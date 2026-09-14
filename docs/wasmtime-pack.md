@@ -142,3 +142,10 @@ grow an Aver-owned host pack. Cross-platform standard-host downloads and
 cross-compiling arbitrary custom providers are separate deployment concerns;
 the supported path is to build the pack on its destination platform or in a
 matching CI runner.
+
+## Work jobs
+
+A pack includes the program's job contracts and preserves `[work] max-jobs`.
+Its host executes pure jobs on threads with separate Stores and a shared
+precompiled Module. Worker execution needs no destination toolchain or JIT.
+See [Parallel Work on wasm-gc](wasm-work.md) for the ABI and JavaScript adapter.

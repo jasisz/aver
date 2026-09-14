@@ -7077,7 +7077,8 @@ fn emit_wasmtime_pack(
         capabilities.clone(),
         provider_bindings.iter().cloned(),
     )?;
-    providers.preflight(required.iter().map(String::as_str))?;
+    // Bundle construction preflights external providers and records compiled
+    // job bodies separately. A program-bound job has no Rust provider to ask.
 
     let return_type = items
         .iter()
@@ -7247,6 +7248,11 @@ fn render_wasmtime_runtime_policy(
     let mut root = toml::map::Map::new();
     if !effects.is_empty() {
         root.insert("effects".to_string(), toml::Value::Table(effects));
+    }
+    if let Some(limit) = config.and_then(|config| config.work_max_jobs) {
+        let mut work = toml::map::Map::new();
+        work.insert("max-jobs".into(), toml::Value::Integer(limit as i64));
+        root.insert("work".into(), toml::Value::Table(work));
     }
     toml::to_string(&toml::Value::Table(root))
         .map_err(|error| format!("serialize Wasmtime runtime policy: {error}"))

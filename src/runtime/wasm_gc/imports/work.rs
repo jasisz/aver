@@ -1,17 +1,7 @@
-//! Jobs and the one wait of a turn on wasm-gc (jasisz/aver#1329).
+//! Work cancellation and the shared socket/job wait on wasm-gc.
 //!
-//! A job runs inline at `begin` on this target, so the module owns everything
-//! about it: the handle is the job, and `Work.cancel` has already happened by
-//! the time this host arm is reached. What is left here is what only the host
-//! can do — watch the sockets a wait set holds, and put the turn in the
-//! recording with the VM's shape, so a recording crosses backends in both
-//! directions.
-//!
-//! `Wait.poll` splits one wait set the way the VM does: sockets go to the
-//! same reactor `Tcp.poll` uses, and every job key is ready at once, because
-//! a job on this target is done the moment it began. A wait set holding any
-//! job therefore returns immediately, which is the timeout such a set asked
-//! for.
+//! Versioned Work modules use the host scheduler; legacy inline modules keep
+//! their original recording hooks and immediate job readiness.
 
 use super::super::RunWasmGcHost;
 use super::factories::{host_result_err_list_int, host_result_ok_list_int_refs};
@@ -66,9 +56,8 @@ pub(super) fn dispatch(
             Ok(true)
         }
         "work_cancel" => {
-            // The module has already dropped the answer and marked the slot.
-            // This is the turn's record of it, and in replay it is what keeps
-            // the recorded stream in step.
+            // Cancel the host job too; legacy inline modules already updated
+            // their handle before entering this recording boundary.
             let id = job_handle_id(
                 caller,
                 params
@@ -76,6 +65,11 @@ pub(super) fn dispatch(
                     .ok_or_else(|| wasmtime::Error::msg("Work.cancel: missing job handle"))?,
             )?;
             let args = vec![json_capability_resource("Work.Job", id)];
+            if let Some(work) = &caller.data().host_work
+                && let Ok(job) = work.job(id, None)
+            {
+                job.cancel();
+            }
             if try_replay(caller, "Work.cancel", args.clone())?.is_some() {
                 return Ok(true);
             }
@@ -147,15 +141,16 @@ fn kind_index(value: Option<&wasmtime::Val>, operation: &str) -> Result<i32, was
 
 /// One wait over a set of sockets and jobs.
 ///
-/// A job is ready at once, so a set holding one waits no longer than it takes
-/// to ask the reactor what is ready right now. A set holding only sockets
-/// waits exactly as `Tcp.poll` does.
+/// Versioned modules watch host completions. Legacy inline modules treat
+/// every job as ready and only probe their sockets.
 fn wait<'entries>(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     entries: &'entries [PollEntry],
     timeout: &super::tcp::GuestInt,
 ) -> Result<Result<Vec<&'entries PollEntry>, String>, wasmtime::Error> {
-    let _ = caller;
+    if let Some(work) = &caller.data().host_work {
+        return Ok(wait_host(work, entries, timeout));
+    }
     let Some(timeout_ms) = timeout.value else {
         return Ok(Err(format!(
             "Wait.poll: timeoutMs {} exceeds the poll limit",
@@ -193,4 +188,76 @@ fn wait<'entries>(
     ready.sort_by(|left, right| left.numeric.cmp(&right.numeric));
     ready.dedup_by(|left, right| left.numeric == right.numeric);
     Ok(Ok(ready))
+}
+
+/// Register the completion waker before inspecting jobs: a completion between
+/// inspection and socket polling must wake the poll instead of being lost.
+fn wait_host<'a>(
+    work: &std::sync::Arc<super::super::host_work::HostWork>,
+    entries: &'a [PollEntry],
+    timeout: &super::tcp::GuestInt,
+) -> Result<Vec<&'a PollEntry>, String> {
+    use std::time::{Duration, Instant};
+    let timeout = timeout.value.ok_or_else(|| {
+        format!(
+            "Wait.poll: timeoutMs {} exceeds the poll limit",
+            timeout.display
+        )
+    })?;
+    if timeout < 0 {
+        return Err(format!("Wait.poll: timeoutMs {timeout} is negative"));
+    }
+    let timeout = timeout.min(1000 * 60 * 60 * 24 * 365 * 100);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_millis(timeout as u64))
+        .ok_or("Wait.poll: timeoutMs exceeds the host clock")?;
+    let mut sockets: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.socket.is_some())
+        .collect();
+    sockets.sort_by(|left, right| left.provider_order.cmp(&right.provider_order));
+    let handles: Vec<_> = sockets
+        .iter()
+        .filter_map(|entry| entry.socket.clone())
+        .collect();
+    loop {
+        // poll_with_waker registers each socket once on its poller. A wake
+        // outside this wait set needs a fresh poller for the next attempt.
+        let waker = aver_rt::tcp::PollWaker::new("Wait.poll")?;
+        let _guard = work.engine.wake_with(std::sync::Arc::new(waker.clone()));
+        let generation = work.engine.generation();
+        let mut ready: Vec<_> = entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .job_id
+                    .is_some_and(|id| work.job(id, None).map_or(true, |job| job.is_ready()))
+            })
+            .collect();
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if !handles.is_empty() {
+            let timeout = if ready.is_empty() {
+                remaining.as_millis() as i64
+            } else {
+                0
+            };
+            for index in aver_rt::tcp::poll_with_waker(&handles, timeout, &waker, "Wait.poll")? {
+                ready.push(sockets[index]);
+            }
+            // A job may have completed while the reactor was blocked.
+            ready.extend(entries.iter().filter(|entry| {
+                entry
+                    .job_id
+                    .is_some_and(|id| work.job(id, None).map_or(true, |job| job.is_ready()))
+            }));
+        }
+        if !ready.is_empty() || Instant::now() >= deadline {
+            ready.sort_by(|left, right| left.numeric.cmp(&right.numeric));
+            ready.dedup_by(|left, right| left.numeric == right.numeric);
+            return Ok(ready);
+        }
+        if handles.is_empty() {
+            work.engine.wait_until(generation, deadline);
+        }
+    }
 }

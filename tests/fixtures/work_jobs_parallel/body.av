@@ -1,0 +1,22 @@
+module Body
+    intent = "Pure work that tests independent progress and interruption inside Wasm."
+    exposes [compute]
+    effects []
+
+fn compute(task: Bool) -> Int
+    ? "Return a large answer or remain running until the host cancels this job."
+    match task
+        true -> spin(0)
+        false -> 340282366920938463463374607431768211457
+
+verify compute
+    compute(false) => 340282366920938463463374607431768211457
+
+fn spin(n: Int) -> Int
+    ? "Only a negative seed finishes; the job deliberately starts at zero."
+    match n < 0
+        true -> 0
+        false -> spin(n + 1)
+
+verify spin
+    spin(-1) => 0

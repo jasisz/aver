@@ -926,6 +926,7 @@ pub(super) struct PollEntry {
     /// `None` for a job: jasisz/aver#1329 lets one wait set hold both, and a
     /// job is watched by the module rather than by the reactor.
     pub(super) socket: Option<aver_rt::tcp::TcpSocket>,
+    pub(super) job_id: Option<i64>,
     pub(super) socket_json: aver::replay::JsonValue,
 }
 
@@ -1050,6 +1051,7 @@ fn decode_map_entries(
                         key_ref,
                         key_json: guest_int_json(&key),
                         socket: None,
+                        job_id: Some(job_id),
                         socket_json: json_wait_item(
                             "Job",
                             json_capability_resource("Work.Job", job_id),
@@ -1129,6 +1131,7 @@ fn decode_map_entries(
             key_ref,
             key_json: guest_int_json(&key),
             socket: Some(socket),
+            job_id: None,
             socket_json: if wait_items {
                 json_wait_item("Socket", socket_json)
             } else {
@@ -1211,7 +1214,7 @@ fn wait_item_job_id(
 }
 
 /// The id field of one `Work.Job` handle.
-pub(super) fn job_handle_id(
+pub(in crate::runtime::wasm_gc) fn job_handle_id(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     value: &wasmtime::Val,
 ) -> Result<i64, wasmtime::Error> {

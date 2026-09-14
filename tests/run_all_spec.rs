@@ -841,7 +841,8 @@ fn the_two_kinds_share_one_table_and_one_limit() {
         "taken0 = __takeEachAlpha(served, ready)",
         "taken1 = __takeEachBeta(taken0, ready)",
         "started0 = __startJobsAlpha(taken1)",
-        "Result.Ok(__startJobsBeta(started0))",
+        "__startJobsBeta(started0)",
+        "Result.Ok(__workHostStep(observed, ready))",
     ] {
         assert!(text.contains(line), "{line} missing from the dump");
     }

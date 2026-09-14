@@ -20,9 +20,11 @@ mod codec;
 mod guest;
 mod replay;
 
-use codec::{decode_value, encode_value, ensure_live_resources};
+use codec::ensure_live_resources;
+pub(super) use codec::{decode_value, encode_value};
 pub(super) use replay::ReplayResource;
-use replay::{provider_value_from_json, provider_value_to_json, provider_values_to_json_lossy};
+use replay::provider_values_to_json_lossy;
+pub(super) use replay::{provider_value_from_json, provider_value_to_json};
 
 #[derive(Clone)]
 pub(super) struct BoundOperation {

@@ -256,6 +256,11 @@ jobs:
         if: matrix.lane == 'checks'
         run: cargo test -p aver-lang --features wasm,wasip2 --test provider_spec --test capability_grammar_spec --test capability_target_manifest_spec
 
+      - name: Install Node for the JavaScript Work host
+        if: matrix.lane == 'wasm-gc'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Test wasm-gc suites
         if: matrix.lane == 'wasm-gc'
         # Compilation has stalled for hours after `Compiling aver-lang`
@@ -318,6 +323,7 @@ jobs:
             wasm_gc_verify_option_case_regression \
             wasm_gc_verify_result_record_eq_regression \
             wasm_work_spec \
+            wasm_host_work_spec \
             work_shape_spec \
             yield_spec
           do

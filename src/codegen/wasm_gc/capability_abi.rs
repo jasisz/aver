@@ -126,8 +126,40 @@ impl CapabilityAbi {
         // answer across the same boundary: give both the ABI helpers the host
         // decodes them with.
         for kind in plan.job_kinds() {
+            collect_type(
+                &kind.begin.return_type,
+                registry,
+                &mut boundary,
+                &mut HashSet::new(),
+            );
             for ty in kind.recorded_types() {
                 collect_type(&ty, registry, &mut boundary, &mut HashSet::new());
+            }
+        }
+        if !plan.job_kinds().is_empty() {
+            if registry.result_type_idx("Result<Int,String>").is_some() {
+                collect_type(
+                    &crate::types::parse_type_str("Result<Int,String>"),
+                    registry,
+                    &mut boundary,
+                    &mut HashSet::new(),
+                );
+            }
+            if registry.map_slots("Map<Int,Wait.Item>").is_some() {
+                collect_type(
+                    &crate::types::parse_type_str("Map<Int,Wait.Item>"),
+                    registry,
+                    &mut boundary,
+                    &mut HashSet::new(),
+                );
+            }
+            if registry.result_type_idx("Result<Unit,String>").is_some() {
+                collect_type(
+                    &crate::types::parse_type_str("Result<Unit,String>"),
+                    registry,
+                    &mut boundary,
+                    &mut HashSet::new(),
+                );
             }
         }
         for interface in plan.interfaces() {
@@ -430,7 +462,7 @@ impl CapabilityAbi {
             // backend-link-stage: ABI types are already contract-qualified and
             // resolved against the post-flatten TypeRegistry by canonical name.
             Type::Named { name, .. } => {
-                if registry.is_capability_resource(name) {
+                if name == "Work.Job" || registry.is_capability_resource(name) {
                     return Ok(());
                 }
                 if registry.packed_sequence(name).is_some() {
@@ -628,7 +660,7 @@ fn helper_stem(canonical: &str) -> String {
     )
 }
 
-fn collect_type(
+pub(super) fn collect_type(
     ty: &Type,
     registry: &TypeRegistry,
     out: &mut BTreeMap<String, Type>,

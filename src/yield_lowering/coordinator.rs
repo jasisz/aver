@@ -27,6 +27,7 @@ use crate::types::checker::TypeError;
 
 use super::{CoordinatorStop, FnSigs, ProcessProtocol};
 
+mod host_driver;
 mod then_reply;
 
 /// The `__Run` field a job table lives in.
@@ -619,6 +620,14 @@ fn marker_variant(fn_name: &str) -> String {
     super::build::capitalize(fn_name)
 }
 
+fn effects(list: &[String]) -> String {
+    if list.is_empty() {
+        String::new()
+    } else {
+        format!("    ! [{}]\n", list.join(", "))
+    }
+}
+
 /// `Infra.Ledger` → `ledger`: the `__Run` field one answer module's state
 /// lives in.
 fn field_name(module: &str) -> String {
@@ -746,13 +755,6 @@ fn write_loop(
     out.push_str(", dropped = 0, stopping = false, now = 0, nextId = 1)\n");
 
     // ── Seating ────────────────────────────────────────────────────
-    let effects = |list: &[String]| {
-        if list.is_empty() {
-            String::new()
-        } else {
-            format!("    ! [{}]\n", list.join(", "))
-        }
-    };
     for (protocol, performs) in protocols.iter().zip(process_effects) {
         let upper = marker_variant(&protocol.fn_name);
         out.push_str(&format!(
@@ -881,52 +883,14 @@ fn write_loop(
         out.push_str(&write_job(job, jobs));
     }
 
-    // ── The turn and the loop ──────────────────────────────────────
-    let (stop_description, stop_observation) = match coordinator_stop {
-        CoordinatorStop::HostSignal => ("observe the host stop flag", "Process.stopRequested()"),
-        CoordinatorStop::PolicyOnly => ("keep the signal stop flag false", "false"),
+    let stop_observation = match coordinator_stop {
+        CoordinatorStop::HostSignal => "Process.stopRequested()",
+        CoordinatorStop::PolicyOnly => "false",
     };
+    out.push_str(&host_driver::write_step(plan, jobs, turn_effects));
     out.push_str(&format!(
-        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"One turn: {stop_description}, wait once, read the clock the wait came back at, serve the askable slots the policy admits, in its order{}. The clock is read after the wait and before the turn serves, so a deadline that fell due while the turn was waiting is askable in this turn rather than the next one; the wait of the turn after this one is measured against the same reading.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    timed = __Run.update(observed, now = Time.unixMs())\n    served = __serveEach(timed, ready, {}(__view(timed, ready)))\n{}",
-        if has_jobs { ", take every job that finished, and start jobs while there is room" } else { "" },
+        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"Observe stopping, wait once, then perform the same turn as the external host driver.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    Result.Ok(__workHostStep(observed, ready))\n",
         effects(turn_effects),
-        bare(&plan.policies.order),
-        if has_jobs {
-            // One table across the kinds: every kind takes what the wait
-            // reported, then every kind starts while there is room. The
-            // takes run first because a landed job frees a slot of room this
-            // turn can already fill.
-            let binder = |prefix: &str, index: usize| {
-                if jobs.len() == 1 {
-                    prefix.to_string()
-                } else {
-                    format!("{prefix}{index}")
-                }
-            };
-            let mut body = String::new();
-            let mut run_of = "served".to_string();
-            for (index, job) in jobs.iter().enumerate() {
-                let name = binder("taken", index);
-                body.push_str(&format!(
-                    "    {name} = __takeEach{upper}({run_of}, ready)\n",
-                    upper = marker_variant(&job.capability)
-                ));
-                run_of = name;
-            }
-            for (index, job) in jobs.iter().enumerate() {
-                let upper = marker_variant(&job.capability);
-                if index + 1 == jobs.len() {
-                    body.push_str(&format!("    Result.Ok(__startJobs{upper}({run_of}))\n"));
-                } else {
-                    let name = binder("started", index);
-                    body.push_str(&format!("    {name} = __startJobs{upper}({run_of})\n"));
-                    run_of = name;
-                }
-            }
-            body
-        } else {
-            "    Result.Ok(served)\n".to_string()
-        }
     ));
     out.push_str(&format!(
         "\nfn __serveEach(run: __Run, ready: List<Int>, ids: List<Int>) -> __Run\n    ? \"Every id the policy ordered, once, if the policy admits it in this turn.\"\n{}    match ids\n        [] -> run\n        [id, ..rest] -> __serveEach(__serveIf(run, ready, id), ready, rest)\n",
@@ -958,6 +922,13 @@ fn write_loop(
         .fold("__fresh()".to_string(), |inner, protocol| {
             format!("__seat{}({inner})", marker_variant(&protocol.fn_name))
         });
+    out.push_str(&host_driver::write_exports(
+        &seated,
+        &stopping,
+        main_effects,
+        has_jobs,
+        coordinator_stop,
+    ));
     out.push_str(&format!(
         "\nfn main() -> Result<Unit, String>\n    ? \"Seats one of every process this program writes and turns until the policy stops the run.\"\n{}    __over(__runAll({seated})?)\n",
         effects(main_effects)

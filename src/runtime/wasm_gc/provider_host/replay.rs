@@ -40,7 +40,7 @@ fn marker(name: &str, value: JsonValue) -> JsonValue {
     JsonValue::Object(Map::from_iter([(name.to_string(), value)]))
 }
 
-pub(super) fn provider_value_to_json(
+pub(in crate::runtime::wasm_gc) fn provider_value_to_json(
     value: &ProviderValue,
     ty: &Type,
     scope: &str,
@@ -283,7 +283,7 @@ fn expected_shape(ty: &Type, value: &ProviderValue) -> String {
     format!("expected {}, got {}", ty.display(), value.shape())
 }
 
-pub(super) fn provider_value_from_json(
+pub(in crate::runtime::wasm_gc) fn provider_value_from_json(
     json: &JsonValue,
     ty: &Type,
     scope: &str,

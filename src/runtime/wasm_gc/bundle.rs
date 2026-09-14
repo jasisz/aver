@@ -23,6 +23,9 @@ pub const BUNDLE_MANIFEST_SCHEMA: u32 = 3;
 const BUNDLE_TARGET: &str = "wasm-gc";
 const BUNDLE_ENGINE: &str = "wasmtime-gc";
 const BUNDLE_MANIFEST_FILE: &str = "manifest.json";
+// Job bodies live in the byte-bound module, rather than a linked Rust provider.
+const PROGRAM_WORK_PROVIDER: &str = "aver.program.Work";
+const PROGRAM_WORK_FINGERPRINT: &str = aver::codegen::wasm_gc::work_abi::MODULE;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -163,9 +166,14 @@ pub fn build_bundle_artifacts(input: BundleManifestInput<'_>) -> Result<BundleAr
     require_sibling_file(input.artifact_file)?;
     require_sibling_file(input.runtime_artifact_file)?;
     require_sibling_file(input.precompiled_file)?;
-    input
-        .providers
-        .preflight(input.required_operations.iter().map(String::as_str))?;
+    let job_operations = input.custom_plan.job_operations();
+    input.providers.preflight(
+        input
+            .required_operations
+            .iter()
+            .filter(|op| !job_operations.contains(op))
+            .map(String::as_str),
+    )?;
 
     let provenance = input
         .providers
@@ -192,37 +200,55 @@ pub fn build_bundle_artifacts(input: BundleManifestInput<'_>) -> Result<BundleAr
             .capabilities
             .contract(&name)
             .ok_or_else(|| format!("bundle capability '{name}' has no contract"))?;
-        let provider = provenance
-            .get(&name)
-            .ok_or_else(|| format!("bundle capability '{name}' has no provider"))?;
+        let (provider_identity, provider_fingerprint) = if is_program_work(input.custom_plan, &name)
+        {
+            (
+                PROGRAM_WORK_PROVIDER.to_string(),
+                PROGRAM_WORK_FINGERPRINT.to_string(),
+            )
+        } else {
+            let provider = provenance
+                .get(&name)
+                .ok_or_else(|| format!("bundle capability '{name}' has no provider"))?;
+            (provider.provider.clone(), provider.fingerprint.clone())
+        };
         capabilities.push(BundleCapability {
             name,
             contract_hash: contract.contract_hash.clone(),
             model_hash: contract.model_hash.clone(),
             required_operations,
-            provider_identity: provider.provider.clone(),
-            provider_fingerprint: provider.fingerprint.clone(),
+            provider_identity,
+            provider_fingerprint,
         });
     }
 
     let mut capability_sources = Vec::with_capacity(input.custom_plan.interfaces().len());
-    for interface in input.custom_plan.interfaces() {
-        let source = input
-            .capability_sources
-            .get(&interface.capability)
-            .ok_or_else(|| {
-                format!(
-                    "cannot pack custom capability '{}': pristine contract source is missing",
-                    interface.capability
-                )
-            })?;
+    let source_names = input
+        .custom_plan
+        .interfaces()
+        .iter()
+        .map(|interface| &interface.capability)
+        .chain(
+            input
+                .custom_plan
+                .job_kinds()
+                .iter()
+                .map(|kind| &kind.shape.capability),
+        );
+    for name in source_names {
+        let source = input.capability_sources.get(name).ok_or_else(|| {
+            format!(
+                "cannot pack custom capability '{}': pristine contract source is missing",
+                name
+            )
+        })?;
         capability_sources.push(BundleCapabilitySource {
-            name: interface.capability.clone(),
+            name: name.clone(),
             source: source.clone(),
         });
     }
 
-    let engine = wasmtime::Engine::new(&crate::runtime::wasmtime_gc_engine_config())
+    let engine = wasmtime::Engine::new(&crate::runtime::wasmtime_work_engine_config())
         .map_err(|error| format!("build bundle engine: {error:#}"))?;
     let module = wasmtime::Module::new(&engine, input.runtime_wasm_bytes)
         .map_err(|error| format!("precompile bundle module: {error:#}"))?;
@@ -379,7 +405,7 @@ fn run_bundle(
     let manifest: BundleManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("parse '{}': {error}", manifest_path.display()))?;
     validate_manifest_header(&manifest)?;
-    let engine = wasmtime::Engine::new(&crate::runtime::wasmtime_gc_engine_config())
+    let engine = wasmtime::Engine::new(&crate::runtime::wasmtime_work_engine_config())
         .map_err(|error| format!("bundle engine: {error:#}"))?;
     let module = match artifact_selection {
         BundleArtifactSelection::Canonical => {
@@ -564,13 +590,29 @@ fn run_bundle(
     let custom_plan = CapabilityWasmGcPlan::build(&registry, &required)?;
     validate_import_owners(&actual_imports, &custom_plan)?;
     let providers = ProviderRegistry::for_program_with_bindings(registry, bindings)?;
-    providers.preflight(required.iter().map(String::as_str))?;
+    let job_operations = custom_plan.job_operations();
+    providers.preflight(
+        required
+            .iter()
+            .filter(|op| !job_operations.contains(op))
+            .map(String::as_str),
+    )?;
     let actual_provenance = providers
         .provenance()
         .into_iter()
         .map(|entry| (entry.capability.clone(), entry))
         .collect::<BTreeMap<_, _>>();
     for (name, expected) in expected_capabilities {
+        if is_program_work(&custom_plan, &name) {
+            if expected.provider_identity != PROGRAM_WORK_PROVIDER
+                || expected.provider_fingerprint != PROGRAM_WORK_FINGERPRINT
+            {
+                return Err(format!(
+                    "error[wasmtime-bundle-provider-mismatch]: job capability '{name}' requires {PROGRAM_WORK_PROVIDER}@{PROGRAM_WORK_FINGERPRINT}"
+                ));
+            }
+            continue;
+        }
         let actual = actual_provenance.get(&name).ok_or_else(|| {
             format!("error[wasmtime-bundle-provider]: capability '{name}' has no linked provider")
         })?;
@@ -624,6 +666,12 @@ fn run_bundle(
     )
     .map(|_| ())
     .map_err(|error| format!("WASM execution error: {error}"))
+}
+
+fn is_program_work(plan: &CapabilityWasmGcPlan, name: &str) -> bool {
+    plan.job_kinds()
+        .iter()
+        .any(|kind| kind.shape.capability == name)
 }
 
 fn validate_manifest_header(manifest: &BundleManifest) -> Result<(), String> {
@@ -698,6 +746,15 @@ fn validate_import_owners(
         .collect::<BTreeSet<_>>();
     for import in imports {
         if import.module == "aver" {
+            continue;
+        }
+        if import.module == aver::codegen::wasm_gc::work_abi::MODULE
+            && !custom_plan.job_kinds().is_empty()
+            && matches!(
+                import.name.as_str(),
+                "submit" | "take" | "task" | "complete"
+            )
+        {
             continue;
         }
         if custom.contains(&(import.module.clone(), import.name.clone())) {
@@ -779,8 +836,76 @@ fn sha256(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn program_job_contracts_pack_without_an_external_provider() {
+        let source = include_str!("../../../tests/fixtures/work_jobs_parallel/scoring.av");
+        let items = aver::source::parse_source(source).unwrap();
+        let (jobs, errors) = CapabilityRegistry::from_module("Scoring", &items);
+        assert!(errors.is_empty());
+        let mut registry = aver::stdlib::standard_capability_registry();
+        registry.merge(jobs);
+        let required = BTreeSet::from(["Scoring.begin".into(), "Scoring.take".into()]);
+        let plan = CapabilityWasmGcPlan::build(&registry, &required).unwrap();
+        let providers =
+            ProviderRegistry::for_program_with_bindings(registry.clone(), Vec::new()).unwrap();
+        let sources = BTreeMap::from([("Scoring".into(), source.into())]);
+        let wasm = wat::parse_str("(module (func (export \"main\")))").unwrap();
+        let artifacts = build_bundle_artifacts(BundleManifestInput {
+            artifact_file: "main.wasm",
+            artifact_bytes: &wasm,
+            runtime_artifact_file: "main.wasm",
+            runtime_wasm_bytes: &wasm,
+            precompiled_file: "main.cwasm",
+            return_type: &Type::Unit,
+            capabilities: &registry,
+            required_operations: &required,
+            custom_plan: &plan,
+            capability_sources: &sources,
+            providers: &providers,
+            runtime_policy_toml: "[work]\nmax-jobs = 2\n",
+            optimization: "none",
+            certified: false,
+        })
+        .unwrap();
+        let mut manifest: BundleManifest = serde_json::from_str(&artifacts.manifest_json).unwrap();
+        assert_eq!(
+            manifest.capabilities[0].provider_identity,
+            PROGRAM_WORK_PROVIDER
+        );
+        assert_eq!(manifest.capability_sources[0].source, source);
+        let directory = tempfile::tempdir().unwrap();
+        write_test_bundle(
+            directory.path(),
+            &manifest,
+            &wasm,
+            &artifacts.precompiled_bytes,
+        );
+        run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Aot,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        manifest.capabilities[0].provider_fingerprint = "wrong Work ABI".into();
+        write_test_bundle(
+            directory.path(),
+            &manifest,
+            &wasm,
+            &artifacts.precompiled_bytes,
+        );
+        let error = run_bundle(
+            directory.path(),
+            BundleArtifactSelection::Aot,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.contains("provider-mismatch"), "{error}");
+    }
+
     fn test_manifest(wasm_bytes: &[u8]) -> (BundleManifest, Vec<u8>) {
-        let engine = wasmtime::Engine::new(&crate::runtime::wasmtime_gc_engine_config())
+        let engine = wasmtime::Engine::new(&crate::runtime::wasmtime_work_engine_config())
             .expect("test engine");
         let module = wasmtime::Module::new(&engine, wasm_bytes).expect("compile test wasm");
         let imports = inspect_imports(&module).expect("inspect test wasm");

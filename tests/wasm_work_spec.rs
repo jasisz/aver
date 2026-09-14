@@ -1,19 +1,8 @@
-//! Jobs, the one wait and the generated coordinator on wasm-gc and wasip2
-//! (jasisz/aver#1329).
+//! Jobs, mixed socket/job waits, and coordinators across wasm targets.
 //!
-//! A component and a wasm-gc module are single-threaded, so a job runs inline
-//! at `begin` and the handle it mints already carries the answer. Everything
-//! else is the VM's: the four answers `take` gives, the words it gives them
-//! in, the keys one wait reports, and the shape of a recorded turn. So every
-//! case here runs one `tests/fixtures/work_*` or `run_*` program on a wasm
-//! target and compares with `aver run` on the same program, the way
-//! `tests/rust_work_spec.rs` compares the Rust backend.
-//!
-//! The one place they part is where the fixture asks for something a
-//! single-threaded target cannot do: `work_jobs_limit` asks for a second job
-//! at a limit of one, and inline there is never a second job running, so the
-//! limit it was written for does not refuse. That case says so in its own
-//! words rather than being left out.
+//! wasm-gc schedules host workers; WASI 0.2 retains inline begin. These
+//! regressions pin shared lifecycle behavior and cross-backend replay while
+//! allowing the scheduling races of independent jobs.
 
 #![cfg(feature = "wasm")]
 
@@ -134,30 +123,21 @@ fn work_jobs_matches_the_vm_on_wasip2() {
     same_lines("work_jobs", &vm, &wasm).unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// A job run inline is done before anything can wait for it, so a `take`
-/// asked in the very next expression answers `Some`. That is the one thing
-/// these targets do that no other backend does, and the second `take` proves
-/// the slot went with the answer.
+/// A nonblocking take observes a prefix of the same lifecycle on both hosts.
 #[test]
-fn a_take_right_after_begin_answers_some_on_wasm_gc() {
-    let wasm =
-        run("work_jobs_inline", &["--wasm-gc"], &[]).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(wasm, "score 5\nwork: job already taken");
-    // The VM runs the job beside the turn, so what its two takes see is a
-    // race the program cannot win on purpose: usually neither has an answer
-    // yet, but a job this small can settle between the two takes, or before
-    // the first one on a loaded machine. What the VM owes is that no take
-    // ever answers before the job is done and that an answer is given once.
-    let vm = run("work_jobs_inline", &[], &[]).unwrap_or_else(|error| panic!("{error}"));
+fn immediate_takes_observe_the_job_lifecycle_on_wasm_gc() {
     let honest = [
         "nothing yet\nnothing yet",
         "nothing yet\nscore 5",
         "score 5\nwork: job already taken",
     ];
-    assert!(
-        honest.contains(&vm.as_str()),
-        "the VM's two takes must be a prefix of the job's life, got:\n{vm}"
-    );
+    for target in [&[][..], &["--wasm-gc"][..]] {
+        let output = run("work_jobs_inline", target, &[]).unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            honest.contains(&output.as_str()),
+            "unexpected lifecycle: {output}"
+        );
+    }
 }
 
 #[cfg(feature = "wasip2")]
@@ -247,8 +227,10 @@ fn work_jobs_two_kinds_keeps_each_kind_to_its_own_handles_on_wasip2() {
 /// as its own failure, so what it prints here is nothing at all — and the
 /// program door says why, naming the key and the target.
 #[test]
-fn work_jobs_limit_says_the_manifest_key_changes_nothing_on_wasm_gc() {
-    assert_work_jobs_limit_is_ignored("--wasm-gc");
+fn work_jobs_limit_is_enforced_on_wasm_gc() {
+    let output =
+        run("work_jobs_limit", &["--wasm-gc"], &[]).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(output, "work: job limit 1 reached");
 }
 
 #[cfg(feature = "wasip2")]
@@ -353,7 +335,9 @@ fn with_peer(run: impl FnOnce(&str) -> Result<String, String>) -> Result<String,
     let ran = run(&text);
     let played = peer.join();
     let out = ran?;
-    played.map_err(|_| "the loopback peer did not play its whole part".to_string())?;
+    played.map_err(|_| {
+        format!("the loopback peer did not play its whole part; program output:\n{out}")
+    })?;
     Ok(out)
 }
 

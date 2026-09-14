@@ -37,3 +37,11 @@ pub fn wasmtime_gc_engine_config() -> wasmtime::Config {
     config.async_stack_size(12 * 1024 * 1024);
     config
 }
+
+/// Work workers need interruption points even inside a pure recursive body.
+#[cfg(feature = "wasm")]
+pub fn wasmtime_work_engine_config() -> wasmtime::Config {
+    let mut config = wasmtime_gc_engine_config();
+    config.epoch_interruption(true);
+    config
+}
