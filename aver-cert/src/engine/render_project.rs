@@ -3173,6 +3173,15 @@ fn render_artifact(
             format!("  exact {proof}\n")
         }
     };
+    // `claimObligationsBound` is the exception to the rule above: its goal
+    // unfolds through `claimObligations`, which wraps every family list in
+    // `List.map … ++ …`. Under the pinned 4.33.1 wall `dsimp` leaves that
+    // chain unreduced, so the empty-claims goal stays open —
+    // `claimObligationsInManifest obs (List.map _ [] ++ …)` — and needs the
+    // `exact trivial` the family proofs must omit. It holds definitionally
+    // (the chain reduces to `[]` and the match on `[]` is `True`), so the
+    // same `exact` discharges every claim count.
+    let obligation_proof_step = format!("  exact {}\n", claims.obligation_proof);
     let proof_bundles = format!(
         concat!(
             "theorem claimObligationsBound : AverCert.AcceptedArtifact.fragmentClaimObligationsInManifest data := by\n",
@@ -3243,7 +3252,7 @@ fn render_artifact(
             "  dsimp [AverCert.AcceptedArtifact.accepted, AverCert.AcceptedArtifact.subjectMatchesArtifactRoot, AverCert.AcceptedArtifact.expectedArtifactRoot]\n",
             "  exact ⟨finalCert, artifactEnvelopeAccepted, rfl, claimObligationsBound, claimsMatchManifest, standardFacesChecked, claimAxesChecked, decodedNonExprFacts, fragmentsAccepted⟩\n"
         ),
-        obligation_proof_step = family_exact(&claims.obligation_proof),
+        obligation_proof_step = obligation_proof_step,
         sym_proof_step = family_exact(&claims.sym_proof),
         string_eq_proof_step = family_exact(&claims.string_eq_proof),
         string_proof_step = family_exact(&claims.string_proof),

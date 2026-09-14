@@ -224,24 +224,29 @@ set_option autoImplicit false
 
 namespace MapModelShape
 
+set_option smartUnfolding false in
 /-- A Bool-keyed literal, which orders false before true. -/
 def boolKeyed  : List (Bool × Int) :=
   [(false, 0), (true, 1)]
 
+set_option smartUnfolding false in
 /-- A map built by three Map.set calls, written out of key order. -/
 def built  : List (String × Int) :=
   let m0 := AverMap.set [] "z" 1
   let m1 := AverMap.set m0 "a" 2
   AverMap.set m1 "m" 3
 
+set_option smartUnfolding false in
 /-- The same map through Map.fromList, with a duplicate key last-write-wins. -/
 def fromPairs  : List (String × Int) :=
   AverMap.fromList ([("z", 9), ("a", 2), ("m", 3), ("z", 1)])
 
+set_option smartUnfolding false in
 /-- An Int-keyed literal, which orders numerically and not by printed digits. -/
 def intKeyed  : List (Int × String) :=
   [(2, "two"), (10, "ten")]
 
+set_option smartUnfolding false in
 /-- The same map as a literal, also written out of key order. -/
 def literal  : List (String × Int) :=
   [("a", 2), ("m", 3), ("z", 1)]
