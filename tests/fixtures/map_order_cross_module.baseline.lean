@@ -11,6 +11,7 @@ set_option autoImplicit false
 
 namespace MapOrderCrossModule
 
+set_option smartUnfolding false in
 /-- The value paired with the lowest key, read through another module. -/
 def firstTupleValue (m : List ((Int × Int) × Int)) : Int :=
   match MapKeys.floatValues m with
