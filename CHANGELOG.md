@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Knowledge laws now close universally in Lean.** Proven map update commutation for Int, String and Bool keys and bounded constructor analysis close the example's merge algebra. The example adds admission and contextual swap/duplicate laws and fixes ambiguous block/context verdict keys. See `docs/knowledge.md`; agreement remains an explicit premise.
+
 - **Lean composes explanation facts before splitting cases.** The final implication of a law with `because` first uses its existing hypotheses; case analysis remains available when needed. This avoids repeating normalization across unnecessary branches.
 
 - **Lean proof export reuses successful speculative builds.** Closed candidates keep byte-identical diagnostic fallbacks, avoiding redundant Lake elaboration when their dependencies are unchanged. Bounded fallback and the final axiom audit are preserved. `tools/proof_bench.py` records repeatable timings and complete proof manifests; see `docs/proof-performance.md`.

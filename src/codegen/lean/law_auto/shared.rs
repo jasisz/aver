@@ -1053,12 +1053,13 @@ pub(super) fn expr_calls_builtin(expr: &Spanned<Expr>, builtin: &str) -> bool {
     })
 }
 
-/// The first law given whose declared type is a user sum type, as the Lean
-/// binder a `cases` can split. Chosen by type shape alone: the given's name,
+/// Law givens whose declared types are user sums, with their Lean binder
+/// names and constructor counts for a bounded case-analysis portfolio.
+/// Chosen by type shape alone: the given's name,
 /// its position in the claim and the variants' names are never read. The
 /// given's type is resolved through the symbol table under the active module
 /// scope, so a same-bare-name type in another module never stands in for it.
-pub(super) fn first_user_sum_given(ctx: &CodegenContext, law: &VerifyLaw) -> Option<String> {
+pub(super) fn user_sum_givens(ctx: &CodegenContext, law: &VerifyLaw) -> Vec<(String, usize)> {
     let scope = ctx.active_module_scope();
     let is_user_sum = |type_name: &str| {
         let type_name = type_name.trim();
@@ -1076,15 +1077,25 @@ pub(super) fn first_user_sum_given(ctx: &CodegenContext, law: &VerifyLaw) -> Opt
             .iter()
             .flat_map(|m| m.type_defs.iter())
             .chain(ctx.type_defs.iter())
-            .any(|td| {
-                matches!(td, crate::ast::TypeDef::Sum { .. })
-                    && crate::codegen::common::type_key_for_decl(ctx, td) == key
+            .find_map(|td| {
+                let crate::ast::TypeDef::Sum { variants, .. } = td else {
+                    return None;
+                };
+                (crate::codegen::common::type_key_for_decl(ctx, td) == key)
+                    .then_some(variants.len())
             })
     };
     law.givens
         .iter()
-        .find(|g| is_user_sum(&g.type_name))
-        .map(|g| aver_name_to_lean(&g.name))
+        .filter_map(|g| is_user_sum(&g.type_name).map(|count| (aver_name_to_lean(&g.name), count)))
+        .collect()
+}
+
+pub(super) fn first_user_sum_given(ctx: &CodegenContext, law: &VerifyLaw) -> Option<String> {
+    user_sum_givens(ctx, law)
+        .into_iter()
+        .next()
+        .map(|(name, _)| name)
 }
 
 /// [`expr_calls_builtin`] over every statement of a fn body.
