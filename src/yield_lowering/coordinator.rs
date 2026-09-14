@@ -25,7 +25,7 @@ use crate::ast::{TopLevel, Type, TypeDef};
 use crate::config::RunPlan;
 use crate::types::checker::TypeError;
 
-use super::{FnSigs, ProcessProtocol};
+use super::{CoordinatorStop, FnSigs, ProcessProtocol};
 
 mod host_driver;
 mod then_reply;
@@ -133,6 +133,7 @@ pub(super) fn generate(
     plan: &RunPlan,
     fn_sigs: &FnSigs,
     laws: &std::collections::BTreeSet<String>,
+    coordinator_stop: CoordinatorStop,
 ) -> Result<GeneratedLoop, Vec<TypeError>> {
     let module = items.iter().find_map(|item| match item {
         TopLevel::Module(module) => Some(module),
@@ -197,7 +198,7 @@ pub(super) fn generate(
 
     let process_effects = process_effect_lists(protocols, generated, &answers, fn_sigs);
     let serve_effects = serve_effect_list(&process_effects);
-    let turn_effects = turn_effect_list(&serve_effects, &jobs);
+    let turn_effects = turn_effect_list(&serve_effects, &jobs, coordinator_stop);
     let main_effects = main_effect_list(&turn_effects, &process_effects, &jobs);
     let source = write_loop(
         protocols,
@@ -209,6 +210,7 @@ pub(super) fn generate(
         &serve_effects,
         &turn_effects,
         &main_effects,
+        coordinator_stop,
     );
     // The module's own boundary has to admit everything generated into it,
     // and the entry point is the widest of the generated functions.
@@ -673,6 +675,7 @@ fn write_loop(
     serve_effects: &[String],
     turn_effects: &[String],
     main_effects: &[String],
+    coordinator_stop: CoordinatorStop,
 ) -> String {
     let mut out = String::new();
     let view = plan.policies.view_name().to_string();
@@ -880,9 +883,13 @@ fn write_loop(
         out.push_str(&write_job(job, jobs));
     }
 
+    let stop_observation = match coordinator_stop {
+        CoordinatorStop::HostSignal => "Process.stopRequested()",
+        CoordinatorStop::PolicyOnly => "false",
+    };
     out.push_str(&host_driver::write_step(plan, jobs, turn_effects));
     out.push_str(&format!(
-        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"Observe stopping, wait once, then perform the same turn as the external host driver.\"\n{}    observed = __Run.update(run, stopping = Process.stopRequested())\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    Result.Ok(__workHostStep(observed, ready))\n",
+        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"Observe stopping, wait once, then perform the same turn as the external host driver.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    Result.Ok(__workHostStep(observed, ready))\n",
         effects(turn_effects),
     ));
     out.push_str(&format!(
@@ -920,6 +927,7 @@ fn write_loop(
         &stopping,
         main_effects,
         has_jobs,
+        coordinator_stop,
     ));
     out.push_str(&format!(
         "\nfn main() -> Result<Unit, String>\n    ? \"Seats one of every process this program writes and turns until the policy stops the run.\"\n{}    __over(__runAll({seated})?)\n",
@@ -1434,9 +1442,15 @@ fn serve_effect_list(effects: &[ProcessEffects]) -> Vec<String> {
 /// What a whole turn performs: the stop observation, the clock reading the
 /// wake gate is measured against, the one wait, the serve path, and both ends
 /// of every job kind.
-fn turn_effect_list(serve: &[String], jobs: &[Job]) -> Vec<String> {
+fn turn_effect_list(
+    serve: &[String],
+    jobs: &[Job],
+    coordinator_stop: CoordinatorStop,
+) -> Vec<String> {
     let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    found.insert("Process.stopRequested".to_string());
+    if coordinator_stop == CoordinatorStop::HostSignal {
+        found.insert("Process.stopRequested".to_string());
+    }
     found.insert("Time.unixMs".to_string());
     found.insert("Wait.poll".to_string());
     found.extend(serve.iter().cloned());

@@ -1262,6 +1262,7 @@ mod tests {
             &mut items,
             crate::ir::PipelineConfig {
                 run_tco: true,
+                coordinator_stop: Default::default(),
                 typecheck: Some(crate::ir::TypecheckMode::Full { base_dir: None }),
                 marked: crate::config::MarkedCapabilities::none(),
                 run_interp_lower: false,

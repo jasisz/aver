@@ -47,6 +47,18 @@ mod build;
 mod coordinator;
 mod lower;
 
+/// The stop observation a target can supply to a generated coordinator.
+/// This changes only the generated turn; explicit capability calls still
+/// have to be supported by the target.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CoordinatorStop {
+    #[default]
+    HostSignal,
+    /// WASI 0.2 has no signal subscription. The loop ends through its policy
+    /// or the normal exhaustion rule, with `View.stopping` remaining false.
+    PolicyOnly,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct YieldLoweringReport {
     /// Names of the functions that were lowered, in source order.
@@ -205,6 +217,7 @@ pub fn lower(
     marked: &crate::config::MarkedCapabilities,
     fn_sigs: &FnSigs,
     laws: &std::collections::BTreeSet<String>,
+    coordinator_stop: CoordinatorStop,
 ) -> Result<YieldLoweringReport, Vec<TypeError>> {
     debug_assert_eq!(items.len(), stamped.len());
     let yield_fns: HashSet<String> = stamped
@@ -379,8 +392,15 @@ pub fn lower(
             .filter(|protocol| !entered.contains(protocol.fn_name.as_str()))
             .cloned()
             .collect();
-        let generated =
-            coordinator::generate(items, &report.generated, &seated, plan, fn_sigs, laws)?;
+        let generated = coordinator::generate(
+            items,
+            &report.generated,
+            &seated,
+            plan,
+            fn_sigs,
+            laws,
+            coordinator_stop,
+        )?;
         report.loop_source = Some(generated.source);
         report.generated.extend(generated.items.iter().cloned());
         items.extend(generated.items);

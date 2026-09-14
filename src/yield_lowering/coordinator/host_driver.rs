@@ -1,7 +1,7 @@
 //! The host-driven coordinator door. Native execution and JS workers share
 //! this post-wait turn; the external host owns only waiting and scheduling.
 
-use super::{Job, RunPlan, bare, effects, marker_variant};
+use super::{CoordinatorStop, Job, RunPlan, bare, effects, marker_variant};
 
 pub(super) fn write_step(plan: &RunPlan, jobs: &[Job], turn_effects: &[String]) -> String {
     let has_jobs = !jobs.is_empty();
@@ -58,10 +58,17 @@ pub(super) fn write_exports(
     stopping: &str,
     main_effects: &[String],
     has_jobs: bool,
+    coordinator_stop: CoordinatorStop,
 ) -> String {
+    let (observe_effects, stop_observation) = match coordinator_stop {
+        CoordinatorStop::HostSignal => {
+            ("    ! [Process.stopRequested]\n", "Process.stopRequested()")
+        }
+        CoordinatorStop::PolicyOnly => ("", "false"),
+    };
     let mut out = String::new();
     out.push_str(&format!(
-        "\nfn __workHostStart() -> __Run\n    ? \"Seat the processes once for an external event-loop driver.\"\n{}    {seated}\n\nfn __workHostStopped(run: __Run) -> Bool\n    {stopping}\n\nfn __workHostObserve(run: __Run) -> __Run\n    ? \"Observe cooperative stopping before the host waits.\"\n    ! [Process.stopRequested]\n    __Run.update(run, stopping = Process.stopRequested())\n\nfn __workHostWaitSet(run: __Run) -> Map<Int, Wait.Item>\n    __waitSet(run, Map.keys(run.slots), {{}})\n\nfn __workHostTimeout(run: __Run) -> Int\n    __timeout(run)\n\nfn __workHostFinish(run: __Run) -> Result<Unit, String>\n    ? \"Cancel outstanding jobs when the host driver finishes.\"\n{}    __over(run)\n",
+        "\nfn __workHostStart() -> __Run\n    ? \"Seat the processes once for an external event-loop driver.\"\n{}    {seated}\n\nfn __workHostStopped(run: __Run) -> Bool\n    {stopping}\n\nfn __workHostObserve(run: __Run) -> __Run\n    ? \"Observe cooperative stopping before the host waits.\"\n{observe_effects}    __Run.update(run, stopping = {stop_observation})\n\nfn __workHostWaitSet(run: __Run) -> Map<Int, Wait.Item>\n    __waitSet(run, Map.keys(run.slots), {{}})\n\nfn __workHostTimeout(run: __Run) -> Int\n    __timeout(run)\n\nfn __workHostFinish(run: __Run) -> Result<Unit, String>\n    ? \"Cancel outstanding jobs when the host driver finishes.\"\n{}    __over(run)\n",
         effects(main_effects), if has_jobs { "    ! [Work.cancel]\n" } else { "" },
     ));
     out

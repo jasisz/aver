@@ -670,7 +670,7 @@ Raw wasm-gc exposes the versioned `aver:work/v1` ABI. The supplied JavaScript ad
 
 The native Wasmtime host records the VM's operation shapes, preserves recorded handle tokens and readiness during replay, and recomputes completed job results for comparison. Live transport is independent of the recording codec, whose existing i64 and finite-float limits remain. The JS adapter provides live execution.
 
-`wasip2` retains the current inline implementation: `begin` computes the result immediately, `take` can collect it at once, cancellation drops an uncollected answer, and every job key is immediately ready. `[work] max-jobs` still produces `warning[work-max-jobs-ignored]` on this target. The component has no `aver:work/v1` imports, and `--record` remains refused. A generated WASI loop additionally requires the separate target-specific stop-observation support; WASI 0.2 does not bind `Process.stopRequested`.
+`wasip2` retains the current inline implementation: `begin` computes the result immediately, `take` can collect it at once, cancellation drops an uncollected answer, and every job key is immediately ready. `[work] max-jobs` still produces `warning[work-max-jobs-ignored]` on this target. The component has no `aver:work/v1` imports, and `--record` remains refused. A generated WASI loop keeps its signal stop flag false and ends through its policy or normal exhaustion. WASI 0.2 does not bind `Process.stopRequested`; explicit calls remain rejected.
 
 ### Capabilities the program answers — `answer`, `task`, `started`, `landed` and `[run]`
 
