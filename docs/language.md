@@ -442,11 +442,11 @@ fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
 
 Stops may sit anywhere the function runs unconditionally — in a binding, as a match subject, inside an argument — and inside `match` arms; a request in tail position, as the last expression of the body or as the leaf of a `match` arm, is a stop like any other, and the answer to it is what the function returns. The same operation may stop several times in one body, and `?` after a request works (`Err` leaves through `Done`). When code follows a stop that sits in a `match` arm of a non-tail statement, the rest of the path becomes a generated continuation function (`__loopJoin1`, `__loopAfterAwaitR`) the arms call. The generated items are ordinary types and pure functions: `aver verify` runs them, every backend compiles them, and `aver proof` exports them to Lean and Dafny like anything else, so the coordinator's laws can reason about the protocol.
 
-A module that exposes a yielding function exposes its protocol in its place: `exposes [loop]` becomes the generated names, and an importer writes `Looper.__loopStart(...)`, matches `Looper.__LoopOutcome` and answers with `Looper.__loopAnswerClaim(...)`. The function itself is not on the module's surface at all, so `Looper.loop(...)` from a dependent module is the same error with the qualified recipe.
+A module that exposes a yielding function exposes its protocol in its place: `exposes [loop]` becomes the generated names, and an importer writes `Looper.__loopStart(...)`, matches `Looper.__LoopOutcome` and answers with `Looper.__loopAnswerClaim(...)`. A yielding importer may also write `Looper.loop(...)`: the compiler retains the exported source signature and nests the library's protocol into the caller. Ordinary functions use the explicit protocol entry points. Default exports follow the same rule; private helpers stay private.
 
 Two diagnostics guard the shape:
 
-- calling a yielding function directly, from a function that does not yield — a plain function or a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
+- calling a yielding function directly, from a function that does not yield — a plain function, including one in a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
 - a yielding function that calls *itself* outside tail position is a type error with the recipe `pass what comes next as data, or make it a tail call`: a process nests another yielding function, not itself, because its own state would have to hold a copy of itself.
 
 ### Testing a process with request stubs
@@ -465,7 +465,7 @@ The full example is `tests/fixtures/yield_verify_stubs/`. Its `numbered` stub
 has signature `(BranchPath, Int, Int) -> Option<Int>`: the second argument is
 the per-branch Oracle counter, and the third is the requested peer. The verifier
 starts the generated protocol and answers each request with the selected stub.
-It exercises the lowered continuation, including nested helpers, self yields
+It exercises the lowered continuation, including local and imported nested helpers, self yields
 and `?` propagation. Stubs return operation results, not `Now`/`Later` replies;
 the live answer module is not consulted.
 
@@ -475,7 +475,7 @@ still needs its own stub if reached. Existing step limits and
 `[[verify.costly]]` settings use the source process name.
 
 This first surface runs in `aver verify` on the VM. Direct process laws,
-`trace` blocks, imported process calls, WASM request stubs and proof export of
+`trace` blocks, direct calls to an imported process from a verify block, WASM request stubs and proof export of
 these cases are not supported yet. State proof laws over the generated protocol.
 Testing a process's responses does not test coordinator scheduling: the separate
 `tests/fixtures/run_schedule_cases/` scenarios exercise service order, grouping,
@@ -485,7 +485,7 @@ all coordinator interleavings.
 
 ### Helpers and nested state
 
-A process does not have to be one function. A yielding function may call another yielding function of the same module, and the compiler puts the callee's machine inside the caller's rather than asking you to fold the two together by hand. Nothing about the coordinator changes: the caller's protocol is what a coordinator seats and serves, and a request the helper makes reaches it as a request of the caller.
+A process does not have to be one function. A yielding function may call another yielding function of the same module or an exposed yielding function of an explicit dependency, and the compiler puts the callee's machine inside the caller's rather than asking you to fold the two together by hand. Nothing about the coordinator changes: the caller's protocol is what a coordinator seats and serves, and a request the helper makes reaches it as a request of the caller.
 
 A **tail call** enters the helper's protocol. `f`'s segment that ends in `g(args)` stops with a `Yield` request carrying what `g` is entered with — the caller has nothing left to do, so nothing of it is kept — and answering that request calls `__gStart(args)`.
 
@@ -513,7 +513,7 @@ fn __walkInFetchAt1(__outcome: __FetchOutcome, id: Int, seen: Int) -> __WalkOutc
 
 The helper's own recursion stays inside the helper's machine: `g` looping on itself is `g`'s `Yield` request, which leaves as the caller's `Yield` request carrying the nested state and comes back to `__gAnswerYield`. These names are the caller's own `__` types; nothing new reaches the module's surface, and `aver context`, `AVER_YIELD_DUMP=1` and the pinned generated Aver show them.
 
-The tail-call rule: a self tail call is the `Yield` request, and a tail call to another yielding function of the same module enters that function's protocol. What is still refused, each with the construct named in the message: mutual nesting — two yielding functions that call each other, because each one's state would have to hold the other's, so the message prints the cycle and two ways to break it, and a cycle written with tail calls only, where no state is held but each function's requests would have to carry the ones it hands over to; a request or a call to a yielding helper inside an independent product `(a, b)!`, because its branches run independently and a request leaves a process one at a time; a function value live across a stop; and a yielding function of *another* module, whose protocol is what that module exposes — call `Module.__fStart(...)` and answer its requests from the coordinator. A request in a product fires less often than it used to, because only an answered operation inside the product is refused.
+The tail-call rule: a self tail call is the `Yield` request, and a tail call to another local or imported yielding function enters that function's protocol. What is still refused, each with the construct named in the message: mutual nesting — two yielding functions that call each other, because each one's state would have to hold the other's, so the message prints the cycle and two ways to break it, and a cycle written with tail calls only, where no state is held but each function's requests would have to carry the ones it hands over to; a request or a call to a yielding helper inside an independent product `(a, b)!`, because its branches run independently and a request leaves a process one at a time; a function value live across a stop; and a yielding function passed as a function value, because protocol composition needs a direct named call. Module dependency cycles are rejected by the loader before composition. A request in a product fires less often than it used to, because only an answered operation inside the product is refused.
 
 ## The coordinator
 
@@ -544,7 +544,7 @@ stop = "Node.stop"
 view = "Node.View"
 ```
 
-The processes are ordinary yielding functions, in direct style, written in the module the `[run]` table names, each taking no parameters and answering `Unit` — the loop seats one of each at start-up, and a seated process asks the module that answers its first request for whatever it needs. A yielding function in any other module of such a program is `error[run-binding]`: the loop is generated into one module and seats what it can see, so a process one module over would be lowered to its protocol and then never seated, never dispatched and never answered.
+The processes are ordinary yielding functions, in direct style, written in the module the `[run]` table names, each taking no parameters and answering `Unit` — the loop seats one of each at start-up, and a seated process asks the module that answers its first request for whatever it needs. Yielding functions in dependencies are library helpers: they run when an entry process calls them, and the loop never seats them separately. An unused library helper is not started. See `tests/fixtures/yield_module_helpers/` for repeated and tail calls through a dependency chain, and `tests/fixtures/run_process_elsewhere/` for an imported helper under the generated loop.
 
 ```aver
 fn peer() -> Unit

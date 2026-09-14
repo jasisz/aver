@@ -4,7 +4,7 @@ name: Proof
 # (`aver proof <example> --target lean` → `lake build`) and Dafny
 # (`aver proof --backend dafny` → `dafny verify`) on the real
 # `examples/formal/` corpus. The job installs both toolchains and
-# runs the same `cargo test --test proof_spec` invocation — the
+# partitions proof-export test cases with nextest — the
 # Dafny arm is conditional on `dafny --version` succeeding, so
 # whether we install it here is the only thing standing between
 # "tested" and "silently skipped".
@@ -34,19 +34,29 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  proof-export:
-    name: Proof Export (Lean + Dafny)
+  proof-lanes:
+    name: Proof Export (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     # Scheduled runs belong to this repository. A fork with Actions enabled
     # otherwise runs our cron on its owner's account and mails them about any
     # failure. Every other trigger still works in a fork, so a contributor can
     # run this workflow on their own branch.
     if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    # The monolithic job timed out after 30 minutes on PR #1370 with no
+    # failing case. Partition test cases (not files) so the large proof_spec
+    # binary spreads across runners without dropping either verifier.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
 
       - uses: Swatinem/rust-cache@v2
 
@@ -102,6 +112,7 @@ jobs:
           exit 1
 
       - name: Check reserved-token snapshot against pinned Lean
+        if: matrix.shard == 1
         # The guard test in src/codegen/lean/syntax.rs asks the pinned Lean
         # toolchain for its token table and fails when the LEAN_RESERVED
         # snapshot is missing entries. It silently skips when `lean` is not
@@ -144,6 +155,7 @@ jobs:
         run: dafny --version
 
       - name: Check the Dafny prelude against the installed Dafny
+        if: matrix.shard == 1
         # Same shape as the Lean reserved-token step above: a guard test in
         # src/codegen/dafny/mod.rs feeds every helper block to `dafny
         # verify` at once and skips silently when `dafny` is not on PATH.
@@ -170,4 +182,22 @@ jobs:
         # verifier to invoke, so those tests skip themselves on the main
         # test lane, where `lake` is not installed. This is the lane
         # where their guard opens.
-        run: cargo test -p aver-lang --test proof_spec --test map_iteration_order
+        # Round-robin over stable test IDs: every case belongs to exactly
+        # one lane, including newly added tests. The helper suite also runs
+        # here so its universal cross-module law sees a real Lean toolchain.
+        run: cargo nextest run -p aver-lang --test proof_spec --test map_iteration_order --test yield_module_helpers_spec --partition slice:${{ matrix.shard }}/4
+
+  proof-export:
+    # Keep the existing check name. A failed, cancelled or skipped shard
+    # must fail this aggregate even when its siblings passed.
+    name: Proof Export (Lean + Dafny)
+    runs-on: ubuntu-latest
+    needs: [proof-lanes]
+    if: always() && (github.event_name != 'schedule' || github.repository == 'jasisz/aver')
+    steps:
+      - name: Require every proof lane
+        env:
+          LANES_RESULT: ${{ needs.proof-lanes.result }}
+        run: |
+          echo "Proof lanes: $LANES_RESULT"
+          test "$LANES_RESULT" = success

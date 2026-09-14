@@ -1103,6 +1103,7 @@ mod tests {
             kind_line: None,
             semantics: None,
             semantics_line: None,
+            yield_protocols: Vec::new(),
         }
     }
 

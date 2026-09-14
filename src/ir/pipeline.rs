@@ -992,6 +992,7 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             &phase_one.errors,
             &marked,
             &phase_one.fn_sigs,
+            &phase_one.imported_processes,
             &phase_one.laws,
             coordinator_stop,
         ) {
