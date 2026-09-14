@@ -2129,13 +2129,8 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
     let arm = format!(
         "  | (simp only [{unfold_set}]; simp_all [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] <;> (first | rfl | omega))"
     );
-    let floor = if super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!("  | {}", super::super::tactic_ir::speculative::floor(&id));
     Some(AutoProof {
         support_lines: Vec::new(),
         body: Tactic::raw(vec![intro, "  first".to_string(), arm, floor]),
@@ -2348,18 +2343,8 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     // two-list) is observable in the build log (Lean's `first` never runs the
     // floor's trace when an earlier branch closes). Both induction arms share the
     // floor: if EITHER arm falls through, the law did not close universally.
-    let floor = if super::super::tactic_ir::speculative::probing() {
-        // Record HERE (not at the recognizer's `admits`): the probe sink must
-        // hold only laws that actually emit this trace floor. A candidate the
-        // recognizer admits but whose `∀`-theorem is then suppressed
-        // (`skip_universal` — e.g. a singleton-domain const-RHS law) emits no
-        // floor, never traces, and so must NOT be counted "closed".
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::tactic_ir::speculative::record_probed(&id);
-        format!("    | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "    | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!("    | {}", super::super::tactic_ir::speculative::floor(&id));
     // The recursive verified fn unfolded ALONE (not the whole def set): a
     // conclusion that wraps the verified fn's call in a non-recursive helper
     // (`leHead z (insort x l)`, `sorted (insort x l)`) must split the verified

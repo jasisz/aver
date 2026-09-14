@@ -527,7 +527,7 @@ pub mod speculative {
     /// a probe-then-commit run lets the empirical result override it (promoting a
     /// single-list closer, DEMOTING a two-list non-closer like `prop_42`). Pure —
     /// does NOT record; the probe sink is populated at the floor-emission site
-    /// (see [`record_probed`]) so it counts only laws that emit a trace floor.
+    /// (see [`floor`]) so it counts only laws that emit a trace floor.
     pub fn admits(id: &str, default: bool) -> bool {
         STATE.with(|s| {
             let st = s.borrow();
@@ -541,23 +541,33 @@ pub mod speculative {
         })
     }
 
-    /// Whether a probe pass is active — the emit reads this to floor each
-    /// speculative portfolio with the `AVERSPEC_SORRY:<id>` trace instead of a
-    /// bare `sorry`, so a non-closing law is observable in the build log.
+    /// Whether the candidate-collecting probe phase is active.
+    #[cfg(test)]
     pub fn probing() -> bool {
         STATE.with(|s| s.borrow().0 == Mode::Probe)
     }
 
-    /// Record that this law actually EMITTED an `AVERSPEC_SORRY` trace floor in
-    /// the probe — i.e. its universal `∀`-theorem was emitted (not suppressed by
-    /// `skip_universal`) and can surface a failure. `closed = probed_ids −
-    /// parse_failures`, so the sink must hold exactly the laws that can trace,
-    /// never one whose theorem was dropped (which would never trace and be
-    /// miscounted "closed"). Called only under [`probing`].
-    pub fn record_probed(id: &str) {
-        STATE.with(|s| {
-            s.borrow_mut().2.insert(id.to_string());
+    /// Keep a successful candidate's fallback byte-identical across probe and
+    /// commit so Lake can reuse checked modules. The trace runs only if proof
+    /// search falls through to `sorry`; the final axiom audit still rejects it.
+    /// Only the probe records candidates, at this actual floor-emission site.
+    /// Do not call for suppressed theorems: `probed - failures` must never count
+    /// a candidate that cannot reach its trace as a successful proof.
+    pub fn floor(id: &str) -> String {
+        let traced = STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            if st.0 == Mode::Probe {
+                st.2.insert(id.to_string());
+                true
+            } else {
+                st.1.as_ref().is_some_and(|closed| closed.contains(id))
+            }
         });
+        if traced {
+            format!("(trace \"AVERSPEC_SORRY:{id}\"; sorry)")
+        } else {
+            "sorry".to_string()
+        }
     }
 
     /// The `fn.law` ids that emitted a probe trace floor (single-list candidates
@@ -895,14 +905,14 @@ warning: declaration uses 'sorry'
         assert!(speculative::admits("g.two", true));
         assert!(!speculative::probing());
         // Probe: admit everything regardless of default; the sink is populated by
-        // `record_probed` at the floor-emission site (not by `admits`).
+        // `floor` at the floor-emission site (not by `admits`).
         speculative::begin_probe();
         assert!(speculative::probing());
         assert!(speculative::admits("f.law", false));
         assert!(speculative::admits("g.two", true));
         assert!(speculative::probed_ids().is_empty());
-        speculative::record_probed("f.law");
-        speculative::record_probed("g.two");
+        let probe_floor = speculative::floor("f.law");
+        speculative::floor("g.two");
         assert!(speculative::probed_ids().contains("f.law"));
         // Commit: admit only the closed set, IGNORING default — so a two-list
         // non-closer (default true) is DEMOTED, a single-list closer promoted.
@@ -912,6 +922,9 @@ warning: declaration uses 'sorry'
         assert!(!speculative::probing());
         assert!(speculative::admits("f.law", false));
         assert!(!speculative::admits("g.two", true));
+        assert_eq!(speculative::floor("f.law"), probe_floor);
+        assert_eq!(speculative::floor("g.two"), "sorry");
+        assert_eq!(speculative::floor("unrelated.law"), "sorry");
         speculative::clear();
         assert!(!speculative::admits("f.law", false));
     }

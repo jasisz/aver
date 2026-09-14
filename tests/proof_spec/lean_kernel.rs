@@ -1511,7 +1511,9 @@ fn proof_lean_speculative_proves_single_list_conditional_universal() {
     }
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let out = temp_output_dir("aver-speculative-out");
+    let probe = temp_output_dir("aver-speculative-probe");
     let run = Command::new(aver_bin)
+        .env("AVER_SPECULATIVE_KEEP", &probe)
         .arg("proof")
         .arg("proof-corpus/decomposed/handwritten/all_zero_sum.av")
         .arg("--backend")
@@ -1530,11 +1532,12 @@ fn proof_lean_speculative_proves_single_list_conditional_universal() {
         lean.contains("-- aver:law-class sumList_law_sumAllZero universal"),
         "sumAllZero must be committed as a universal-classed conditional:\n{lean}"
     );
-    // The committed proof must carry neither the probe's transient trace floor
-    // nor a reachable sorry.
-    assert!(
-        !lean.contains("AVERSPEC_SORRY"),
-        "the committed proof must not carry the probe's trace floor:\n{lean}"
+    // Removing an unreachable diagnostic used to rebuild a successfully
+    // checked module. Preserve its bytes so Lake can reuse the probe artifact.
+    assert_eq!(
+        lean,
+        std::fs::read_to_string(probe.join("AllZeroSum.lean")).unwrap(),
+        "a fully closed probe must keep its source bytes when committed"
     );
     let json_line = run
         .stdout
@@ -1556,6 +1559,7 @@ fn proof_lean_speculative_proves_single_list_conditional_universal() {
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&probe);
 }
 
 #[test]

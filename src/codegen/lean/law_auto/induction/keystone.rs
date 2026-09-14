@@ -1529,13 +1529,11 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     if grind_call != "grind" || simp_list_full != simp_list {
         closes.push(close_with(&simp_list_full, "grind"));
     }
-    let floor = if super::super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!(
+        "  | {}",
+        super::super::super::tactic_ir::speculative::floor(&id)
+    );
     Some(AutoProof {
         support_lines,
         body: Tactic::raw(

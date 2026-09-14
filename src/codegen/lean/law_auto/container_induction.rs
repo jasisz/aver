@@ -33,7 +33,7 @@
 //!
 //! Fail-closed like the transparent-chain arm (#634): the whole induction sits
 //! under a `first | (..) | sorry` floor (with the `AVERSPEC_SORRY:<id>` trace +
-//! `record_probed` under a probe), and every support lemma is floored too, so a
+//! candidate recording under a probe), and every support lemma is floored too, so a
 //! mis-recognized shape degrades to an honest sorry — bounded, never a red build.
 //! The statement is already the `∀`-universal form the emitter builds for any
 //! unconditional recursive-ADT law, so no sampled-domain flip is involved; the
@@ -140,12 +140,7 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
     };
 
     let id = law_id(vb, law);
-    let floor = if speculative::probing() {
-        speculative::record_probed(&id);
-        format!("(trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "sorry".to_string()
-    };
+    let floor = speculative::floor(&id);
 
     let t = &intro_names[0];
     let mut induction_block = vec![format!(
