@@ -5593,11 +5593,11 @@ fn plain_call_to_a_yield_function_is_an_error_with_a_recipe() {
 }
 
 #[test]
-fn verify_case_calling_a_yield_function_gets_the_same_recipe() {
+fn verify_case_calling_a_yield_function_requires_request_stubs() {
     let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nverify loop\n    loop(0) => 0\n");
     assert_front_error_containing(
         &src,
-        "verify block for 'loop' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)'",
+        "verify 'loop' must supply an exact given stub for every request: Say.readLine; add `given answer: Say.readLine = [stub]`",
     );
 }
 
