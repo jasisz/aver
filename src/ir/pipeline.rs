@@ -192,6 +192,9 @@ pub enum TypecheckMode<'a> {
 
 pub struct PipelineConfig<'a> {
     pub run_tco: bool,
+    /// How the target supplies the generated coordinator's stop observation.
+    /// WASI 0.2 uses `PolicyOnly`; other doors keep `HostSignal`.
+    pub coordinator_stop: crate::yield_lowering::CoordinatorStop,
     /// `Some(mode)` runs the type checker with that driver; `None` skips it.
     pub typecheck: Option<TypecheckMode<'a>>,
     /// The capabilities this program answers itself; see [`FrontConfig`].
@@ -323,6 +326,7 @@ impl<'a> Default for PipelineConfig<'a> {
     fn default() -> Self {
         Self {
             run_tco: true,
+            coordinator_stop: Default::default(),
             typecheck: None,
             marked: crate::config::MarkedCapabilities::none(),
             run_interp_lower: true,
@@ -781,6 +785,7 @@ pub fn front_gate(
         items,
         FrontConfig {
             run_tco: true,
+            coordinator_stop: Default::default(),
             typecheck: Some(mode),
             user_program_len,
             marked,
@@ -794,6 +799,7 @@ pub fn front_gate(
 /// What [`front`] runs.
 pub struct FrontConfig<'a, 'b> {
     pub run_tco: bool,
+    pub coordinator_stop: crate::yield_lowering::CoordinatorStop,
     /// `Some(mode)` lowers `yield` functions and runs the typecheck gate
     /// with that driver; `None` runs neither (a `yield` function cannot be
     /// lowered without types).
@@ -882,6 +888,7 @@ pub fn lower_loaded_yield_modules(
             &mut items,
             FrontConfig {
                 run_tco: true,
+                coordinator_stop: Default::default(),
                 typecheck: Some(&TypecheckMode::WithCheckedLoaded(&deps)),
                 user_program_len,
                 marked: &marked,
@@ -926,6 +933,7 @@ fn dependency_origin(
 pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult {
     let FrontConfig {
         run_tco,
+        coordinator_stop,
         typecheck: mode,
         user_program_len,
         marked,
@@ -985,6 +993,7 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             &marked,
             &phase_one.fn_sigs,
             &phase_one.laws,
+            coordinator_stop,
         ) {
             Ok(report) => {
                 if std::env::var_os("AVER_YIELD_DUMP").is_some() {
@@ -1133,6 +1142,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         items,
         FrontConfig {
             run_tco: cfg.run_tco,
+            coordinator_stop: cfg.coordinator_stop,
             typecheck: cfg.typecheck.as_ref(),
             user_program_len,
             marked: &cfg.marked,

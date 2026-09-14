@@ -335,6 +335,7 @@ jobs:
           for test in \
             stdlib_spec \
             wasip2_codegen_regression \
+            wasip2_coordinator_spec \
             wasip2_http \
             wasip2_http_handler \
             wasip2_http_handler_stress \

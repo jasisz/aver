@@ -6,6 +6,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Generated coordinators now run and compile on wasip2.** WASI 0.2 has no signal subscription, so the generated turn keeps the signal stop flag false and ends through the program's policy or normal exhaustion. Explicit `Process.stopRequested` calls remain unsupported; VM, Rust and wasm-gc keep their host stop observation.
 - **An empty `[run]` generates the default policies.** Processes run in slot order, every askable id is admitted, and the run stops on the flag or when no process is seated and no job runs. Custom policies still name all four of `order`, `admit`, `stop`, `view`; a partial set is rejected with the recipe. The entry no longer lists the loop's answer modules, job kinds, `Wait` and `Work` in `depends` unless its own source names them.
 - **`Then(wake, answer)` saves an answer until its wake fires.** It keeps the request and its instance, retains the answer module's returned state, and resumes the process without asking the module again. `Later` retries the original arguments against current state. **Breaking:** every declared operation reply sum now requires all three constructors: `Now(R)`, `Later(Wait.Wake)`, `Then(Wait.Wake, R)`.
 - **Manifest and generated-loop references count as uses of exports.** Answer functions, job operations, seam functions and their boundary types no longer raise false `unused-expose` warnings. Module `exposes` remains optional.
