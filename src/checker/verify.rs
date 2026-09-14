@@ -4,8 +4,8 @@ use super::callee_is_target;
 
 pub fn verify_block_label(block: &VerifyBlock) -> String {
     match &block.kind {
-        VerifyKind::Law(law) => format!("{} law {}", block.fn_name, law.name),
-        VerifyKind::Cases => block.fn_name.clone(),
+        VerifyKind::Law(law) => format!("{} law {}", block.source_name(), law.name),
+        VerifyKind::Cases => block.source_name().to_string(),
     }
 }
 

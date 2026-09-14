@@ -1,0 +1,106 @@
+module YieldVerifyStubs
+    intent = "Test a process in direct style using exact per-operation stubs."
+    depends [Pool, Pooled]
+    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs, yield]
+
+fn pair(id: Int) -> Int
+    ? "Ask twice and retain the first answer across the second request."
+    ! [Pool.claim, yield]
+    first = one(id)
+    second = Pool.claim(id + 1)
+    match (first, second)
+        (Option.Some(a), Option.Some(b)) -> a + b
+        _ -> 0
+
+verify pair
+    given answer: Pool.claim = [numbered]
+    pair(2) => 15
+    pair(7) => 25
+
+verify pair
+    given answer: Pool.claim = [unavailable]
+    pair(2) => 0
+
+verify pair
+    given id: Int = [2, 7]
+    given answer: Pool.claim = [numbered]
+    pair(id) => id * 2 + 11
+
+fn one(id: Int) -> Option<Int>
+    ? "A nested helper makes one request through the parent's protocol."
+    ! [Pool.claim, yield]
+    Pool.claim(id)
+
+fn accumulate(left: Int, total: Int) -> Int
+    ? "Each self yield advances the loop without consuming an oracle answer."
+    ! [Pool.claim, yield]
+    match left == 0
+        true -> total
+        false -> match Pool.claim(left)
+            Option.None -> total
+            Option.Some(value) -> accumulate(left - 1, total + value)
+
+verify accumulate
+    given answer: Pool.claim = [numbered]
+    accumulate(3, 0) => 36
+    accumulate(2, 5) => 18
+
+fn checkpoint(id: Int) -> Result<Int, String>
+    ? "An error answer exits the process before its second request."
+    ! [Pool.finish, yield]
+    first = Pool.finish(id)?
+    Pool.finish(first + 1)
+
+verify checkpoint
+    given answer: Pool.finish = [committed]
+    checkpoint(2) => Result.Ok(103)
+
+verify checkpoint
+    given answer: Pool.finish = [refused]
+    checkpoint(2) => Result.Err("refused")
+
+fn clocked(id: Int) -> Int
+    ? "An in-place effect and a request share the existing Oracle coordinates."
+    ! [Pool.claim, Time.unixMs, yield]
+    now = Time.unixMs()
+    match Pool.claim(id)
+        Option.None -> now
+        Option.Some(value) -> now + value
+
+fn timeStub(path: BranchPath, index: Int) -> Int
+    100
+
+fn numbered(path: BranchPath, index: Int, peer: Int) -> Option<Int>
+    ? "The answer depends on both the requested peer and request ordinal."
+    Option.Some(peer + index * 10)
+
+fn unavailable(path: BranchPath, index: Int, peer: Int) -> Option<Int>
+    ? "Neither request has an answer."
+    Option.None
+
+fn committed(path: BranchPath, index: Int, value: Int) -> Result<Int, String>
+    ? "A distinct result type using the case's Oracle counter."
+    Result.Ok(value + index * 100)
+
+fn refused(path: BranchPath, index: Int, value: Int) -> Result<Int, String>
+    ? "The first request fails and the process propagates its error."
+    Result.Err("refused")
+
+verify clocked
+    given clock: Time.unixMs = [timeStub]
+    given answer: Pool.claim = [numbered]
+    clocked(2) => 112
+
+fn notified(id: Int) -> Option<Int>
+    ? "Even a Unit request consumes one Oracle coordinate before the next kind."
+    ! [Pool.claim, Pool.notice, yield]
+    Pool.notice(id)
+    Pool.claim(id)
+
+fn noticeStub(path: BranchPath, index: Int, id: Int) -> Unit
+    Unit
+
+verify notified
+    given notice: Pool.notice = [noticeStub]
+    given answer: Pool.claim = [numbered]
+    notified(2) => Option.Some(12)

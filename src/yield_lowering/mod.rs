@@ -46,6 +46,7 @@ pub(crate) type FnSigs =
 mod build;
 mod coordinator;
 mod lower;
+mod verify;
 
 /// The stop observation a target can supply to a generated coordinator.
 /// This changes only the generated turn; explicit capability calls still
@@ -339,6 +340,10 @@ pub fn lower(
     if !errors.is_empty() {
         return Err(errors);
     }
+
+    let verification = verify::generate(items, &report.protocols, fn_sigs)?;
+    report.generated.extend(verification.iter().cloned());
+    items.extend(verification);
 
     // The loop the manifest asked for, generated into the module the `[run]`
     // table names — the entry module, and no other, because that is where the
@@ -648,6 +653,7 @@ fn scan_verify(vb: &VerifyBlock, yield_fns: &HashSet<String>, errors: &mut Vec<T
             if let Expr::FnCall(callee, _) = &e.node
                 && let Expr::Ident(name) = &callee.node
                 && yield_fns.contains(name)
+                && !verify::supports(vb, name)
                 && seen.insert(name.clone())
             {
                 errors.push(error_at(

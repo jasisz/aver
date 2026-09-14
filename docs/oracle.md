@@ -97,6 +97,13 @@ stub instead. Capability paths keep their full module qualification throughout
 lifting, so an operation such as `Infra.Kv.get` becomes the corresponding
 oracle argument rather than a host call in the Lean artifact.
 
+A local yielding process also supports plain cases with an exact stub for every
+request operation. These cases drive its generated protocol on the VM; they do
+not call its live answer module. The process driver shares the normal Oracle
+counter with in-place effects and charges no counter for self yields. Direct
+process cases currently have no proof-export or WASM-stub model. See
+[testing a process](language.md#testing-a-process-with-request-stubs).
+
 ## Trace-aware cases
 
 Use cases-form `verify <fn> trace` when a case intentionally reaches classified

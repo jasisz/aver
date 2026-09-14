@@ -375,9 +375,23 @@ pub fn required_capability_operations(
         }
     }
 
+    // A process verifier dispatches requests through exact per-case stubs.
+    // Those calls do not add live host requirements. The lowered process
+    // segments are still scanned, so in-place effects keep their providers.
+    let verify_drivers: BTreeSet<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::Verify(block) => block
+                .process_verification
+                .as_ref()
+                .map(|process| process.driver.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut required = BTreeSet::new();
     for item in items {
         match item {
+            TopLevel::FnDef(function) if verify_drivers.contains(function.name.as_str()) => {}
             TopLevel::FnDef(function) => scan_fn(function, registry, &mut required),
             TopLevel::Stmt(statement) => match statement {
                 Stmt::Binding(_, _, expression) | Stmt::Expr(expression) => {
@@ -388,8 +402,20 @@ pub fn required_capability_operations(
         }
     }
     for module in modules {
+        let verify_drivers: BTreeSet<_> = module
+            .verify_blocks
+            .iter()
+            .filter_map(|block| {
+                block
+                    .process_verification
+                    .as_ref()
+                    .map(|process| process.driver.as_str())
+            })
+            .collect();
         for function in &module.fn_defs {
-            scan_fn(function, registry, &mut required);
+            if !verify_drivers.contains(function.name.as_str()) {
+                scan_fn(function, registry, &mut required);
+            }
         }
     }
     required

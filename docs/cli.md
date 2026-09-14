@@ -565,7 +565,7 @@ Diagnostics an agent meets on the way, each with its recipe (`docs/diagnostics-s
 
 | Slug | What it says | Recipe |
 |---|---|---|
-| `yield-direct-call` | A function that does not yield, a verify case, or another module calls a `yield` function as written. | Call `__<fn>Start(...)` and answer its requests, or let the generated loop seat it. |
+| `yield-direct-call` | A function that does not yield, an unsupported verify form, or another module calls a `yield` function as written. | Call `__<fn>Start(...)` and answer its requests, or let the generated loop seat it. |
 | `yield-non-tail-call` | A yielding function calls itself outside tail position. | Pass what comes next as data, or make it a tail call. |
 | `yield-unsupported` | Mutual nesting between yielding functions, a request or a helper call inside `(a, b)!`, a function value live across a request, or a `yield` function with no stop. | Break the cycle, perform them one after another, pass data instead of a callback, or drop `yield`. |
 | `intercept-outside-yield` | A function without `yield` performs an operation of an answered capability. | Add `yield` to the function, or call the answer module's own function directly. |

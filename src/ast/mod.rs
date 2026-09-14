@@ -789,9 +789,21 @@ pub enum VerifyKind {
     Law(Box<VerifyLaw>),
 }
 
+/// Compiler-owned routing for a process case, never parsed from source.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessVerification {
+    pub source_fn_name: String,
+    /// The generated request dispatcher; its operation calls require test
+    /// stubs, not a live provider package.
+    pub driver: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerifyBlock {
     pub fn_name: String,
+    /// The source function when lowering redirects cases through a generated
+    /// process driver. Execution uses `fn_name`; reports and budgets use this.
+    pub process_verification: Option<ProcessVerification>,
     pub line: usize,
     pub cases: Vec<(Spanned<Expr>, Spanned<Expr>)>,
     pub case_spans: Vec<SourceSpan>,
@@ -838,6 +850,19 @@ pub struct VerifyBlock {
 }
 
 impl VerifyBlock {
+    /// Compiler-owned helpers that exist only to execute this process case.
+    pub fn process_driver_names(&self) -> impl Iterator<Item = &str> {
+        self.process_verification
+            .iter()
+            .flat_map(|process| [self.fn_name.as_str(), process.driver.as_str()])
+    }
+
+    pub fn source_name(&self) -> &str {
+        self.process_verification
+            .as_ref()
+            .map_or(&self.fn_name, |process| &process.source_fn_name)
+    }
+
     /// Construct a VerifyBlock with default (zero) spans for each case.
     /// Use when source location tracking is not needed (codegen, tests).
     pub fn new_unspanned(
@@ -852,6 +877,7 @@ impl VerifyBlock {
         let case_reverse_order = vec![false; cases.len()];
         Self {
             fn_name,
+            process_verification: None,
             line,
             cases,
             case_spans,

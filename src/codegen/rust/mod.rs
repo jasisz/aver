@@ -762,11 +762,20 @@ fn entry_module_sections(
         }
     }
 
+    let process_drivers: std::collections::HashSet<&str> = ctx
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::Verify(block) => Some(block),
+            _ => None,
+        })
+        .flat_map(|block| block.process_driver_names())
+        .collect();
     // Detect mutual TCO groups directly from resolved tail-call identities.
     let non_main_fns: Vec<&crate::ir::hir::ResolvedFnDef> = ctx
         .resolved_program
         .entry_fns()
-        .filter(|fd| fd.name != "main")
+        .filter(|fd| fd.name != "main" && !process_drivers.contains(fd.name.as_str()))
         .collect();
     let mutual_groups = toplevel::find_mutual_tco_groups(&non_main_fns);
 
@@ -790,7 +799,7 @@ fn entry_module_sections(
     // is the identity-keyed lookup — no bare-name walk over the
     // resolved list.
     for fd in &ctx.fn_defs {
-        if fd.name == "main" {
+        if fd.name == "main" || process_drivers.contains(fd.name.as_str()) {
             continue;
         }
         let Some(fn_id) = crate::codegen::common::fn_id_for_decl(ctx, fd) else {
@@ -866,10 +875,16 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
     // implementation.  Drop their full model-only closure here, at the
     // runtime-backend boundary.  The capability registry preserves helpers
     // that are also reachable from an exported ordinary function.
-    let verification_only_fns = ctx.capabilities.verification_only_function_names(
+    let mut verification_only_fns = ctx.capabilities.verification_only_function_names(
         &module.prefix,
         &module.fn_defs,
         &module.exposes,
+    );
+    verification_only_fns.extend(
+        module
+            .verify_blocks
+            .iter()
+            .flat_map(|block| block.process_driver_names().map(str::to_owned)),
     );
     let fn_refs: Vec<&crate::ir::hir::ResolvedFnDef> = ctx
         .resolved_program

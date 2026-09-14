@@ -1,0 +1,38 @@
+module Ledger
+    intent = "Explicit control state: order is observable and job landing is counted."
+    depends [Inbox]
+    exposes [State, fresh, arrive, nextTask, started, landed, score]
+
+record State
+    served: List<Int>
+    offered: Option<Int>
+    scored: Int
+    failures: Int
+
+fn fresh() -> State
+    State(served = [], offered = Option.Some(1), scored = 0, failures = 0)
+
+fn arrive(state: State, id: Int) -> Tuple<State, Inbox.ArriveReply>
+    ? "Append this id; reversing service order must reverse this observation."
+    (State.update(state, served = List.concat(state.served, [id])), Inbox.ArriveReply.Now(Unit))
+
+fn nextTask(state: State) -> Option<Int>
+    state.offered
+
+fn started(state: State, task: Int) -> State
+    State.update(state, offered = Option.None)
+
+verify started law aStartedTaskIsNotAskedAgain
+    given state: State = [fresh()]
+    given task: Int = [0, 1, 2]
+    when nextTask(state) == Option.Some(task)
+    using []
+    nextTask(started(state, task)) != Option.Some(task) holds
+
+fn landed(state: State, result: Result<Int, String>) -> State
+    match result
+        Result.Ok(value) -> State.update(state, scored = state.scored + value)
+        Result.Err(_) -> State.update(state, failures = state.failures + 1)
+
+fn score(task: Int) -> Int
+    task * 10

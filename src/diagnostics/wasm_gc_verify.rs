@@ -129,13 +129,30 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
         return Ok(vec![]);
     }
 
+    for block in &blocks {
+        if block.process_verification.is_some()
+            && block
+                .cases_givens
+                .iter()
+                .any(|given| tc.capabilities.operation(&given.type_name).is_some())
+        {
+            return Err(format!(
+                "verify --wasm-gc: request stubs for process '{}' need per-case Oracle dispatch, which this backend does not implement. Use `aver verify` (VM) for this block.",
+                block.source_name()
+            ));
+        }
+    }
+
     if mode == ExpansionMode::Hostile {
         // Same ceiling the VM lane uses, resolved per block for the same
         // reason: `[[verify.costly]]` names one function.
         let key = crate::diagnostics::vm_verify::costly_glob_key(source_file, base_dir);
         for b in &mut blocks {
-            let max_cases =
-                crate::diagnostics::vm_verify::max_cases_for(config.as_ref(), &b.fn_name, &key);
+            let max_cases = crate::diagnostics::vm_verify::max_cases_for(
+                config.as_ref(),
+                b.source_name(),
+                &key,
+            );
             apply_hostile_expansion_with_registry(b, &items, &tc.capabilities, max_cases)?;
         }
     }
@@ -263,7 +280,7 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
     let key = crate::diagnostics::vm_verify::costly_glob_key(source_file, base_dir);
     let budgets: Vec<CaseBudget> = plans
         .iter()
-        .map(|plan| CaseBudget::resolve(config.as_ref(), &plan.block.fn_name, &key))
+        .map(|plan| CaseBudget::resolve(config.as_ref(), plan.block.source_name(), &key))
         .collect();
     let raised_by: Vec<Option<String>> = budgets
         .iter()
@@ -814,7 +831,7 @@ fn run_verify_cases_in_wasmtime(
         }
 
         results.push(VerifyResult {
-            fn_name: plan.block.fn_name.clone(),
+            fn_name: plan.block.source_name().to_string(),
             is_law: matches!(&plan.block.kind, crate::ast::VerifyKind::Law(_)),
             block_label: crate::checker::verify_block_label(&plan.block),
             passed,

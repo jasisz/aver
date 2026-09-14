@@ -805,6 +805,7 @@ impl Parser {
         let case_hostile_profiles = vec![Vec::new(); cases.len()];
         let case_reverse_order = vec![false; cases.len()];
         Ok(VerifyBlock {
+            process_verification: None,
             fn_name,
             line,
             cases,
