@@ -62,6 +62,10 @@ fn describe(ty: &Type, registry: &TypeRegistry) -> Result<Value, WasmGcError> {
         Type::Tuple(args) => {
             json!({"kind":"Tuple", "args":args.iter().map(Type::display).collect::<Vec<_>>()})
         }
+        // backend-link-stage: collect_type supplies names from the linked
+        // TypeRegistry, including parsed field types without source TypeIds.
+        // Describe the same name-keyed representations as capability_abi's
+        // exported factories, which the external host uses to move values.
         Type::Named { name, .. } if name == "Work.Job" || registry.is_capability_resource(name) => {
             json!({"kind":"Resource"})
         }
