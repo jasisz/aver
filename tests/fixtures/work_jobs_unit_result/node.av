@@ -1,0 +1,8 @@
+module Node
+    intent = "The pure function one tick job runs."
+    exposes [tick]
+    effects []
+
+fn tick(task: Unit) -> Unit
+    ? "Returns Unit to exercise a job boundary without a machine value on either side."
+    Unit

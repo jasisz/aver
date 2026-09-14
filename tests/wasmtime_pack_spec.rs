@@ -13,7 +13,8 @@ use aver_cmd::{aver_bin, repo_root};
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 const SHAPES_SOURCE: &str = include_str!("fixtures/native_provider_composed/Shapes.av");
 const CUSTOM_SOURCE: &str = include_str!("fixtures/native_provider_composed/wasm.av");
@@ -82,7 +83,26 @@ fn run_host_with_args(pack: &Path, args: &[&str]) -> Output {
         .env_clear()
         .env("PATH", "/definitely/missing")
         .args(args);
-    command.output().expect("run packed host")
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run packed host");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if child.try_wait().expect("poll packed host").is_some() {
+            return child.wait_with_output().expect("collect packed host");
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().expect("collect timed-out host");
+            panic!(
+                "packed host failed to finish within 60s: {}",
+                report(&output)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn run_host_artifact(pack: &Path, artifact: &str) -> Output {
@@ -189,6 +209,36 @@ fn emitted_standard_and_custom_hosts_are_toolchain_free_and_cache_isolated() {
         assert_eq!(
             String::from_utf8_lossy(&selected.stdout).trim(),
             "standard-pack-ok"
+        );
+    }
+
+    // The same toolchain-free host schedules pure jobs in separate Stores.
+    // One infinite job must not prevent the other from producing its answer.
+    let parallel_root = repo_root().join("tests/fixtures/work_jobs_parallel");
+    let parallel_pack = temp.path().join("parallel-pack");
+    let parallel = compile_pack(
+        &cache,
+        &parallel_root.join("main.av"),
+        &parallel_root,
+        &parallel_pack,
+        None,
+        false,
+    );
+    assert!(parallel.status.success(), "{}", report(&parallel));
+    let parallel_manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(parallel_pack.join("manifest.json")).unwrap()).unwrap();
+    assert!(
+        parallel_manifest["runtimePolicyToml"]
+            .as_str()
+            .unwrap()
+            .contains("max-jobs = 2")
+    );
+    for artifact in ["aot", "canonical"] {
+        let output = run_host_artifact(&parallel_pack, artifact);
+        assert!(output.status.success(), "{}", report(&output));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "parallel 340282366920938463463374607431768211457"
         );
     }
 

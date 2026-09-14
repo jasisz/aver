@@ -1,0 +1,58 @@
+module Main
+    depends [Body, Scoring, Work, Wait]
+    intent = "A finite job finishes beside an infinite one, then cancellation stops the infinite one."
+    exposes [main, start, take, cancel, waiting]
+    effects [Console.print, Scoring.begin, Scoring.take, Wait.poll, Work.cancel]
+
+fn start(stuck: Bool) -> Result<Work.Job, String>
+    ? "Entry shared by the program and its external JS driver."
+    ! [Scoring.begin]
+    Scoring.begin(stuck)
+
+fn take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "Collect a job through the declared kind."
+    ! [Scoring.take]
+    Scoring.take(job)
+
+fn cancel(job: Work.Job) -> Unit
+    ? "Interrupt a running computation."
+    ! [Work.cancel]
+    Work.cancel(job)
+
+fn waiting(stuck: Work.Job, quick: Work.Job) -> Map<Int, Wait.Item>
+    ? "Watch both jobs with stable keys."
+    {1 => Wait.Item.Job(stuck), 2 => Wait.Item.Job(quick)}
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Scoring.begin, Scoring.take, Wait.poll, Work.cancel]
+    stuck = start(true)?
+    quick = start(false)?
+    ready = Wait.poll(waiting(stuck, quick), 10000)?
+    match ready == [2]
+        false -> Result.Err("finite job did not finish beside the infinite job")
+        true -> finish(stuck, quick)
+
+fn finish(stuck: Work.Job, quick: Work.Job) -> Result<Unit, String>
+    ? "Observe the pending job, collect the large answer, then cancel the pending one."
+    ! [Console.print, Scoring.take, Work.cancel]
+    match take(stuck)?
+        Option.Some(_) -> Result.Err("the infinite job unexpectedly finished")
+        Option.None -> match take(quick)?
+            Option.None -> Result.Err("the finite job was not ready")
+            Option.Some(answer) -> stopped(stuck, answer)
+
+fn stopped(stuck: Work.Job, answer: Int) -> Result<Unit, String>
+    ? "Cancellation makes the infinite job collectable without waiting for its result."
+    ! [Console.print, Scoring.take, Work.cancel]
+    cancel(stuck)
+    match take(stuck)
+        Result.Err(reason) -> match reason == "work: job cancelled"
+            true -> printed(answer)
+            false -> Result.Err(reason)
+        Result.Ok(_) -> Result.Err("cancellation did not settle the job")
+
+fn printed(answer: Int) -> Result<Unit, String>
+    ? "Report the exact arbitrary-precision answer."
+    ! [Console.print]
+    Console.print("parallel {answer}")
+    Result.Ok(Unit)

@@ -230,12 +230,14 @@ pub(super) enum EffectName {
     /// `<Kind>.begin` in the recording with the task it was given and the
     /// handle it answered. The task rides boxed in an `Option` so one import
     /// serves a task of any type, including a scalar.
+    #[allow(dead_code)] // Retained in the legacy import/certificate registry.
     WorkBegin,
     /// `(kind: Int, job: Work.Job, answer: Result<Option<R>, String>)
     /// -> Result<Option<R>, String>` — the module has already computed the
     /// answer; this records `<Kind>.take` with it, and in replay hands back
     /// the recorded one instead, so a turn that answered `None` on the VM
     /// answers `None` here too.
+    #[allow(dead_code)] // Retained in the legacy import/certificate registry.
     WorkTake,
 }
 

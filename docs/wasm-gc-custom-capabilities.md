@@ -132,3 +132,10 @@ credited by the certificate.
 The wasip2 route remains separate: it lowers the supported canonical subset to
 WIT and the Component Model. Raw wasm-gc deliberately uses native GC values so
 it can carry Aver's complete provider-value vocabulary today.
+
+## Program-bound Work jobs
+
+Work-shaped capabilities use the versioned `aver:work/v1` scheduling imports
+and compiler-emitted worker exports. Their task/result transport uses these
+same typed construction and inspection helpers, with owned values copied
+between instances. See [Parallel Work on wasm-gc](wasm-work.md).

@@ -507,7 +507,8 @@ Rules:
 Where it runs:
 - the VM: `aver run main.av --module-root .`; a job runs on its own thread, `[work] max-jobs` bounds how many at once, and `begin` answers `Err("work: job limit N reached")` at the limit rather than blocking the turn
 - `--target rust`: the same loop as a native binary; a job runs on a thread of `aver-rt`, and `Work.cancel` detaches the job rather than stopping it, so a cancelled job holds its slot until its body ends
-- wasm-gc and wasip2: a job runs inline at `begin` — a module and a component are single-threaded — so a `take` in the next expression answers `Some`; `[work] max-jobs` is ignored with `warning[work-max-jobs-ignored]`; wasip2 does not run a generated loop yet, because the turn reads `Process.stopRequested` and WASI 0.2 cannot bind it (jasisz/aver#1351)
+- wasm-gc: the runner and Wasmtime packs execute jobs on host threads, enforce `max-jobs`, and support cancellation. Raw modules expose `aver:work/v1`; the JavaScript adapter uses workers and drives a generated coordinator between waits. See `docs/wasm-work.md`.
+- wasip2: jobs currently run inline at `begin`; `max-jobs` is ignored with `warning[work-max-jobs-ignored]`. Generated loops additionally need the target-specific stop-observation support (#1351).
 
 **Driving the protocol by hand.** The generated names are compiler-defined and callable, so a program without a `[run]` table drives a process itself. For `loop` the compiler generates, in the same module: `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind (state only when the operation returns `Unit`) and `__loopAnswerYield(__state)`. The original function is removed:
 

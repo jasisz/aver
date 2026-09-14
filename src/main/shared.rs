@@ -72,11 +72,14 @@ pub(super) fn bind_and_warn_about_jobs(
 ) {
     let manifest = config.and_then(|config| config.provider_manifest.as_ref());
     bind(manifest.map_or(&[], |manifest| manifest.work_bindings.as_slice()));
-    if has_job_kinds && config.and_then(|config| config.work_max_jobs).is_some() {
+    if target.contains("wasip2")
+        && has_job_kinds
+        && config.and_then(|config| config.work_max_jobs).is_some()
+    {
         eprintln!(
             "{}",
             format!(
-                "warning[work-max-jobs-ignored]: aver.toml sets `[work] max-jobs`, and a job on {target} runs inline at `begin` because the target is single-threaded, so the key changes nothing here"
+                "warning[work-max-jobs-ignored]: aver.toml sets `[work] max-jobs`, and a job on {target} currently runs inline at `begin`, so the key changes nothing here"
             )
             .yellow()
         );

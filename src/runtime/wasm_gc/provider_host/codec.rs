@@ -32,7 +32,7 @@ fn read_payload(
     helper_optional_value(caller, ty, suffix, value)
 }
 
-pub(super) fn decode_value(
+pub(in crate::runtime::wasm_gc) fn decode_value(
     caller: &mut Caller<'_, RunWasmGcHost>,
     value: Option<&Val>,
     ty: &Type,
@@ -184,7 +184,7 @@ pub(super) fn decode_value(
     }
 }
 
-pub(super) fn encode_value(
+pub(in crate::runtime::wasm_gc) fn encode_value(
     caller: &mut Caller<'_, RunWasmGcHost>,
     value: ProviderValue,
     ty: &Type,

@@ -74,6 +74,8 @@ mod packed_sequences;
 #[cfg(test)]
 mod tests;
 mod types;
+pub mod work_abi;
+mod work_manifest;
 pub(crate) use types::{OPTION_SOME_TAG, RESULT_OK_TAG};
 mod types_discovery;
 mod view;

@@ -1,7 +1,9 @@
-//! Jobs run inline on wasm-gc and wasip2 (jasisz/aver#1329).
+//! Work lowering: host scheduling on wasm-gc, inline execution on wasip2.
 //!
-//! A component and a wasm-gc module are single-threaded, so a job cannot run
-//! beside the turn. It runs *in* the turn instead: `begin(task)` calls the
+//! wasm-gc delegates begin/take to `aver:work/v1`. The host schedules isolated
+//! worker instances; only owned task/result data crosses their boundaries.
+//!
+//! A WASI 0.2 component currently runs a job in the turn: `begin(task)` calls the
 //! bound function at once and hands back a handle that already carries the
 //! answer. That makes the handle the whole job — the `$job` struct's four
 //! fields are its identity, its state, the kind that minted it and the
@@ -14,8 +16,7 @@
 //! this job was not started by job kind 'K'`. Only the wall clock differs —
 //! a job is done the moment it began.
 //!
-//! Both wasm targets share every byte of this: the module answers the
-//! capability itself, so there is nothing target-specific to say.
+//! The inline fallback below retains the component's existing behavior.
 
 use wasm_encoder::{Function, HeapType, Instruction, RefType, ValType};
 
@@ -158,6 +159,23 @@ pub(super) fn emit_begin(
     ctx: &EmitCtx<'_>,
     emit_task: impl FnOnce(&mut Function) -> Result<Option<bool>, WasmGcError>,
 ) -> Result<Option<()>, WasmGcError> {
+    if let Some(&submit) = ctx.fn_map.effects.get(super::work_abi::SUBMIT) {
+        func.instruction(&Instruction::I32Const(kind.kind_tag));
+        func.instruction(&Instruction::I32Const(super::types::OPTION_SOME_TAG));
+        let Some(has_value) = emit_task(func)? else {
+            return Ok(None);
+        };
+        if !has_value {
+            func.instruction(&Instruction::I32Const(0));
+        }
+        func.instruction(&Instruction::StructNew(kind.option_task_idx));
+        super::body::emit_caller_fn_idx(func, ctx)?;
+        func.instruction(&Instruction::Call(submit));
+        func.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+            kind.begin_result_idx,
+        )));
+        return Ok(Some(()));
+    }
     // The task is read twice: the bound function runs it, and — where the
     // recorder exists — the turn is told what it was. Park it once.
     let task_local =
@@ -247,6 +265,16 @@ pub(super) fn emit_take(
     use wasm_encoder::BlockType;
 
     func.instruction(&Instruction::LocalSet(handle_local));
+    if let Some(&take) = ctx.fn_map.effects.get(super::work_abi::TAKE) {
+        func.instruction(&Instruction::I32Const(kind.kind_tag));
+        func.instruction(&Instruction::LocalGet(handle_local));
+        super::body::emit_caller_fn_idx(func, ctx)?;
+        func.instruction(&Instruction::Call(take));
+        func.instruction(&Instruction::RefCastNullable(HeapType::Concrete(
+            kind.take_result_idx,
+        )));
+        return Ok(());
+    }
     let result_block = BlockType::Result(struct_ref(kind.take_result_idx));
     // The recorder's view of `<Kind>.take`: the handle it was given and the
     // answer this turn produced. In replay the host hands back the recorded

@@ -12,9 +12,9 @@ fn main() -> Result<Unit, String>
     said(Tick.take(job)?)
     Result.Ok(Unit)
 
-fn said(answer: Option<Int>) -> Unit
-    ? "Says what one take carried: a count, or nothing yet."
+fn said(answer: Option<Unit>) -> Unit
+    ? "Says what one take carried: a completed Unit, or nothing yet."
     ! [Console.print]
     match answer
-        Option.Some(n) -> Console.print("tick {n}")
+        Option.Some(_) -> Console.print("unit-work-ok")
         Option.None -> Console.print("nothing yet")

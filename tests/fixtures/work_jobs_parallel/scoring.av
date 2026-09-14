@@ -1,0 +1,16 @@
+module Scoring
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "A job that either computes a large integer or keeps computing until cancelled."
+    exposes [begin, take]
+
+operation begin(task: Bool) -> Result<Work.Job, String>
+    ? "Start independently; true deliberately never completes."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "Collect the answer once, or report pending or cancellation."
+    oracle = generativeOutput
+    replay = recorded

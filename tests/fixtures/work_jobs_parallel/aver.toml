@@ -1,0 +1,9 @@
+[work]
+max-jobs = 2
+
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Scoring"
+work = "Body.compute"

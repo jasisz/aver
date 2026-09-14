@@ -163,6 +163,8 @@ pub struct RunWasmGcHost {
     pub job_kinds: Vec<aver::capability::work::JobKindPlan>,
     /// The program's provider registry, for the same reason.
     pub providers: Option<aver::provider::ProviderRegistry>,
+    host_work: Option<std::sync::Arc<host_work::HostWork>>,
+    worker_job: Option<host_work::WorkerJob>,
 }
 
 /// Compile `items` to wasm-gc bytes, instantiate inside an embedded
@@ -327,7 +329,7 @@ pub(super) fn run_wasm_gc_with_host(
 ) -> Result<RunOutcome, String> {
     use wasmtime::*;
 
-    let mut config = super::wasmtime_gc_engine_config();
+    let mut config = super::wasmtime_work_engine_config();
     // Wasm emission and Cranelift are separate compilation stages. Persist the
     // latter in Wasmtime's content/config-addressed cache so repeated
     // `aver run --wasm-gc` processes rehydrate native code instead of JITing
@@ -380,6 +382,27 @@ fn execute_wasm_gc_module(
             Some(r)
         }
     };
+    let work = custom_providers
+        .filter(|custom| {
+            !custom.plan.job_kinds().is_empty()
+                && module
+                    .imports()
+                    .any(|import| import.module() == aver::codegen::wasm_gc::work_abi::MODULE)
+        })
+        .map(|custom| {
+            host_work::HostWork::new(
+                engine,
+                module,
+                custom.plan.job_kinds().to_vec(),
+                custom.providers.clone(),
+                project_config.as_ref().map_or_else(
+                    aver_rt::work::JobEngine::default_limit,
+                    aver::config::ProjectConfig::work_max_jobs,
+                ),
+            )
+        })
+        .transpose()?;
+    let _shutdown = host_work::Shutdown(work.clone());
     let mut store = Store::new(
         engine,
         RunWasmGcHost {
@@ -392,8 +415,11 @@ fn execute_wasm_gc_module(
                 .map(|custom| custom.plan.job_kinds().to_vec())
                 .unwrap_or_default(),
             providers: custom_providers.map(|custom| custom.providers.clone()),
+            host_work: work,
+            worker_job: None,
         },
     );
+    store.set_epoch_deadline(u64::MAX / 2);
     let mut linker: Linker<RunWasmGcHost> = Linker::new(engine);
     let custom_imports = custom_providers
         .map(provider_host::operation_imports)
@@ -434,6 +460,14 @@ fn execute_wasm_gc_module(
                       params: &[Val],
                       results: &mut [Val]|
                       -> Result<(), wasmtime::Error> {
+                    if module_name_for_closure == aver::codegen::wasm_gc::work_abi::MODULE {
+                        return host_work::dispatch(
+                            &field_name_for_closure,
+                            &mut caller,
+                            params,
+                            results,
+                        );
+                    }
                     if module_name_for_closure == "aver"
                         && imports::dispatch_aver_import(
                             &field_name_for_closure,
@@ -571,6 +605,7 @@ fn execute_wasm_gc_module(
 
 mod bundle;
 mod decode;
+mod host_work;
 mod imports;
 mod provider_host;
 

@@ -526,7 +526,7 @@ Disk path patterns have deliberately small, explicit semantics:
 
 An empty pattern, unsupported `*` placement, or a `..`-rooted pattern is also a config-load error. An absent `paths` key or `paths = []` keeps the existing allow-all behavior. Matching is string-only: Aver normalizes `.` and `..` in the caller-supplied path without resolving it against the working directory or touching the filesystem. A project-relative pattern therefore does not admit an absolute spelling of the same in-project file.
 
-`[work] max-jobs` bounds how many jobs a program runs at once. It must be a positive integer; without it a program gets the host's own available parallelism. At the limit, a job kind's `begin` answers `Err("work: job limit N reached")` instead of blocking the turn. It decides nothing on `wasm-gc` and `wasip2`, where a job runs inline at `begin` and is over before the next expression: a manifest that sets it for one of those targets gets `warning[work-max-jobs-ignored]` at the program door, naming the key and the target, and the program runs.
+`[work] max-jobs` bounds how many jobs a program runs at once. It must be a positive integer; without it a program gets the host's own available parallelism. At the limit, a job kind's `begin` answers `Err("work: job limit N reached")` instead of blocking the turn. It is enforced by the wasm-gc runner and Wasmtime packs. On `wasip2`, a job currently runs inline at `begin` and is over before the next expression: a manifest that sets it for that target gets `warning[work-max-jobs-ignored]` at the program door, naming the key and the target, and the program runs.
 
 ### Processes, answer modules and jobs in `aver.toml`
 
@@ -575,7 +575,7 @@ Diagnostics an agent meets on the way, each with its recipe (`docs/diagnostics-s
 | `view-shape` | The view record or the `Pending` sum is not the shape the loop fills. | Declare them exactly as the message prints them: `pending`, `ready`, `askable`, `jobs`, `room`, `stopping`; one `Pending` constructor per process carrying `(Int, Wait.Wake)`. |
 | `work-shape` | A capability names `Work.Job` but is not exactly `begin`/`take` with the Work result shapes. | Declare exactly those two operations; keep capability resources out of `T` and `R`. |
 | `work-binding` | A job kind with no `work` binding, or a binding naming a missing, effectful, entry-module or wrongly typed function; a seam declared in part or with the wrong signatures. | Bind `work = "Module.function"` with `(T) -> R`; give all three seam keys or none. |
-| `work-max-jobs-ignored` | Warning: `[work] max-jobs` is set and the target is wasm-gc or wasip2, where a job runs inline at `begin`. | Leave the key for the VM and Rust, or remove it. |
+| `work-max-jobs-ignored` | Warning: `[work] max-jobs` is set and the target is wasip2, where a job currently runs inline at `begin`. | Leave the key for the VM, Rust and wasm-gc hosts, or remove it. |
 | `serve-path` | Warning: a function that waits reaches a loop with input effects that runs to completion inside one turn. | Do one step per turn, run it as its own command, or suppress with `[[check.suppress]]` and a reason. |
 | `turn-budget` | Warning: with `[verify] turn-budget = N`, one turn of a case ran past N VM steps without waiting. | Wait more often: one step of the named loop per turn. |
 

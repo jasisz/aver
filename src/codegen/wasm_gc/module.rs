@@ -183,9 +183,8 @@ pub(super) fn emit_module_with(
     let mut capability_boundary_types = capability_wasm_gc_plan
         .map(|plan| plan.boundary_type_strings())
         .unwrap_or_default();
-    // jasisz/aver#1329 — a job kind is answered by the program on both wasm
-    // targets, so it is in whichever plan reached this emitter rather than in
-    // an import table. The task and payload types can be spelled nowhere else
+    // Job bodies come from the program on both targets. Scheduling is a
+    // separate host ABI on wasm-gc. The task and payload types can be spelled nowhere else
     // in the program, so the registry is told about them here.
     let job_kinds: &[crate::capability::work::JobKindPlan] =
         match (capability_wasm_gc_plan, capability_wit_plan) {
@@ -804,16 +803,6 @@ pub(super) fn emit_module_with(
         }
     }
 
-    // jasisz/aver#1329 — a job kind is answered by the module, so nothing in
-    // the program's effect lists reaches these two. They exist for the
-    // recorder: with them a wasm-gc recording has the VM's shape, and a VM
-    // recording replays here. A component records nothing, so only the
-    // bridge target registers them.
-    if !job_kinds.is_empty() && matches!(target, super::TargetMode::AverBridge) {
-        effect_registry.register(EffectName::WorkBegin);
-        effect_registry.register(EffectName::WorkTake);
-    }
-
     // List<String>/List<Char> show up as soon as the program reaches
     // for `String.split` or any List<String> literal. Their per-T
     // `contains` helper compares heads via `__wasmgc_string_eq`, so
@@ -973,9 +962,16 @@ pub(super) fn emit_module_with(
         }
     }
 
+    let work_imports = super::work_abi::WorkImports::allocate(
+        !job_kinds.is_empty() && matches!(target, super::TargetMode::AverBridge),
+        effect_registry.import_count() + wasm_gc_capability_imports.import_count(),
+        &mut next_type_idx,
+        &mut types,
+    );
     let wasip2_import_count = wasip2_imports.import_count() + capability_imports.import_count();
-    let wasm_gc_import_count =
-        effect_registry.import_count() + wasm_gc_capability_imports.import_count();
+    let wasm_gc_import_count = effect_registry.import_count()
+        + wasm_gc_capability_imports.import_count()
+        + work_imports.count();
 
     // 3) Entry-point type. Three shapes drive different exports:
     //    - AverBridge: `_start: () -> ()` — the JS host calls
@@ -2289,6 +2285,18 @@ pub(super) fn emit_module_with(
         &mut next_builtin_fn_idx,
     )?;
 
+    let work_abi = super::work_abi::WorkAbi::allocate(
+        if work_imports.count() > 0 {
+            job_kinds.len()
+        } else {
+            0
+        },
+        &registry,
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+    )?;
+
     // 10) Caller-fn name table exports. `__caller_fn_count() -> i32`
     //     and `__caller_fn_name(i32) -> ref null $string`. Host walks
     //     `0..count` once at instantiation, decodes each ref via the
@@ -2340,6 +2348,7 @@ pub(super) fn emit_module_with(
                     imports.import(module_, field, EntityType::Function(type_idx));
                 }
                 wasm_gc_capability_imports.emit_imports(&mut imports);
+                work_imports.emit_imports(&mut imports);
                 module.section(&imports);
             }
         }
@@ -2474,6 +2483,7 @@ pub(super) fn emit_module_with(
     }
     factory_exports.emit_function_entries(&mut funcs);
     capability_abi.emit_function_entries(&mut funcs);
+    work_abi.emit_function_entries(&mut funcs);
     // Caller-fn name table fns — fixed-shape entries (count + name),
     // their bodies land at the very end of the code section once
     // `caller_fn_collector` has all names. Idxs are recorded so
@@ -2942,6 +2952,7 @@ pub(super) fn emit_module_with(
             effect_idx_lookup.insert(name.canonical().to_string(), idx);
         }
         effect_idx_lookup.extend(wasm_gc_capability_imports.function_indices());
+        effect_idx_lookup.extend(work_imports.function_indices());
     }
     // On `TargetMode::Wasip2` the EffectRegistry is populated by
     // discovery but never `assign_slots`'d (the import section uses
@@ -3366,6 +3377,7 @@ pub(super) fn emit_module_with(
     }
     factory_exports.emit_exports(&mut exports);
     capability_abi.emit_exports(&mut exports);
+    work_abi.emit_exports(&mut exports);
     if let Some(hw) = &handler_wrapper {
         exports.export("aver_http_handle", ExportKind::Func, hw.wrapper_fn);
         exports.export("__rt_list_string_cons", ExportKind::Func, hw.list_cons_fn);
@@ -5941,6 +5953,7 @@ pub(super) fn emit_module_with(
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
     capability_abi.emit_bodies(&mut codes);
+    work_abi.emit_bodies(&mut codes, &registry, fn_map.jobs.as_ref(), &work_imports)?;
 
     // `__caller_fn_count` + `__caller_fn_name` bodies. Emitted after
     // every helper so their fn idxs land last in the code section,
@@ -6051,6 +6064,12 @@ pub(super) fn emit_module_with(
         module.section(&names);
     }
 
+    if work_imports.count() > 0 {
+        module.section(&wasm_encoder::CustomSection {
+            name: std::borrow::Cow::Borrowed("aver:work/v1"),
+            data: std::borrow::Cow::Owned(super::work_manifest::render(job_kinds, &registry)?),
+        });
+    }
     let bytes = module.finish();
     if let Err(e) = validate(&bytes) {
         // Dump invalid bytes for `wasm-tools print` inspection.

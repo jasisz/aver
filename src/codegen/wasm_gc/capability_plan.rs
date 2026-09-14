@@ -157,13 +157,10 @@ impl CapabilityWasmGcPlan {
                 );
             }
         }
-        // A job kind's task and answer cross to the recorder through the same
-        // ABI, so an `Int` in either needs the full-ℤ host bridges too.
-        let job_bignum = job_kinds.iter().any(|kind| {
-            kind.recorded_types().iter().any(|ty| {
-                type_contains_int(ty, registry, &kind.shape.capability, &mut HashSet::new())
-            })
-        });
+        // The Work host ABI includes Int-keyed wait maps even when neither
+        // the task nor its answer contains Int (for example Unit -> Unit).
+        // Its external driver therefore needs the full-ℤ bridges as well.
+        let job_bignum = !job_kinds.is_empty();
         let force_bignum = job_bignum
             || interfaces.iter().any(|interface| {
                 interface.operations.iter().any(|operation| {
@@ -199,8 +196,8 @@ impl CapabilityWasmGcPlan {
     /// The operations a job kind answers, `Validation.begin` and
     /// `Validation.take`.
     ///
-    /// No host provider is preflighted for these and no import is emitted:
-    /// the program answers them itself, through the function `work` binds.
+    /// No external provider is preflighted for these: the program supplies
+    /// the pure function, while the target's Work lowering schedules it.
     pub fn job_operations(&self) -> Vec<String> {
         self.job_kinds
             .iter()
