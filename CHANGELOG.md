@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Lean proof export reuses successful speculative builds.** Closed candidates keep byte-identical diagnostic fallbacks, avoiding redundant Lake elaboration when their dependencies are unchanged. Bounded fallback and the final axiom audit are preserved. `tools/proof_bench.py` records repeatable timings and complete proof manifests; see `docs/proof-performance.md`.
+
 - **Work jobs run in parallel on wasm-gc.** The runner and Wasmtime packs share compiled code across isolated worker instances, enforce `max-jobs`, interrupt cancelled computations, and preserve VM replay tokens. Raw modules expose `aver:work/v1` with a supplied JavaScript worker adapter and an event-loop-driven coordinator. WASI keeps its inline lowering. The new host ABI requires an updated embedding; see `docs/wasm-work.md`.
 
 - **Generated coordinators now run and compile on wasip2.** WASI 0.2 has no signal subscription, so the generated turn keeps the signal stop flag false and ends through the program's policy or normal exhaustion. Explicit `Process.stopRequested` calls remain unsupported; VM, Rust and wasm-gc keep their host stop observation.

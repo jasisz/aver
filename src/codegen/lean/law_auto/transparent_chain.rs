@@ -90,15 +90,10 @@ pub(in crate::codegen::lean) fn emit_transparent_chain_law(
     intros.push("h_when".to_string());
     let premise_defs = premise_unfolds.join(" ");
     // Fail-closed floor. Under the probe it carries the `AVERSPEC_SORRY:<id>`
-    // trace so a non-closing chain surfaces in the build log (and `record_probed`
+    // trace so a non-closing chain surfaces in the build log (and `floor`
     // registers the id as one that emitted a floor); the committed re-emit then
-    // states only the closers universally. Off-probe it is a bare `sorry`.
-    let floor = if speculative::probing() {
-        speculative::record_probed(&id);
-        format!("(trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "sorry".to_string()
-    };
+    // states only the closers universally. Closed candidates keep the same diagnostic floor for Lake reuse.
+    let floor = speculative::floor(&id);
     Some(AutoProof {
         support_lines: Vec::new(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(super::intro_then(

@@ -11546,8 +11546,10 @@ fn cmd_proof_lean(
 /// No-op when the file has no single-list candidate (the probe emit records
 /// none — the byte-identical baseline is restored without a build, so the
 /// decomposed corpus pays nothing). Fail-safe: if the committed project does not
-/// build, the bounded baseline is restored. `lake`'s content-addressed cache
-/// keeps the probe + commit builds cheap.
+/// build, the bounded baseline is restored. Successful candidates retain their
+/// diagnostic floors, keeping unchanged modules reusable by Lake. A demoted
+/// candidate still rebuilds its module and dependents; the final axiom audit
+/// always runs against the committed environment.
 fn run_lean_speculative(
     file: &str,
     output_dir: &str,

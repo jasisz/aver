@@ -1383,13 +1383,11 @@ fn emit_rational_floor_bound_matched(
     body.push("    )".to_string());
     body.push("  )".to_string());
 
-    let floor = if super::super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!(
+        "  | {}",
+        super::super::super::tactic_ir::speculative::floor(&id)
+    );
     body.push(floor);
 
     Some(AutoProof {
@@ -1802,13 +1800,11 @@ fn emit_rational_frac_bound(
     }
     body.push("  )".to_string());
 
-    let floor = if super::super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!(
+        "  | {}",
+        super::super::super::tactic_ir::speculative::floor(&id)
+    );
     body.push(floor);
 
     Some(AutoProof {
@@ -2042,13 +2038,11 @@ fn emit_rational_floor_bound_general(
     body.push("    aver_int_order".to_string());
     body.push("  )".to_string());
 
-    let floor = if super::super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!(
+        "  | {}",
+        super::super::super::tactic_ir::speculative::floor(&id)
+    );
     body.push(floor);
 
     Some(AutoProof {
@@ -2221,13 +2215,11 @@ fn emit_rational_floor_sign_general(
     body.push("    simp only [hVfact, hTfact]".to_string());
     body.push("    rcases hsign with h | h <;> simp only [h] <;> split <;> simp only [decide_eq_true_eq] <;> omega".to_string());
     body.push("  )".to_string());
-    let floor = if super::super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!(
+        "  | {}",
+        super::super::super::tactic_ir::speculative::floor(&id)
+    );
     body.push(floor);
 
     Some(AutoProof {
@@ -2422,13 +2414,11 @@ fn emit_rational_floor_bound(
     body.push("      rw [lhs_eq, rhs_eq]; aver_int_order".to_string());
     body.push("  )".to_string());
 
-    let floor = if super::super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!(
+        "  | {}",
+        super::super::super::tactic_ir::speculative::floor(&id)
+    );
     body.push(floor);
 
     Some(AutoProof {
@@ -2531,13 +2521,11 @@ pub(super) fn emit_rational_floor_family(
         }
     };
 
-    let floor = if super::super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!(
+        "  | {}",
+        super::super::super::tactic_ir::speculative::floor(&id)
+    );
 
     Some(AutoProof {
         support_lines,

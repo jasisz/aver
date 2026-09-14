@@ -592,13 +592,11 @@ pub(in crate::codegen::lean) fn emit_multicite_composition_law(
         "       | (simp only [{alias_csv}] at * <;> assumption))"
     ));
 
-    let floor = if super::super::super::tactic_ir::speculative::probing() {
-        let id = format!("{}.{}", vb.fn_name, law.name);
-        super::super::super::tactic_ir::speculative::record_probed(&id);
-        format!("  | (trace \"AVERSPEC_SORRY:{id}\"; sorry)")
-    } else {
-        "  | sorry".to_string()
-    };
+    let id = format!("{}.{}", vb.fn_name, law.name);
+    let floor = format!(
+        "  | {}",
+        super::super::super::tactic_ir::speculative::floor(&id)
+    );
 
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!("  intro {} h_when", intro_names.join(" ")));
