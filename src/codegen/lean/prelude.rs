@@ -311,11 +311,12 @@ pub(crate) fn prelude_spec_lemmas_for_builtins(builtins: &[String]) -> Vec<Strin
 /// what makes the demand-driven map prelude ship the lemma text. The call may
 /// sit anywhere in the cone — including inside a field of a record the cone
 /// rebuilds, which is what most one-key updates look like.
-pub(crate) const MAP_SET_FACT_LEMMAS: [&str; 6] = [
+pub(crate) const MAP_SET_FACT_LEMMAS: [&str; 7] = [
     "AverMap.get_set_self",
     "AverMap.get_set_ne",
     "AverMap.has_set_self",
     "AverMap.set_set_self",
+    "AverMap.set_set_comm",
     "AverMap.len_set_ge",
     "AverMap.len_set_of_has",
 ];
@@ -796,10 +797,9 @@ const AVER_MAP_PRELUDE_LEN_REMOVE_LE: &str = r#"theorem len_remove_le [Decidable
 /// the same key overwrites the first. After the first set the key is present
 /// (`has_set_self`), so the second one is a replace; replacing twice is
 /// replacing once, and replacing what was just inserted is inserting the second
-/// value. Different keys are another matter: whether two sets under different
-/// keys commute depends on `AverKeyOrder.lt` being a strict total order, which
-/// the class does not promise (the fallback instance appends), so no such lemma
-/// lives here.
+/// value. Different keys additionally need the lawful order evidence proved
+/// for Int, String and Bool in `prelude/map_order.lean`; the fallback instance
+/// deliberately has no such evidence.
 const AVER_MAP_PRELUDE_SET_SET_SELF: &str = r#"theorem set_set_self [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v w : β) :
     AverMap.set (AverMap.set m k v) k w = AverMap.set m k w := by
   rw [set_of_has (AverMap.set m k v) k w (AverMap.has_set_self m k v)]
@@ -1545,12 +1545,15 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     // demanded by that lemma too, not only by the generated body that names it.
     let needs_has_set = include_all_helpers || mentions_exact(body, "AverMap.has_set");
     let needs_set_set_self = include_all_helpers || mentions_exact(body, "AverMap.set_set_self");
+    let needs_set_set_comm = include_all_helpers || mentions_exact(body, "AverMap.set_set_comm");
     let needs_has_set_self = include_all_helpers
         || body.contains("AverMap.has_set_self")
         || needs_has_set
         || needs_set_set_self;
-    let needs_has_set_other =
-        include_all_helpers || body.contains("AverMap.has_set_other") || needs_has_set;
+    let needs_has_set_other = include_all_helpers
+        || body.contains("AverMap.has_set_other")
+        || needs_has_set
+        || needs_set_set_comm;
     // `get_set_ne` (general different-key get) and `has_set` (general-key
     // membership-after-set) — the map-fold-homomorphism cons different-key arm.
     let needs_get_set_ne = include_all_helpers || body.contains("AverMap.get_set_ne");
@@ -1614,6 +1617,9 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     }
 
     parts.push(AVER_MAP_PRELUDE_END.to_string());
+    if needs_set_set_comm {
+        parts.push(include_str!("prelude/map_order.lean").to_string());
+    }
     parts.join("\n\n")
 }
 

@@ -268,7 +268,18 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 .iter()
                 .filter_map(|reason| case_call(reason, ctx))
                 .collect::<Vec<_>>();
-            if cases.is_empty() {
+            let sum_givens = super::shared::user_sum_givens(ctx, law);
+            // A small pair of changes can hide independent map writes behind
+            // two matches. Bound the constructor product, and split only after
+            // the ordinary solver has had a chance to compose existing facts.
+            let split_maps = definitions.map_facts
+                && !sum_givens.is_empty()
+                && sum_givens.len() <= 2
+                && sum_givens
+                    .iter()
+                    .try_fold(1usize, |n, (_, count)| n.checked_mul(*count))
+                    .is_some_and(|count| count <= 16);
+            if cases.is_empty() && !split_maps {
                 lines.push("  all_goals".to_string());
                 lines.extend(solver(&definitions, &label, "    ", fact_count, true));
             } else {
@@ -280,6 +291,18 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 lines.push("  first".to_string());
                 lines.push("  |".to_string());
                 lines.extend(solver(&definitions, &label, "    ", fact_count, false));
+                if split_maps {
+                    let splits = sum_givens
+                        .iter()
+                        .map(|(name, _)| format!("cases {name}"))
+                        .collect::<Vec<_>>()
+                        .join(" <;> ");
+                    let map_facts = crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS.join(", ");
+                    let excluded = (0..fact_count)
+                        .map(|i| format!(", -_fact{i}"))
+                        .collect::<String>();
+                    lines.push(format!("  | ({splits} <;> simp_all +zetaDelta [{}, {map_facts}{excluded}] <;> grind [{map_facts}])", definitions.simp));
+                }
                 lines.push("  |".to_string());
                 for call in cases {
                     lines.push(format!("    all_goals try fun_cases {call}"));

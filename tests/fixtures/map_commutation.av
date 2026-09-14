@@ -1,0 +1,45 @@
+module MapCommutation
+    intent = "Distinct-key writes commute for every faithfully ordered scalar key, including existing and absent keys. Conflicting writes to one key remain ordered."
+    effects []
+
+fn text(m: Map<String, Int>, key: String, value: Int) -> Map<String, Int>
+    Map.set(m, key, value)
+
+verify text law commutes
+    given m: Map<String, Int> = [{}, {"a" => 7, "z" => 9}]
+    given a: String = ["a", "é", "🙂"]
+    given b: String = ["z", "é", "🙂"]
+    given v: Int = [1]
+    given w: Int = [2]
+    when a != b
+    using []
+    text(text(m, a, v), b, w) => text(text(m, b, w), a, v)
+
+verify text
+    text(text({}, "same", 1), "same", 2) == text(text({}, "same", 2), "same", 1) => false
+
+fn number(m: Map<Int, Int>, key: Int, value: Int) -> Map<Int, Int>
+    Map.set(m, key, value)
+
+verify number law commutes
+    given m: Map<Int, Int> = [{}, {-5 => 7, 10 => 9}]
+    given a: Int = [-5, 0, 10]
+    given b: Int = [-5, 0, 10]
+    given v: Int = [1]
+    given w: Int = [2]
+    when a != b
+    using []
+    number(number(m, a, v), b, w) => number(number(m, b, w), a, v)
+
+fn flag(m: Map<Bool, Int>, key: Bool, value: Int) -> Map<Bool, Int>
+    Map.set(m, key, value)
+
+verify flag law commutes
+    given m: Map<Bool, Int> = [{}, {true => 7}, {false => 9}]
+    given a: Bool = [false, true]
+    given b: Bool = [false, true]
+    given v: Int = [1]
+    given w: Int = [2]
+    when a != b
+    using []
+    flag(flag(m, a, v), b, w) => flag(flag(m, b, w), a, v)
