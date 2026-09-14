@@ -1,0 +1,16 @@
+module Scoring
+    intent = "A job whose observation schedule is supplied by verify stubs."
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    exposes [begin, take]
+
+operation begin(task: Int) -> Result<Work.Job, String>
+    ? "Begin the pure scoring computation."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "Return a completed score once, or keep the job pending."
+    oracle = generativeOutput
+    replay = recorded

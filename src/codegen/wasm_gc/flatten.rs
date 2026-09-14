@@ -92,6 +92,17 @@ pub fn flatten_multimodule(
     capabilities: &crate::capability::CapabilityRegistry,
     capability_surface: CapabilityFunctionSurface,
 ) -> HashMap<String, String> {
+    if capability_surface == CapabilityFunctionSurface::Runtime {
+        let drivers: HashSet<String> = items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::Verify(block) => Some(block),
+                _ => None,
+            })
+            .flat_map(|block| block.process_driver_names().map(str::to_owned))
+            .collect();
+        items.retain(|item| !matches!(item, TopLevel::FnDef(fd) if drivers.contains(&fd.name)));
+    }
     // A capability's hostile profiles and model-only helper closure belong to
     // verify/proof, not to an executable artifact. Rust codegen applies the
     // same registry-derived boundary. Do it before flattening so an untyped
@@ -285,13 +296,20 @@ pub fn flatten_multimodule(
     }
 
     for dep in dep_modules {
-        let verification_only = if capability_surface == CapabilityFunctionSurface::Runtime
+        let mut verification_only = if capability_surface == CapabilityFunctionSurface::Runtime
             && dep.capability_semantics.is_some()
         {
             capabilities.verification_only_function_names(&dep.prefix, &dep.fn_defs, &dep.exposes)
         } else {
             Default::default()
         };
+        if capability_surface == CapabilityFunctionSurface::Runtime {
+            verification_only.extend(
+                dep.verify_blocks
+                    .iter()
+                    .flat_map(|block| block.process_driver_names().map(str::to_owned)),
+            );
+        }
         let same_module_fns: HashSet<String> = dep
             .fn_defs
             .iter()

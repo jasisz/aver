@@ -600,6 +600,7 @@ verify addOne law shifts
 fn empty_ctx_with_verify_case() -> CodegenContext {
     let mut ctx = empty_ctx();
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "f".to_string(),
         line: 1,
         cases: vec![(
@@ -621,6 +622,7 @@ fn empty_ctx_with_verify_case() -> CodegenContext {
 fn empty_ctx_with_two_verify_blocks_same_fn() -> CodegenContext {
     let mut ctx = empty_ctx();
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "f".to_string(),
         line: 1,
         cases: vec![(
@@ -637,6 +639,7 @@ fn empty_ctx_with_two_verify_blocks_same_fn() -> CodegenContext {
         cases_givens: vec![],
     }));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "f".to_string(),
         line: 2,
         cases: vec![(
@@ -677,6 +680,7 @@ fn empty_ctx_with_verify_law() -> CodegenContext {
     ctx.fn_defs.push(add.clone());
     ctx.items.push(TopLevel::FnDef(add));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "add".to_string(),
         line: 1,
         cases: vec![
@@ -1497,6 +1501,7 @@ fn transpile_auto_proves_reflexive_law_with_rfl() {
     ctx.fn_defs.push(id_law.clone());
     ctx.items.push(TopLevel::FnDef(id_law));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "idLaw".to_string(),
         line: 1,
         cases: vec![(
@@ -1545,6 +1550,7 @@ fn transpile_auto_proves_reflexive_law_with_rfl() {
 fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
     let mut ctx = empty_ctx_with_verify_law();
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "add".to_string(),
         line: 10,
         cases: vec![(
@@ -1604,6 +1610,7 @@ fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
 fn transpile_auto_proves_associative_law_for_int_add_wrapper() {
     let mut ctx = empty_ctx_with_verify_law();
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "add".to_string(),
         line: 20,
         cases: vec![(
@@ -1730,6 +1737,7 @@ fn transpile_auto_proves_sub_laws() {
     ctx.items.push(TopLevel::FnDef(sub));
 
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "sub".to_string(),
         line: 10,
         cases: vec![(
@@ -1771,6 +1779,7 @@ fn transpile_auto_proves_sub_laws() {
         cases_givens: vec![],
     }));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "sub".to_string(),
         line: 20,
         cases: vec![(
@@ -1885,6 +1894,7 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
     ctx.items.push(TopLevel::FnDef(add));
     ctx.items.push(TopLevel::FnDef(add_one));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "addOne".to_string(),
         line: 3,
         cases: vec![(
@@ -2010,6 +2020,7 @@ fn transpile_auto_proves_direct_map_set_laws() {
     };
 
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "map".to_string(),
         line: 1,
         cases: vec![(
@@ -2068,6 +2079,7 @@ fn transpile_auto_proves_direct_map_set_laws() {
     }));
 
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "map".to_string(),
         line: 2,
         cases: vec![(
@@ -2393,6 +2405,7 @@ fn transpile_auto_proves_map_update_laws() {
     ctx.items.push(TopLevel::FnDef(inc_count));
 
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "incCount".to_string(),
         line: 10,
         cases: vec![(
@@ -2450,6 +2463,7 @@ fn transpile_auto_proves_map_update_laws() {
     }));
 
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "incCount".to_string(),
         line: 20,
         cases: vec![(
@@ -2557,6 +2571,7 @@ fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
     ctx.fn_defs.push(add.clone());
     ctx.items.push(TopLevel::FnDef(add));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "add".to_string(),
         line: 1,
         cases: vec![(
@@ -2645,6 +2660,7 @@ fn verify_law_numbering_is_scoped_per_law_name() {
     ctx.fn_defs.push(f.clone());
     ctx.items.push(TopLevel::FnDef(f));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "f".to_string(),
         line: 1,
         cases: vec![(
@@ -2661,6 +2677,7 @@ fn verify_law_numbering_is_scoped_per_law_name() {
         cases_givens: vec![],
     }));
     ctx.items.push(TopLevel::Verify(VerifyBlock {
+        process_verification: None,
         fn_name: "f".to_string(),
         line: 2,
         cases: vec![(

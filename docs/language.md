@@ -446,8 +446,42 @@ A module that exposes a yielding function exposes its protocol in its place: `ex
 
 Two diagnostics guard the shape:
 
-- calling a yielding function directly, from a function that does not yield — a plain function, a verify case, a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
+- calling a yielding function directly, from a function that does not yield — a plain function or a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
 - a yielding function that calls *itself* outside tail position is a type error with the recipe `pass what comes next as data, or make it a tail call`: a process nests another yielding function, not itself, because its own state would have to hold a copy of itself.
+
+### Testing a process with request stubs
+
+A local cases-form `verify process` may call that process directly when it
+supplies an exact `given` for every request operation in the process protocol:
+
+```aver
+verify pair
+    given answer: Pool.claim = [numbered]
+    pair(2) => 15
+    pair(7) => 25
+```
+
+The full example is `tests/fixtures/yield_verify_stubs/`. Its `numbered` stub
+has signature `(BranchPath, Int, Int) -> Option<Int>`: the second argument is
+the per-branch Oracle counter, and the third is the requested peer. The verifier
+starts the generated protocol and answers each request with the selected stub.
+It exercises the lowered continuation, including nested helpers, self yields
+and `?` propagation. Stubs return operation results, not `Now`/`Later` replies;
+the live answer module is not consulted.
+
+Each case starts fresh Oracle coordinates. Request calls and in-place effects
+share the normal counter; a self yield consumes no answer. An in-place effect
+still needs its own stub if reached. Existing step limits and
+`[[verify.costly]]` settings use the source process name.
+
+This first surface runs in `aver verify` on the VM. Direct process laws,
+`trace` blocks, imported process calls, WASM request stubs and proof export of
+these cases are not supported yet. State proof laws over the generated protocol.
+Testing a process's responses does not test coordinator scheduling: the separate
+`tests/fixtures/run_schedule_cases/` scenarios exercise service order, grouping,
+premature job readiness and stale notifications after completion or cancellation.
+They enumerate explicit schedules; `--hostile` does not automatically generate
+all coordinator interleavings.
 
 ### Helpers and nested state
 

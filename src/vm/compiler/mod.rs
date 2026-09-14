@@ -262,6 +262,7 @@ fn compile_program_inner(
     let mir_program = &mir_built;
 
     let mut compiler = ProgramCompiler::new();
+    compiler.register_process_verify_drivers(items);
     compiler.source_file = source_file.to_string();
     compiler.sync_record_field_symbols(arena)?;
     compiler.register_capability_symbols(symbols)?;
@@ -472,6 +473,7 @@ struct ProgramCompiler {
     /// Source file path for the main program (propagated to FnChunks).
     source_file: String,
     required_capability_operations: std::collections::BTreeSet<String>,
+    process_verify_drivers: std::collections::HashSet<crate::ir::FnId>,
 }
 
 impl ProgramCompiler {
@@ -483,6 +485,7 @@ impl ProgramCompiler {
             global_names: HashMap::new(),
             source_file: String::new(),
             required_capability_operations: std::collections::BTreeSet::new(),
+            process_verify_drivers: std::collections::HashSet::new(),
         };
         // bootstrap into a fresh `VmSymbolTable` populates well-known
         // builtins / wrappers / namespaces; nothing it inserts can
@@ -697,6 +700,7 @@ impl ProgramCompiler {
         // bytecode with the dep's module scope — the same path the entry
         // module takes. MIR is the only VM codegen path; a rejection
         // surfaces as a hard CompileError (no HIR fallback).
+        self.register_process_verify_drivers(&dep_resolved);
         let dep_mir = build_optimized_mir(&dep_resolved, true, entry_symbols.literal_refinements());
         let mut fn_idx = 0;
         for item in &dep_resolved {
@@ -938,12 +942,24 @@ impl ProgramCompiler {
         Ok(())
     }
 
-    /// Phase 4b: emit a fn's bytecode by walking the MIR body
-    /// instead of the HIR body. Mirrors `compile_fn_with_scope`'s
-    /// `FnCompiler` setup exactly — same arity / local_count /
-    /// effects / aliased slots — so the resulting `FnChunk` is
-    /// drop-in for the HIR-emitted version when the MIR walker
-    /// covers the body shape.
+    /// Resolve compiler-owned verification helpers before recording host needs.
+    fn register_process_verify_drivers(&mut self, items: &[ResolvedTopLevel]) {
+        let names: std::collections::HashSet<&str> = items
+            .iter()
+            .filter_map(|item| match item {
+                ResolvedTopLevel::Passthrough(TopLevel::Verify(block)) => Some(block),
+                _ => None,
+            })
+            .flat_map(|block| block.process_driver_names())
+            .collect();
+        self.process_verify_drivers
+            .extend(items.iter().filter_map(|item| match item {
+                ResolvedTopLevel::FnDef(fd) if names.contains(fd.name.as_str()) => Some(fd.fn_id),
+                _ => None,
+            }));
+    }
+
+    /// Emit a function's bytecode from its MIR body and resolved signature.
     fn compile_fn_via_mir(
         &mut self,
         rfd: &ResolvedFnDef,
@@ -1000,6 +1016,15 @@ impl ProgramCompiler {
                 rfd.params.len()
             ),
         )?;
+        // Verify drivers remain callable by the case runner, but their exact
+        // stubs do not create live provider requirements for ordinary `run`.
+        // Calls in real process segments still accumulate in the main set.
+        let mut verify_requirements = std::collections::BTreeSet::new();
+        let required_operations = if self.process_verify_drivers.contains(&rfd.fn_id) {
+            &mut verify_requirements
+        } else {
+            &mut self.required_capability_operations
+        };
         let mut fc = FnCompiler::new(
             &rfd.name,
             arity,
@@ -1016,7 +1041,7 @@ impl ProgramCompiler {
             arena,
             symbols,
             Some(mir_program),
-            &mut self.required_capability_operations,
+            required_operations,
         );
         fc.source_file = self.source_file.clone();
         fc.note_line(rfd.line);

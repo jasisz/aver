@@ -937,7 +937,7 @@ fn run_verify_for_items_vm_impl(
         // it per block: `[[verify.costly]]` names one function.
         let key = costly_glob_key(source_file, base_dir);
         for block in &mut verify_blocks {
-            let max_cases = max_cases_for(config.as_ref(), &block.fn_name, &key);
+            let max_cases = max_cases_for(config.as_ref(), block.source_name(), &key);
             apply_hostile_expansion_with_registry(
                 block,
                 &items,
@@ -1120,7 +1120,7 @@ fn budgets_for_plans(
     let key = costly_glob_key(source_file, base_dir);
     plans
         .iter()
-        .map(|plan| CaseBudget::resolve(config, &plan.block.fn_name, &key))
+        .map(|plan| CaseBudget::resolve(config, plan.block.source_name(), &key))
         .collect()
 }
 
@@ -1312,7 +1312,7 @@ fn run_verify_for_items_vm_with_loaded_impl(
         // per block.
         let key = costly_glob_key(source_file, None);
         for block in &mut verify_blocks {
-            let max_cases = max_cases_for(config.as_ref(), &block.fn_name, &key);
+            let max_cases = max_cases_for(config.as_ref(), block.source_name(), &key);
             apply_hostile_expansion_with_registry(
                 block,
                 &items,
@@ -2128,7 +2128,7 @@ fn empty_verify_result(
     let block = &plan.block;
     let block_label = crate::checker::verify_block_label(block);
     VerifyResult {
-        fn_name: block.fn_name.clone(),
+        fn_name: block.source_name().to_string(),
         is_law: matches!(&block.kind, VerifyKind::Law(_)),
         block_label,
         passed: 0,
@@ -2276,8 +2276,8 @@ fn run_verify_vm(
     let mut turn_overruns = Vec::new();
     let is_law = matches!(block.kind, VerifyKind::Law(_));
     let case_total = block.cases.len();
-    let plain_verify_fn =
-        (matches!(block.kind, VerifyKind::Cases) && !block.trace).then(|| block.fn_name.clone());
+    let plain_verify_fn = (matches!(block.kind, VerifyKind::Cases) && !block.trace)
+        .then(|| block.source_name().to_string());
     machine.set_plain_verify_fn(plain_verify_fn);
 
     let law_context_template = if let VerifyKind::Law(law) = &block.kind {
@@ -2302,7 +2302,18 @@ fn run_verify_vm(
     for (idx, ((left_expr, right_expr), case_fns)) in
         block.cases.iter().zip(&plan.cases).enumerate()
     {
-        let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
+        let display_expr = |expr: &Spanned<Expr>| {
+            let source = crate::ast_rewrite::rewrite_idents_scoped(expr, |name| {
+                (block.process_verification.is_some() && name == block.fn_name)
+                    .then(|| Spanned::new(Expr::Ident(block.source_name().to_string()), expr.line))
+            });
+            expr_to_str(&source)
+        };
+        let case_str = format!(
+            "{} == {}",
+            display_expr(left_expr),
+            display_expr(right_expr)
+        );
         let span = block.case_spans.get(idx).cloned();
         // The largest single evaluation this case needed — guard, left or
         // right. The budget is a per-call cap, so this is the number it is
@@ -2706,7 +2717,7 @@ fn run_verify_vm(
     machine.set_plain_verify_fn(None);
     machine.set_turn_limit(None);
     VerifyResult {
-        fn_name: block.fn_name.clone(),
+        fn_name: block.source_name().to_string(),
         is_law: matches!(&block.kind, VerifyKind::Law(_)),
         block_label,
         passed,
@@ -2741,6 +2752,7 @@ mod tests {
         let src = "module M\n    effects [Time.now, Random.int]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Time.now, Random.int]\n    1\n";
         let items = parse_source(src);
         let block = VerifyBlock {
+            process_verification: None,
             fn_name: "f".to_string(),
             line: 1,
             cases: vec![],
@@ -2788,6 +2800,7 @@ mod tests {
         let src = "module M\n    effects [Tcp.sendBytes]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Tcp.sendBytes]\n    1\n";
         let items = parse_source(src);
         let block = VerifyBlock {
+            process_verification: None,
             fn_name: "f".to_string(),
             line: 1,
             cases: vec![],
@@ -2831,6 +2844,7 @@ mod tests {
         let src = "module M\n    effects [Time.now]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Time.now]\n    1\n";
         let items = parse_source(src);
         let block = VerifyBlock {
+            process_verification: None,
             fn_name: "f".to_string(),
             line: 1,
             cases: vec![],
@@ -2865,6 +2879,7 @@ mod tests {
         let src = "module M\n    effects [Console.print]\n\nfn greet() -> Unit\n    ? \"toy\"\n    ! [Console.print]\n    Console.print(\"hi\")\n";
         let items = parse_source(src);
         let block = VerifyBlock {
+            process_verification: None,
             fn_name: "greet".to_string(),
             line: 1,
             cases: vec![],
@@ -2895,6 +2910,7 @@ mod tests {
         let src = "module M\n    effects [Time.now]\n\nfn f() -> String\n    ? \"toy\"\n    ! [Time.now]\n    Time.now()\n";
         let mut items = parse_source(src);
         let blocks = vec![VerifyBlock {
+            process_verification: None,
             fn_name: "f".to_string(),
             line: 1,
             cases: vec![],
@@ -3114,6 +3130,7 @@ verify currentYear trace
             );
             let mut items = parse_source(&src);
             let blocks = vec![VerifyBlock {
+                process_verification: None,
                 fn_name: "f".to_string(),
                 line: 1,
                 cases: vec![],
@@ -3201,6 +3218,7 @@ verify currentYear trace
         // never injected (nothing named `__hostile_Time_now_frozen`
         // exists in the program above).
         let block = VerifyBlock {
+            process_verification: None,
             fn_name: "f".to_string(),
             line: 1,
             cases: vec![],

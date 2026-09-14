@@ -1,0 +1,97 @@
+module Node
+    intent = "Perturb service grouping and job observations without timing races or live effects."
+    depends [Inbox, Scoring, Ledger, Wait, Work]
+    effects [
+        Inbox.arrive,
+        Process.stopRequested,
+        Scoring.begin, Scoring.take,
+        Time.unixMs,
+        Wait.poll,
+        Work.cancel,
+        yield,
+    ]
+
+fn left() -> Unit
+    ? "The first independent process records its own id."
+    ! [Inbox.arrive, yield]
+    Inbox.arrive(1)
+
+fn right() -> Unit
+    ? "The second independent process records its own id."
+    ! [Inbox.arrive, yield]
+    Inbox.arrive(2)
+
+fn serveGroups(groups: List<List<Int>>) -> List<Int>
+    ? "Drive the generated service path in exactly the requested groups."
+    serveRemaining(__seatRight(__seatLeft(__fresh())), groups).ledger.served
+
+verify serveGroups
+    serveGroups([[1, 2]]) => [1, 2]
+    serveGroups([[2, 1]]) => [2, 1]
+    serveGroups([[1], [2]]) => [1, 2]
+    serveGroups([[2], [1]]) => [2, 1]
+    serveGroups([[1, 1, 2], [1, 2]]) => [1, 2]
+    serveGroups([[], [999], [2], [], [1]]) => [2, 1]
+
+fn serveRemaining(run: __Run, groups: List<List<Int>>) -> __Run
+    match groups
+        [] -> run
+        [ids, ..rest] -> serveRemaining(__serveEach(run, [1, 2], ids), rest)
+
+fn beginStub(path: BranchPath, index: Int, fresh: Work.Job, task: Int) -> Result<Work.Job, String>
+    ? "Mint a test handle without starting a real job."
+    Result.Ok(fresh)
+
+fn pendingThenReady(path: BranchPath, index: Int, job: Work.Job) -> Result<Option<Int>, String>
+    ? "Begin is observation 0; each turn observes stop, wait, clock, then take. Takes 4 and 8 return pending and the sole result; any later take is an error."
+    match index
+        4 -> Result.Ok(Option.None)
+        8 -> Result.Ok(Option.Some(10))
+        _ -> Result.Err("a settled job was taken again")
+
+fn falselyReady(path: BranchPath, index: Int, items: Map<Int, Wait.Item>, timeout: Int) -> Result<List<Int>, String>
+    ? "Report the original job key even after its slot has been removed."
+    Result.Ok([1])
+
+fn stoppedStub(path: BranchPath, index: Int) -> Bool
+    false
+
+fn clockStub(path: BranchPath, index: Int) -> Int
+    index
+
+fn cancelStub(path: BranchPath, index: Int, job: Work.Job) -> Unit
+    Unit
+
+fn observeJob() -> Result<Tuple<Int, Int, Int, Int>, String>
+    ? "One pending take, one successful take, then a stale readiness notification."
+    ! [Process.stopRequested, Scoring.begin, Scoring.take, Time.unixMs, Wait.poll]
+    started = __startJobsScoring(__fresh())
+    pending = __turn(started)?
+    completed = __turn(pending)?
+    late = __turn(completed)?
+    Result.Ok((Map.len(pending.jobs), Map.len(completed.jobs), late.ledger.scored, late.ledger.failures))
+
+verify observeJob
+    given begin: Scoring.begin = [beginStub]
+    given take: Scoring.take = [pendingThenReady]
+    given ready: Wait.poll = [falselyReady]
+    given stop: Process.stopRequested = [stoppedStub]
+    given clock: Time.unixMs = [clockStub]
+    observeJob() => Result.Ok((1, 0, 10, 0))
+
+fn observeCancelled() -> Result<Tuple<Int, Int, Int>, String>
+    ? "A notification for a cancelled table entry cannot land a second outcome."
+    ! [Process.stopRequested, Scoring.begin, Scoring.take, Time.unixMs, Wait.poll, Work.cancel]
+    started = __startJobsScoring(__fresh())
+    cancelled = __cancelOne(started, 1)
+    late = __turn(cancelled)?
+    Result.Ok((Map.len(late.jobs), late.ledger.scored, late.ledger.failures))
+
+verify observeCancelled
+    given begin: Scoring.begin = [beginStub]
+    given take: Scoring.take = [pendingThenReady]
+    given cancel: Work.cancel = [cancelStub]
+    given ready: Wait.poll = [falselyReady]
+    given stop: Process.stopRequested = [stoppedStub]
+    given clock: Time.unixMs = [clockStub]
+    observeCancelled() => Result.Ok((0, 0, 0))

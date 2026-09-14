@@ -7916,6 +7916,25 @@ pub(super) fn cmd_proof(
         true,  // run_law_lower — same
     );
 
+    // Process cases use the VM's dynamic Oracle counter across requests and
+    // in-place effects. The proof lifter has no equivalent driver yet.
+    let process_case = ctx
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::Verify(block) => Some(block),
+            _ => None,
+        })
+        .chain(ctx.modules.iter().flat_map(|module| &module.verify_blocks))
+        .find(|block| block.process_verification.is_some());
+    if let Some(block) = process_case {
+        eprintln!(
+            "error: process cases for '{}' currently run with `aver verify` (VM). Proof export needs a model of the request driver's dynamic Oracle counter; state proof laws over the generated process protocol instead.",
+            block.source_name()
+        );
+        std::process::exit(1);
+    }
+
     // `--allow-mathlib` is Lean-only. On Dafny it is a no-op (Z3 already carries
     // the nonlinear-floor lemmas natively, so there is no break-glass tier) —
     // warn and proceed with the unchanged Dafny path.
@@ -10975,6 +10994,7 @@ fn build_candidate_law(
         sample_guards: vec![],
     };
     let block = VerifyBlock {
+        process_verification: None,
         fn_name: fn_name.to_string(),
         line: 0,
         cases: vec![],
