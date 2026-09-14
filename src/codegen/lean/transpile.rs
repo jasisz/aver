@@ -153,7 +153,10 @@ fn emit_lifted_effectful_functions(
                     toplevel::emit_fn_def(fd, recursive_fns, ctx)
                 }
             };
-            let Some(mut code) = code else { continue };
+            let Some(code) = code else { continue };
+            // Scoped to the def/mutual command itself so the option still
+            // applies when `noncomputable section … end` wraps it below.
+            let mut code = without_smart_unfolding(code);
             if capability_opacity.emitted_component_reaches_result_proven(&component, ctx) {
                 code = format!("noncomputable section\n\n{code}\nend");
             }
@@ -448,6 +451,20 @@ fn emit_pure_component(
     out
 }
 
+/// `set_option smartUnfolding false` scoped to one emitted command. Under the
+/// pinned wall a `termination_by`/`mutual` body matching on a call that
+/// reaches the `String.toList`-based helpers (`AverUnicodeCase.toLower`,
+/// `AverString.split`, …) makes whnf's smart-unfolding path evaluate the
+/// marked match alternatives over symbolic data until the heartbeat limit —
+/// `App.Commands` in `payment_ops` died at 200k heartbeats (#1357). `in`
+/// scopes the option to the definition itself: def elaboration takes the
+/// plain whnf path that stops at the first stuck application, while theorems
+/// and law proofs keep the default unfolding they may rely on. It changes
+/// nothing about what the kernel accepts.
+fn without_smart_unfolding(code: String) -> String {
+    format!("set_option smartUnfolding false in\n{code}")
+}
+
 fn emit_pure_component_code(
     comp: &[&crate::ast::FnDef],
     scope: Option<&str>,
@@ -471,7 +488,7 @@ fn emit_pure_component_code(
                 }
                 LeanEmitMode::Standard => toplevel::emit_mutual_group(comp, ctx),
             };
-            out.push(code);
+            out.push(without_smart_unfolding(code));
             out.push(String::new());
         } else if let Some(fd) = comp.first() {
             let emitted = match emit_mode {
@@ -492,7 +509,7 @@ fn emit_pure_component_code(
                 LeanEmitMode::Standard => toplevel::emit_fn_def(fd, recursive.standard, ctx),
             };
             if let Some(code) = emitted {
-                out.push(code);
+                out.push(without_smart_unfolding(code));
                 out.push(String::new());
             }
         }

@@ -152,8 +152,8 @@ verify twice law doubling
     let main = std::fs::read_to_string(output_dir.join("Main.lean")).expect("read Main.lean");
     assert!(
         main.contains(
-            "noncomputable section\n\n/-- Validate, hash, and unwrap bytes. -/\ndef hashed"
-        ) && main.contains("\nend\n\ndef twice (n : Int) : Int :=\n  (n + n)"),
+            "noncomputable section\n\nset_option smartUnfolding false in\n/-- Validate, hash, and unwrap bytes. -/\ndef hashed"
+        ) && main.contains("\nend\n\nset_option smartUnfolding false in\ndef twice (n : Int) : Int :=\n  (n + n)"),
         "only the provider call cone should be noncomputable:\n{main}"
     );
     assert!(
@@ -667,20 +667,23 @@ verify same
     let capability = std::fs::read_to_string(output_dir.join("Cap.lean")).expect("read Cap.lean");
     assert!(
         capability.contains("noncomputable opaque hashInt : Int → Int")
-            && capability.contains("noncomputable section\n\ndef twiceHash (x : Int) : Int :=\n  Cap.hashInt (Cap.hashInt x)\n\nend"),
+            && capability.contains("noncomputable section\n\nset_option smartUnfolding false in\ndef twiceHash (x : Int) : Int :=\n  Cap.hashInt (Cap.hashInt x)\n\nend"),
         "a function inside the provider module joins the noncomputable cone:\n{capability}"
     );
     let mid = std::fs::read_to_string(output_dir.join("Mid.lean")).expect("read Mid.lean");
     assert!(
-        mid.contains("noncomputable section\n\ndef wrap"),
+        mid.contains("noncomputable section\n\nset_option smartUnfolding false in\ndef wrap"),
         "the wrapper is in the cone:\n{mid}"
     );
     let main = std::fs::read_to_string(output_dir.join("Main.lean")).expect("read Main.lean");
     assert!(
-        main.contains("noncomputable section\n\ndef w2")
-            && main.contains("noncomputable section\n\ndef both")
-            && main.contains("noncomputable section\n\ndef t")
-            && main.contains("\nend\n\ndef same (x : Int) : Int :=\n  x\n")
+        main.contains("noncomputable section\n\nset_option smartUnfolding false in\ndef w2")
+            && main
+                .contains("noncomputable section\n\nset_option smartUnfolding false in\ndef both")
+            && main.contains("noncomputable section\n\nset_option smartUnfolding false in\ndef t")
+            && main.contains(
+                "\nend\n\nset_option smartUnfolding false in\ndef same (x : Int) : Int :=\n  x\n"
+            )
             && main.contains("example : same 4 = 4 := by decide +kernel"),
         "only the cone is noncomputable; the pure sibling keeps its computable case:\n{main}"
     );

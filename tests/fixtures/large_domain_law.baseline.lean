@@ -8,6 +8,7 @@ set_option autoImplicit false
 
 namespace LargeDomainLaw
 
+set_option smartUnfolding false in
 /-- Sum of the three arguments. -/
 def tripleSum (a : Int) (b : Int) (c : Int) : Int :=
   ((a + b) + c)
