@@ -1,0 +1,56 @@
+module ModuleHelpers
+    intent = "A process enters an imported helper twice and resumes with its own live values."
+    depends [Looper, Middle, Pool, Pooled]
+    effects [Console.print, Pool.claim, yield]
+
+fn combined(id: Int) -> Int
+    ? "Retain the first result while entering the same imported helper again."
+    ! [Pool.claim, yield]
+    first = Looper.loop(id, 10)
+    second = Looper.loop(id + 1, first)
+    first + second
+
+fn delegated(id: Int) -> Int
+    ? "Tail-enter an imported helper that tail-enters a second library."
+    ! [Pool.claim, yield]
+    Middle.loop(id)
+
+fn drive(outcome: __CombinedOutcome) -> Int
+    ? "Answer both helper invocations through the caller's single protocol."
+    match outcome
+        __CombinedOutcome.Done(value) -> value
+        __CombinedOutcome.Waiting(request) -> match request
+            __CombinedRequest.Claim(peer, state) -> drive(__combinedAnswerClaim(state, peer * 2))
+            __CombinedRequest.Yield(state) -> drive(__combinedAnswerYield(state))
+
+verify drive
+    drive(__combinedStart(0)) => 22
+    drive(__combinedStart(2)) => 44
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("total = {drive(__combinedStart(2))}")
+
+fn driveDelegated(outcome: __DelegatedOutcome) -> Int
+    ? "Resume self yields and cross-module tail entries through the parent."
+    match outcome
+        __DelegatedOutcome.Done(value) -> value
+        __DelegatedOutcome.Waiting(request) -> match request
+            __DelegatedRequest.Claim(peer, state) -> driveDelegated(__delegatedAnswerClaim(state, peer * 2))
+            __DelegatedRequest.Yield(state) -> driveDelegated(__delegatedAnswerYield(state))
+
+verify driveDelegated
+    driveDelegated(__delegatedStart(0)) => 10
+    driveDelegated(__delegatedStart(2)) => 16
+
+fn offered(outcome: __CombinedOutcome) -> Option<Int>
+    ? "Read the peer of the first request without running a coordinator."
+    match outcome
+        __CombinedOutcome.Done(_) -> Option.None
+        __CombinedOutcome.Waiting(request) -> match request
+            __CombinedRequest.Claim(peer, _) -> Option.Some(peer)
+            __CombinedRequest.Yield(_) -> Option.None
+
+verify offered law firstRequest
+    given id: Int = [-1, 0, 10]
+    offered(__combinedStart(id)) => Option.Some(id)

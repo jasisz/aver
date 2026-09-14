@@ -244,6 +244,7 @@ fn an_answered_capability_runs_on_wasip2() {
         ("yield_continuations", "sum = 8"),
         ("yield_tail_stop", "one = 10, pick = 6"),
         ("yield_cross_module", "total = 6"),
+        ("yield_module_helpers", "total = 44"),
         ("yield_tail_into", "total = 20"),
         ("yield_nested", "walk = 9"),
         ("yield_nested_twice", "pairUp = 14"),

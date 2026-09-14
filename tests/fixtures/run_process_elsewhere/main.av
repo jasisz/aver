@@ -1,5 +1,5 @@
 module Node
-    intent = "Fixture: the loop is generated here, and a process written one module over is seated by nobody."
+    intent = "The entry seats one process, which enters a yielding helper from a library."
     depends [Process, Wait, Pool, Pooled, Walker]
     effects [Pool.claim, yield]
     exposes [Pending, View, order, admit, stop]
@@ -18,9 +18,7 @@ record View
 fn pooling() -> Unit
     ? "Claims handles until the pool answers None."
     ! [Pool.claim, yield]
-    match Pool.claim()
-        Option.None -> Unit
-        Option.Some(_) -> pooling()
+    Walker.walking()
 
 fn order(view: View) -> List<Int>
     ? "Every seated process, in slot order."

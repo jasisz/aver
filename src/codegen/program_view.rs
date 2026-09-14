@@ -339,6 +339,7 @@ mod tests {
             kind_line: None,
             semantics: None,
             semantics_line: None,
+            yield_protocols: Vec::new(),
         })];
         let modules = vec![mk_module("A", &["walker"]), mk_module("B", &["walker"])];
         let symbol_table = SymbolTable::build(&entry_items, &modules);

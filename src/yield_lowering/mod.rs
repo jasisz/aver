@@ -97,6 +97,13 @@ pub struct ProcessProtocol {
     pub kinds: Vec<ProtocolKind>,
 }
 
+/// Public source signature and its lowered protocol, retained across module loading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessExport {
+    pub protocol: ProcessProtocol,
+    pub effects: Vec<String>,
+}
+
 /// One request kind of one process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProtocolKind {
@@ -211,12 +218,14 @@ fn item_line(item: &TopLevel) -> Option<usize> {
 /// [`TypeCheckResult::laws`](crate::types::checker::TypeCheckResult): the
 /// loop generator cites a program's own law by name and refuses a program
 /// that does not state it.
+#[allow(clippy::too_many_arguments)]
 pub fn lower(
     items: &mut Vec<TopLevel>,
     stamped: &[TopLevel],
     stamped_errors: &[TypeError],
     marked: &crate::config::MarkedCapabilities,
     fn_sigs: &FnSigs,
+    imported: &std::collections::HashMap<String, ProcessProtocol>,
     laws: &std::collections::BTreeSet<String>,
     coordinator_stop: CoordinatorStop,
 ) -> Result<YieldLoweringReport, Vec<TypeError>> {
@@ -255,9 +264,11 @@ pub fn lower(
         return Err(errors);
     }
 
+    let callable_processes: HashSet<String> =
+        yield_fns.iter().chain(imported.keys()).cloned().collect();
     for item in stamped {
         match item {
-            TopLevel::FnDef(fd) => scan_fn(fd, &yield_fns, &mut errors),
+            TopLevel::FnDef(fd) => scan_fn(fd, &callable_processes, &mut errors),
             TopLevel::Verify(vb) => scan_verify(vb, &yield_fns, &mut errors),
             _ => {}
         }
@@ -277,7 +288,7 @@ pub fn lower(
             return Err(errors);
         }
     };
-    let mut nesting = lower::Nesting::new(yield_fns.clone());
+    let mut nesting = lower::Nesting::new(yield_fns.clone(), imported);
     let mut lowered: std::collections::HashMap<String, lower::Generated> =
         std::collections::HashMap::new();
     let mut failed: HashSet<String> = HashSet::new();
@@ -353,33 +364,8 @@ pub fn lower(
         _ => None,
     });
     let plan = marked.run();
-    // A program that asks for its loop to be generated has that loop in one
-    // module, and the loop seats the processes it can see. A process written
-    // one module over would be lowered to its protocol and then never seated,
-    // never dispatched and never answered, which is the one shape of this
-    // class that would fail silently. Say so instead.
-    if let Some(plan) = plan
-        && !coordinator::is_run_module(module_name.as_deref(), Some(plan))
-        && let Some(module_name) = module_name.as_deref()
-    {
-        let line = items
-            .iter()
-            .find_map(|item| match item {
-                TopLevel::Module(module) => Some(module.line),
-                _ => None,
-            })
-            .unwrap_or(1);
-        for lowered in &report.lowered {
-            errors.push(error_at(line, format!(
-                "aver.toml declares [run], so the loop of this program is generated into module '{}' and seats the processes written there; module '{module_name}' writes process '{lowered}', and nothing seats it. Move it into '{}', or remove [run] and drive the protocol by hand",
-                plan.policies.module(),
-                plan.policies.module()
-            )));
-        }
-    }
-    if !errors.is_empty() {
-        return Err(errors);
-    }
+    // Only the entry module seats processes. Dependency protocols are
+    // libraries: callers enter them as helpers or drive them explicitly.
     if coordinator::is_run_module(module_name.as_deref(), plan) {
         let plan = plan.expect("checked by is_run_module");
         // The loop seats the processes, and a helper is not one: it is
@@ -428,11 +414,49 @@ pub fn lower(
         }
     }
 
+    // Materialize the default export surface before replacing source process
+    // names with reserved protocol names (which the underscore rule hides).
+    let exports = crate::visibility::collect_module_exports(stamped);
+    let default_exposes: Vec<String> = exports
+        .functions
+        .iter()
+        .map(|fd| fd.name.clone())
+        .chain(
+            exports
+                .types
+                .iter()
+                .filter(|ty| !ty.is_opaque)
+                .map(|ty| match ty.def {
+                    crate::ast::TypeDef::Sum { name, .. }
+                    | crate::ast::TypeDef::Product { name, .. } => name.clone(),
+                }),
+        )
+        .collect();
     // An exposed `yield` function exposes its protocol instead.
     for item in items.iter_mut() {
         let TopLevel::Module(module) = item else {
             continue;
         };
+        if module.exposes.is_empty() {
+            module.exposes = default_exposes.clone();
+        }
+        for protocol in &report.protocols {
+            if module.exposes.contains(&protocol.fn_name) {
+                let effects = stamped
+                    .iter()
+                    .find_map(|item| match item {
+                        TopLevel::FnDef(fd) if fd.name == protocol.fn_name => {
+                            Some(fd.effects.iter().map(|e| e.node.clone()).collect())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                module.yield_protocols.push(ProcessExport {
+                    protocol: protocol.clone(),
+                    effects,
+                });
+            }
+        }
         for (fn_name, public_names) in &exposes_rewrite {
             if let Some(pos) = module.exposes.iter().position(|e| e == fn_name) {
                 module.exposes.remove(pos);
@@ -603,10 +627,10 @@ fn scan_expr(
             }
         }
         Expr::FnCall(callee, args) => {
-            if let Expr::Ident(name) = &callee.node
-                && yield_fns.contains(name)
+            if let Some(name) = build::dotted_name(callee)
+                && yield_fns.contains(&name)
             {
-                report_call(fd, name, tail, expr.line, errors);
+                report_call(fd, &name, tail, expr.line, errors);
             }
             for arg in args {
                 scan_expr(fd, arg, false, yield_fns, errors);
@@ -619,6 +643,15 @@ fn scan_expr(
             for arg in &tc.args {
                 scan_expr(fd, arg, false, yield_fns, errors);
             }
+        }
+        Expr::Ident(_) | Expr::Attr(_, _)
+            if build::dotted_name(expr).is_some_and(|name| yield_fns.contains(&name)) =>
+        {
+            let name = build::dotted_name(expr).expect("matched a process name");
+            errors.push(error_at(expr.line, format!(
+                "Yield function '{name}' cannot be passed as a function value; call it directly inside another yield function, or drive '{}(...)' explicitly",
+                qualified_start_name(&name)
+            )));
         }
         _ => expr_walk::for_each_child(expr, &mut |child| {
             scan_expr(fd, child, false, yield_fns, errors)

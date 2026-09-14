@@ -226,6 +226,7 @@ impl TypeChecker {
         if let Err(e) = self.integrate_registry(&registry) {
             self.error(e);
         }
+        self.integrate_process_protocols(modules, visible_modules);
         self.canonicalize_source_typed_builtin_sigs();
         self.register_capability_sigs();
     }

@@ -680,6 +680,10 @@ pub struct Module {
     /// `effectful`. Ordinary modules carry `None`.
     pub semantics: Option<String>,
     pub semantics_line: Option<usize>,
+    /// Compiler-owned descriptions of exposed yielding functions removed by
+    /// lowering. Importers use these signatures only to compose protocols;
+    /// no source function or runtime callable is reconstructed from a name.
+    pub yield_protocols: Vec<crate::yield_lowering::ProcessExport>,
 }
 
 /// A declaration that only a capability module may carry. Both forms

@@ -30,6 +30,7 @@ mod infer;
 pub(crate) use infer::type_is_fully_concrete;
 mod modules;
 pub mod oracle_subtypes;
+mod process_imports;
 pub mod proof_trust_header;
 
 #[cfg(test)]
@@ -80,6 +81,8 @@ pub struct TypeCheckResult {
     /// reads it to refuse a program that does not state a law the generated
     /// loop cites, before the generated module is checked.
     pub laws: std::collections::BTreeSet<String>,
+    /// Exposed dependency protocols, resolved in their declaring module's type scope.
+    pub imported_processes: HashMap<String, crate::yield_lowering::ProcessProtocol>,
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
@@ -350,6 +353,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         unused_bindings: checker.unused_warnings,
         capabilities: checker.capabilities,
         laws: checker.available_laws,
+        imported_processes: checker.imported_processes,
     }
 }
 
@@ -709,6 +713,7 @@ struct TypeChecker {
     /// [`TypeCheckResult::laws`] exports them; filled when the law
     /// dependencies are checked.
     available_laws: std::collections::BTreeSet<String>,
+    imported_processes: HashMap<String, crate::yield_lowering::ProcessProtocol>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, Type>,
     /// Local bindings in the current function/scope.
@@ -794,6 +799,7 @@ impl TypeChecker {
             type_variants,
             current_module_prefix: None,
             available_laws: std::collections::BTreeSet::new(),
+            imported_processes: HashMap::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),

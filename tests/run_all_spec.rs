@@ -611,24 +611,14 @@ fn declared_effects(dump: &str, function: &str) -> Option<String> {
     None
 }
 
-/// A process the generated loop cannot see is refused rather than lowered,
-/// seated by nobody and silently never run.
+/// Dependency yielding functions are library protocols. Only the entry
+/// process is seated, and it enters Walker's protocol through a tail call.
 #[test]
-fn a_process_written_outside_the_module_the_loop_is_generated_into_is_refused() {
-    let sentence = "module 'Walker' writes process 'walking', and nothing seats it";
+fn a_process_enters_an_imported_helper_under_the_generated_loop() {
     for command in ["check", "run"] {
         let out = aver("run_process_elsewhere", &[command]);
-        assert!(!out.status.success(), "{command}: {}", format_output(&out));
-        assert!(
-            combined(&out).contains(sentence),
-            "{command}: {}",
-            format_output(&out)
-        );
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
     }
-    assert!(
-        combined(&aver("run_process_elsewhere", &["check"])).contains("error[run-binding]:"),
-        "the refusal is slugged"
-    );
 }
 
 /// A limit above one runs rather than being refused: `started` consumes the
