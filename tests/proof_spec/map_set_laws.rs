@@ -23,6 +23,41 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
             );
         }
     }
+    // The companion proves arbitrary schedules against this exact export,
+    // including different duplicate counts; it does not replace mergeAll.
+    std::fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/formal/knowledge_proof/Schedules.lean"),
+        dir.join("Schedules.lean"),
+    )
+    .unwrap();
+    let schedules = Command::new("lake")
+        .current_dir(&dir)
+        .args(["env", "lean", "Schedules.lean"])
+        .output()
+        .unwrap();
+    assert!(schedules.status.success(), "{}", format_output(&schedules));
+    let output = String::from_utf8_lossy(&schedules.stdout);
+    for theorem in [
+        "permutation",
+        "same_contributions",
+        "any_schedule",
+        "body_stable_run",
+        "verdict_stable_run",
+    ] {
+        let prefix = format!("'KnowledgeSchedules.{theorem}' depends on axioms: [");
+        let axioms = output
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .and_then(|line| line.strip_suffix(']'))
+            .unwrap_or_else(|| panic!("missing audit for {theorem}: {output}"));
+        for axiom in axioms.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+            assert!(
+                ["propext", "Quot.sound", "Classical.choice"].contains(&axiom),
+                "{theorem}: unexpected axiom {axiom}"
+            );
+        }
+    }
     let cases = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .args(["verify", "examples/formal/knowledge.av"])

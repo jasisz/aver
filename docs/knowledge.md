@@ -30,16 +30,43 @@ state, rather than a binary merge of two Knowledge snapshots:
 | `mergeAll.swapAdjacent` | The swap remains valid inside arbitrary prefixes and suffixes. |
 | `mergeAll.duplicateAdjacent` | An adjacent duplicate can be removed inside arbitrary prefixes and suffixes. |
 
-Repeated adjacent swaps and duplicate removals explain why agreeing
-contributions can be reordered and deduplicated. The exported laws above
-are the local transformation rules; there is not yet a separate exported
-theorem quantified over arbitrary list permutations.
+The companion [Schedules.lean](../examples/formal/knowledge_proof/Schedules.lean)
+composes these exported laws into an arbitrary-schedule theorem. It imports
+the freshly generated `Knowledge` module and uses its actual `mergeAll`.
+It supplies no alternate implementation of merging.
+
+`KnowledgeSchedules.any_schedule` quantifies over any two finite lists of
+batches, without a bound on their lengths. If both contain the same set of
+contributions, every contribution is admitted, and all contributions agree
+pairwise, both schedules produce equal Knowledge from the same initial state.
+Order, batch boundaries, empty batches and duplicate counts may all differ.
+The membership premise permits different multiplicities, so the result is
+stronger than a permutation theorem. The proof uses induction and the exported merge
+laws, with only `propext`, `Classical.choice` and `Quot.sound` as axioms.
+
+Check it after exporting the model above:
+
+```sh
+cp examples/formal/knowledge_proof/Schedules.lean out/knowledge/Schedules.lean
+(cd out/knowledge && lake env lean Schedules.lean)
+```
+
+This is a reviewed companion Lean proof, checked in the Proof suite against a
+fresh Aver export. The ordinary Aver proof manifest still reports the eleven
+source laws; the test separately audits the companion's five public theorems.
 
 `body.stable` and `verdict.stable` prove that a known answer survives any
 admitted contribution consistent with the current state. An unknown answer
 may become known. The time at which that happens remains part of coordinator
 policy and replay. `count.monotone` proves that body count cannot decrease;
 count remains a changing snapshot, without a stable-answer guarantee.
+
+The companion also lifts body and verdict stability to every finite sequence
+of consistent, admitted updates. `ConsistentRun` states the condition at each
+actual intermediate state, rather than assuming that admission alone makes a
+contribution consistent with an arbitrary initial state. The theorem applies
+to every finite prefix of a continuing run. It does not assert when an unknown
+answer becomes available or that an unfair schedule eventually serves it.
 
 Verdict keys encode the length of the block key before concatenating the block
 and context keys. Thus `("ab", "c")` and `("a", "bc")` occupy different slots;
@@ -55,3 +82,27 @@ Coordinator integration remains a separate step: bind the provider, admit
 peer contributions before merging, accept verdicts only from local `Work`,
 and exercise parallel contribution processing and stable queries with `!`.
 The proofs here do not make control decisions or arbitrary snapshots commute.
+
+## Generated coordinator laws
+
+The coordinator generator emits proof obligations for its own pure transitions:
+stale answers leave slots alone and increment the dropped counter, `Later`
+preserves the request and instance, fresh instances increase, and a full job
+table offers no new task. These laws already quantify over all states and
+arguments satisfying their premises when the proof report says `universal`.
+The `given` values also support sampled VM verification; they are not the
+domain restriction of a successful universal proof.
+
+Generation alone is not proof. `aver proof --check` runs the checker, and the
+report distinguishes universal proofs from bounded or failed obligations.
+Some generated laws cite laws supplied by the program's answer module, such
+as `aStartedTaskIsNotAskedAgain`; that dependency must itself prove universally.
+The examples' green proofs do not establish a theorem about every possible
+program the generator might receive.
+
+The remaining coordinator proof work is to compose its transition invariants
+over arbitrary finite admissible histories and prove that the generated code
+preserves the direct-style request trace. `any_schedule` above covers Knowledge
+contributions; it does not claim either of those whole-coordinator results.
+Automatic schedule enumeration is optional execution testing, not a substitute
+or a prerequisite for these universal proofs.
