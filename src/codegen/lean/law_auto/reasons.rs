@@ -146,8 +146,11 @@ fn solver(
     // Apply a cited conclusion before arithmetic normalization can erase its
     // matching syntax. This is one theorem application, with every remaining
     // premise checked from the current context; no recursive rewrite loop.
+    // A premise can itself need a universally quantified citation (for example,
+    // positivity of a recursive scale). Saturate that smaller goal using the
+    // cited facts before the fallback expands the original recursive terms.
     for i in 0..fact_count {
-        lines.push(format!("{indent}| (simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; with_reducible apply _fact{i} <;> (first | assumption | omega))"));
+        lines.push(format!("{indent}| (simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; with_reducible apply _fact{i} <;> (first | assumption | omega | (with_reducible grind only)))"));
     }
     // Expose named Bool facts before simp_all substitutes their truth values.
     // Normalize multiplication by constants before Presburger arithmetic treats
