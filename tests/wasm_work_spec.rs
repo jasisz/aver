@@ -18,7 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 static UNIQUE: AtomicU64 = AtomicU64::new(0);
 
@@ -320,23 +320,30 @@ fn two_job_kinds_under_one_generated_loop_match_the_vm_on_wasm_gc() {
 /// free port, so parity here is parity over a real socket conversation.
 #[test]
 fn run_all_slice_does_the_same_work_as_the_vm_on_wasm_gc() {
-    let vm = with_peer(|port| run("run_all_slice", &[], &[port]))
+    let vm = with_peer("VM", |port| run("run_all_slice", &[], &[port]))
         .unwrap_or_else(|error| panic!("{error}"));
-    let wasm = with_peer(|port| run("run_all_slice", &["--wasm-gc"], &[port]))
-        .unwrap_or_else(|error| panic!("{error}"));
+    let wasm = with_peer("wasm-gc", |port| {
+        run("run_all_slice", &["--wasm-gc"], &[port])
+    })
+    .unwrap_or_else(|error| panic!("{error}"));
     same_lines("run_all_slice", &vm, &wasm).unwrap_or_else(|error| panic!("{error}"));
 }
 
 /// Runs one backend against a loopback peer, on a port nobody else holds.
-fn with_peer(run: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
+fn with_peer(
+    backend: &str,
+    run: impl FnOnce(&str) -> Result<String, String>,
+) -> Result<String, String> {
     let port = free_port();
     let peer = loopback_peer(port);
     let text = port.to_string();
+    let started = Instant::now();
     let ran = run(&text);
+    let elapsed = started.elapsed();
     let played = peer.join();
     let out = ran?;
     played.map_err(|_| {
-        format!("the loopback peer did not play its whole part; program output:\n{out}")
+        format!("the loopback peer did not play its whole part; {backend} ran for {elapsed:?}; program output:\n{out}")
     })?;
     Ok(out)
 }
