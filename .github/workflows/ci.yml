@@ -300,6 +300,7 @@ jobs:
             cross_backend_proptest \
             cross_backend_stress \
             guide_example_spec \
+            knowledge_provider_spec \
             shadowing_ban \
             verify_runner_regressions \
             vm_self_qualified_type \
@@ -351,6 +352,7 @@ jobs:
             wasip2_tcp_stress \
             wasip2_unicode_case \
             wasm_work_spec \
+            knowledge_provider_spec \
             work_shape_spec \
             yield_spec
           do

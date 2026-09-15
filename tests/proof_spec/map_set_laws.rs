@@ -6,7 +6,7 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
         return;
     }
     let dir = temp_output_dir("aver-knowledge-laws");
-    let (summary, run) = run_lean_check_json("examples/formal/knowledge.av", &dir, 0, &[]);
+    let (summary, run) = run_lean_check_json("examples/knowledge/knowledge.av", &dir, 0, &[]);
     assert!(run.status.success(), "{}", format_output(&run));
     assert_eq!(summary["universal_laws"], 20, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
@@ -42,7 +42,7 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
     }
     let cases = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .args(["verify", "examples/formal/knowledge.av"])
+        .args(["verify", "examples/knowledge/knowledge.av"])
         .output()
         .unwrap();
     assert!(cases.status.success(), "{}", format_output(&cases));

@@ -1,0 +1,35 @@
+module Node
+    intent = "Two peers offer duplicate content and a reader waits for local Work. Admission and stable lookups use independent products; the generated coordinator owns the ordered queue."
+    depends [Bytes, Content, Knowledge]
+    effects [Console.print, Content.offer, Content.read, yield]
+
+fn peer() -> Unit
+    ? "Reject a forged hash, then offer a valid duplicate batch. No peer can supply a verdict."
+    ! [Console.print, Content.offer, yield]
+    good = Content.Peer(hash = Knowledge.keyOf(Bytes.empty()), bytes = Bytes.empty())
+    bad = Content.Peer(hash = "forged", bytes = Bytes.empty())
+    rejected = Content.offer(bad, good)
+    accepted = Content.offer(good, good)
+    Console.print("peer: forged={rejected}, admitted={accepted}")
+
+fn duplicatePeer() -> Unit
+    ? "A second peer may deliver the same body on a different turn."
+    ! [Content.offer, yield]
+    good = Content.Peer(hash = Knowledge.keyOf(Bytes.empty()), bytes = Bytes.empty())
+    Content.offer(good, good)
+    Unit
+
+fn reader() -> Unit
+    ? "Observe the stable local verdict, then read it again after a duplicate delivery."
+    ! [Console.print, Content.offer, Content.read, yield]
+    hash = Knowledge.keyOf(Bytes.empty())
+    first = Content.read(hash)
+    same = Content.Peer(hash = hash, bytes = Bytes.empty())
+    Content.offer(same, same)
+    second = Content.read(hash)
+    Console.print("reader: stable={first == second}")
+    match second
+        Result.Err(message) -> Console.print("failed: {message}")
+        Result.Ok(snapshot) -> match snapshot.valid
+            true -> Console.print("local verdict: valid")
+            false -> Console.print("local verdict: invalid")

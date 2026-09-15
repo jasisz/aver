@@ -403,6 +403,7 @@ pub(super) fn validate_boundary_type_ownership(
     scope: &str,
     operations: &[CapabilityOperation],
     locally_declared: &BTreeSet<String>,
+    type_defs: &BTreeMap<String, &TypeDef>,
     dependencies: &[String],
     errors: &mut Vec<CapabilityError>,
 ) {
@@ -411,6 +412,7 @@ pub(super) fn validate_boundary_type_ownership(
             scope,
             operation,
             locally_declared,
+            type_defs,
             dependencies,
             seen: BTreeSet::new(),
             errors,
@@ -426,6 +428,7 @@ struct BoundaryTypeVisitor<'a, 'errors> {
     scope: &'a str,
     operation: &'a CapabilityOperation,
     locally_declared: &'a BTreeSet<String>,
+    type_defs: &'a BTreeMap<String, &'a TypeDef>,
     dependencies: &'a [String],
     seen: BTreeSet<(String, String)>,
     errors: &'errors mut Vec<CapabilityError>,
@@ -461,6 +464,36 @@ impl BoundaryTypeVisitor<'_, '_> {
                         .any(|dependency| dependency == owner)
                 }) && crate::stdlib::embedded_capability_resources()
                     .contains(name);
+                // Ownership applies to the entire reachable layout, not just
+                // the operation's outer type. Track local nodes per position
+                // before descending so recursive records/sums terminate.
+                // Compiler-owned capabilities and their adapters ship together;
+                // their nested standard layouts (e.g. Wait.Item's Tcp.Socket)
+                // are pinned by that compiler, rather than a user contract.
+                if belongs_to_capability && !crate::stdlib::has_shipped_provider(self.scope) {
+                    let local = name
+                        .strip_prefix(&format!("{}.", self.scope))
+                        .unwrap_or(name);
+                    if self.seen.insert((position.to_string(), local.to_string()))
+                        && let Some(definition) = self.type_defs.get(local)
+                    {
+                        let fields: Vec<_> = match definition {
+                            TypeDef::Product { fields, .. } => {
+                                fields.iter().map(|(_, ty)| ty).collect()
+                            }
+                            TypeDef::Sum { variants, .. } => {
+                                variants.iter().flat_map(|v| &v.fields).collect()
+                            }
+                        };
+                        let types: Vec<_> = fields
+                            .into_iter()
+                            .filter_map(|field| crate::types::parse_type_str_strict(field).ok())
+                            .collect();
+                        for field in types {
+                            self.visit(position, &field);
+                        }
+                    }
+                }
                 if !belongs_to_capability
                     && !is_standard_bytes
                     && !is_embedded_resource

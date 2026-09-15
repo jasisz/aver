@@ -1,0 +1,16 @@
+module Validation
+    kind = capability
+    semantics = effectful
+    intent = "Local deterministic validation. The worker returns a content hash and a validity flag; peers cannot submit this result."
+    depends [Bytes, Work]
+    exposes [begin, take]
+
+operation begin(task: Bytes) -> Result<Work.Job, String>
+    ? "Validate one body's nonempty-v1 rule outside the coordinator turn."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Tuple<String, Bool>>, String>
+    ? "Take the result from the local worker that owns this handle."
+    oracle = generativeOutput
+    replay = recorded

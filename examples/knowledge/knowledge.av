@@ -29,7 +29,7 @@ module Knowledge
         "The agreement premise is explicit; no hash injectivity is assumed"
         "by the kernel. See docs/knowledge.md for the exact scope."
     depends [Bytes, Crypto.Digest32]
-    exposes [Verdict, Delta, Knowledge, empty, keyOf, admit, agrees, consistent, merge, mergeAll, body, verdict, count]
+    exposes [Verdict, Delta, Knowledge, empty, keyOf, admit, agrees, consistent, merge, mergeAll, body, verdict, count, consistentRun]
     effects []
 
 type Verdict
@@ -404,11 +404,19 @@ fn allAdmitted(xs: List<Delta>) -> Bool
         [] -> true
         [d, ..rest] -> Bool.and(admit(d), allAdmitted(rest))
 
+verify allAdmitted
+    allAdmitted([]) => true
+    allAdmitted([Delta.Body("bad", Bytes.empty())]) => false
+
 fn agreesAll(a: Delta, xs: List<Delta>) -> Bool
     ? "One contribution agrees with every entry of a finite list."
     match xs
         [] -> true
         [d, ..rest] -> Bool.and(agrees(a, d), agreesAll(a, rest))
+
+verify agreesAll
+    agreesAll(Delta.Verdict("b", "c", Verdict.Valid), []) => true
+    agreesAll(Delta.Verdict("b", "c", Verdict.Valid), [Delta.Verdict("b", "c", Verdict.Invalid)]) => false
 
 fn covered(xs: List<Delta>, ys: List<Delta>) -> Bool
     ? "Every entry of xs occurs in ys, is admitted and agrees with every entry of ys. Multiplicities need not match."
@@ -416,11 +424,19 @@ fn covered(xs: List<Delta>, ys: List<Delta>) -> Bool
         [] -> true
         [d, ..rest] -> Bool.and(List.contains(ys, d), Bool.and(admit(d), Bool.and(agreesAll(d, ys), covered(rest, ys))))
 
+verify covered
+    covered([], []) => true
+    covered([Delta.Verdict("b", "c", Verdict.Valid)], []) => false
+
 fn flattenBatches(batches: List<List<Delta>>) -> List<Delta>
     ? "List the contributions of any finite schedule, retaining duplicates."
     match batches
         [] -> []
         [batch, ..rest] -> List.concat(batch, flattenBatches(rest))
+
+verify flattenBatches
+    flattenBatches([]) => []
+    flattenBatches([[], [Delta.Verdict("b", "c", Verdict.Valid)], []]) => [Delta.Verdict("b", "c", Verdict.Valid)]
 
 fn runBatches(k: Knowledge, batches: List<List<Delta>>) -> Knowledge
     ? "Apply batches in order, including empty batches."
@@ -450,3 +466,7 @@ fn consistentRun(k: Knowledge, xs: List<Delta>) -> Bool
     match xs
         [] -> true
         [d, ..rest] -> Bool.and(admit(d), Bool.and(consistent(k, d), consistentRun(merge(k, d), rest)))
+
+verify consistentRun
+    consistentRun(empty(), []) => true
+    consistentRun(empty(), [Delta.Verdict("b", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)]) => false

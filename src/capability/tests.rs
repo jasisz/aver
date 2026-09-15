@@ -462,3 +462,26 @@ fn an_undeclared_embedded_capability_resource_is_still_rejected() {
         "expected a cross-module boundary error: {errors:?}"
     );
 }
+
+#[test]
+fn nested_boundary_layouts_cannot_hide_foreign_types() {
+    for outer in ["Envelope", "Invalid.Envelope"] {
+        let source = format!(
+            "module Invalid\n    kind = capability\n    semantics = pure\n    depends [Other]\n\nrecord Envelope\n    item: Option<Local>\n\ntype Local\n    Again(List<Envelope>)\n    Value(Other.Verdict)\n\noperation f(value: {outer}) -> {outer}\n"
+        );
+        let errors = error_messages(&source);
+        for position in ["parameter 0", "result"] {
+            let expected = format!("{position} uses cross-module boundary type 'Other.Verdict'");
+            assert_eq!(
+                errors
+                    .iter()
+                    .filter(|error| error.contains(&expected))
+                    .count(),
+                1,
+                "{errors:?}"
+            );
+        }
+        let local = source.replace("Other.Verdict", "Bool");
+        assert!(error_messages(&local).is_empty());
+    }
+}
