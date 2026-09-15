@@ -1,7 +1,7 @@
 # Knowledge that grows consistently
 
 `examples/formal/knowledge.av` separates admission, merging and queries. Its
-eleven laws are universally checked by Lean; no law relies on a finite sample
+twenty laws are universally checked by Lean; no law relies on a finite sample
 domain or a `sorry`. Run the example's cases and proofs with:
 
 ```sh
@@ -30,30 +30,35 @@ state, rather than a binary merge of two Knowledge snapshots:
 | `mergeAll.swapAdjacent` | The swap remains valid inside arbitrary prefixes and suffixes. |
 | `mergeAll.duplicateAdjacent` | An adjacent duplicate can be removed inside arbitrary prefixes and suffixes. |
 
-The companion [Schedules.lean](../examples/formal/knowledge_proof/Schedules.lean)
-composes these exported laws into an arbitrary-schedule theorem. It imports
-the freshly generated `Knowledge` module and uses its actual `mergeAll`.
-It supplies no alternate implementation of merging.
-
-`KnowledgeSchedules.any_schedule` quantifies over any two finite lists of
+The ordinary Aver law `runBatches.anySchedule` quantifies over any two finite lists of
 batches, without a bound on their lengths. If both contain the same set of
 contributions, every contribution is admitted, and all contributions agree
 pairwise, both schedules produce equal Knowledge from the same initial state.
 Order, batch boundaries, empty batches and duplicate counts may all differ.
-The membership premise permits different multiplicities, so the result is
-stronger than a permutation theorem. The proof uses induction and the exported merge
-laws, with only `propext`, `Classical.choice` and `Quot.sound` as axioms.
+Its executable `covered(xs, ys)` premise says that each entry of `xs` occurs
+in `ys`, is admitted and agrees with every entry of `ys`. Coverage in both
+directions expresses equal membership and agreement; it permits different
+multiplicities. `allAdmitted` makes the admission requirement explicit for
+both flattened schedules. These predicates inspect contributions, without
+assuming equality of the resulting states.
 
-Check it after exporting the model above:
+All the laws live in [knowledge.av](../examples/formal/knowledge.av).
+`mergeAll.moveOne`, `absorbMember`, `absorbCovered` and `commuteCovered` compose
+the local merge laws into `sameContributions`; `runBatches.flatten` lifts the
+result to arbitrary batches. The source uses ordinary `given`, `when`,
+`because` and `using` clauses. The commands above generate and check the entire
+proof and report all twenty laws in the normal manifest, using only
+`propext`, `Classical.choice` and `Quot.sound` as axioms.
 
-```sh
-cp examples/formal/knowledge_proof/Schedules.lean out/knowledge/Schedules.lean
-(cd out/knowledge && lake env lean Schedules.lean)
-```
-
-This is a reviewed companion Lean proof, checked in the Proof suite against a
-fresh Aver export. The ordinary Aver proof manifest still reports the eleven
-source laws; the test separately audits the companion's five public theorems.
+The Lean exporter first tries to compose the cited facts with recursive
+functions left opaque. When a list induction is needed, it keeps guards in
+the induction motive, generalizes the other state inputs, and uses checked
+recursive equations with the cited laws to prove the base and step. It also
+tries generalizing another list when that list is a changing accumulator.
+This strategy is independent of the example's names and types; it is tested
+on a separate meter model and a growing list accumulator. A failed step stays
+an open obligation, including when all supplied samples pass. This is a
+bounded proof search for universal theorems, not a bounded schedule domain.
 
 `body.stable` and `verdict.stable` prove that a known answer survives any
 admitted contribution consistent with the current state. An unknown answer
@@ -61,8 +66,8 @@ may become known. The time at which that happens remains part of coordinator
 policy and replay. `count.monotone` proves that body count cannot decrease;
 count remains a changing snapshot, without a stable-answer guarantee.
 
-The companion also lifts body and verdict stability to every finite sequence
-of consistent, admitted updates. `ConsistentRun` states the condition at each
+`body.stableRun` and `verdict.stableRun` lift stability to every finite sequence
+of consistent, admitted updates. `consistentRun` states the condition at each
 actual intermediate state, rather than assuming that admission alone makes a
 contribution consistent with an arbitrary initial state. The theorem applies
 to every finite prefix of a continuing run. It does not assert when an unknown
@@ -102,7 +107,7 @@ program the generator might receive.
 
 The remaining coordinator proof work is to compose its transition invariants
 over arbitrary finite admissible histories and prove that the generated code
-preserves the direct-style request trace. `any_schedule` above covers Knowledge
+preserves the direct-style request trace. `runBatches.anySchedule` covers Knowledge
 contributions; it does not claim either of those whole-coordinator results.
 Automatic schedule enumeration is optional execution testing, not a substitute
 or a prerequisite for these universal proofs.

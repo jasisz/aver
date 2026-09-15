@@ -8,7 +8,7 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
     let dir = temp_output_dir("aver-knowledge-laws");
     let (summary, run) = run_lean_check_json("examples/formal/knowledge.av", &dir, 0, &[]);
     assert!(run.status.success(), "{}", format_output(&run));
-    assert_eq!(summary["universal_laws"], 11, "{summary}");
+    assert_eq!(summary["universal_laws"], 20, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
     let manifest: serde_json::Value =
@@ -23,40 +23,22 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
             );
         }
     }
-    // The companion proves arbitrary schedules against this exact export,
-    // including different duplicate counts; it does not replace mergeAll.
-    std::fs::copy(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("examples/formal/knowledge_proof/Schedules.lean"),
-        dir.join("Schedules.lean"),
-    )
-    .unwrap();
-    let schedules = Command::new("lake")
-        .current_dir(&dir)
-        .args(["env", "lean", "Schedules.lean"])
-        .output()
-        .unwrap();
-    assert!(schedules.status.success(), "{}", format_output(&schedules));
-    let output = String::from_utf8_lossy(&schedules.stdout);
-    for theorem in [
-        "permutation",
-        "same_contributions",
-        "any_schedule",
-        "body_stable_run",
-        "verdict_stable_run",
+    // These are ordinary source laws in the normal manifest, not a separately
+    // copied Lean companion. The samples do not restrict their quantifiers.
+    for name in [
+        "mergeAll.sameContributions",
+        "runBatches.anySchedule",
+        "body.stableRun",
+        "verdict.stableRun",
     ] {
-        let prefix = format!("'KnowledgeSchedules.{theorem}' depends on axioms: [");
-        let axioms = output
-            .lines()
-            .find_map(|line| line.strip_prefix(&prefix))
-            .and_then(|line| line.strip_suffix(']'))
-            .unwrap_or_else(|| panic!("missing audit for {theorem}: {output}"));
-        for axiom in axioms.split(',').map(str::trim).filter(|a| !a.is_empty()) {
-            assert!(
-                ["propext", "Quot.sound", "Classical.choice"].contains(&axiom),
-                "{theorem}: unexpected axiom {axiom}"
-            );
-        }
+        assert!(
+            manifest["laws"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|l| l["law"] == name),
+            "missing {name}: {manifest}"
+        );
     }
     let cases = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))

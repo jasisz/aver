@@ -1,0 +1,65 @@
+module CitedTransitionHistories
+    intent = "Cited transition laws compose over unbounded finite histories of a different state and event type."
+    effects []
+
+record Meter
+    total: Int
+
+fn advance(state: Meter, amount: Int) -> Meter
+    Meter(total = state.total + amount)
+
+verify advance law preservesFloor
+    given state: Meter = [Meter(total = 0)]
+    given amount: Int = [0, 2]
+    when state.total >= 0
+    when amount >= 0
+    using []
+    advance(state, amount).total >= 0 holds
+
+fn accepted(events: List<Int>) -> Bool
+    match events
+        [] -> true
+        [amount, ..rest] -> Bool.and(amount >= 0, accepted(rest))
+
+fn consume(state: Meter, events: List<Int>) -> Meter
+    match events
+        [] -> state
+        [amount, ..rest] -> consume(advance(state, amount), rest)
+
+verify consume law everyFiniteHistory
+    given events: List<Int> = [[], [1, 2]]
+    given state: Meter = [Meter(total = 0)]
+    when state.total >= 0
+    when accepted(events)
+    using [advance.preservesFloor]
+    consume(state, events).total >= 0 holds
+
+verify consume law rejectsMissingEventGuard
+    given events: List<Int> = [[], [1, 2]]
+    given state: Meter = [Meter(total = 0)]
+    when state.total >= 0
+    using [advance.preservesFloor]
+    consume(state, events).total >= 0 holds
+
+verify consume
+    consume(Meter(total = 0), [-1]).total >= 0 => false
+
+fn prependOne(xs: List<Int>, x: Int) -> List<Int>
+    List.prepend(x, xs)
+
+verify prependOne law lengthStep
+    given xs: List<Int> = [[], [1, 2]]
+    given x: Int = [0, 3]
+    using []
+    List.len(prependOne(xs, x)) => List.len(xs) + 1
+
+fn collect(acc: List<Int>, events: List<Int>) -> List<Int>
+    match events
+        [] -> acc
+        [x, ..rest] -> collect(prependOne(acc, x), rest)
+
+verify collect law growingListAccumulator
+    given acc: List<Int> = [[], [9]]
+    given events: List<Int> = [[], [1, 2]]
+    using [prependOne.lengthStep]
+    List.len(collect(acc, events)) => List.len(acc) + List.len(events)

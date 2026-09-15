@@ -146,6 +146,9 @@ pub(super) fn plan(
 /// Walk only this law's calls, resolving every edge in its owner's scope.
 /// Unsupported recursive functions stay opaque; no fuel equation is imported.
 pub(super) struct Definitions {
+    /// Checked list-recursive equations for a structural step, without
+    /// expanding the implementations summarized by cited transition laws.
+    pub(super) list_steps: String,
     pub(super) heads: String,
     pub(super) simp: String,
     pub(super) grind: String,
@@ -173,6 +176,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         .unwrap_or(&[]);
     let seen: HashSet<_> = cone.iter().copied().collect();
     let mut out = BTreeMap::new();
+    let mut list_steps = BTreeSet::new();
     let mut unfold_once = Vec::new();
     let law_calls = |builtin: &str| {
         law.because
@@ -191,6 +195,9 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         map_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.set");
         map_remove_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.remove");
         let recursive = ctx.recursive_fns.contains(&id);
+        if list_measure(fd, ctx).is_some() {
+            list_steps.insert(lean_name(fd, ctx));
+        }
         // Subtractive countdown equations expose fixed-width steps. Keep
         // floor-division recursion opaque: its equations recursively grow
         // the arithmetic search even when cited laws already summarize it.
@@ -263,6 +270,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         .collect::<Vec<_>>()
         .join(", ");
     Definitions {
+        list_steps: list_steps.into_iter().collect::<Vec<_>>().join(", "),
         heads,
         map_facts,
         map_remove_facts,

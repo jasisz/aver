@@ -23,7 +23,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
-- **Knowledge has an arbitrary-schedule companion proof.** The Lean theorem imports the actual Aver export and proves identical results for any finite ordering, batching and duplicate counts of the same admitted, agreeing contributions. Stable body and verdict answers also survive arbitrary consistent finite update sequences. The Proof suite separately audits these theorems; see `docs/knowledge.md` for their scope and the remaining coordinator proof work.
+- **Aver laws compose across arbitrary finite histories.** The Lean exporter composes cited transition laws through list induction, retaining recursive guards and generalizing changing state. The Knowledge example states all twenty laws in Aver, including equality across arbitrary ordering, batching and duplicate counts of admitted, agreeing contributions, and stable answers across consistent update sequences. Ordinary `aver proof --check` generates and checks the complete proof; see `docs/knowledge.md` for its scope and remaining coordinator work.
 
 - **Yielding helpers compose across module boundaries.** A process may directly call an exposed `yield` function from an explicit dependency, including repeated calls and tail calls through a dependency chain. The caller retains its live state and forwards the helper's requests; nominal types, declared effects and request stubs keep their module identity. With `[run]`, only entry processes are seated; imported helpers run through their callers. Ordinary callers still use the generated protocol, and yielding functions cannot be passed as callbacks.
 
