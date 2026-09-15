@@ -468,6 +468,7 @@ impl CapabilityRegistry {
             scope,
             &operations,
             &locally_declared,
+            &type_defs,
             &module.depends,
             &mut errors,
         );

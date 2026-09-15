@@ -1,0 +1,34 @@
+module Content
+    kind = capability
+    semantics = effectful
+    intent = "Peers offer content, never verdicts. Readers ask for one body's locally computed verdict."
+    depends [Bytes]
+    exposes [Peer, Snapshot, OfferReply, ReadReply, offer, read]
+
+record Peer
+    hash: String
+    bytes: Bytes
+
+record Snapshot
+    body: Bytes
+    valid: Bool
+
+type OfferReply
+    Now(Bool)
+    Later(Wait.Wake)
+    Then(Wait.Wake, Bool)
+
+type ReadReply
+    Now(Result<Content.Snapshot, String>)
+    Later(Wait.Wake)
+    Then(Wait.Wake, Result<Content.Snapshot, String>)
+
+operation offer(first: Content.Peer, second: Content.Peer) -> Bool
+    ? "Admit both contributions from their content alone, then merge and queue local validation; false leaves the entire batch out."
+    oracle = generative
+    replay = recorded
+
+operation read(hash: String) -> Result<Content.Snapshot, String>
+    ? "Wait for this body and its local nonempty-v1 verdict; a settled successful answer is stable under consistent growth."
+    oracle = generative
+    replay = recorded

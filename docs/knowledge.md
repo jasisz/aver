@@ -1,12 +1,12 @@
 # Knowledge that grows consistently
 
-`examples/formal/knowledge.av` separates admission, merging and queries. Its
+`examples/knowledge/knowledge.av` separates admission, merging and queries. Its
 twenty laws are universally checked by Lean; no law relies on a finite sample
 domain or a `sorry`. Run the example's cases and proofs with:
 
 ```sh
-aver verify examples/formal/knowledge.av
-aver proof examples/formal/knowledge.av --backend lean --check -o out/knowledge
+aver verify examples/knowledge/knowledge.av
+aver proof examples/knowledge/knowledge.av --backend lean --check -o out/knowledge
 ```
 
 Admission reads only the contribution. Headers and bodies carry the SHA-256
@@ -15,8 +15,8 @@ constructors produce admitted contributions. These theorems do not assert
 that SHA-256 is injective. The merge laws explicitly require `agrees(a, b)`:
 contributions to the same slot carry the same value. Applying this model to
 content hashes requires the application's cryptographic assumption; applying
-it to verdicts requires a deterministic local producer. The example does not
-enforce that producer boundary with a capability or a `Work` binding yet.
+it to verdicts requires a deterministic local producer. The runnable provider below enforces the peer/local-worker split; its
+query laws retain the explicit consistency premise.
 
 The merge algebra is stated over contributions and their application to a
 state, rather than a binary merge of two Knowledge snapshots:
@@ -42,7 +42,7 @@ multiplicities. `allAdmitted` makes the admission requirement explicit for
 both flattened schedules. These predicates inspect contributions, without
 assuming equality of the resulting states.
 
-All the laws live in [knowledge.av](../examples/formal/knowledge.av).
+All the laws live in [knowledge.av](../examples/knowledge/knowledge.av).
 `mergeAll.moveOne`, `absorbMember`, `absorbCovered` and `commuteCovered` compose
 the local merge laws into `sameContributions`; `runBatches.flatten` lifts the
 result to arbitrary batches. The source uses ordinary `given`, `when`,
@@ -83,10 +83,57 @@ order instance is supplied for the model's fallback comparator. The theorem
 also handles unsorted or duplicate-key lists quantified by the Lean model,
 even though an Aver program cannot construct those map representations.
 
-Coordinator integration remains a separate step: bind the provider, admit
-peer contributions before merging, accept verdicts only from local `Work`,
-and exercise parallel contribution processing and stable queries with `!`.
-The proofs here do not make control decisions or arbitrary snapshots commute.
+## A running provider and coordinator
+
+The model now lives beside its consumer in `examples/knowledge/`. Run the
+whole program, including its generated coordinator, from that project root.
+Its proof checks all 53 laws universally with no bounded or open obligations:
+
+```sh
+cd examples/knowledge
+aver check main.av
+aver verify main.av
+aver run main.av
+aver proof main.av --backend lean --check --sorry-budget 0 -o /tmp/knowledge-proof
+aver run main.av --record /tmp/knowledge-recording
+aver replay /tmp/knowledge-recording --test --diff
+```
+
+`Content` declares the peer and reader operations; `aver.toml` binds them to
+`Stored`. A peer offers two hash/body pairs. `Stored.offer` checks both hashes
+with `(admitted(first), admitted(second))!`, before changing any state. A bad
+hash rejects the entire batch. Accepted bodies enter the **same** `Knowledge`
+model proved above, then join the ordered work queue. Reversing an admitted,
+agreeing pair preserves Knowledge; the queue's order is deliberately separate.
+Duplicate queue entries are all removed when a task starts.
+
+The `Validation` job kind binds `Stored.validate`, a pure illustrative rule:
+nonempty bodies are valid in the fixed `nonempty-v1` context. This is not
+Bitcoin block validation. `Work.take` delivers the body hash and Boolean
+result to `Stored.validated`, which translates it to the model's verdict.
+There is no peer operation that accepts a verdict. Worker failure records a
+control error and adds no Knowledge. Capability boundary layouts remain local
+to their contracts; the internal model's nominal types do not cross the job
+ABI implicitly.
+
+`Stored.read` uses `!` for the body and verdict lookups. It answers
+`Now(Ok(snapshot))` only once both are known, otherwise `Later(NextTurn)` or a
+worker error. Its stable-answer law applies to the actual answer function:
+under admitted, consistent growth, a successful `Now` retains its value.
+`read.stableHistory` applies this to every finite consistent update sequence,
+with no bound on its length.
+`observed` projects exactly that successful `Now` payload; it returns `None`
+for `Later`, `Then` and errors, so the premise does not compare wake handles.
+Errors and the time an answer becomes known have no stability claim.
+
+The example has two producers and a reader. It rejects a forged hash, processes
+duplicates through local Work, and obtains the same settled answer after another
+delivery. Native VM, generated Rust and wasm integration tests execute this
+program; the VM recording is replayed with recomputation of local work.
+
+The independent products run inside the answer functions. The generated
+coordinator still orders requests, queue updates and result visibility; this
+example does not add parallel yielding calls or make control decisions commute.
 
 ## Generated coordinator laws
 

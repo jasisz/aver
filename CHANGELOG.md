@@ -6,6 +6,9 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Knowledge has a runnable provider/coordinator example in `examples/knowledge/`.** Peer batches pass content-only admission before merging into the proved model; local Work produces fixed-context verdicts, and the answer module uses independent products for admission and stable lookups. Source laws cover rejected batches, peer/local result separation and successful query stability. The standalone model moved alongside its consumer.
+- **Capability boundary ownership checks descend through nested records and sums.** A foreign represented type hidden in a local wrapper now fails at the contract boundary instead of reaching a runtime `unknown boundary type` error with an incomplete layout hash. Recursive local layouts terminate and compiler-owned standard layouts remain pinned to their shipped adapters.
+
 - **Knowledge laws now close universally in Lean.** Proven map update commutation for Int, String and Bool keys and bounded constructor analysis close the example's merge algebra. The example adds admission and contextual swap/duplicate laws and fixes ambiguous block/context verdict keys. See `docs/knowledge.md`; agreement remains an explicit premise.
 
 - **Lean composes explanation facts before splitting cases.** The final implication of a law with `because` first uses its existing hypotheses; case analysis remains available when needed. This avoids repeating normalization across unnecessary branches.
