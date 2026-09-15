@@ -181,7 +181,7 @@ pub const RECORD_COMPUTE_DOMAIN_LINE: &str =
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:0635cd6e1b5900005c317c2e7ca0f161a3f8a55efc17c29dc626580566bf2b77";
+    "sha256:a3c0e76722eee7a09f0fb85eab10d94657be52ffe059e541645c0a9c80167dd5";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///

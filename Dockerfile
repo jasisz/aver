@@ -1,6 +1,6 @@
 FROM --platform=linux/amd64 rust:1.95.0-bookworm AS builder
 
-ARG LEAN_TOOLCHAIN=leanprover/lean4:v4.33.1
+ARG LEAN_TOOLCHAIN=leanprover/lean4:v4.34.0
 ARG DAFNY_VERSION=4.11.0
 
 ENV ELAN_HOME=/opt/elan
