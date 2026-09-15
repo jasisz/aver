@@ -7,6 +7,7 @@ use super::*;
 use build::*;
 
 mod inline;
+mod tail;
 
 type Expression = Spanned<Expr>;
 type ResultExpr = Result<Expression, String>;
@@ -119,27 +120,42 @@ impl<'a> Compiler<'a> {
     }
 
     fn block(&mut self, stmts: &[Stmt], cursor: Cursor) -> ResultExpr {
-        self.sequence(stmts, cursor, &|this, value, current| {
-            Ok(this.done(value, current))
-        })
+        self.sequence(
+            stmts,
+            cursor,
+            super::super::is_yield_fn(self.function),
+            &|this, value, current| Ok(this.done(value, current)),
+        )
     }
 
-    fn sequence(&mut self, stmts: &[Stmt], cursor: Cursor, finish: &Next<'_, 'a>) -> ResultExpr {
+    fn sequence(
+        &mut self,
+        stmts: &[Stmt],
+        cursor: Cursor,
+        tail_yields: bool,
+        finish: &Next<'_, 'a>,
+    ) -> ResultExpr {
         let Some((first, rest)) = stmts.split_first() else {
             return finish(self, Spanned::new(Expr::Literal(Literal::Unit), 0), cursor);
         };
         match first {
             Stmt::Binding(name, _, expr) => self.eval(expr, cursor, &|this, value, next| {
-                let body = this.sequence(rest, next, finish)?;
+                let body = this.sequence(rest, next, tail_yields, finish)?;
                 Ok(match_expr(
                     value,
                     vec![MatchArm::new(Pattern::Ident(name.clone()), body)],
                     expr.line,
                 ))
             }),
-            Stmt::Expr(expr) if rest.is_empty() => self.eval(expr, cursor, finish),
+            Stmt::Expr(expr) if rest.is_empty() => {
+                if tail_yields {
+                    self.eval_tail(expr, cursor, finish)
+                } else {
+                    self.eval(expr, cursor, finish)
+                }
+            }
             Stmt::Expr(expr) => self.eval(expr, cursor, &|this, value, next| {
-                let body = this.sequence(rest, next, finish)?;
+                let body = this.sequence(rest, next, tail_yields, finish)?;
                 Ok(match_expr(
                     value,
                     vec![MatchArm::new(Pattern::Ident(this.name()), body)],
@@ -298,9 +314,6 @@ impl<'a> Compiler<'a> {
             });
         if let Some(helper) = helper {
             if name == self.function.name {
-                if super::super::is_yield_fn(self.function) {
-                    return self.advance(args, cursor);
-                }
                 let mut args = args;
                 args.extend([
                     cursor.inputs,
@@ -419,40 +432,6 @@ impl<'a> Compiler<'a> {
         arms.extend(
             self.model
                 .other_inputs(&format!("Answer{}", kind.name))
-                .into_iter()
-                .map(|pattern| {
-                    MatchArm::new(pattern, self.halted(query.clone(), cursor.clone(), false))
-                }),
-        );
-        let token_match = match_expr(ident(&token, 0), arms, 0);
-        Ok(match_expr(
-            cursor.inputs.clone(),
-            vec![
-                MatchArm::new(Pattern::EmptyList, self.halted(query, cursor, true)),
-                MatchArm::new(Pattern::Cons(token, rest), token_match),
-            ],
-            0,
-        ))
-    }
-
-    fn advance(&mut self, mut args: Vec<Expression>, cursor: Cursor) -> ResultExpr {
-        let token = self.name();
-        let rest = self.name();
-        let query = ctor(&format!("{}Query", self.model.upper), "Yield", vec![], 0);
-        args.extend([
-            ident(&rest, 0),
-            cursor.position.clone(),
-            cursor.events.clone(),
-            add_one(cursor.consumed.clone()),
-        ]);
-        let success = call(&self.model.source_name(self.function), args, 0);
-        let mut arms = vec![MatchArm::new(
-            Pattern::Constructor(format!("{}Input.Advance", self.model.upper), vec![]),
-            success,
-        )];
-        arms.extend(
-            self.model
-                .other_inputs("Advance")
                 .into_iter()
                 .map(|pattern| {
                     MatchArm::new(pattern, self.halted(query.clone(), cursor.clone(), false))

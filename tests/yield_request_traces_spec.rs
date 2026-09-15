@@ -195,24 +195,21 @@ fn unsupported_recursive_and_effectful_import_composition_is_explicit() {
 }
 
 #[test]
-fn tail_helper_entry_requires_explicit_stuttering_alignment() {
-    let root = repo_root().join("tests/fixtures/yield_request_trace_imports");
-    let dir = tempfile::tempdir().unwrap();
-    for name in ["looper.av", "pool.av", "pooled.av", "aver.toml"] {
-        std::fs::copy(root.join(name), dir.path().join(name)).unwrap();
+fn tail_helper_boundaries_preserve_answers_and_align_imported_prefixes() {
+    let root = repo_root().join("tests/fixtures/yield_tail_traces");
+    let mut backends = vec![vec![]];
+    if cfg!(feature = "wasm") {
+        backends.push(vec!["--wasm-gc"]);
     }
-    std::fs::write(dir.path().join("main.av"), "module Client\n    depends [Looper, Pool, Pooled]\n\nfn parent(id: Int) -> Int\n    ! [Pool.claim, yield]\n    Looper.loop(id, 0)\n\nverify __parentSourceTrace law correspondence\n    given id: Int = [1]\n    given inputs: List<__ParentTraceInput> = [[]]\n    using []\n    __parentSourceTrace(id, inputs) == __parentProtocolTrace(id, inputs) holds\n").unwrap();
-    let out = Command::new(aver_bin())
-        .arg("check")
-        .arg(dir.path().join("main.av"))
-        .arg("--module-root")
-        .arg(dir.path())
-        .output()
-        .unwrap();
-    assert!(!out.status.success(), "{}", format_output(&out));
-    assert!(
-        format_output(&out).contains("stuttering-alignment theorem"),
-        "{}",
-        format_output(&out)
-    );
+    for args in backends {
+        let out = Command::new(aver_bin())
+            .arg("verify")
+            .arg(root.join("main.av"))
+            .arg("--module-root")
+            .arg(&root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", format_output(&out));
+    }
 }

@@ -166,3 +166,90 @@ fn imported_private_helpers_preserve_universal_request_traces() {
     assert_eq!(summary["universal_laws"], 2, "{summary}");
     audit(dir.path(), 2);
 }
+
+#[test]
+fn tail_entry_alignment_is_universal_across_local_and_imported_helpers() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_tail_traces");
+    let dir = tempfile::tempdir().unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        source.join("main.av").to_str().unwrap(),
+        dir.path(),
+        0,
+        &[],
+        &["--module-root", source.to_str().unwrap()],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    for key in ["bounded_laws", "build_errors", "sorries"] {
+        assert_eq!(summary[key], 0, "{summary}");
+    }
+    assert_eq!(summary["universal_laws"], 8, "{summary}");
+    audit(dir.path(), 8);
+}
+
+#[test]
+fn tail_pause_cannot_be_counted_as_an_answer_or_hidden_from_consumption() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_tail_traces");
+    let source = tempfile::tempdir().unwrap();
+    for name in ["main.av", "leaf.av", "pool.av", "pooled.av", "aver.toml"] {
+        std::fs::copy(fixture.join(name), source.path().join(name)).unwrap();
+    }
+    let main = source.path().join("main.av");
+    let mut text = std::fs::read_to_string(&main).unwrap();
+    text.push_str(r#"
+fn brokenPause(id: Int, inputs: List<__LocalTraceInput>, answer: Bool) -> __LocalTraceLocalResult
+    observed = __localProtocolTrace(id, inputs)
+    match answer
+        true -> __LocalTraceLocalResult.update(observed, position = observed.position + 1)
+        false -> __LocalTraceLocalResult.update(observed, consumed = observed.consumed - 1)
+
+fn detectsPause(answer: Bool) -> Bool
+    inputs = [__LocalTraceInput.Advance, __LocalTraceInput.AnswerClaim(9)]
+    expected = __localSourceTrace(2, inputs)
+    broken = brokenPause(2, inputs, answer)
+    Bool.and(expected.value == broken.value, Bool.and(expected.events == broken.events, Bool.not(expected == broken)))
+
+verify detectsPause
+    detectsPause(true) => true
+    detectsPause(false) => true
+"#);
+    for (name, answer) in [("inventedAnswer", true), ("hiddenResumption", false)] {
+        text.push_str(&format!("\nverify __localSourceTrace law {name}\n    given id: Int = [2]\n    given inputs: List<__LocalTraceInput> = [[]]\n    when List.len(inputs) >= 2\n    using []\n    __localSourceTrace(id, inputs) == brokenPause(id, inputs, {answer}) holds\n"));
+    }
+    std::fs::write(&main, text).unwrap();
+    let cases = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .args([
+            "verify",
+            main.to_str().unwrap(),
+            "--module-root",
+            source.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(cases.status.success(), "{}", format_output(&cases));
+    let dir = tempfile::tempdir().unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        main.to_str().unwrap(),
+        dir.path(),
+        0,
+        &[],
+        &["--module-root", source.path().to_str().unwrap()],
+    );
+    assert!(!run.status.success(), "false pause laws passed: {summary}");
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 8, "{summary}");
+    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    for name in ["inventedAnswer", "hiddenResumption"] {
+        assert_eq!(
+            summary["obligations"][format!("__localSourceTrace.{name}.implication")],
+            "failed",
+            "{summary}"
+        );
+    }
+}

@@ -57,9 +57,12 @@ pub fn free_port() -> u16 {
 
 /// Connects to the slice's listener, which is bound inside the first turn —
 /// after the run has already been spawned — so the first attempts are
-/// expected to be refused.
+/// expected to be refused. The peer starts before the CLI parses, checks and
+/// compiles the program (including JIT on wasm). Allow that startup work to
+/// finish even when sibling tests compete for the CI runner's CPUs; this
+/// deadline does not govern the socket conversation once connected.
 pub fn connect_when_bound(port: u16) -> TcpStream {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         match TcpStream::connect(("127.0.0.1", port)) {
             Ok(stream) => return stream,

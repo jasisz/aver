@@ -49,12 +49,17 @@ impl<'a> Compiler<'a> {
                 Stmt::Expr(expr) => stmts.push(Stmt::Expr(self.rename(expr, &names))),
             }
         }
-        let result = self.sequence(&stmts, cursor, &|this, value, cursor| {
-            let active = this.inlining.pop().expect("active inline helper");
-            let result = next(this, value, cursor);
-            this.inlining.push(active);
-            result
-        });
+        let result = self.sequence(
+            &stmts,
+            cursor,
+            super::super::super::is_yield_fn(fd),
+            &|this, value, cursor| {
+                let active = this.inlining.pop().expect("active inline helper");
+                let result = next(this, value, cursor);
+                this.inlining.push(active);
+                result
+            },
+        );
         self.inlining.pop();
         result
     }
