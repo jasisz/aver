@@ -181,8 +181,9 @@ spurious job reports. Thus these structural properties need no honesty or
 consistency premise about a provider. Semantic properties of its answers still
 need the provider's own laws, such as `Stored.read.stableHistory`.
 
-The remaining proof work is to show that lowering and the effectful driver
-preserve the direct-style request trace. These history laws prove the composed
+The [source request-trace observers](yield-request-traces.md) check a supported
+subset of lowering independently. Recursive helper composition, tail-entry
+alignment and correspondence with the effectful driver remain open. These history laws prove the composed
 pure transitions; they do not establish that correspondence or termination.
 `runBatches.anySchedule` separately covers Knowledge contributions. Automatic
 schedule enumeration remains optional execution testing.

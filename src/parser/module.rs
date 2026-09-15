@@ -135,6 +135,7 @@ impl Parser {
             semantics,
             semantics_line,
             yield_protocols: Vec::new(),
+            yield_sources: Vec::new(),
         })
     }
 

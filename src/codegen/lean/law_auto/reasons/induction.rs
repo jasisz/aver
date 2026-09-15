@@ -7,7 +7,7 @@ use crate::ast::{Expr, FnDef, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::lean::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
 use crate::codegen::{CodegenContext, common};
 
-fn list_measure<'a>(fd: &FnDef, ctx: &'a CodegenContext) -> Option<&'a str> {
+pub(super) fn list_measure<'a>(fd: &FnDef, ctx: &'a CodegenContext) -> Option<&'a str> {
     match common::find_fn_contract_for_fn(ctx, fd).and_then(|c| c.recursion.as_ref()) {
         Some(crate::ir::RecursionContract::Fuel {
             fuel_metric: crate::ir::FuelMetric::SeqLenPlusOne { param },
@@ -27,7 +27,7 @@ pub(super) fn callee<'a>(
     ctx.fn_def_by_name(&key.name, key.scope_str())
 }
 
-fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
+pub(super) fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
     match common::fn_owning_scope_for(ctx, fd) {
         Some(scope) => format!(
             "{}.{}",
@@ -149,6 +149,7 @@ pub(super) struct Definitions {
     /// Checked list-recursive equations for a structural step, without
     /// expanding the implementations summarized by cited transition laws.
     pub(super) list_steps: String,
+    pub(super) list_maps: String,
     pub(super) heads: String,
     pub(super) simp: String,
     pub(super) grind: String,
@@ -177,6 +178,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     let seen: HashSet<_> = cone.iter().copied().collect();
     let mut out = BTreeMap::new();
     let mut list_steps = BTreeSet::new();
+    let mut list_maps = BTreeSet::new();
     let mut unfold_once = Vec::new();
     let law_calls = |builtin: &str| {
         law.because
@@ -197,6 +199,9 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         let recursive = ctx.recursive_fns.contains(&id);
         if list_measure(fd, ctx).is_some() {
             list_steps.insert(lean_name(fd, ctx));
+            if fd.return_type.starts_with("List<") {
+                list_maps.insert(lean_name(fd, ctx));
+            }
         }
         // Subtractive countdown equations expose fixed-width steps. Keep
         // floor-division recursion opaque: its equations recursively grow
@@ -271,6 +276,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         .join(", ");
     Definitions {
         list_steps: list_steps.into_iter().collect::<Vec<_>>().join(", "),
+        list_maps: list_maps.into_iter().collect::<Vec<_>>().join(", "),
         heads,
         map_facts,
         map_remove_facts,

@@ -82,7 +82,8 @@ pub(crate) fn emit_mir_option_constructor(
         .registry
         .option_type_idx(&canonical)
         .ok_or(WasmGcError::Validation(format!(
-            "Option constructor: instantiation `{canonical}` was not registered"
+            "Option constructor in {}: instantiation `{canonical}` was not registered",
+            ctx.self_fn_name
         )))?;
     let inner_ty = TypeRegistry::option_element_type(&canonical).ok_or(WasmGcError::Validation(
         format!("Option canonical `{canonical}` has no element type"),

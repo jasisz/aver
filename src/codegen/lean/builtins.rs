@@ -345,6 +345,7 @@ mod tests {
             symbol_table: crate::ir::SymbolTable::default(),
             current_module_scope: std::cell::RefCell::new(None),
             lean_do_block: std::cell::Cell::new(false),
+            lean_match_equations: std::cell::Cell::new(true),
             declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
             omitted_verify_cases: std::cell::RefCell::new(Vec::new()),

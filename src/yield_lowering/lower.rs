@@ -1812,6 +1812,7 @@ impl<'a> Lowering<'a> {
                         .collect(),
                 })
                 .collect(),
+            trace: None,
         };
         Ok(Generated {
             public_names,

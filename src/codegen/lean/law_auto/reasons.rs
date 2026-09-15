@@ -9,6 +9,7 @@ use crate::codegen::lean::{
     expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output},
 };
 
+mod equivalence;
 mod induction;
 mod list_induction;
 
@@ -267,12 +268,15 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         }
         let strategy_start = lines.len();
         if final_step {
-            let inductive = list_induction::candidates(
+            let mut inductive = list_induction::candidates(
                 law,
                 &definitions,
                 &format!("{hypotheses}{guard_intro}"),
                 fact_count,
             );
+            if let Some(candidate) = equivalence::candidate(law, ctx, &definitions, fact_count) {
+                inductive.push(candidate);
+            }
             // Induction supplies recursive equations and saturates its leaves.
             // Repeating saturation on the original arbitrary history after a
             // failed induction can exhaust elaboration before reporting a gap.

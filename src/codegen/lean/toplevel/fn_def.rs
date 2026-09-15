@@ -551,11 +551,16 @@ pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) 
         };
         super::expr::resolved_expr_contains_error_prop(expr)
     });
-    if fn_returns_result_typed(rfd) && uses_error_prop {
+    let previous = ctx
+        .lean_match_equations
+        .replace(ctx.recursive_fns.contains(&fn_id));
+    let emitted = if fn_returns_result_typed(rfd) && uses_error_prop {
         emit_fn_body_result_do(resolved_body, ctx)
     } else {
         emit_fn_body(resolved_body, ctx)
-    }
+    };
+    ctx.lean_match_equations.set(previous);
+    emitted
 }
 
 /// Emit mutual recursion group wrapped in `mutual ... end`.

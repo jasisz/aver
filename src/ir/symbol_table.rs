@@ -1104,6 +1104,7 @@ mod tests {
             semantics: None,
             semantics_line: None,
             yield_protocols: Vec::new(),
+            yield_sources: Vec::new(),
         }
     }
 

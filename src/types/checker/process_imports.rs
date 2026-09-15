@@ -36,6 +36,21 @@ impl TypeChecker {
                 protocol.start = qualify(&protocol.start);
                 protocol.request = qualify(&protocol.request);
                 protocol.outcome = qualify(&protocol.outcome);
+                if let Some(trace) = &mut protocol.trace {
+                    trace.input = qualify(&trace.input);
+                    trace.query = qualify(&trace.query);
+                    trace.event = qualify(&trace.event);
+                    trace.result = qualify(&trace.result);
+                    trace.source = qualify(&trace.source);
+                    for operation in &mut trace.operations {
+                        for ty in &mut operation.arg_types {
+                            *ty = annotation(&resolve(ty));
+                        }
+                        if let Some(ty) = &mut operation.answer_type {
+                            *ty = annotation(&resolve(ty));
+                        }
+                    }
+                }
                 for kind in &mut protocol.kinds {
                     kind.state = qualify(&kind.state);
                     kind.answer_fn = qualify(&kind.answer_fn);

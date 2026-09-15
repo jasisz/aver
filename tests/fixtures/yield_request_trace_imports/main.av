@@ -1,0 +1,16 @@
+module ImportTraces
+    intent = "Two calls into a library with its own private helper preserve the entire trace."
+    depends [Looper, Pool, Pooled]
+    effects [Pool.claim, yield]
+
+fn combined(id: Int) -> Int
+    ! [Pool.claim, yield]
+    first = Looper.loop(id, 10)
+    second = Looper.loop(id + 1, first)
+    first + second
+
+verify __combinedSourceTrace law correspondence
+    given id: Int = [2]
+    given inputs: List<__CombinedTraceInput> = [[], [__CombinedTraceInput.AnswerClaim(4), __CombinedTraceInput.AnswerClaim(6)]]
+    using []
+    __combinedSourceTrace(id, inputs) == __combinedProtocolTrace(id, inputs) holds
