@@ -286,6 +286,12 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 // on an arbitrary recursive result can itself exhaust isDefEq.
                 if !matches!(law.rhs.node, Expr::Literal(crate::ast::Literal::Bool(true))) {
                     lines.push("  | (simp only [Bool.and_eq_true, beq_iff_eq, List.contains_eq_mem] at *; with_reducible grind only)".to_string());
+                    // Reveal nonrecursive outer wrappers so cited conclusions
+                    // match the source call they summarize. Recursive callees
+                    // stay opaque; unfolding the full cone defeats composition.
+                    if !definitions.heads.is_empty() {
+                        lines.push(format!("  | (simp only [{}, Bool.and_eq_true, beq_iff_eq, List.contains_eq_mem] at *; with_reducible grind only)", definitions.heads));
+                    }
                 }
                 for candidate in inductive {
                     lines.push(format!("  | {candidate}"));
