@@ -104,7 +104,7 @@ fn the_default_guide_invariants_are_universal() {
         .find(|line| line.starts_with('{'))
         .unwrap_or_else(|| panic!("{}", format_output(&out)));
     let summary: serde_json::Value = serde_json::from_str(line).unwrap();
-    assert_eq!(summary["universal_laws"], 22, "{}", format_output(&out));
+    assert_eq!(summary["universal_laws"], 29, "{}", format_output(&out));
     for field in ["build_errors", "bounded_laws", "sorries"] {
         assert_eq!(summary[field], 0, "{field}: {}", format_output(&out));
     }

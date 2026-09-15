@@ -347,11 +347,23 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                         .map(|(name, _)| format!("cases {name}"))
                         .collect::<Vec<_>>()
                         .join(" <;> ");
-                    let map_facts = crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS.join(", ");
+                    let mut map_facts = crate::codegen::lean::prelude::MAP_SET_FACT_LEMMAS.to_vec();
+                    if definitions.map_remove_facts {
+                        map_facts.extend(crate::codegen::lean::prelude::MAP_REMOVE_FACT_LEMMAS);
+                    }
+                    let map_facts = map_facts.join(", ");
                     let excluded = (0..fact_count)
                         .map(|i| format!(", -_fact{i}"))
                         .collect::<String>();
-                    lines.push(format!("  | ({splits} <;> simp_all +zetaDelta [{}, {map_facts}{excluded}] <;> grind [{map_facts}])", definitions.simp));
+                    // Reveal a result predicate before splitting its event:
+                    // otherwise unchanged record fields stay hidden behind it.
+                    // Retain removal facts beside insertion facts in each arm.
+                    let heads = if definitions.heads.is_empty() {
+                        String::new()
+                    } else {
+                        format!("(try simp only [{}] at *) <;> ", definitions.heads)
+                    };
+                    lines.push(format!("  | ({heads}{splits} <;> simp_all +zetaDelta [{}, {map_facts}{excluded}] <;> grind [{map_facts}])", definitions.simp));
                 }
                 lines.push("  |".to_string());
                 for call in cases {

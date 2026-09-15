@@ -14,7 +14,7 @@ fn knowledge_provider_and_coordinator_laws_are_universal_and_audited() {
         &["--module-root", "examples/knowledge"],
     );
     assert!(run.status.success(), "{}", format_output(&run));
-    assert_eq!(summary["universal_laws"], 53, "{summary}");
+    assert_eq!(summary["universal_laws"], 62, "{summary}");
     for key in ["bounded_laws", "build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
@@ -33,6 +33,9 @@ fn knowledge_provider_and_coordinator_laws_are_universal_and_audited() {
         "Stored.validated.workCannotRewriteBodies",
         "Knowledge.runBatches.anySchedule",
         "__consumedValidation.aStartedTaskIsNotAskedAgain",
+        "__historyRun.noNewProcesses",
+        "__historyRun.jobsStayWithinLimit",
+        "__historyRun.retiredInstanceNeverReturns",
     ] {
         assert!(laws.iter().any(|law| law["law"] == name), "missing {name}");
     }

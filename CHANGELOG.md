@@ -26,6 +26,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
+- **Generated coordinators carry universal finite-history laws.** Each `[run]` program gets a concrete event type and history fold over its own pure transitions. Lean checks that process slots never grow after seating, all job kinds stay within the shared limit, and retired request instances never return, under explicit control preconditions. No schedule-length bound or runtime history log is introduced; correspondence with the effectful driver and source request traces remains separate. See `docs/knowledge.md`.
+
 - **Aver laws compose across arbitrary finite histories.** The Lean exporter composes cited transition laws through list induction, retaining recursive guards and generalizing changing state. The Knowledge example states all twenty laws in Aver, including equality across arbitrary ordering, batching and duplicate counts of admitted, agreeing contributions, and stable answers across consistent update sequences. Ordinary `aver proof --check` generates and checks the complete proof; see `docs/knowledge.md` for its scope and remaining coordinator work.
 
 - **Yielding helpers compose across module boundaries.** A process may directly call an exposed `yield` function from an explicit dependency, including repeated calls and tail calls through a dependency chain. The caller retains its live state and forwards the helper's requests; nominal types, declared effects and request stubs keep their module identity. With `[run]`, only entry processes are seated; imported helpers run through their callers. Ordinary callers still use the generated protocol, and yielding functions cannot be passed as callbacks.
