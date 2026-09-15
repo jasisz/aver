@@ -94,6 +94,11 @@ pub(crate) fn emit_mir_option_constructor(
             if emit_mir_expr(func, p, slots, ctx)?.is_none() {
                 return Ok(None);
             }
+            // Unit expressions still run, but leave no stack value. Option's
+            // payload field needs the same i32 placeholder as Result<Unit, E>.
+            if t_aver.trim() == "Unit" {
+                func.instruction(&Instruction::I32Const(0));
+            }
         }
         None => {
             func.instruction(&Instruction::I32Const(OPTION_NONE_TAG));

@@ -126,7 +126,7 @@ impl<'a> Compiler<'a> {
 
     fn sequence(&mut self, stmts: &[Stmt], cursor: Cursor, finish: &Next<'_, 'a>) -> ResultExpr {
         let Some((first, rest)) = stmts.split_first() else {
-            return finish(self, ident("Unit", 0), cursor);
+            return finish(self, Spanned::new(Expr::Literal(Literal::Unit), 0), cursor);
         };
         match first {
             Stmt::Binding(name, _, expr) => self.eval(expr, cursor, &|this, value, next| {

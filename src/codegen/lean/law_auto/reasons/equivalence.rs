@@ -13,7 +13,14 @@ pub(super) fn candidate(
     definitions: &Definitions,
     fact_count: usize,
 ) -> Option<String> {
-    if definitions.list_steps.is_empty() {
+    // An incidental list helper in a scalar/record operation (e.g. a hash
+    // encoder) is not the law's induction input. Keep its established solver.
+    if definitions.list_steps.is_empty()
+        || !law
+            .givens
+            .iter()
+            .any(|given| given.type_name.starts_with("List<"))
+    {
         return None;
     }
     let (left, right) = match &law.lhs.node {
