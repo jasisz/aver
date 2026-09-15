@@ -8,7 +8,7 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
     let dir = temp_output_dir("aver-knowledge-laws");
     let (summary, run) = run_lean_check_json("examples/formal/knowledge.av", &dir, 0, &[]);
     assert!(run.status.success(), "{}", format_output(&run));
-    assert_eq!(summary["universal_laws"], 11, "{summary}");
+    assert_eq!(summary["universal_laws"], 20, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
     let manifest: serde_json::Value =
@@ -22,6 +22,23 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
                 "{law}"
             );
         }
+    }
+    // These are ordinary source laws in the normal manifest, not a separately
+    // copied Lean companion. The samples do not restrict their quantifiers.
+    for name in [
+        "mergeAll.sameContributions",
+        "runBatches.anySchedule",
+        "body.stableRun",
+        "verdict.stableRun",
+    ] {
+        assert!(
+            manifest["laws"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|l| l["law"] == name),
+            "missing {name}: {manifest}"
+        );
     }
     let cases = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))

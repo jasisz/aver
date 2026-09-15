@@ -21,10 +21,11 @@ module Knowledge
         "below show it: two verdicts for one block in one context with"
         "different values do not commute, and they do not agree."
         ""
-        "All eleven laws close universally in Lean, including admission of"
+        "All twenty laws close universally in Lean, including admission of"
         "constructed content contributions, merge commutativity/idempotence,"
         "batch grouping, adjacent swaps and duplicate removal inside arbitrary"
-        "prefixes/suffixes, stable body/verdict answers and monotone count."
+        "prefixes/suffixes, arbitrary batch schedules and duplicate counts,"
+        "stable body/verdict answers over consistent runs and monotone count."
         "The agreement premise is explicit; no hash injectivity is assumed"
         "by the kernel. See docs/knowledge.md for the exact scope."
     depends [Bytes, Crypto.Digest32]
@@ -245,6 +246,58 @@ verify mergeAll law duplicateAdjacent
     using [merge.idempotent, mergeAll.appends]
     mergeAll(k, List.concat(prefix, List.concat([a, a], suffix))) => mergeAll(k, List.concat(prefix, List.concat([a], suffix)))
 
+verify mergeAll law moveOne
+    given k: Knowledge = [empty()]
+    given a: Delta = [Delta.Verdict("a", "c", Verdict.Valid)]
+    given xs: List<Delta> = [[], [Delta.Verdict("b", "c", Verdict.Invalid)]]
+    when admit(a)
+    when allAdmitted(xs)
+    when agreesAll(a, xs)
+    using [merge.commutative]
+    mergeAll(merge(k, a), xs) => merge(mergeAll(k, xs), a)
+
+verify mergeAll law absorbMember
+    given k: Knowledge = [empty()]
+    given a: Delta = [Delta.Verdict("a", "c", Verdict.Valid)]
+    given xs: List<Delta> = [[Delta.Verdict("a", "c", Verdict.Valid)], [Delta.Verdict("b", "c", Verdict.Invalid), Delta.Verdict("a", "c", Verdict.Valid)]]
+    when admit(a)
+    when allAdmitted(xs)
+    when agreesAll(a, xs)
+    when List.contains(xs, a)
+    using [merge.commutative, merge.idempotent]
+    mergeAll(merge(k, a), xs) => mergeAll(k, xs)
+
+verify mergeAll law absorbCovered
+    given k: Knowledge = [empty()]
+    given xs: List<Delta> = [[], [Delta.Verdict("a", "c", Verdict.Valid)]]
+    given ys: List<Delta> = [[Delta.Verdict("a", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)]]
+    when covered(xs, ys)
+    when allAdmitted(ys)
+    using [mergeAll.absorbMember]
+    mergeAll(mergeAll(k, xs), ys) => mergeAll(k, ys)
+
+verify mergeAll law commuteCovered
+    given k: Knowledge = [empty()]
+    given xs: List<Delta> = [[], [Delta.Verdict("a", "c", Verdict.Valid)]]
+    given ys: List<Delta> = [[Delta.Verdict("a", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)]]
+    when covered(xs, ys)
+    when allAdmitted(ys)
+    using [mergeAll.moveOne]
+    mergeAll(mergeAll(k, xs), ys) => mergeAll(mergeAll(k, ys), xs)
+
+verify mergeAll law sameContributions
+    given k: Knowledge = [empty()]
+    given xs: List<Delta> = [[], [Delta.Verdict("a", "c", Verdict.Valid)], [Delta.Verdict("a", "c", Verdict.Valid), Delta.Verdict("b", "c", Verdict.Invalid)]]
+    given ys: List<Delta> = [[], [Delta.Verdict("a", "c", Verdict.Valid), Delta.Verdict("a", "c", Verdict.Valid)], [Delta.Verdict("b", "c", Verdict.Invalid), Delta.Verdict("a", "c", Verdict.Valid)]]
+    when covered(xs, ys)
+    when covered(ys, xs)
+    when allAdmitted(xs)
+    when allAdmitted(ys)
+    because mergeAll(mergeAll(k, xs), ys) == mergeAll(k, ys)
+    because mergeAll(mergeAll(k, ys), xs) == mergeAll(k, xs)
+    using [mergeAll.absorbCovered, mergeAll.commuteCovered]
+    mergeAll(k, xs) => mergeAll(k, ys)
+
 fn body(k: Knowledge, hash: String) -> Option<Bytes>
     ? "The body known under a hash, if any. A stable answer: once Some, it stays that Some under every consistent merge."
     Map.get(k.bodies, hash)
@@ -263,6 +316,16 @@ verify body law stable
     when consistent(k, d)
     because keepsBody(h, v, d)
     body(merge(k, d), h) => Option.Some(v)
+
+verify body law stableRun
+    given k: Knowledge = [merge(empty(), bodyOf(Bytes.fromList([1])))]
+    given xs: List<Delta> = [[], [Delta.Verdict("a", "c", Verdict.Valid)]]
+    given h: String = [keyOf(Bytes.fromList([1]))]
+    given v: Bytes = [Bytes.fromList([1])]
+    when consistentRun(k, xs)
+    when body(k, h) == Option.Some(v)
+    using [body.stable]
+    body(mergeAll(k, xs), h) => Option.Some(v)
 
 fn keepsBody(hash: String, bytes: Bytes, delta: Delta) -> Bool
     ? "Why a consistent contribution cannot withdraw a known body: it either lands under another key, or it carries the very bytes already known under this one."
@@ -297,6 +360,17 @@ verify verdict law stable
     because keepsVerdict(blockHash, contextHash, v, d)
     verdict(merge(k, d), blockHash, contextHash) => Option.Some(v)
 
+verify verdict law stableRun
+    given k: Knowledge = [merge(empty(), Delta.Verdict("a", "c", Verdict.Valid))]
+    given xs: List<Delta> = [[], [Delta.Verdict("b", "c", Verdict.Invalid)]]
+    given b: String = ["a"]
+    given c: String = ["c"]
+    given v: Verdict = [Verdict.Valid]
+    when consistentRun(k, xs)
+    when verdict(k, b, c) == Option.Some(v)
+    using [verdict.stable]
+    verdict(mergeAll(k, xs), b, c) => Option.Some(v)
+
 fn keepsVerdict(blockHash: String, contextHash: String, v: Verdict, delta: Delta) -> Bool
     ? "Why a consistent contribution cannot withdraw a known verdict: it either judges another block or context, or it carries the very verdict already known."
     match delta
@@ -323,3 +397,56 @@ verify count law monotone
     given k: Knowledge = [empty(), merge(empty(), bodyOf(Bytes.fromList([9]))), merge(empty(), Delta.Verdict("b", "c", Verdict.Valid))]
     given delta: Delta = [bodyOf(Bytes.fromList([1])), bodyOf(Bytes.fromList([9])), headerOf(Bytes.fromList([1])), Delta.Verdict("b", "c", Verdict.Invalid)]
     count(merge(k, delta)) >= count(k) holds
+
+fn allAdmitted(xs: List<Delta>) -> Bool
+    ? "Every contribution passes admission, with no bound on the list."
+    match xs
+        [] -> true
+        [d, ..rest] -> Bool.and(admit(d), allAdmitted(rest))
+
+fn agreesAll(a: Delta, xs: List<Delta>) -> Bool
+    ? "One contribution agrees with every entry of a finite list."
+    match xs
+        [] -> true
+        [d, ..rest] -> Bool.and(agrees(a, d), agreesAll(a, rest))
+
+fn covered(xs: List<Delta>, ys: List<Delta>) -> Bool
+    ? "Every entry of xs occurs in ys, is admitted and agrees with every entry of ys. Multiplicities need not match."
+    match xs
+        [] -> true
+        [d, ..rest] -> Bool.and(List.contains(ys, d), Bool.and(admit(d), Bool.and(agreesAll(d, ys), covered(rest, ys))))
+
+fn flattenBatches(batches: List<List<Delta>>) -> List<Delta>
+    ? "List the contributions of any finite schedule, retaining duplicates."
+    match batches
+        [] -> []
+        [batch, ..rest] -> List.concat(batch, flattenBatches(rest))
+
+fn runBatches(k: Knowledge, batches: List<List<Delta>>) -> Knowledge
+    ? "Apply batches in order, including empty batches."
+    match batches
+        [] -> k
+        [batch, ..rest] -> runBatches(mergeAll(k, batch), rest)
+
+verify runBatches law flatten
+    given k: Knowledge = [empty()]
+    given batches: List<List<Delta>> = [[], [[]], [[Delta.Verdict("a", "c", Verdict.Valid)], [], [Delta.Verdict("b", "c", Verdict.Invalid)]]]
+    using [mergeAll.appends]
+    runBatches(k, batches) => mergeAll(k, flattenBatches(batches))
+
+verify runBatches law anySchedule
+    given k: Knowledge = [empty()]
+    given first: List<List<Delta>> = [[], [[Delta.Verdict("a", "c", Verdict.Valid)], [Delta.Verdict("b", "c", Verdict.Invalid)]]]
+    given second: List<List<Delta>> = [[[]], [[], [Delta.Verdict("b", "c", Verdict.Invalid), Delta.Verdict("a", "c", Verdict.Valid), Delta.Verdict("a", "c", Verdict.Valid)]]]
+    when covered(flattenBatches(first), flattenBatches(second))
+    when covered(flattenBatches(second), flattenBatches(first))
+    when allAdmitted(flattenBatches(first))
+    when allAdmitted(flattenBatches(second))
+    using [runBatches.flatten, mergeAll.sameContributions]
+    runBatches(k, first) => runBatches(k, second)
+
+fn consistentRun(k: Knowledge, xs: List<Delta>) -> Bool
+    ? "Every update is admitted and consistent with its actual intermediate state."
+    match xs
+        [] -> true
+        [d, ..rest] -> Bool.and(admit(d), Bool.and(consistent(k, d), consistentRun(merge(k, d), rest)))

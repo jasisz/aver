@@ -10,6 +10,7 @@ use crate::codegen::lean::{
 };
 
 mod induction;
+mod list_induction;
 
 pub(in crate::codegen::lean) struct ReasonClaim<'a> {
     pub base: &'a str,
@@ -100,6 +101,7 @@ fn solver(
     indent: &str,
     fact_count: usize,
     report_open: bool,
+    saturate: bool,
 ) -> Vec<String> {
     // Cited theorems remain available to grind, but are not unconditional
     // rewrite rules: an accumulator equation can rewrite its own result.
@@ -144,7 +146,7 @@ fn solver(
     // matching syntax. This is one theorem application, with every remaining
     // premise checked from the current context; no recursive rewrite loop.
     for i in 0..fact_count {
-        lines.push(format!("{indent}| (simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; apply _fact{i} <;> (first | assumption | omega))"));
+        lines.push(format!("{indent}| (simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; with_reducible apply _fact{i} <;> (first | assumption | omega))"));
     }
     // Expose named Bool facts before simp_all substitutes their truth values.
     // Normalize multiplication by constants before Presburger arithmetic treats
@@ -153,21 +155,23 @@ fn solver(
         "{indent}| ((try simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, {}] at *) <;> simp_all +zetaDelta [Int.mul_assoc, Int.add_assoc, {simp_defs}] <;> omega)",
         definitions.simp
     ));
-    lines.push(format!(
-        "{indent}| ((try simp only [List.contains_eq_mem]); grind [{grind_defs}])"
-    ));
-    let mut steps = Vec::new();
-    for (name, reason) in &definitions.unfold_once {
-        let location = if *reason { " at *" } else { "" };
-        steps.push(format!(
-            "(try rw [{name}.eq_def]{location}) <;> (try simp only [{}] at *)",
-            definitions.simp
-        ));
-        let prefix = steps.join(" <;> ");
+    if saturate {
         lines.push(format!(
-            "{indent}| ((try simp only [{}] at *) <;> {prefix} <;> grind [{grind_defs}])",
-            definitions.simp
+            "{indent}| ((try simp only [List.contains_eq_mem]); grind [{grind_defs}])"
         ));
+        let mut steps = Vec::new();
+        for (name, reason) in &definitions.unfold_once {
+            let location = if *reason { " at *" } else { "" };
+            steps.push(format!(
+                "(try rw [{name}.eq_def]{location}) <;> (try simp only [{}] at *)",
+                definitions.simp
+            ));
+            let prefix = steps.join(" <;> ");
+            lines.push(format!(
+                "{indent}| ((try simp only [{}] at *) <;> {prefix} <;> grind [{grind_defs}])",
+                definitions.simp
+            ));
+        }
     }
     if report_open {
         lines.push(format!(
@@ -263,6 +267,38 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         }
         let strategy_start = lines.len();
         if final_step {
+            let inductive = list_induction::candidates(
+                law,
+                &definitions,
+                &format!("{hypotheses}{guard_intro}"),
+                fact_count,
+            );
+            // Induction supplies recursive equations and saturates its leaves.
+            // Repeating saturation on the original arbitrary history after a
+            // failed induction can exhaust elaboration before reporting a gap.
+            // Explicit explanations still need their equations: a proved
+            // recursive Bool reason may expose the conclusion only by unfolding.
+            let saturate = inductive.is_empty() || !law.because.is_empty();
+            if !inductive.is_empty() {
+                lines.push("  first".to_string());
+                // Compose equations before spending work on induction. Bool
+                // invariants go straight to induction: matching a predicate
+                // on an arbitrary recursive result can itself exhaust isDefEq.
+                if !matches!(law.rhs.node, Expr::Literal(crate::ast::Literal::Bool(true))) {
+                    lines.push("  | (simp only [Bool.and_eq_true, beq_iff_eq, List.contains_eq_mem] at *; with_reducible grind only)".to_string());
+                    // Reveal nonrecursive outer wrappers so cited conclusions
+                    // match the source call they summarize. Recursive callees
+                    // stay opaque; unfolding the full cone defeats composition.
+                    if !definitions.heads.is_empty() {
+                        lines.push(format!("  | (simp only [{}, Bool.and_eq_true, beq_iff_eq, List.contains_eq_mem] at *; with_reducible grind only)", definitions.heads));
+                    }
+                }
+                for candidate in inductive {
+                    lines.push(format!("  | {candidate}"));
+                }
+                lines.push("  |".to_string());
+            }
+            let final_start = lines.len();
             let cases = law
                 .because
                 .iter()
@@ -281,7 +317,14 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                     .is_some_and(|count| count <= 16);
             if cases.is_empty() && !split_maps {
                 lines.push("  all_goals".to_string());
-                lines.extend(solver(&definitions, &label, "    ", fact_count, true));
+                lines.extend(solver(
+                    &definitions,
+                    &label,
+                    "    ",
+                    fact_count,
+                    true,
+                    saturate,
+                ));
             } else {
                 // Earlier explanations already carry the facts needed by the
                 // implication. Try composing them before fun_cases multiplies
@@ -290,7 +333,14 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 // into the existing case-analysis strategy below.
                 lines.push("  first".to_string());
                 lines.push("  |".to_string());
-                lines.extend(solver(&definitions, &label, "    ", fact_count, false));
+                lines.extend(solver(
+                    &definitions,
+                    &label,
+                    "    ",
+                    fact_count,
+                    false,
+                    saturate,
+                ));
                 if split_maps {
                     let splits = sum_givens
                         .iter()
@@ -308,7 +358,19 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                     lines.push(format!("    all_goals try fun_cases {call}"));
                 }
                 lines.push("    all_goals".to_string());
-                lines.extend(solver(&definitions, &label, "      ", fact_count, true));
+                lines.extend(solver(
+                    &definitions,
+                    &label,
+                    "      ",
+                    fact_count,
+                    true,
+                    saturate,
+                ));
+            }
+            if final_start > strategy_start {
+                for line in &mut lines[final_start..] {
+                    *line = format!("  {line}");
+                }
             }
         } else {
             if let Some(plan) = &plans[index] {
@@ -329,7 +391,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 "  all_goals repeat' first | (intro) | (split) | (dsimp only; split) | apply {and_rule}"
             ));
             lines.push("  all_goals".to_string());
-            lines.extend(solver(&definitions, &label, "    ", fact_count, true));
+            lines.extend(solver(&definitions, &label, "    ", fact_count, true, true));
             previous.push(format!("h_reason{index}"));
         }
         // First use the named facts without expanding their dependency cones.
