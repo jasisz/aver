@@ -684,6 +684,10 @@ pub struct Module {
     /// lowering. Importers use these signatures only to compose protocols;
     /// no source function or runtime callable is reconstructed from a name.
     pub yield_protocols: Vec<crate::yield_lowering::ProcessExport>,
+    /// Independently retained source definitions before process lowering,
+    /// including private helpers. These are proof metadata, never callable
+    /// declarations or additions to the module's export surface.
+    pub yield_sources: Vec<FnDef>,
 }
 
 /// A declaration that only a capability module may carry. Both forms

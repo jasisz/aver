@@ -551,11 +551,24 @@ pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) 
         };
         super::expr::resolved_expr_contains_error_prop(expr)
     });
-    if fn_returns_result_typed(rfd) && uses_error_prop {
+    // The function's own law tactics use its match equations to retain
+    // constructor premises. Nonrecursive helpers need no termination evidence;
+    // their callers instead benefit from directly reducing the returned value.
+    let owns_law = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .any(|law| law.fn_id == fn_id);
+    let previous = ctx
+        .lean_match_equations
+        .replace(ctx.recursive_fns.contains(&fn_id) || owns_law);
+    let emitted = if fn_returns_result_typed(rfd) && uses_error_prop {
         emit_fn_body_result_do(resolved_body, ctx)
     } else {
         emit_fn_body(resolved_body, ctx)
-    }
+    };
+    ctx.lean_match_equations.set(previous);
+    emitted
 }
 
 /// Emit mutual recursion group wrapped in `mutual ... end`.

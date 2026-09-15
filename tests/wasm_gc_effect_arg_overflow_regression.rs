@@ -720,3 +720,33 @@ fn main() -> Unit
          (the VM's clamp), matching the pure-builtin saturating path; got stdout {out:?}"
     );
 }
+
+#[test]
+fn option_unit_keeps_its_payload_slot_and_runs_the_payload_effect_once() {
+    let source = r#"
+fn present(value: Unit) -> Option<Unit>
+    Option.Some(value)
+
+fn absent() -> Option<Unit>
+    Option.None
+
+fn effectful() -> Option<Unit>
+    ! [Console.print]
+    Option.Some(Console.print("payload"))
+
+fn describe(value: Option<Unit>) -> String
+    match value
+        Option.Some(_) -> "some"
+        Option.None -> "none"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(describe(present(Unit)))
+    Console.print(describe(absent()))
+    Console.print(describe(effectful()))
+"#;
+    assert_eq!(
+        run_wasm_gc(source).expect("Option<Unit> runs"),
+        "some\nnone\npayload\nsome\n"
+    );
+}

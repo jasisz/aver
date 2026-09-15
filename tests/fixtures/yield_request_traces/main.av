@@ -1,0 +1,95 @@
+module RequestTraces
+    intent = "Compare retained direct-style source with the generated protocol for every finite answer and resumption tape."
+    depends [Pool, Pooled]
+    exposes [branch, count, mixed, ignored]
+    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs, yield]
+
+fn branch(id: Int) -> Int
+    ? "Both initial requests happen even when the first answer ends the computation."
+    ! [Pool.claim, yield]
+    first = Pool.claim(id)
+    second = Pool.claim(id + 1)
+    match first
+        Option.None -> 0
+        Option.Some(a) -> match second
+            Option.None -> a
+            Option.Some(b) -> match Pool.claim(a + b)
+                Option.None -> a + b
+                Option.Some(c) -> a + b + c
+
+fn count(n: Int) -> Int
+    ? "Answers may increase n; only the finite input tape bounds the observation."
+    ! [Pool.claim, yield]
+    match n <= 0
+        true -> 0
+        false -> match Pool.claim(n)
+            Option.None -> 0
+            Option.Some(value) -> count(value)
+
+fn read(id: Int) -> Int
+    ? "Private yielding helper whose consumed prefix is returned to its caller."
+    ! [Pool.claim, yield]
+    match Pool.claim(id)
+        Option.None -> 0
+        Option.Some(value) -> value
+
+fn mixed(id: Int) -> Result<Int, String>
+    ? "Two private helper calls, a Unit answer and a distinct request kind share one executed-call position."
+    ! [Pool.claim, Pool.finish, Pool.notice, yield]
+    first = read(id)
+    second = read(id + 1)
+    Pool.notice(first + second)
+    value = Pool.finish(first + second)?
+    Result.Ok(value + first)
+
+fn ignored(id: Int) -> Int
+    ? "Same final value for every answer: preserving only the result would miss all requests."
+    ! [Pool.claim, yield]
+    Pool.claim(id)
+    Pool.claim(id + 1)
+    0
+
+verify __branchSourceTrace law correspondence
+    given id: Int = [1]
+    given inputs: List<__BranchTraceInput> = [[], [__BranchTraceInput.AnswerClaim(Option.Some(2)), __BranchTraceInput.AnswerClaim(Option.Some(3)), __BranchTraceInput.AnswerClaim(Option.Some(10))]]
+    using []
+    __branchSourceTrace(id, inputs) == __branchProtocolTrace(id, inputs) holds
+
+verify __countSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__CountTraceInput> = [[], [__CountTraceInput.AnswerClaim(Option.Some(10)), __CountTraceInput.Advance, __CountTraceInput.AnswerClaim(Option.None)]]
+    using []
+    __countSourceTrace(n, inputs) == __countProtocolTrace(n, inputs) holds
+
+verify __mixedSourceTrace law correspondence
+    given id: Int = [1]
+    given inputs: List<__MixedTraceInput> = [[], [__MixedTraceInput.AnswerClaim(Option.Some(2)), __MixedTraceInput.AnswerClaim(Option.Some(3)), __MixedTraceInput.AnswerNotice(Unit), __MixedTraceInput.AnswerFinish(Result.Ok(7))]]
+    using []
+    __mixedSourceTrace(id, inputs) == __mixedProtocolTrace(id, inputs) holds
+
+verify __ignoredSourceTrace law correspondence
+    given id: Int = [1]
+    given inputs: List<__IgnoredTraceInput> = [[], [__IgnoredTraceInput.AnswerClaim(Option.Some(2)), __IgnoredTraceInput.AnswerClaim(Option.Some(3))]]
+    using []
+    __ignoredSourceTrace(id, inputs) == __ignoredProtocolTrace(id, inputs) holds
+
+fn readTime() -> Int
+    ? "An ordinary effectful helper must also return the executed oracle position."
+    ! [Time.unixMs]
+    Time.unixMs()
+
+fn timed(id: Int) -> Int
+    ? "The trace includes in-place effects on both sides of a suspension."
+    ! [Pool.claim, Time.unixMs, yield]
+    before = readTime()
+    answer = Pool.claim(id)
+    after = Time.unixMs()
+    match answer
+        Option.None -> after - before
+        Option.Some(value) -> value + after - before
+
+verify __timedSourceTrace law correspondence
+    given id: Int = [1]
+    given inputs: List<__TimedTraceInput> = [[], [__TimedTraceInput.AnswerHostTimeUnixMs(100), __TimedTraceInput.AnswerClaim(Option.Some(5)), __TimedTraceInput.AnswerHostTimeUnixMs(110)]]
+    using []
+    __timedSourceTrace(id, inputs) == __timedProtocolTrace(id, inputs) holds

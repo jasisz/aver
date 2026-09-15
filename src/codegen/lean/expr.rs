@@ -855,6 +855,10 @@ fn emit_match(
             arm_strs.push(format!("  | {} => {}", pat, body));
         }
     }
+    // Nonrecursive helpers without their own laws disable named equations: a dependent
+    // matcher around a helper result can prevent simp from reducing its
+    // nested observations. Recursive and law-owning bodies retain the
+    // equations used by termination and constructor-case proofs.
     // Use `match h_NN : <ident> with …` (named form) only when the
     // subject is a local ident — that's where Lean's wf elaboration
     // needs the equation `h_NN : ident = pattern` to relate the
@@ -873,10 +877,11 @@ fn emit_match(
     // Three fuel-helper emitters still call `strip_match_eq_binders`;
     // with this guard the strip only fires for the ident path,
     // preserving wrapper-return emit untouched.
-    let needs_eq_binder = matches!(
-        &subject.node,
-        ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } | ResolvedExpr::Attr(_, _)
-    );
+    let needs_eq_binder = ctx.lean_match_equations.get()
+        && matches!(
+            &subject.node,
+            ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } | ResolvedExpr::Attr(_, _)
+        );
     let emitted_match = if needs_eq_binder {
         let eq_name = format!("h_{}", line);
         format!("match {} : {} with\n{}", eq_name, subj, arm_strs.join("\n"))

@@ -46,6 +46,7 @@ pub(crate) type FnSigs =
 mod build;
 mod coordinator;
 mod lower;
+mod trace;
 mod verify;
 
 /// The stop observation a target can supply to a generated coordinator.
@@ -69,6 +70,9 @@ pub struct YieldLoweringReport {
     /// One entry per lowered function: the protocol the loop generator
     /// dispatches over.
     pub protocols: Vec<ProcessProtocol>,
+    /// Original stamped definitions, including private helpers, before any
+    /// body is replaced by protocol code. The source observer reads these.
+    pub sources: Vec<FnDef>,
     /// The generated loop, as source, when the manifest asked for one.
     pub loop_source: Option<String>,
 }
@@ -95,6 +99,18 @@ pub struct ProcessProtocol {
     pub outcome: String,
     /// One per request kind, in the order the request sum declares them.
     pub kinds: Vec<ProtocolKind>,
+    /// Source observer exported by the owning module, when its effects are modeled.
+    pub trace: Option<ProcessTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessTrace {
+    pub operations: Vec<ProtocolKind>,
+    pub input: String,
+    pub query: String,
+    pub event: String,
+    pub result: String,
+    pub source: String,
 }
 
 /// Public source signature and its lowered protocol, retained across module loading.
@@ -321,7 +337,16 @@ pub fn lower(
         }
     }
 
-    let mut report = YieldLoweringReport::default();
+    let mut report = YieldLoweringReport {
+        sources: stamped
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::FnDef(fd) => Some(fd.clone()),
+                _ => None,
+            })
+            .collect(),
+        ..Default::default()
+    };
     let mut out: Vec<TopLevel> = Vec::with_capacity(items.len());
     let mut exposes_rewrite: Vec<(String, Vec<String>)> = Vec::new();
     for (item, typed) in items.drain(..).zip(stamped) {
@@ -352,6 +377,18 @@ pub fn lower(
         return Err(errors);
     }
 
+    let traces = trace::generate(
+        items,
+        &report.sources,
+        &mut report.protocols,
+        fn_sigs,
+        imported,
+    )?;
+    report.generated.extend(traces.iter().cloned());
+    items.extend(traces);
+    report
+        .generated
+        .extend(trace::strengthen_laws(items, &report.protocols));
     let verification = verify::generate(items, &report.protocols, fn_sigs)?;
     report.generated.extend(verification.iter().cloned());
     items.extend(verification);
@@ -437,6 +474,7 @@ pub fn lower(
         let TopLevel::Module(module) = item else {
             continue;
         };
+        module.yield_sources = report.sources.clone();
         if module.exposes.is_empty() {
             module.exposes = default_exposes.clone();
         }
@@ -460,6 +498,21 @@ pub fn lower(
         for (fn_name, public_names) in &exposes_rewrite {
             if let Some(pos) = module.exposes.iter().position(|e| e == fn_name) {
                 module.exposes.remove(pos);
+                let mut public_names = public_names.clone();
+                if let Some(trace) = report
+                    .protocols
+                    .iter()
+                    .find(|p| p.fn_name == *fn_name)
+                    .and_then(|p| p.trace.as_ref())
+                {
+                    public_names.extend([
+                        trace.input.clone(),
+                        trace.query.clone(),
+                        trace.event.clone(),
+                        trace.result.clone(),
+                        trace.source.clone(),
+                    ]);
+                }
                 for (offset, name) in public_names.iter().enumerate() {
                     module.exposes.insert(pos + offset, name.clone());
                 }

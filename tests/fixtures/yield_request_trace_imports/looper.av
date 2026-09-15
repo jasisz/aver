@@ -1,0 +1,14 @@
+module Looper
+    intent = "A public source process using a private yielding helper."
+    depends [Pool]
+    exposes [loop]
+    effects [Pool.claim, yield]
+
+fn read(id: Int) -> Int
+    ! [Pool.claim, yield]
+    Pool.claim(id)
+
+fn loop(id: Int, seen: Int) -> Int
+    ! [Pool.claim, yield]
+    value = read(id)
+    value + seen

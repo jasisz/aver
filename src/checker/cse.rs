@@ -30,7 +30,11 @@ pub fn collect_cse_warnings(items: &[TopLevel]) -> Vec<CheckFinding> {
         })
         .collect();
     for item in items {
-        if let TopLevel::FnDef(fd) = item {
+        // Compiler-owned proof/protocol helpers have no user binding to
+        // extract. Their expansion must not add repair advice to source checks.
+        if let TopLevel::FnDef(fd) = item
+            && !fd.name.starts_with("__")
+        {
             collect_cse_warnings_in_fn(fd, &pure_fns, &mut warnings);
         }
     }

@@ -82,7 +82,8 @@ pub(crate) fn emit_mir_option_constructor(
         .registry
         .option_type_idx(&canonical)
         .ok_or(WasmGcError::Validation(format!(
-            "Option constructor: instantiation `{canonical}` was not registered"
+            "Option constructor in {}: instantiation `{canonical}` was not registered",
+            ctx.self_fn_name
         )))?;
     let inner_ty = TypeRegistry::option_element_type(&canonical).ok_or(WasmGcError::Validation(
         format!("Option canonical `{canonical}` has no element type"),
@@ -92,6 +93,11 @@ pub(crate) fn emit_mir_option_constructor(
             func.instruction(&Instruction::I32Const(OPTION_SOME_TAG));
             if emit_mir_expr(func, p, slots, ctx)?.is_none() {
                 return Ok(None);
+            }
+            // Unit expressions still run, but leave no stack value. Option's
+            // payload field needs the same i32 placeholder as Result<Unit, E>.
+            if t_aver.trim() == "Unit" {
+                func.instruction(&Instruction::I32Const(0));
             }
         }
         None => {

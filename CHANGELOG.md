@@ -26,6 +26,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 
+- **Yield lowering has independent source/request-trace observers.** Compiler fixtures compare retained direct-style source with actual generated protocols using typed answers, dynamic positions and internal resumptions. Ordinary Aver laws check arbitrary finite prefixes, including local in-place effects and finite helper composition; corruption controls preserve return values while changing traces. Recursive helper splice invariants and imported in-place-effect composition remain open. See `docs/yield-request-traces.md`.
+
 - **Generated coordinators carry universal finite-history laws.** Each `[run]` program gets a concrete event type and history fold over its own pure transitions. Lean checks that process slots never grow after seating, all job kinds stay within the shared limit, and retired request instances never return, under explicit control preconditions. No schedule-length bound or runtime history log is introduced; correspondence with the effectful driver and source request traces remains separate. See `docs/knowledge.md`.
 
 - **Aver laws compose across arbitrary finite histories.** The Lean exporter composes cited transition laws through list induction, retaining recursive guards and generalizing changing state. The Knowledge example states all twenty laws in Aver, including equality across arbitrary ordering, batching and duplicate counts of admitted, agreeing contributions, and stable answers across consistent update sequences. Ordinary `aver proof --check` generates and checks the complete proof; see `docs/knowledge.md` for its scope and remaining coordinator work.
