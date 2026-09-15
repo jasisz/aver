@@ -403,8 +403,8 @@ pub struct CodegenContext {
     /// bodies, verify cases and law statements all set it; positions that are
     /// not actions — a `when` premise, a trace projection — do not.
     pub lean_do_block: std::cell::Cell<bool>,
-    /// Match equations support recursive termination proofs. Ordinary helper
-    /// results use nondependent matches so their observers simplify at calls.
+    /// Match equations support termination and constructor-case proofs.
+    /// Nonrecursive helpers without their own laws use nondependent result matches.
     pub lean_match_equations: std::cell::Cell<bool>,
     /// Claims the exporter refused to state, keyed by identity so the
     /// same refusal seen twice counts once.
