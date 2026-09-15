@@ -87,7 +87,7 @@ even though an Aver program cannot construct those map representations.
 
 The model now lives beside its consumer in `examples/knowledge/`. Run the
 whole program, including its generated coordinator, from that project root.
-Its proof checks all 53 laws universally with no bounded or open obligations:
+Its proof checks all 62 laws universally with no bounded or open obligations:
 
 ```sh
 cd examples/knowledge
@@ -152,9 +152,37 @@ as `aStartedTaskIsNotAskedAgain`; that dependency must itself prove universally.
 The examples' green proofs do not establish a theorem about every possible
 program the generator might receive.
 
-The remaining coordinator proof work is to compose its transition invariants
-over arbitrary finite admissible histories and prove that the generated code
-preserves the direct-style request trace. `runBatches.anySchedule` covers Knowledge
-contributions; it does not claim either of those whole-coordinator results.
-Automatic schedule enumeration is optional execution testing, not a substitute
-or a prerequisite for these universal proofs.
+The generator also emits `__HistoryEvent`, `__historyStep`,
+`__historyAdmissible`, and `__historyRun` into this program. Events use its
+concrete request, answer-state and job-result types. The fold calls the same
+pure transitions as the live coordinator: parking, saving an answer, settling
+an instance, seating a worker, reporting its result, and cancellation. Clock,
+stop and returned answer-state observations are explicit events. These helpers
+are proof/verification code; normal execution does not record or allocate a
+history.
+
+The three generated `__historyRun` laws quantify over arbitrary finite lists:
+
+- `noNewProcesses`: after initial seating, the slot count never increases.
+- `jobsStayWithinLimit`: a run initially within `max-jobs` remains within it,
+  counting all job kinds in the same table.
+- `retiredInstanceNeverReturns`: once an instance is retired (its process is
+  gone or its number has advanced), it stays retired. The per-process
+  `answeringRetiresTheInstance` law establishes this premise after accepting
+  a current answer, including completion that removes the slot.
+
+Each statement applies to any finite prefix, with no length bound. The
+admissibility predicate checks each event against the state its predecessors
+left: starts require positive room; settlements require a nonnegative instance
+and a seated slot if that instance is current. It does **not** assume the three
+conclusions. The history model deliberately allows more observations than the
+live driver, including arbitrary returned answer states, arbitrary tasks and
+spurious job reports. Thus these structural properties need no honesty or
+consistency premise about a provider. Semantic properties of its answers still
+need the provider's own laws, such as `Stored.read.stableHistory`.
+
+The remaining proof work is to show that lowering and the effectful driver
+preserve the direct-style request trace. These history laws prove the composed
+pure transitions; they do not establish that correspondence or termination.
+`runBatches.anySchedule` separately covers Knowledge contributions. Automatic
+schedule enumeration remains optional execution testing.

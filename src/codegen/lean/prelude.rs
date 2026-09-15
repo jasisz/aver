@@ -303,28 +303,31 @@ pub(crate) fn prelude_spec_lemmas_for_builtins(builtins: &[String]) -> Vec<Strin
 
 /// The hand-proved `AverMap` facts about `set` that a proof search cites
 /// whenever its cone calls `Map.set`: a get after a set under the same key,
-/// under another key, membership after a set under the same key, a second set
-/// under one key, the length never shrinking, and the length not moving at all
-/// when the key was already there. Keyed on
+/// under another key, membership and lookup agreement, a second set under
+/// one key, and the size bounds (unchanged for an existing key, at most one
+/// larger for a new one). Keyed on
 /// the builtin call alone, never on what the law says; a cone that only reads
 /// a map (`Map.get`, `Map.len`) has nothing for them to rewrite. Each name is
 /// what makes the demand-driven map prelude ship the lemma text. The call may
 /// sit anywhere in the cone — including inside a field of a record the cone
 /// rebuilds, which is what most one-key updates look like.
-pub(crate) const MAP_SET_FACT_LEMMAS: [&str; 7] = [
+pub(crate) const MAP_SET_FACT_LEMMAS: [&str; 9] = [
     "AverMap.get_set_self",
     "AverMap.get_set_ne",
     "AverMap.has_set_self",
+    "AverMap.has_eq_isSome_get",
     "AverMap.set_set_self",
     "AverMap.set_set_comm",
     "AverMap.len_set_ge",
+    "AverMap.len_set_le",
     "AverMap.len_set_of_has",
 ];
 
-/// The same, for a cone that calls `Map.remove`: a removal never grows a map.
+/// The same, for a cone that calls `Map.remove`: its size and lookup effects.
 /// A branch that drops one entry and a branch that sets one usually sit in the
 /// same function, so a size law across it needs both families.
-pub(crate) const MAP_REMOVE_FACT_LEMMAS: [&str; 1] = ["AverMap.len_remove_le"];
+pub(crate) const MAP_REMOVE_FACT_LEMMAS: [&str; 2] =
+    ["AverMap.len_remove_le", "AverMap.get_remove"];
 
 /// Oracle v1: BranchPath mirrors the Aver-source opaque builtin. The
 /// dewey-decimal string under the hood is not user-observable — users
@@ -772,6 +775,25 @@ const AVER_MAP_PRELUDE_LEN_SET_GE: &str = r#"theorem len_set_ge [DecidableEq α]
     simp [AverMap.len, length_insert]
   · rw [set_of_has m k v h]
     simp [AverMap.len, length_replace]"#;
+
+/// One write adds at most one entry, even on a noncanonical input map.
+const AVER_MAP_PRELUDE_LEN_SET_LE: &str = r#"theorem len_set_le [DecidableEq α] [AverKeyOrder α] (m : List (α × β)) (k : α) (v : β) :
+    AverMap.len (AverMap.set m k v) ≤ AverMap.len m + 1 := by
+  cases h : AverMap.has m k
+  · rw [set_of_missing m k v h]
+    simp [AverMap.len, length_insert]
+  · rw [set_of_has m k v h]
+    simp [AverMap.len, length_replace]"#;
+
+/// Removal deletes every occurrence of its key and preserves other lookups.
+const AVER_MAP_PRELUDE_GET_REMOVE: &str = r#"theorem get_remove [DecidableEq α] (m : List (α × β)) (k key : α) :
+    AverMap.get (AverMap.remove m k) key = (if key = k then none else AverMap.get m key) := by
+  induction m with
+  | nil => simp [AverMap.remove, AverMap.get]
+  | cons pair rest ih =>
+    rcases pair with ⟨head, value⟩
+    by_cases h : k = head <;> by_cases q : key = k <;> by_cases r : key = head <;>
+      simp_all [AverMap.remove, AverMap.get]"#;
 
 /// `Map.has(m, k) => Map.len(Map.set(m, k, v)) == Map.len(m)` — a set under a
 /// key the map already holds keeps every key it had and adds none, so the size
@@ -1564,6 +1586,8 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     let needs_len_set_ge_one = include_all_helpers || body.contains("AverMap.len_set_ge_one");
     let needs_get_set_self = include_all_helpers || body.contains("AverMap.get_set_self");
     let needs_len_set_ge = include_all_helpers || mentions_exact(body, "AverMap.len_set_ge");
+    let needs_len_set_le = include_all_helpers || body.contains("AverMap.len_set_le");
+    let needs_get_remove = include_all_helpers || body.contains("AverMap.get_remove");
     let needs_len_set_of_has = include_all_helpers || body.contains("AverMap.len_set_of_has");
     let needs_len_remove_le = include_all_helpers || body.contains("AverMap.len_remove_le");
 
@@ -1577,6 +1601,7 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
         || needs_get_set_ne
         || needs_has_set
         || needs_len_set_ge
+        || needs_len_set_le
         || needs_len_set_of_has
         || needs_set_set_self
     {
@@ -1605,6 +1630,12 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     }
     if needs_len_set_ge {
         parts.push(AVER_MAP_PRELUDE_LEN_SET_GE.to_string());
+    }
+    if needs_len_set_le {
+        parts.push(AVER_MAP_PRELUDE_LEN_SET_LE.to_string());
+    }
+    if needs_get_remove {
+        parts.push(AVER_MAP_PRELUDE_GET_REMOVE.to_string());
     }
     if needs_len_set_of_has {
         parts.push(AVER_MAP_PRELUDE_LEN_SET_OF_HAS.to_string());

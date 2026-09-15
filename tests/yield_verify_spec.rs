@@ -174,7 +174,13 @@ fn coordinator_cases_pin_service_order_turn_groups_and_late_job_observations() {
         let out = invoke(&dir, "verify", &args);
         assert!(out.status.success(), "{}", format_output(&out));
         let text = String::from_utf8_lossy(&out.stdout);
-        for label in ["serveGroups", "observeJob", "observeCancelled"] {
+        for label in [
+            "serveGroups",
+            "observeJob",
+            "observeCancelled",
+            "historyObservation",
+            "historyJobLimit",
+        ] {
             assert!(text.contains(label), "{text}");
         }
         assert!(text.contains("0 failed"), "{text}");
@@ -240,7 +246,7 @@ fn coordinator_laws_are_universal_beside_the_vm_schedule_scenarios() {
     )
     .unwrap();
     assert_eq!(summary["universal"], true, "{summary}");
-    assert_eq!(summary["universal_laws"], 17, "{summary}");
+    assert_eq!(summary["universal_laws"], 25, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");

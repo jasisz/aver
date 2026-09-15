@@ -95,3 +95,30 @@ verify observeCancelled
     given stop: Process.stopRequested = [stoppedStub]
     given clock: Time.unixMs = [clockStub]
     observeCancelled() => Result.Ok((0, 0, 0))
+
+fn historyObservation(events: List<__HistoryEvent>) -> Tuple<Bool, Int, Int, Int>
+    ? "Observe the generated history after both processes have been seated."
+    initial = __seatRight(__seatLeft(__fresh()))
+    final = __historyRun(initial, events)
+    (__historyAdmissible(initial, events), Map.len(final.slots), __current(final, 1), final.dropped)
+
+verify historyObservation
+    historyObservation([]) => (true, 2, 1, 0)
+    historyObservation([__HistoryEvent.Later(1, Wait.Wake.After(5)), __HistoryEvent.Observe(0 - 5000, false)]) => (true, 2, 1, 0)
+    historyObservation([__HistoryEvent.SettleLeft(1, 1, __LeftOutcome.Done(Unit)), __HistoryEvent.Later(1, Wait.Wake.NextTurn), __HistoryEvent.SettleLeft(1, 1, __LeftOutcome.Done(Unit))]) => (true, 1, 0 - 1, 1)
+    historyObservation([__HistoryEvent.SettleRight(2, 1, __RightOutcome.Done(Unit)), __HistoryEvent.SettleLeft(1, 1, __LeftOutcome.Done(Unit))]) => (true, 0, 0 - 1, 0)
+    historyObservation([__HistoryEvent.SettleLeft(99, 0 - 1, __LeftOutcome.Done(Unit))]) => (false, 2, 1, 0)
+
+fn historyJobLimit() -> Result<Tuple<Bool, Bool, Bool, Int>, String>
+    ? "Admissibility checks the job table after each preceding event; cancellation makes room again."
+    ! [Scoring.begin]
+    handle = Scoring.begin(1)?
+    start = __HistoryEvent.StartScoring(1, handle)
+    initial = __fresh()
+    full = __historyRun(initial, [start])
+    cancelled = [start, __HistoryEvent.Cancel(1), start]
+    Result.Ok((__historyAdmissible(initial, [start]), __historyAdmissible(full, [start]), __historyAdmissible(initial, cancelled), Map.len(__historyRun(initial, cancelled).jobs)))
+
+verify historyJobLimit
+    given begin: Scoring.begin = [beginStub]
+    historyJobLimit() => Result.Ok((true, false, true, 1))

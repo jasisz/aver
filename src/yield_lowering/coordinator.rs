@@ -27,6 +27,7 @@ use crate::types::checker::TypeError;
 
 use super::{CoordinatorStop, FnSigs, ProcessProtocol};
 
+mod history;
 mod host_driver;
 mod then_reply;
 
@@ -952,6 +953,7 @@ fn write_loop(
 
     // ── The invariants ─────────────────────────────────────────────
     out.push_str(&write_laws(protocols, jobs));
+    out.push_str(&history::write(protocols, answers, jobs));
     if protocols
         .iter()
         .any(|protocol| sample_request(protocol).is_some())

@@ -955,45 +955,11 @@ fn a_started_function_without_its_law_is_refused_with_the_block_to_write() {
     );
 }
 
-/// The laws decision 7 names, on the Lean wall.
-///
-/// All thirty-six of the example's laws close as universals: I2 (a late
-/// answer changes nothing and is counted) and I4's visible half (a `Later`
-/// moves neither the instance number nor any answer state) for every process
-/// and every answer module, I3's per-call half in its two halves — the slot an
-/// answer for the current instance writes back carries a strictly higher
-/// instance number than the one it answered, and the slot written under an id
-/// is the slot read from it — I1 for every process, both halves of the
-/// deadline gate — a reading that has not reached the deadline does not ask,
-/// and a reading that has fallen back further than the deadline asked for
-/// does — the wait one deadline contributes never being longer than the `ms`
-/// that deadline asked for, both halves of the same gate for a request parked
-/// on an item and a deadline at once, the program's own priority law, and the
-/// four the job seam's third end brought: the program's
-/// `taskStarted law aStartedTaskIsNotAskedAgain` and the
-/// `withoutTask law theStartedTaskIsOut` it cites, the generated
-/// `__consumedValidation law aStartedTaskIsNotAskedAgain` that cites the
-/// first, and `__startableValidation law aFullTableAsksNothing`. No law is
-/// bounded and none is a `sorry`.
-///
-/// The two `Either` laws are stated over the gate's arithmetic rather than
-/// over a sampled slot, because a slot parked on `Either` cannot be written
-/// down: the constructor carries a `Wait.Item`, and a `Wait.Item` carries a
-/// socket or a job handle a program cannot construct. That is the same reason
-/// the socket half of the gate has no law at all.
-///
-/// I1's implication was the last one open: a size comparison across one
-/// `Map.set` or one `Map.remove` inside a record update. It needed two facts
-/// the prelude did not carry — a set under a key the map already holds does
-/// not move the size, and a removal never grows a map — the first of which was
-/// not even true of the old map model, whose `set` could insert a second entry
-/// for a key already present in an unsorted list. The model's `set` is now
-/// key-canonical and both facts ship; the `because` supplies the membership.
-///
-/// The composed statement of I3 — `__current` after `__settled` is strictly
-/// higher — is still generated as two halves. That split was made for the same
-/// missing one-key `Map.set` fact, so it may no longer be needed; re-measuring
-/// the composed sentence belongs to the coordinator generator, not here.
+/// The generated single-transition and finite-history laws, together with
+/// the program's policy and task-consumption laws, all close universally.
+/// The history fold calls the live coordinator's pure transitions; its three
+/// inductive invariants cover slot count, the shared job bound, and retirement.
+/// The manifest must retain every law without a bounded or admitted fallback.
 #[test]
 fn the_generated_invariants_reach_the_lean_wall() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -1026,7 +992,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(36),
+        Some(47),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -1051,6 +1017,9 @@ fn the_generated_invariants_reach_the_lean_wall() {
         "__settlePeer.lateAnswerIsDropped.implication",
         "__settlePeer.lateAnswerIsRecorded.implication",
         "admit.readyPeerBeforeNewJob.implication",
+        "__historyRun.noNewProcesses.implication",
+        "__historyRun.jobsStayWithinLimit.implication",
+        "__historyRun.retiredInstanceNeverReturns.implication",
     ] {
         assert_eq!(
             obligations[closed].as_str(),
