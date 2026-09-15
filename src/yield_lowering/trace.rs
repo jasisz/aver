@@ -3,7 +3,7 @@
 //! Models are requested by referring to `__fSourceTrace` in a verify block.
 //! The source observer reads retained, stamped source, never protocol states
 //! or answer bodies. The replay observer calls the actual generated protocol.
-//! A typed input is an answer or permission to cross a source self-tail-call;
+//! A typed input is an answer or permission to cross a source tail call;
 //! it is not an interpreter instruction budget. Only answers advance position.
 
 use super::{FnSigs, ProcessProtocol, build};
@@ -67,6 +67,7 @@ pub(super) fn generate(
             Ok(mut result) => {
                 let root = model.source(&protocol.fn_name).expect("retained root");
                 let trace = super::ProcessTrace {
+                    recursive: calls_itself(root),
                     operations: model
                         .kinds
                         .iter()
@@ -222,18 +223,7 @@ impl<'a> Model<'a> {
         // invariant. Until that obligation is generated, reject the shape
         // instead of exporting a fuel-bounded stand-in as source semantics.
         for helper in &reached {
-            if helper.name != root.name
-                && helper.body.stmts().iter().any(|stmt| {
-                    let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
-                    crate::codegen::expr_walk::any(expr, &mut |expr| match &expr.node {
-                        Expr::FnCall(callee, _) => {
-                            build::dotted_name(callee).as_deref() == Some(&helper.name)
-                        }
-                        Expr::TailCall(call) => call.target == helper.name,
-                        _ => false,
-                    })
-                })
-            {
+            if helper.name != root.name && calls_itself(helper) {
                 return Err(format!(
                     "recursive helper '{}' needs a compositional subtrace theorem",
                     helper.name
@@ -242,7 +232,7 @@ impl<'a> Model<'a> {
         }
         if let Some(helper) = imports
             .iter()
-            .find(|helper| helper.kinds.iter().any(|kind| kind.operation.is_none()))
+            .find(|helper| helper.trace.as_ref().is_some_and(|trace| trace.recursive))
         {
             return Err(format!(
                 "recursive imported helper '{}' needs a compositional subtrace theorem",
@@ -287,34 +277,10 @@ impl<'a> Model<'a> {
                 }
             }
         }
-        for fd in &reached {
-            if let Some(Stmt::Expr(expr)) = fd.body.stmts().last()
-                && let Some(name) = self.tail_helper(expr, &fd.name)
-            {
-                return Err(format!(
-                    "tail entry into yielding helper '{name}' needs a stuttering-alignment theorem"
-                ));
-            }
-        }
         for fd in reached {
             items.push(TopLevel::FnDef(source::Compiler::new(self, fd).compile()?));
         }
         Ok(items)
-    }
-
-    fn tail_helper(&self, expr: &Spanned<Expr>, owner: &str) -> Option<String> {
-        match &expr.node {
-            Expr::Match { arms, .. } => arms
-                .iter()
-                .find_map(|arm| self.tail_helper(&arm.body, owner)),
-            Expr::FnCall(callee, _) => build::dotted_name(callee).filter(|name| {
-                name != owner
-                    && !self.operations.contains_key(name)
-                    && (self.imported.contains_key(name)
-                        || self.source(name).is_some_and(super::is_yield_fn))
-            }),
-            _ => None,
-        }
     }
 
     fn reachable(
@@ -364,4 +330,15 @@ impl<'a> Model<'a> {
         }
         Ok(())
     }
+}
+
+fn calls_itself(fd: &FnDef) -> bool {
+    fd.body.stmts().iter().any(|stmt| {
+        let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
+        crate::codegen::expr_walk::any(expr, &mut |expr| match &expr.node {
+            Expr::FnCall(callee, _) => build::dotted_name(callee).as_deref() == Some(&fd.name),
+            Expr::TailCall(call) => call.target == fd.name,
+            _ => false,
+        })
+    })
 }

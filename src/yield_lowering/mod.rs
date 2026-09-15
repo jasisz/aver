@@ -105,6 +105,9 @@ pub struct ProcessProtocol {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessTrace {
+    /// The retained root can re-enter itself; importing its returned subtrace
+    /// still needs a compositional theorem. Internal Yield alone is not recursion.
+    pub recursive: bool,
     pub operations: Vec<ProtocolKind>,
     pub input: String,
     pub query: String,

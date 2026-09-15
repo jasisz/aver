@@ -40,13 +40,25 @@ this does not add a user-facing trace DSL or generic type facility.
 | --- | --- |
 | `AnswerClaim(answer)` | Answer the pending `Pool.claim` with its exact result type. |
 | `AnswerHostTimeUnixMs(answer)` | Supply an in-place clock observation. |
-| `Advance` | Permit a source self-tail-call to resume across an internal yield. |
+| `Advance` | Permit a yielding tail call to resume: self-entry or entry into another yielding helper. |
 | `Foreign` | Internal adapter marker for an input kind unavailable in a child. |
 
 Inputs are semantic answers and resumptions, not a shared interpreter instruction
 budget. Pure evaluation consumes nothing. An internal yield consumes `Advance`
 but emits no operation event and consumes no answer. Requests emit an ordered
 `ObservedKind(position, arguments..., answer)` event when answered.
+
+Tail positions come from the retained source: the last expression of a yielding
+function, through its `match` arms. Arguments run before the boundary. A call
+whose value feeds another expression has no entry pause; its helper still keeps
+its own internal tail boundaries. Inlining a finite helper preserves that scope.
+
+For example, `parent(id) = helper(id)` suspends before entering `helper`.
+An empty tape reports `pending = Yield`; `[Advance]` enters the helper and stops
+at its first unanswered request. The advance preserves `position` and `events`,
+and increases only `consumed`. A wrong-kind answer at this boundary is rejected
+without consumption. A chain of two tail entries needs two advances. This is the
+alignment checked against the real protocol; no instruction-count fuel is added.
 
 A result records:
 
@@ -86,7 +98,10 @@ companion, added axiom or larger proof budget is involved.
 The regression fixture covers repeated requests, branches, mixed result types,
 Unit answers, private helpers, early `Result.Err`, self yields and in-place
 clock reads. A second fixture covers repeated calls through imported private
-helpers. Negative controls drop, duplicate and reorder events, change arguments
+helpers. Tail-entry fixtures additionally check local and imported pauses, a
+helper used in a non-tail expression, branches, and same-named private helpers
+in different modules. False laws that count a pause as an answer or hide its
+consumption stay unproved even when the result and operation events are unchanged. Negative controls drop, duplicate and reorder events, change arguments
 or answers, and reset positions while preserving the function's return value.
 
 ## Boundary of the claim
@@ -98,11 +113,15 @@ runtime conformance, scheduling fairness, liveness, termination of an unbounded
 run, or equivalence with the coordinator's host loop. Runtime tests on VM and
 WASM are separate checks of the executable observers.
 
-Model requests currently reject tail entry into another yielding helper (which
-needs alignment of the inserted internal yield), recursive local/imported helper subtraces,
+Model requests currently reject recursive local/imported helper subtraces,
 effectful independent products, indirect effectful calls and imported segments
 whose in-place effects cannot be observed in their owning module. Pure source
 computations retain the ordinary exporter's recursion and proof requirements.
 A generated model is not itself universal credit: an unproved equality remains
 an open obligation. #1376 stays open for recursive helper splice invariants and
 compositional dependencies across those boundaries.
+
+The owning module records whether its source observer is recursive. An internal
+`Yield` kind is not itself evidence of recursion: a finite tail-entry chain also
+has that kind. Importing finite observers therefore retains those boundaries;
+recursive imported subtraces still require the pending composition theorem.

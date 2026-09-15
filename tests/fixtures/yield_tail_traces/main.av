@@ -1,0 +1,71 @@
+module TailTraces
+    intent = "Tail-entry pauses align without adding an answer or an operation event."
+    depends [Pool, Pooled, Leaf]
+    effects [Pool.claim, yield]
+
+fn read(id: Int) -> Int
+    ! [Pool.claim, yield]
+    Pool.claim(id)
+
+fn local(id: Int) -> Int
+    ! [Pool.claim, yield]
+    read(id)
+
+fn nested(id: Int) -> Int
+    ! [Pool.claim, yield]
+    value = local(id)
+    value + 1
+
+fn imported(id: Int) -> Int
+    ! [Pool.claim, yield]
+    Leaf.forward(id)
+
+fn branch(id: Int, tail: Bool) -> Int
+    ! [Pool.claim, yield]
+    value = Pool.claim(id)
+    match tail
+        true -> read(value)
+        false -> value
+
+fn boundary() -> Bool
+    events = [__LocalTraceEvent.ObservedClaim(-3, 8, 4)]
+    initial = __localSourceTraceFrom(2, [], 7, events, 20)
+    resumed = __localSourceTraceFrom(2, [__LocalTraceInput.Advance], 7, events, 20)
+    wrong = __localSourceTraceFrom(2, [__LocalTraceInput.AnswerClaim(9)], 7, events, 20)
+    Bool.and(initial.pending == Option.Some(__LocalTraceQuery.Yield), Bool.and(initial.valid, Bool.and(initial.events == events, Bool.and(initial.position == 7, Bool.and(initial.consumed == 20, Bool.and(resumed.pending == Option.Some(__LocalTraceQuery.Claim(2)), Bool.and(resumed.events == events, Bool.and(resumed.position == 7, Bool.and(resumed.consumed == 21, Bool.and(Bool.not(wrong.valid), Bool.and(wrong.consumed == 20, wrong.remaining == [__LocalTraceInput.AnswerClaim(9)])))))))))))
+
+verify boundary
+    boundary() => true
+
+fn finished() -> Bool
+    inputs = [__ImportedTraceInput.Advance, __ImportedTraceInput.Advance, __ImportedTraceInput.AnswerClaim(9), __ImportedTraceInput.Foreign]
+    observed = __importedSourceTraceFrom(2, inputs, 7, [], 20)
+    Bool.and(observed.value == Option.Some(9), Bool.and(observed.position == 8, Bool.and(observed.consumed == 23, Bool.and(observed.events == [__ImportedTraceEvent.ObservedClaim(7, 2, 9)], observed.remaining == [__ImportedTraceInput.Foreign]))))
+
+verify finished
+    finished() => true
+
+verify __localSourceTrace law correspondence
+    given id: Int = [2]
+    given inputs: List<__LocalTraceInput> = [[], [__LocalTraceInput.Advance], [__LocalTraceInput.Advance, __LocalTraceInput.AnswerClaim(7)]]
+    using []
+    __localSourceTrace(id, inputs) == __localProtocolTrace(id, inputs) holds
+
+verify __nestedSourceTrace law correspondence
+    given id: Int = [2]
+    given inputs: List<__NestedTraceInput> = [[], [__NestedTraceInput.Advance, __NestedTraceInput.AnswerClaim(7)]]
+    using []
+    __nestedSourceTrace(id, inputs) == __nestedProtocolTrace(id, inputs) holds
+
+verify __importedSourceTrace law correspondence
+    given id: Int = [2]
+    given inputs: List<__ImportedTraceInput> = [[], [__ImportedTraceInput.Advance], [__ImportedTraceInput.Advance, __ImportedTraceInput.Advance], [__ImportedTraceInput.Advance, __ImportedTraceInput.Advance, __ImportedTraceInput.AnswerClaim(7)]]
+    using []
+    __importedSourceTrace(id, inputs) == __importedProtocolTrace(id, inputs) holds
+
+verify __branchSourceTrace law correspondence
+    given id: Int = [2]
+    given tail: Bool = [true, false]
+    given inputs: List<__BranchTraceInput> = [[], [__BranchTraceInput.AnswerClaim(7)], [__BranchTraceInput.AnswerClaim(7), __BranchTraceInput.Advance, __BranchTraceInput.AnswerClaim(9)]]
+    using []
+    __branchSourceTrace(id, tail, inputs) == __branchProtocolTrace(id, tail, inputs) holds

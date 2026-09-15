@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Source request-trace proofs support finite tail-entry chains.** The independent source observer preserves yielding helper boundaries, including inlined and imported helpers: each pause consumes a resumption permission without adding an answer or operation event. Ordinary universal laws check those prefixes against the lowered protocol. Recursive helper subtrace composition remains unsupported. WASM linking also preserves module ownership for temporarily entry-stamped types when private helper names collide. See `docs/yield-request-traces.md`.
+
 - **Knowledge has a runnable provider/coordinator example in `examples/knowledge/`.** Peer batches pass content-only admission before merging into the proved model; local Work produces fixed-context verdicts, and the answer module uses independent products for admission and stable lookups. Source laws cover rejected batches, peer/local result separation and successful query stability. The standalone model moved alongside its consumer.
 - **Capability boundary ownership checks descend through nested records and sums.** A foreign represented type hidden in a local wrapper now fails at the contract boundary instead of reaching a runtime `unknown boundary type` error with an incomplete layout hash. Recursive local layouts terminate and compiler-owned standard layouts remain pinned to their shipped adapters.
 

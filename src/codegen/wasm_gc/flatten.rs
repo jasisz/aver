@@ -677,7 +677,15 @@ fn rewrite_stamped_type(ty: &mut crate::ast::Type, ctx: &RewriteCtx<'_>) {
     use crate::ast::Type;
     match ty {
         Type::Named { id, name } => {
+            // A dependency checked on its own temporarily stamps its own
+            // declarations as entry types. Re-home those in the dependency's
+            // scope, just as HIR does: a same-named real entry declaration is
+            // not the owner of that temporary ID. Canonical imported IDs still
+            // win over spelling (including types carried through projections).
+            let bare = name.rsplit('.').next().unwrap_or(name);
+            let temporary_entry = TypeId::for_key(&TypeKey::entry(bare));
             *name = (*id)
+                .filter(|incoming| *incoming != temporary_entry)
                 .and_then(|incoming| ctx.flattened_name_by_type_id.get(&incoming))
                 .cloned()
                 .unwrap_or_else(|| rewrite_type_spelling(name, ctx));
