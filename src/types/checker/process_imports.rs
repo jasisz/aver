@@ -36,7 +36,17 @@ impl TypeChecker {
                 protocol.start = qualify(&protocol.start);
                 protocol.request = qualify(&protocol.request);
                 protocol.outcome = qualify(&protocol.outcome);
+                for nest in &mut protocol.nests {
+                    // A nested imported helper already names its own module.
+                    if !nest.callee.contains('.') {
+                        nest.callee = qualify(&nest.callee);
+                    }
+                    nest.router = qualify(&nest.router);
+                }
                 if let Some(trace) = &mut protocol.trace {
+                    for dependency in &mut trace.dependencies {
+                        *dependency = qualify(dependency);
+                    }
                     trace.input = qualify(&trace.input);
                     trace.query = qualify(&trace.query);
                     trace.event = qualify(&trace.event);

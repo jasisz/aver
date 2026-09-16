@@ -40,6 +40,30 @@ pub(in crate::yield_lowering) fn strengthen_laws(
             let VerifyKind::Law(aux) = &mut auxiliary.kind else {
                 unreachable!()
             };
+            let dependencies = &protocol.trace.as_ref().unwrap().dependencies;
+            if !dependencies.is_empty() {
+                // Omitted `using` retains the earlier laws it could cite before
+                // this auxiliary was generated. An explicit list stays explicit.
+                let selected = aux.using.get_or_insert_with(|| {
+                    output
+                        .iter()
+                        .filter_map(|item| match item {
+                            TopLevel::Verify(block) => match &block.kind {
+                                VerifyKind::Law(law) => {
+                                    Some(format!("{}.{}", block.fn_name, law.name))
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        })
+                        .collect()
+                });
+                for dependency in dependencies {
+                    if !selected.contains(dependency) {
+                        selected.push(dependency.clone());
+                    }
+                }
+            }
             while !occupied.insert((auxiliary.fn_name.clone(), aux.name.clone())) {
                 aux.name.push('_');
             }

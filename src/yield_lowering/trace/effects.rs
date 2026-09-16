@@ -9,14 +9,26 @@ impl Model<'_> {
         items: &mut [TopLevel],
         root: &FnDef,
     ) -> Result<(), String> {
-        let drive = format!("{}Drive", self.prefix);
-        let mut compiler = source::Compiler::new(self, root);
-        for item in items {
-            let TopLevel::FnDef(fd) = item else { continue };
-            let body = std::sync::Arc::make_mut(&mut fd.body);
-            for stmt in body.stmts_mut() {
-                let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
-                observe(expr, &drive, &mut compiler)?;
+        let mut reached = Vec::new();
+        let mut imports = Vec::new();
+        self.reachable(root, &mut reached, &mut imports)?;
+        for function in reached {
+            let drive = self.child_drive(function);
+            // Only root and composition drivers actually present in the model.
+            if !items
+                .iter()
+                .any(|item| matches!(item, TopLevel::FnDef(fd) if fd.name == drive))
+            {
+                continue;
+            }
+            let mut compiler = source::Compiler::new(self, function);
+            for item in items.iter_mut() {
+                let TopLevel::FnDef(fd) = item else { continue };
+                let body = std::sync::Arc::make_mut(&mut fd.body);
+                for stmt in body.stmts_mut() {
+                    let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
+                    observe(expr, &drive, &mut compiler)?;
+                }
             }
         }
         Ok(())

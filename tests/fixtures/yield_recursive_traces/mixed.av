@@ -1,0 +1,46 @@
+module RecursiveMixed
+    intent = "Recursive helper composition retains nominal arguments, Unit answers, early errors and in-place effects."
+    depends [Pool, Pooled]
+    exposes [checked]
+    effects [Pool.finish, Pool.notice, Time.unixMs, yield]
+
+record Seed
+    id: Int
+
+fn scan(seed: Seed) -> Result<Unit, String>
+    ! [Pool.finish, Pool.notice, Time.unixMs, yield]
+    Time.unixMs()
+    Pool.notice(seed.id)
+    next = Pool.finish(seed.id)?
+    match next < 0
+        true -> Result.Ok(Unit)
+        false -> scan(Seed(id = next))
+
+fn checked(seed: Seed) -> Result<Int, String>
+    ! [Pool.finish, Pool.notice, Time.unixMs, yield]
+    scan(seed)?
+    Result.Ok(seed.id)
+
+fn earlyError() -> Bool
+    inputs = [__CheckedTraceInput.AnswerHostTimeUnixMs(100), __CheckedTraceInput.AnswerNotice(Unit), __CheckedTraceInput.AnswerFinish(Result.Ok(7)), __CheckedTraceInput.Advance, __CheckedTraceInput.AnswerHostTimeUnixMs(110), __CheckedTraceInput.AnswerNotice(Unit), __CheckedTraceInput.AnswerFinish(Result.Err("stop")), __CheckedTraceInput.Foreign]
+    observed = __checkedSourceTraceFrom(Seed(id = 2), inputs, 3, [], 8)
+    expected: Result<Int, String> = Result.Err("stop")
+    Bool.and(observed == __checkedProtocolTraceFrom(Seed(id = 2), inputs, 3, [], 8), Bool.and(observed.value == Option.Some(expected), Bool.and(observed.position == 9, Bool.and(observed.consumed == 15, observed.remaining == [__CheckedTraceInput.Foreign]))))
+
+verify earlyError
+    earlyError() => true
+
+fn completed() -> Bool
+    inputs = [__CheckedTraceInput.AnswerHostTimeUnixMs(100), __CheckedTraceInput.AnswerNotice(Unit), __CheckedTraceInput.AnswerFinish(Result.Ok(0 - 1)), __CheckedTraceInput.Advance]
+    observed = __checkedSourceTrace(Seed(id = 2), inputs)
+    expected: Result<Int, String> = Result.Ok(2)
+    Bool.and(observed == __checkedProtocolTrace(Seed(id = 2), inputs), Bool.and(observed.value == Option.Some(expected), Bool.and(observed.position == 3, Bool.and(observed.consumed == 3, observed.remaining == [__CheckedTraceInput.Advance]))))
+
+verify completed
+    completed() => true
+
+verify __checkedSourceTrace law correspondence
+    given seed: Seed = [Seed(id = 2)]
+    given inputs: List<__CheckedTraceInput> = [[], [__CheckedTraceInput.AnswerHostTimeUnixMs(100), __CheckedTraceInput.AnswerNotice(Unit), __CheckedTraceInput.AnswerFinish(Result.Err("stop"))]]
+    using []
+    __checkedSourceTrace(seed, inputs) == __checkedProtocolTrace(seed, inputs) holds

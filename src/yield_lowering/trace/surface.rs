@@ -35,25 +35,29 @@ impl Model<'_> {
         out
     }
 
-    pub(super) fn driver(&self, root: &FnDef) -> String {
+    pub(super) fn drive(&self, protocol: &ProcessProtocol, root: &FnDef, driver: &str) -> String {
         let u = &self.upper;
-        let p = &self.prefix;
         let result = self.result_type(root);
         let done = format!(
             "{result}(remaining = inputs, position = position, consumed = consumed, events = events, value = Option.Some(value), pending = Option.None, valid = true)"
         );
         let mut out = format!(
-            "\nfn {p}Drive(outcome: {}, inputs: List<{u}Input>, position: Int, events: List<{u}Event>, consumed: Int) -> {result}\n    match outcome\n        {}.Done(value) -> {done}\n        {}.Waiting(request) -> match request\n",
-            self.protocol.outcome, self.protocol.outcome, self.protocol.outcome
+            "\nfn {driver}(outcome: {}, inputs: List<{u}Input>, position: Int, events: List<{u}Event>, consumed: Int) -> {result}\n    match outcome\n        {}.Done(value) -> {done}\n        {}.Waiting(request) -> match request\n",
+            protocol.outcome, protocol.outcome, protocol.outcome
         );
-        for kind in &self.protocol.kinds {
+        for kind in &protocol.kinds {
+            let trace_kind = kind
+                .operation
+                .as_ref()
+                .and_then(|op| self.operations.get(op));
+            let trace_name = trace_kind.map_or(kind.name.as_str(), |kind| kind.name.as_str());
             let args: Vec<String> = (0..kind.arg_types.len())
                 .map(|n| format!("arg{n}"))
                 .collect();
             let mut fields = args.clone();
             fields.push("state".into());
             let query = if kind.operation.is_some() {
-                format!("{u}Query.{}{}", kind.name, payload(&args))
+                format!("{u}Query.{}{}", trace_name, payload(&args))
             } else {
                 format!("{u}Query.Yield")
             };
@@ -72,12 +76,12 @@ impl Model<'_> {
                     "state, answer"
                 };
                 (
-                    format!("{u}Input.Answer{}(answer)", kind.name),
+                    format!("{u}Input.Answer{}(answer)", trace_name),
                     answer_args,
                     "position + 1",
                     format!(
                         "List.concat(events, [{u}Event.Observed{}({})])",
-                        kind.name,
+                        trace_name,
                         event_args.join(", ")
                     ),
                 )
@@ -89,9 +93,9 @@ impl Model<'_> {
                     "events".into(),
                 )
             };
-            out.push_str(&format!("            {}.{}({}) -> match inputs\n                [] -> {}\n                [input, ..rest] -> match input\n                    {token} -> {p}Drive({}({answer_args}), rest, {position}, {events}, consumed + 1)\n", self.protocol.request, kind.name, fields.join(", "), halted(true), kind.answer_fn));
+            out.push_str(&format!("            {}.{}({}) -> match inputs\n                [] -> {}\n                [input, ..rest] -> match input\n                    {token} -> {driver}({}({answer_args}), rest, {position}, {events}, consumed + 1)\n", protocol.request, kind.name, fields.join(", "), halted(true), kind.answer_fn));
             let accepted = if kind.operation.is_some() {
-                format!("Answer{}", kind.name)
+                format!("Answer{}", trace_name)
             } else {
                 "Advance".into()
             };
@@ -105,6 +109,14 @@ impl Model<'_> {
                 }
             }
         }
+        out
+    }
+
+    pub(super) fn driver(&self, root: &FnDef) -> String {
+        let u = &self.upper;
+        let p = &self.prefix;
+        let result = self.result_type(root);
+        let mut out = self.drive(self.protocol, root, &format!("{p}Drive"));
         let params: Vec<_> = root
             .params
             .iter()

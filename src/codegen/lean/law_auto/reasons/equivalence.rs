@@ -55,6 +55,29 @@ pub(super) fn candidate(
             induction_call = Some(emit_expr(&resolve_rewrite_output(&call, ctx, None), ctx));
             break;
         }
+        // A composition can wrap a checked recursive result (for example a
+        // helper trace passed to a continuation). Induct on that call before
+        // splitting its result projections; the kernel supplies the same IH.
+        if let Expr::FnCall(_, args) = &call.node {
+            induction_call = args.iter().find_map(|arg| {
+                let nested = induction::callee(arg, ctx, scope.as_deref())?;
+                let measure = induction::list_measure(nested, ctx)?;
+                let Expr::FnCall(_, values) = &arg.node else {
+                    return None;
+                };
+                let index = nested.params.iter().position(|(name, _)| name == measure)?;
+                if !matches!(
+                    values.get(index)?.node,
+                    Expr::Ident(_) | Expr::Resolved { .. }
+                ) {
+                    return None;
+                }
+                Some(emit_expr(&resolve_rewrite_output(arg, ctx, None), ctx))
+            });
+            if induction_call.is_some() {
+                break;
+            }
+        }
         // Peel only a direct wrapper. Source bindings, conditions and recursive
         // bodies are not substituted by a compiler-side proof heuristic.
         let body: &Spanned<Expr> = match fd.body.as_ref() {
