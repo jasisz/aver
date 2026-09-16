@@ -856,3 +856,77 @@ fn one_recording(dir: &Path) -> Result<PathBuf, String> {
         other => Err(format!("expected exactly one recording, found {other}")),
     }
 }
+
+/// A real consumer carries Bytes-keyed UTXO maps in ordinary records even
+/// when only its typed Work task crosses an effect boundary. --with-replay
+/// must emit usable codecs for those records as well as Int/String maps.
+#[test]
+fn native_replay_round_trips_non_string_map_keys() {
+    let ws = temp_dir("map-replay");
+    let source = ws.join("main.av");
+    fs::write(&source, r#"module MapReplay
+    depends [Bytes]
+    effects []
+
+record Maps
+    bytes: Map<Bytes, Int>
+    flags: Map<Bool, Int>
+    counts: Map<Int, Int>
+    names: Map<String, Int>
+
+fn sample() -> Maps
+    Maps(bytes = Map.fromList([(Bytes.fromList([2]), 20), (Bytes.fromList([1]), 10)]), flags = Map.fromList([(false, 4), (true, 5)]), counts = Map.fromList([(2, 9), (-1, 7)]), names = Map.fromList([("hi", 6)]))
+
+fn main() -> Int
+    Map.len(sample().bytes)
+"#).unwrap();
+    let project = ws.join("project");
+    let result = (|| -> Result<(), String> {
+        compile_rust_at(&source, &ws, &project, "map_replay", &["--with-replay"])?;
+        let lib = project.join("src/main.rs");
+        let mut code = fs::read_to_string(&lib).unwrap();
+        code.push_str(r#"
+#[cfg(test)]
+mod map_replay_regression {
+    use super::replay_support::aver_replay::ReplayValue;
+    #[test]
+    fn typed_keys_round_trip() {
+        let original = super::aver_generated::entry::sample();
+        let encoded = original.to_replay_json();
+        let decoded = super::aver_generated::entry::Maps::from_replay_json(&encoded).unwrap();
+        assert_eq!(original, decoded);
+        assert_eq!(original.flags.to_replay_json(), serde_json::json!({"$map": [[false, 4], [true, 5]]}));
+        assert_eq!(original.counts.to_replay_json(), serde_json::json!({"$map": [[-1, 7], [2, 9]]}));
+        assert_eq!(original.names.to_replay_json(), serde_json::json!({"hi": 6}));
+        let empty = aver_rt::AverMap::<bool, aver_rt::AverInt>::new();
+        assert_eq!(empty.to_replay_json(), serde_json::json!({}));
+        assert_eq!(empty, aver_rt::AverMap::from_replay_json(&empty.to_replay_json()).unwrap());
+        assert!(aver_rt::AverMap::<bool, aver_rt::AverInt>::from_replay_json(&serde_json::json!({"$map": [[true]]})).is_err());
+    }
+}
+"#);
+        fs::write(&lib, code).unwrap();
+        let out = Command::new("cargo")
+            .args([
+                "test",
+                "--offline",
+                "--bin",
+                "map_replay",
+                "map_replay_regression",
+            ])
+            .arg("--manifest-path")
+            .arg(project.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", shared_target_dir())
+            .output()
+            .expect("run generated codec tests");
+        if !out.status.success() {
+            return Err(format!(
+                "generated map replay failed:\n{}",
+                format_output(&out)
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
