@@ -8,10 +8,11 @@ completion values. Equal return values alone do not establish correspondence.
 
 This is the compiler validation surface for #1376. It is separate from the
 coordinator's finite-history invariants and from provider answer-stability
-laws. Local recursive helpers compose through explicit helper and splice laws.
-Recursive imported observers and imported segments with in-place effects still
-need composition across their module boundary; the compiler rejects those model
-requests explicitly. The existing refusal to export stubbed direct process
+laws. Recursive helpers compose through explicit helper and splice laws,
+including imports whose owning module supplies its source correspondence and
+cursor contract. Imported segments with in-place effects still need an
+owning-module observation interface; the compiler rejects those model requests
+explicitly. The existing refusal to export stubbed direct process
 cases as proofs remains in place.
 
 ## Two independent inputs to the model generator
@@ -139,6 +140,45 @@ clock observations. False laws that reset cursor fields remain unproved even
 when completion values are unchanged. These are proof obligations for arbitrary
 finite tapes, not a fixed collection of generated schedules.
 
+## Composition across imports
+
+An imported helper uses its own concrete input and event types. The adapter
+maps operations by contract identity; a token that the child cannot accept maps
+to `Foreign`. It reconstructs the caller's remaining input with `List.drop`
+using the child's consumed-count delta, preserving the original token types.
+
+Every explicitly requested source observer gains an ordinary cursor law over
+**all outcomes**, including every waiting state, and arbitrary tapes and initial
+cursors. If `used = observed.consumed - consumed`, that law establishes:
+
+- `0 <= used <= List.len(inputs)`;
+- `observed.remaining == List.drop(inputs, used)`.
+
+The owning module exports the law subject and its strengthened correspondence
+subject. Import metadata carries their identities, not a trusted assertion that
+they have been proved. A recursive imported observer without these contracts is
+rejected explicitly. A cited law with an unproved obligation still fails the
+normal proof check and axiom audit.
+
+The caller generates a mapping law equating its observation of the child's
+actual protocol with the adapted owning-module observation. This law quantifies
+over both modules' event prefixes, the complete child outcome and every input.
+Ordinary append and singleton laws summarize event conversion. Two explicit
+`because` steps then apply the owning-module correspondence and the checked
+mapping. The caller's existing splice laws use the resulting child summary.
+
+Private recursive helpers remain in their original module. A finite exported
+wrapper around such a helper carries the same contracts. Fixtures check repeated
+imports, tail entry, private recursion, arbitrary initial cursors, Unit answers,
+early errors and tokens belonging only to the caller. The latter must remain
+unchanged when the child rejects them.
+
+Proof search keeps a summarized adapter opaque until its theorem rewrites the
+call. Between splices, a constructor-specific equation unfolds a completed
+continuation while preserving the next unknown outcome for its own theorem.
+No extra axiom, proof budget, generated scenario bound or handwritten Lean file
+is required.
+
 ## Boundary of the claim
 
 This proves equality of the two generated Aver observations for the supported
@@ -148,16 +188,15 @@ runtime conformance, scheduling fairness, liveness, termination of an unbounded
 run, or equivalence with the coordinator's host loop. Runtime tests on VM and
 WASM are separate checks of the executable observers.
 
-Model requests currently reject recursive imported helper subtraces,
-effectful independent products, indirect effectful calls and imported segments
+Model requests currently reject recursive imported helpers without owning-module
+contracts, effectful independent products, indirect effectful calls and imported segments
 whose in-place effects cannot be observed in their owning module. Pure source
 computations retain the ordinary exporter's recursion and proof requirements.
-Combining a local recursive source cone with an imported nested call also needs
-an owning-module splice theorem; that combination is currently rejected even
-when the imported helper itself is finite.
+Combining a local recursive source cone with an imported nested call requires
+the imported helper's owning-module contracts even when that helper is finite.
 A generated model is not itself universal credit: an unproved equality remains
-an open obligation. #1376 stays open for recursive imported splice invariants,
-imported in-place effects and the broader source/driver correspondence.
+an open obligation. #1376 stays open for imported in-place effects and the
+broader source/driver correspondence.
 
 The owning module records whether its source observer or any reachable helper
 is recursive. A finite caller of a recursive helper therefore retains this marker. An internal

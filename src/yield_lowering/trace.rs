@@ -11,7 +11,9 @@ use crate::ast::*;
 use std::collections::HashMap;
 
 mod composition;
+mod cursor;
 mod effects;
+mod import_composition;
 mod imports;
 mod laws;
 mod source;
@@ -70,7 +72,7 @@ pub(super) fn generate(
             &local_protocols,
             items,
         );
-        match model.generate() {
+        match model.generate(requested) {
             Ok(mut result) => {
                 let root = model.source(&protocol.fn_name).expect("retained root");
                 let trace = super::ProcessTrace {
@@ -87,6 +89,10 @@ pub(super) fn generate(
                     event: format!("{}Event", model.upper),
                     result: model.result_type(root),
                     source: model.source_name(root),
+                    drive: model.child_drive(root),
+                    protocol_from: format!("__{}ProtocolTraceFrom", protocol.fn_name),
+                    cursor: requested.then(|| format!("{}Cursor", model.prefix)),
+                    correspondence: None,
                 };
                 protocol.trace = Some(trace);
                 generated.append(&mut result);
@@ -234,17 +240,18 @@ impl<'a> Model<'a> {
         patterns
     }
 
-    fn generate(&self) -> Result<Vec<TopLevel>, String> {
+    fn generate(&self, requested: bool) -> Result<Vec<TopLevel>, String> {
         let root = self
             .source(&self.protocol.fn_name)
             .ok_or("missing retained source")?;
         let mut reached = Vec::new();
         let mut imports = Vec::new();
         self.reachable(root, &mut reached, &mut imports)?;
-        if let Some(helper) = imports
-            .iter()
-            .find(|helper| helper.trace.as_ref().is_some_and(|trace| trace.recursive))
-        {
+        if let Some(helper) = imports.iter().find(|helper| {
+            helper.trace.as_ref().is_some_and(|trace| {
+                trace.recursive && (trace.cursor.is_none() || trace.correspondence.is_none())
+            })
+        }) {
             return Err(format!(
                 "recursive imported helper '{}' needs a compositional subtrace theorem",
                 helper.fn_name
@@ -255,11 +262,11 @@ impl<'a> Model<'a> {
         let mut all = reached.clone();
         all.extend(imported_signatures.iter());
         let mut text = self.surface(&all);
-        for protocol in imports {
+        for protocol in &imports {
             text.push_str(&self.adapter(protocol)?);
         }
         text.push_str(&self.driver(root));
-        text.push_str(&self.composition(&reached)?);
+        text.push_str(&self.composition(&reached, &imports)?);
         let tokens = crate::lexer::Lexer::new(&text)
             .tokenize()
             .map_err(|e| format!("invalid generated observer: {e}"))?;
@@ -291,6 +298,9 @@ impl<'a> Model<'a> {
         }
         for fd in reached {
             items.push(TopLevel::FnDef(source::Compiler::new(self, fd).compile()?));
+        }
+        if requested {
+            self.cursor_contract(&mut items, root)?;
         }
         Ok(items)
     }

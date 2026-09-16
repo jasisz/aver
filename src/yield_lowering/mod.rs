@@ -124,6 +124,11 @@ pub struct ProcessTrace {
     pub event: String,
     pub result: String,
     pub source: String,
+    /// Owning-module observers and law dependencies used by import adapters.
+    pub drive: String,
+    pub protocol_from: String,
+    pub cursor: Option<String>,
+    pub correspondence: Option<String>,
 }
 
 /// Public source signature and its lowered protocol, retained across module loading.
@@ -401,7 +406,7 @@ pub fn lower(
     items.extend(traces);
     report
         .generated
-        .extend(trace::strengthen_laws(items, &report.protocols));
+        .extend(trace::strengthen_laws(items, &mut report.protocols));
     let verification = verify::generate(items, &report.protocols, fn_sigs)?;
     report.generated.extend(verification.iter().cloned());
     items.extend(verification);
@@ -524,7 +529,13 @@ pub fn lower(
                         trace.event.clone(),
                         trace.result.clone(),
                         trace.source.clone(),
+                        trace.drive.clone(),
+                        trace.protocol_from.clone(),
                     ]);
+                    public_names.extend(trace.cursor.iter().cloned());
+                    if trace.correspondence.is_some() {
+                        public_names.push(format!("__{fn_name}SourceTraceFrom"));
+                    }
                 }
                 for (offset, name) in public_names.iter().enumerate() {
                     module.exposes.insert(pos + offset, name.clone());

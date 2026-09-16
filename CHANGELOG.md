@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Source request-trace laws compose recursive imports.** Owning modules export checked cursor and source-correspondence contracts. Ordinary mapping and splice laws preserve the caller’s original remainder, event prefixes and continuation across repeated calls, tail entry and private recursive helpers. Lean uses structural transport proofs and constructor-specific continuation equations without increasing proof budgets. Imported in-place effects remain outside this slice. See `docs/yield-request-traces.md`.
+
 - **Source request-trace laws compose local recursive helpers.** Each nested call gets an ordinary universal helper/splice obligation over arbitrary finite input tapes, suspended outcomes and cursors. Parent laws cite those facts before unfolding their continuation, preserving repeated calls, tail entry, in-place observations and early errors. Recursive imported observers still require their own module-boundary composition. See `docs/yield-request-traces.md`.
 
 - **Source request-trace proofs support finite tail-entry chains.** The independent source observer preserves yielding helper boundaries, including inlined and imported helpers: each pause consumes a resumption permission without adding an answer or operation event. Ordinary universal laws check those prefixes against the lowered protocol. Recursive imported helper subtrace composition remains unsupported. WASM linking also preserves module ownership for temporarily entry-stamped types when private helper names collide. See `docs/yield-request-traces.md`.

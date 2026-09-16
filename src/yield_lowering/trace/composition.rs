@@ -2,7 +2,7 @@
 //! Each splice equation is an ordinary universally quantified Aver law. Its
 //! right side reads the real protocol; the source observer stays independent.
 use super::*;
-mod samples;
+pub(super) mod samples;
 
 impl Model<'_> {
     pub(super) fn has_recursion(&self) -> bool {
@@ -24,9 +24,12 @@ impl Model<'_> {
             return vec![];
         };
         if self.reachable(root, &mut reached, &mut imports).is_err()
-            || !reached
+            || (!reached
                 .iter()
                 .any(|fd| fd.name != root.name && calls_itself(fd))
+                && !imports
+                    .iter()
+                    .any(|p| p.trace.as_ref().is_some_and(|t| t.recursive)))
         {
             return vec![];
         }
@@ -34,6 +37,16 @@ impl Model<'_> {
         for nest in &protocol.nests {
             if let Some(child) = self.source(&nest.callee) {
                 let law = format!("{}.correspondence", self.source_name(child));
+                if !dependencies.contains(&law) {
+                    dependencies.push(law);
+                }
+                dependencies.push(format!(
+                    "{}Splice{}Observed.splice",
+                    self.prefix, nest.router
+                ));
+            } else if let Some(child) = self.imported.get(&nest.callee) {
+                let signature = self.import_signature(child);
+                let law = format!("{}.correspondence", self.source_name(&signature));
                 if !dependencies.contains(&law) {
                     dependencies.push(law);
                 }
@@ -54,10 +67,17 @@ impl Model<'_> {
         }
     }
 
-    pub(super) fn composition(&self, reached: &[&FnDef]) -> Result<String, String> {
+    pub(super) fn composition(
+        &self,
+        reached: &[&FnDef],
+        imports: &[&ProcessProtocol],
+    ) -> Result<String, String> {
         if !reached
             .iter()
             .any(|fd| fd.name != self.protocol.fn_name && calls_itself(fd))
+            && !imports
+                .iter()
+                .any(|p| p.trace.as_ref().is_some_and(|t| t.recursive))
         {
             return Ok(String::new());
         }
@@ -70,6 +90,10 @@ impl Model<'_> {
         ];
         let cursor_args = "inputs, position, events, consumed";
         let mut out = String::new();
+        let signatures: Vec<_> = imports.iter().map(|p| self.import_signature(p)).collect();
+        for (protocol, signature) in imports.iter().zip(&signatures) {
+            out.push_str(&self.import_composition(protocol, signature)?);
+        }
         for fd in reached.iter().copied() {
             let Some(protocol) = self.local_protocols.iter().find(|p| p.fn_name == fd.name) else {
                 continue;
@@ -104,14 +128,22 @@ impl Model<'_> {
                 )?);
             }
             for nest in &protocol.nests {
-                let Some(child) = reached.iter().find(|child| child.name == nest.callee) else {
-                    return Err("recursive composition through imports needs an owning-module splice theorem".into());
-                };
-                let child_protocol = self
-                    .local_protocols
-                    .iter()
-                    .find(|p| p.fn_name == child.name)
-                    .ok_or("helper protocol missing")?;
+                let (child, child_protocol) =
+                    if let Some(child) = reached.iter().find(|child| child.name == nest.callee) {
+                        (
+                            *child,
+                            self.local_protocols
+                                .iter()
+                                .find(|p| p.fn_name == child.name)
+                                .ok_or("helper protocol missing")?,
+                        )
+                    } else {
+                        let index = imports
+                            .iter()
+                            .position(|p| p.fn_name == nest.callee)
+                            .ok_or("imported helper protocol missing")?;
+                        (&signatures[index], imports[index])
+                    };
                 let router = self
                     .segments
                     .iter()
@@ -170,21 +202,21 @@ impl Model<'_> {
     }
 }
 
-fn declarations(params: &[(String, String)]) -> String {
+pub(super) fn declarations(params: &[(String, String)]) -> String {
     params
         .iter()
         .map(|(n, t)| format!("{n}: {t}"))
         .collect::<Vec<_>>()
         .join(", ")
 }
-fn names(params: &[(String, String)]) -> String {
+pub(super) fn names(params: &[(String, String)]) -> String {
     params
         .iter()
         .map(|(n, _)| n.as_str())
         .collect::<Vec<_>>()
         .join(", ")
 }
-fn law(
+pub(super) fn law(
     model: &Model<'_>,
     target: &str,
     label: &str,

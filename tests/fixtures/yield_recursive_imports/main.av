@@ -1,0 +1,57 @@
+module RecursiveImports
+    intent = "Compose a recursive helper across a module boundary over any finite tape."
+    depends [Pool, Pooled, Looper]
+    exposes [parent]
+    effects [Pool.claim, yield]
+
+fn parent(n: Int) -> Int
+    ! [Pool.claim, yield]
+    value = Looper.loop(n)
+    value + 10
+
+fn tail(n: Int) -> Int
+    ! [Pool.claim, yield]
+    Looper.loop(n)
+
+fn repeated(n: Int) -> Int
+    ! [Pool.claim, yield]
+    first = Looper.loop(n)
+    second = Looper.loop(first)
+    match Pool.claim(first + second)
+        Option.None -> second
+        Option.Some(value) -> value
+
+fn cursorChecks() -> Bool
+    inputs = [__RepeatedTraceInput.AnswerClaim(Option.Some(7)), __RepeatedTraceInput.Advance, __RepeatedTraceInput.AnswerClaim(Option.None), __RepeatedTraceInput.AnswerClaim(Option.Some(9)), __RepeatedTraceInput.Advance, __RepeatedTraceInput.AnswerClaim(Option.None), __RepeatedTraceInput.AnswerClaim(Option.Some(20)), __RepeatedTraceInput.Foreign]
+    observed = __repeatedSourceTraceFrom(2, inputs, 0 - 4, [__RepeatedTraceEvent.Empty], 10)
+    expected = [__RepeatedTraceEvent.Empty, __RepeatedTraceEvent.ObservedClaim(0 - 4, 2, Option.Some(7)), __RepeatedTraceEvent.ObservedClaim(0 - 3, 7, Option.None), __RepeatedTraceEvent.ObservedClaim(0 - 2, 7, Option.Some(9)), __RepeatedTraceEvent.ObservedClaim(0 - 1, 9, Option.None), __RepeatedTraceEvent.ObservedClaim(0, 16, Option.Some(20))]
+    Bool.and(observed == __repeatedProtocolTraceFrom(2, inputs, 0 - 4, [__RepeatedTraceEvent.Empty], 10), Bool.and(observed.events == expected, Bool.and(observed.position == 1, Bool.and(observed.consumed == 17, Bool.and(observed.remaining == [__RepeatedTraceInput.Foreign], observed.value == Option.Some(20))))))
+
+verify cursorChecks
+    cursorChecks() => true
+
+fn waitingChecks() -> Bool
+    inputs = [__RepeatedTraceInput.AnswerClaim(Option.None), __RepeatedTraceInput.AnswerClaim(Option.Some(9)), __RepeatedTraceInput.Advance]
+    observed = __repeatedSourceTrace(2, inputs)
+    Bool.and(observed == __repeatedProtocolTrace(2, inputs), Bool.and(observed.position == 2, Bool.and(observed.consumed == 3, Bool.and(observed.pending == Option.Some(__RepeatedTraceQuery.Claim(9)), observed.value == Option.None))))
+
+verify waitingChecks
+    waitingChecks() => true
+
+verify __parentSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__ParentTraceInput> = [[], [__ParentTraceInput.AnswerClaim(Option.Some(7)), __ParentTraceInput.Advance, __ParentTraceInput.AnswerClaim(Option.None), __ParentTraceInput.Foreign]]
+    using []
+    __parentSourceTrace(n, inputs) == __parentProtocolTrace(n, inputs) holds
+
+verify __tailSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__TailTraceInput> = [[], [__TailTraceInput.Advance, __TailTraceInput.AnswerClaim(Option.None), __TailTraceInput.Foreign]]
+    using []
+    __tailSourceTrace(n, inputs) == __tailProtocolTrace(n, inputs) holds
+
+verify __repeatedSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__RepeatedTraceInput> = [[]]
+    using []
+    __repeatedSourceTrace(n, inputs) == __repeatedProtocolTrace(n, inputs) holds

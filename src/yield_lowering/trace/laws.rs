@@ -6,7 +6,7 @@ use super::*;
 
 pub(in crate::yield_lowering) fn strengthen_laws(
     items: &mut Vec<TopLevel>,
-    protocols: &[ProcessProtocol],
+    protocols: &mut [ProcessProtocol],
 ) -> Vec<TopLevel> {
     let mut occupied: std::collections::HashSet<_> = items
         .iter()
@@ -22,7 +22,7 @@ pub(in crate::yield_lowering) fn strengthen_laws(
     let mut output = Vec::new();
     for mut item in items.drain(..) {
         if let TopLevel::Verify(block) = &mut item
-            && let Some(protocol) = protocols.iter().find(|p| {
+            && let Some(protocol) = protocols.iter_mut().find(|p| {
                 p.trace.is_some() && block.fn_name == format!("__{}SourceTrace", p.fn_name)
             })
             && let VerifyKind::Law(law) = &block.kind
@@ -112,6 +112,12 @@ pub(in crate::yield_lowering) fn strengthen_laws(
                 givens.extend(names.iter().cloned().zip(samples.iter().cloned()));
             }
             let dependency = format!("{}.{}", auxiliary.fn_name, aux.name);
+            protocol
+                .trace
+                .as_mut()
+                .unwrap()
+                .correspondence
+                .get_or_insert_with(|| dependency.clone());
             let VerifyKind::Law(original) = &mut block.kind else {
                 unreachable!()
             };

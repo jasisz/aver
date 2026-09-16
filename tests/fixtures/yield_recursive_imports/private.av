@@ -1,0 +1,34 @@
+module PrivateImports
+    intent = "Compose an imported finite parent whose recursion stays inside its owning module."
+    depends [Pool, Pooled, Worker]
+    exposes [parent]
+    effects [Pool.claim, Pool.finish, Pool.notice, yield]
+
+fn parent(n: Int) -> Result<Int, String>
+    ! [Pool.claim, Pool.finish, Pool.notice, yield]
+    value = Worker.run(n)
+    Pool.notice(value)
+    Pool.finish(value + 10)
+
+fn earlyErrorChecks() -> Bool
+    inputs = [__ParentTraceInput.AnswerClaim(Option.Some(7)), __ParentTraceInput.Advance, __ParentTraceInput.AnswerClaim(Option.None), __ParentTraceInput.AnswerNotice(Unit), __ParentTraceInput.AnswerFinish(Result.Err("stop")), __ParentTraceInput.Foreign]
+    observed = __parentSourceTraceFrom(2, inputs, 5, [__ParentTraceEvent.Empty], 11)
+    expected: Result<Int, String> = Result.Err("stop")
+    Bool.and(observed == __parentProtocolTraceFrom(2, inputs, 5, [__ParentTraceEvent.Empty], 11), Bool.and(observed.value == Option.Some(expected), Bool.and(observed.position == 9, Bool.and(observed.consumed == 16, observed.remaining == [__ParentTraceInput.Foreign]))))
+
+verify earlyErrorChecks
+    earlyErrorChecks() => true
+
+fn wrongKindChecks() -> Bool
+    inputs = [__ParentTraceInput.AnswerFinish(Result.Err("wrong operation"))]
+    observed = __parentSourceTraceFrom(2, inputs, 5, [__ParentTraceEvent.Empty], 11)
+    Bool.and(observed == __parentProtocolTraceFrom(2, inputs, 5, [__ParentTraceEvent.Empty], 11), Bool.and(observed.remaining == inputs, Bool.and(observed.events == [__ParentTraceEvent.Empty], Bool.and(observed.consumed == 11, Bool.and(Bool.not(observed.valid), observed.pending == Option.Some(__ParentTraceQuery.Claim(2)))))))
+
+verify wrongKindChecks
+    wrongKindChecks() => true
+
+verify __parentSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__ParentTraceInput> = [[], [__ParentTraceInput.AnswerClaim(Option.Some(7)), __ParentTraceInput.Advance, __ParentTraceInput.AnswerClaim(Option.None), __ParentTraceInput.Foreign]]
+    using []
+    __parentSourceTrace(n, inputs) == __parentProtocolTrace(n, inputs) holds

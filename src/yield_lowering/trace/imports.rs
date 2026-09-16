@@ -125,7 +125,8 @@ impl Model<'_> {
                 "consumed".into(),
             ])
             .collect();
-        out.push_str(&format!("\nfn {name}({}) -> {result}\n    emptyEvents: List<{}> = []\n    observed = {}({})\n    {result}(remaining = List.drop(inputs, observed.consumed - consumed), position = observed.position, consumed = observed.consumed, events = List.concat(events, {convert_events}(observed.events)), value = observed.value, pending = {convert_pending}(observed.pending), valid = observed.valid)\n", params.join(", "), trace.event, trace.source, args.join(", ")));
+        out.push_str(&format!("\nfn {name}Lift(observed: {}, inputs: List<{u}Input>, events: List<{u}Event>, consumed: Int) -> {result}\n    {result}(remaining = List.drop(inputs, observed.consumed - consumed), position = observed.position, consumed = observed.consumed, events = List.concat(events, {convert_events}(observed.events)), value = observed.value, pending = {convert_pending}(observed.pending), valid = observed.valid)\n", trace.result));
+        out.push_str(&format!("\nfn {name}({}) -> {result}\n    emptyEvents: List<{}> = []\n    {name}Lift({}({}), inputs, events, consumed)\n", params.join(", "), trace.event, trace.source, args.join(", ")));
         Ok(out)
     }
 }

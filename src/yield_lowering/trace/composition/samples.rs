@@ -3,7 +3,10 @@
 //! only constructors visible in this module; resources remain unconstructible.
 use super::*;
 
-pub(super) fn witness(model: &Model<'_>, annotation: &str) -> Result<String, String> {
+pub(in crate::yield_lowering::trace) fn witness(
+    model: &Model<'_>,
+    annotation: &str,
+) -> Result<String, String> {
     let ty = crate::types::parse_type_str_strict(annotation)
         .map_err(|_| format!("invalid trace law type '{annotation}'"))?;
     value(model, &ty, &mut Vec::new()).ok_or_else(|| {

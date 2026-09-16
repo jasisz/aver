@@ -27,7 +27,11 @@ pub(super) fn candidate(
         Expr::BinOp(BinOp::Eq, left, right) => (left.as_ref(), right.as_ref()),
         _ => (&law.lhs, &law.rhs),
     };
-    if !matches!(left.node, Expr::FnCall(_, _)) || !matches!(right.node, Expr::FnCall(_, _)) {
+    let invariant = matches!(right.node, Expr::Literal(crate::ast::Literal::Bool(true)))
+        && law.because.is_empty();
+    if !matches!(left.node, Expr::FnCall(_, _))
+        || !(matches!(right.node, Expr::FnCall(_, _)) || invariant)
+    {
         return None;
     }
     let scope = ctx.active_module_scope();
@@ -50,6 +54,36 @@ pub(super) fn candidate(
                 args.get(index)?.node,
                 Expr::Ident(_) | Expr::Resolved { .. }
             ) {
+                // A unary list observer over an appended input has a simple
+                // structural motive even though its call argument is composite.
+                if fd.params.len() == 1
+                    && fd.return_type.starts_with("List<")
+                    && let Some((name, parts)) = super::super::shared::call_name_args(&args[index])
+                    && name == "List.concat"
+                    && parts.len() == 2
+                    && let Expr::Ident(driver) | Expr::Resolved { name: driver, .. } =
+                        &parts[0].node
+                    && law.givens.iter().any(|given| given.name == *driver)
+                {
+                    let others = law
+                        .givens
+                        .iter()
+                        .filter(|given| given.name != *driver)
+                        .map(|given| crate::codegen::lean::expr::aver_name_to_lean(&given.name))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let generalizing = if others.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" generalizing {others}")
+                    };
+                    return Some(format!(
+                        "(simp only [beq_iff_eq]; induction {}{generalizing} <;> simp_all [{}, {}]; done)",
+                        crate::codegen::lean::expr::aver_name_to_lean(driver),
+                        induction::lean_name(fd, ctx),
+                        definitions.simp
+                    ));
+                }
                 return None;
             }
             induction_call = Some(emit_expr(&resolve_rewrite_output(&call, ctx, None), ctx));
@@ -104,6 +138,9 @@ pub(super) fn candidate(
         wrappers.push(induction::lean_name(fd, ctx));
         call = super::super::shared::substitute_expr(body, &bindings);
     }
+    if invariant && induction_call.is_none() {
+        return None;
+    }
     let start = match induction_call {
         Some(call) => format!("fun_induction {call}; "),
         None => String::new(),
@@ -135,6 +172,15 @@ pub(super) fn candidate(
     } else {
         format!(", {heads}")
     };
+    if invariant {
+        // A predicate of a recursive result needs that computation's motive,
+        // not induction on an incidental list projection or Bool wrapper.
+        // Expose Bool facts in the IH before solving a consumed-prefix step;
+        // the guarded drop equation lets arithmetic relate Int cursor deltas.
+        return Some(format!(
+            "(simp only [beq_iff_eq{heads}]; {start}all_goals simp only [{simp}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le] at *; all_goals grind [List.drop_cons]; done)"
+        ));
+    }
     let solve = format!(
         "simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
     );
