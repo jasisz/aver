@@ -313,6 +313,13 @@ fn work_jobs_two_kinds_keeps_each_kind_to_its_own_handles() {
     .unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// Capability-owned records and a worker imported through nested module paths.
+/// This is the same boundary used by the btc-listener consumer.
+#[test]
+fn nested_record_job_matches_the_vm() {
+    assert_same_lines("work_jobs_nested_record");
+}
+
 // ── A capability the program answers ────────────────────────────────────
 
 /// A program that answers a capability of its own, without asking for a

@@ -483,3 +483,9 @@ fn the_wasip2_backend_accepts_a_program_with_a_job_kind() {
     assert!(out.status.success(), "{}", format_output(&out));
     let _ = std::fs::remove_dir_all(std::env::temp_dir().join("aver-work-target-wasip2"));
 }
+
+#[test]
+fn a_nested_record_worker_is_checked_as_part_of_its_program() {
+    let out = aver("work_jobs_nested_record", &["check"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+}
