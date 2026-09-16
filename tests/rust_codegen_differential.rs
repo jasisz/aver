@@ -4027,6 +4027,71 @@ fn record_replay_roundtrips_effects_through_invoke_wrapper() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+#[test]
+fn normal_capability_calls_skip_replay_argument_serialization() {
+    let ws = temp_dir("lazy-replay-args");
+    let source = ws.join("lazy_args.av");
+    fs::write(
+        &source,
+        "module LazyArgs\n    intent = \"Replay snapshots are optional work.\"\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"payload\")\n",
+    )
+    .unwrap();
+    let project = ws.join("project");
+    let result = (|| -> Result<(), String> {
+        compile_rust(&source, &project, "lazy_args", None, &["--with-replay"])?;
+        // Instrument the actual generated string codec: checking output or
+        // emitted syntax alone would miss an eagerly built, discarded snapshot.
+        let runtime = project.join("src/replay_support.rs");
+        let emitted = fs::read_to_string(&runtime).unwrap();
+        let needle = "impl ReplayValue for aver_rt::AverStr {\n        fn to_replay_json(&self) -> ReplayJson {";
+        assert!(emitted.contains(needle));
+        fs::write(&runtime, emitted.replacen(needle, &format!(
+            "{needle}\n            assert!(std::env::var_os(\"AVER_TEST_FORBID_SNAPSHOT\").is_none(), \"unnecessary argument snapshot\");"
+        ), 1)).unwrap();
+        let binary = cargo_build(&project, "lazy_args")?;
+        let normal = Command::new(&binary)
+            .env("AVER_TEST_FORBID_SNAPSHOT", "1")
+            .env_remove("AVER_REPLAY_RECORD")
+            .env_remove("AVER_REPLAY_REPLAY")
+            .output()
+            .unwrap();
+        if !normal.status.success() {
+            return Err(format!(
+                "normal run serialized arguments: {}",
+                format_output(&normal)
+            ));
+        }
+        assert_eq!(String::from_utf8_lossy(&normal.stdout).trim(), "payload");
+        let session = ws.join("session.json");
+        let record = Command::new(&binary)
+            .env("AVER_REPLAY_RECORD", &session)
+            .output()
+            .unwrap();
+        if !record.status.success() {
+            return Err(format!("record failed: {}", format_output(&record)));
+        }
+        let data: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&session).unwrap()).unwrap();
+        let print = data["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|effect| effect["type"] == "Console.print")
+            .unwrap();
+        assert_eq!(print["args"], serde_json::json!(["payload"]));
+        let replay = Command::new(&binary)
+            .env("AVER_REPLAY_REPLAY", &session)
+            .output()
+            .unwrap();
+        if !replay.status.success() {
+            return Err(format!("replay failed: {}", format_output(&replay)));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 // ─── Mode (e): MIR-synthesized TCO (Wave 5) ──────────────────────────────
 //
 // The MIR walker synthesizes the self-TCO loop and the mutual-recursion
