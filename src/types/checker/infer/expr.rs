@@ -212,8 +212,11 @@ impl TypeChecker {
         // the enclosing call is rejected. Only an unresolved result may be
         // replaced, only by a fully concrete pin, and only when the two
         // agree in shape — a genuine mismatch still goes to the caller's
-        // own check.
+        // own check. Invalid is error recovery, not an unresolved generic:
+        // rechecking retained source before lowering can see old stamps for
+        // declarations that this stage has not generated yet.
         if let Some(pinned) = expr.ty()
+            && !matches!(t, Type::Invalid)
             && !type_is_fully_concrete(&t)
             && type_is_fully_concrete(pinned)
         {

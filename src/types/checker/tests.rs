@@ -84,6 +84,32 @@ fn duplicate_binding_is_rejected() {
 }
 
 #[test]
+fn a_previous_type_stamp_cannot_revive_an_unknown_call() {
+    let call = Spanned::bare(Expr::FnCall(
+        Box::new(Spanned::bare(Expr::Ident("removed".into()))),
+        vec![],
+    ));
+    call.set_ty(Type::Named {
+        id: Some(crate::ir::TypeId::for_key(&crate::ir::TypeKey::entry(
+            "OldResult",
+        ))),
+        name: "OldResult".into(),
+    });
+    let errs = errors(vec![TopLevel::Stmt(Stmt::Expr(Spanned::bare(
+        Expr::BinOp(BinOp::Eq, Box::new(call.clone()), Box::new(call)),
+    )))]);
+    assert!(
+        errs.iter()
+            .any(|error| error.contains("Call to unknown function 'removed'")),
+        "{errs:?}"
+    );
+    assert!(
+        !errs.iter().any(|error| error.contains("Equality")),
+        "{errs:?}"
+    );
+}
+
+#[test]
 fn nested_attr_callee_key() {
     let expr = Expr::Attr(
         Box::new(Spanned::bare(Expr::Attr(
