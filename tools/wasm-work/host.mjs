@@ -115,7 +115,9 @@ export async function createWorkHost(module, options = {}) {
         retire(id);
         notify();
     };
-    aver.wait_poll = () => { throw new Error("work: synchronous Wait.poll cannot receive worker messages; use runCoordinator() or await host.wait()"); };
+    // Embedders using JSPI can suspend an ordinary main at Wait.poll and
+    // delegate to host.wait(). Preserve their explicit async import.
+    aver.wait_poll = options.imports?.aver?.wait_poll ?? (() => { throw new Error("work: synchronous Wait.poll cannot receive worker messages; use runCoordinator() or await host.wait()"); });
 
     async function close() {
         if (closed) return;

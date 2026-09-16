@@ -70,10 +70,31 @@ JavaScript must return to its event loop to receive worker messages. The
 generated coordinator therefore exposes start, observe, wait-set, timeout,
 step, stopped and finish functions. Its step is the same post-wait turn the
 blocking native driver uses. `runCoordinator()` awaits readiness outside Wasm,
-then calls that step. Arbitrary synchronous calls to `main` that block inside
-`Wait.poll` cannot use this adapter; it reports that explicitly. A host for a
-hand-written coordinator can call application exports and `await host.wait(...)`
-instead. Other synchronous effect implementations remain the embedding's job;
+then calls that step. A synchronous `main` that blocks inside `Wait.poll`
+cannot receive worker messages. A host for a hand-written coordinator can
+call application exports and `await host.wait(...)` instead, or use JSPI to
+suspend that stack. An explicitly supplied `imports.aver.wait_poll` is
+preserved, so a JSPI embedding can delegate to the same combined wait:
+
+```js
+let host;
+const wait_poll = new WebAssembly.Suspending(async (items, timeout) => {
+    try {
+        return host.instance.exports.__rt_result_list_int_string_ok(await host.wait(items, timeout));
+    } catch (error) {
+        return host.instance.exports.__rt_result_list_int_string_err(host.codec.stringIn(String(error)));
+    }
+});
+host = await createWorkHost(module, { imports: { aver: { wait_poll } }, pollSockets });
+try {
+    await WebAssembly.promising(host.instance.exports.main)();
+} finally {
+    await host.close();
+}
+```
+
+This needs JSPI in addition to WasmGC and tail calls (Node 26, or Node 24/25
+with `--experimental-wasm-jspi`). Other synchronous effect implementations remain the embedding's job;
 this adapter does not transform arbitrary blocking effects into async calls.
 
 The JS adapter performs live execution. Recording/replay is supplied by the

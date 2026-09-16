@@ -62,3 +62,28 @@ for (const [file, task, expected] of [
     } finally { await host.close(); }
 }
 console.log("worker ABI passed");
+
+// JSPI lets a hand-written main yield inside Wait.poll. Both workers must
+// make progress while that Wasm stack is suspended, and cancel must stop
+// the infinite worker before the host closes.
+if (typeof WebAssembly.Suspending === "function") {
+    const lines = [];
+    let jspi;
+    const wait_poll = new WebAssembly.Suspending(async (items, timeout) => {
+        try {
+            const ready = await jspi.wait(items, timeout);
+            return jspi.instance.exports.__rt_result_list_int_string_ok(ready);
+        } catch (error) {
+            return jspi.instance.exports.__rt_result_list_int_string_err(jspi.codec.stringIn(String(error)));
+        }
+    });
+    jspi = await createWorkHost(await WebAssembly.compile(await readFile(parallelFile)), {
+        maxJobs: 2, onPrint: line => lines.push(line), imports: { aver: { wait_poll } },
+    });
+    try {
+        const result = await WebAssembly.promising(jspi.instance.exports.main)();
+        assert.deepEqual(jspi.codec.decode("Result<Unit, String>", result), { ok: null });
+        assert.deepEqual(lines, ["parallel 340282366920938463463374607431768211457"]);
+    } finally { await jspi.close(); }
+    console.log("JSPI Work main passed");
+}

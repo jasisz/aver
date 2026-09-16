@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **JavaScript Work hosts preserve an embedding's explicit `Wait.poll` import.** A JSPI adapter can suspend a hand-written `main`, await the shared socket/job scheduler, and resume it while worker threads progress. The default synchronous-wait rejection remains in place for embeddings without an adapter.
+
 - **Native replay supports all serializable map keys, including `Bytes` and `Bool`.** Non-string keys retain their typed `$map` encoding, decode through that marker, and are sorted before recording so repeated runs and VM recordings agree. This also fixes `--with-replay` compilation of records carrying UTXO maps.
 
 - **Nested Work capabilities compile to native Rust and pass multi-module checks.** Generated worker wrappers use collision-free Rust identifiers even when capability names contain module paths. `aver check` validates job bindings at the composed program entry while retaining shape and request-placement checks in dependencies. Regression coverage uses capability-owned record tasks and results across nested modules.
