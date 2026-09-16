@@ -1,0 +1,22 @@
+module Worker
+    intent = "Keep a recursive helper private while exposing its checked process observation."
+    depends [Pool, Pooled]
+    exposes [run]
+    effects [Pool.claim, yield]
+
+fn loop(n: Int) -> Int
+    ! [Pool.claim, yield]
+    match Pool.claim(n)
+        Option.None -> n
+        Option.Some(next) -> loop(next)
+
+fn run(n: Int) -> Int
+    ! [Pool.claim, yield]
+    value = loop(n)
+    value + 1
+
+verify __runSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__RunTraceInput> = [[]]
+    using []
+    __runSourceTrace(n, inputs) == __runProtocolTrace(n, inputs) holds

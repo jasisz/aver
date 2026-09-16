@@ -90,9 +90,13 @@ pub(super) fn candidate(
             .find(|t| t.fn_id == id && t.law_name == label)?;
         if function != block.fn_name || label != law.name {
             cited_cones.extend(theorem.function_cone.iter().copied());
-            if ctx.recursive_fns.contains(&id) {
-                let key = &ctx.symbol_table.fn_entry(id).key;
-                if let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) {
+            let key = &ctx.symbol_table.fn_entry(id).key;
+            if let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) {
+                let wrapper = matches!(fd.body.stmts(), [crate::ast::Stmt::Expr(expr)] if matches!(expr.node, Expr::FnCall(..)));
+                if !wrapper || ctx.recursive_fns.contains(&id) {
+                    // A checked summary is also a boundary when its adapter
+                    // itself is nonrecursive. Keep that call available for
+                    // rewriting before projecting a recursively computed record.
                     summarized.insert(induction::lean_name(fd, ctx));
                 }
             }
@@ -100,6 +104,7 @@ pub(super) fn candidate(
         cones.extend(theorem.function_cone.iter().copied());
     }
     let mut plain = BTreeSet::new();
+    let mut completed_boundaries = BTreeSet::new();
     let mut input_match = false;
     let mut opaque = BTreeSet::new();
     for id in cited_cones {
@@ -150,7 +155,13 @@ pub(super) fn candidate(
         }
         input_match |= !ctx.recursive_fns.contains(&id) && parameter_match(fd, true);
         let name = induction::lean_name(fd, ctx);
+        if summarized.contains(&name) {
+            continue;
+        }
         if opaque.contains(&name) {
+            if first_constructor_branch(fd) {
+                completed_boundaries.insert(format!("{name}.eq_1"));
+            }
             if parameter_match(fd, false) {
                 steps.insert(format!("= {name}.eq_def"));
             }
@@ -176,6 +187,12 @@ pub(super) fn candidate(
         .map(|i| format!("(try (conv => rhs; rw [← _fact{i}]))"))
         .collect::<Vec<_>>()
         .join("; ");
+    let staged_plain = plain
+        .iter()
+        .chain(completed_boundaries.iter())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
     let plain = plain.into_iter().collect::<Vec<_>>().join(", ");
     let steps = steps.into_iter().collect::<Vec<_>>().join(", ");
     let splices: Vec<_> = relevant
@@ -211,7 +228,7 @@ pub(super) fn candidate(
             String::new()
         };
         let step = format!(
-            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all only [{plain}, {excluded}]))); "
+            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all only [{staged_plain}, {excluded}]))); "
         );
         format!(
             " | ({}all_goals (repeat' first | rfl | (simp_all [{completion}, {equations}, {excluded}]) | split); done)",
@@ -246,4 +263,26 @@ fn parameter_match(fd: &crate::ast::FnDef, lists_only: bool) -> bool {
             false
         })
     })
+}
+
+/// A constructor-specific equation advances a completed boundary without
+/// unfolding a different call whose outcome is still unknown. The first flat
+/// branch has Lean's first kernel-generated equation, irrespective of names.
+fn first_constructor_branch(fd: &crate::ast::FnDef) -> bool {
+    let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts() else {
+        return false;
+    };
+    let Expr::Match { subject, arms } = &expr.node else {
+        return false;
+    };
+    let (Expr::Ident(name) | Expr::Resolved { name, .. }) = &subject.node else {
+        return false;
+    };
+    fd.params.iter().any(|(param, _)| param == name)
+        && arms.first().is_some_and(|arm| {
+            matches!(arm.pattern, crate::ast::Pattern::Constructor(..))
+                && !crate::codegen::expr_walk::any(&arm.body, &mut |expr| {
+                    matches!(expr.node, Expr::Match { .. })
+                })
+        })
 }

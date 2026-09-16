@@ -13,6 +13,7 @@ mod composition;
 mod equivalence;
 mod induction;
 mod list_induction;
+mod transport;
 
 pub(in crate::codegen::lean) struct ReasonClaim<'a> {
     pub base: &'a str,
@@ -289,6 +290,9 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             let saturate = inductive.is_empty() || !law.because.is_empty();
             if !inductive.is_empty() {
                 lines.push("  first".to_string());
+                if let Some(candidate) = transport::candidate(vb, law, ctx, fact_count) {
+                    lines.push(format!("  | {candidate}"));
+                }
                 if let Some(candidate) =
                     composition::candidate(vb, law, ctx, &definitions, fact_count)
                 {
@@ -453,6 +457,12 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             }
             for i in 0..direct_facts {
                 lines.push(format!("  | (simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; with_reducible apply _fact{i} <;> (first | assumption | omega | ({shallow}) | (simp_all only [{premise_simp}]; grind)))"));
+                if !definitions.heads.is_empty() {
+                    // Unwrap the named Bool explanation before applying a
+                    // cited equation. Keeping its computed arguments opaque
+                    // preserves the theorem's matching syntax.
+                    lines.push(format!("  | (simp only [{}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; with_reducible apply _fact{i} <;> (first | assumption | omega))", definitions.heads));
+                }
             }
             lines.push("  |".to_string());
             lines.extend(structured.into_iter().map(|line| format!("  {line}")));

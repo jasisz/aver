@@ -1,0 +1,17 @@
+module Looper
+    intent = "Export a recursive request observer with a checked cursor and correspondence."
+    depends [Pool, Pooled]
+    exposes [loop]
+    effects [Pool.claim, yield]
+
+fn loop(n: Int) -> Int
+    ! [Pool.claim, yield]
+    match Pool.claim(n)
+        Option.None -> n
+        Option.Some(next) -> loop(next)
+
+verify __loopSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__LoopTraceInput> = [[]]
+    using []
+    __loopSourceTrace(n, inputs) == __loopProtocolTrace(n, inputs) holds

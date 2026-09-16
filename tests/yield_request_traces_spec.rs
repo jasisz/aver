@@ -70,7 +70,7 @@ fn check(args: &[&str]) {
         .unwrap();
     assert!(out.status.success(), "{}", format_output(&out));
     assert!(
-        format_output(&out).contains("24/24 cases passed"),
+        format_output(&out).contains("29/29 cases passed"),
         "{}",
         format_output(&out)
     );
@@ -237,7 +237,7 @@ fn recursive_helpers_preserve_subtraces_across_calls_and_tail_entry() {
 }
 
 #[test]
-fn importing_a_finite_parent_of_a_recursive_helper_still_requires_a_splice_theorem() {
+fn importing_a_finite_parent_uses_its_private_recursive_helper_contract() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = repo_root().join("tests/fixtures/yield_recursive_traces");
     for name in ["pool.av", "pooled.av", "aver.toml"] {
@@ -266,18 +266,13 @@ verify __clientSourceTrace law correspondence
     )
     .unwrap();
     let out = Command::new(aver_bin())
-        .arg("check")
+        .arg("verify")
         .arg(dir.path().join("main.av"))
         .arg("--module-root")
         .arg(dir.path())
         .output()
         .unwrap();
-    assert!(!out.status.success(), "{}", format_output(&out));
-    assert!(
-        format_output(&out).contains("recursive imported helper 'Leaf.parent'"),
-        "{}",
-        format_output(&out)
-    );
+    assert!(out.status.success(), "{}", format_output(&out));
 }
 
 #[test]
@@ -315,10 +310,38 @@ fn read(n: Int) -> Int
         .unwrap();
     assert!(!out.status.success());
     assert!(
-        format_output(&out).contains(
-            "recursive composition through imports needs an owning-module splice theorem"
-        ),
+        format_output(&out).contains("import composition needs an owning-module cursor law"),
         "{}",
         format_output(&out)
     );
+}
+
+#[test]
+fn imported_recursive_contracts_preserve_repeated_calls_private_helpers_and_foreign_tokens() {
+    let root = repo_root().join("tests/fixtures/yield_recursive_imports");
+    let mut backends = vec![vec![]];
+    if cfg!(feature = "wasm") {
+        backends.push(vec!["--wasm-gc"]);
+    }
+    for (entry, count) in [
+        ("main.av", "40/40 cases passed"),
+        ("private.av", "19/19 cases passed"),
+    ] {
+        for args in &backends {
+            let out = Command::new(aver_bin())
+                .arg("verify")
+                .arg(root.join(entry))
+                .arg("--module-root")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", format_output(&out));
+            assert!(
+                format_output(&out).contains(count),
+                "{}",
+                format_output(&out)
+            );
+        }
+    }
 }

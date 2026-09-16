@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Source request-trace laws compose recursive imports.** Owning modules export checked cursor and source-correspondence contracts. Ordinary mapping and splice laws preserve the caller’s original remainder, event prefixes and continuation across repeated calls, tail entry and private recursive helpers. Lean uses structural transport proofs and constructor-specific continuation equations without increasing proof budgets. Imported in-place effects remain outside this slice. See `docs/yield-request-traces.md`.
+
 - **Proof export and certificate verification use Lean 4.34.0.** The update includes fixes for three routes to accepting a false proof from crafted input, plus tactic and kernel hardening improvements. Cited-law application can discharge its remaining premises from other checked citations, preserving the existing rounding proofs on the new toolchain. The toolchain pin rotates the certificate wall identity; regenerate existing certificate packages with the updated producer before checking them with this verifier.
 
 - **Source request-trace laws compose local recursive helpers.** Each nested call gets an ordinary universal helper/splice obligation over arbitrary finite input tapes, suspended outcomes and cursors. Parent laws cite those facts before unfolding their continuation, preserving repeated calls, tail entry, in-place observations and early errors. Recursive imported observers still require their own module-boundary composition. See `docs/yield-request-traces.md`.

@@ -40,8 +40,8 @@ fn source_request_traces_are_universal_including_in_place_effects() {
     for key in ["bounded_laws", "build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
-    assert_eq!(summary["universal_laws"], 10, "{summary}");
-    audit(dir.path(), 10);
+    assert_eq!(summary["universal_laws"], 15, "{summary}");
+    audit(dir.path(), 15);
 }
 
 #[test]
@@ -126,7 +126,7 @@ verify detects
     );
     assert!(!run.status.success(), "false laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
-    assert_eq!(summary["universal_laws"], 10, "{summary}");
+    assert_eq!(summary["universal_laws"], 15, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     for name in [
         "dropped",
@@ -163,8 +163,8 @@ fn imported_private_helpers_preserve_universal_request_traces() {
     for key in ["bounded_laws", "build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
-    assert_eq!(summary["universal_laws"], 2, "{summary}");
-    audit(dir.path(), 2);
+    assert_eq!(summary["universal_laws"], 3, "{summary}");
+    audit(dir.path(), 3);
 }
 
 #[test]
@@ -185,8 +185,8 @@ fn tail_entry_alignment_is_universal_across_local_and_imported_helpers() {
     for key in ["bounded_laws", "build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
-    assert_eq!(summary["universal_laws"], 8, "{summary}");
-    audit(dir.path(), 8);
+    assert_eq!(summary["universal_laws"], 12, "{summary}");
+    audit(dir.path(), 12);
 }
 
 #[test]
@@ -243,7 +243,7 @@ verify detectsPause
     );
     assert!(!run.status.success(), "false pause laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
-    assert_eq!(summary["universal_laws"], 8, "{summary}");
+    assert_eq!(summary["universal_laws"], 12, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     for name in ["inventedAnswer", "hiddenResumption"] {
         assert_eq!(
@@ -273,8 +273,8 @@ fn recursive_helper_splices_are_universal_and_explicit_dependencies() {
     for key in ["bounded_laws", "build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
-    assert_eq!(summary["universal_laws"], 13, "{summary}");
-    audit(dir.path(), 13);
+    assert_eq!(summary["universal_laws"], 16, "{summary}");
+    audit(dir.path(), 16);
     let lean = std::fs::read_to_string(dir.path().join("RecursiveTraces.lean")).unwrap();
     for root in ["parent", "tail", "repeated"] {
         let proof = lean
@@ -351,7 +351,7 @@ verify detectsCorruption
     );
     assert!(!run.status.success(), "false laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
-    assert_eq!(summary["universal_laws"], 13, "{summary}");
+    assert_eq!(summary["universal_laws"], 16, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     for name in ["position", "consumed", "events", "remaining"] {
         assert_eq!(
@@ -381,8 +381,8 @@ fn recursive_splices_preserve_nominal_arguments_early_errors_and_in_place_effect
     for key in ["bounded_laws", "build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
-    assert_eq!(summary["universal_laws"], 4, "{summary}");
-    audit(dir.path(), 4);
+    assert_eq!(summary["universal_laws"], 5, "{summary}");
+    audit(dir.path(), 5);
 }
 
 #[test]
@@ -419,8 +419,8 @@ fn loop"#,
         &["--module-root", source.path().to_str().unwrap()],
     );
     assert!(run.status.success(), "{}", format_output(&run));
-    assert_eq!(summary["universal_laws"], 14, "{summary}");
-    audit(dir.path(), 14);
+    assert_eq!(summary["universal_laws"], 17, "{summary}");
+    audit(dir.path(), 17);
     let lean = std::fs::read_to_string(dir.path().join("RecursiveTraces.lean")).unwrap();
     let proof = lean
         .split("theorem __aver_reason___parentSourceTraceFrom_law_correspondence_implication")
@@ -431,4 +431,29 @@ fn loop"#,
         .unwrap();
     assert!(proof.contains("marker_law_identity"), "{proof}");
     assert!(proof.contains("Observed_law_splice"), "{proof}");
+}
+
+#[test]
+fn recursive_imports_compose_universal_contracts_without_exposing_private_helpers() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_recursive_imports");
+    for (entry, count) in [("main.av", 28), ("private.av", 13)] {
+        let dir = tempfile::tempdir().unwrap();
+        let (summary, run) = run_lean_check_json_with_args(
+            source.join(entry).to_str().unwrap(),
+            dir.path(),
+            0,
+            &[],
+            &["--module-root", source.to_str().unwrap()],
+        );
+        assert!(run.status.success(), "{}", format_output(&run));
+        for key in ["bounded_laws", "build_errors", "sorries"] {
+            assert_eq!(summary[key], 0, "{summary}");
+        }
+        assert_eq!(summary["universal_laws"], count, "{summary}");
+        audit(dir.path(), count);
+    }
 }
