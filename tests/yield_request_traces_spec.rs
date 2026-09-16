@@ -213,3 +213,112 @@ fn tail_helper_boundaries_preserve_answers_and_align_imported_prefixes() {
         assert!(out.status.success(), "{}", format_output(&out));
     }
 }
+
+#[test]
+fn recursive_helpers_preserve_subtraces_across_calls_and_tail_entry() {
+    let root = repo_root().join("tests/fixtures/yield_recursive_traces");
+    let mut backends = vec![vec![]];
+    if cfg!(feature = "wasm") {
+        backends.push(vec!["--wasm-gc"]);
+    }
+    for entry in ["main.av", "mixed.av"] {
+        for args in &backends {
+            let out = Command::new(aver_bin())
+                .arg("verify")
+                .arg(root.join(entry))
+                .arg("--module-root")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", format_output(&out));
+        }
+    }
+}
+
+#[test]
+fn importing_a_finite_parent_of_a_recursive_helper_still_requires_a_splice_theorem() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = repo_root().join("tests/fixtures/yield_recursive_traces");
+    for name in ["pool.av", "pooled.av", "aver.toml"] {
+        std::fs::copy(fixture.join(name), dir.path().join(name)).unwrap();
+    }
+    let leaf = std::fs::read_to_string(fixture.join("main.av"))
+        .unwrap()
+        .replace("module RecursiveTraces", "module Leaf");
+    std::fs::write(dir.path().join("leaf.av"), leaf).unwrap();
+    std::fs::write(
+        dir.path().join("main.av"),
+        r#"
+module Client
+    depends [Leaf, Pool, Pooled]
+
+fn client(n: Int) -> Int
+    ! [Pool.claim, yield]
+    Leaf.parent(n)
+
+verify __clientSourceTrace law correspondence
+    given n: Int = [0]
+    given inputs: List<__ClientTraceInput> = [[]]
+    using []
+    __clientSourceTrace(n, inputs) == __clientProtocolTrace(n, inputs) holds
+"#,
+    )
+    .unwrap();
+    let out = Command::new(aver_bin())
+        .arg("check")
+        .arg(dir.path().join("main.av"))
+        .arg("--module-root")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(
+        format_output(&out).contains("recursive imported helper 'Leaf.parent'"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+#[test]
+fn local_recursion_with_a_finite_import_requires_the_owning_splice_law() {
+    let fixture = repo_root().join("tests/fixtures/yield_recursive_traces");
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["pool.av", "pooled.av", "aver.toml"] {
+        std::fs::copy(fixture.join(name), dir.path().join(name)).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("leaf.av"),
+        r#"module Leaf
+    depends [Pool, Pooled]
+    exposes [read]
+    effects [Pool.claim, yield]
+fn read(n: Int) -> Int
+    ! [Pool.claim, yield]
+    match Pool.claim(n)
+        Option.None -> n
+        Option.Some(value) -> value
+"#,
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(fixture.join("main.av"))
+        .unwrap()
+        .replace("depends [Pool, Pooled]", "depends [Pool, Pooled, Leaf]")
+        .replace("value + 10", "Leaf.read(value) + 10");
+    std::fs::write(dir.path().join("main.av"), text).unwrap();
+    let out = Command::new(aver_bin())
+        .arg("check")
+        .arg(dir.path().join("main.av"))
+        .arg("--module-root")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        format_output(&out).contains(
+            "recursive composition through imports needs an owning-module splice theorem"
+        ),
+        "{}",
+        format_output(&out)
+    );
+}

@@ -8,8 +8,9 @@ completion values. Equal return values alone do not establish correspondence.
 
 This is the compiler validation surface for #1376. It is separate from the
 coordinator's finite-history invariants and from provider answer-stability
-laws. Recursive helper composition and imported segments with in-place
-effects still need compositional theorems; the compiler rejects those model
+laws. Local recursive helpers compose through explicit helper and splice laws.
+Recursive imported observers and imported segments with in-place effects still
+need composition across their module boundary; the compiler rejects those model
 requests explicitly. The existing refusal to export stubbed direct process
 cases as proofs remains in place.
 
@@ -104,6 +105,40 @@ in different modules. False laws that count a pause as an answer or hide its
 consumption stay unproved even when the result and operation events are unchanged. Negative controls drop, duplicate and reorder events, change arguments
 or answers, and reset positions while preserving the function's return value.
 
+## Local recursive helper composition
+
+A caller can observe a private recursive helper, resume after its completion,
+and call it again with the updated cursor. The generator observes the helper's
+actual protocol using the caller's concrete input and event types; operation
+identity determines the mapping. It records the actual nested-call routers
+when lowering instead of inferring them from generated names.
+
+Two ordinary Aver laws provide the composition:
+
+- The helper correspondence law equates its retained-source observation with
+  its protocol observation for arbitrary arguments, input tape and cursor.
+- Each call site's splice law equates observing the nested protocol directly
+  with observing the child and then continuing the parent. It quantifies over
+  every child outcome, including suspended states, and every captured argument.
+
+The parent's correspondence obligation explicitly cites these laws. A splice
+preserves the complete observation: events, remaining input, both counters,
+completion value, pending request and validity. Local helpers return the exact
+remaining tape, so local composition needs no imported consumed-count/drop
+adapter. A pending or invalid child suspends the parent with that child's cursor.
+
+Lean proves each splice by functional induction over the child's checked input
+list measure. It composes those facts at call boundaries before unfolding the
+parent's finite continuation. Repeated calls therefore reuse the child theorem
+instead of repeating induction over its history. A finite prefix of in-place
+observations is split only when it prevents applying the cited equation.
+
+Recursive fixtures check non-tail calls, tail entry, repeated calls, nonzero
+initial cursors, nominal arguments, Unit answers, early errors and in-place
+clock observations. False laws that reset cursor fields remain unproved even
+when completion values are unchanged. These are proof obligations for arbitrary
+finite tapes, not a fixed collection of generated schedules.
+
 ## Boundary of the claim
 
 This proves equality of the two generated Aver observations for the supported
@@ -113,15 +148,19 @@ runtime conformance, scheduling fairness, liveness, termination of an unbounded
 run, or equivalence with the coordinator's host loop. Runtime tests on VM and
 WASM are separate checks of the executable observers.
 
-Model requests currently reject recursive local/imported helper subtraces,
+Model requests currently reject recursive imported helper subtraces,
 effectful independent products, indirect effectful calls and imported segments
 whose in-place effects cannot be observed in their owning module. Pure source
 computations retain the ordinary exporter's recursion and proof requirements.
+Combining a local recursive source cone with an imported nested call also needs
+an owning-module splice theorem; that combination is currently rejected even
+when the imported helper itself is finite.
 A generated model is not itself universal credit: an unproved equality remains
-an open obligation. #1376 stays open for recursive helper splice invariants and
-compositional dependencies across those boundaries.
+an open obligation. #1376 stays open for recursive imported splice invariants,
+imported in-place effects and the broader source/driver correspondence.
 
-The owning module records whether its source observer is recursive. An internal
+The owning module records whether its source observer or any reachable helper
+is recursive. A finite caller of a recursive helper therefore retains this marker. An internal
 `Yield` kind is not itself evidence of recursion: a finite tail-entry chain also
 has that kind. Importing finite observers therefore retains those boundaries;
 recursive imported subtraces still require the pending composition theorem.

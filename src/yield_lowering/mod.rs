@@ -99,14 +99,24 @@ pub struct ProcessProtocol {
     pub outcome: String,
     /// One per request kind, in the order the request sum declares them.
     pub kinds: Vec<ProtocolKind>,
+    /// Nested-call routers, retained as data for compositional trace obligations.
+    pub nests: Vec<ProcessNest>,
     /// Source observer exported by the owning module, when its effects are modeled.
     pub trace: Option<ProcessTrace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessNest {
+    pub callee: String,
+    pub router: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessTrace {
-    /// The retained root can re-enter itself; importing its returned subtrace
-    /// still needs a compositional theorem. Internal Yield alone is not recursion.
+    /// Ordinary helper and splice laws required by the root correspondence law.
+    pub dependencies: Vec<String>,
+    /// The retained source cone contains recursion, including through helpers.
+    /// Imported subtraces still need a composition theorem; Yield alone is not recursion.
     pub recursive: bool,
     pub operations: Vec<ProtocolKind>,
     pub input: String,

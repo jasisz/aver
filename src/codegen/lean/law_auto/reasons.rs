@@ -9,6 +9,7 @@ use crate::codegen::lean::{
     expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output},
 };
 
+mod composition;
 mod equivalence;
 mod induction;
 mod list_induction;
@@ -288,6 +289,11 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             let saturate = inductive.is_empty() || !law.because.is_empty();
             if !inductive.is_empty() {
                 lines.push("  first".to_string());
+                if let Some(candidate) =
+                    composition::candidate(vb, law, ctx, &definitions, fact_count)
+                {
+                    lines.push(format!("  | {candidate}"));
+                }
                 // Compose equations before spending work on induction. Bool
                 // invariants go straight to induction: matching a predicate
                 // on an arbitrary recursive result can itself exhaust isDefEq.

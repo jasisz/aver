@@ -10,6 +10,7 @@ use super::{FnSigs, ProcessProtocol, build};
 use crate::ast::*;
 use std::collections::HashMap;
 
+mod composition;
 mod effects;
 mod imports;
 mod laws;
@@ -35,6 +36,7 @@ pub(super) fn generate(
     let exposes = crate::visibility::module_decl(items)
         .map(|m| m.exposes.as_slice())
         .unwrap_or(&[]);
+    let local_protocols = protocols.to_vec();
     for protocol in protocols {
         let entry = format!("__{}SourceTrace", protocol.fn_name);
         let requested = items.iter().any(|item| {
@@ -59,15 +61,21 @@ pub(super) fn generate(
         {
             continue;
         }
-        let owner = crate::visibility::module_decl(items)
-            .map(|m| m.name.as_str())
-            .unwrap_or("Entry");
-        let model = Model::new(protocol, sources, &segments, fn_sigs, imported, owner);
+        let model = Model::new(
+            protocol,
+            sources,
+            &segments,
+            fn_sigs,
+            imported,
+            &local_protocols,
+            items,
+        );
         match model.generate() {
             Ok(mut result) => {
                 let root = model.source(&protocol.fn_name).expect("retained root");
                 let trace = super::ProcessTrace {
-                    recursive: calls_itself(root),
+                    dependencies: model.composition_dependencies(protocol),
+                    recursive: model.has_recursion(),
                     operations: model
                         .kinds
                         .iter()
@@ -101,9 +109,11 @@ pub(super) fn generate(
 struct Model<'a> {
     protocol: &'a ProcessProtocol,
     sources: &'a [FnDef],
+    type_defs: Vec<&'a TypeDef>,
     segments: &'a [FnDef],
     fn_sigs: &'a FnSigs,
     imported: &'a HashMap<String, ProcessProtocol>,
+    local_protocols: &'a [ProcessProtocol],
     prefix: String,
     upper: String,
     operations: HashMap<String, super::ProtocolKind>,
@@ -117,8 +127,12 @@ impl<'a> Model<'a> {
         segments: &'a [FnDef],
         fn_sigs: &'a FnSigs,
         imported: &'a HashMap<String, ProcessProtocol>,
-        owner: &str,
+        local_protocols: &'a [ProcessProtocol],
+        items: &'a [TopLevel],
     ) -> Self {
+        let owner = crate::visibility::module_decl(items)
+            .map(|m| m.name.as_str())
+            .unwrap_or("Entry");
         let mut kinds = protocol.kinds.clone();
         if let Some(root) = sources.iter().find(|fd| fd.name == protocol.fn_name) {
             for effect in &root.effects {
@@ -156,9 +170,17 @@ impl<'a> Model<'a> {
         Self {
             protocol,
             sources,
+            type_defs: items
+                .iter()
+                .filter_map(|item| match item {
+                    TopLevel::TypeDef(td) => Some(td),
+                    _ => None,
+                })
+                .collect(),
             segments,
             fn_sigs,
             imported,
+            local_protocols,
             prefix: format!(
                 "__{}Trace{}",
                 protocol.fn_name,
@@ -219,17 +241,6 @@ impl<'a> Model<'a> {
         let mut reached = Vec::new();
         let mut imports = Vec::new();
         self.reachable(root, &mut reached, &mut imports)?;
-        // A returned subtrace of a recursive helper needs its own splice
-        // invariant. Until that obligation is generated, reject the shape
-        // instead of exporting a fuel-bounded stand-in as source semantics.
-        for helper in &reached {
-            if helper.name != root.name && calls_itself(helper) {
-                return Err(format!(
-                    "recursive helper '{}' needs a compositional subtrace theorem",
-                    helper.name
-                ));
-            }
-        }
         if let Some(helper) = imports
             .iter()
             .find(|helper| helper.trace.as_ref().is_some_and(|trace| trace.recursive))
@@ -248,6 +259,7 @@ impl<'a> Model<'a> {
             text.push_str(&self.adapter(protocol)?);
         }
         text.push_str(&self.driver(root));
+        text.push_str(&self.composition(&reached)?);
         let tokens = crate::lexer::Lexer::new(&text)
             .tokenize()
             .map_err(|e| format!("invalid generated observer: {e}"))?;

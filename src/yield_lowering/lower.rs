@@ -234,6 +234,7 @@ struct Lowering<'a> {
     kind_names: HashMap<String, String>,
     kinds: Vec<Kind>,
     helpers: Vec<FnDef>,
+    nests: Vec<super::ProcessNest>,
     errors: Vec<TypeError>,
     tmp_counter: usize,
     stop_counter: usize,
@@ -264,6 +265,7 @@ impl<'a> Lowering<'a> {
             kind_names: HashMap::new(),
             kinds: Vec::new(),
             helpers: Vec::new(),
+            nests: Vec::new(),
             errors: Vec::new(),
             tmp_counter: 0,
             stop_counter: 0,
@@ -1439,6 +1441,10 @@ impl<'a> Lowering<'a> {
         done_body: Spanned<Expr>,
         line: usize,
     ) {
+        self.nests.push(super::ProcessNest {
+            callee: callee.to_string(),
+            router: helper.to_string(),
+        });
         let mut arms = Vec::with_capacity(protocol.kinds.len());
         for (kind, (_, _, name)) in protocol.kinds.iter().zip(reserved) {
             let binders: Vec<String> = (0..kind.arg_types.len())
@@ -1813,6 +1819,7 @@ impl<'a> Lowering<'a> {
                 })
                 .collect(),
             trace: None,
+            nests: self.nests.clone(),
         };
         Ok(Generated {
             public_names,

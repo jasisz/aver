@@ -253,3 +253,182 @@ verify detectsPause
         );
     }
 }
+
+#[test]
+fn recursive_helper_splices_are_universal_and_explicit_dependencies() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_recursive_traces");
+    let dir = tempfile::tempdir().unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        source.join("main.av").to_str().unwrap(),
+        dir.path(),
+        0,
+        &[],
+        &["--module-root", source.to_str().unwrap()],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    for key in ["bounded_laws", "build_errors", "sorries"] {
+        assert_eq!(summary[key], 0, "{summary}");
+    }
+    assert_eq!(summary["universal_laws"], 13, "{summary}");
+    audit(dir.path(), 13);
+    let lean = std::fs::read_to_string(dir.path().join("RecursiveTraces.lean")).unwrap();
+    for root in ["parent", "tail", "repeated"] {
+        let proof = lean
+            .split(&format!(
+                "theorem __aver_reason___{root}SourceTraceFrom_law_correspondence_implication"
+            ))
+            .nth(1)
+            .unwrap()
+            .split(&format!(
+                "theorem __{root}SourceTraceFrom_law_correspondence :"
+            ))
+            .next()
+            .unwrap();
+        assert!(proof.contains("SourceLoop_law_correspondence"), "{proof}");
+        assert!(proof.contains("Observed_law_splice"), "{proof}");
+    }
+}
+
+#[test]
+fn equal_helper_results_do_not_justify_corrupted_splice_cursors() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_recursive_traces");
+    let source = tempfile::tempdir().unwrap();
+    for name in ["main.av", "pool.av", "pooled.av", "aver.toml"] {
+        std::fs::copy(fixture.join(name), source.path().join(name)).unwrap();
+    }
+    let main = source.path().join("main.av");
+    let mut text = std::fs::read_to_string(&main).unwrap();
+    text.push_str(r#"
+fn corrupt(observed: __ParentTraceParentResult, mode: Int) -> __ParentTraceParentResult
+    match mode
+        0 -> __ParentTraceParentResult.update(observed, position = observed.position + 1)
+        1 -> __ParentTraceParentResult.update(observed, consumed = observed.consumed + 1)
+        2 -> __ParentTraceParentResult.update(observed, events = List.drop(observed.events, 1))
+        _ -> __ParentTraceParentResult.update(observed, remaining = List.concat(observed.remaining, [__ParentTraceInput.Foreign]))
+
+fn detectsCorruption(mode: Int) -> Bool
+    inputs = [__ParentTraceInput.AnswerClaim(Option.Some(7)), __ParentTraceInput.Advance, __ParentTraceInput.AnswerClaim(Option.None), __ParentTraceInput.Advance]
+    original = __parentSourceTrace(2, inputs)
+    broken = corrupt(original, mode)
+    Bool.and(original.value == broken.value, Bool.not(original == broken))
+
+verify detectsCorruption
+    detectsCorruption(0) => true
+    detectsCorruption(1) => true
+    detectsCorruption(2) => true
+    detectsCorruption(3) => true
+"#);
+    for (mode, name) in ["position", "consumed", "events", "remaining"]
+        .iter()
+        .enumerate()
+    {
+        text.push_str(&format!("\nverify corrupt law {name}\n    given observed: __ParentTraceParentResult = [__parentSourceTrace(0, [])]\n    when observed.value == Option.Some(10)\n    when List.len(observed.events) > 0\n    using []\n    corrupt(observed, {mode}) == observed holds\n"));
+    }
+    std::fs::write(&main, text).unwrap();
+    let cases = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("verify")
+        .arg(&main)
+        .arg("--module-root")
+        .arg(source.path())
+        .output()
+        .unwrap();
+    assert!(cases.status.success(), "{}", format_output(&cases));
+    let dir = tempfile::tempdir().unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        main.to_str().unwrap(),
+        dir.path(),
+        0,
+        &[],
+        &["--module-root", source.path().to_str().unwrap()],
+    );
+    assert!(!run.status.success(), "false laws passed: {summary}");
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 13, "{summary}");
+    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    for name in ["position", "consumed", "events", "remaining"] {
+        assert_eq!(
+            summary["obligations"][format!("corrupt.{name}.implication")],
+            "failed",
+            "{summary}"
+        );
+    }
+}
+
+#[test]
+fn recursive_splices_preserve_nominal_arguments_early_errors_and_in_place_effects() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_recursive_traces");
+    let dir = tempfile::tempdir().unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        source.join("mixed.av").to_str().unwrap(),
+        dir.path(),
+        0,
+        &[],
+        &["--module-root", source.to_str().unwrap()],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    for key in ["bounded_laws", "build_errors", "sorries"] {
+        assert_eq!(summary[key], 0, "{summary}");
+    }
+    assert_eq!(summary["universal_laws"], 4, "{summary}");
+    audit(dir.path(), 4);
+}
+
+#[test]
+fn implicit_trace_citations_keep_earlier_laws_when_adding_splice_dependencies() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_recursive_traces");
+    let source = tempfile::tempdir().unwrap();
+    for name in ["pool.av", "pooled.av", "aver.toml"] {
+        std::fs::copy(fixture.join(name), source.path().join(name)).unwrap();
+    }
+    let text = std::fs::read_to_string(fixture.join("main.av")).unwrap();
+    let text = text.replace("    using []\n", "").replacen(
+        "fn loop",
+        r#"fn marker(n: Int) -> Int
+    n
+verify marker law identity
+    given n: Int = [0]
+    marker(n) => n
+
+fn loop"#,
+        1,
+    );
+    let main = source.path().join("main.av");
+    std::fs::write(&main, text).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (summary, run) = run_lean_check_json_with_args(
+        main.to_str().unwrap(),
+        dir.path(),
+        0,
+        &[],
+        &["--module-root", source.path().to_str().unwrap()],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["universal_laws"], 14, "{summary}");
+    audit(dir.path(), 14);
+    let lean = std::fs::read_to_string(dir.path().join("RecursiveTraces.lean")).unwrap();
+    let proof = lean
+        .split("theorem __aver_reason___parentSourceTraceFrom_law_correspondence_implication")
+        .nth(1)
+        .unwrap()
+        .split("theorem __parentSourceTraceFrom_law_correspondence :")
+        .next()
+        .unwrap();
+    assert!(proof.contains("marker_law_identity"), "{proof}");
+    assert!(proof.contains("Observed_law_splice"), "{proof}");
+}
