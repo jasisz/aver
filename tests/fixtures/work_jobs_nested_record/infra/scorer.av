@@ -1,0 +1,24 @@
+module Scorer
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "One job kind whose task and answer are its own records."
+    exposes [begin, take, Task, Report]
+
+record Task
+    text: String
+    weight: Int
+
+record Report
+    score: Int
+    label: String
+
+operation begin(task: Task) -> Result<Work.Job, String>
+    ? "Starts one scoring job off the turn and returns its job handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Report>, String>
+    ? "Collects one finished scoring job: None while it runs, Some(report) once it finished."
+    oracle = generativeOutput
+    replay = recorded

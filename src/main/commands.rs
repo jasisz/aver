@@ -1795,6 +1795,7 @@ pub(super) fn cmd_run_self_hosted(
 #[allow(clippy::too_many_arguments)]
 fn check_units(
     units: &[ReportUnit],
+    entry_path: &str,
     module_root: &str,
     config: Option<&aver::config::ProjectConfig>,
     verbose: bool,
@@ -1835,6 +1836,7 @@ fn check_units(
             module_base_dir: Some(module_root.to_string()),
             source_path: Some(path.to_string()),
             stdlib_shadowed: aver::source::collect_stdlib_shadowed(items, module_root),
+            include_work_bindings: own_key == canonical_path_key(entry_path),
             ..Default::default()
         };
         let report = diagnostic::analyze_source(source, &opts);
@@ -2542,6 +2544,7 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
             Ok(units) => {
                 let outcomes = check_units(
                     &units,
+                    file,
                     &module_root,
                     config.as_ref(),
                     verbose,

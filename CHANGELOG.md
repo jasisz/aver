@@ -6,6 +6,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Native replay supports all serializable map keys, including `Bytes` and `Bool`.** Non-string keys retain their typed `$map` encoding, decode through that marker, and are sorted before recording so repeated runs and VM recordings agree. This also fixes `--with-replay` compilation of records carrying UTXO maps.
+
+- **Nested Work capabilities compile to native Rust and pass multi-module checks.** Generated worker wrappers use collision-free Rust identifiers even when capability names contain module paths. `aver check` validates job bindings at the composed program entry while retaining shape and request-placement checks in dependencies. Regression coverage uses capability-owned record tasks and results across nested modules.
+
 - **Source request-trace laws compose recursive imports.** Owning modules export checked cursor and source-correspondence contracts. Ordinary mapping and splice laws preserve the caller’s original remainder, event prefixes and continuation across repeated calls, tail entry and private recursive helpers. Lean uses structural transport proofs and constructor-specific continuation equations without increasing proof budgets. Imported in-place effects remain outside this slice. See `docs/yield-request-traces.md`.
 
 - **Proof export and certificate verification use Lean 4.34.0.** The update includes fixes for three routes to accepting a false proof from crafted input, plus tactic and kernel hardening improvements. Cited-law application can discharge its remaining premises from other checked citations, preserving the existing rounding proofs on the new toolchain. The toolchain pin rotates the certificate wall identity; regenerate existing certificate packages with the updated producer before checking them with this verifier.

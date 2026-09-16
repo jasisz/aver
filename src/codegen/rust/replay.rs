@@ -1162,26 +1162,6 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         fn from_replay_json(value: &ReplayJson) -> Result<Self, String>;
     }
 
-    pub trait ReplayKey {
-        fn replay_string_key(&self) -> Option<String>;
-    }
-
-    impl ReplayKey for aver_rt::AverStr {
-        fn replay_string_key(&self) -> Option<String> {
-            Some(self.to_string())
-        }
-    }
-
-    impl ReplayKey for aver_rt::AverInt {
-        fn replay_string_key(&self) -> Option<String> {
-            // Int keys retain their numeric replay shape.  Returning None
-            // selects the existing `$map` array-of-pairs encoding instead of
-            // coercing the key into a JSON object property that could not be
-            // decoded by `ReplayValue for AverInt`.
-            None
-        }
-    }
-
     impl ReplayValue for () {
         fn to_replay_json(&self) -> ReplayJson {
             ReplayJson::Null
@@ -1363,23 +1343,27 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
 
     impl<K, V> ReplayValue for aver_rt::AverMap<K, V>
     where
-        K: ReplayValue + ReplayKey + Eq + Hash + Clone,
+        K: ReplayValue + Eq + Hash + Ord + Clone,
         V: ReplayValue + Clone,
     {
         fn to_replay_json(&self) -> ReplayJson {
-            if self.iter().all(|(key, _)| key.replay_string_key().is_some()) {
+            let mut ordered: Vec<_> = self.iter().collect();
+            ordered.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let entries: Vec<_> = ordered.into_iter()
+                .map(|(key, value)| (key.to_replay_json(), value.to_replay_json()))
+                .collect();
+            // Only actual String keys use object properties. Every other
+            // serializable key retains its type in the VM's $map encoding.
+            if entries.iter().all(|(key, _)| matches!(key, ReplayJson::String(_))) {
                 let mut obj = serde_json::Map::new();
-                for (key, value) in self.iter() {
-                    let key_str = key.replay_string_key().expect("checked above");
-                    obj.insert(key_str, value.to_replay_json());
+                for (key, value) in entries {
+                    let ReplayJson::String(key) = key else { unreachable!("checked above") };
+                    obj.insert(key, value);
                 }
                 ReplayJson::Object(obj)
             } else {
-                let pairs = self
-                    .iter()
-                    .map(|(key, value)| {
-                        ReplayJson::Array(vec![key.to_replay_json(), value.to_replay_json()])
-                    })
+                let pairs = entries.into_iter()
+                    .map(|(key, value)| ReplayJson::Array(vec![key, value]))
                     .collect();
                 wrap_marker("$map", ReplayJson::Array(pairs))
             }
@@ -1387,7 +1371,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
 
         fn from_replay_json(value: &ReplayJson) -> Result<Self, String> {
             match value {
-                ReplayJson::Object(obj) => {
+                ReplayJson::Object(obj) if marker_payload(value, "$map").is_none() => {
                     let mut map = aver_rt::AverMap::new();
                     for (key, value) in obj {
                         map = map.insert_owned(

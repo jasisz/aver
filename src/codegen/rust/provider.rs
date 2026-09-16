@@ -15,7 +15,7 @@ use super::types::type_annotation_to_rust_scoped;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct WorkKindEmit {
     pub capability: String,
-    /// The generated wrapper's own name, e.g. `work_body_Validation`.
+    /// The generated wrapper's own name, e.g. `work_body_0`.
     pub body_fn: String,
     /// The call that runs one task, with `__task` already decoded.
     pub call: String,
@@ -47,7 +47,8 @@ pub(super) fn plan_work_kinds(
 ) -> Vec<WorkKindEmit> {
     work_kinds
         .iter()
-        .map(|kind| {
+        .enumerate()
+        .map(|(index, kind)| {
             let path = generated_fn_path(&kind.function, ctx);
             let borrows = super::expr::callee_borrow_mask(&kind.function, 1, ctx)
                 .first()
@@ -56,7 +57,9 @@ pub(super) fn plan_work_kinds(
             let argument = if borrows { "&__task" } else { "__task" };
             WorkKindEmit {
                 capability: kind.capability.clone(),
-                body_fn: format!("work_body_{}", aver_name_to_rust(&kind.capability)),
+                // A capability is a dotted path, not one Rust identifier.
+                // Ordinals are unique even when flattening names would collide.
+                body_fn: format!("work_body_{index}"),
                 call: format!("{path}({argument})"),
             }
         })

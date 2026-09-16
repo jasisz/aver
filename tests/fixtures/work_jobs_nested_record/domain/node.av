@@ -1,0 +1,12 @@
+module Node
+    depends [Infra.Scorer]
+    intent = "The pure function one scoring job runs."
+    exposes [score]
+    effects []
+
+fn score(task: Infra.Scorer.Task) -> Infra.Scorer.Report
+    ? "Scores one task by its text length times its weight."
+    Infra.Scorer.Report(score = String.len(task.text) * task.weight, label = task.text)
+
+verify score
+    score(Infra.Scorer.Task(text = "alpha", weight = 2)) => Infra.Scorer.Report(score = 10, label = "alpha")

@@ -54,6 +54,11 @@ pub struct AnalyzeOptions {
     /// `collect_stdlib_shadowed_in_map` (playground) — because detection
     /// needs the caller's file universe; each entry becomes a warning.
     pub stdlib_shadowed: Vec<(String, String)>,
+    /// Report job deployment-binding errors for this unit as a complete program.
+    /// A multi-module caller disables only these errors for dependencies and
+    /// validates the composed entry once. Shape checks and request-placement
+    /// checks still run in each dependency, including its private functions.
+    pub include_work_bindings: bool,
     pub include_intent_warnings: bool,
     pub include_coverage_warnings: bool,
     pub include_law_dependency_warnings: bool,
@@ -100,6 +105,7 @@ impl Default for AnalyzeOptions {
             source_path: None,
             loaded_modules: None,
             stdlib_shadowed: Vec::new(),
+            include_work_bindings: true,
             include_intent_warnings: true,
             include_coverage_warnings: true,
             include_law_dependency_warnings: true,
@@ -277,6 +283,9 @@ fn analyze_prechecked_items_impl(
         &tc_result.fn_sigs,
         module_decl.map(|module| module.name.as_str()),
     ) {
+        if !options.include_work_bindings && finding.slug == crate::capability::work::WORK_BINDING {
+            continue;
+        }
         diagnostics.push(work_diagnostic(
             &finding,
             module_decl.map(|module| module.line).unwrap_or(1),
