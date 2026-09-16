@@ -1679,7 +1679,7 @@ lean_lib «{}» where
 }
 
 pub(super) fn generate_toolchain() -> String {
-    "leanprover/lean4:v4.33.1\n".to_string()
+    "leanprover/lean4:v4.34.0\n".to_string()
 }
 
 pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {

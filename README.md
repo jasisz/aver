@@ -59,7 +59,7 @@ also want the WASI 0.2 target shown below. `aver-lang` installs the compiler as
 `aver-cert` installs the independent certificate verifier used by `aver cert`;
 keep both executables in the same directory or on `PATH`. The verifier starts
 its own public version line at `0.1.0` rather than sharing the `aver-lang`
-version, and checks certificates with the pinned Lean 4.32 toolchain.
+version, and checks certificates with the pinned Lean 4.34 toolchain.
 Verification requires a standard Elan installation. The verifier resolves the
 canonical Elan executable directly and does not find its trusted Lake, Lean, or
 leanchecker processes through `PATH`.

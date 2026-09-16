@@ -11909,7 +11909,7 @@ fn setup_mathlib_for_project(output_dir: &str) {
                 "{}",
                 "--allow-mathlib: set AVER_MATHLIB_CACHE to a lake project that has Mathlib \
                  built (a dir with .lake/packages/mathlib and lake-manifest.json, toolchain \
-                 leanprover/lean4:v4.33.1) — the break-glass tier reuses its prebuilt oleans \
+                 leanprover/lean4:v4.34.0) — the break-glass tier reuses its prebuilt oleans \
                  instead of re-fetching Mathlib per check."
                     .red()
             );
