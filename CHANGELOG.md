@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Native Work tasks transfer their prepared arguments without a second deep copy.** Generated provider dispatch can consume its owned argument buffer; existing providers retain their borrowed implementation by default. Contract lookup, diagnostics, and replay behavior use the same boundaries.
+
 - **Native builds with replay support skip unused argument snapshots.** Ordinary capability calls no longer build a JSON copy when recording and replay are inactive. HTTP, Disk, and Env policy checks retain their arguments; recordings and replay matching retain the complete argument values. This removes avoidable copying of large Work tasks and database batches.
 
 - **JavaScript Work hosts preserve an embedding's explicit `Wait.poll` import.** A JSPI adapter can suspend a hand-written `main`, await the shared socket/job scheduler, and resume it while worker threads progress. The default synchronous-wait rejection remains in place for embeddings without an adapter.

@@ -387,7 +387,7 @@ pub fn invoke<T: ProviderCodec>(
 ) -> T {
     let registry = registry();
     let value = registry
-        .invoke(operation, &args)
+        .invoke_owned(operation, args)
         .unwrap_or_else(|message| panic!("{}", message));
     let received = value.shape();
     T::from_provider_value(value, registry, capability, minted_resource).unwrap_or_else(|message| {
