@@ -104,8 +104,12 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
         );
         assert!(output.status.success(), "{}", format_output(&output));
     }
+    let mut command = Command::new(node);
+    if (24..26).contains(&major) {
+        command.arg("--experimental-wasm-jspi");
+    }
     let output = bounded(
-        Command::new(node)
+        command
             .arg(repo_root().join("tools/wasm-work/spec.mjs"))
             .arg(out.path().join("work_jobs_parallel/main.wasm"))
             .arg(out.path().join("run_guide_example/main.wasm"))
@@ -115,4 +119,7 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
     );
     assert!(output.status.success(), "{}", format_output(&output));
     assert!(String::from_utf8_lossy(&output.stdout).contains("worker ABI passed"));
+    if major >= 24 {
+        assert!(String::from_utf8_lossy(&output.stdout).contains("JSPI Work main passed"));
+    }
 }
