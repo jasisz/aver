@@ -174,11 +174,23 @@ pub(super) fn candidate(
     } else {
         format!(" generalizing {others}")
     };
+    let input = aver_name_to_lean(input);
+    // A fold may continue on a drop of the current tail after observing a
+    // finite helper. A cons-tail IH is too narrow for that checked decrease;
+    // length induction provides the equation for every shorter suffix.
+    let induction = if crate::codegen::recursion::detect::single_list_structural_param_index(driver)
+        .is_some()
+    {
+        format!("induction {input}{generalizing}")
+    } else {
+        format!(
+            "induction {input} using (measure List.length).wf.induction{generalizing}; all_goals (dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at *; cases {input})"
+        )
+    };
     let normalize = (0..fact_count).map(|i| format!("(try simp only [{plain}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at _fact{i}); ")).collect::<String>();
     Some(format!(
-        "({normalize}simp only [beq_iff_eq, {}, {}]; induction {}{generalizing}; all_goals ({steps}); all_goals (repeat' first | (simp_all [{mapping}, {excluded}]) | split); all_goals (simp_all [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals grind [List.drop_cons, {equations}]; done)",
+        "({normalize}simp only [beq_iff_eq, {}, {}]; {induction}; all_goals ({steps}); all_goals (repeat' first | (simp_all [{mapping}, {excluded}]) | split); all_goals (simp_all [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals grind [List.drop_cons, List.length_drop, List.length_cons, {equations}]; done)",
         induction::lean_name(left_fn, ctx),
         induction::lean_name(right_fn, ctx),
-        aver_name_to_lean(input)
     ))
 }

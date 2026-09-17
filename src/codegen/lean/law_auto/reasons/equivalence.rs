@@ -181,8 +181,16 @@ pub(super) fn candidate(
             "(simp only [beq_iff_eq{heads}]; {start}all_goals simp only [{simp}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le] at *; all_goals grind [List.drop_cons]; done)"
         ));
     }
+    // Expose the matching right-hand step before splitting result projections
+    // on the left. Otherwise a splice can branch on an unknown recursive
+    // result before its induction hypothesis has a matching right-hand call.
+    let first_step = if start.is_empty() {
+        String::new()
+    } else {
+        format!("all_goals (try (first{steps})); ")
+    };
     let solve = format!(
-        "simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
+        "simp only [beq_iff_eq{heads}]; {start}{first_step}all_goals (repeat' first | assumption | rfl | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
     );
     // Finite helper chains often return records containing a mapped remainder.
     // Split only a constructor prefix before substitution duplicates those
