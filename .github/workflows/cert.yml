@@ -247,7 +247,18 @@ jobs:
         if: matrix.mode == 'nextest'
         env:
           AVER_CERT_PHASE_TIMEOUT_SECS: ${{ matrix.phase_timeout_secs || 900 }}
-        run: >-
-          cargo nextest run -p aver-lang --features wasm --test ${{ matrix.suite }}
-          -E '${{ matrix.filter }}'
-          --partition slice:${{ matrix.partition }}
+          AVER_CERT_MEMORY_LIMIT_MB: '2048'
+        # Diagnostic branch only: one test, bounded address space, resource log.
+        run: |
+          (
+            while sleep 15; do
+              date -u
+              free -m
+              ps -eo pid,ppid,comm,rss --sort=-rss | head -10
+            done
+          ) &
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+          ulimit -v 6291456
+          cargo test -p aver-lang --features wasm --test cert_verify_spec \
+            cert_tripwire_declines_tampered_int_sign_cmp_plan -- --exact --nocapture
