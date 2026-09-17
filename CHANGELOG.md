@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Source request-trace observers include imported in-place effects.** Owning modules export pure observations of their generated Start/Answer segments. Callers preserve operation positions, event prefixes and their original unconsumed inputs across repeated calls, private recursion, nested imports and early errors. The retained-source observer remains independent of those segments; broader execution-driver correspondence remains separate.
+
 - **Certificate source-fragment proofs check symbolic encoding before combining byte proofs.** Each generated claim carries a kernel-checked equality to its encoded plan. A tampered helper-role table is rejected at that equality, and the regression requires a specific proof diagnostic rather than accepting a timeout as evidence.
 
 - **Compiled native Work jobs transfer typed tasks and results without rebuilding provider value trees.** Compiler-owned bindings keep the existing job engine, limits, cancellation, and Wait semantics. Recording/replay and explicit host bindings retain the public provider format.

@@ -115,11 +115,10 @@ pub(super) fn candidate(
         let length = format!("__aver_transport_length_{index}");
         let drop = format!("__aver_transport_drop_{index}");
         map_lemmas.push_str(&format!(
-            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := by (intro xs; induction xs <;> simp_all [{name}]); have {drop} : ∀ xs n, {name} (List.drop n xs) = List.drop n ({name} xs) := by (intro xs n; induction xs generalizing n <;> cases n <;> simp_all [{name}]); "
+            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by intro xs; induction xs <;> simp_all [{name}]); have {drop} : ∀ xs n, {name} (List.drop n xs) = List.drop n ({name} xs) := (by intro xs n; induction xs generalizing n <;> cases n <;> simp_all [{name}]); "
         ));
         map_facts.extend([length, drop]);
     }
-    let map_facts = map_facts.join(", ");
     // Calls producing a fold's state stay opaque. Expanding their patterns is
     // unrelated to transporting that fold's observations across a list map.
     let boundary: BTreeSet<_> = folds
@@ -187,9 +186,9 @@ pub(super) fn candidate(
         .chain(step_helpers)
         .collect::<Vec<_>>()
         .join(", ");
-    let equations = converters
-        .iter()
-        .map(|name| format!("= {name}.eq_def"))
+    let equations = map_facts
+        .into_iter()
+        .chain(converters.iter().map(|name| format!("= {name}.eq_def")))
         .collect::<Vec<_>>()
         .join(", ");
     let steps = folds
@@ -219,7 +218,7 @@ pub(super) fn candidate(
     // finite helper. A cons-tail IH is too narrow for that checked decrease;
     // length induction provides the equation for every shorter suffix.
     let steps = format!(
-        "all_goals ({steps}); all_goals (repeat' first | (simp_all +zetaDelta [{step_simp}, {excluded}]) | split); all_goals (simp_all +zetaDelta [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals grind [List.drop_cons, List.length_drop, List.length_cons, {map_facts}, {equations}]; done"
+        "all_goals ({steps}); all_goals (repeat' first | (simp_all +zetaDelta [{step_simp}, {excluded}]) | split); all_goals (simp_all +zetaDelta [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals grind [List.drop_cons, List.length_drop, List.length_cons, {equations}]; done"
     );
     let induction = if crate::codegen::recursion::detect::single_list_structural_param_index(driver)
         .is_some()

@@ -30,12 +30,12 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
-          text = Path('Wrapper.lean').read_text()
+          text = Path('Wrapper.lean').read_text().replace('namespace Wrapper', 'set_option linter.unusedSimpArgs false\nnamespace Wrapper', 1)
           lines = text.splitlines()
           index = next(i for i, line in enumerate(lines) if line.startswith('  | (') and 'with | h inputs __aver_transport_ih' in line)
           tactic = lines[index][4:].replace('; done))', '; all_goals trace_state; all_goals sorry))')
           for variant in ['steps', 'finish']:
-              probe = tactic
+              probe = tactic.replace('; all_goals grind [', '; all_goals (try grind [').replace(']; all_goals trace_state', ']); all_goals trace_state')
               if variant == 'steps':
                   probe = probe.split('; all_goals (simp_all +zetaDelta [Looper.')[0] + '; all_goals trace_state; all_goals sorry))'
               name = f'WrapperTransport{variant}.lean'
