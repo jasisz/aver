@@ -161,7 +161,8 @@ pub(super) fn candidate(
         });
         if let (Some(left), Some(right)) = (
             left_fold,
-            induction::outer_fold(right, ctx, scope.as_deref()),
+            induction::outer_fold(right, ctx, scope.as_deref())
+                .or_else(|| induction::body_fold(right, ctx, scope.as_deref())),
         ) {
             let mut left = induction::direct_finite_calls(left, ctx);
             if let Some(adapter) = induction::callee(&call, ctx, scope.as_deref()) {

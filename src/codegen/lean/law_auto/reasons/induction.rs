@@ -49,6 +49,29 @@ pub(super) fn outer_fold<'a>(
     }
 }
 
+/// A finite prefix can surround the compared fold with matches instead of
+/// a direct wrapper call. Select its unique direct recursive boundary.
+pub(super) fn body_fold<'a>(
+    expr: &Spanned<Expr>,
+    ctx: &'a CodegenContext,
+    scope: Option<&str>,
+) -> Option<&'a FnDef> {
+    let fd = callee(expr, ctx, scope)?;
+    let mut folds = BTreeMap::new();
+    for stmt in fd.body.stmts() {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::walk(expr, &mut |expr| {
+            if let Some(called) = callee(expr, ctx, common::fn_owning_scope_for(ctx, fd))
+                && list_measure(called, ctx).is_some()
+                && !called.return_type.starts_with("List<")
+            {
+                folds.insert(lean_name(called, ctx), called);
+            }
+        });
+    }
+    (folds.len() == 1).then(|| *folds.values().next().unwrap())
+}
+
 /// A shared computed record can stay opaque; state constructors and scalar
 /// routers still need to reduce so the fold's next case becomes visible.
 fn constructs_result_record(fd: &FnDef) -> bool {

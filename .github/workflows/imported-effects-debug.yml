@@ -61,13 +61,18 @@ jobs:
               Path(name + '.lean.log').write_text(output)
               print(name, 'EXIT', process.returncode, flush=True)
               print('\n'.join(line for line in output.splitlines() if 'error:' in line or line.startswith('case ')), flush=True)
+          def goal_only(tactic, count=-1):
+              tactic = tactic.replace('simp_all +zetaDelta', 'simp +zetaDelta', count)
+              # Local exclusions are only accepted by simp_all / simp [*].
+              return re.sub(r'(simp \+zetaDelta(?: only)? \[)([^]]*)\]', lambda match: match[1] + ', '.join(arg for arg in match[2].split(', ') if not arg.startswith('-_')) + ']', tactic)
           mapping_defs = definitions + ''.join('-- verify law ' + block for block in text.split('-- verify law ')[1:] if block.startswith('__repeatedTrace') and ('Events.append ' in block.splitlines()[0] or 'Events.singleton ' in block.splitlines()[0]))
           index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and 'Direct_law_mapping_implication :' in line and 'repeated' in line)
           first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
           mapping_prefix = mapping_defs + '\n'.join(lines[index:first]) + '\n  '
           mapping_tactic = lines[first+1].strip()[2:]
           probe('Mapping', mapping_prefix + mapping_tactic + '\nend ImportedEffects\n')
-          probe('MappingGoalOnly', mapping_prefix + mapping_tactic.replace('simp_all +zetaDelta', 'simp +zetaDelta', 1) + '\nend ImportedEffects\n')
+          probe('MappingSteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', mapping_tactic) + '\nend ImportedEffects\n')
+          probe('MappingGoalOnly', mapping_prefix + goal_only(mapping_tactic, 1) + '\nend ImportedEffects\n')
           for name, suffix in [('Cursor', '__repeatedTrace496d706f7274656445666665637473Cursor_law_boundedSuffix_implication :')]:
               index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
               first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
@@ -87,13 +92,13 @@ jobs:
               if name == 'Cursor':
                   steps = tactic.split('; all_goals grind [')[0]
                   probe('CursorSteps', prefix + steps + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
-          index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and 'Splice__repeatedInRunAt2Observed_law_splice_implication :' in line)
+          index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and 'Splice__repeatedInRunAt1Observed_law_splice_implication :' in line)
           first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
           tactic = lines[first+1].strip()[2:]
           primary = tactic.rsplit(' | (simp only [beq_iff_eq', 1)[0] + ')'
           prefix = definitions + '\n'.join(lines[index:first]) + '\n  '
           probe('Splice', prefix + primary + '\nend ImportedEffects\n')
-          probe('SpliceGoalOnly', prefix + primary.replace('simp_all +zetaDelta', 'simp +zetaDelta') + '\nend ImportedEffects\n')
+          probe('SpliceGoalOnly', prefix + goal_only(primary) + '\nend ImportedEffects\n')
           tail = definitions + ''.join('-- verify law ' + block for block in text.split('-- verify law ')[1:] if block.startswith('__tailTrace') and not block.startswith('__tailTrace496d706f7274656445666665637473Cursor'))
           index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '__tailSourceTraceFrom_law_correspondence_implication :' in line)
           first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
