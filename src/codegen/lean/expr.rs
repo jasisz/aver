@@ -881,7 +881,12 @@ fn emit_match(
     // original list. Retain it for the checked non-growing slice measure.
     let slice = matches!(&subject.node,
         ResolvedExpr::Call(ResolvedCallee::Builtin(name), _) if matches!(name.as_str(), "List.drop" | "List.take"));
+    // An irrefutable binding introduces no constructor information. Giving
+    // every alias a named equation makes later matches depend on duplicate
+    // equality proofs, inflating the recursive equation and its induction IH.
+    let alias = matches!(arms, [arm] if matches!(arm.pattern, ResolvedPattern::Ident(_) | ResolvedPattern::Wildcard));
     let needs_eq_binder = ctx.lean_match_equations.get()
+        && !alias
         && (slice
             || matches!(
                 &subject.node,
