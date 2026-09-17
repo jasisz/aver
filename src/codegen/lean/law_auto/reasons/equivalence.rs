@@ -181,12 +181,17 @@ pub(super) fn candidate(
         // the guarded drop equation lets arithmetic relate Int cursor deltas.
         if !definitions.unary_list_maps.is_empty() {
             let (lemmas, facts) = induction::checked_map_lemmas(&definitions.unary_list_maps);
+            let excluded = facts
+                .iter()
+                .map(|name| format!("-{name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             let facts = facts.join(", ");
             // A finite imported helper may inspect a mapped suffix before the
             // fold resumes. Split those finite matches, retaining the checked
             // length/drop equations that relate it to the original tape.
             return Some(format!(
-                "({lemmas}simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | (simp_all +zetaDelta only [{simp}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le]) | split at *); all_goals grind [List.drop_cons, List.drop_drop, List.length_drop, {facts}]; done)"
+                "({lemmas}simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | (simp_all +zetaDelta only [{simp}, {excluded}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le]) | split at *); all_goals grind [List.drop_cons, List.drop_drop, List.length_drop, {facts}]; done)"
             ));
         }
         return Some(format!(
