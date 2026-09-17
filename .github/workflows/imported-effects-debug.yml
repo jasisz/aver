@@ -47,6 +47,7 @@ jobs:
           ]
           for i, tactic in enumerate(probes):
               name = f'LooperProbe{i}.lean'
+              tactic = tactic.replace('simp_all ', 'simp_all +zetaDelta ')
               options = 'set_option smartUnfolding false in\n' if i == 3 else ''
               Path(name).write_text(prefix + options + statement + '\n  ' + begin + tactic + '\nend Looper\n')
               print(f'PROBE {i}', flush=True)
