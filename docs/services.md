@@ -607,6 +607,25 @@ error. The native provider switches the stream to non-blocking mode for that
 one call and restores it afterwards, so the blocking operations keep their
 contracts on the same connection.
 
+A program that writes with `writeNow` carries the queue itself, and the shape
+that works is a bounded outbox per connection: the payload at the head, an
+exact count of how many of its bytes have already gone, and the rest of the
+queue behind it. The turn that a `Sending` key reports writes from that count
+and advances it by what `writeNow` accepted, and the connection is registered
+under its `Sending` key only while bytes remain, so a connection with nothing
+to send is never woken for writability. When the outbox is full the slow peer
+pays for it: drop the peer, or drop what it asked for, rather than letting one
+connection's backlog grow without a bound.
+
+The part that is easy to get wrong is a bulk producer, one request whose answer
+is many large payloads. Enqueueing all of them the moment the request arrives
+fills the outbox from the program's own side, and a healthy peer is then
+dropped for an overflow it did not cause: it was reading as fast as the wire
+allowed and the program produced faster. Keep the cheap thing instead, the list
+of what was asked for, and render the next payload only once the outbox has
+fallen below a watermark. See "Common patterns" in the bundled language guide
+for the sketch.
+
 ### Jobs — `Work` and `Wait`
 
 Contract sources: `stdlib/capabilities/work.av` and `stdlib/capabilities/wait.av`. A job is long pure work a program starts off the turn so the turn can go back to serving peers, and collects in a later turn. Nothing here is a thread the program can see: the program holds a handle, the schedule stays data, and `Wait.poll` is the one wait of a turn.
@@ -651,6 +670,8 @@ max-jobs = 4
 ```
 
 `max-jobs` must be a positive integer; zero would mean a program that can never start a job, and is refused when `aver.toml` is read.
+
+Set `max-jobs` above the number of jobs the program keeps running, because a slot is freed by the end of a job's body and not by `Work.cancel`. `begin` refuses at the limit rather than waiting for a slot, so a program at its limit reads `Err("work: job limit N reached")` in the turn that asked. `Work.cancel` sets the job's cancellation flag and drops its answer, and the running count falls only once the body settles. How long that takes belongs to the backend: the VM's interpreter stops the body at its next cancellation check, wasm-gc traps it at the next epoch check, and generated Rust checks no flag, so there the body runs to completion. A program that cancels a job and begins its replacement in the same turn, which is what a retry after an owner-side error looks like, asks for a slot the cancelled job is still holding, so a limit set to exactly the steady-state need refuses the retry. Size it with that in mind: on the VM and on wasm-gc one spare slot per job that may be retried at once covers the gap between the cancel and the next check, and on the Rust backend the cancelled body holds its slot for the whole of its remaining run, so a program that may replace every job it is running wants twice its steady-state need. On `wasip2` there is nothing to size, because a job runs inline at `begin` and the key is ignored.
 
 Recording a turn records `begin` with its task and the handle it minted, `take` with the answer it gave, and `poll` with the keys it reported, exactly as `Tcp.dial` records a `Dial`. Replaying it hands the program the recorded answers back in the turns they were recorded in — a faster or slower machine must not move a result into a different turn — and runs the bound function again beside them, because a job is pure and recomputing it is the check worth having. When a recorded `take` said `Some(v)` and the recomputation produces a different value, replay stops and names the job kind, the job and both values. A job whose recording ends before anything took it is cancelled when the recording ends.
 
