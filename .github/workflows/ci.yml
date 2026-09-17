@@ -248,6 +248,13 @@ jobs:
         # dependency graph.
         run: cargo check -p aver-lang --features wasip2
 
+      - name: Compile fuzz harnesses
+        if: matrix.lane == 'checks'
+        # The standalone fuzz crate is outside the workspace, so ordinary
+        # compiler checks miss harness/API drift. Type-check every harness
+        # against the cached WASM graph without starting an AFL campaign.
+        run: cargo check --manifest-path fuzz/Cargo.toml --bins --target-dir target
+
       - name: Unit tests (wasm + wasip2)
         if: matrix.lane == 'checks'
         run: cargo test -p aver-lang --lib --features wasm,wasip2
