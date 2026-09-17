@@ -81,6 +81,13 @@ jobs:
           probe('MappingContext', mapping_prefix + split_context + '\nend ImportedEffects\n')
           probe('MappingContextSteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', split_context) + '\nend ImportedEffects\n')
           probe('MappingNoZeta', mapping_prefix + mapping_tactic.replace(' +zetaDelta', '') + '\nend ImportedEffects\n')
+          mapped_inputs = re.search(r'ImportedEffects\.\w+Inputs', mapping_tactic).group()
+          right_fold = re.search(r'rw \[([^] ]+\.eq_def)\]', mapping_tactic[mapping_tactic.index('rw [') + 4:]).group(1)
+          current_bound = 'have _aver_boundary := _fact0 outcome (' + mapped_inputs + ' inputs) position childEvents consumed; rw [' + right_fold + '] at _aver_boundary; '
+          bounded = mapping_tactic.replace('cases inputs;', current_bound + 'cases inputs;', 1)
+          bounded = goal_only(bounded, 1).replace('| split)', '| split at *)')
+          probe('MappingBoundary', mapping_prefix + bounded + '\nend ImportedEffects\n')
+          probe('MappingBoundarySteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', bounded) + '\nend ImportedEffects\n')
           for name, suffix in [('Cursor', '__repeatedTrace496d706f7274656445666665637473Cursor_law_boundedSuffix_implication :')]:
               index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
               first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
