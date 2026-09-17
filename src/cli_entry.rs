@@ -20,6 +20,8 @@ mod context_format;
 #[allow(dead_code)]
 mod diagnostic;
 use crate::format as format_cmd;
+#[path = "main/proof_waterfall.rs"]
+mod proof_waterfall;
 #[path = "main/provider_host_cmd.rs"]
 mod provider_host_cmd;
 #[path = "main/repl.rs"]
@@ -513,6 +515,7 @@ fn main_impl(
             explain,
             minimize,
             allow_mathlib,
+            waterfall,
             gate,
             write_baseline,
         } => {
@@ -531,6 +534,7 @@ fn main_impl(
                 *explain,
                 *minimize,
                 *allow_mathlib,
+                waterfall,
                 gate.as_deref(),
                 write_baseline.as_deref(),
             );

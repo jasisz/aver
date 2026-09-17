@@ -104,6 +104,8 @@ mod source_only;
 mod source_recursion;
 #[path = "proof_spec/transition_histories.rs"]
 mod transition_histories;
+#[path = "proof_spec/waterfall.rs"]
+mod waterfall;
 #[path = "proof_spec/wf_fuel.rs"]
 mod wf_fuel;
 #[path = "proof_spec/when_lane.rs"]

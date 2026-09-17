@@ -1,0 +1,3 @@
+COMPACT success=false attempts=1000 nodes=145 depth=4 rawHeartbeats=41136468
+Trial1_search.lean:28:2: error: waterfall exhausted 1000 attempts at depth 4
+'FalseAccumulator.size_law_failedSupplier' depends on axioms: [propext, sorryAx]

@@ -1,0 +1,420 @@
+## segment-search/BtcTrial_waterfall_btc_segment_search_0.log
+
+
+
+## segment-search/BtcTrial_waterfall_btc_segment_search_1.log
+
+COMPACT success=true attempts=37 nodes=7 depth=1 rawHeartbeats=4279745 strength=1 moves=[grind, normalize]
+'Segment.place_law_staysUnderCap' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-search/BtcTrial_waterfall_btc_segment_search_2.log
+
+COMPACT success=true attempts=37 nodes=7 depth=1 rawHeartbeats=5599639 strength=1 moves=[grind, normalize]
+'Segment.place_law_recordEndsAtUsed' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-search/BtcTrial_waterfall_btc_segment_search_3.log
+
+COMPACT success=true attempts=37 nodes=7 depth=1 rawHeartbeats=8674744 strength=1 moves=[grind, normalize]
+'Segment.place_law_consecutiveRecordsTile' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-search/BtcTrial_waterfall_btc_segment_search_4.log
+
+COMPACT success=true attempts=3 nodes=1 depth=0 rawHeartbeats=84751 strength=1 moves=[simp]
+'Segment.agreesWithDisk_law_theDiskItCountedAgrees' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-search/BtcTrial_waterfall_btc_segment_search_5.log
+
+COMPACT success=true attempts=4 nodes=1 depth=0 rawHeartbeats=729802 strength=1 moves=[grind]
+'Segment.agreesWithDisk_law_anyOtherSizeRefuses' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-search/BtcTrial_waterfall_btc_segment_search_6.log
+
+
+
+## segment-search/BtcTrial_waterfall_btc_segment_search_7.log
+
+
+
+## segment-search/BtcTrial_waterfall_btc_segment_search_8.log
+
+COMPACT success=true attempts=37 nodes=7 depth=1 rawHeartbeats=7787647 strength=1 moves=[grind, normalize]
+'Segment.place_law_agreesWithTheReader' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## message-search/BtcTrial_waterfall_btc_message_search_0.log
+
+COMPACT success=true attempts=13 nodes=3 depth=0 rawHeartbeats=83599387 strength=3 moves=[grind]
+'Domain.Message.littleEndianInto_law_accumulatorPrefix' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## message-search/BtcTrial_waterfall_btc_message_search_1.log
+
+COMPACT success=true attempts=13 nodes=3 depth=0 rawHeartbeats=76912532 strength=3 moves=[grind]
+'Domain.Message.littleEndianInto_law_fixedWidth' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## message-search/BtcTrial_waterfall_btc_message_search_2.log
+
+COMPACT success=true attempts=68 nodes=12 depth=2 rawHeartbeats=1713214 strength=1 moves=[simp,
+ simp,
+ induction prefix'._@.BtcTrial_waterfall_btc_message_search_2.3239017132._hygCtx._hyg.248,
+ intro]
+'Domain.Message.readLittleEndianFrom_law_finalDigit' depends on axioms: [propext, Quot.sound]
+
+
+## scriptparse-search/BtcTrial_waterfall_btc_scriptparse_search_0.log
+
+COMPACT success=false attempts=1000 nodes=144 depth=4 rawHeartbeats=87219978
+BtcTrial_waterfall_btc_scriptparse_search_0.lean:446:2: error: waterfall exhausted 1000 attempts at depth 4
+'Domain.ScriptParse.parse_law_directPushRunsPastTheEnd' depends on axioms: [propext,
+ sorryAx,
+ Classical.choice,
+ Quot.sound]
+
+
+## scriptparse-search/BtcTrial_waterfall_btc_scriptparse_search_1.log
+
+COMPACT success=true attempts=68 nodes=12 depth=2 rawHeartbeats=1004279 strength=1 moves=[simp,
+ simp,
+ induction bytes._@.BtcTrial_waterfall_btc_scriptparse_search_1.566914452._hygCtx._hyg.234,
+ intro]
+'Domain.ScriptParse.prependReversed_law_reverseOnto' depends on axioms: [propext, Quot.sound]
+
+
+## scriptparse-search/BtcTrial_waterfall_btc_scriptparse_search_2.log
+
+
+
+## scriptparse-search/BtcTrial_waterfall_btc_scriptparse_search_3.log
+
+COMPACT success=false attempts=1000 nodes=160 depth=3 rawHeartbeats=173462434
+BtcTrial_waterfall_btc_scriptparse_search_3.lean:446:2: error: waterfall exhausted 1000 attempts at depth 3
+'Domain.ScriptParse.__aver_reason_intoBytes_law_accumulates_because1' depends on axioms: [propext, sorryAx, Quot.sound]
+
+
+## scriptparse-search/BtcTrial_waterfall_btc_scriptparse_search_4.log
+
+COMPACT success=true attempts=89 nodes=15 depth=2 rawHeartbeats=3180660 strength=1 moves=[simp,
+ simp,
+ induction ops._@.BtcTrial_waterfall_btc_scriptparse_search_4.1181298842._hygCtx._hyg.289,
+ intro]
+'Domain.ScriptParse.__aver_reason_intoBytes_law_accumulates_implication' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+
+
+## stackitem-search/BtcTrial_waterfall_btc_stackitem_search_0.log
+
+BtcTrial_waterfall_btc_stackitem_search_0.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=78 nodes=14 depth=2 rawHeartbeats=3287361 strength=1 moves=[simp,
+ simp,
+ induction bytes._@.BtcTrial_waterfall_btc_stackitem_search_0.1610230504._hygCtx._hyg.291,
+ intro]
+'Domain.StackItem.bigEndian_law_largerPrefixStaysLarger' depends on axioms: [propext, Quot.sound]
+
+
+## stackitem-search/BtcTrial_waterfall_btc_stackitem_search_1.log
+
+BtcTrial_waterfall_btc_stackitem_search_1.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=false attempts=1000 nodes=156 depth=3 rawHeartbeats=65053268
+BtcTrial_waterfall_btc_stackitem_search_1.lean:417:2: error: waterfall exhausted 1000 attempts at depth 3
+'Domain.StackItem.__aver_reason_bigEndian_law_largerPrefixStaysLarger_because1' depends on axioms: [propext, sorryAx]
+
+
+## stackitem-search/BtcTrial_waterfall_btc_stackitem_search_2.log
+
+BtcTrial_waterfall_btc_stackitem_search_2.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=80 nodes=14 depth=2 rawHeartbeats=4671564 strength=1 moves=[simp,
+ simp,
+ induction bytes._@.BtcTrial_waterfall_btc_stackitem_search_2.3084285169._hygCtx._hyg.302,
+ intro]
+'Domain.StackItem.__aver_reason_bigEndian_law_largerPrefixStaysLarger_implication' depends on axioms: [propext,
+ Quot.sound]
+
+
+## stackitem-search/BtcTrial_waterfall_btc_stackitem_search_3.log
+
+BtcTrial_waterfall_btc_stackitem_search_3.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=664 nodes=114 depth=3 rawHeartbeats=65140500 strength=1 moves=[grind,
+ simp,
+ induction tail._@.BtcTrial_waterfall_btc_stackitem_search_3.1195969190._hygCtx._hyg.3776 generalized,
+ simp,
+ function cases,
+ intro]
+'Domain.StackItem.anyNonZero_law_concatenation' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## stackitem-search/BtcTrial_waterfall_btc_stackitem_search_4.log
+
+BtcTrial_waterfall_btc_stackitem_search_4.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=false attempts=1000 nodes=164 depth=3 rawHeartbeats=38634958
+BtcTrial_waterfall_btc_stackitem_search_4.lean:417:2: error: waterfall exhausted 1000 attempts at depth 3
+'Domain.StackItem.__aver_reason_anyNonZero_law_concatenation_because1' depends on axioms: [propext, sorryAx, Quot.sound]
+
+
+## stackitem-search/BtcTrial_waterfall_btc_stackitem_search_5.log
+
+BtcTrial_waterfall_btc_stackitem_search_5.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=71 nodes=12 depth=2 rawHeartbeats=1934471 strength=1 moves=[simp,
+ simp,
+ function cases,
+ intro]
+'Domain.StackItem.__aver_reason_anyNonZero_law_concatenation_implication' depends on axioms: [propext, Quot.sound]
+
+
+## stackitem-search/BtcTrial_waterfall_btc_stackitem_search_6.log
+
+BtcTrial_waterfall_btc_stackitem_search_6.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=false attempts=1000 nodes=145 depth=3 rawHeartbeats=111967256
+BtcTrial_waterfall_btc_stackitem_search_6.lean:417:2: error: waterfall exhausted 1000 attempts at depth 3
+'Domain.StackItem.isMinimalPush_law_directPushIsMinimalUnlessSmallNumber' depends on axioms: [propext, sorryAx]
+
+
+## scriptstate-search/BtcTrial_waterfall_btc_scriptstate_search_0.log
+
+
+
+## scriptparse-cited/BtcTrial_waterfall_btc_scriptparse_cited_0.log
+
+BtcTrial_waterfall_btc_scriptparse_cited_0.lean:446:69: warning: This simp argument is unused:
+  Domain.ScriptParse.prependReversed
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=90 nodes=15 depth=2 rawHeartbeats=22701858 strength=1 moves=[grind,
+ simp,
+ induction ops._@.BtcTrial_waterfall_btc_scriptparse_cited_0.121930210._hygCtx._hyg.280,
+ intro]
+'Domain.ScriptParse.intoBytes_law_accumulates' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## scriptparse-cited/BtcTrial_waterfall_btc_scriptparse_cited_1.log
+
+BtcTrial_waterfall_btc_scriptparse_cited_1.lean:446:69: warning: This simp argument is unused:
+  Domain.ScriptParse.prependReversed
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=687 nodes=105 depth=3 rawHeartbeats=159397337 strength=1 moves=[simp,
+ simp,
+ function cases,
+ simp,
+ function induction,
+ introduce binders]
+'Domain.ScriptParse.__aver_reason_intoBytes_law_accumulates_because1' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+
+
+## scriptparse-cited/BtcTrial_waterfall_btc_scriptparse_cited_2.log
+
+BtcTrial_waterfall_btc_scriptparse_cited_2.lean:446:69: warning: This simp argument is unused:
+  Domain.ScriptParse.prependReversed
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=91 nodes=15 depth=2 rawHeartbeats=3862174 strength=1 moves=[simp,
+ simp,
+ induction ops._@.BtcTrial_waterfall_btc_scriptparse_cited_2.1181298842._hygCtx._hyg.290,
+ intro]
+'Domain.ScriptParse.__aver_reason_intoBytes_law_accumulates_implication' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+
+
+## segment-header-cited/BtcTrial_waterfall_btc_segment_header_cited_0.log
+
+
+
+## segment-header-cited/BtcTrial_waterfall_btc_segment_header_cited_1.log
+
+
+
+## minimal-committed/BtcTrial_waterfall_btc_minimal_committed_0.log
+
+BtcTrial_waterfall_btc_minimal_committed_0.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=52 nodes=7 depth=8 rawHeartbeats=6126070 strength=1 moves=[grind,
+ normalize,
+ normalize,
+ normalize,
+ normalize,
+ intro,
+ intro]
+'Domain.StackItem.isMinimalPush_law_directPushIsMinimalUnlessSmallNumber' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+
+
+## directpush-committed/BtcTrial_waterfall_btc_directpush_committed_0.log
+
+COMPACT success=false attempts=1000 nodes=92 depth=20 rawHeartbeats=66277618
+BtcTrial_waterfall_btc_directpush_committed_0.lean:446:2: error: waterfall exhausted 1000 attempts at depth 20
+'Domain.ScriptParse.parse_law_directPushRunsPastTheEnd' depends on axioms: [propext,
+ sorryAx,
+ Classical.choice,
+ Quot.sound]
+
+
+## scriptstate-committed/BtcTrial_waterfall_btc_scriptstate_committed_0.log
+
+COMPACT success=false attempts=1000 nodes=41 depth=8 rawHeartbeats=64640085
+BtcTrial_waterfall_btc_scriptstate_committed_0.lean:400:2: error: waterfall exhausted 1000 attempts at depth 8
+'Domain.ScriptState.rearranged_law_staysWithinDeclaredDepth' depends on axioms: [propext, sorryAx, Quot.sound]
+
+
+## segment-suggestions/BtcTrial_waterfall_btc_segment_suggestions_0.log
+
+COMPACT success=true attempts=37 nodes=7 depth=1 rawHeartbeats=4279749 strength=1 moves=[grind, normalize]
+Try this:
+  [apply] (
+    expose_names
+    simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [Segment.headerBytes, Segment.capBytes,
+      Segment.place]
+    expose_names
+    grind +lax [Segment.headerBytes, Segment.capBytes, Segment.rolls, Segment.rolled, Segment.appended])
+'Segment.place_law_staysUnderCap' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-suggestions/BtcTrial_waterfall_btc_segment_suggestions_1.log
+
+COMPACT success=true attempts=37 nodes=7 depth=1 rawHeartbeats=5599856 strength=1 moves=[grind, normalize]
+Try this:
+  [apply] (
+    expose_names
+    simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [Segment.endsAtUsed, Segment.place]
+    expose_names
+    grind +lax [Segment.rolls, Segment.rolled, Segment.appended, Segment.headerBytes])
+'Segment.place_law_recordEndsAtUsed' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-suggestions/BtcTrial_waterfall_btc_segment_suggestions_2.log
+
+COMPACT success=true attempts=37 nodes=7 depth=1 rawHeartbeats=8674921 strength=1 moves=[grind, normalize]
+Try this:
+  [apply] (
+    expose_names
+    simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [Segment.tiles, Segment.place]
+    expose_names
+    grind +lax [Segment.opensNext, Segment.rolls, Segment.rolled, Segment.appended, Segment.place, Segment.followsOn])
+'Segment.place_law_consecutiveRecordsTile' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-suggestions/BtcTrial_waterfall_btc_segment_suggestions_3.log
+
+COMPACT success=true attempts=4 nodes=1 depth=0 rawHeartbeats=729774 strength=1 moves=[grind]
+Try this:
+  [apply] (
+    expose_names
+    grind +lax [Segment.agreesWithDisk])
+'Segment.agreesWithDisk_law_anyOtherSizeRefuses' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## segment-suggestions/BtcTrial_waterfall_btc_segment_suggestions_4.log
+
+COMPACT success=true attempts=37 nodes=7 depth=1 rawHeartbeats=7787791 strength=1 moves=[grind, normalize]
+Try this:
+  [apply] (
+    expose_names
+    simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [Segment.rolls, Segment.readerAgrees,
+      Segment.place]
+    expose_names
+    grind +lax [Segment.headerBytes, Segment.capBytes, Segment.rolled, Segment.appended, Segment.payloadAt,
+      Segment.nextHeader, Segment.complete])
+'Segment.place_law_agreesWithTheReader' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+
+## minimal-suggestions/BtcTrial_waterfall_btc_minimal_suggestions_0.log
+
+BtcTrial_waterfall_btc_minimal_suggestions_0.lean:20:19: warning: This simp argument is unused:
+  Except.withDefault
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+COMPACT success=true attempts=52 nodes=7 depth=8 rawHeartbeats=6126444 strength=1 moves=[grind,
+ normalize,
+ normalize,
+ normalize,
+ normalize,
+ intro,
+ intro]
+Try this:
+  [apply] (
+    expose_names
+    intro _
+    expose_names
+    intro _
+    expose_names
+    simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [Domain.StackItem.isMinimalPush]
+    expose_names
+    simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [Domain.StackItem.singleByteMinimal]
+    expose_names
+    simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [Domain.StackItem.asNumber,
+      Domain.StackItem.smallOrDirect]
+    expose_names
+    simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [Domain.StackItem.valued]
+    expose_names
+    grind +lax [Domain.StackItem.signedBy, Domain.StackItem.bigEndian, Domain.StackItem.unsigned])
+'Domain.StackItem.isMinimalPush_law_directPushIsMinimalUnlessSmallNumber' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]

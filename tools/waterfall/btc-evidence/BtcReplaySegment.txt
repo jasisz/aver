@@ -1,0 +1,5 @@
+'Segment.place_law_staysUnderCap' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Segment.place_law_recordEndsAtUsed' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Segment.place_law_consecutiveRecordsTile' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Segment.agreesWithDisk_law_anyOtherSizeRefuses' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Segment.place_law_agreesWithTheReader' depends on axioms: [propext, Classical.choice, Quot.sound]

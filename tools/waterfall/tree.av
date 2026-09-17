@@ -1,0 +1,26 @@
+module WaterfallTree
+    intent = "Compare proof search on Aver-exported tree traversal and its accumulator implementation."
+    effects []
+
+type Tree
+    Empty
+    Node(Tree, Int, Tree)
+
+fn elements(tree: Tree) -> List<Int>
+    match tree
+        Tree.Empty -> []
+        Tree.Node(left, value, right) -> List.concat(elements(left), List.prepend(value, elements(right)))
+
+fn fastElements(tree: Tree, acc: List<Int>) -> List<Int>
+    match tree
+        Tree.Empty -> acc
+        Tree.Node(left, value, right) -> fastElements(left, List.prepend(value, fastElements(right, acc)))
+
+verify fastElements law accumulator
+    given tree: Tree = [Tree.Empty, Tree.Node(Tree.Empty, 1, Tree.Empty), Tree.Node(Tree.Node(Tree.Empty, 2, Tree.Empty), 3, Tree.Node(Tree.Empty, 4, Tree.Empty))]
+    given acc: List<Int> = [[], [7, 8]]
+    fastElements(tree, acc) => List.concat(elements(tree), acc)
+
+verify fastElements law traversal
+    given tree: Tree = [Tree.Empty, Tree.Node(Tree.Empty, 1, Tree.Empty)]
+    fastElements(tree, []) => elements(tree)

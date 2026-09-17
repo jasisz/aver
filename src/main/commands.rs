@@ -7902,9 +7902,21 @@ pub(super) fn cmd_proof(
     // glass arm on walling entry-module `when`-laws and wire the cached Mathlib
     // into the generated lake project. OFF → byte-identical to today.
     allow_mathlib: bool,
+    waterfall: &super::proof_waterfall::Options,
     gate: Option<&str>,
     write_baseline: Option<&str>,
 ) {
+    if waterfall.waterfall.is_some()
+        && (!matches!(backend, super::cli::ProofBackend::Lean)
+            || !matches!(verify_mode, super::cli::ProofVerifyMode::Auto))
+    {
+        eprintln!("--waterfall requires --backend lean and --verify-mode auto");
+        std::process::exit(2);
+    }
+    let _waterfall_emission = waterfall
+        .waterfall
+        .as_ref()
+        .map(|_| lean_codegen::waterfall::enable());
     let (mut ctx, module_root) = build_codegen_context(
         file,
         project_name,
@@ -8089,7 +8101,7 @@ pub(super) fn cmd_proof(
             let ground_truth = collect_verify_ground_truth(file, &module_root);
             ctx.sample_expected = ground_truth.expected;
             ctx.declined_cases = ground_truth.declined;
-            cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
+            let lean_files = cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
             // Under `--allow-mathlib` the speculative/minimize re-emit passes are
             // SKIPPED: they run their own `lake build` probes that would choke on
             // the not-yet-wired `aver_mathlib` macro (the Mathlib import + macro
@@ -8120,6 +8132,12 @@ pub(super) fn cmd_proof(
             // cache so the opt-in failure is loud, never a silent core fallback.
             if allow_mathlib {
                 setup_mathlib_for_project(output_dir);
+            }
+            if waterfall.waterfall.is_some()
+                && let Err(error) = super::proof_waterfall::run(output_dir, waterfall, &lean_files)
+            {
+                eprintln!("waterfall: {error}");
+                std::process::exit(2);
             }
         }
         super::cli::ProofBackend::Dafny => {
@@ -11469,7 +11487,7 @@ fn cmd_proof_lean(
     output_dir: &str,
     ctx: &mut codegen::CodegenContext,
     verify_mode: &super::cli::ProofVerifyMode,
-) {
+) -> Vec<String> {
     // Laws about a function are emitted before every law whose cone reaches
     // it, wherever the formatter put the blocks — see `citation_order`.
     for cycle in lean_codegen::order_verify_blocks_for_citation(ctx) {
@@ -11526,6 +11544,12 @@ fn cmd_proof_lean(
 
     let build_hint = format!("cd {} && lake build", output_dir);
     write_codegen_output(file, output_dir, "Lean 4", &build_hint, &output);
+    output
+        .files
+        .into_iter()
+        .map(|(path, _)| path)
+        .filter(|path| path.ends_with(".lean") && path != "lakefile.lean")
+        .collect()
 }
 
 /// Speculative-universal (Lean): the "try-universal, fall-back-to-sampled"

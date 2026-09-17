@@ -1,0 +1,1049 @@
+{
+  "aver_sha": "1ef21e7e38192134bce899d4c87a3d66b968258c",
+  "aver_binary_sha256": "d43e92a8154e9dd124f1fa4601312a1fa1402107e7c137481c80dd37982756aa",
+  "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+  "toolchain": "leanprover/lean4:v4.34.0",
+  "effort": 1000,
+  "max_heartbeats": 1000000,
+  "trial_timeout_seconds": 30,
+  "workers": 1,
+  "setup": {
+    "exit_code": 0,
+    "timeout": false,
+    "seconds": 0.145
+  },
+  "cases": [
+    {
+      "case": "list_fold",
+      "source": "tests/fixtures/source_recursion/list_fold.av",
+      "source_sha256": "bc3a13e5a5a1e58a1c4d6b57ba12168a3d88d4c904f582a80632a98cfb44b11f",
+      "baseline": {
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 2.131
+      },
+      "baseline_summary": {
+        "backend": "lean",
+        "bounded_laws": 0,
+        "budget": 0,
+        "build_errors": 0,
+        "manifest": "proof_manifest.json",
+        "model_panicked": false,
+        "obligations": {
+          "emptyLength.inferredEmpty.implication": "universal",
+          "finish.composed.implication": "universal"
+        },
+        "passed": true,
+        "sorries": 0,
+        "universal": true,
+        "universal_laws": 3
+      },
+      "trials": [
+        {
+          "law": "read.snoc",
+          "theorem": "ListFold.read_law_snoc",
+          "statement_sha256": "4f666919a514d749f18bdb63dc2d54fa59418b931b11424eba65703335b29cbd",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 4.617,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "read.snoc",
+          "theorem": "ListFold.read_law_snoc",
+          "statement_sha256": "4f666919a514d749f18bdb63dc2d54fa59418b931b11424eba65703335b29cbd",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.742,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "finish.composed",
+          "theorem": "ListFold.finish_law_composed",
+          "statement_sha256": "82440161f97d21451c3812407b3c0fdca25d27eb166baac691c5f40413041ea7",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.965,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "finish.composed",
+          "theorem": "ListFold.finish_law_composed",
+          "statement_sha256": "82440161f97d21451c3812407b3c0fdca25d27eb166baac691c5f40413041ea7",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 2.789,
+          "axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "emptyLength.inferredEmpty",
+          "theorem": "ListFold.emptyLength_law_inferredEmpty",
+          "statement_sha256": "a68f64ac073f57920b9dfc06970f96c6a1ff390647830a44d53ac908005caab3",
+          "baseline_tier": "universal",
+          "baseline_axioms": [],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.489,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "emptyLength.inferredEmpty",
+          "theorem": "ListFold.emptyLength_law_inferredEmpty",
+          "statement_sha256": "a68f64ac073f57920b9dfc06970f96c6a1ff390647830a44d53ac908005caab3",
+          "baseline_tier": "universal",
+          "baseline_axioms": [],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.456,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    {
+      "case": "tree",
+      "source": "tools/waterfall/tree.av",
+      "source_sha256": "f566d73c16249526cf46be138c364add3b87c49f717d6e2d574839c62864c3e0",
+      "baseline": {
+        "exit_code": 1,
+        "timeout": false,
+        "seconds": 2.371
+      },
+      "baseline_summary": {
+        "backend": "lean",
+        "bounded_laws": 0,
+        "budget": 0,
+        "build_errors": 0,
+        "manifest": "proof_manifest.json",
+        "model_panicked": false,
+        "passed": false,
+        "sorries": 1,
+        "sorry_laws": [
+          "fastElements.accumulator"
+        ],
+        "universal": false,
+        "universal_laws": 0
+      },
+      "trials": [
+        {
+          "law": "fastElements.accumulator",
+          "theorem": "WaterfallTree.fastElements_law_accumulator",
+          "statement_sha256": "fe30ea3d11d0a0ae4c44510ce7d32729c0bfd97533806f505728904f9b10e106",
+          "baseline_tier": "failed",
+          "baseline_axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.593,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "fastElements.accumulator",
+          "theorem": "WaterfallTree.fastElements_law_accumulator",
+          "statement_sha256": "fe30ea3d11d0a0ae4c44510ce7d32729c0bfd97533806f505728904f9b10e106",
+          "baseline_tier": "failed",
+          "baseline_axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.264,
+          "axioms": [
+            "propext"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "fastElements.traversal",
+          "theorem": "WaterfallTree.fastElements_law_traversal",
+          "statement_sha256": "e6632c094af4fd48d0cbe3340411f98b560c0b7a3c379bee91f588e397d284ca",
+          "baseline_tier": "failed",
+          "baseline_axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "mode": "search",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 3.282,
+          "axioms": [
+            "sorryAx"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "fastElements.traversal",
+          "theorem": "WaterfallTree.fastElements_law_traversal",
+          "statement_sha256": "e6632c094af4fd48d0cbe3340411f98b560c0b7a3c379bee91f588e397d284ca",
+          "baseline_tier": "failed",
+          "baseline_axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "mode": "committed",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 3.625,
+          "axioms": [
+            "sorryAx"
+          ],
+          "accepted": false
+        }
+      ]
+    },
+    {
+      "case": "reverse_algebra",
+      "source": "tests/fixtures/source_recursion/reverse_algebra.av",
+      "source_sha256": "453b028837d9b77b0d58adb85b113c4f89492a1956e81565388da7cf5a3815e2",
+      "baseline": {
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 1.883
+      },
+      "baseline_summary": {
+        "backend": "lean",
+        "bounded_laws": 0,
+        "budget": 0,
+        "build_errors": 0,
+        "manifest": "proof_manifest.json",
+        "model_panicked": false,
+        "passed": true,
+        "sorries": 0,
+        "universal": true,
+        "universal_laws": 3
+      },
+      "trials": [
+        {
+          "law": "frame.roundtrip",
+          "theorem": "ReverseAlgebra.frame_law_roundtrip",
+          "statement_sha256": "7ffeebdaa8f46e89f71fce33280a7739d009fc34f106a01914eacba9cd5044ae",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.481,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "frame.roundtrip",
+          "theorem": "ReverseAlgebra.frame_law_roundtrip",
+          "statement_sha256": "7ffeebdaa8f46e89f71fce33280a7739d009fc34f106a01914eacba9cd5044ae",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.372,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "flip.twice",
+          "theorem": "ReverseAlgebra.flip_law_twice",
+          "statement_sha256": "d9a2a2a17c70095cb4d43b6c32744c6c34d74eb7e6029dacde0c99c3c3cdadf4",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.369,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "flip.twice",
+          "theorem": "ReverseAlgebra.flip_law_twice",
+          "statement_sha256": "d9a2a2a17c70095cb4d43b6c32744c6c34d74eb7e6029dacde0c99c3c3cdadf4",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.356,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "flip.joinsInReverseOrder",
+          "theorem": "ReverseAlgebra.flip_law_joinsInReverseOrder",
+          "statement_sha256": "098ec4dd0474d5aefff6641fef779fab065dba743bda1c075c97343c89604b7d",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.332,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "flip.joinsInReverseOrder",
+          "theorem": "ReverseAlgebra.flip_law_joinsInReverseOrder",
+          "statement_sha256": "098ec4dd0474d5aefff6641fef779fab065dba743bda1c075c97343c89604b7d",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.349,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    {
+      "case": "floor_digits",
+      "source": "tests/fixtures/source_recursion/floor_digits.av",
+      "source_sha256": "478a46a854eb1cfa259287cf1b39c51cd8bdd9a5e3538a069fdb50ae818a601e",
+      "baseline": {
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 4.42
+      },
+      "baseline_summary": {
+        "backend": "lean",
+        "bounded_laws": 0,
+        "budget": 0,
+        "build_errors": 0,
+        "manifest": "proof_manifest.json",
+        "model_panicked": false,
+        "passed": true,
+        "sorries": 0,
+        "universal": true,
+        "universal_laws": 7
+      },
+      "trials": [
+        {
+          "law": "digits.prefix",
+          "theorem": "FloorDigits.digits_law_prefix'",
+          "statement_sha256": "26c203d5e8d563f9788ec7fc14f1a2a6c836a94858bb8e3f1a5692287f8eba60",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 29.68,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "digits.prefix",
+          "theorem": "FloorDigits.digits_law_prefix'",
+          "statement_sha256": "26c203d5e8d563f9788ec7fc14f1a2a6c836a94858bb8e3f1a5692287f8eba60",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 29.707,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "digits.outsideRange",
+          "theorem": "FloorDigits.digits_law_outsideRange",
+          "statement_sha256": "1f909c85f17ffaac421987411f6fee6c7039f086f4d31a19d6c0eb5d76c2759f",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 12.274,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "digits.outsideRange",
+          "theorem": "FloorDigits.digits_law_outsideRange",
+          "statement_sha256": "1f909c85f17ffaac421987411f6fee6c7039f086f4d31a19d6c0eb5d76c2759f",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.058,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "digits.noNewDigits",
+          "theorem": "FloorDigits.digits_law_noNewDigits",
+          "statement_sha256": "bf184cf3ee6a2f524496fcf53256381fb1323e5f455d176814fabf0435acbd3e",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 12.32,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "digits.noNewDigits",
+          "theorem": "FloorDigits.digits_law_noNewDigits",
+          "statement_sha256": "bf184cf3ee6a2f524496fcf53256381fb1323e5f455d176814fabf0435acbd3e",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.053,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "digits.singletonPrefix",
+          "theorem": "FloorDigits.digits_law_singletonPrefix",
+          "statement_sha256": "1fcdc487f3e7ed19d61f48225629b3bc440169a38426ac5deb5f8c3c9ca3a987",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 29.528,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "digits.singletonPrefix",
+          "theorem": "FloorDigits.digits_law_singletonPrefix",
+          "statement_sha256": "1fcdc487f3e7ed19d61f48225629b3bc440169a38426ac5deb5f8c3c9ca3a987",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.057,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "digits.oneDigit",
+          "theorem": "FloorDigits.digits_law_oneDigit",
+          "statement_sha256": "e4e437e63aa6f50737acf96f42c9488513b9303efe7619c3b4c2f94bc56ee786",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.945,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "digits.oneDigit",
+          "theorem": "FloorDigits.digits_law_oneDigit",
+          "statement_sha256": "e4e437e63aa6f50737acf96f42c9488513b9303efe7619c3b4c2f94bc56ee786",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.916,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "digits.positive",
+          "theorem": "FloorDigits.digits_law_positive",
+          "statement_sha256": "7234b60999ccf4205cae8144fa374e0576d8304740c72e57523f021b329a37d5",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 10.619,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "digits.positive",
+          "theorem": "FloorDigits.digits_law_positive",
+          "statement_sha256": "7234b60999ccf4205cae8144fa374e0576d8304740c72e57523f021b329a37d5",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 17.038,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "digits.nonpositive",
+          "theorem": "FloorDigits.digits_law_nonpositive",
+          "statement_sha256": "f3d5351676f863bf2bba06535e12ccfabf5d9b0d802f0e882203c74b157d5af0",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.877,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "digits.nonpositive",
+          "theorem": "FloorDigits.digits_law_nonpositive",
+          "statement_sha256": "f3d5351676f863bf2bba06535e12ccfabf5d9b0d802f0e882203c74b157d5af0",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.908,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    {
+      "case": "roundtrip",
+      "source": "tests/fixtures/source_recursion/roundtrip.av",
+      "source_sha256": "b1381ffaf7a9a53edd202e7b97412d9368f6c7568eeadbedcc8c961c906c8660",
+      "baseline": {
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 4.045
+      },
+      "baseline_summary": {
+        "backend": "lean",
+        "bounded_laws": 0,
+        "budget": 0,
+        "build_errors": 0,
+        "manifest": "proof_manifest.json",
+        "model_panicked": false,
+        "passed": true,
+        "sorries": 0,
+        "universal": true,
+        "universal_laws": 3
+      },
+      "trials": [
+        {
+          "law": "read.suffix",
+          "theorem": "Roundtrip.read_law_suffix",
+          "statement_sha256": "4637094e3d5f4b20f59d7a87be7861a286fcef0b68de7dcbda40e0aa87527579",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.516,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "read.suffix",
+          "theorem": "Roundtrip.read_law_suffix",
+          "statement_sha256": "4637094e3d5f4b20f59d7a87be7861a286fcef0b68de7dcbda40e0aa87527579",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.724,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "digits.prefix",
+          "theorem": "Roundtrip.digits_law_prefix'",
+          "statement_sha256": "26c203d5e8d563f9788ec7fc14f1a2a6c836a94858bb8e3f1a5692287f8eba60",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.052,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "digits.prefix",
+          "theorem": "Roundtrip.digits_law_prefix'",
+          "statement_sha256": "26c203d5e8d563f9788ec7fc14f1a2a6c836a94858bb8e3f1a5692287f8eba60",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 29.948,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "digits.roundtrip",
+          "theorem": "Roundtrip.digits_law_roundtrip",
+          "statement_sha256": "e2f44a9dd6dc590d112f4949b5bf4fa699ecc4166763d0c7460b28989b2694aa",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "search",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 29.754,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "digits.roundtrip",
+          "theorem": "Roundtrip.digits_law_roundtrip",
+          "statement_sha256": "e2f44a9dd6dc590d112f4949b5bf4fa699ecc4166763d0c7460b28989b2694aa",
+          "baseline_tier": "universal",
+          "baseline_axioms": [
+            "Classical.choice",
+            "Quot.sound",
+            "propext"
+          ],
+          "mode": "committed",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 11.678,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": false
+        }
+      ]
+    },
+    {
+      "case": "false_accumulator",
+      "source": "tests/fixtures/source_recursion/false_accumulator.av",
+      "source_sha256": "1c53d38c2adab93fe07f8be03e73a77713ca008d870544f282a1ee844be16f5b",
+      "baseline": {
+        "exit_code": 1,
+        "timeout": false,
+        "seconds": 2.092
+      },
+      "baseline_summary": {
+        "backend": "lean",
+        "bounded_laws": 0,
+        "budget": 0,
+        "build_errors": 0,
+        "manifest": "proof_manifest.json",
+        "model_panicked": false,
+        "obligations": {
+          "size.failedSupplier.implication": "failed"
+        },
+        "passed": false,
+        "sorries": 1,
+        "sorry_laws": [
+          "count.droppedAccumulator"
+        ],
+        "universal": false,
+        "universal_laws": 0
+      },
+      "trials": [
+        {
+          "law": "count.droppedAccumulator",
+          "theorem": "FalseAccumulator.count_law_droppedAccumulator",
+          "statement_sha256": "742d7bf2aba3357ac75ec1a34f055ce06013ca88ab044165d7ef87b2fa8d20b4",
+          "baseline_tier": "failed",
+          "baseline_axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "mode": "search",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 3.77,
+          "axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "count.droppedAccumulator",
+          "theorem": "FalseAccumulator.count_law_droppedAccumulator",
+          "statement_sha256": "742d7bf2aba3357ac75ec1a34f055ce06013ca88ab044165d7ef87b2fa8d20b4",
+          "baseline_tier": "failed",
+          "baseline_axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "mode": "committed",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 2.433,
+          "axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "size.failedSupplier",
+          "theorem": "FalseAccumulator.size_law_failedSupplier",
+          "statement_sha256": "8d245b0435ebeffe06f4666f8d8d9550f147491da4fb7068612ace9553c47691",
+          "baseline_tier": "failed",
+          "baseline_axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "mode": "search",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 3.959,
+          "axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "size.failedSupplier",
+          "theorem": "FalseAccumulator.size_law_failedSupplier",
+          "statement_sha256": "8d245b0435ebeffe06f4666f8d8d9550f147491da4fb7068612ace9553c47691",
+          "baseline_tier": "failed",
+          "baseline_axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "mode": "committed",
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 2.663,
+          "axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "accepted": false
+        }
+      ]
+    }
+  ],
+  "binary_unchanged": true,
+  "measurement_date": "2026-09-17",
+  "tree_demo": {
+    "replay": {
+      "exit_code": 0,
+      "timeout": false,
+      "seconds": 0.812,
+      "axioms": {
+        "fastElements_law_accumulator": [
+          "propext",
+          "Quot.sound"
+        ],
+        "fastElements_law_traversal": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "accepted": true
+    },
+    "fresh": {
+      "exit_code": 0,
+      "timeout": false,
+      "seconds": 37.271,
+      "accepted": true
+    },
+    "search": {
+      "exit_code": 0,
+      "timeout": false,
+      "seconds": 1.605,
+      "axioms": {
+        "fastElements_law_accumulator": [
+          "propext",
+          "Quot.sound"
+        ],
+        "fastElements_law_traversal": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "accepted": true
+    }
+  },
+  "upstream_tutorial_on_4_34": {
+    "command": "lake +leanprover/lean4:v4.34.0 env lean Tutorial/Examples.lean",
+    "exit_code": 0
+  },
+  "counts": [
+    {
+      "case": "list_fold",
+      "laws": 3,
+      "baseline": 3,
+      "search": 3,
+      "committed": 2
+    },
+    {
+      "case": "tree",
+      "laws": 2,
+      "baseline": 0,
+      "search": 1,
+      "committed": 1
+    },
+    {
+      "case": "reverse_algebra",
+      "laws": 3,
+      "baseline": 3,
+      "search": 3,
+      "committed": 3
+    },
+    {
+      "case": "floor_digits",
+      "laws": 7,
+      "baseline": 7,
+      "search": 5,
+      "committed": 3
+    },
+    {
+      "case": "roundtrip",
+      "laws": 3,
+      "baseline": 3,
+      "search": 1,
+      "committed": 1
+    },
+    {
+      "case": "false_accumulator",
+      "laws": 2,
+      "baseline": 0,
+      "search": 0,
+      "committed": 0
+    }
+  ]
+}
