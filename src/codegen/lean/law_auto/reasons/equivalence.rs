@@ -163,7 +163,10 @@ pub(super) fn candidate(
             left_fold,
             induction::outer_fold(right, ctx, scope.as_deref()),
         ) {
-            let left = induction::direct_finite_calls(left, ctx);
+            let mut left = induction::direct_finite_calls(left, ctx);
+            if let Some(adapter) = induction::callee(&call, ctx, scope.as_deref()) {
+                left.extend(induction::direct_finite_calls(adapter, ctx));
+            }
             let right = induction::direct_finite_calls(right, ctx);
             shared.extend(left.intersection(&right).cloned());
         }
