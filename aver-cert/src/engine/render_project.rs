@@ -1399,6 +1399,7 @@ fn render_sym_claim_bundles(
         let body = format!("symFragmentClaim{index}Body");
         let code_entry = format!("symFragmentClaim{index}CodeEntry");
         let binding = format!("symFragmentClaim{index}Binding");
+        let export_name = lean_str(name);
         let encoded_plan = format!("symFragmentClaim{index}EncodedPlan");
         let carrier_bound = format!("symFragmentClaim{index}CarrierBound");
         let host_types = format!("symFragmentClaim{index}HostTableFuncTypes");
@@ -1453,8 +1454,8 @@ fn render_sym_claim_bundles(
              -- prepares the goal shape; the `exact` holds no heavy reduction.\n\
              theorem {accepted} :\n  \
                AverCert.AcceptedArtifact.symFragmentClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen (symFragmentClaims.get ⟨{index}, by decide⟩) := by\n  \
-               simp only [symFragmentClaims, List.get_cons_zero, List.get_cons_succ]\n  \
-               dsimp only [AverCert.AcceptedArtifact.symFragmentClaimAccepted, AverCert.AcceptedArtifact.symFragmentPlanAccepted]\n  \
+               change AverCert.AcceptedArtifact.symFragmentPlanAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {export_name_bytes} {export_name} {carrier} {host_table_lean} {struct_table_lean} AverCert.Plans.{name}SymPlan AverCert.{name}Ob\n  \
+               dsimp only [AverCert.AcceptedArtifact.symFragmentPlanAccepted]\n  \
                rw [{encoded_plan}]\n  \
                dsimp [symFragmentClaims, AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted]\n  \
                exact ⟨{carrier_bound}, {host_types}, rfl, rfl, ⟨{body}, {code_entry}, {binding}, ⟨⟨{check_plan}, {lower_body}, {lower_code}, {func_binding}⟩, {func_type}, {nominal}, rfl, rfl⟩⟩⟩\n\n"
