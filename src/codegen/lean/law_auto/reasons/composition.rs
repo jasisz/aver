@@ -197,6 +197,20 @@ pub(super) fn candidate(
         for stmt in fd.body.stmts() {
             let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
             crate::codegen::expr_walk::walk(expr, &mut |expr| {
+                // Preserve an adapter of a recursive result until its cited
+                // equation rewrites that whole result. Projecting it here
+                // duplicates unknown fields across the continuation's cases.
+                if let Expr::FnCall(_, args) = &expr.node
+                    && args.iter().any(|arg| {
+                        induction::callee(arg, ctx, key.scope_str())
+                            .is_some_and(|fd| induction::list_measure(fd, ctx).is_some())
+                    })
+                    && let Some(adapter) = induction::callee(expr, ctx, key.scope_str())
+                    && adapter.effects.is_empty()
+                    && induction::list_measure(adapter, ctx).is_none()
+                {
+                    opaque.insert(induction::lean_name(adapter, ctx));
+                }
                 if let Some(callee) = induction::callee(expr, ctx, key.scope_str())
                     && induction::list_measure(callee, ctx).is_some()
                     && let Expr::FnCall(_, args) = &expr.node

@@ -47,6 +47,8 @@ jobs:
           probe('WrapperComposition', prefix + tactic + '\nend Wrapper\n')
           diagnostic = tactic.replace('; done)', '; all_goals trace_state; all_goals sorry)')
           probe('WrapperCompositionSteps', prefix + diagnostic + '\nend Wrapper\n')
+          normalized = tactic[tactic.index('(simp only [Bool.and_eq_true'):].split('; first', 1)[0]
+          probe('WrapperCompositionNormalized', prefix + normalized + '; all_goals trace_state; all_goals sorry)\nend Wrapper\n')
           PYPROBE
       - uses: actions/upload-artifact@v4
         if: always()
