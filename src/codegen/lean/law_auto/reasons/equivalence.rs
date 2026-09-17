@@ -210,7 +210,7 @@ pub(super) fn candidate(
         // Expose Bool facts in the IH before solving a consumed-prefix step;
         // the guarded drop equation lets arithmetic relate Int cursor deltas.
         if !definitions.unary_list_maps.is_empty() {
-            let lemmas = induction::checked_map_lemmas(&definitions.unary_list_maps);
+            let lemmas = induction::checked_map_lemmas(&definitions.unary_list_maps, false);
             let keep_maps = (0..definitions.unary_list_maps.len())
                 .map(|i| format!("-_aver_transport_length_{i}, -_aver_transport_drop_{i}"))
                 .collect::<Vec<_>>()

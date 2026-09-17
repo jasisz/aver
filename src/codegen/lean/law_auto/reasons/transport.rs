@@ -135,6 +135,7 @@ pub(super) fn candidate(
             .filter(|fd| induction::is_unary_list_map(fd, ctx))
             .map(|fd| induction::lean_name(fd, ctx))
             .collect::<Vec<_>>(),
+        true,
     );
     // Calls producing a fold's state stay opaque. Expanding their patterns is
     // unrelated to transporting that fold's observations across a list map.
@@ -242,7 +243,7 @@ pub(super) fn candidate(
     // finite helper. A cons-tail IH is too narrow for that checked decrease;
     // length induction provides the equation for every shorter suffix.
     let steps = format!(
-        "all_goals ({steps}); all_goals (repeat' first | (simp_all +zetaDelta [{step_simp}, {excluded}]) | split); all_goals (simp_all +zetaDelta [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals ({map_lemmas}grind [List.drop_cons, List.drop_drop, List.length_drop, List.length_cons, {equations}]); done"
+        "all_goals ({steps}); all_goals (repeat' first | (simp_all +zetaDelta [{step_simp}, {excluded}]) | split); all_goals (simp_all +zetaDelta [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals (grind [List.drop_cons, List.drop_drop, List.length_drop, List.length_cons, {equations}]); done"
     );
     let induction = if crate::codegen::recursion::detect::single_list_structural_param_index(driver)
         .is_some()
@@ -255,7 +256,7 @@ pub(super) fn candidate(
     };
     let normalize = (0..fact_count).map(|i| format!("(try simp only [{plain}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at _fact{i}); ")).collect::<String>();
     Some(format!(
-        "({normalize}simp only [beq_iff_eq, {}, {}]; {induction})",
+        "({normalize}{map_lemmas}simp only [beq_iff_eq, {}, {}]; {induction})",
         induction::lean_name(left_fn, ctx),
         induction::lean_name(right_fn, ctx),
     ))

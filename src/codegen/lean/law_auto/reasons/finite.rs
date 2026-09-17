@@ -72,7 +72,7 @@ pub(super) fn candidate(
     .filter(|part| !part.is_empty())
     .collect::<Vec<_>>()
     .join(", ");
-    let lemmas = induction::checked_map_lemmas(&definitions.unary_list_maps);
+    let lemmas = induction::checked_map_lemmas(&definitions.unary_list_maps, false);
     Some(format!(
         "(simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, {finite}] at *; all_goals (repeat' first | (simp_all +zetaDelta [{simp}]) | split); all_goals ({lemmas}grind [List.drop_cons, List.drop_drop, List.length_drop, List.append_assoc, {equations}]); done)",
     ))

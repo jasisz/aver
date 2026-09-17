@@ -95,13 +95,24 @@ pub(super) fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
 /// shape. A length-changing function makes this candidate fail normally.
 /// A single underscore keeps these hypotheses visible to `grind`; Lean marks
 /// double-underscore hypothesis names as implementation details and skips them.
-pub(super) fn checked_map_lemmas(names: &[String]) -> String {
+pub(super) fn checked_map_lemmas(names: &[String], slices_first: bool) -> String {
     let mut proofs = String::new();
     for (index, name) in names.iter().enumerate() {
         let length = format!("_aver_transport_length_{index}");
         let drop = format!("_aver_transport_drop_{index}");
+        let (drop_prop, orient) = if slices_first {
+            (
+                format!("List.drop n ({name} xs) = {name} (List.drop n xs)"),
+                "symm; ",
+            )
+        } else {
+            (
+                format!("{name} (List.drop n xs) = List.drop n ({name} xs)"),
+                "",
+            )
+        };
         proofs.push_str(&format!(
-            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by intro xs; induction xs with | nil => simp only [{name}, List.length_nil] | cons x xs ih => simpa only [{name}, List.length_cons] using congrArg Nat.succ ih); have {drop} : ∀ xs n, {name} (List.drop n xs) = List.drop n ({name} xs) := (by intro xs n; induction xs generalizing n with | nil => simp only [{name}, List.drop_nil] | cons x xs ih => cases n with | zero => rfl | succ n => simpa only [{name}, List.drop_succ_cons] using ih n); "
+            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by intro xs; induction xs with | nil => simp only [{name}, List.length_nil] | cons x xs ih => simpa only [{name}, List.length_cons] using congrArg Nat.succ ih); have {drop} : ∀ xs n, {drop_prop} := (by intro xs n; {orient}induction xs generalizing n with | nil => simp only [{name}, List.drop_nil] | cons x xs ih => cases n with | zero => rfl | succ n => simpa only [{name}, List.drop_succ_cons] using ih n); "
         ));
     }
     proofs
