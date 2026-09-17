@@ -1,0 +1,15 @@
+module Main
+    intent =
+        "A tree whose declared lists already carry the computed minimum, spelled"
+        "the way their author spelled them. The report has nothing to say about"
+        "it, so a rewrite has nothing to do either."
+    exposes [main]
+    depends [Infra.Store]
+    effects [Console.print, Disk]
+
+fn main() -> Result<Unit, String>
+    ? "Save one line and say that it was saved."
+    ! [Disk, Console.print]
+    _saved = Infra.Store.save("out.log", "hello")?
+    Console.print("saved")
+    Result.Ok(Unit)

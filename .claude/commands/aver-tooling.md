@@ -86,15 +86,18 @@ aver effects file-or-dir --module-root . --since <rev>
 
 `effects` compares every declared `! [...]` against the minimum the checker computes for that function, and every module `effects [...]` against the union of its functions. The minimum is the same set the `unused-effect` warning already computes, taken over the whole module graph: a function's set is what its own body performs plus the set of everything it calls. It is iterated from the empty set upward, so a recursion group settles on the least set. Starting from what is written instead would leave a cycle as its own answer, because two functions that call each other keep each other's surplus entries alive. A module with nothing to say gets one summary line; the rest list each function with what is missing and what is unused, then the same for the boundary. The report never fails the command, and it works on a program that does not type-check, which is the state a primitive swap leaves behind.
 
-`--write` rewrites every list, on functions and on module boundaries, to that minimum, rendered through the formatter's own layout so `aver format --check` stays clean afterwards. It is idempotent, and a tree whose lists are already minimal is left byte-identical. Three rules keep it a mechanical step:
+`--write` rewrites exactly the lists the report names, on functions and on module boundaries, to that minimum, rendered through the formatter's own layout so `aver format --check` stays clean afterwards. It is idempotent, and a tree whose lists the report calls minimal is left byte-identical: the report is what you read to decide whether to run the rewrite at all, so the rewrite never touches a list the report said nothing about. Four rules keep it a mechanical step:
 
 - `yield` and the callback-forwarding marker `_` are copied through verbatim. `yield` is a declaration about lowering, not a computed effect, so it is never invented and never removed. A function that newly needs it gets the ordinary `check` diagnostic and you add it yourself.
-- A namespace entry you wrote, such as `Disk`, stays as written while the computed set is covered by it. Narrowing it to `Disk.readText` is a decision about the contract; `effect-granularity` raises that as a warning instead.
+- A namespace entry you wrote, such as `Disk`, stays as written while the computed set is covered by it, including when you wrote a method beside it. Narrowing it to `Disk.readText` is a decision about the contract; `effect-granularity` raises that as a warning instead.
 - A module that declares no boundary does not get one. `check` already nudges for that, and declaring the boundary is the author's call.
+- A `//` comment written on a list's own lines is put back on the rewritten list. The formatter leaves a line carrying a comment alone, and so does the rewrite.
 
 An out-of-date effect list does not stop `--write`; anything else does. A callee whose name does not resolve contributes no effects, so the computed minimum would be short and the rewrite would delete entries the program needs. `--write` names those errors and refuses; run `aver check` and fix them first. The report has no such restriction.
 
-`--since <rev>` is the reviewer's view. It reads each module at that git revision through `git show` and, per module, separates the functions whose declared list changed while their body stayed byte-identical from the functions whose own body changed. The first group carries no decision: its lists moved because something further down the call chain moved, and a reviewer can skip them. An unknown revision fails with the revision named; a module that revision did not carry is reported as new.
+A rewrite is the tree's, while the walk is one program's. When `--write` rewrites a module the input did not name, it says the module was reached as a dependency and names it: another program can import that module, this run did not read it, and its lists moved anyway. Run `aver check` over the module root afterwards, not over the input you rewrote from.
+
+`--since <rev>` is the reviewer's view. It reads each module at that git revision through `git show` and, per module, separates the functions whose declared list changed while their body stayed byte-identical from the functions whose own body changed. The first group carries no decision: its lists moved because something further down the call chain moved, and a reviewer can skip them. A function the revision did not have is named as added and one it had and the working tree does not is named as removed, which is how a rename reads. An unknown revision fails with the revision named; a module that revision did not carry is reported as new.
 
 Granularity stays `Namespace.method` everywhere. The command writes the lists for you; it adds no way to omit one, to name a set of effects, or to abbreviate one.
 
@@ -487,7 +490,7 @@ Safety:
 
 1. change the call at the leaf
 2. `aver effects . --module-root . --write`
-3. `aver check .`
+3. `aver check .` over the whole module root, because a rewritten module can be imported by a program the walk did not read
 4. `aver effects . --module-root . --since <the branch point>` before asking for review
 
 ### Project discovery

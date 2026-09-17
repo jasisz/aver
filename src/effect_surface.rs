@@ -214,12 +214,10 @@ fn resolve(declared: &[String], minimum: &BTreeSet<String>) -> Vec<String> {
         .collect();
 
     for computed in minimum {
-        if declared.iter().any(|entry| entry == computed) {
-            out.insert(computed.clone());
-            continue;
-        }
         // A namespace the author already wrote down covers this method, so
         // keep their spelling rather than narrowing the contract for them.
+        // That holds when they wrote the method beside the namespace too:
+        // `Disk` admits every `Disk.*`, so dropping it is the narrowing.
         match declared
             .iter()
             .find(|entry| !entry.contains('.') && effect_satisfies(entry, computed))
@@ -414,12 +412,17 @@ pub fn compute(mut units: Vec<SurfaceInput>) -> ProgramSurface {
             let index = node_cursor;
             node_cursor += 1;
             let node = &nodes[index];
-            for entry in &node.resolved {
-                union.insert(entry.clone());
-            }
             if !is_rewritable(fd) {
                 // A yielding function's list is lowering's business; report it
-                // as written and say nothing about it.
+                // as written and say nothing about it. The boundary takes what
+                // it declares rather than what the fixpoint computed: a
+                // yielding callee is lowered out of the signature map before
+                // the surface is computed, so a function that reaches the
+                // capability only through one resolves to the marker alone,
+                // while the boundary check still reads the declared list.
+                for entry in &node.declared {
+                    union.insert(entry.clone());
+                }
                 functions.push(FnSurface {
                     name: fd.name.clone(),
                     line: fd.line,
@@ -430,6 +433,9 @@ pub fn compute(mut units: Vec<SurfaceInput>) -> ProgramSurface {
                     unused: Vec::new(),
                 });
                 continue;
+            }
+            for entry in &node.resolved {
+                union.insert(entry.clone());
             }
             functions.push(FnSurface {
                 name: fd.name.clone(),
@@ -521,6 +527,20 @@ mod tests {
     fn resolve_keeps_a_namespace_the_author_wrote() {
         assert_eq!(
             resolve(&list(&["Disk"]), &set(&["Disk.readText", "Disk.sync"])),
+            list(&["Disk"])
+        );
+    }
+
+    #[test]
+    fn resolve_keeps_the_namespace_when_the_author_wrote_both_spellings() {
+        // `Disk` already admits every `Disk.*`, so keeping the method and
+        // dropping the namespace would narrow a contract the author widened on
+        // purpose.
+        assert_eq!(
+            resolve(
+                &list(&["Disk", "Disk.appendText"]),
+                &set(&["Disk.appendText"])
+            ),
             list(&["Disk"])
         );
     }

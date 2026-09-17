@@ -53,10 +53,16 @@ fn scratch_copy(fixture_name: &str, label: &str) -> PathBuf {
 }
 
 fn run_effects(root: &Path, args: &[&str]) -> Output {
+    run_effects_on(root, root, args)
+}
+
+/// The command pointed at one file while the module root stays the tree, which
+/// is how a walk reaches a module the input did not name.
+fn run_effects_on(input: &Path, root: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(aver_bin());
     command
         .arg("effects")
-        .arg(root)
+        .arg(input)
         .arg("--module-root")
         .arg(root);
     for arg in args {
@@ -362,6 +368,259 @@ fn write_and_since_are_not_the_same_run() {
     let root = fixture("effects_command");
     let output = run_effects(&root, &["--write", "--since", "HEAD"]);
     assert!(!output.status.success(), "{}", format_output(&output));
+}
+
+/// A `//` comment after the leaf's own effect list. `check` and
+/// `format --check` both accept it, and the formatter leaves a line carrying
+/// one alone, so a rewriter has to read past it rather than through it.
+fn comment_after_the_leaf_list(root: &Path) {
+    let source = read(root, "infra/store.av");
+    let commented = source.replace(
+        "    ! [Disk.appendText]\n    writeThrough(file, line)\n",
+        "    ! [Disk.appendText]  // the helper below reaches the disk\n    writeThrough(file, line)\n",
+    );
+    assert_ne!(source, commented, "the leaf list fixture text moved");
+    write(root, "infra/store.av", &commented);
+}
+
+/// A `//` comment at column zero inside the leaf function, which is the shape
+/// `examples/services/weather.av` already uses above its entry point.
+fn comment_at_column_zero_inside_the_leaf(root: &Path) {
+    let source = read(root, "infra/store.av");
+    let commented = source.replace(
+        "    ? \"The one call in this program that reaches the disk.\"\n",
+        "    ? \"The one call in this program that reaches the disk.\"\n// the only disk touch in the tree\n",
+    );
+    assert_ne!(source, commented, "the leaf description fixture text moved");
+    write(root, "infra/store.av", &commented);
+}
+
+#[test]
+fn write_keeps_the_function_under_a_commented_effect_list() {
+    let root = scratch_copy("effects_command", "write-comment-after-list");
+    comment_after_the_leaf_list(&root);
+    swap_the_leaf_primitive(&root);
+
+    let written = run_effects(&root, &["--write"]);
+    assert!(written.status.success(), "{}", format_output(&written));
+
+    let store = read(&root, "infra/store.av");
+    // The comment sits on `save`'s list; everything under it is a different
+    // function and has to still be there.
+    assert!(store.contains("fn writeThrough"), "{store}");
+    assert!(store.contains("Disk.appendText(file, line)"), "{store}");
+    assert!(
+        store.contains("// the helper below reaches the disk"),
+        "{store}"
+    );
+
+    let checked = run_check(&root);
+    assert!(checked.status.success(), "{}", format_output(&checked));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn write_finds_the_list_of_a_function_under_a_column_zero_comment() {
+    let root = scratch_copy("effects_command", "write-comment-column-zero");
+    comment_at_column_zero_inside_the_leaf(&root);
+    swap_the_leaf_primitive(&root);
+
+    let written = run_effects(&root, &["--write"]);
+    assert!(written.status.success(), "{}", format_output(&written));
+
+    let store = read(&root, "infra/store.av");
+    // One list per function, each of them indented. A second list written at
+    // column zero would be a function header's worth of nonsense.
+    assert!(!store.contains("\n! ["), "{store}");
+    assert_eq!(store.matches("! [").count(), 2, "{store}");
+
+    let checked = run_check(&root);
+    assert!(checked.status.success(), "{}", format_output(&checked));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn write_inserts_a_first_list_at_the_body_indent_under_a_column_zero_comment() {
+    let root = scratch_copy("effects_command", "write-insert-column-zero");
+    let source = read(&root, "infra/store.av");
+    let stripped = source.replace(
+        "    ? \"The one call in this program that reaches the disk.\"\n    ! [Disk.appendText]\n",
+        "    ? \"The one call in this program that reaches the disk.\"\n// the only disk touch in the tree\n",
+    );
+    assert_ne!(source, stripped, "the leaf list fixture text moved");
+    write(&root, "infra/store.av", &stripped);
+
+    let written = run_effects(&root, &["--write"]);
+    assert!(written.status.success(), "{}", format_output(&written));
+
+    // The comment is not the body's first line, so it does not decide where
+    // the list goes or how far it is indented.
+    let store = read(&root, "infra/store.av");
+    assert!(store.contains("\n    ! [Disk.appendText]\n"), "{store}");
+    assert!(!store.contains("\n! ["), "{store}");
+
+    let checked = run_check(&root);
+    assert!(checked.status.success(), "{}", format_output(&checked));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn write_keeps_a_boundary_the_yielding_functions_need() {
+    // `Mid.hop` reaches the capability only through an imported yielding
+    // helper, and a yielding callee is lowered out of the signature map before
+    // the surface is computed. The boundary is what its functions declare, not
+    // what the lowered call chain still resolves to.
+    let root = scratch_copy("effects_yield_boundary", "write-yield-boundary");
+
+    let before = run_check(&root);
+    assert!(before.status.success(), "{}", format_output(&before));
+
+    let reported = run_effects(&root, &["--json"]);
+    assert!(reported.status.success(), "{}", format_output(&reported));
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout_of(&reported)).expect("effects --json is JSON");
+    let mid = value["modules"]
+        .as_array()
+        .expect("modules array")
+        .iter()
+        .find(|module| module["module"] == "Mid")
+        .expect("the Mid module");
+    assert_eq!(
+        mid["boundary"]["unused"],
+        serde_json::json!([]),
+        "{}",
+        stdout_of(&reported)
+    );
+
+    let written = run_effects(&root, &["--write"]);
+    assert!(written.status.success(), "{}", format_output(&written));
+    assert!(
+        read(&root, "main.av").contains("effects [Pool.claim, yield]"),
+        "{}",
+        read(&root, "main.av")
+    );
+
+    let after = run_check(&root);
+    assert!(after.status.success(), "{}", format_output(&after));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn write_leaves_a_tree_the_report_calls_minimal_byte_identical() {
+    // Reordering a list and narrowing `Disk` to the one method under it are
+    // both invisible to the report, so neither is `--write`'s to make.
+    let root = scratch_copy("effects_spelling", "write-spelling");
+    let paths = ["main.av", "infra/store.av"];
+    let before: Vec<String> = paths.iter().map(|p| read(&root, p)).collect();
+
+    let reported = run_effects(&root, &[]);
+    assert!(reported.status.success(), "{}", format_output(&reported));
+    let stdout = stdout_of(&reported);
+    assert!(
+        stdout.contains("2 modules, 2 functions, every declared list is the computed minimum"),
+        "{stdout}"
+    );
+
+    let written = run_effects(&root, &["--write"]);
+    assert!(written.status.success(), "{}", format_output(&written));
+    let after: Vec<String> = paths.iter().map(|p| read(&root, p)).collect();
+    assert_eq!(before, after, "{}", stdout_of(&written));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn since_reads_the_body_under_a_column_zero_comment() {
+    let root = scratch_copy("effects_command", "since-column-zero");
+    comment_at_column_zero_inside_the_leaf(&root);
+    assert!(git(&root, &["init", "-q"]).status.success(), "git init");
+    assert!(git(&root, &["add", "-A"]).status.success(), "git add");
+    assert!(
+        git(&root, &["commit", "-q", "-m", "baseline"])
+            .status
+            .success(),
+        "git commit"
+    );
+
+    // The one line that changes sits under the comment, and it is a body
+    // change: this function reaches a primitive it did not reach before.
+    let source = read(&root, "infra/store.av");
+    let swapped = source.replace(
+        "    ! [Disk.appendText]\n    Disk.appendText(file, line)\n",
+        "    ! [Disk.appendText, Disk.sync]\n    _written = Disk.appendText(file, line)?\n    Disk.sync(file)\n",
+    );
+    assert_ne!(source, swapped, "the leaf body fixture text moved");
+    write(&root, "infra/store.av", &swapped);
+
+    let output = run_effects(&root, &["--since", "HEAD"]);
+    assert!(output.status.success(), "{}", format_output(&output));
+    let stdout = stdout_of(&output);
+    assert!(stdout.contains("body changed: writeThrough"), "{stdout}");
+    assert!(
+        !stdout.contains("propagation only: writeThrough"),
+        "{stdout}"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn since_names_a_function_that_was_added_or_removed() {
+    let root = scratch_copy("effects_command", "since-renamed");
+    assert!(git(&root, &["init", "-q"]).status.success(), "git init");
+    assert!(git(&root, &["add", "-A"]).status.success(), "git add");
+    assert!(
+        git(&root, &["commit", "-q", "-m", "baseline"])
+            .status
+            .success(),
+        "git commit"
+    );
+
+    let source = read(&root, "app/cli.av");
+    write(
+        &root,
+        "app/cli.av",
+        &source.replace("announced", "reported"),
+    );
+
+    let output = run_effects(&root, &["--since", "HEAD"]);
+    assert!(output.status.success(), "{}", format_output(&output));
+    let stdout = stdout_of(&output);
+    // A rename carries the list with it, and the reviewer reads the text view.
+    assert!(stdout.contains("added: reported"), "{stdout}");
+    assert!(stdout.contains("removed: announced"), "{stdout}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn write_names_the_files_it_reached_as_a_dependency() {
+    // The walk is one program's view and the rewrite is the tree's, so a
+    // module the input did not name can be imported by a program this run
+    // never read.
+    let root = scratch_copy("effects_command", "write-dependency");
+    swap_the_leaf_primitive(&root);
+
+    let written = run_effects_on(&root.join("main.av"), &root, &["--write"]);
+    assert!(written.status.success(), "{}", format_output(&written));
+    let stdout = stdout_of(&written);
+    assert!(
+        stdout.contains("Reached as a dependency, so a program outside this walk changes with it:"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("infra/store.av"), "{stdout}");
+    // The entry the input named is not one of them.
+    let notice = stdout
+        .split("Reached as a dependency")
+        .nth(1)
+        .expect("the dependency notice");
+    assert!(!notice.contains("main.av"), "{stdout}");
+
+    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]

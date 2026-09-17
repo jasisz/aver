@@ -307,26 +307,59 @@ impl WriteOutcome {
     }
 }
 
+/// A line that opens a new top-level item.
+///
+/// A `//` comment at column zero opens nothing: the formatter reads them the
+/// same way in `is_top_level_start`, and a function whose body carries one is
+/// still one function. Calling such a line top level would cut a function in
+/// half, and both the rewriter and the reviewer's view walk from one of these
+/// to the next.
 fn is_top_level(line: &str) -> bool {
-    !line.is_empty() && !line.starts_with(' ') && !line.starts_with('\t')
+    !line.is_empty()
+        && !line.starts_with(' ')
+        && !line.starts_with('\t')
+        && !line.trim_start().starts_with("//")
 }
 
 fn indent_of(line: &str) -> String {
     line.chars().take_while(|c| *c == ' ').collect()
 }
 
-/// The entries of the bracketed list `lines[start]` opens with `lead`, and the
-/// index just past its closing `]`. `None` when the list never closes.
+/// One bracketed list as the source carries it.
+struct Bracketed {
+    /// The entries between the brackets, in source order.
+    entries: Vec<String>,
+    /// The `//` comments written on the list's own lines, in source order.
+    /// The formatter leaves a line carrying one alone, so a rewrite puts them
+    /// back instead of deleting what the author wrote.
+    comments: Vec<String>,
+    /// Index just past the closing `]`.
+    end: usize,
+}
+
+/// One line of a bracketed list split into its list text and the comment
+/// written after it.
+///
+/// An effect entry is a dotted name, so the first `//` on such a line always
+/// starts a comment. Reading the line without this split makes a commented
+/// `]` invisible, and then the list appears to run on until some later line
+/// happens to end in a bracket.
+fn split_comment(segment: &str) -> (&str, Option<&str>) {
+    match segment.find("//") {
+        Some(at) => (segment[..at].trim_end(), Some(segment[at..].trim_end())),
+        None => (segment.trim_end(), None),
+    }
+}
+
+/// The bracketed list `lines[start]` opens with `lead`. `None` when the list
+/// never closes.
 ///
 /// Effect declarations are written inline while they fit and across one line
 /// per namespace group when they do not, and both the rewriter and the
 /// reviewer's view have to read either shape, at either `! [` or `effects [`.
-fn read_bracketed<S: AsRef<str>>(
-    lines: &[S],
-    start: usize,
-    lead: &str,
-) -> Option<(Vec<String>, usize)> {
+fn read_bracketed<S: AsRef<str>>(lines: &[S], start: usize, lead: &str) -> Option<Bracketed> {
     let mut inner = String::new();
+    let mut comments: Vec<String> = Vec::new();
     let mut cursor = start;
     while cursor < lines.len() {
         let trimmed = lines[cursor].as_ref().trim();
@@ -336,11 +369,19 @@ fn read_bracketed<S: AsRef<str>>(
             trimmed
         };
         cursor += 1;
+        let (segment, comment) = split_comment(segment);
+        if let Some(comment) = comment {
+            comments.push(comment.to_string());
+        }
         match segment.strip_suffix(']') {
             Some(before) => {
                 inner.push(' ');
                 inner.push_str(before.trim());
-                return Some((split_entries(&inner), cursor));
+                return Some(Bracketed {
+                    entries: split_entries(&inner),
+                    comments,
+                    end: cursor,
+                });
             }
             None => {
                 inner.push(' ');
@@ -349,6 +390,18 @@ fn read_bracketed<S: AsRef<str>>(
         }
     }
     None
+}
+
+/// The rendered list with the comments the old one carried put back on its
+/// last line.
+fn with_comments(mut rendered: Vec<String>, comments: &[String]) -> Vec<String> {
+    if !comments.is_empty()
+        && let Some(last) = rendered.last_mut()
+    {
+        last.push_str("  ");
+        last.push_str(&comments.join("  "));
+    }
+    rendered
 }
 
 fn split_entries(inner: &str) -> Vec<String> {
@@ -414,6 +467,12 @@ fn insert_point(lines: &[String], header: usize, end: usize) -> usize {
             index += 1;
             continue;
         }
+        // A comment is not the body's first line, and stopping on one at column
+        // zero would write the list at column zero with it.
+        if trimmed.starts_with("//") {
+            index += 1;
+            continue;
+        }
         // Continuation lines of a `?` description are bare strings. A bare
         // string that is not continuing one is the body's first expression.
         if in_description && trimmed.starts_with('"') {
@@ -434,11 +493,13 @@ fn rewrite_source(source: &str, module: &ModuleSurface) -> Option<(String, Write
     };
 
     // Functions last-first, so rewriting one does not move the line numbers of
-    // the ones still to come.
+    // the ones still to come. The filter is the one the report prints from: a
+    // list that is already the minimum is left as its author spelled it, so
+    // running the report to decide whether to run `--write` is honest.
     let mut functions: Vec<_> = module
         .functions
         .iter()
-        .filter(|function| function.resolved != function.declared)
+        .filter(|function| function.differs())
         .collect();
     functions.sort_by_key(|function| std::cmp::Reverse(function.line));
 
@@ -449,16 +510,18 @@ fn rewrite_source(source: &str, module: &ModuleSurface) -> Option<(String, Write
         let opening = (header + 1..end).find(|index| lines[*index].trim().starts_with("! ["));
         let rendered = match opening {
             Some(open) => {
-                let Some((_, close)) = read_bracketed(&lines, open, "! [") else {
+                let Some(list) = read_bracketed(&lines, open, "! [") else {
                     continue;
                 };
                 let indent = indent_of(&lines[open]);
-                let rendered =
-                    crate::format::format_bracketed_effect_list(&indent, "! ", &function.resolved);
-                if rendered == lines[open..close] {
+                let rendered = with_comments(
+                    crate::format::format_bracketed_effect_list(&indent, "! ", &function.resolved),
+                    &list.comments,
+                );
+                if rendered == lines[open..list.end] {
                     continue;
                 }
-                lines.splice(open..close, rendered);
+                lines.splice(open..list.end, rendered);
                 true
             }
             None => {
@@ -487,19 +550,21 @@ fn rewrite_source(source: &str, module: &ModuleSurface) -> Option<(String, Write
     }
     outcome.functions.reverse();
 
-    if let Some(declared) = &module.boundary.declared
-        && &module.boundary.resolved != declared
+    if module.boundary.differs()
         && let Some(open) = module_header_effects_line(&lines)
-        && let Some((_, close)) = read_bracketed(&lines, open, "effects [")
+        && let Some(list) = read_bracketed(&lines, open, "effects [")
     {
         let indent = indent_of(&lines[open]);
-        let rendered = crate::format::format_bracketed_effect_list(
-            &indent,
-            "effects ",
-            &module.boundary.resolved,
+        let rendered = with_comments(
+            crate::format::format_bracketed_effect_list(
+                &indent,
+                "effects ",
+                &module.boundary.resolved,
+            ),
+            &list.comments,
         );
-        if rendered != lines[open..close] {
-            lines.splice(open..close, rendered);
+        if rendered != lines[open..list.end] {
+            lines.splice(open..list.end, rendered);
             outcome.boundary = true;
         }
     }
@@ -514,8 +579,18 @@ fn rewrite_source(source: &str, module: &ModuleSurface) -> Option<(String, Write
     Some((rewritten, outcome))
 }
 
-fn cmd_write(label: &str, surface: &ProgramSurface, module_root: &str, json: bool) {
-    let mut written: Vec<(String, WriteOutcome)> = Vec::new();
+fn cmd_write(
+    label: &str,
+    surface: &ProgramSurface,
+    module_root: &str,
+    inputs: &[String],
+    json: bool,
+) {
+    let walked: std::collections::BTreeSet<PathBuf> = inputs
+        .iter()
+        .map(|input| aver::source::canonicalize_path(Path::new(input)))
+        .collect();
+    let mut written: Vec<(String, WriteOutcome, bool)> = Vec::new();
     for module in &surface.modules {
         let source = match std::fs::read_to_string(&module.path) {
             Ok(source) => source,
@@ -535,7 +610,9 @@ fn cmd_write(label: &str, surface: &ProgramSurface, module_root: &str, json: boo
                 "effectSurfaceWriteError",
             );
         }
-        written.push((display_path(&module.path, module_root), outcome));
+        let dependency =
+            !walked.contains(&aver::source::canonicalize_path(Path::new(&module.path)));
+        written.push((display_path(&module.path, module_root), outcome, dependency));
     }
 
     if json {
@@ -545,10 +622,11 @@ fn cmd_write(label: &str, surface: &ProgramSurface, module_root: &str, json: boo
             "program": label,
             "files": written
                 .iter()
-                .map(|(path, outcome)| serde_json::json!({
+                .map(|(path, outcome, dependency)| serde_json::json!({
                     "path": path,
                     "functions": outcome.functions,
                     "boundary": outcome.boundary,
+                    "reachedAsDependency": dependency,
                 }))
                 .collect::<Vec<_>>(),
         });
@@ -571,7 +649,7 @@ fn cmd_write(label: &str, surface: &ProgramSurface, module_root: &str, json: boo
     println!("Rewrote effect declarations: {}", label.cyan());
     let mut functions = 0usize;
     let mut boundaries = 0usize;
-    for (path, outcome) in &written {
+    for (path, outcome, _) in &written {
         functions += outcome.functions.len();
         if outcome.boundary {
             boundaries += 1;
@@ -592,6 +670,28 @@ fn cmd_write(label: &str, surface: &ProgramSurface, module_root: &str, json: boo
         plural(functions, "function", "functions"),
         plural(boundaries, "module boundary", "module boundaries")
     );
+
+    // A module the input did not name is one this walk arrived at through an
+    // import. Its lists are the tree's, not this program's, and another
+    // program that imports it was not read here.
+    let dependencies: Vec<&str> = written
+        .iter()
+        .filter(|(_, _, dependency)| *dependency)
+        .map(|(path, _, _)| path.as_str())
+        .collect();
+    if !dependencies.is_empty() {
+        println!();
+        println!(
+            "Reached as a dependency, so a program outside this walk changes with it: {}",
+            join(
+                &dependencies
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            )
+        );
+        println!("Run `aver check` over the module root to cover those programs.");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -632,10 +732,16 @@ fn scan_functions(source: &str) -> BTreeMap<String, SourceFn> {
         while cursor < lines.len() && !is_top_level(lines[cursor]) {
             if effects.is_none()
                 && lines[cursor].trim().starts_with("! [")
-                && let Some((entries, close)) = read_bracketed(&lines, cursor, "! [")
+                && let Some(list) = read_bracketed(&lines, cursor, "! [")
             {
-                effects = Some(entries);
-                cursor = close;
+                // A comment beside the list is the author's, not propagation's,
+                // so it belongs to the text the two revisions are compared by.
+                for comment in &list.comments {
+                    rest.push_str(comment);
+                    rest.push('\n');
+                }
+                effects = Some(list.entries);
+                cursor = list.end;
                 continue;
             }
             rest.push_str(lines[cursor]);
@@ -762,7 +868,7 @@ fn module_boundary(source: &str) -> Vec<String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut entries = module_header_effects_line(&lines)
         .and_then(|open| read_bracketed(&lines, open, "effects ["))
-        .map(|(entries, _)| entries)
+        .map(|list| list.entries)
         .unwrap_or_default();
     entries.sort();
     entries
@@ -837,6 +943,8 @@ fn cmd_since(label: &str, surface: &ProgramSurface, module_root: &str, rev: &str
     println!();
     let mut propagation_total = 0usize;
     let mut body_total = 0usize;
+    let mut added_total = 0usize;
+    let mut removed_total = 0usize;
     for (index, row) in rows.iter().enumerate() {
         if index > 0 {
             println!();
@@ -848,25 +956,43 @@ fn cmd_since(label: &str, surface: &ProgramSurface, module_root: &str, rev: &str
         }
         propagation_total += row.propagation_only.len();
         body_total += row.body_changed.len();
-        if row.propagation_only.is_empty() && row.body_changed.is_empty() && !row.boundary_changed {
+        added_total += row.added.len();
+        removed_total += row.removed.len();
+        if row.propagation_only.is_empty()
+            && row.body_changed.is_empty()
+            && row.added.is_empty()
+            && row.removed.is_empty()
+            && !row.boundary_changed
+        {
             println!("  no effect list changed");
             continue;
         }
-        println!(
-            "  {} changed: {} propagation only, {} with a body change",
-            plural(
-                row.propagation_only.len() + row.body_changed.len(),
-                "list",
-                "lists"
-            ),
-            row.propagation_only.len(),
-            row.body_changed.len()
-        );
+        if !row.propagation_only.is_empty() || !row.body_changed.is_empty() {
+            println!(
+                "  {} changed: {} propagation only, {} with a body change",
+                plural(
+                    row.propagation_only.len() + row.body_changed.len(),
+                    "list",
+                    "lists"
+                ),
+                row.propagation_only.len(),
+                row.body_changed.len()
+            );
+        }
         if !row.propagation_only.is_empty() {
             println!("  propagation only: {}", join(&row.propagation_only));
         }
         if !row.body_changed.is_empty() {
             println!("  body changed: {}", join(&row.body_changed));
+        }
+        // A function that was renamed took its list with it and is in neither
+        // group. Leaving it out of the text view is the one change a reviewer
+        // most needs named.
+        if !row.added.is_empty() {
+            println!("  added: {}", join(&row.added));
+        }
+        if !row.removed.is_empty() {
+            println!("  removed: {}", join(&row.removed));
         }
         if row.boundary_changed {
             println!("  module boundary changed");
@@ -880,6 +1006,13 @@ fn cmd_since(label: &str, surface: &ProgramSurface, module_root: &str, rev: &str
         propagation_total,
         body_total
     );
+    if added_total > 0 || removed_total > 0 {
+        println!(
+            "{} added, {} removed",
+            plural(added_total, "function", "functions"),
+            plural(removed_total, "function", "functions")
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -927,7 +1060,7 @@ pub(super) fn cmd_effects(
     }
 
     match (write, since) {
-        (true, _) => cmd_write(&label, &surface, &module_root, json),
+        (true, _) => cmd_write(&label, &surface, &module_root, &inputs, json),
         (false, Some(rev)) => cmd_since(&label, &surface, &module_root, rev, json),
         (false, None) => {
             if json {
