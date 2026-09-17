@@ -1041,21 +1041,28 @@ pub(super) fn cmd_effects(
     let (surface, blocking) = load_surface(&inputs, &module_root, json);
     let label = display_path(file, &module_root);
 
-    if write && !blocking.is_empty() {
+    if !blocking.is_empty() {
         let shown: Vec<String> = blocking
             .iter()
             .take(5)
             .map(|(where_, message)| format!("  {where_}: {message}"))
             .collect();
+        // A callee whose name does not resolve contributes no effects, so
+        // every figure below it would be short; and a program the language
+        // refuses is refused here as at every other front door.
         fail(
             format!(
-                "`--write` needs every name to resolve, and {} did not:\n{}\n\
-                 Fix those with `aver check` first; effect violations alone do not block the rewrite.",
+                "`aver effects` needs a program that checks apart from its effect lists, and {} did not:\n{}\n\
+                 Fix those with `aver check` first; effect violations alone do not stop this command.",
                 plural(blocking.len(), "one error", "errors"),
                 shown.join("\n")
             ),
             json,
-            "effectSurfaceWriteError",
+            if write {
+                "effectSurfaceWriteError"
+            } else {
+                "effectSurfaceError"
+            },
         );
     }
 

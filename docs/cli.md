@@ -98,7 +98,7 @@ aver effects file-or-dir --module-root . --since <rev>
 - A module that declares no boundary does not get one. `check` already nudges for that, and declaring the boundary is the author's call.
 - A `//` comment written on a list's own lines is put back on the rewritten list. The formatter leaves a line carrying a comment alone, and so does the rewrite.
 
-An out-of-date effect list does not stop `--write`; anything else does. A callee whose name does not resolve contributes no effects, so the computed minimum would be short and the rewrite would delete entries the program needs. `--write` names those errors and refuses; run `aver check` and fix them first. The report has no such restriction.
+An out-of-date effect list does not stop `aver effects`; any other error does, in every mode. A callee whose name does not resolve contributes no effects, so the computed minimum would be short: the report would understate every list above it and the rewrite would delete entries the program needs. The command names those errors and refuses; run `aver check` and fix them first.
 
 A rewrite is the tree's, while the walk is one program's. When `--write` rewrites a module the input did not name, it says the module was reached as a dependency and names it: another program can import that module, this run did not read it, and its lists moved anyway. Run `aver check` over the module root afterwards, not over the input you rewrote from.
 

@@ -624,10 +624,10 @@ fn write_names_the_files_it_reached_as_a_dependency() {
 }
 
 #[test]
-fn write_refuses_while_a_name_does_not_resolve() {
+fn refuses_while_a_name_does_not_resolve() {
     // An unresolved callee contributes no effects, so the computed minimum
-    // would be too small and the rewrite would delete entries the program
-    // needs. The report still runs; only the rewrite stops.
+    // would be too small: the report would understate every list above it
+    // and the rewrite would delete entries the program needs. Both stop.
     let root = scratch_copy("effects_command", "write-unresolved");
     let source = read(&root, "infra/store.av");
     write(
@@ -637,7 +637,12 @@ fn write_refuses_while_a_name_does_not_resolve() {
     );
 
     let reported = run_effects(&root, &[]);
-    assert!(reported.status.success(), "{}", format_output(&reported));
+    assert!(!reported.status.success(), "{}", format_output(&reported));
+    assert!(
+        String::from_utf8_lossy(&reported.stderr).contains("writeThroguh"),
+        "{}",
+        format_output(&reported)
+    );
 
     let written = run_effects(&root, &["--write"]);
     assert!(!written.status.success(), "{}", format_output(&written));
