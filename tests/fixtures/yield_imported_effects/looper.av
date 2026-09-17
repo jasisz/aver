@@ -1,0 +1,39 @@
+module Looper
+    intent = "Observe clocks around requests while keeping recursive code private."
+    depends [Pool, Pooled]
+    exposes [run, fallible]
+    effects [Pool.claim, Pool.finish, Time.unixMs, yield]
+
+fn loop(n: Int) -> Int
+    ! [Pool.claim, Time.unixMs, yield]
+    before = Time.unixMs()
+    value = Pool.claim(n)
+    after = Time.unixMs()
+    match value
+        Option.None -> n + after - before
+        Option.Some(next) -> loop(next)
+
+fn run(n: Int) -> Int
+    ! [Pool.claim, Time.unixMs, yield]
+    value = loop(n)
+    value + 1
+
+fn fallible(n: Int) -> Result<Int, String>
+    ? "A failed request returns before the trailing clock read."
+    ! [Pool.finish, Time.unixMs, yield]
+    before = Time.unixMs()
+    value = Pool.finish(n)?
+    after = Time.unixMs()
+    Result.Ok(value + after - before)
+
+verify __runSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__RunTraceInput> = [[]]
+    using []
+    __runSourceTrace(n, inputs) == __runProtocolTrace(n, inputs) holds
+
+verify __fallibleSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__FallibleTraceInput> = [[]]
+    using []
+    __fallibleSourceTrace(n, inputs) == __fallibleProtocolTrace(n, inputs) holds

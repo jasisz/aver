@@ -1,0 +1,17 @@
+module Wrapper
+    intent = "Compose a checked imported observer through another module."
+    depends [Pool, Pooled, Looper]
+    exposes [run]
+    effects [Pool.claim, Time.unixMs, yield]
+
+fn run(n: Int) -> Int
+    ! [Pool.claim, Time.unixMs, yield]
+    value = Looper.run(n)
+    after = Time.unixMs()
+    value + after
+
+verify __runSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__RunTraceInput> = [[]]
+    using []
+    __runSourceTrace(n, inputs) == __runProtocolTrace(n, inputs) holds

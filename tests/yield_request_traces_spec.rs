@@ -154,44 +154,27 @@ fn imported_observers_keep_private_helpers_in_the_owning_module() {
 }
 
 #[test]
-fn unsupported_recursive_and_effectful_import_composition_is_explicit() {
-    for recursive in [true, false] {
-        let dir = tempfile::tempdir().unwrap();
-        let source = repo_root().join("tests/fixtures/yield_module_helpers");
-        for name in ["looper.av", "pool.av", "pooled.av", "aver.toml"] {
-            std::fs::copy(source.join(name), dir.path().join(name)).unwrap();
-        }
-        let effects = if recursive {
-            "Pool.claim, yield"
-        } else {
-            "Pool.claim, Time.unixMs, yield"
-        };
-        if !recursive {
-            std::fs::write(dir.path().join("looper.av"), "module Looper\n    depends [Pool, Pooled]\n    exposes [loop]\n\nfn loop(id: Int, seen: Int) -> Int\n    ! [Pool.claim, Time.unixMs, yield]\n    value = Pool.claim(id)\n    value + Time.unixMs()\n").unwrap();
-        }
-        std::fs::write(dir.path().join("main.av"), format!("module Client\n    depends [Looper, Pool, Pooled]\n\nfn parent(id: Int) -> Int\n    ! [{effects}]\n    Looper.loop(id, 0)\n\nverify __parentSourceTrace law correspondence\n    given id: Int = [1]\n    given inputs: List<__ParentTraceInput> = [[]]\n    using []\n    __parentSourceTrace(id, inputs) == __parentProtocolTrace(id, inputs) holds\n")).unwrap();
-        let out = Command::new(aver_bin())
-            .arg("check")
-            .arg(dir.path().join("main.av"))
-            .arg("--module-root")
-            .arg(dir.path())
-            .output()
-            .unwrap();
-        assert!(!out.status.success(), "{}", format_output(&out));
-        let text = format_output(&out);
-        assert!(
-            text.contains("No trace-equivalence claim was generated"),
-            "{text}"
-        );
-        assert!(
-            text.contains(if recursive {
-                "compositional subtrace theorem"
-            } else {
-                "owning-module observer"
-            }),
-            "{text}"
-        );
+fn recursive_imports_without_owning_module_contracts_are_explicitly_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = repo_root().join("tests/fixtures/yield_module_helpers");
+    for name in ["looper.av", "pool.av", "pooled.av", "aver.toml"] {
+        std::fs::copy(source.join(name), dir.path().join(name)).unwrap();
     }
+    std::fs::write(dir.path().join("main.av"), "module Client\n    depends [Looper, Pool, Pooled]\n\nfn parent(id: Int) -> Int\n    ! [Pool.claim, yield]\n    Looper.loop(id, 0)\n\nverify __parentSourceTrace law correspondence\n    given id: Int = [1]\n    given inputs: List<__ParentTraceInput> = [[]]\n    using []\n    __parentSourceTrace(id, inputs) == __parentProtocolTrace(id, inputs) holds\n").unwrap();
+    let out = Command::new(aver_bin())
+        .arg("check")
+        .arg(dir.path().join("main.av"))
+        .arg("--module-root")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "{}", format_output(&out));
+    let text = format_output(&out);
+    assert!(
+        text.contains("No trace-equivalence claim was generated"),
+        "{text}"
+    );
+    assert!(text.contains("compositional subtrace theorem"), "{text}");
 }
 
 #[test]

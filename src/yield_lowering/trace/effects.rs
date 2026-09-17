@@ -21,7 +21,7 @@ impl Model<'_> {
             {
                 continue;
             }
-            let mut compiler = source::Compiler::new(self, function);
+            let mut compiler = source::Compiler::for_protocol(self, function);
             for item in items.iter_mut() {
                 let TopLevel::FnDef(fd) = item else { continue };
                 let body = std::sync::Arc::make_mut(&mut fd.body);

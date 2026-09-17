@@ -127,8 +127,18 @@ pub struct ProcessTrace {
     /// Owning-module observers and law dependencies used by import adapters.
     pub drive: String,
     pub protocol_from: String,
+    /// Pure observations of actual effectful Start/Answer bodies in their owner.
+    pub segments: Vec<ProcessTraceSegment>,
     pub cursor: Option<String>,
     pub correspondence: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessTraceSegment {
+    pub function: String,
+    pub observer: String,
+    pub result: String,
+    pub params: Vec<(String, String)>,
 }
 
 /// Public source signature and its lowered protocol, retained across module loading.
@@ -533,6 +543,9 @@ pub fn lower(
                         trace.protocol_from.clone(),
                     ]);
                     public_names.extend(trace.cursor.iter().cloned());
+                    for segment in &trace.segments {
+                        public_names.extend([segment.observer.clone(), segment.result.clone()]);
+                    }
                     if trace.correspondence.is_some() {
                         public_names.push(format!("__{fn_name}SourceTraceFrom"));
                     }

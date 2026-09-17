@@ -27,6 +27,7 @@ pub(super) struct Compiler<'a> {
     function: &'a FnDef,
     fresh: usize,
     inlining: Vec<String>,
+    protocol_segments: bool,
 }
 
 impl<'a> Compiler<'a> {
@@ -36,6 +37,14 @@ impl<'a> Compiler<'a> {
             function,
             fresh: 0,
             inlining: Vec::new(),
+            protocol_segments: false,
+        }
+    }
+
+    pub(super) fn for_protocol(model: &'a Model<'a>, function: &'a FnDef) -> Self {
+        Self {
+            protocol_segments: true,
+            ..Self::new(model, function)
         }
     }
 
@@ -179,6 +188,7 @@ impl<'a> Compiler<'a> {
                         .source(&name)
                         .is_some_and(|fd| !fd.effects.is_empty())
                         || self.model.imported.contains_key(&name))
+                    || (self.protocol_segments && self.model.imported_segment(&name).is_some())
             }),
             _ => false,
         })
@@ -311,6 +321,12 @@ impl<'a> Compiler<'a> {
                     .imported
                     .get(name)
                     .map(|p| self.model.import_signature(p))
+            })
+            .or_else(|| {
+                self.protocol_segments
+                    .then(|| self.model.imported_segment(name))
+                    .flatten()
+                    .map(|(protocol, segment)| self.model.segment_signature(protocol, segment))
             });
         if let Some(helper) = helper {
             if name == self.function.name {

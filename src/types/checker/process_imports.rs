@@ -54,6 +54,14 @@ impl TypeChecker {
                     trace.source = qualify(&trace.source);
                     trace.drive = qualify(&trace.drive);
                     trace.protocol_from = qualify(&trace.protocol_from);
+                    for segment in &mut trace.segments {
+                        segment.function = qualify(&segment.function);
+                        segment.observer = qualify(&segment.observer);
+                        segment.result = qualify(&segment.result);
+                        for (_, ty) in &mut segment.params {
+                            *ty = annotation(&resolve(ty));
+                        }
+                    }
                     trace.cursor = trace.cursor.as_ref().map(|name| qualify(name));
                     trace.correspondence = trace.correspondence.as_ref().map(|name| qualify(name));
                     for operation in &mut trace.operations {

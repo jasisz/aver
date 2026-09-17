@@ -16,6 +16,7 @@ mod effects;
 mod import_composition;
 mod imports;
 mod laws;
+mod segments;
 mod source;
 mod surface;
 pub(super) use laws::strengthen_laws;
@@ -91,6 +92,7 @@ pub(super) fn generate(
                     source: model.source_name(root),
                     drive: model.child_drive(root),
                     protocol_from: format!("__{}ProtocolTraceFrom", protocol.fn_name),
+                    segments: model.segment_exports(),
                     cursor: requested.then(|| format!("{}Cursor", model.prefix)),
                     correspondence: None,
                 };
@@ -261,9 +263,24 @@ impl<'a> Model<'a> {
             imports.iter().map(|p| self.import_signature(p)).collect();
         let mut all = reached.clone();
         all.extend(imported_signatures.iter());
+        let segments = self.observed_segments();
+        all.extend(segments.iter().copied());
+        let imported_segments: Vec<_> = imports
+            .iter()
+            .flat_map(|p| {
+                p.trace
+                    .as_ref()
+                    .unwrap()
+                    .segments
+                    .iter()
+                    .map(|segment| self.segment_signature(p, segment))
+            })
+            .collect();
+        all.extend(imported_segments.iter());
         let mut text = self.surface(&all);
         for protocol in &imports {
             text.push_str(&self.adapter(protocol)?);
+            text.push_str(&self.segment_adapters(protocol));
         }
         text.push_str(&self.driver(root));
         text.push_str(&self.composition(&reached, &imports)?);
@@ -276,6 +293,11 @@ impl<'a> Model<'a> {
         // Model in-place effects inside the actual protocol code with the same
         // dynamic tape semantics; the original source body remains independent.
         self.observe_segments(&mut items, root)?;
+        for segment in segments {
+            items.push(TopLevel::FnDef(
+                source::Compiler::for_protocol(self, segment).compile()?,
+            ));
+        }
         for item in &items {
             let TopLevel::FnDef(fd) = item else { continue };
             for stmt in fd.body.stmts() {
