@@ -11,6 +11,7 @@ use crate::codegen::lean::{
 
 mod composition;
 mod equivalence;
+mod finite;
 mod induction;
 mod list_induction;
 mod transport;
@@ -423,6 +424,12 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 }
             }
         } else {
+            if let Some(candidate) = finite::candidate(law, ctx, &definitions, fact_count) {
+                lines.push("  first".to_string());
+                lines.push(format!("  | {candidate}"));
+                lines.push("  |".to_string());
+            }
+            let finite_start = lines.len();
             if let Some(plan) = &plans[index] {
                 // Guards and previous explanations belong in the motive:
                 // recursive calls must establish their own premises.
@@ -442,6 +449,11 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             ));
             lines.push("  all_goals".to_string());
             lines.extend(solver(&definitions, &label, "    ", fact_count, true, true));
+            if finite_start > strategy_start {
+                for line in &mut lines[finite_start..] {
+                    *line = format!("  {line}");
+                }
+            }
             previous.push(format!("h_reason{index}"));
         }
         // First use the named facts without expanding their dependency cones.

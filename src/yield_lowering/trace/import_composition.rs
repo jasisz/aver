@@ -74,7 +74,11 @@ verify {name}Direct law mapping
             "correspondence",
             &params,
             &format!("{name}({args}) == {entry}({args})"),
-            &[source_law.clone(), format!("{name}Direct.mapping")],
+            &[
+                source_law.clone(),
+                format!("{name}Direct.mapping"),
+                format!("{cursor_law}.boundedSuffix"),
+            ],
         )?;
         let source_from = source_law
             .rsplit_once('.')

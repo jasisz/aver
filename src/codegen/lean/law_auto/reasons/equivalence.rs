@@ -208,8 +208,8 @@ pub(super) fn candidate(
     // Preserve the application appearing in the recursive IH while reducing
     // the other fold's step. Expanding its result adapter first duplicates
     // projections of an unknown recursive result and obscures the equality.
-    // This attempt must close the goal; terminal branches still use the full
-    // simplifier below when the adapter's argument is a concrete record.
+    // Keep this progress and split finite observations before exposing the
+    // adapter. Terminal branches can still use the full simplifier below.
     let recursive = result_adapter
         .map(|adapter| {
             let step_simp = simp
@@ -217,7 +217,7 @@ pub(super) fn candidate(
                 .filter(|name| *name != adapter)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(" | (solve | simp_all +zetaDelta only [{step_simp}])")
+            format!(" | (simp_all +zetaDelta only [{step_simp}]) | (split at *)")
         })
         .unwrap_or_default();
     let solve = format!(
