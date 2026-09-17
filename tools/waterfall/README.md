@@ -3,6 +3,8 @@
 An isolated proof-search experiment, run on 2026-09-17. It adds no compiler
 option or production dependency.
 
+The follow-up on the real btc-listener proof corpus is documented in [BTC.md](BTC.md).
+
 ## Finding
 
 Waterfall is worth trying as an optional discovery/fallback tool for recursive
