@@ -790,6 +790,19 @@ fn emit_match(
     line: usize,
     ctx: &CodegenContext,
 ) -> String {
+    // An irrefutable binding is a let, not a dependent case split. In
+    // generated observation code these bindings thread each intermediate
+    // value; naming a match equation for every alias needlessly multiplies
+    // the hypotheses of functional induction. A let retains the same scope
+    // and definitional equality, including for checked termination measures.
+    if !ctx.lean_do_block.get()
+        && let [arm] = arms
+        && let ResolvedPattern::Ident(name) = &arm.pattern
+    {
+        let value = emit_expr(subject, ctx);
+        let body = emit_expr(&arm.body, ctx).replace('\n', "\n  ");
+        return format!("(let {} := ({value});\n  {body})", aver_name_to_lean(name));
+    }
     // Bool match → if/then/else (avoids Lean dependent elimination issues)
     if let Some((true_body, false_body)) = extract_bool_arms(arms) {
         let monadify_arms = ctx.lean_do_block.get()
