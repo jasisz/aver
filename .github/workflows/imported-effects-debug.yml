@@ -43,10 +43,12 @@ jobs:
               f"all_goals (repeat' first | assumption | rfl | (split at *) | (simp_all [{full}])); all_goals trace_state; all_goals sorry",
               f"all_goals (repeat' first | assumption | rfl | (solve | simp_all only [{small}, {completed}]) | (split at *)); all_goals (try simp_all [{full}]); all_goals trace_state; all_goals sorry",
               f"all_goals (try (rename_i ih; rw [ih])); all_goals (try (conv => rhs; simp only [{small}])); all_goals (try (congr 1)); all_goals (repeat' first | rfl | (simp_all only [{full}]) | (split at *)); all_goals trace_state; all_goals sorry",
+              f"all_goals (repeat' first | assumption | rfl | (simp_all [{full}]) | split); all_goals trace_state; all_goals sorry",
           ]
           for i, tactic in enumerate(probes):
               name = f'LooperProbe{i}.lean'
-              Path(name).write_text(prefix + statement + '\n  ' + begin + tactic + '\nend Looper\n')
+              options = 'set_option smartUnfolding false in\n' if i == 3 else ''
+              Path(name).write_text(prefix + options + statement + '\n  ' + begin + tactic + '\nend Looper\n')
               print(f'PROBE {i}', flush=True)
               result = subprocess.run(['lake', 'env', 'lean', name], timeout=90)
               print(f'PROBE {i} EXIT {result.returncode}', flush=True)
