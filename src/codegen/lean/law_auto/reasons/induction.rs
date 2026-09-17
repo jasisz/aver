@@ -49,7 +49,19 @@ pub(super) fn outer_fold<'a>(
     }
 }
 
-/// Common finite calls can remain opaque while the two recursive steps align.
+/// A shared computed record can stay opaque; state constructors and scalar
+/// routers still need to reduce so the fold's next case becomes visible.
+fn constructs_result_record(fd: &FnDef) -> bool {
+    fd.body.stmts().iter().any(|stmt| {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::any(expr, &mut |expr| {
+            matches!(&expr.node,
+            Expr::RecordCreate { type_name, .. } if type_name == &fd.return_type)
+        })
+    })
+}
+
+/// Common finite record calls can remain opaque while the recursive steps align.
 pub(super) fn direct_finite_calls(fd: &FnDef, ctx: &CodegenContext) -> BTreeSet<String> {
     let mut calls = BTreeSet::new();
     for stmt in fd.body.stmts() {
@@ -57,6 +69,7 @@ pub(super) fn direct_finite_calls(fd: &FnDef, ctx: &CodegenContext) -> BTreeSet<
         crate::codegen::expr_walk::walk(expr, &mut |expr| {
             if let Some(called) = callee(expr, ctx, common::fn_owning_scope_for(ctx, fd))
                 && called.effects.is_empty()
+                && constructs_result_record(called)
                 && common::fn_id_for_decl(ctx, called)
                     .is_some_and(|id| !ctx.recursive_fns.contains(&id))
             {
