@@ -1,0 +1,16 @@
+module Kv
+    intent = "Minimal provider boundary for a proof export regression."
+    kind = capability
+    semantics = effectful
+    exposes [Handle, open, applyAll]
+    depends [Bytes]
+
+resource Handle
+
+operation open(dir: String) -> Result<Handle, String>
+    oracle = generativeOutput
+    replay = recorded
+
+operation applyAll(handle: Handle, puts: List<Tuple<Bytes, Bytes>>, deletes: List<Bytes>) -> Result<Unit, String>
+    oracle = generativeOutput
+    replay = recorded

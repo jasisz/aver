@@ -19,6 +19,8 @@ mod builds;
 mod capability;
 #[path = "proof_spec/capability_opaque.rs"]
 mod capability_opaque;
+#[path = "proof_spec/capability_tuple.rs"]
+mod capability_tuple;
 #[path = "proof_spec/check_gates.rs"]
 mod check_gates;
 #[path = "proof_spec/citation_attempts.rs"]

@@ -1,0 +1,28 @@
+module Store
+    intent = "A verified pure branch beside a provider operation."
+    exposes [Store, applied]
+    depends [Bytes, Infra.Kv]
+    effects [Infra.Kv.applyAll]
+
+type Store
+    Memory(Int)
+    Database(Infra.Kv.Handle)
+
+fn applied(store: Store, pairs: List<Tuple<Bytes, Bytes>>) -> Result<Store, String>
+    ? "Apply a batch to either backend."
+    ! [Infra.Kv.applyAll]
+    match store
+        Store.Memory(n) -> Result.Ok(Store.Memory(n + List.len(pairs)))
+        Store.Database(handle) -> kept(store, Infra.Kv.applyAll(handle, pairs, []))
+
+verify applied
+    applied(Store.Memory(0), []) => Result.Ok(Store.Memory(0))
+
+fn kept(store: Store, outcome: Result<Unit, String>) -> Result<Store, String>
+    ? "Keep the store after a successful operation."
+    match outcome
+        Result.Err(why) -> Result.Err(why)
+        Result.Ok(unit) -> Result.Ok(store)
+
+verify kept
+    kept(Store.Memory(1), Result.Ok(Unit)) => Result.Ok(Store.Memory(1))
