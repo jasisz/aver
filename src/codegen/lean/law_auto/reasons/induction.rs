@@ -47,7 +47,7 @@ pub(super) fn checked_map_lemmas(names: &[String]) -> (String, Vec<String>) {
         let length = format!("__aver_transport_length_{index}");
         let drop = format!("__aver_transport_drop_{index}");
         proofs.push_str(&format!(
-            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by clear *; intro xs; induction xs <;> simp_all [{name}]); have {drop} : ∀ xs n, {name} (List.drop n xs) = List.drop n ({name} xs) := (by clear *; intro xs n; induction xs generalizing n <;> cases n <;> simp_all [{name}]); "
+            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by intro xs; induction xs with | nil => rfl | cons x xs ih => simpa only [{name}, List.length_cons] using congrArg Nat.succ ih); have {drop} : ∀ xs n, {name} (List.drop n xs) = List.drop n ({name} xs) := (by intro xs n; induction xs generalizing n with | nil => simp only [{name}, List.drop_nil] | cons x xs ih => cases n with | zero => rfl | succ n => simpa only [{name}, List.drop_succ_cons] using ih n); "
         ));
         facts.extend([length, drop]);
     }
