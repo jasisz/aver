@@ -132,7 +132,7 @@ pub(super) fn candidate(
     let map_lemmas = induction::checked_map_lemmas(
         &maps
             .iter()
-            .filter(|fd| fd.params.len() == 1)
+            .filter(|fd| induction::is_unary_list_map(fd, ctx))
             .map(|fd| induction::lean_name(fd, ctx))
             .collect::<Vec<_>>(),
     );

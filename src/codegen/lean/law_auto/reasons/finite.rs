@@ -63,9 +63,17 @@ pub(super) fn candidate(
         .map(|index| format!("-_fact{index}"))
         .collect::<Vec<_>>()
         .join(", ");
+    let simp = [
+        finite.as_str(),
+        definitions.list_maps.as_str(),
+        excluded.as_str(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(", ");
     let lemmas = induction::checked_map_lemmas(&definitions.unary_list_maps);
     Some(format!(
-        "(simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, {finite}] at *; all_goals (repeat' first | (simp_all +zetaDelta [{finite}, {}, {excluded}]) | split); all_goals ({lemmas}grind [List.drop_cons, List.drop_drop, List.length_drop, List.append_assoc, {equations}]); done)",
-        definitions.list_maps,
+        "(simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, {finite}] at *; all_goals (repeat' first | (simp_all +zetaDelta [{simp}]) | split); all_goals ({lemmas}grind [List.drop_cons, List.drop_drop, List.length_drop, List.append_assoc, {equations}]); done)",
     ))
 }

@@ -54,6 +54,47 @@ pub(super) fn checked_map_lemmas(names: &[String]) -> String {
     proofs
 }
 
+/// Select one-output-per-cell recursions for the locally checked map facts.
+/// Other list observers (notably reversal) need their own proof strategy.
+pub(super) fn is_unary_list_map(fd: &FnDef, ctx: &CodegenContext) -> bool {
+    if fd.params.len() != 1 {
+        return false;
+    }
+    let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts() else {
+        return false;
+    };
+    let Expr::Match { arms, .. } = &expr.node else {
+        return false;
+    };
+    let [nil, cons] = arms.as_slice() else {
+        return false;
+    };
+    let crate::ast::Pattern::Cons(_, tail) = &cons.pattern else {
+        return false;
+    };
+    if !matches!(nil.pattern, crate::ast::Pattern::EmptyList)
+        || !matches!(&nil.body.node, Expr::List(items) if items.is_empty())
+    {
+        return false;
+    }
+    let Some((name, args)) = super::super::shared::call_name_args(&cons.body) else {
+        return false;
+    };
+    if name != "List.prepend" || args.len() != 2 {
+        return false;
+    }
+    let Some(recursive) = callee(&args[1], ctx, common::fn_owning_scope_for(ctx, fd)) else {
+        return false;
+    };
+    if common::fn_id_for_decl(ctx, recursive) != common::fn_id_for_decl(ctx, fd) {
+        return false;
+    }
+    let Expr::FnCall(_, values) = &args[1].node else {
+        return false;
+    };
+    matches!(values.as_slice(), [value] if matches!(&value.node, Expr::Ident(name) | Expr::Resolved { name, .. } if name == tail))
+}
+
 /// Equations for visible cells of a two-arm list map; arbitrary tails stay opaque.
 pub(super) fn map_constructor_equations(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts() else {
@@ -248,7 +289,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
             }
             if fd.return_type.starts_with("List<") {
                 list_maps.insert(lean_name(fd, ctx));
-                if fd.params.len() == 1 {
+                if is_unary_list_map(fd, ctx) {
                     unary_list_maps.insert(lean_name(fd, ctx));
                 }
             }
