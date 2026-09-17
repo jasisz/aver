@@ -39,10 +39,9 @@ pub(super) fn candidate(
             if definitions
                 .unary_list_maps
                 .contains(&induction::lean_name(fd, ctx))
+                && let Some(equation) = induction::map_constructor_equations(fd, ctx)
             {
-                if let Some(equation) = induction::map_constructor_equations(fd, ctx) {
-                    equations.insert(equation);
-                }
+                equations.insert(equation);
             }
             if fd.effects.is_empty()
                 && common::fn_id_for_decl(ctx, fd)

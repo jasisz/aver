@@ -198,7 +198,7 @@ pub(super) fn candidate(
     let first_step = if start.is_empty() {
         String::new()
     } else {
-        format!("all_goals (try (first{steps})); ")
+        format!("all_goals dsimp only; all_goals (try (first{steps})); ")
     };
     let completed = if definitions.completed.is_empty() {
         String::new()
