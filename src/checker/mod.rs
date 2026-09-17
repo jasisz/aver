@@ -311,6 +311,7 @@ use verify::verify_case_calls_target;
 pub use coverage::{collect_verify_coverage_warnings, collect_verify_coverage_warnings_in};
 pub use cse::{collect_cse_warnings, collect_cse_warnings_in};
 pub use independence::{collect_independence_warnings, collect_independence_warnings_in};
+pub(crate) use intent::collect_used_effects;
 pub use intent::{
     check_module_intent, check_module_intent_with_sigs, check_module_intent_with_sigs_in,
     index_decisions,

@@ -19,6 +19,8 @@ mod context_format;
 #[path = "main/diagnostic.rs"]
 #[allow(dead_code)]
 mod diagnostic;
+#[path = "main/effects_cmd.rs"]
+mod effects_cmd;
 use crate::format as format_cmd;
 #[path = "main/proof_waterfall.rs"]
 mod proof_waterfall;
@@ -247,6 +249,21 @@ fn main_impl(
             json,
         } => {
             capabilities_cmd::cmd_capabilities(file, module_root.as_deref(), *json);
+        }
+        Commands::Effects {
+            file,
+            module_root,
+            json,
+            write,
+            since,
+        } => {
+            effects_cmd::cmd_effects(
+                file,
+                module_root.as_deref(),
+                *json,
+                *write,
+                since.as_deref(),
+            );
         }
         Commands::Verify {
             file,

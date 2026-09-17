@@ -1,0 +1,17 @@
+module Store
+    intent =
+        "The one place that puts a line at the end of a file. Everything above"
+        "this module only passes the line along, which is what makes it the"
+        "leaf a primitive swap starts at."
+    exposes [save]
+    effects [Disk.appendText]
+
+fn save(file: String, line: String) -> Result<Unit, String>
+    ? "Append one line to the file, through the helper that touches the disk."
+    ! [Disk.appendText]
+    writeThrough(file, line)
+
+fn writeThrough(file: String, line: String) -> Result<Unit, String>
+    ? "The one call in this program that reaches the disk."
+    ! [Disk.appendText]
+    Disk.appendText(file, line)
