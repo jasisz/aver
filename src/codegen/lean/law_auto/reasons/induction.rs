@@ -27,6 +27,46 @@ pub(super) fn callee<'a>(
     ctx.fn_def_by_name(&key.name, key.scope_str())
 }
 
+/// Follow transparent outer wrappers to the fold being compared.
+pub(super) fn outer_fold<'a>(
+    expr: &Spanned<Expr>,
+    ctx: &'a CodegenContext,
+    scope: Option<&str>,
+) -> Option<&'a FnDef> {
+    let mut fd = callee(expr, ctx, scope)?;
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(lean_name(fd, ctx)) {
+            return None;
+        }
+        if list_measure(fd, ctx).is_some() {
+            return Some(fd);
+        }
+        let [crate::ast::Stmt::Expr(body)] = fd.body.stmts() else {
+            return None;
+        };
+        fd = callee(body, ctx, common::fn_owning_scope_for(ctx, fd))?;
+    }
+}
+
+/// Common finite calls can remain opaque while the two recursive steps align.
+pub(super) fn direct_finite_calls(fd: &FnDef, ctx: &CodegenContext) -> BTreeSet<String> {
+    let mut calls = BTreeSet::new();
+    for stmt in fd.body.stmts() {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::walk(expr, &mut |expr| {
+            if let Some(called) = callee(expr, ctx, common::fn_owning_scope_for(ctx, fd))
+                && called.effects.is_empty()
+                && common::fn_id_for_decl(ctx, called)
+                    .is_some_and(|id| !ctx.recursive_fns.contains(&id))
+            {
+                calls.insert(lean_name(called, ctx));
+            }
+        });
+    }
+    calls
+}
+
 pub(super) fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
     match common::fn_owning_scope_for(ctx, fd) {
         Some(scope) => format!(

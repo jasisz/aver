@@ -147,7 +147,34 @@ pub(super) fn candidate(
         Some(call) => format!("fun_induction {call}; "),
         None => String::new(),
     };
-    let simp = [definitions.simp.clone(), definitions.list_maps.clone()]
+    // An adapter comparison can call the very same finite helper on both
+    // sides. Preserve that shared result: projecting its implementation before
+    // applying the recursive IH needlessly duplicates every nested branch.
+    let mut shared = std::collections::BTreeSet::new();
+    if result_adapter.is_some() && definitions.staged_recursion {
+        let left_fold = induction::outer_fold(&call, ctx, scope.as_deref()).or_else(|| {
+            let Expr::FnCall(_, args) = &call.node else {
+                return None;
+            };
+            args.iter()
+                .find_map(|arg| induction::outer_fold(arg, ctx, scope.as_deref()))
+        });
+        if let (Some(left), Some(right)) = (
+            left_fold,
+            induction::outer_fold(right, ctx, scope.as_deref()),
+        ) {
+            let left = induction::direct_finite_calls(left, ctx);
+            let right = induction::direct_finite_calls(right, ctx);
+            shared.extend(left.intersection(&right).cloned());
+        }
+    }
+    let finite = definitions
+        .simp
+        .split(", ")
+        .filter(|name| !shared.contains(*name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let simp = [finite, definitions.list_maps.clone()]
         .into_iter()
         .filter(|s| !s.is_empty())
         .chain((0..fact_count).map(|i| format!("-_fact{i}")))

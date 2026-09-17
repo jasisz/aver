@@ -148,6 +148,9 @@ pub(super) fn candidate(
         .copied()
         .filter(|fd| {
             fd.effects.is_empty()
+                // Normalize the compared interfaces; a deeper import is a
+                // shared computation whose result should remain opaque.
+                && folds.iter().any(|fold| common::fn_owning_scope_for(ctx, fold) == common::fn_owning_scope_for(ctx, fd))
                 && !boundary.contains(fd.return_type.as_str())
                 && common::fn_id_for_decl(ctx, fd)
                     .is_some_and(|id| !ctx.recursive_fns.contains(&id))
