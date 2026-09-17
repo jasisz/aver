@@ -66,8 +66,8 @@ jobs:
           first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
           mapping_prefix = mapping_defs + '\n'.join(lines[index:first]) + '\n  '
           mapping_tactic = lines[first+1].strip()[2:]
-          probe('MappingSplitFirst', mapping_prefix + mapping_tactic.replace("repeat' first | (simp_all", "repeat' first | split | (simp_all") + '\nend ImportedEffects\n')
-          for name, suffix in [('Early', '__earlySourceTraceFrom_law_correspondence_implication :'), ('Cursor', '__repeatedTrace496d706f7274656445666665637473Cursor_law_boundedSuffix_implication :')]:
+          probe('MappingGoalOnly', mapping_prefix + mapping_tactic.replace('simp_all +zetaDelta', 'simp +zetaDelta', 1) + '\nend ImportedEffects\n')
+          for name, suffix in [('Cursor', '__repeatedTrace496d706f7274656445666665637473Cursor_law_boundedSuffix_implication :')]:
               index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
               first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
               if name == 'Cursor':
@@ -76,14 +76,17 @@ jobs:
                   tactic = lines[first+1].strip()[2:]
               prefix = definitions + '\n'.join(lines[index:first]) + '\n  '
               if name == 'Cursor':
-                  probe('CursorSplitFirst', prefix + tactic.replace("repeat' first | (simp_all", "repeat' first | (split at *) | (simp_all") + '\nend ImportedEffects\n')
-              if name == 'Early':
-                  direct = '(simp only [beq_iff_eq,' + tactic.rsplit(' | (simp only [beq_iff_eq,',1)[1][:-1]
-                  three = tactic.replace('all_goals (try (rename_i __aver_head __aver_tail; cases __aver_head));', 'all_goals (try (rename_i __aver_head __aver_tail; cases __aver_head <;> cases __aver_tail)); all_goals (try (rename_i __aver_head __aver_tail; cases __aver_head));')
-                  probe('EarlyThree', prefix + three + '\nend ImportedEffects\n')
+                  probe('CursorGoalOnly', prefix + tactic.replace('simp_all +zetaDelta', 'simp +zetaDelta', 1) + '\nend ImportedEffects\n')
               if name == 'Cursor':
                   steps = tactic.split('; all_goals grind [')[0]
-                  probe('CursorNoZeta', prefix + tactic.replace(' +zetaDelta', '') + '\nend ImportedEffects\n')
+                  probe('CursorSteps', prefix + steps + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
+          index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and 'Splice__repeatedInRunAt2Observed_law_splice_implication :' in line)
+          first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
+          tactic = lines[first+1].strip()[2:]
+          primary = tactic.rsplit(' | (simp only [beq_iff_eq', 1)[0] + ')'
+          prefix = definitions + '\n'.join(lines[index:first]) + '\n  '
+          probe('Splice', prefix + primary + '\nend ImportedEffects\n')
+          probe('SpliceGoalOnly', prefix + primary.replace('simp_all +zetaDelta', 'simp +zetaDelta') + '\nend ImportedEffects\n')
           tail = definitions + ''.join('-- verify law ' + block for block in text.split('-- verify law ')[1:] if block.startswith('__tailTrace') and not block.startswith('__tailTrace496d706f7274656445666665637473Cursor'))
           index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '__tailSourceTraceFrom_law_correspondence_implication :' in line)
           first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
