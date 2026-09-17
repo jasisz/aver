@@ -54,6 +54,24 @@ pub(super) fn checked_map_lemmas(names: &[String]) -> String {
     proofs
 }
 
+/// Equations for visible cells of a two-arm list map; arbitrary tails stay opaque.
+pub(super) fn map_constructor_equations(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
+    let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { arms, .. } = &expr.node else {
+        return None;
+    };
+    if arms.len() != 2
+        || !matches!(arms[0].pattern, crate::ast::Pattern::EmptyList)
+        || !matches!(arms[1].pattern, crate::ast::Pattern::Cons(..))
+    {
+        return None;
+    }
+    let name = lean_name(fd, ctx);
+    Some(format!("= {name}.eq_1, = {name}.eq_2"))
+}
+
 pub(super) fn plan(
     vb: &VerifyBlock,
     index: usize,

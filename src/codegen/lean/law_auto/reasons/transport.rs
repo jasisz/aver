@@ -185,25 +185,10 @@ pub(super) fn candidate(
     let equations = converters
         .iter()
         .map(|name| format!("= {name}.eq_def"))
-        .chain(maps.iter().filter_map(|fd| {
-            let [Stmt::Expr(expr)] = fd.body.stmts() else {
-                return None;
-            };
-            let Expr::Match { arms, .. } = &expr.node else {
-                return None;
-            };
-            if arms.len() != 2
-                || !matches!(arms[0].pattern, crate::ast::Pattern::EmptyList)
-                || !matches!(arms[1].pattern, crate::ast::Pattern::Cons(..))
-            {
-                return None;
-            }
-            let name = induction::lean_name(fd, ctx);
-            // Append/singleton facts do not reduce a concrete multi-event
-            // segment. Constructor equations reduce only visible cells;
-            // the map over the arbitrary tail remains opaque.
-            Some(format!("= {name}.eq_1, = {name}.eq_2"))
-        }))
+        .chain(
+            maps.iter()
+                .filter_map(|fd| induction::map_constructor_equations(fd, ctx)),
+        )
         .collect::<Vec<_>>()
         .join(", ");
     let steps = folds
