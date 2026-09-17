@@ -227,6 +227,8 @@ pub(super) struct Definitions {
     pub(super) list_maps: String,
     pub(super) unary_list_maps: Vec<String>,
     pub(super) completed: String,
+    /// At least one checked fold recurs on a computed suffix, not a cons tail.
+    pub(super) sliced_recursion: bool,
     pub(super) heads: String,
     /// Equations of outer calls and their direct arguments, without the full cone.
     pub(super) head_equations: String,
@@ -261,6 +263,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     let mut list_maps = BTreeSet::new();
     let mut unary_list_maps = BTreeSet::new();
     let mut completed = BTreeSet::new();
+    let mut sliced_recursion = false;
     let mut unfold_once = Vec::new();
     let law_calls = |builtin: &str| {
         law.because
@@ -280,6 +283,8 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         map_remove_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.remove");
         let recursive = ctx.recursive_fns.contains(&id);
         if list_measure(fd, ctx).is_some() {
+            sliced_recursion |=
+                crate::codegen::recursion::detect::single_list_structural_param_index(fd).is_none();
             list_steps.insert(lean_name(fd, ctx));
             // A terminal constructor may also occur on the left after a
             // splice. Its checked equation reduces that one boundary without
@@ -401,6 +406,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         list_maps: list_maps.into_iter().collect::<Vec<_>>().join(", "),
         unary_list_maps: unary_list_maps.into_iter().collect(),
         completed: completed.into_iter().collect::<Vec<_>>().join(", "),
+        sliced_recursion,
         heads,
         head_equations: head_equations.join(", "),
         structural_reason: law.because.iter().any(|reason| {

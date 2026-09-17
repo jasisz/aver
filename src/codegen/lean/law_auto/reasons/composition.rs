@@ -200,7 +200,8 @@ pub(super) fn candidate(
                 // Preserve an adapter of a recursive result until its cited
                 // equation rewrites that whole result. Projecting it here
                 // duplicates unknown fields across the continuation's cases.
-                if let Expr::FnCall(_, args) = &expr.node
+                if definitions.sliced_recursion
+                    && let Expr::FnCall(_, args) = &expr.node
                     && args.iter().any(|arg| {
                         induction::callee(arg, ctx, key.scope_str())
                             .is_some_and(|fd| induction::list_measure(fd, ctx).is_some())
@@ -306,6 +307,11 @@ pub(super) fn candidate(
     // cursor projection across subsequent calls and overwhelms congruence.
     // The number of cited boundaries bounds this attempt; an unsupported
     // composition must close by another candidate or remain an obligation.
+    let zeta = if definitions.sliced_recursion {
+        " +zetaDelta"
+    } else {
+        ""
+    };
     let staged = if splices.is_empty() {
         String::new()
     } else {
@@ -313,24 +319,28 @@ pub(super) fn candidate(
         // call. Expose that prefix only when a direct rewrite cannot apply;
         // matching the right side first avoids splitting the helper's result
         // before the shared input prefix is known.
-        let prefix_cases = if input_match {
+        let prefix_cases = if input_match && !definitions.sliced_recursion {
             format!(
-                " | ((repeat' first | rfl | (first{rewrite}) | (simp_all +zetaDelta only [{plain}, {excluded}]) | (symm; split <;> symm){opening}); all_goals (try (first{rewrite})))"
+                " | ((repeat' first | rfl | (simp_all only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (first | rfl | (first{rewrite})))"
+            )
+        } else if input_match {
+            format!(
+                " | ((repeat' first | rfl | (first{rewrite}) | (simp_all{zeta} only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (try (first{rewrite})))"
             )
         } else {
             String::new()
         };
         let step = format!(
-            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all +zetaDelta only [{staged_plain}, {excluded}]))); "
+            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all{zeta} only [{staged_plain}, {excluded}]))); "
         );
         format!(
-            " | ({}all_goals (repeat' first | rfl | (simp_all +zetaDelta [{completion}, {equations}, {excluded}]) | split); done)",
+            " | ({}all_goals (repeat' first | rfl | (simp_all{zeta} [{completion}, {equations}, {excluded}]) | split); done)",
             step.repeat(splices.len())
         )
     };
     let prefix = if input_match {
         format!(
-            " | ((first{opening}); (try simp only [{plain}]); (repeat' first | rfl | (simp_all +zetaDelta only [{facts}]) | split); all_goals ({reverse}); all_goals (simp_all +zetaDelta only [{completion}, {equations}]); done)"
+            " | ((first{opening}); (try simp only [{plain}]); (repeat' first | rfl | (simp_all{zeta} only [{facts}]) | split); all_goals ({reverse}); all_goals (simp_all{zeta} only [{completion}, {equations}]); done)"
         )
     } else {
         String::new()
@@ -344,11 +354,16 @@ pub(super) fn candidate(
         .collect::<Vec<_>>()
         .join(", ");
     let shallow = format!(
-        "(simp only [{}]; (repeat' first | rfl | (simp_all +zetaDelta only [{shallow_defs}]) | split); done)",
+        "(simp only [{}]; (repeat' first | rfl | (simp_all{zeta} only [{shallow_defs}]) | split); done)",
         definitions.heads
     );
+    let composed = if definitions.sliced_recursion {
+        format!("{staged}{prefix}")
+    } else {
+        format!("{prefix}{staged}")
+    };
     Some(format!(
-        "(first | {shallow} | (simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{staged}{prefix} | (grind only [{steps}])))"
+        "(first | {shallow} | (simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{composed} | (grind only [{steps}])))"
     ))
 }
 
