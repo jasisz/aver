@@ -222,7 +222,7 @@ pub(super) fn candidate(
         format!("induction {input}{generalizing}; {steps}")
     } else {
         format!(
-            "induction {input} using (measure List.length).wf.induction{generalizing} with | h {input} __aver_transport_ih => (dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at *; cases {input}; {steps})"
+            "induction {input} using (measure List.length).wf.induction{generalizing} with | h {input} _aver_transport_ih => (dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at *; cases {input}; {steps})"
         )
     };
     let normalize = (0..fact_count).map(|i| format!("(try simp only [{plain}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at _fact{i}); ")).collect::<String>();

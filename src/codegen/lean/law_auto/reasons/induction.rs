@@ -40,11 +40,13 @@ pub(super) fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
 
 /// Prove map/suffix properties locally rather than trusting the function's
 /// shape. A length-changing function makes this candidate fail normally.
+/// A single underscore keeps these hypotheses visible to `grind`; Lean marks
+/// double-underscore hypothesis names as implementation details and skips them.
 pub(super) fn checked_map_lemmas(names: &[String]) -> String {
     let mut proofs = String::new();
     for (index, name) in names.iter().enumerate() {
-        let length = format!("__aver_transport_length_{index}");
-        let drop = format!("__aver_transport_drop_{index}");
+        let length = format!("_aver_transport_length_{index}");
+        let drop = format!("_aver_transport_drop_{index}");
         proofs.push_str(&format!(
             "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by intro xs; induction xs with | nil => simp only [{name}, List.length_nil] | cons x xs ih => simpa only [{name}, List.length_cons] using congrArg Nat.succ ih); have {drop} : ∀ xs n, {name} (List.drop n xs) = List.drop n ({name} xs) := (by intro xs n; induction xs generalizing n with | nil => simp only [{name}, List.drop_nil] | cons x xs ih => cases n with | zero => rfl | succ n => simpa only [{name}, List.drop_succ_cons] using ih n); "
         ));

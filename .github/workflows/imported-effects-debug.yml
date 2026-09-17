@@ -32,7 +32,7 @@ jobs:
           import subprocess
           text = Path('Wrapper.lean').read_text().replace('namespace Wrapper', 'set_option linter.unusedSimpArgs false\nnamespace Wrapper', 1)
           lines = text.splitlines()
-          index = next(i for i, line in enumerate(lines) if line.startswith('  | (') and 'with | h inputs __aver_transport_ih' in line)
+          index = next(i for i, line in enumerate(lines) if line.startswith('  | (') and 'with | h inputs _aver_transport_ih' in line)
           tactic = lines[index][4:].replace('; done))', '; all_goals trace_state; all_goals sorry))')
           for variant in ['steps', 'finish']:
               probe = tactic
