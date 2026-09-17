@@ -1259,6 +1259,7 @@ fn emit_verify_law_block(
     // wrong.
     let mut claim_statement: Option<String> = None;
     if !quant_params.is_empty() && !skip_universal {
+        let waterfall_start = lines.len();
         lines.extend(emit_verify_law_support_theorems(
             vb,
             law,
@@ -1482,6 +1483,33 @@ fn emit_verify_law_block(
             lines.extend(support_lines);
             for body in part_bodies {
                 lines.extend(body);
+            }
+        }
+        if !guided
+            && !cert_model
+            && crate::codegen::lean::waterfall::enabled()
+            && let Some(hints) = super::law_auto::waterfall_dependencies(vb, law, ctx)
+        {
+            let universal = law_theorem_parts(
+                law,
+                ctx,
+                &theorem_base,
+                &lhs_template,
+                &rhs_template,
+                when_template.as_deref(),
+                &lifted_vars,
+                true,
+            );
+            if universal.len() == 1 && !universal[0].bounded_domain {
+                crate::codegen::lean::waterfall::Candidate {
+                    name: theorem_base.clone(),
+                    label: law_label,
+                    statement: universal_statement(&quant_params, &universal[0].prop),
+                    hints,
+                    obligation: false,
+                    baseline_universal: stmt_universal,
+                }
+                .wrap(&mut lines, waterfall_start);
             }
         }
     }

@@ -21,6 +21,7 @@ mod reasons;
 mod recursive_mono;
 mod sampled;
 mod shared;
+pub(in crate::codegen::lean) use reasons::dependencies as waterfall_dependencies;
 pub(in crate::codegen::lean) use reasons::{ReasonClaim, emit_reason_law};
 mod spec;
 mod suffix_roundtrip;

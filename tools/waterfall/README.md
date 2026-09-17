@@ -1,7 +1,11 @@
 # Waterfall on Aver exports
 
-An isolated proof-search experiment, run on 2026-09-17. It adds no compiler
-option or production dependency.
+An isolated proof-search experiment, run on 2026-09-17. The original experiment
+added no compiler option or production dependency.
+
+The follow-up implementation is now available as
+`aver proof --waterfall PATH --check`: see [the integration guide](../../docs/waterfall.md).
+The experiments below retain their original source revisions and measurements.
 
 The follow-up on the real btc-listener proof corpus is documented in [BTC.md](BTC.md).
 

@@ -23,7 +23,11 @@ pub(in crate::codegen::lean) struct ReasonClaim<'a> {
     pub guard: Option<&'a str>,
 }
 
-fn dependencies(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<Vec<String>> {
+pub(in crate::codegen::lean) fn dependencies(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<Vec<String>> {
     let blocks = super::shared::same_file_verify_blocks(ctx);
     let earlier: Vec<_> = blocks
         .into_iter()
@@ -256,6 +260,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 None => goal,
             }
         };
+        let waterfall_start = lines.len();
         lines.push(format!(
             "{LAW_OBLIGATION_MARKER_PREFIX}{name} universal {label}"
         ));
@@ -489,6 +494,17 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             }
             lines.push("  |".to_string());
             lines.extend(structured.into_iter().map(|line| format!("  {line}")));
+        }
+        if let Some(hints) = &facts {
+            crate::codegen::lean::waterfall::Candidate {
+                name,
+                label,
+                statement: format!("∀ {params}, {}", premise_chain(&reasons[..index], &prop)),
+                hints: hints.clone(),
+                obligation: true,
+                baseline_universal: true,
+            }
+            .wrap(&mut lines, waterfall_start);
         }
     }
     lines.push(format!(

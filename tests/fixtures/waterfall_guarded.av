@@ -1,0 +1,21 @@
+module WaterfallGuarded
+    intent = "Generalize the sample domain while retaining the source's positivity guard."
+    effects []
+
+record Fraction
+    top: Int
+    bottom: Int
+
+fn zeroF() -> Fraction
+    Fraction(top = 0, bottom = 1)
+
+fn lessF(a: Fraction, b: Fraction) -> Bool
+    a.top * a.bottom * (b.bottom * b.bottom) < b.top * b.bottom * (a.bottom * a.bottom)
+
+fn nonNeg(a: Fraction) -> Bool
+    Int.abs(a.top * a.bottom) == a.top * a.bottom
+
+verify nonNeg law positiveIsNonnegative
+    given x: Fraction = [Fraction(top = 3, bottom = 4), Fraction(top = 1, bottom = 2)]
+    when lessF(zeroF(), x)
+    nonNeg(x) holds
