@@ -96,6 +96,7 @@ jobs:
               if name == 'Cursor':
                   steps = tactic.split('; all_goals grind [')[0]
                   probe('CursorSteps', prefix + steps + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
+                  probe('CursorNoZeta', prefix + tactic.replace(' +zetaDelta', '') + '\nend ImportedEffects\n')
           index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and 'Splice__repeatedInRunAt1Observed_law_splice_implication :' in line)
           first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
           tactic = lines[first+1].strip()[2:]
@@ -103,14 +104,29 @@ jobs:
           prefix = definitions + '\n'.join(lines[index:first]) + '\n  '
           probe('Splice', prefix + primary + '\nend ImportedEffects\n')
           probe('SpliceGoalOnly', prefix + goal_only(primary) + '\nend ImportedEffects\n')
-          tail = definitions + ''.join('-- verify law ' + block for block in text.split('-- verify law ')[1:] if block.startswith('__tailTrace') and not block.startswith('__tailTrace496d706f7274656445666665637473Cursor'))
-          index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '__tailSourceTraceFrom_law_correspondence_implication :' in line)
+          # Check composition against the exact cited theorem types even while
+          # an earlier independent mapping obligation remains open.
+          index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '__repeatedSourceTraceFrom_law_correspondence_implication :' in line)
           first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
+          header = lines[index:first]
+          binders = []
+          body = []
+          for line in header[1:]:
+              match = re.fullmatch(r'  have (_fact\d+) := (\S+)', line)
+              if match:
+                  local, cited = match.groups()
+                  cited = cited.removeprefix('ImportedEffects.')
+                  theorem = re.search(r'theorem ' + re.escape(cited) + r'\s*:(.*?) := by', text, re.S)
+                  if theorem:
+                      binders.append('(' + local + ' : ' + theorem.group(1).strip() + ')')
+                      continue
+              body.append(line)
+          declaration = header[0].replace(' :', ' ' + ' '.join(binders) + ' :', 1)
+          prefix = definitions + declaration + '\n' + '\n'.join(body) + '\n  '
           tactic = lines[first+1].strip()[2:]
-          prefix = tail + '\n'.join(lines[index:first]) + '\n  '
-          probe('Tail', prefix + tactic + '\nend ImportedEffects\n')
+          probe('RepeatedComposition', prefix + tactic + '\nend ImportedEffects\n')
           normalized = tactic[tactic.index('(simp only [Bool.and_eq_true'):].split('; first', 1)[0]
-          probe('TailNormalized', prefix + normalized + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
+          probe('RepeatedNormalized', prefix + normalized + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
           for future in futures:
               future.result()
           executor.shutdown()
