@@ -22,7 +22,8 @@ jobs:
       - name: Observe and prove imported effects
         run: |
           target/debug/aver verify tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects
-          target/debug/aver proof tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects --backend lean --check --sorry-budget 0 -o /tmp/imported-effects-proof
+          set -o pipefail
+          target/debug/aver proof tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects --backend lean --check --sorry-budget 0 -o /tmp/imported-effects-proof 2>&1 | tee /tmp/imported-effects-proof.log
       - name: Inspect imported entry and splice goals
         if: failure()
         run: |
@@ -39,26 +40,20 @@ jobs:
               Path(name + '.lean.log').write_text(result.stdout)
               print(name, 'EXIT', result.returncode, flush=True)
               print('\n'.join(line for line in result.stdout.splitlines() if 'error:' in line or line.startswith('case ')), flush=True)
-          index = next(i for i, line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '_law_correspondence_because2 :' in line)
+          index = next(i for i, line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '__runSourceTraceFrom_law_correspondence_implication :' in line)
           first = next(i for i in range(index, len(lines)) if lines[i] == '  first')
-          tactic = next(line.strip()[2:] for line in lines[first:] if line.strip().startswith('| (simp only [Bool.and_eq_true') and 'List.length_drop, List.append_assoc' in line)
-          probe('WrapperEntry', '\n'.join(lines[:first]) + '\n  ' + tactic + '\nend Wrapper\n')
-          index = next(i for i, line in enumerate(lines) if line.startswith('theorem __aver_reason_') and 'Observed_law_splice_implication :' in line)
-          tactic = next(line.strip()[2:] for line in lines[index:] if line.strip().startswith('| (first | (simp only [beq_iff_eq') and 'fun_induction' in line)
-          prefix = text.split('-- verify law ')[0] + lines[index] + '\n  intro outcome inputs position events consumed\n  '
-          probe('WrapperSplice', prefix + tactic + '\nend Wrapper\n')
-          protected = re.search(r'simp_all \+zetaDelta \[([^]]*)\]', tactic).group(1)
-          steps = tactic.split("; all_goals (repeat' first")[0]
-          steps += "; all_goals (repeat' first | assumption | rfl | (simp_all +zetaDelta [" + protected + "]) | split at *); all_goals trace_state; all_goals sorry))"
-          probe('WrapperSpliceSteps', prefix + steps + '\nend Wrapper\n')
-          closed = steps.replace('; all_goals trace_state; all_goals sorry', '; all_goals (with_reducible grind only [List.length_drop, List.length_cons])')
-          probe('WrapperSpliceFinish', prefix + closed + '\nend Wrapper\n')
+          tactic = lines[first + 1].strip()[2:]
+          prefix = '\n'.join(lines[:first]) + '\n  '
+          probe('WrapperComposition', prefix + tactic + '\nend Wrapper\n')
+          diagnostic = tactic.replace('; done)', '; all_goals trace_state; all_goals sorry)')
+          probe('WrapperCompositionSteps', prefix + diagnostic + '\nend Wrapper\n')
           PYPROBE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: imported-effects-proof
           path: |
+            /tmp/imported-effects-proof.log
             /tmp/imported-effects-proof/**/*.lean
             /tmp/imported-effects-proof/*.json
             /tmp/imported-effects-proof/*.log
@@ -69,12 +64,29 @@ jobs:
           for fixture in yield_recursive_traces yield_recursive_imports; do
             target/debug/aver proof tests/fixtures/$fixture/main.av --module-root tests/fixtures/$fixture --backend lean --check --sorry-budget 0 -o /tmp/$fixture > /tmp/$fixture.log 2>&1 || true
           done
+          python3 - <<'PYOLD'
+          from pathlib import Path
+          import subprocess
+          for fixture, module, suffix in [('yield_recursive_traces', 'RecursiveTraces', 'Splice__parentInLoopAt1Observed_law_splice_implication :'), ('yield_recursive_imports', 'Looper', '__loopSourceTraceFrom_law_correspondence_implication :')]:
+              root = Path('/tmp') / fixture
+              text = (root / (module + '.lean')).read_text().replace('namespace ' + module, 'set_option linter.unusedSimpArgs false\nnamespace ' + module, 1)
+              lines = text.splitlines()
+              index = next(i for i, line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
+              tactic = next(line.strip()[2:] for line in lines[index:] if line.strip().startswith('| (first') and 'fun_induction' in line)
+              source = text.split('-- verify law ')[0] + '\n'.join(lines[index:index+2]) + '\n  ' + tactic + '\nend ' + module + '\n'
+              (root / 'Primary.lean').write_text(source)
+              result = subprocess.run(['lake', 'env', 'lean', 'Primary.lean'], cwd=root, timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              (root / 'Primary.log').write_text(result.stdout)
+              print(module, 'PRIMARY EXIT', result.returncode)
+          PYOLD
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: recursive-compositions-proof
           path: |
             /tmp/yield_recursive_traces/*.lean
+            /tmp/yield_recursive_traces/*.log
             /tmp/yield_recursive_traces.log
             /tmp/yield_recursive_imports/*.lean
+            /tmp/yield_recursive_imports/*.log
             /tmp/yield_recursive_imports.log

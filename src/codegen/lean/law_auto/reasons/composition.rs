@@ -301,22 +301,22 @@ pub(super) fn candidate(
         // before the shared input prefix is known.
         let prefix_cases = if input_match {
             format!(
-                " | ((repeat' first | rfl | (simp_all only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (first | rfl | (first{rewrite})))"
+                " | ((repeat' first | rfl | (simp_all +zetaDelta only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (first | rfl | (first{rewrite})))"
             )
         } else {
             String::new()
         };
         let step = format!(
-            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all only [{staged_plain}, {excluded}]))); "
+            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all +zetaDelta only [{staged_plain}, {excluded}]))); "
         );
         format!(
-            " | ({}all_goals (repeat' first | rfl | (simp_all [{completion}, {equations}, {excluded}]) | split); done)",
+            " | ({}all_goals (repeat' first | rfl | (simp_all +zetaDelta [{completion}, {equations}, {excluded}]) | split); done)",
             step.repeat(splices.len())
         )
     };
     let prefix = if input_match {
         format!(
-            " | ((first{opening}); (try simp only [{plain}]); (repeat' first | rfl | (simp_all only [{facts}]) | split); all_goals ({reverse}); all_goals (simp_all only [{completion}, {equations}]); done)"
+            " | ((first{opening}); (try simp only [{plain}]); (repeat' first | rfl | (simp_all +zetaDelta only [{facts}]) | split); all_goals ({reverse}); all_goals (simp_all +zetaDelta only [{completion}, {equations}]); done)"
         )
     } else {
         String::new()
@@ -330,7 +330,7 @@ pub(super) fn candidate(
         .collect::<Vec<_>>()
         .join(", ");
     let shallow = format!(
-        "(simp only [{}]; (repeat' first | rfl | (simp_all only [{shallow_defs}]) | split); done)",
+        "(simp only [{}]; (repeat' first | rfl | (simp_all +zetaDelta only [{shallow_defs}]) | split); done)",
         definitions.heads
     );
     Some(format!(
