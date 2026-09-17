@@ -38,6 +38,7 @@ pub(super) fn candidate(
     let mut call = left.clone();
     let mut visited = std::collections::HashSet::new();
     let mut induction_call = None;
+    let mut result_adapter = None;
     let mut wrappers = Vec::new();
     while let Some(fd) = induction::callee(&call, ctx, scope.as_deref()) {
         if !visited.insert(fd.name.clone()) || !fd.effects.is_empty() {
@@ -109,6 +110,7 @@ pub(super) fn candidate(
                 Some(emit_expr(&resolve_rewrite_output(arg, ctx, None), ctx))
             });
             if induction_call.is_some() {
+                result_adapter = Some(induction::lean_name(fd, ctx));
                 break;
             }
         }
@@ -194,8 +196,23 @@ pub(super) fn candidate(
     } else {
         format!(" | (solve | simp only [{}])", definitions.completed)
     };
+    // Preserve the application appearing in the recursive IH while reducing
+    // the other fold's step. Expanding its result adapter first duplicates
+    // projections of an unknown recursive result and obscures the equality.
+    // This attempt must close the goal; terminal branches still use the full
+    // simplifier below when the adapter's argument is a concrete record.
+    let recursive = result_adapter
+        .map(|adapter| {
+            let step_simp = simp
+                .split(", ")
+                .filter(|name| *name != adapter)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(" | (solve | simp_all only [{step_simp}])")
+        })
+        .unwrap_or_default();
     let solve = format!(
-        "simp only [beq_iff_eq{heads}]; {start}{first_step}all_goals (repeat' first | assumption | rfl{completed} | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
+        "simp only [beq_iff_eq{heads}]; {start}{first_step}all_goals (repeat' first | assumption | rfl{completed}{recursive} | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
     );
     // Finite helper chains often return records containing a mapped remainder.
     // Split only a constructor prefix before substitution duplicates those
