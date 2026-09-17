@@ -357,8 +357,16 @@ pub(super) fn candidate(
         "(simp only [{}]; (repeat' first | rfl | (simp_all{zeta} only [{shallow_defs}]) | split); done)",
         definitions.heads
     );
+    // A suspended entry may put one recursive equation outside every cited
+    // boundary. Open that outer step once, then resume summary composition;
+    // opening repeatedly would descend into the summarized helper itself.
+    let staged_entry = if staged.is_empty() || opening.is_empty() {
+        String::new()
+    } else {
+        format!(" | ((first{opening}); first{staged})")
+    };
     let composed = if definitions.sliced_recursion {
-        format!("{staged}{prefix}")
+        format!("{staged}{staged_entry}{prefix}")
     } else {
         format!("{prefix}{staged}")
     };

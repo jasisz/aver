@@ -253,6 +253,8 @@ pub(super) fn candidate(
     // Advancing the right fold first helps observed prefixes, but a pure
     // continuation can already match the IH before that step. Retain the
     // established symmetric normalization as a checked fallback for adapters.
+    // Its small search budget leaves room for the observed-suffix strategy
+    // when a finite prefix makes symmetric unfolding expensive.
     let legacy = if adapting || definitions.unary_list_maps.is_empty() {
         let zeta = if definitions.unary_list_maps.is_empty() {
             ""
@@ -260,7 +262,7 @@ pub(super) fn candidate(
             " +zetaDelta"
         };
         format!(
-            " | (simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all{zeta} [{simp}]) | split{steps} | (solve | grind)); done)"
+            " | (set_option maxHeartbeats 40000 in (simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all{zeta} [{simp}]) | split{steps} | (solve | grind)); done))"
         )
     } else {
         String::new()
