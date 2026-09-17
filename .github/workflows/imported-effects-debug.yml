@@ -1,0 +1,31 @@
+name: Imported effects diagnostics
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  observe:
+    if: github.head_ref == 'feat/yield-imported-effects'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install pinned Lean
+        run: |
+          set -o pipefail
+          curl -sSfL --retry 5 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain "$(cat aver-cert/assets/wall/current/lean-toolchain)"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - run: cargo build --locked --bin aver
+      - name: Observe and prove imported effects
+        run: |
+          target/debug/aver verify tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects
+          target/debug/aver proof tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects --backend lean --check --sorry-budget 0 -o /tmp/imported-effects-proof
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: imported-effects-proof
+          path: |
+            /tmp/imported-effects-proof/**/*.lean
+            /tmp/imported-effects-proof/*.json
+            /tmp/imported-effects-proof/lean-toolchain

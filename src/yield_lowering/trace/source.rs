@@ -343,6 +343,13 @@ impl<'a> Compiler<'a> {
                 ]);
                 return Ok(call(&self.model.source_name(self.function), args, 0));
             }
+            // An imported segment adapter reconstructs its remainder as this
+            // exact drop. Keep that shape at the call site too: a subsequent
+            // protocol step then visibly consumes a suffix of its input, and
+            // the ordinary list-length termination proof can check it.
+            let segment_cursor = (self.protocol_segments
+                && self.model.imported_segment(name).is_some())
+            .then(|| (cursor.inputs.clone(), cursor.consumed.clone()));
             let mut arguments = args;
             arguments.extend([
                 cursor.inputs,
@@ -356,7 +363,26 @@ impl<'a> Compiler<'a> {
             let field =
                 |name: &str| Spanned::new(Expr::Attr(Box::new(ident(&result, 0)), name.into()), 0);
             let current = Cursor {
-                inputs: field("remaining"),
+                inputs: segment_cursor.map_or_else(
+                    || field("remaining"),
+                    |(inputs, consumed)| {
+                        call(
+                            "List.drop",
+                            vec![
+                                inputs,
+                                Spanned::new(
+                                    Expr::BinOp(
+                                        BinOp::Sub,
+                                        Box::new(field("consumed")),
+                                        Box::new(consumed),
+                                    ),
+                                    0,
+                                ),
+                            ],
+                            0,
+                        )
+                    },
+                ),
                 position: field("position"),
                 events: field("events"),
                 consumed: field("consumed"),
