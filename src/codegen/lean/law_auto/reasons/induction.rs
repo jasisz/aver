@@ -202,6 +202,12 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         let recursive = ctx.recursive_fns.contains(&id);
         if list_measure(fd, ctx).is_some() {
             list_steps.insert(lean_name(fd, ctx));
+            // A terminal constructor may also occur on the left after a
+            // splice. Its checked equation reduces that one boundary without
+            // unfolding another recursive call on an unknown outcome.
+            if super::composition::first_constructor_branch(fd) {
+                out.insert(format!("{}.eq_1", lean_name(fd, ctx)), false);
+            }
             if fd.return_type.starts_with("List<") {
                 list_maps.insert(lean_name(fd, ctx));
             }

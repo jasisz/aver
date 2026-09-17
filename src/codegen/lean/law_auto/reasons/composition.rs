@@ -359,7 +359,7 @@ fn parameter_match(fd: &crate::ast::FnDef, lists_only: bool) -> bool {
 /// A constructor-specific equation advances a completed boundary without
 /// unfolding a different call whose outcome is still unknown. The first flat
 /// branch has Lean's first kernel-generated equation, irrespective of names.
-fn first_constructor_branch(fd: &crate::ast::FnDef) -> bool {
+pub(super) fn first_constructor_branch(fd: &crate::ast::FnDef) -> bool {
     let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts() else {
         return false;
     };
