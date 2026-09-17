@@ -32,23 +32,35 @@ jobs:
           from pathlib import Path
           import re
           import subprocess
-          text = Path('Wrapper.lean').read_text().replace('namespace Wrapper', 'set_option linter.unusedSimpArgs false\nnamespace Wrapper', 1)
+          text = Path('ImportedEffects.lean').read_text().replace('namespace ImportedEffects', 'set_option linter.unusedSimpArgs false\nnamespace ImportedEffects', 1)
           lines = text.splitlines()
+          definitions = text.split('-- verify law ')[0]
           def probe(name, source):
               Path(name + '.lean').write_text(source)
               result = subprocess.run(['lake', 'env', 'lean', name + '.lean'], timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
               Path(name + '.lean.log').write_text(result.stdout)
               print(name, 'EXIT', result.returncode, flush=True)
               print('\n'.join(line for line in result.stdout.splitlines() if 'error:' in line or line.startswith('case ')), flush=True)
-          index = next(i for i, line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '__runSourceTraceFrom_law_correspondence_implication :' in line)
-          first = next(i for i in range(index, len(lines)) if lines[i] == '  first')
-          tactic = lines[first + 1].strip()[2:]
-          prefix = '\n'.join(lines[:first]) + '\n  '
-          probe('WrapperComposition', prefix + tactic + '\nend Wrapper\n')
-          diagnostic = tactic.replace('; done)', '; all_goals trace_state; all_goals sorry)')
-          probe('WrapperCompositionSteps', prefix + diagnostic + '\nend Wrapper\n')
+          for name, suffix in [('Early', '__earlySourceTraceFrom_law_correspondence_implication :'), ('Cursor', '__repeatedTrace496d706f7274656445666665637473Cursor_law_boundedSuffix_implication :')]:
+              index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
+              first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
+              if name == 'Cursor':
+                  tactic = next(line.strip()[2:] for line in lines[first:] if line.strip().startswith('| (simp only [beq_iff_eq') and 'fun_induction' in line)
+              else:
+                  tactic = lines[first+1].strip()[2:]
+              prefix = definitions + '\n'.join(lines[index:first]) + '\n  '
+              probe(name, prefix + tactic + '\nend ImportedEffects\n')
+              if name == 'Cursor':
+                  steps = tactic.split('; all_goals (have _aver_transport_length_')[0]
+                  probe(name + 'Steps', prefix + steps + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
+          tail = definitions + ''.join('-- verify law ' + block for block in text.split('-- verify law ')[1:] if block.startswith('__tailTrace') and not block.startswith('__tailTrace496d706f7274656445666665637473Cursor'))
+          index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '__tailSourceTraceFrom_law_correspondence_implication :' in line)
+          first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
+          tactic = lines[first+1].strip()[2:]
+          prefix = tail + '\n'.join(lines[index:first]) + '\n  '
+          probe('Tail', prefix + tactic + '\nend ImportedEffects\n')
           normalized = tactic[tactic.index('(simp only [Bool.and_eq_true'):].split('; first', 1)[0]
-          probe('WrapperCompositionNormalized', prefix + normalized + '; all_goals trace_state; all_goals sorry)\nend Wrapper\n')
+          probe('TailNormalized', prefix + normalized + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
           PYPROBE
       - uses: actions/upload-artifact@v4
         if: always()

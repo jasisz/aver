@@ -83,14 +83,35 @@ pub(super) fn candidate(
             ctx.fn_def_by_name(&key.name, key.scope_str())
         })
         .collect();
+    // Only the two folds compared by this law are induction boundaries.
+    // Deeper imports may contribute further recursive helpers to its cone;
+    // their presence does not change this transport obligation.
+    let mut right_folds = BTreeSet::new();
+    let owner = common::fn_owning_scope_for(ctx, right_fn);
+    for stmt in right_fn.body.stmts() {
+        let (Stmt::Expr(expr) | Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::walk(expr, &mut |expr| {
+            if let Some(fd) = induction::callee(expr, ctx, owner)
+                && induction::list_measure(fd, ctx).is_some()
+                && !fd.return_type.starts_with("List<")
+            {
+                right_folds.insert(induction::lean_name(fd, ctx));
+            }
+        });
+    }
+    if right_folds.len() != 1 {
+        return None;
+    }
+    let driver_name = induction::lean_name(driver, ctx);
     let folds: Vec<_> = functions
         .iter()
         .copied()
         .filter(|fd| {
-            induction::list_measure(fd, ctx).is_some() && !fd.return_type.starts_with("List<")
+            let name = induction::lean_name(fd, ctx);
+            name == driver_name || right_folds.contains(&name)
         })
         .collect();
-    if folds.len() != 2 || !folds.iter().any(|fd| fd.name == driver.name) {
+    if folds.len() != 2 {
         return None;
     }
     let maps: Vec<_> = functions
