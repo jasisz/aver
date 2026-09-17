@@ -8188,8 +8188,9 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
             tamper_cert_lean_files(&dir.join("cert"), name, edit);
             let (ok, out) = aver_check(&dir.join("intcompare.wasm"), &dir.join("cert"));
             eprintln!(
-                "int-sign tripwire: {name} finished in {:?}:\n{out}",
-                started.elapsed()
+                "int-sign tripwire: {name} finished in {:?}:\n{}",
+                started.elapsed(),
+                out.lines().take(60).collect::<Vec<_>>().join("\n")
             );
             assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
             assert!(
