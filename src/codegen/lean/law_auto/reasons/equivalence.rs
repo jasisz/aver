@@ -210,6 +210,7 @@ pub(super) fn candidate(
     // projections of an unknown recursive result and obscures the equality.
     // Keep this progress and split finite observations before exposing the
     // adapter. Terminal branches can still use the full simplifier below.
+    let adapting = result_adapter.is_some();
     let recursive = result_adapter
         .map(|adapter| {
             let step_simp = simp
@@ -245,5 +246,15 @@ pub(super) fn candidate(
     } else {
         String::new()
     };
-    Some(format!("(first{compose}{cases} | ({solve}))"))
+    // Advancing the right fold first helps observed prefixes, but a pure
+    // continuation can already match the IH before that step. Retain the
+    // established symmetric normalization as a checked fallback for adapters.
+    let legacy = if adapting {
+        format!(
+            " | (simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all +zetaDelta [{simp}]) | split{steps} | (solve | grind)); done)"
+        )
+    } else {
+        String::new()
+    };
+    Some(format!("(first{compose}{cases} | ({solve}){legacy})"))
 }
