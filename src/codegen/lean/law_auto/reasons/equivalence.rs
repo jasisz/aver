@@ -217,7 +217,7 @@ pub(super) fn candidate(
                 .filter(|name| *name != adapter)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(" | (simp_all +zetaDelta [{step_simp}]) | (split at *){steps}")
+            format!(" | (simp_all +zetaDelta [{step_simp}]) | (solve | with_reducible grind only [List.length_drop, List.length_cons]) | (solve | simp_all +zetaDelta [{simp}]) | (split at *){steps}")
         })
         .unwrap_or_default();
     let solve = format!(

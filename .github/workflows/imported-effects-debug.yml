@@ -47,22 +47,13 @@ jobs:
           tactic = next(line.strip()[2:] for line in lines[index:] if line.strip().startswith('| (first | (simp only [beq_iff_eq') and 'fun_induction' in line)
           prefix = text.split('-- verify law ')[0] + lines[index] + '\n  intro outcome inputs position events consumed\n  '
           probe('WrapperSplice', prefix + tactic + '\nend Wrapper\n')
-          no_first = re.sub(r'all_goals dsimp only; all_goals \(try \(first.*?\)\); ', '', tactic, count=1)
-          legacy = re.sub(r' \| \(solve \| simp only \[.*?\]\) \| \(simp_all \+zetaDelta \[.*?\]\) \| \(split at \*\).*?(?= \| \(simp_all \+zetaDelta)', '', no_first, count=1)
-          probe('WrapperSpliceLegacy', prefix + legacy + '\nend Wrapper\n')
-          limited = tactic.replace('| assumption | rfl', '| (with_reducible assumption) | (with_reducible rfl)')
-          probe('WrapperSpliceReducible', prefix + limited + '\nend Wrapper\n')
           protected = re.search(r'simp_all \+zetaDelta \[([^]]*)\]', tactic).group(1)
           steps = tactic.split("; all_goals (repeat' first")[0]
           steps += "; all_goals (repeat' first | assumption | rfl | (simp_all +zetaDelta [" + protected + "]) | split at *); all_goals trace_state; all_goals sorry))"
           probe('WrapperSpliceSteps', prefix + steps + '\nend Wrapper\n')
+          closed = steps.replace('; all_goals trace_state; all_goals sorry', '; all_goals (with_reducible grind only [List.length_drop, List.length_cons])')
+          probe('WrapperSpliceFinish', prefix + closed + '\nend Wrapper\n')
           PYPROBE
-      - name: Check existing recursive compositions
-        if: always()
-        run: |
-          for fixture in yield_recursive_traces yield_recursive_imports; do
-            target/debug/aver proof tests/fixtures/$fixture/main.av --module-root tests/fixtures/$fixture --backend lean --check --sorry-budget 0 -o /tmp/$fixture > /tmp/$fixture.log 2>&1 || true
-          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -72,6 +63,17 @@ jobs:
             /tmp/imported-effects-proof/*.json
             /tmp/imported-effects-proof/*.log
             /tmp/imported-effects-proof/lean-toolchain
+      - name: Check existing recursive compositions
+        if: always()
+        run: |
+          for fixture in yield_recursive_traces yield_recursive_imports; do
+            target/debug/aver proof tests/fixtures/$fixture/main.av --module-root tests/fixtures/$fixture --backend lean --check --sorry-budget 0 -o /tmp/$fixture > /tmp/$fixture.log 2>&1 || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recursive-compositions-proof
+          path: |
             /tmp/yield_recursive_traces/*.lean
             /tmp/yield_recursive_traces.log
             /tmp/yield_recursive_imports/*.lean
