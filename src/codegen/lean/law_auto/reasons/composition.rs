@@ -348,7 +348,7 @@ pub(super) fn candidate(
         definitions.heads
     );
     Some(format!(
-        "(first | {shallow} | (simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{prefix}{staged} | (grind only [{steps}])))"
+        "(first | {shallow} | (simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{staged}{prefix} | (grind only [{steps}])))"
     ))
 }
 
