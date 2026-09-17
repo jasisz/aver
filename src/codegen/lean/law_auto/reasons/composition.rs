@@ -298,39 +298,9 @@ pub(super) fn candidate(
         .map(|i| format!("-_fact{i}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let rewrite = relevant
+    let rewrite = splices
         .iter()
-        .filter_map(|index| {
-            let fact = format!("_fact{index}");
-            if forward.contains(&fact) {
-                return None;
-            }
-            let adapter = definitions
-                .staged_recursion
-                .then(|| {
-                    let (function, _) = sorted[*index].rsplit_once('.')?;
-                    let id = ctx
-                        .symbol_table
-                        .resolve_fn_id_in(function, scope.as_deref())?;
-                    let key = &ctx.symbol_table.fn_entry(id).key;
-                    let fd = ctx.fn_def_by_name(&key.name, key.scope_str())?;
-                    let [crate::ast::Stmt::Expr(body)] = fd.body.stmts() else {
-                        return None;
-                    };
-                    let adapter = induction::callee(body, ctx, key.scope_str())?;
-                    common::fn_id_for_decl(ctx, adapter)
-                        .is_some_and(|id| !ctx.recursive_fns.contains(&id))
-                        .then(|| induction::lean_name(adapter, ctx))
-                })
-                .flatten();
-            // Once a summary has rewritten this boundary, expose its finite
-            // adapter on the right so the next cited computation becomes visible.
-            // Keep the other citations and their implementations opaque.
-            let expose = adapter
-                .map(|name| format!("; try (conv => rhs; simp only [{name}])"))
-                .unwrap_or_default();
-            Some(format!(" | ((conv => rhs; rw [← {fact}]){expose})"))
-        })
+        .map(|name| format!(" | (conv => rhs; rw [← {name}])"))
         .collect::<String>();
     // Compose one cited boundary at a time, then distinguish completion from
     // suspension. Expanding all recursive results together duplicates every

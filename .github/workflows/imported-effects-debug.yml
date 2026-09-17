@@ -77,6 +77,10 @@ jobs:
           no_ih_simp = mapping_tactic.replace('simp_all +zetaDelta [', 'simp +zetaDelta [*, -_aver_transport_ih, ')
           probe('MappingNoIHSimp', mapping_prefix + no_ih_simp + '\nend ImportedEffects\n')
           probe('MappingNoIHSimpSteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', no_ih_simp) + '\nend ImportedEffects\n')
+          split_context = goal_only(mapping_tactic, 1).replace('| split)', '| split at *)')
+          probe('MappingContext', mapping_prefix + split_context + '\nend ImportedEffects\n')
+          probe('MappingContextSteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', split_context) + '\nend ImportedEffects\n')
+          probe('MappingNoZeta', mapping_prefix + mapping_tactic.replace(' +zetaDelta', '') + '\nend ImportedEffects\n')
           for name, suffix in [('Cursor', '__repeatedTrace496d706f7274656445666665637473Cursor_law_boundedSuffix_implication :')]:
               index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
               first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
