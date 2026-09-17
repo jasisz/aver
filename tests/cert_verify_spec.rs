@@ -8256,17 +8256,10 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
     //     declare the same function type, so only the export-name binding
     //     objects — and it is what drives the audited encoder.
     //
-    //     No pin name is asserted here, and that is a deliberate weakening of
-    //     what this case used to check. The role table used to be duplicated
-    //     into `Plans.lean`'s emitted `encodeSymRawPlanToExprFragmentRawPlan`
-    //     example, so this edit reached that example's `rfl` first and the
-    //     decline named it. The examples are no longer emitted (the packages
-    //     they broke were unbuildable, see the format spec section 2.2), so the
-    //     same edit now lands only on the role table acceptance itself reads,
-    //     in `Artifact.lean` and `Manifest.lean`. It is still DECLINED — the
-    //     assertions above are what this case now guarantees — but the decline
-    //     arrives from the acceptance build rather than from a named pin, and
-    //     re-authoring it to name one again is open work.
+    //     The named encoding equality rejects the changed role table before
+    //     the aggregate proof tries to unify byte-derived leaf statements.
+    //     Require that pin: a timeout or memory failure is not this regression's
+    //     expected rejection.
     tamper(
         "cmp-eq-role-swap",
         &|text| {
@@ -8274,7 +8267,7 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
                 .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
                 .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
         },
-        &[],
+        &["encodeSymRawPlanToExprFragmentRawPlan"],
         &[],
     );
 
