@@ -640,6 +640,8 @@ pub(super) enum Commands {
     #[command(group(clap::ArgGroup::new("check_mode").args(["check", "check_json"]).multiple(true)))]
     Proof {
         file: String,
+        #[command(flatten)]
+        waterfall: super::proof_waterfall::Options,
         /// Output directory for the generated project
         #[arg(short = 'o', long, default_value = "out")]
         output: String,
@@ -864,6 +866,47 @@ mod tests {
             Commands::Proof { check, .. } => assert!(!check, "--check defaults to false"),
             _ => panic!("expected proof command"),
         }
+    }
+
+    #[test]
+    fn waterfall_requires_check_and_valid_limits() {
+        assert!(Cli::try_parse_from(["aver", "proof", "x.av", "--waterfall", "/tmp/w"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "aver",
+                "proof",
+                "x.av",
+                "--check-json",
+                "--waterfall",
+                "/tmp/w"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "aver",
+                "proof",
+                "x.av",
+                "--check-json",
+                "--waterfall",
+                "/tmp/w",
+                "--waterfall-effort",
+                "0"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "aver",
+                "proof",
+                "x.av",
+                "--check-json",
+                "--waterfall",
+                "/tmp/w",
+                "--allow-mathlib"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

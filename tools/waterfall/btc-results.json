@@ -1,0 +1,1223 @@
+{
+  "measurement_date": "2026-09-17",
+  "aver_sha": "1ef21e7e38192134bce899d4c87a3d66b968258c",
+  "aver_binary_sha256": "d43e92a8154e9dd124f1fa4601312a1fa1402107e7c137481c80dd37982756aa",
+  "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+  "source_branch": "feat/follow-work-wait",
+  "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+  "toolchain": "leanprover/lean4:v4.34.0",
+  "baseline": {
+    "interp": {
+      "backend": "lean",
+      "bounded_laws": 3,
+      "budget": 0,
+      "build_errors": 0,
+      "declined": 134,
+      "declined_budget": 134,
+      "manifest": "proof_manifest.json",
+      "model_panicked": false,
+      "passed": true,
+      "sorries": 0,
+      "universal": true,
+      "universal_laws": 117
+    },
+    "segment": {
+      "backend": "lean",
+      "bounded_laws": 0,
+      "budget": 0,
+      "build_errors": 1,
+      "declined": 3,
+      "declined_budget": 134,
+      "manifest": "proof_manifest.json",
+      "model_panicked": false,
+      "passed": false,
+      "sorries": 0,
+      "universal": false,
+      "universal_laws": 0,
+      "errors": [
+        "error: Segment.lean:944:49: (deterministic) timeout at `isDefEq`, maximum number of heartbeats (200000) has been reached",
+        "error: build failed"
+      ]
+    }
+  },
+  "runs": {
+    "segment-search": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Segment",
+      "export_sha256": "ad0bab77df3c8a774d94a249ac50eb43bfc808c76653b6c4940b5bba3ee290aa",
+      "mode": "search",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "trials": [
+        {
+          "law": "nameOf.sortsWithSegment",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (lower : Int) (higher : Int), lower = 0 \u2228 lower = 1 \u2228 lower = 42 \u2228 lower = 999998 \u2228 lower = 999999 -> higher = 0 \u2228 higher = 1 \u2228 higher = 42 \u2228 higher = 999998 \u2228 higher = 999999 -> (((0 <= lower) && (lower < 1000000)) && ((0 <= higher) && (higher < 1000000))) = true -> (nameOf lower < nameOf higher) = (lower < higher)",
+          "statement": "\u2200 (lower : Int) (higher : Int), (((0 <= lower) && (lower < 1000000)) && ((0 <= higher) && (higher < 1000000))) = true -> (nameOf lower < nameOf higher) = (lower < higher)",
+          "removed_sample_premises": [
+            "lower = 0 \u2228 lower = 1 \u2228 lower = 42 \u2228 lower = 999998 \u2228 lower = 999999",
+            "higher = 0 \u2228 higher = 1 \u2228 higher = 42 \u2228 higher = 999998 \u2228 higher = 999999"
+          ],
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.082,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "place.staysUnderCap",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (blockBytes : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 0, used := 134217624 : SegmentState } \u2228 state = { segment := 3, used := 134217728 : SegmentState } -> blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 134217724 -> (((headerBytes + blockBytes) <= capBytes) && (state.used <= capBytes)) = true -> ((place state blockBytes).state.used <= capBytes) = true",
+          "statement": "\u2200 (state : SegmentState) (blockBytes : Int), (((headerBytes + blockBytes) <= capBytes) && (state.used <= capBytes)) = true -> ((place state blockBytes).state.used <= capBytes) = true",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 0, used := 134217624 : SegmentState } \u2228 state = { segment := 3, used := 134217728 : SegmentState }",
+            "blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 134217724"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.844,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "place.recordEndsAtUsed",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (blockBytes : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 1, used := 14 : SegmentState } \u2228 state = { segment := 3, used := 134217700 : SegmentState } -> blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 200000000 -> ((state.used >= 0) && (blockBytes >= 0)) = true -> endsAtUsed (place state blockBytes) blockBytes = true",
+          "statement": "\u2200 (state : SegmentState) (blockBytes : Int), ((state.used >= 0) && (blockBytes >= 0)) = true -> endsAtUsed (place state blockBytes) blockBytes = true",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 1, used := 14 : SegmentState } \u2228 state = { segment := 3, used := 134217700 : SegmentState }",
+            "blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 200000000"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.887,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "place.consecutiveRecordsTile",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (first : Int) (second : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 3, used := 134217600 : SegmentState } -> first = 0 \u2228 first = 1 \u2228 first = 100 \u2228 first = 200000000 -> second = 0 \u2228 second = 1 \u2228 second = 100 \u2228 second = 200000000 -> ((state.used >= 0) && ((first >= 0) && (second >= 0))) = true -> tiles (place state first) (place ((place state first).state) second) = true",
+          "statement": "\u2200 (state : SegmentState) (first : Int) (second : Int), ((state.used >= 0) && ((first >= 0) && (second >= 0))) = true -> tiles (place state first) (place ((place state first).state) second) = true",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 3, used := 134217600 : SegmentState }",
+            "first = 0 \u2228 first = 1 \u2228 first = 100 \u2228 first = 200000000",
+            "second = 0 \u2228 second = 1 \u2228 second = 100 \u2228 second = 200000000"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.024,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "agreesWithDisk.theDiskItCountedAgrees",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "universal",
+          "original_statement": "\u2200 (state : SegmentState), agreesWithDisk state state.used = Except.ok ()",
+          "statement": "\u2200 (state : SegmentState), agreesWithDisk state state.used = Except.ok ()",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.598,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "agreesWithDisk.anyOtherSizeRefuses",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (delta : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 5745, used := 100591405 : SegmentState } -> delta = (-104) \u2228 delta = (-1) \u2228 delta = 1 \u2228 delta = 35202610 -> (delta != 0) = true -> agreesWithDisk state (state.used + delta) = Except.error (s!\"Segment {state.segment} is {(state.used + delta)} bytes on the disk where the count says {state.used}; a Location placed from the count would be {((delta : Int).natAbs : Int)} bytes off, so none was written, and the next open counts from the disk again\")",
+          "statement": "\u2200 (state : SegmentState) (delta : Int), (delta != 0) = true -> agreesWithDisk state (state.used + delta) = Except.error (s!\"Segment {state.segment} is {(state.used + delta)} bytes on the disk where the count says {state.used}; a Location placed from the count would be {((delta : Int).natAbs : Int)} bytes off, so none was written, and the next open counts from the disk again\")",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 5745, used := 100591405 : SegmentState }",
+            "delta = (-104) \u2228 delta = (-1) \u2228 delta = 1 \u2228 delta = 35202610"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.665,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "headerFor.readsBack",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "universal",
+          "original_statement": "\u2200 (length : Int), ((0 <= length) && (length < 4294967296)) = true -> (do pure (lengthOf (<- headerFor length))) = Except.ok (Except.ok length)",
+          "statement": "\u2200 (length : Int), ((0 <= length) && (length < 4294967296)) = true -> (do pure (lengthOf (<- headerFor length))) = Except.ok (Except.ok length)",
+          "removed_sample_premises": [],
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.074,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "headerFor.readsBack.implication",
+          "category": "obligation",
+          "baseline": null,
+          "export_kind": "universal",
+          "original_statement": "\u2200 (length : Int), ((0 <= length) && (length < 4294967296)) = true -> (do pure (lengthOf (<- headerFor length))) = Except.ok (Except.ok length)",
+          "statement": "\u2200 (length : Int), ((0 <= length) && (length < 4294967296)) = true -> (do pure (lengthOf (<- headerFor length))) = Except.ok (Except.ok length)",
+          "removed_sample_premises": [],
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.077,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "place.agreesWithTheReader",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (blockBytes : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 3, used := 134217600 : SegmentState } -> blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 200000000 -> (((state.used >= 0) && (blockBytes >= 0)) && (!rolls state blockBytes)) = true -> readerAgrees state blockBytes (place state blockBytes) = true",
+          "statement": "\u2200 (state : SegmentState) (blockBytes : Int), (((state.used >= 0) && (blockBytes >= 0)) && (!rolls state blockBytes)) = true -> readerAgrees state blockBytes (place state blockBytes) = true",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 3, used := 134217600 : SegmentState }",
+            "blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 200000000"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.124,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    "message-search": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.Message",
+      "export_sha256": "e0d5084e62b477cf8b946b5ec0269f2ab6bffdc4093c101586f725734ebf8843",
+      "mode": "search",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "trials": [
+        {
+          "law": "Domain.Message.littleEndianInto.accumulatorPrefix",
+          "category": "class",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.Message.littleEndianInto.accumulatorPrefix",
+            "theorem": "Domain.Message.littleEndianInto_law_accumulatorPrefix",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (value : Int) (width : Int) (acc : List Int), (width <= 8) = true -> Domain.Message.littleEndianInto value width acc = (acc.reverse ++ (Domain.Message.littleEndianInto value width ([] : List Int)))",
+          "statement": "\u2200 (value : Int) (width : Int) (acc : List Int), (width <= 8) = true -> Domain.Message.littleEndianInto value width acc = (acc.reverse ++ (Domain.Message.littleEndianInto value width ([] : List Int)))",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 10.779,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.Message.littleEndianInto.fixedWidth",
+          "category": "class",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.Message.littleEndianInto.fixedWidth",
+            "theorem": "Domain.Message.littleEndianInto_law_fixedWidth",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (value : Int) (width : Int) (acc : List Int), (width <= 8) = true -> ((Domain.Message.littleEndianInto value width acc).length : Int) = (if (width <= 0) then (acc.length : Int)\n  else ((acc.length : Int) + width))",
+          "statement": "\u2200 (value : Int) (width : Int) (acc : List Int), (width <= 8) = true -> ((Domain.Message.littleEndianInto value width acc).length : Int) = (if (width <= 0) then (acc.length : Int)\n  else ((acc.length : Int) + width))",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 4.81,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.Message.readLittleEndianFrom.finalDigit",
+          "category": "class",
+          "baseline": {
+            "axioms": [
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.Message.readLittleEndianFrom.finalDigit",
+            "theorem": "Domain.Message.readLittleEndianFrom_law_finalDigit",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (prefix' : List Int) (acc : Int) (digit : Int), Domain.Message.readLittleEndianFrom (prefix' ++ [digit]) acc = ((Domain.Message.readLittleEndianFrom prefix' acc * 256) + digit)",
+          "statement": "\u2200 (prefix' : List Int) (acc : Int) (digit : Int), Domain.Message.readLittleEndianFrom (prefix' ++ [digit]) acc = ((Domain.Message.readLittleEndianFrom prefix' acc * 256) + digit)",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.183,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    "scriptparse-search": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.ScriptParse",
+      "export_sha256": "4d2da051ebfcf4a9a3f47b04de892ffeb65e1cd4da10cbc073cf7cd2354211b4",
+      "mode": "search",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "trials": [
+        {
+          "law": "Domain.ScriptParse.parse.directPushRunsPastTheEnd",
+          "category": "class",
+          "baseline": {
+            "axioms": [],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.parse.directPushRunsPastTheEnd",
+            "theorem": "Domain.ScriptParse.parse_law_directPushRunsPastTheEnd",
+            "tier": "bounded"
+          },
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (n : Int), n = 1 \u2228 n = 2 \u2228 n = 3 \u2228 n = 20 \u2228 n = 75 -> ((n >= 1) && (n <= 75)) = true -> Domain.ScriptParse.parse [n] = Except.error (s!\"push of {n} bytes runs past the end of the script\")",
+          "statement": "\u2200 (n : Int), ((n >= 1) && (n <= 75)) = true -> Domain.ScriptParse.parse [n] = Except.error (s!\"push of {n} bytes runs past the end of the script\")",
+          "removed_sample_premises": [
+            "n = 1 \u2228 n = 2 \u2228 n = 3 \u2228 n = 20 \u2228 n = 75"
+          ],
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 8.0,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "Domain.ScriptParse.prependReversed.reverseOnto",
+          "category": "class",
+          "baseline": {
+            "axioms": [
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.prependReversed.reverseOnto",
+            "theorem": "Domain.ScriptParse.prependReversed_law_reverseOnto",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (bytes : List Int) (acc : List Int), Domain.ScriptParse.prependReversed bytes acc = (bytes.reverse ++ acc)",
+          "statement": "\u2200 (bytes : List Int) (acc : List Int), Domain.ScriptParse.prependReversed bytes acc = (bytes.reverse ++ acc)",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.337,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.ScriptParse.intoBytes.accumulates",
+          "category": "class",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.intoBytes.accumulates",
+            "theorem": "Domain.ScriptParse.intoBytes_law_accumulates",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (ops : List Op) (acc : List Int), Domain.ScriptParse.intoBytes ops acc = (acc.reverse ++ (Domain.ScriptParse.bytesOf ops))",
+          "statement": "\u2200 (ops : List Op) (acc : List Int), Domain.ScriptParse.intoBytes ops acc = (acc.reverse ++ (Domain.ScriptParse.bytesOf ops))",
+          "removed_sample_premises": [],
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.062,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "Domain.ScriptParse.intoBytes.accumulates.because1",
+          "category": "obligation",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.intoBytes.accumulates.because1",
+            "theorem": "Domain.ScriptParse.__aver_reason_intoBytes_law_accumulates_because1",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (ops : List Op) (acc : List Int), (Domain.ScriptParse.serializeAccReason ops acc) = true",
+          "statement": "\u2200 (ops : List Op) (acc : List Int), (Domain.ScriptParse.serializeAccReason ops acc) = true",
+          "removed_sample_premises": [],
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 10.318,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Quot.sound"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "Domain.ScriptParse.intoBytes.accumulates.implication",
+          "category": "obligation",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.intoBytes.accumulates.implication",
+            "theorem": "Domain.ScriptParse.__aver_reason_intoBytes_law_accumulates_implication",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (ops : List Op) (acc : List Int), (Domain.ScriptParse.serializeAccReason ops acc) = true \u2192 Domain.ScriptParse.intoBytes ops acc = (acc.reverse ++ (Domain.ScriptParse.bytesOf ops))",
+          "statement": "\u2200 (ops : List Op) (acc : List Int), (Domain.ScriptParse.serializeAccReason ops acc) = true \u2192 Domain.ScriptParse.intoBytes ops acc = (acc.reverse ++ (Domain.ScriptParse.bytesOf ops))",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.673,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    "stackitem-search": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.StackItem",
+      "export_sha256": "30574433dc6767c1d391300f42e7dd22c4a0ddcd6844d78ff33a4f8c0a4b65ce",
+      "mode": "search",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "trials": [
+        {
+          "law": "Domain.StackItem.bigEndian.largerPrefixStaysLarger",
+          "category": "class",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.StackItem.bigEndian.largerPrefixStaysLarger",
+            "theorem": "Domain.StackItem.bigEndian_law_largerPrefixStaysLarger",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (bytes : List Int) (lower : Int) (upper : Int), (lower < upper) = true -> (Domain.StackItem.bigEndian bytes lower < Domain.StackItem.bigEndian bytes upper) = true",
+          "statement": "\u2200 (bytes : List Int) (lower : Int) (upper : Int), (lower < upper) = true -> (Domain.StackItem.bigEndian bytes lower < Domain.StackItem.bigEndian bytes upper) = true",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.446,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.StackItem.bigEndian.largerPrefixStaysLarger.because1",
+          "category": "obligation",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.StackItem.bigEndian.largerPrefixStaysLarger.because1",
+            "theorem": "Domain.StackItem.__aver_reason_bigEndian_law_largerPrefixStaysLarger_because1",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (bytes : List Int) (lower : Int) (upper : Int), ((lower < upper)) = true \u2192 (Domain.StackItem.largerPrefixReason bytes lower upper) = true",
+          "statement": "\u2200 (bytes : List Int) (lower : Int) (upper : Int), ((lower < upper)) = true \u2192 (Domain.StackItem.largerPrefixReason bytes lower upper) = true",
+          "removed_sample_premises": [],
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 5.996,
+          "axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "Domain.StackItem.bigEndian.largerPrefixStaysLarger.implication",
+          "category": "obligation",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.StackItem.bigEndian.largerPrefixStaysLarger.implication",
+            "theorem": "Domain.StackItem.__aver_reason_bigEndian_law_largerPrefixStaysLarger_implication",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (bytes : List Int) (lower : Int) (upper : Int), (Domain.StackItem.largerPrefixReason bytes lower upper) = true \u2192 (lower < upper) = true -> (Domain.StackItem.bigEndian bytes lower < Domain.StackItem.bigEndian bytes upper) = true",
+          "statement": "\u2200 (bytes : List Int) (lower : Int) (upper : Int), (Domain.StackItem.largerPrefixReason bytes lower upper) = true \u2192 (lower < upper) = true -> (Domain.StackItem.bigEndian bytes lower < Domain.StackItem.bigEndian bytes upper) = true",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.24,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.StackItem.anyNonZero.concatenation",
+          "category": "class",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.StackItem.anyNonZero.concatenation",
+            "theorem": "Domain.StackItem.anyNonZero_law_concatenation",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (left : List Int) (right : List Int), Domain.StackItem.anyNonZero (left ++ right) = (Domain.StackItem.anyNonZero left || Domain.StackItem.anyNonZero right)",
+          "statement": "\u2200 (left : List Int) (right : List Int), Domain.StackItem.anyNonZero (left ++ right) = (Domain.StackItem.anyNonZero left || Domain.StackItem.anyNonZero right)",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 5.714,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.StackItem.anyNonZero.concatenation.because1",
+          "category": "obligation",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.StackItem.anyNonZero.concatenation.because1",
+            "theorem": "Domain.StackItem.__aver_reason_anyNonZero_law_concatenation_because1",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (left : List Int) (right : List Int), (Domain.StackItem.concatenationReason left right) = true",
+          "statement": "\u2200 (left : List Int) (right : List Int), (Domain.StackItem.concatenationReason left right) = true",
+          "removed_sample_premises": [],
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 4.656,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Quot.sound"
+          ],
+          "accepted": false
+        },
+        {
+          "law": "Domain.StackItem.anyNonZero.concatenation.implication",
+          "category": "obligation",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.StackItem.anyNonZero.concatenation.implication",
+            "theorem": "Domain.StackItem.__aver_reason_anyNonZero_law_concatenation_implication",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (left : List Int) (right : List Int), (Domain.StackItem.concatenationReason left right) = true \u2192 Domain.StackItem.anyNonZero (left ++ right) = (Domain.StackItem.anyNonZero left || Domain.StackItem.anyNonZero right)",
+          "statement": "\u2200 (left : List Int) (right : List Int), (Domain.StackItem.concatenationReason left right) = true \u2192 Domain.StackItem.anyNonZero (left ++ right) = (Domain.StackItem.anyNonZero left || Domain.StackItem.anyNonZero right)",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.053,
+          "axioms": [
+            "propext",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.StackItem.isMinimalPush.directPushIsMinimalUnlessSmallNumber",
+          "category": "class",
+          "baseline": {
+            "axioms": [],
+            "backend": "lean",
+            "law": "Domain.StackItem.isMinimalPush.directPushIsMinimalUnlessSmallNumber",
+            "theorem": "Domain.StackItem.isMinimalPush_law_directPushIsMinimalUnlessSmallNumber_part1",
+            "tier": "bounded"
+          },
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (b : Int), b = 0 \u2228 b = 1 \u2228 b = 2 \u2228 b = 3 \u2228 b = 4 \u2228 b = 5 \u2228 b = 6 \u2228 b = 7 \u2228 b = 8 \u2228 b = 9 \u2228 b = 10 \u2228 b = 11 \u2228 b = 12 \u2228 b = 13 \u2228 b = 14 \u2228 b = 15 \u2228 b = 16 \u2228 b = 17 \u2228 b = 18 \u2228 b = 19 \u2228 b = 20 \u2228 b = 21 \u2228 b = 22 \u2228 b = 23 \u2228 b = 24 \u2228 b = 25 \u2228 b = 26 \u2228 b = 27 \u2228 b = 28 \u2228 b = 29 \u2228 b = 30 \u2228 b = 31 \u2228 b = 32 \u2228 b = 33 \u2228 b = 34 \u2228 b = 35 \u2228 b = 36 \u2228 b = 37 \u2228 b = 38 \u2228 b = 39 \u2228 b = 40 \u2228 b = 41 \u2228 b = 42 \u2228 b = 43 \u2228 b = 44 \u2228 b = 45 \u2228 b = 46 \u2228 b = 47 \u2228 b = 48 \u2228 b = 49 \u2228 b = 50 \u2228 b = 51 \u2228 b = 52 \u2228 b = 53 \u2228 b = 54 \u2228 b = 55 \u2228 b = 56 \u2228 b = 57 \u2228 b = 58 \u2228 b = 59 \u2228 b = 60 \u2228 b = 61 \u2228 b = 62 \u2228 b = 63 \u2228 b = 64 \u2228 b = 65 \u2228 b = 66 \u2228 b = 67 \u2228 b = 68 \u2228 b = 69 \u2228 b = 70 \u2228 b = 71 \u2228 b = 72 \u2228 b = 73 \u2228 b = 74 \u2228 b = 75 \u2228 b = 76 \u2228 b = 77 \u2228 b = 78 \u2228 b = 79 \u2228 b = 80 \u2228 b = 81 \u2228 b = 82 \u2228 b = 83 \u2228 b = 84 \u2228 b = 85 \u2228 b = 86 \u2228 b = 87 \u2228 b = 88 \u2228 b = 89 \u2228 b = 90 \u2228 b = 91 \u2228 b = 92 \u2228 b = 93 \u2228 b = 94 \u2228 b = 95 \u2228 b = 96 \u2228 b = 97 \u2228 b = 98 \u2228 b = 99 \u2228 b = 100 \u2228 b = 101 \u2228 b = 102 \u2228 b = 103 \u2228 b = 104 \u2228 b = 105 \u2228 b = 106 \u2228 b = 107 \u2228 b = 108 \u2228 b = 109 \u2228 b = 110 \u2228 b = 111 \u2228 b = 112 \u2228 b = 113 \u2228 b = 114 \u2228 b = 115 \u2228 b = 116 \u2228 b = 117 \u2228 b = 118 \u2228 b = 119 \u2228 b = 120 \u2228 b = 121 \u2228 b = 122 \u2228 b = 123 \u2228 b = 124 \u2228 b = 125 \u2228 b = 126 \u2228 b = 127 -> ((b >= 0) && (b <= 255)) = true -> Domain.StackItem.isMinimalPush 1 [b] = (!(((b >= 1) && (b <= 16)) || (b == 129)))",
+          "statement": "\u2200 (b : Int), ((b >= 0) && (b <= 255)) = true -> Domain.StackItem.isMinimalPush 1 [b] = (!(((b >= 1) && (b <= 16)) || (b == 129)))",
+          "removed_sample_premises": [
+            "b = 0 \u2228 b = 1 \u2228 b = 2 \u2228 b = 3 \u2228 b = 4 \u2228 b = 5 \u2228 b = 6 \u2228 b = 7 \u2228 b = 8 \u2228 b = 9 \u2228 b = 10 \u2228 b = 11 \u2228 b = 12 \u2228 b = 13 \u2228 b = 14 \u2228 b = 15 \u2228 b = 16 \u2228 b = 17 \u2228 b = 18 \u2228 b = 19 \u2228 b = 20 \u2228 b = 21 \u2228 b = 22 \u2228 b = 23 \u2228 b = 24 \u2228 b = 25 \u2228 b = 26 \u2228 b = 27 \u2228 b = 28 \u2228 b = 29 \u2228 b = 30 \u2228 b = 31 \u2228 b = 32 \u2228 b = 33 \u2228 b = 34 \u2228 b = 35 \u2228 b = 36 \u2228 b = 37 \u2228 b = 38 \u2228 b = 39 \u2228 b = 40 \u2228 b = 41 \u2228 b = 42 \u2228 b = 43 \u2228 b = 44 \u2228 b = 45 \u2228 b = 46 \u2228 b = 47 \u2228 b = 48 \u2228 b = 49 \u2228 b = 50 \u2228 b = 51 \u2228 b = 52 \u2228 b = 53 \u2228 b = 54 \u2228 b = 55 \u2228 b = 56 \u2228 b = 57 \u2228 b = 58 \u2228 b = 59 \u2228 b = 60 \u2228 b = 61 \u2228 b = 62 \u2228 b = 63 \u2228 b = 64 \u2228 b = 65 \u2228 b = 66 \u2228 b = 67 \u2228 b = 68 \u2228 b = 69 \u2228 b = 70 \u2228 b = 71 \u2228 b = 72 \u2228 b = 73 \u2228 b = 74 \u2228 b = 75 \u2228 b = 76 \u2228 b = 77 \u2228 b = 78 \u2228 b = 79 \u2228 b = 80 \u2228 b = 81 \u2228 b = 82 \u2228 b = 83 \u2228 b = 84 \u2228 b = 85 \u2228 b = 86 \u2228 b = 87 \u2228 b = 88 \u2228 b = 89 \u2228 b = 90 \u2228 b = 91 \u2228 b = 92 \u2228 b = 93 \u2228 b = 94 \u2228 b = 95 \u2228 b = 96 \u2228 b = 97 \u2228 b = 98 \u2228 b = 99 \u2228 b = 100 \u2228 b = 101 \u2228 b = 102 \u2228 b = 103 \u2228 b = 104 \u2228 b = 105 \u2228 b = 106 \u2228 b = 107 \u2228 b = 108 \u2228 b = 109 \u2228 b = 110 \u2228 b = 111 \u2228 b = 112 \u2228 b = 113 \u2228 b = 114 \u2228 b = 115 \u2228 b = 116 \u2228 b = 117 \u2228 b = 118 \u2228 b = 119 \u2228 b = 120 \u2228 b = 121 \u2228 b = 122 \u2228 b = 123 \u2228 b = 124 \u2228 b = 125 \u2228 b = 126 \u2228 b = 127"
+          ],
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 8.398,
+          "axioms": [
+            "propext",
+            "sorryAx"
+          ],
+          "accepted": false
+        }
+      ]
+    },
+    "scriptstate-search": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.ScriptState",
+      "export_sha256": "fcc4803a59f863f266082f1766a67682367d9b92706efdadb6fc4b261984bac1",
+      "mode": "search",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "trials": [
+        {
+          "law": "Domain.ScriptState.rearranged.staysWithinDeclaredDepth",
+          "category": "class",
+          "baseline": {
+            "axioms": [],
+            "backend": "lean",
+            "law": "Domain.ScriptState.rearranged.staysWithinDeclaredDepth",
+            "theorem": "Domain.ScriptState.rearranged_law_staysWithinDeclaredDepth",
+            "tier": "bounded"
+          },
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (code : Int) (items : List (List Int)), code = 109 \u2228 code = 110 \u2228 code = 111 \u2228 code = 112 \u2228 code = 113 \u2228 code = 114 \u2228 code = 117 \u2228 code = 118 \u2228 code = 119 \u2228 code = 120 \u2228 code = 123 \u2228 code = 124 \u2228 code = 125 -> items = [[1]] \u2228 items = [[1], [2]] \u2228 items = [[1], [2], [3]] \u2228 items = [[1], [2], [3], [4], [5], [6]] \u2228 items = [[1], [2], [3], [4], [5], [6], [7], [8]] -> (Domain.Opcode.rearrangeDepth code > 0) = true -> Domain.ScriptState.rearranged code (items.take (Int.toNat (Domain.Opcode.rearrangeDepth code))) = Domain.ScriptState.rearranged code items",
+          "statement": "\u2200 (code : Int) (items : List (List Int)), (Domain.Opcode.rearrangeDepth code > 0) = true -> Domain.ScriptState.rearranged code (items.take (Int.toNat (Domain.Opcode.rearrangeDepth code))) = Domain.ScriptState.rearranged code items",
+          "removed_sample_premises": [
+            "code = 109 \u2228 code = 110 \u2228 code = 111 \u2228 code = 112 \u2228 code = 113 \u2228 code = 114 \u2228 code = 117 \u2228 code = 118 \u2228 code = 119 \u2228 code = 120 \u2228 code = 123 \u2228 code = 124 \u2228 code = 125",
+            "items = [[1]] \u2228 items = [[1], [2]] \u2228 items = [[1], [2], [3]] \u2228 items = [[1], [2], [3], [4], [5], [6]] \u2228 items = [[1], [2], [3], [4], [5], [6], [7], [8]]"
+          ],
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.062,
+          "axioms": null,
+          "accepted": false
+        }
+      ]
+    },
+    "scriptparse-cited": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.ScriptParse",
+      "export_sha256": "4d2da051ebfcf4a9a3f47b04de892ffeb65e1cd4da10cbc073cf7cd2354211b4",
+      "mode": "search",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "local_lemmas": [
+        "prependReversed_law_reverseOnto"
+      ],
+      "trials": [
+        {
+          "law": "Domain.ScriptParse.intoBytes.accumulates",
+          "category": "class",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.intoBytes.accumulates",
+            "theorem": "Domain.ScriptParse.intoBytes_law_accumulates",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (ops : List Op) (acc : List Int), Domain.ScriptParse.intoBytes ops acc = (acc.reverse ++ (Domain.ScriptParse.bytesOf ops))",
+          "statement": "\u2200 (ops : List Op) (acc : List Int), Domain.ScriptParse.intoBytes ops acc = (acc.reverse ++ (Domain.ScriptParse.bytesOf ops))",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 8.337,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.ScriptParse.intoBytes.accumulates.because1",
+          "category": "obligation",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.intoBytes.accumulates.because1",
+            "theorem": "Domain.ScriptParse.__aver_reason_intoBytes_law_accumulates_because1",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (ops : List Op) (acc : List Int), (Domain.ScriptParse.serializeAccReason ops acc) = true",
+          "statement": "\u2200 (ops : List Op) (acc : List Int), (Domain.ScriptParse.serializeAccReason ops acc) = true",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 9.34,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "Domain.ScriptParse.intoBytes.accumulates.implication",
+          "category": "obligation",
+          "baseline": {
+            "axioms": [
+              "Classical.choice",
+              "Quot.sound",
+              "propext"
+            ],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.intoBytes.accumulates.implication",
+            "theorem": "Domain.ScriptParse.__aver_reason_intoBytes_law_accumulates_implication",
+            "tier": "universal"
+          },
+          "export_kind": "universal",
+          "original_statement": "\u2200 (ops : List Op) (acc : List Int), (Domain.ScriptParse.serializeAccReason ops acc) = true \u2192 Domain.ScriptParse.intoBytes ops acc = (acc.reverse ++ (Domain.ScriptParse.bytesOf ops))",
+          "statement": "\u2200 (ops : List Op) (acc : List Int), (Domain.ScriptParse.serializeAccReason ops acc) = true \u2192 Domain.ScriptParse.intoBytes ops acc = (acc.reverse ++ (Domain.ScriptParse.bytesOf ops))",
+          "removed_sample_premises": [],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.508,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    "segment-header-cited": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Segment",
+      "export_sha256": "ad0bab77df3c8a774d94a249ac50eb43bfc808c76653b6c4940b5bba3ee290aa",
+      "mode": "search",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [
+        "Domain.Message.littleEndian_law_fourBytesReadBack"
+      ],
+      "local_lemmas": [],
+      "trials": [
+        {
+          "law": "headerFor.readsBack",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "universal",
+          "original_statement": "\u2200 (length : Int), ((0 <= length) && (length < 4294967296)) = true -> (do pure (lengthOf (<- headerFor length))) = Except.ok (Except.ok length)",
+          "statement": "\u2200 (length : Int), ((0 <= length) && (length < 4294967296)) = true -> (do pure (lengthOf (<- headerFor length))) = Except.ok (Except.ok length)",
+          "removed_sample_premises": [],
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.074,
+          "axioms": null,
+          "accepted": false
+        },
+        {
+          "law": "headerFor.readsBack.implication",
+          "category": "obligation",
+          "baseline": null,
+          "export_kind": "universal",
+          "original_statement": "\u2200 (length : Int), ((0 <= length) && (length < 4294967296)) = true -> (do pure (lengthOf (<- headerFor length))) = Except.ok (Except.ok length)",
+          "statement": "\u2200 (length : Int), ((0 <= length) && (length < 4294967296)) = true -> (do pure (lengthOf (<- headerFor length))) = Except.ok (Except.ok length)",
+          "removed_sample_premises": [],
+          "exit_code": -9,
+          "timeout": true,
+          "seconds": 30.076,
+          "axioms": null,
+          "accepted": false
+        }
+      ]
+    },
+    "minimal-committed": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.StackItem",
+      "export_sha256": "30574433dc6767c1d391300f42e7dd22c4a0ddcd6844d78ff33a4f8c0a4b65ce",
+      "mode": "committed",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "local_lemmas": [],
+      "trials": [
+        {
+          "law": "Domain.StackItem.isMinimalPush.directPushIsMinimalUnlessSmallNumber",
+          "category": "class",
+          "baseline": {
+            "axioms": [],
+            "backend": "lean",
+            "law": "Domain.StackItem.isMinimalPush.directPushIsMinimalUnlessSmallNumber",
+            "theorem": "Domain.StackItem.isMinimalPush_law_directPushIsMinimalUnlessSmallNumber_part1",
+            "tier": "bounded"
+          },
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (b : Int), b = 0 \u2228 b = 1 \u2228 b = 2 \u2228 b = 3 \u2228 b = 4 \u2228 b = 5 \u2228 b = 6 \u2228 b = 7 \u2228 b = 8 \u2228 b = 9 \u2228 b = 10 \u2228 b = 11 \u2228 b = 12 \u2228 b = 13 \u2228 b = 14 \u2228 b = 15 \u2228 b = 16 \u2228 b = 17 \u2228 b = 18 \u2228 b = 19 \u2228 b = 20 \u2228 b = 21 \u2228 b = 22 \u2228 b = 23 \u2228 b = 24 \u2228 b = 25 \u2228 b = 26 \u2228 b = 27 \u2228 b = 28 \u2228 b = 29 \u2228 b = 30 \u2228 b = 31 \u2228 b = 32 \u2228 b = 33 \u2228 b = 34 \u2228 b = 35 \u2228 b = 36 \u2228 b = 37 \u2228 b = 38 \u2228 b = 39 \u2228 b = 40 \u2228 b = 41 \u2228 b = 42 \u2228 b = 43 \u2228 b = 44 \u2228 b = 45 \u2228 b = 46 \u2228 b = 47 \u2228 b = 48 \u2228 b = 49 \u2228 b = 50 \u2228 b = 51 \u2228 b = 52 \u2228 b = 53 \u2228 b = 54 \u2228 b = 55 \u2228 b = 56 \u2228 b = 57 \u2228 b = 58 \u2228 b = 59 \u2228 b = 60 \u2228 b = 61 \u2228 b = 62 \u2228 b = 63 \u2228 b = 64 \u2228 b = 65 \u2228 b = 66 \u2228 b = 67 \u2228 b = 68 \u2228 b = 69 \u2228 b = 70 \u2228 b = 71 \u2228 b = 72 \u2228 b = 73 \u2228 b = 74 \u2228 b = 75 \u2228 b = 76 \u2228 b = 77 \u2228 b = 78 \u2228 b = 79 \u2228 b = 80 \u2228 b = 81 \u2228 b = 82 \u2228 b = 83 \u2228 b = 84 \u2228 b = 85 \u2228 b = 86 \u2228 b = 87 \u2228 b = 88 \u2228 b = 89 \u2228 b = 90 \u2228 b = 91 \u2228 b = 92 \u2228 b = 93 \u2228 b = 94 \u2228 b = 95 \u2228 b = 96 \u2228 b = 97 \u2228 b = 98 \u2228 b = 99 \u2228 b = 100 \u2228 b = 101 \u2228 b = 102 \u2228 b = 103 \u2228 b = 104 \u2228 b = 105 \u2228 b = 106 \u2228 b = 107 \u2228 b = 108 \u2228 b = 109 \u2228 b = 110 \u2228 b = 111 \u2228 b = 112 \u2228 b = 113 \u2228 b = 114 \u2228 b = 115 \u2228 b = 116 \u2228 b = 117 \u2228 b = 118 \u2228 b = 119 \u2228 b = 120 \u2228 b = 121 \u2228 b = 122 \u2228 b = 123 \u2228 b = 124 \u2228 b = 125 \u2228 b = 126 \u2228 b = 127 -> ((b >= 0) && (b <= 255)) = true -> Domain.StackItem.isMinimalPush 1 [b] = (!(((b >= 1) && (b <= 16)) || (b == 129)))",
+          "statement": "\u2200 (b : Int), ((b >= 0) && (b <= 255)) = true -> Domain.StackItem.isMinimalPush 1 [b] = (!(((b >= 1) && (b <= 16)) || (b == 129)))",
+          "removed_sample_premises": [
+            "b = 0 \u2228 b = 1 \u2228 b = 2 \u2228 b = 3 \u2228 b = 4 \u2228 b = 5 \u2228 b = 6 \u2228 b = 7 \u2228 b = 8 \u2228 b = 9 \u2228 b = 10 \u2228 b = 11 \u2228 b = 12 \u2228 b = 13 \u2228 b = 14 \u2228 b = 15 \u2228 b = 16 \u2228 b = 17 \u2228 b = 18 \u2228 b = 19 \u2228 b = 20 \u2228 b = 21 \u2228 b = 22 \u2228 b = 23 \u2228 b = 24 \u2228 b = 25 \u2228 b = 26 \u2228 b = 27 \u2228 b = 28 \u2228 b = 29 \u2228 b = 30 \u2228 b = 31 \u2228 b = 32 \u2228 b = 33 \u2228 b = 34 \u2228 b = 35 \u2228 b = 36 \u2228 b = 37 \u2228 b = 38 \u2228 b = 39 \u2228 b = 40 \u2228 b = 41 \u2228 b = 42 \u2228 b = 43 \u2228 b = 44 \u2228 b = 45 \u2228 b = 46 \u2228 b = 47 \u2228 b = 48 \u2228 b = 49 \u2228 b = 50 \u2228 b = 51 \u2228 b = 52 \u2228 b = 53 \u2228 b = 54 \u2228 b = 55 \u2228 b = 56 \u2228 b = 57 \u2228 b = 58 \u2228 b = 59 \u2228 b = 60 \u2228 b = 61 \u2228 b = 62 \u2228 b = 63 \u2228 b = 64 \u2228 b = 65 \u2228 b = 66 \u2228 b = 67 \u2228 b = 68 \u2228 b = 69 \u2228 b = 70 \u2228 b = 71 \u2228 b = 72 \u2228 b = 73 \u2228 b = 74 \u2228 b = 75 \u2228 b = 76 \u2228 b = 77 \u2228 b = 78 \u2228 b = 79 \u2228 b = 80 \u2228 b = 81 \u2228 b = 82 \u2228 b = 83 \u2228 b = 84 \u2228 b = 85 \u2228 b = 86 \u2228 b = 87 \u2228 b = 88 \u2228 b = 89 \u2228 b = 90 \u2228 b = 91 \u2228 b = 92 \u2228 b = 93 \u2228 b = 94 \u2228 b = 95 \u2228 b = 96 \u2228 b = 97 \u2228 b = 98 \u2228 b = 99 \u2228 b = 100 \u2228 b = 101 \u2228 b = 102 \u2228 b = 103 \u2228 b = 104 \u2228 b = 105 \u2228 b = 106 \u2228 b = 107 \u2228 b = 108 \u2228 b = 109 \u2228 b = 110 \u2228 b = 111 \u2228 b = 112 \u2228 b = 113 \u2228 b = 114 \u2228 b = 115 \u2228 b = 116 \u2228 b = 117 \u2228 b = 118 \u2228 b = 119 \u2228 b = 120 \u2228 b = 121 \u2228 b = 122 \u2228 b = 123 \u2228 b = 124 \u2228 b = 125 \u2228 b = 126 \u2228 b = 127"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.276,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    "directpush-committed": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.ScriptParse",
+      "export_sha256": "4d2da051ebfcf4a9a3f47b04de892ffeb65e1cd4da10cbc073cf7cd2354211b4",
+      "mode": "committed",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "local_lemmas": [],
+      "trials": [
+        {
+          "law": "Domain.ScriptParse.parse.directPushRunsPastTheEnd",
+          "category": "class",
+          "baseline": {
+            "axioms": [],
+            "backend": "lean",
+            "law": "Domain.ScriptParse.parse.directPushRunsPastTheEnd",
+            "theorem": "Domain.ScriptParse.parse_law_directPushRunsPastTheEnd",
+            "tier": "bounded"
+          },
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (n : Int), n = 1 \u2228 n = 2 \u2228 n = 3 \u2228 n = 20 \u2228 n = 75 -> ((n >= 1) && (n <= 75)) = true -> Domain.ScriptParse.parse [n] = Except.error (s!\"push of {n} bytes runs past the end of the script\")",
+          "statement": "\u2200 (n : Int), ((n >= 1) && (n <= 75)) = true -> Domain.ScriptParse.parse [n] = Except.error (s!\"push of {n} bytes runs past the end of the script\")",
+          "removed_sample_premises": [
+            "n = 1 \u2228 n = 2 \u2228 n = 3 \u2228 n = 20 \u2228 n = 75"
+          ],
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 6.163,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": false
+        }
+      ]
+    },
+    "scriptstate-committed": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.ScriptState",
+      "export_sha256": "fcc4803a59f863f266082f1766a67682367d9b92706efdadb6fc4b261984bac1",
+      "mode": "committed",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "local_lemmas": [],
+      "trials": [
+        {
+          "law": "Domain.ScriptState.rearranged.staysWithinDeclaredDepth",
+          "category": "class",
+          "baseline": {
+            "axioms": [],
+            "backend": "lean",
+            "law": "Domain.ScriptState.rearranged.staysWithinDeclaredDepth",
+            "theorem": "Domain.ScriptState.rearranged_law_staysWithinDeclaredDepth",
+            "tier": "bounded"
+          },
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (code : Int) (items : List (List Int)), code = 109 \u2228 code = 110 \u2228 code = 111 \u2228 code = 112 \u2228 code = 113 \u2228 code = 114 \u2228 code = 117 \u2228 code = 118 \u2228 code = 119 \u2228 code = 120 \u2228 code = 123 \u2228 code = 124 \u2228 code = 125 -> items = [[1]] \u2228 items = [[1], [2]] \u2228 items = [[1], [2], [3]] \u2228 items = [[1], [2], [3], [4], [5], [6]] \u2228 items = [[1], [2], [3], [4], [5], [6], [7], [8]] -> (Domain.Opcode.rearrangeDepth code > 0) = true -> Domain.ScriptState.rearranged code (items.take (Int.toNat (Domain.Opcode.rearrangeDepth code))) = Domain.ScriptState.rearranged code items",
+          "statement": "\u2200 (code : Int) (items : List (List Int)), (Domain.Opcode.rearrangeDepth code > 0) = true -> Domain.ScriptState.rearranged code (items.take (Int.toNat (Domain.Opcode.rearrangeDepth code))) = Domain.ScriptState.rearranged code items",
+          "removed_sample_premises": [
+            "code = 109 \u2228 code = 110 \u2228 code = 111 \u2228 code = 112 \u2228 code = 113 \u2228 code = 114 \u2228 code = 117 \u2228 code = 118 \u2228 code = 119 \u2228 code = 120 \u2228 code = 123 \u2228 code = 124 \u2228 code = 125",
+            "items = [[1]] \u2228 items = [[1], [2]] \u2228 items = [[1], [2], [3]] \u2228 items = [[1], [2], [3], [4], [5], [6]] \u2228 items = [[1], [2], [3], [4], [5], [6], [7], [8]]"
+          ],
+          "exit_code": 1,
+          "timeout": false,
+          "seconds": 13.24,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Quot.sound"
+          ],
+          "accepted": false
+        }
+      ]
+    },
+    "segment-suggestions": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Segment",
+      "export_sha256": "ad0bab77df3c8a774d94a249ac50eb43bfc808c76653b6c4940b5bba3ee290aa",
+      "mode": "search",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "local_lemmas": [],
+      "trials": [
+        {
+          "law": "place.staysUnderCap",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (blockBytes : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 0, used := 134217624 : SegmentState } \u2228 state = { segment := 3, used := 134217728 : SegmentState } -> blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 134217724 -> (((headerBytes + blockBytes) <= capBytes) && (state.used <= capBytes)) = true -> ((place state blockBytes).state.used <= capBytes) = true",
+          "statement": "\u2200 (state : SegmentState) (blockBytes : Int), (((headerBytes + blockBytes) <= capBytes) && (state.used <= capBytes)) = true -> ((place state blockBytes).state.used <= capBytes) = true",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 0, used := 134217624 : SegmentState } \u2228 state = { segment := 3, used := 134217728 : SegmentState }",
+            "blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 134217724"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.915,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "place.recordEndsAtUsed",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (blockBytes : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 1, used := 14 : SegmentState } \u2228 state = { segment := 3, used := 134217700 : SegmentState } -> blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 200000000 -> ((state.used >= 0) && (blockBytes >= 0)) = true -> endsAtUsed (place state blockBytes) blockBytes = true",
+          "statement": "\u2200 (state : SegmentState) (blockBytes : Int), ((state.used >= 0) && (blockBytes >= 0)) = true -> endsAtUsed (place state blockBytes) blockBytes = true",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 1, used := 14 : SegmentState } \u2228 state = { segment := 3, used := 134217700 : SegmentState }",
+            "blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 200000000"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.942,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "place.consecutiveRecordsTile",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (first : Int) (second : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 3, used := 134217600 : SegmentState } -> first = 0 \u2228 first = 1 \u2228 first = 100 \u2228 first = 200000000 -> second = 0 \u2228 second = 1 \u2228 second = 100 \u2228 second = 200000000 -> ((state.used >= 0) && ((first >= 0) && (second >= 0))) = true -> tiles (place state first) (place ((place state first).state) second) = true",
+          "statement": "\u2200 (state : SegmentState) (first : Int) (second : Int), ((state.used >= 0) && ((first >= 0) && (second >= 0))) = true -> tiles (place state first) (place ((place state first).state) second) = true",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 3, used := 134217600 : SegmentState }",
+            "first = 0 \u2228 first = 1 \u2228 first = 100 \u2228 first = 200000000",
+            "second = 0 \u2228 second = 1 \u2228 second = 100 \u2228 second = 200000000"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.08,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "agreesWithDisk.anyOtherSizeRefuses",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (delta : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 5745, used := 100591405 : SegmentState } -> delta = (-104) \u2228 delta = (-1) \u2228 delta = 1 \u2228 delta = 35202610 -> (delta != 0) = true -> agreesWithDisk state (state.used + delta) = Except.error (s!\"Segment {state.segment} is {(state.used + delta)} bytes on the disk where the count says {state.used}; a Location placed from the count would be {((delta : Int).natAbs : Int)} bytes off, so none was written, and the next open counts from the disk again\")",
+          "statement": "\u2200 (state : SegmentState) (delta : Int), (delta != 0) = true -> agreesWithDisk state (state.used + delta) = Except.error (s!\"Segment {state.segment} is {(state.used + delta)} bytes on the disk where the count says {state.used}; a Location placed from the count would be {((delta : Int).natAbs : Int)} bytes off, so none was written, and the next open counts from the disk again\")",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 5745, used := 100591405 : SegmentState }",
+            "delta = (-104) \u2228 delta = (-1) \u2228 delta = 1 \u2228 delta = 35202610"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 1.75,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        },
+        {
+          "law": "place.agreesWithTheReader",
+          "category": "class",
+          "baseline": null,
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (state : SegmentState) (blockBytes : Int), state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 3, used := 134217600 : SegmentState } -> blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 200000000 -> (((state.used >= 0) && (blockBytes >= 0)) && (!rolls state blockBytes)) = true -> readerAgrees state blockBytes (place state blockBytes) = true",
+          "statement": "\u2200 (state : SegmentState) (blockBytes : Int), (((state.used >= 0) && (blockBytes >= 0)) && (!rolls state blockBytes)) = true -> readerAgrees state blockBytes (place state blockBytes) = true",
+          "removed_sample_premises": [
+            "state = initial \u2228 state = { segment := 0, used := 104 : SegmentState } \u2228 state = { segment := 3, used := 134217600 : SegmentState }",
+            "blockBytes = 0 \u2228 blockBytes = 1 \u2228 blockBytes = 100 \u2228 blockBytes = 200000000"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 2.068,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    },
+    "minimal-suggestions": {
+      "source_sha": "ba4303a5a4c247f39b5257f0ca43d694340386d6",
+      "waterfall_sha": "e04ea93b678c831c404067dd86573b821bc528e4",
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "module": "Domain.StackItem",
+      "export_sha256": "30574433dc6767c1d391300f42e7dd22c4a0ddcd6844d78ff33a4f8c0a4b65ce",
+      "mode": "committed",
+      "effort": 1000,
+      "timeout_seconds": 30,
+      "max_heartbeats": 1000000,
+      "hints": [],
+      "local_lemmas": [],
+      "trials": [
+        {
+          "law": "Domain.StackItem.isMinimalPush.directPushIsMinimalUnlessSmallNumber",
+          "category": "class",
+          "baseline": {
+            "axioms": [],
+            "backend": "lean",
+            "law": "Domain.StackItem.isMinimalPush.directPushIsMinimalUnlessSmallNumber",
+            "theorem": "Domain.StackItem.isMinimalPush_law_directPushIsMinimalUnlessSmallNumber_part1",
+            "tier": "bounded"
+          },
+          "export_kind": "bounded-domain",
+          "original_statement": "\u2200 (b : Int), b = 0 \u2228 b = 1 \u2228 b = 2 \u2228 b = 3 \u2228 b = 4 \u2228 b = 5 \u2228 b = 6 \u2228 b = 7 \u2228 b = 8 \u2228 b = 9 \u2228 b = 10 \u2228 b = 11 \u2228 b = 12 \u2228 b = 13 \u2228 b = 14 \u2228 b = 15 \u2228 b = 16 \u2228 b = 17 \u2228 b = 18 \u2228 b = 19 \u2228 b = 20 \u2228 b = 21 \u2228 b = 22 \u2228 b = 23 \u2228 b = 24 \u2228 b = 25 \u2228 b = 26 \u2228 b = 27 \u2228 b = 28 \u2228 b = 29 \u2228 b = 30 \u2228 b = 31 \u2228 b = 32 \u2228 b = 33 \u2228 b = 34 \u2228 b = 35 \u2228 b = 36 \u2228 b = 37 \u2228 b = 38 \u2228 b = 39 \u2228 b = 40 \u2228 b = 41 \u2228 b = 42 \u2228 b = 43 \u2228 b = 44 \u2228 b = 45 \u2228 b = 46 \u2228 b = 47 \u2228 b = 48 \u2228 b = 49 \u2228 b = 50 \u2228 b = 51 \u2228 b = 52 \u2228 b = 53 \u2228 b = 54 \u2228 b = 55 \u2228 b = 56 \u2228 b = 57 \u2228 b = 58 \u2228 b = 59 \u2228 b = 60 \u2228 b = 61 \u2228 b = 62 \u2228 b = 63 \u2228 b = 64 \u2228 b = 65 \u2228 b = 66 \u2228 b = 67 \u2228 b = 68 \u2228 b = 69 \u2228 b = 70 \u2228 b = 71 \u2228 b = 72 \u2228 b = 73 \u2228 b = 74 \u2228 b = 75 \u2228 b = 76 \u2228 b = 77 \u2228 b = 78 \u2228 b = 79 \u2228 b = 80 \u2228 b = 81 \u2228 b = 82 \u2228 b = 83 \u2228 b = 84 \u2228 b = 85 \u2228 b = 86 \u2228 b = 87 \u2228 b = 88 \u2228 b = 89 \u2228 b = 90 \u2228 b = 91 \u2228 b = 92 \u2228 b = 93 \u2228 b = 94 \u2228 b = 95 \u2228 b = 96 \u2228 b = 97 \u2228 b = 98 \u2228 b = 99 \u2228 b = 100 \u2228 b = 101 \u2228 b = 102 \u2228 b = 103 \u2228 b = 104 \u2228 b = 105 \u2228 b = 106 \u2228 b = 107 \u2228 b = 108 \u2228 b = 109 \u2228 b = 110 \u2228 b = 111 \u2228 b = 112 \u2228 b = 113 \u2228 b = 114 \u2228 b = 115 \u2228 b = 116 \u2228 b = 117 \u2228 b = 118 \u2228 b = 119 \u2228 b = 120 \u2228 b = 121 \u2228 b = 122 \u2228 b = 123 \u2228 b = 124 \u2228 b = 125 \u2228 b = 126 \u2228 b = 127 -> ((b >= 0) && (b <= 255)) = true -> Domain.StackItem.isMinimalPush 1 [b] = (!(((b >= 1) && (b <= 16)) || (b == 129)))",
+          "statement": "\u2200 (b : Int), ((b >= 0) && (b <= 255)) = true -> Domain.StackItem.isMinimalPush 1 [b] = (!(((b >= 1) && (b <= 16)) || (b == 129)))",
+          "removed_sample_premises": [
+            "b = 0 \u2228 b = 1 \u2228 b = 2 \u2228 b = 3 \u2228 b = 4 \u2228 b = 5 \u2228 b = 6 \u2228 b = 7 \u2228 b = 8 \u2228 b = 9 \u2228 b = 10 \u2228 b = 11 \u2228 b = 12 \u2228 b = 13 \u2228 b = 14 \u2228 b = 15 \u2228 b = 16 \u2228 b = 17 \u2228 b = 18 \u2228 b = 19 \u2228 b = 20 \u2228 b = 21 \u2228 b = 22 \u2228 b = 23 \u2228 b = 24 \u2228 b = 25 \u2228 b = 26 \u2228 b = 27 \u2228 b = 28 \u2228 b = 29 \u2228 b = 30 \u2228 b = 31 \u2228 b = 32 \u2228 b = 33 \u2228 b = 34 \u2228 b = 35 \u2228 b = 36 \u2228 b = 37 \u2228 b = 38 \u2228 b = 39 \u2228 b = 40 \u2228 b = 41 \u2228 b = 42 \u2228 b = 43 \u2228 b = 44 \u2228 b = 45 \u2228 b = 46 \u2228 b = 47 \u2228 b = 48 \u2228 b = 49 \u2228 b = 50 \u2228 b = 51 \u2228 b = 52 \u2228 b = 53 \u2228 b = 54 \u2228 b = 55 \u2228 b = 56 \u2228 b = 57 \u2228 b = 58 \u2228 b = 59 \u2228 b = 60 \u2228 b = 61 \u2228 b = 62 \u2228 b = 63 \u2228 b = 64 \u2228 b = 65 \u2228 b = 66 \u2228 b = 67 \u2228 b = 68 \u2228 b = 69 \u2228 b = 70 \u2228 b = 71 \u2228 b = 72 \u2228 b = 73 \u2228 b = 74 \u2228 b = 75 \u2228 b = 76 \u2228 b = 77 \u2228 b = 78 \u2228 b = 79 \u2228 b = 80 \u2228 b = 81 \u2228 b = 82 \u2228 b = 83 \u2228 b = 84 \u2228 b = 85 \u2228 b = 86 \u2228 b = 87 \u2228 b = 88 \u2228 b = 89 \u2228 b = 90 \u2228 b = 91 \u2228 b = 92 \u2228 b = 93 \u2228 b = 94 \u2228 b = 95 \u2228 b = 96 \u2228 b = 97 \u2228 b = 98 \u2228 b = 99 \u2228 b = 100 \u2228 b = 101 \u2228 b = 102 \u2228 b = 103 \u2228 b = 104 \u2228 b = 105 \u2228 b = 106 \u2228 b = 107 \u2228 b = 108 \u2228 b = 109 \u2228 b = 110 \u2228 b = 111 \u2228 b = 112 \u2228 b = 113 \u2228 b = 114 \u2228 b = 115 \u2228 b = 116 \u2228 b = 117 \u2228 b = 118 \u2228 b = 119 \u2228 b = 120 \u2228 b = 121 \u2228 b = 122 \u2228 b = 123 \u2228 b = 124 \u2228 b = 125 \u2228 b = 126 \u2228 b = 127"
+          ],
+          "exit_code": 0,
+          "timeout": false,
+          "seconds": 9.097,
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "accepted": true
+        }
+      ]
+    }
+  },
+  "replay": {
+    "Segment": {
+      "module": "Segment",
+      "replay": {
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 1.285,
+        "axioms": {
+          "place_law_staysUnderCap": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "place_law_recordEndsAtUsed": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "place_law_consecutiveRecordsTile": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "agreesWithDisk_law_anyOtherSizeRefuses": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "place_law_agreesWithTheReader": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        "accepted": true
+      },
+      "fresh": {
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 39.089,
+        "accepted": true
+      }
+    },
+    "Domain.StackItem": {
+      "module": "Domain.StackItem",
+      "replay": {
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 1.288,
+        "axioms": {
+          "isMinimalPush_law_directPushIsMinimalUnlessSmallNumber": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        "accepted": true
+      },
+      "fresh": {
+        "exit_code": 0,
+        "timeout": false,
+        "seconds": 38.89,
+        "accepted": true
+      }
+    }
+  },
+  "initial_counts": {
+    "propositions": 25,
+    "accepted": 15,
+    "laws": 18,
+    "obligations": 7
+  },
+  "source_files_sha256": {
+    "domain/segment.av": "bf3348786dba10a9ffdd03ade96e0644a380938d44c8065ef8101fd3efcaa256",
+    "domain/message.av": "263904344eacea46951f1d17566a363409723a5943e5e65ed8bb287f043766d4",
+    "domain/scriptparse.av": "21eaa2bfd189bbd5c3bd4311bef76b076fd170c54615dfa21c59a527f9f235f8",
+    "domain/stackitem.av": "95668dc518349e1a0ee66db5cfe14bc1e51a576b75be9aebe59b10c17414a3bd",
+    "domain/scriptstate.av": "5d68c458c62ff6cdc0db1cd79f31f73ce2b508381cd6a3594fe4050876d36a60"
+  }
+}

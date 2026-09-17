@@ -1,0 +1,2 @@
+error: Segment.lean:944:49: (deterministic) timeout at `isDefEq`, maximum number of heartbeats (200000) has been reached
+error: build failed

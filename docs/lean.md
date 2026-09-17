@@ -480,6 +480,16 @@ suggestions print this line above their pasteable `verify` block, so pasting a
 calculated law and re-checking records `provenance: "calculated from=… tool=explain"`
 automatically.
 
+## Optional waterfall discovery (`--waterfall PATH`)
+
+`aver proof file.av --check --waterfall /path/to/waterfall` adds bounded proof
+search after existing automation. Accepted scripts are replayed without waterfall,
+saved in the generated Lean and a rechecked cache, then audited by the normal
+project gate. Source guards, `using` scope, and every `because` obligation remain
+part of the proof. The option is off by default.
+
+See [waterfall.md](waterfall.md) for setup, limits, retained output, and validation.
+
 ## Minimizing a proof (`--minimize`)
 
 `aver proof file.av --backend lean -o out/ --check --minimize` (Lean-only,
