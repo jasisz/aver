@@ -219,9 +219,11 @@ pub fn builtinConsolePrint(
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -248,9 +250,11 @@ pub fn builtinConsoleError(
         crate::aver_replay::invoke_capability_effect(
             "Console.error",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.error", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -277,9 +281,11 @@ pub fn builtinConsoleWarn(
         crate::aver_replay::invoke_capability_effect(
             "Console.warn",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.warn", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -301,15 +307,20 @@ pub fn builtinConsoleReadLine(
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Console.readLine", "recorded", vec![], || {
-            crate::provider_support::invoke::<Result<AverStr, AverStr>>(
-                "Console",
-                "Console.readLine",
-                vec![],
-                None,
-                "Result<String, String>",
-            )
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Console.readLine",
+            "recorded",
+            crate::aver_replay::effect_args("Console.readLine", || vec![]),
+            || {
+                crate::provider_support::invoke::<Result<AverStr, AverStr>>(
+                    "Console",
+                    "Console.readLine",
+                    vec![],
+                    None,
+                    "Result<String, String>",
+                )
+            },
+        )
     } {
         Ok(line @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(line)),
@@ -333,9 +344,11 @@ pub fn builtinDiskReadText(
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Disk.readText", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<AverStr, AverStr>>(
                     "Disk",
@@ -363,15 +376,20 @@ pub fn builtinArgsGet(
     crate::cancel_checkpoint();
     let rawArgs @ _ = {
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Args.get", "recorded", vec![], || {
-            crate::provider_support::invoke::<aver_rt::AverList<AverStr>>(
-                "Args",
-                "Args.get",
-                vec![],
-                None,
-                "List<String>",
-            )
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Args.get",
+            "recorded",
+            crate::aver_replay::effect_args("Args.get", || vec![]),
+            || {
+                crate::provider_support::invoke::<aver_rt::AverList<AverStr>>(
+                    "Args",
+                    "Args.get",
+                    vec![],
+                    None,
+                    "List<String>",
+                )
+            },
+        )
     };
     Ok(crate::aver_generated::domain::value::Val::ValList(
         crate::aver_generated::domain::builtins::stringsToVals__collected(
@@ -394,9 +412,11 @@ pub fn builtinEnvGet(
         crate::aver_replay::invoke_capability_effect(
             "Env.get",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Env.get", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Option<AverStr>>(
                     "Env",
@@ -442,10 +462,12 @@ pub fn builtinEnvSetInner(
         crate::aver_replay::invoke_capability_effect(
             "Env.set",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Env.set", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Env",
@@ -670,10 +692,12 @@ pub fn builtinRandomIntInner(
         crate::aver_replay::invoke_capability_effect(
             "Random.int",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Random.int", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<aver_rt::AverInt, AverStr>>(
                     "Random",
@@ -710,9 +734,11 @@ pub fn builtinTimeSleep(
         crate::aver_replay::invoke_capability_effect(
             "Time.sleep",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Time.sleep", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Time",
@@ -740,15 +766,20 @@ pub fn builtinTimeUnixMs(
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValInt({
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Time.unixMs", "recorded", vec![], || {
-            crate::provider_support::invoke::<aver_rt::AverInt>(
-                "Time",
-                "Time.unixMs",
-                vec![],
-                None,
-                "Int",
-            )
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Time.unixMs",
+            "recorded",
+            crate::aver_replay::effect_args("Time.unixMs", || vec![]),
+            || {
+                crate::provider_support::invoke::<aver_rt::AverInt>(
+                    "Time",
+                    "Time.unixMs",
+                    vec![],
+                    None,
+                    "Int",
+                )
+            },
+        )
     }))
 }
 
@@ -770,15 +801,20 @@ pub fn termClear() -> Result<crate::aver_generated::domain::value::Val, AverStr>
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Terminal.clear", "recorded", vec![], || {
-            crate::provider_support::invoke::<Result<(), AverStr>>(
-                "Terminal",
-                "Terminal.clear",
-                vec![],
-                None,
-                "Result<Unit, String>",
-            )
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.clear",
+            "recorded",
+            crate::aver_replay::effect_args("Terminal.clear", || vec![]),
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.clear",
+                    vec![],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
@@ -794,15 +830,20 @@ pub fn termFlush() -> Result<crate::aver_generated::domain::value::Val, AverStr>
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Terminal.flush", "recorded", vec![], || {
-            crate::provider_support::invoke::<Result<(), AverStr>>(
-                "Terminal",
-                "Terminal.flush",
-                vec![],
-                None,
-                "Result<Unit, String>",
-            )
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.flush",
+            "recorded",
+            crate::aver_replay::effect_args("Terminal.flush", || vec![]),
+            || {
+                crate::provider_support::invoke::<Result<(), AverStr>>(
+                    "Terminal",
+                    "Terminal.flush",
+                    vec![],
+                    None,
+                    "Result<Unit, String>",
+                )
+            },
+        )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
@@ -821,7 +862,7 @@ pub fn termEnableRawMode() -> Result<crate::aver_generated::domain::value::Val, 
         crate::aver_replay::invoke_capability_effect(
             "Terminal.enableRawMode",
             "recorded",
-            vec![],
+            crate::aver_replay::effect_args("Terminal.enableRawMode", || vec![]),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Terminal",
@@ -850,7 +891,7 @@ pub fn termDisableRawMode() -> Result<crate::aver_generated::domain::value::Val,
         crate::aver_replay::invoke_capability_effect(
             "Terminal.disableRawMode",
             "recorded",
-            vec![],
+            crate::aver_replay::effect_args("Terminal.disableRawMode", || vec![]),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Terminal",
@@ -879,7 +920,7 @@ pub fn termHideCursor() -> Result<crate::aver_generated::domain::value::Val, Ave
         crate::aver_replay::invoke_capability_effect(
             "Terminal.hideCursor",
             "recorded",
-            vec![],
+            crate::aver_replay::effect_args("Terminal.hideCursor", || vec![]),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Terminal",
@@ -908,7 +949,7 @@ pub fn termShowCursor() -> Result<crate::aver_generated::domain::value::Val, Ave
         crate::aver_replay::invoke_capability_effect(
             "Terminal.showCursor",
             "recorded",
-            vec![],
+            crate::aver_replay::effect_args("Terminal.showCursor", || vec![]),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Terminal",
@@ -937,7 +978,7 @@ pub fn termResetColor() -> Result<crate::aver_generated::domain::value::Val, Ave
         crate::aver_replay::invoke_capability_effect(
             "Terminal.resetColor",
             "recorded",
-            vec![],
+            crate::aver_replay::effect_args("Terminal.resetColor", || vec![]),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Terminal",
@@ -965,15 +1006,20 @@ pub fn builtinTerminalReadKey(
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Terminal.readKey", "recorded", vec![], || {
-            crate::provider_support::invoke::<Result<Option<AverStr>, AverStr>>(
-                "Terminal",
-                "Terminal.readKey",
-                vec![],
-                None,
-                "Result<Option<String>, String>",
-            )
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.readKey",
+            "recorded",
+            crate::aver_replay::effect_args("Terminal.readKey", || vec![]),
+            || {
+                crate::provider_support::invoke::<Result<Option<AverStr>, AverStr>>(
+                    "Terminal",
+                    "Terminal.readKey",
+                    vec![],
+                    None,
+                    "Result<Option<String>, String>",
+                )
+            },
+        )
     } {
         Ok(key @ _) => match key {
             Some(k @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
@@ -998,15 +1044,22 @@ pub fn builtinTerminalSize(
     crate::cancel_checkpoint();
     match {
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Terminal.size", "recorded", vec![], || {
-            crate::provider_support::invoke::<Result<crate::aver_generated::terminal::Size, AverStr>>(
-                "Terminal",
-                "Terminal.size",
-                vec![],
-                None,
-                "Result<Terminal.Size, String>",
-            )
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Terminal.size",
+            "recorded",
+            crate::aver_replay::effect_args("Terminal.size", || vec![]),
+            || {
+                crate::provider_support::invoke::<
+                    Result<crate::aver_generated::terminal::Size, AverStr>,
+                >(
+                    "Terminal",
+                    "Terminal.size",
+                    vec![],
+                    None,
+                    "Result<Terminal.Size, String>",
+                )
+            },
+        )
     } {
         Ok(sz @ _) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValRecord(
@@ -1054,9 +1107,11 @@ pub fn termPrintStr(s @ _: AverStr) -> Result<crate::aver_generated::domain::val
         crate::aver_replay::invoke_capability_effect(
             "Terminal.print",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Terminal.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Terminal",
@@ -1090,9 +1145,11 @@ pub fn builtinTerminalSetColor(
         crate::aver_replay::invoke_capability_effect(
             "Terminal.setColor",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Terminal.setColor", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Terminal",
@@ -1140,10 +1197,12 @@ pub fn builtinTerminalMoveToInner(
         crate::aver_replay::invoke_capability_effect(
             "Terminal.moveTo",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Terminal.moveTo", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Terminal",
@@ -1194,10 +1253,12 @@ pub fn builtinDiskWriteTextInner(
         crate::aver_replay::invoke_capability_effect(
             "Disk.writeText",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Disk.writeText", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Disk",
@@ -1248,10 +1309,12 @@ pub fn builtinDiskAppendTextInner(
         crate::aver_replay::invoke_capability_effect(
             "Disk.appendText",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Disk.appendText", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Disk",
@@ -1288,9 +1351,11 @@ pub fn builtinDiskDelete(
         crate::aver_replay::invoke_capability_effect(
             "Disk.delete",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Disk.delete", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Disk",
@@ -1324,9 +1389,11 @@ pub fn builtinDiskDeleteDir(
         crate::aver_replay::invoke_capability_effect(
             "Disk.deleteDir",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Disk.deleteDir", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Disk",
@@ -1360,9 +1427,11 @@ pub fn builtinDiskMakeDir(
         crate::aver_replay::invoke_capability_effect(
             "Disk.makeDir",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Disk.makeDir", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Disk",
@@ -1396,9 +1465,11 @@ pub fn builtinDiskExists(
         crate::aver_replay::invoke_capability_effect(
             "Disk.exists",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Disk.exists", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<bool>(
                     "Disk",
@@ -1425,9 +1496,11 @@ pub fn builtinDiskListDir(
         crate::aver_replay::invoke_capability_effect(
             "Disk.listDir",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Disk.listDir", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<aver_rt::AverList<AverStr>, AverStr>>(
                     "Disk",
@@ -1697,9 +1770,20 @@ pub fn builtinTimeNow(
     crate::cancel_checkpoint();
     Ok(crate::aver_generated::domain::value::Val::ValStr({
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Time.now", "recorded", vec![], || {
-            crate::provider_support::invoke::<AverStr>("Time", "Time.now", vec![], None, "String")
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Time.now",
+            "recorded",
+            crate::aver_replay::effect_args("Time.now", || vec![]),
+            || {
+                crate::provider_support::invoke::<AverStr>(
+                    "Time",
+                    "Time.now",
+                    vec![],
+                    None,
+                    "String",
+                )
+            },
+        )
     }))
 }
 
@@ -1721,9 +1805,11 @@ pub fn builtinHttpSimple(
                     crate::aver_replay::invoke_capability_effect(
                         "Http.get",
                         "recorded",
-                        vec![crate::aver_replay::ReplayValue::to_replay_json(
-                            &__provider_arg0,
-                        )],
+                        crate::aver_replay::effect_args("Http.get", || {
+                            vec![crate::aver_replay::ReplayValue::to_replay_json(
+                                &__provider_arg0,
+                            )]
+                        }),
                         || {
                             crate::provider_support::invoke::<
                                 Result<crate::aver_generated::http::Response, AverStr>,
@@ -1747,9 +1833,11 @@ pub fn builtinHttpSimple(
                         crate::aver_replay::invoke_capability_effect(
                             "Http.head",
                             "recorded",
-                            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                                &__provider_arg0,
-                            )],
+                            crate::aver_replay::effect_args("Http.head", || {
+                                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                                    &__provider_arg0,
+                                )]
+                            }),
                             || {
                                 crate::provider_support::invoke::<
                                     Result<crate::aver_generated::http::Response, AverStr>,
@@ -1772,9 +1860,11 @@ pub fn builtinHttpSimple(
                         crate::aver_replay::invoke_capability_effect(
                             "Http.delete",
                             "recorded",
-                            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                                &__provider_arg0,
-                            )],
+                            crate::aver_replay::effect_args("Http.delete", || {
+                                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                                    &__provider_arg0,
+                                )]
+                            }),
                             || {
                                 crate::provider_support::invoke::<
                                     Result<crate::aver_generated::http::Response, AverStr>,
@@ -1861,12 +1951,14 @@ pub fn builtinHttpBodyInner(
                     crate::aver_replay::invoke_capability_effect(
                         "Http.post",
                         "recorded",
-                        vec![
-                            crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                            crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-                            crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
-                            crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg3),
-                        ],
+                        crate::aver_replay::effect_args("Http.post", || {
+                            vec![
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
+                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg3),
+                            ]
+                        }),
                         || {
                             crate::provider_support::invoke::<
                                 Result<crate::aver_generated::http::Response, AverStr>,
@@ -1899,12 +1991,22 @@ pub fn builtinHttpBodyInner(
                         crate::aver_replay::invoke_capability_effect(
                             "Http.put",
                             "recorded",
-                            vec![
-                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
-                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg3),
-                            ],
+                            crate::aver_replay::effect_args("Http.put", || {
+                                vec![
+                                    crate::aver_replay::ReplayValue::to_replay_json(
+                                        &__provider_arg0,
+                                    ),
+                                    crate::aver_replay::ReplayValue::to_replay_json(
+                                        &__provider_arg1,
+                                    ),
+                                    crate::aver_replay::ReplayValue::to_replay_json(
+                                        &__provider_arg2,
+                                    ),
+                                    crate::aver_replay::ReplayValue::to_replay_json(
+                                        &__provider_arg3,
+                                    ),
+                                ]
+                            }),
                             || {
                                 crate::provider_support::invoke::<
                                     Result<crate::aver_generated::http::Response, AverStr>,
@@ -1936,12 +2038,22 @@ pub fn builtinHttpBodyInner(
                         crate::aver_replay::invoke_capability_effect(
                             "Http.patch",
                             "recorded",
-                            vec![
-                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
-                                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg3),
-                            ],
+                            crate::aver_replay::effect_args("Http.patch", || {
+                                vec![
+                                    crate::aver_replay::ReplayValue::to_replay_json(
+                                        &__provider_arg0,
+                                    ),
+                                    crate::aver_replay::ReplayValue::to_replay_json(
+                                        &__provider_arg1,
+                                    ),
+                                    crate::aver_replay::ReplayValue::to_replay_json(
+                                        &__provider_arg2,
+                                    ),
+                                    crate::aver_replay::ReplayValue::to_replay_json(
+                                        &__provider_arg3,
+                                    ),
+                                ]
+                            }),
                             || {
                                 crate::provider_support::invoke::<
                                     Result<crate::aver_generated::http::Response, AverStr>,
@@ -2109,11 +2221,13 @@ pub fn builtinTcpSendInner(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.send",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
-            ],
+            crate::aver_replay::effect_args("Tcp.send", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg2),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<AverStr, AverStr>>(
                     "Tcp",
@@ -2165,10 +2279,12 @@ pub fn builtinTcpPingInner(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.ping",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Tcp.ping", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Tcp",
@@ -2219,10 +2335,12 @@ pub fn builtinTcpConnectInner(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.connect",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Tcp.connect", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<
                     Result<crate::aver_generated::tcp::Connection, AverStr>,
@@ -2294,10 +2412,12 @@ pub fn builtinTcpBeginConnectInner(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.beginConnect",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Tcp.beginConnect", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<crate::aver_generated::tcp::Dial, AverStr>>(
                     "Tcp",
@@ -2345,9 +2465,11 @@ pub fn builtinTcpDialled(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.dialled",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Tcp.dialled", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<
                     Result<Option<crate::aver_generated::tcp::Connection>, AverStr>,
@@ -2406,10 +2528,12 @@ pub fn builtinTcpListenInner(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.listen",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Tcp.listen", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<
                     Result<crate::aver_generated::tcp::Listener, AverStr>,
@@ -2461,9 +2585,11 @@ pub fn builtinTcpAccept(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.accept",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Tcp.accept", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<
                     Result<Option<crate::aver_generated::tcp::Connection>, AverStr>,
@@ -2508,9 +2634,11 @@ pub fn builtinTcpPeerAddress(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.peerAddress",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Tcp.peerAddress", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<AverStr, AverStr>>(
                     "Tcp",
@@ -2676,10 +2804,12 @@ pub fn builtinTcpPollInner(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.poll",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Tcp.poll", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<aver_rt::AverIntList, AverStr>>(
                     "Tcp",
@@ -2723,9 +2853,11 @@ pub fn builtinTcpCloseDial(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.closeDial",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Tcp.closeDial", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Tcp",
@@ -2759,9 +2891,11 @@ pub fn builtinTcpCloseListener(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.closeListener",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Tcp.closeListener", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Tcp",
@@ -2809,10 +2943,12 @@ pub fn builtinTcpWriteLineInner(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.writeLine",
             "recorded",
-            vec![
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
-                crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
-            ],
+            crate::aver_replay::effect_args("Tcp.writeLine", || {
+                vec![
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg0),
+                    crate::aver_replay::ReplayValue::to_replay_json(&__provider_arg1),
+                ]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Tcp",
@@ -2849,9 +2985,11 @@ pub fn builtinTcpReadLine(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.readLine",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Tcp.readLine", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<AverStr, AverStr>>(
                     "Tcp",
@@ -2885,9 +3023,11 @@ pub fn builtinTcpClose(
         crate::aver_replay::invoke_capability_effect(
             "Tcp.close",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Tcp.close", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<(), AverStr>>(
                     "Tcp",

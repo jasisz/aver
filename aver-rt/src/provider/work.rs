@@ -461,6 +461,19 @@ impl CapabilityProvider for WorkKindProvider {
         WORK_KIND_NATIVE_FINGERPRINT
     }
 
+    fn invoke_owned(
+        &self,
+        context: &ProviderContext,
+        mut args: Vec<ProviderValue>,
+    ) -> Result<ProviderValue, ProviderFault> {
+        if context.operation.rsplit_once('.').map(|(_, name)| name) == Some("begin")
+            && args.len() == 1
+        {
+            return Ok(self.begin(args.pop().expect("one argument checked above")));
+        }
+        self.invoke(context, &args)
+    }
+
     fn invoke(
         &self,
         context: &ProviderContext,
@@ -520,6 +533,77 @@ mod tests {
     use crate::work::JobEngine;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn owned_work_dispatch_transfers_the_task_allocation() {
+        use crate::provider::{NativeProviderRegistry, ProviderBinding, ProviderContractSpec};
+        fn same_allocation(task: ProviderValue) -> Result<ProviderValue, String> {
+            let ProviderValue::Tuple(fields) = task else {
+                panic!("tuple task")
+            };
+            let [
+                ProviderValue::String(payload),
+                ProviderValue::String(address),
+            ] = fields.as_slice()
+            else {
+                panic!("payload and its original address")
+            };
+            Ok(ProviderValue::Bool(
+                format!("{:p}", payload.as_ptr()) == *address,
+            ))
+        }
+        let mut registry = NativeProviderRegistry::new([ProviderContractSpec::new(
+            "CopyProbe",
+            "contract",
+            "model",
+            vec!["CopyProbe.begin", "CopyProbe.take"],
+        )])
+        .unwrap();
+        registry
+            .bind(ProviderBinding::new(
+                "CopyProbe",
+                "contract",
+                vec!["CopyProbe.begin", "CopyProbe.take"],
+                Arc::new(WorkKindProvider::new(
+                    "CopyProbe",
+                    JobEngine::new(1),
+                    same_allocation,
+                )),
+            ))
+            .unwrap();
+        let payload = "nonempty task data".repeat(1024);
+        let address = format!("{:p}", payload.as_ptr());
+        let answer = registry
+            .invoke_owned(
+                "CopyProbe.begin",
+                vec![ProviderValue::Tuple(vec![
+                    ProviderValue::String(payload),
+                    ProviderValue::String(address),
+                ])],
+            )
+            .unwrap();
+        let ProviderValue::ResultOk(handle) = answer else {
+            panic!("begin succeeded")
+        };
+        let ProviderValue::Resource(resource) = &*handle else {
+            panic!("job resource")
+        };
+        let job = resource.downcast_ref::<Job>().unwrap();
+        poll(job, 5000);
+        let answer = registry
+            .invoke_owned("CopyProbe.take", vec![*handle])
+            .unwrap();
+        assert!(matches!(answer, ProviderValue::ResultOk(value)
+            if matches!(&*value, ProviderValue::OptionSome(result)
+                if matches!(&**result, ProviderValue::Bool(true)))));
+        // A consumed-buffer call must still use the normal arity diagnostics.
+        assert!(
+            registry
+                .invoke_owned("CopyProbe.begin", vec![])
+                .unwrap_err()
+                .contains("expects exactly one argument")
+        );
+    }
 
     fn context() -> ProviderContext {
         ProviderContext {

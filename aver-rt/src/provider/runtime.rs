@@ -148,6 +148,30 @@ impl NativeProviderRegistry {
     }
 
     pub fn invoke(&self, operation: &str, args: &[ProviderValue]) -> Result<ProviderValue, String> {
+        self.invoke_with(operation, |provider, context| {
+            provider.invoke(context, args)
+        })
+    }
+
+    /// The same contract lookup and fault boundary, transferring the caller's
+    /// argument buffer to providers that can consume it.
+    pub fn invoke_owned(
+        &self,
+        operation: &str,
+        args: Vec<ProviderValue>,
+    ) -> Result<ProviderValue, String> {
+        self.invoke_with(operation, |provider, context| {
+            provider.invoke_owned(context, args)
+        })
+    }
+
+    fn invoke_with<F>(&self, operation: &str, call: F) -> Result<ProviderValue, String>
+    where
+        F: FnOnce(
+            &dyn CapabilityProvider,
+            &ProviderContext,
+        ) -> Result<ProviderValue, ProviderFault>,
+    {
         let contract = self
             .contracts
             .values()
@@ -165,24 +189,30 @@ impl NativeProviderRegistry {
             contract_hash: contract.contract_hash.clone(),
             model_hash: contract.model_hash.clone(),
         };
-        catch_unwind(AssertUnwindSafe(|| binding.provider.invoke(&context, args)))
-            .map_err(|panic| {
-                let message = panic
-                    .downcast_ref::<&str>()
-                    .copied()
-                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-                    .unwrap_or("non-string panic payload");
-                format!(
-                    "error[capability-provider-panic]: provider '{}' panicked while calling '{}': {}",
-                    binding.provider_identity(), operation, message
-                )
-            })?
-            .map_err(|fault| {
-                format!(
-                    "error[capability-provider-fault]: provider fault from '{}' while calling '{}': {}",
-                    binding.provider_identity(), operation, fault
-                )
-            })
+        catch_unwind(AssertUnwindSafe(|| {
+            call(binding.provider.as_ref(), &context)
+        }))
+        .map_err(|panic| {
+            let message = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("non-string panic payload");
+            format!(
+                "error[capability-provider-panic]: provider '{}' panicked while calling '{}': {}",
+                binding.provider_identity(),
+                operation,
+                message
+            )
+        })?
+        .map_err(|fault| {
+            format!(
+                "error[capability-provider-fault]: provider fault from '{}' while calling '{}': {}",
+                binding.provider_identity(),
+                operation,
+                fault
+            )
+        })
     }
 
     pub fn provider_identity_for(&self, capability: &str) -> Option<&str> {

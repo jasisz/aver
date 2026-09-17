@@ -809,9 +809,11 @@ pub fn loadProgramFromFile(
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Disk.readText", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<AverStr, AverStr>>(
                     "Disk",
@@ -903,9 +905,11 @@ pub fn printIfNotUnit(s @ _: AverStr) -> () {
             crate::aver_replay::invoke_capability_effect(
                 "Console.print",
                 "reissued",
-                vec![crate::aver_replay::ReplayValue::to_replay_json(
-                    &__provider_arg0,
-                )],
+                crate::aver_replay::effect_args("Console.print", || {
+                    vec![crate::aver_replay::ReplayValue::to_replay_json(
+                        &__provider_arg0,
+                    )]
+                }),
                 || {
                     crate::provider_support::invoke::<()>(
                         "Console",
@@ -924,9 +928,11 @@ pub fn printIfNotUnit(s @ _: AverStr) -> () {
             crate::aver_replay::invoke_capability_effect(
                 "Console.print",
                 "reissued",
-                vec![crate::aver_replay::ReplayValue::to_replay_json(
-                    &__provider_arg0,
-                )],
+                crate::aver_replay::effect_args("Console.print", || {
+                    vec![crate::aver_replay::ReplayValue::to_replay_json(
+                        &__provider_arg0,
+                    )]
+                }),
                 || {
                     crate::provider_support::invoke::<()>(
                         "Console",
@@ -955,9 +961,11 @@ pub fn runDemo() -> Result<(), AverStr> {
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -975,9 +983,11 @@ pub fn runDemo() -> Result<(), AverStr> {
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -997,9 +1007,11 @@ pub fn runDemo() -> Result<(), AverStr> {
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -1017,9 +1029,11 @@ pub fn runDemo() -> Result<(), AverStr> {
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -1037,9 +1051,11 @@ pub fn runDemo() -> Result<(), AverStr> {
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -1069,9 +1085,11 @@ pub fn runDemo() -> Result<(), AverStr> {
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -1101,9 +1119,11 @@ pub fn runDemo() -> Result<(), AverStr> {
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -1131,9 +1151,11 @@ pub fn runDemo() -> Result<(), AverStr> {
         crate::aver_replay::invoke_capability_effect(
             "Console.print",
             "reissued",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Console.print", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<()>(
                     "Console",
@@ -1176,9 +1198,11 @@ pub fn loadOneModule__indexed(
         crate::aver_replay::invoke_capability_effect(
             "Disk.readText",
             "recorded",
-            vec![crate::aver_replay::ReplayValue::to_replay_json(
-                &__provider_arg0,
-            )],
+            crate::aver_replay::effect_args("Disk.readText", || {
+                vec![crate::aver_replay::ReplayValue::to_replay_json(
+                    &__provider_arg0,
+                )]
+            }),
             || {
                 crate::provider_support::invoke::<Result<AverStr, AverStr>>(
                     "Disk",
@@ -1232,9 +1256,11 @@ pub fn findModulePath__indexed(
             crate::aver_replay::invoke_capability_effect(
                 "Disk.exists",
                 "recorded",
-                vec![crate::aver_replay::ReplayValue::to_replay_json(
-                    &__provider_arg0,
-                )],
+                crate::aver_replay::effect_args("Disk.exists", || {
+                    vec![crate::aver_replay::ReplayValue::to_replay_json(
+                        &__provider_arg0,
+                    )]
+                }),
                 || {
                     crate::provider_support::invoke::<bool>(
                         "Disk",
@@ -1439,15 +1465,20 @@ pub fn main() -> Result<(), AverStr> {
     crate::cancel_checkpoint();
     let args @ _ = {
         crate::cancel_checkpoint();
-        crate::aver_replay::invoke_capability_effect("Args.get", "recorded", vec![], || {
-            crate::provider_support::invoke::<aver_rt::AverList<AverStr>>(
-                "Args",
-                "Args.get",
-                vec![],
-                None,
-                "List<String>",
-            )
-        })
+        crate::aver_replay::invoke_capability_effect(
+            "Args.get",
+            "recorded",
+            crate::aver_replay::effect_args("Args.get", || vec![]),
+            || {
+                crate::provider_support::invoke::<aver_rt::AverList<AverStr>>(
+                    "Args",
+                    "Args.get",
+                    vec![],
+                    None,
+                    "List<String>",
+                )
+            },
+        )
     };
     aver_list_match!(args, [] => runDemo(), [path, rest] => match runFromFileWithRest(path, &rest) { Ok(_) => { Ok(()) }, Err(e @ _) => { Err(e) } })
 }

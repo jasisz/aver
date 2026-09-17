@@ -1718,6 +1718,25 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         }
     }
 
+    /// Argument snapshots are needed for record/replay, and for the three
+    /// policy namespaces inspected by check_policy. Normal execution of other
+    /// capabilities must not walk and allocate a JSON copy of large payloads.
+    /// Keep policy arguments intact even when the recording machinery is idle.
+    pub fn effect_args<F>(effect_type: &str, snapshot: F) -> Vec<ReplayJson>
+    where
+        F: FnOnce() -> Vec<ReplayJson>,
+    {
+        let needed = matches!(effect_type.split('.').next(), Some("Http" | "Disk" | "Env"))
+            || SCOPE_STATE.with(|cell| match &*cell.borrow() {
+                ScopeState::Active(scope) => matches!(
+                    &scope.mode,
+                    ScopeMode::Record { .. } | ScopeMode::Replay { .. }
+                ),
+                ScopeState::Inactive => false,
+            });
+        if needed { snapshot() } else { Vec::new() }
+    }
+
     pub fn invoke_effect<T, F>(effect_type: &str, args: Vec<ReplayJson>, call: F) -> T
     where
         T: ReplayValue,

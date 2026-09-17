@@ -1917,9 +1917,10 @@ fn emit_mir_capability_call(
     }
     lines.push("    crate::cancel_checkpoint();".to_string());
     lines.push(format!(
-        "    crate::aver_replay::invoke_capability_effect({:?}, {:?}, vec![{}], || {})",
+        "    crate::aver_replay::invoke_capability_effect({:?}, {:?}, crate::aver_replay::effect_args({:?}, || vec![{}]), || {})",
         operation.canonical_name,
         replay,
+        operation.canonical_name,
         json_args,
         invoke_with(&names)
     ));

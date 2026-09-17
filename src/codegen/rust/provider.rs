@@ -280,7 +280,7 @@ pub(super) fn generate_provider_runtime(
              expected: &str,\n\
          ) -> T {\n\
              let registry = registry();\n\
-             let value = registry.invoke(operation, &args).unwrap_or_else(|message| panic!(\"{}\", message));\n\
+             let value = registry.invoke_owned(operation, args).unwrap_or_else(|message| panic!(\"{}\", message));\n\
              let received = value.shape();\n\
              T::from_provider_value(value, registry, capability, minted_resource).unwrap_or_else(|message| {\n\
                  let provider = registry.provider_identity_for(capability).unwrap_or(\"<missing>\");\n\

@@ -231,6 +231,17 @@ pub trait CapabilityProvider: Send + Sync {
         context: &ProviderContext,
         args: &[ProviderValue],
     ) -> Result<ProviderValue, ProviderFault>;
+
+    /// Consume an already-owned argument buffer when the caller can release it.
+    /// Providers that retain data (for example a Work task) can transfer it
+    /// without cloning. Existing providers keep their borrowed implementation.
+    fn invoke_owned(
+        &self,
+        context: &ProviderContext,
+        args: Vec<ProviderValue>,
+    ) -> Result<ProviderValue, ProviderFault> {
+        self.invoke(context, &args)
+    }
 }
 
 /// One host implementation pinned to one exact capability contract.
