@@ -334,7 +334,8 @@ jobs:
             wasm_host_work_spec \
             work_shape_spec \
             yield_spec \
-            yield_request_traces_spec
+            yield_request_traces_spec \
+            yield_imported_effects_spec
           do
             cargo test -p aver-lang --features wasm --test "$test"
           done

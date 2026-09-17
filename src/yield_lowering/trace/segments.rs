@@ -90,13 +90,14 @@ impl<'a> Model<'a> {
                 .chain([
                     format!("{adapter}Inputs(inputs)"),
                     "position".into(),
-                    "[]".into(),
+                    "emptyEvents".into(),
                     "consumed".into(),
                 ])
                 .collect();
             out.push_str(&format!(
-                "\nfn {name}({params}) -> {result}\n    observed = {observer}({args})\n    {result}(remaining = List.drop(inputs, observed.consumed - consumed), position = observed.position, consumed = observed.consumed, events = List.concat(events, {adapter}Events(observed.events)), value = observed.value, pending = {adapter}Pending(observed.pending), valid = observed.valid)\n",
+                "\nfn {name}({params}) -> {result}\n    emptyEvents: List<{event}> = []\n    observed = {observer}({args})\n    {result}(remaining = List.drop(inputs, observed.consumed - consumed), position = observed.position, consumed = observed.consumed, events = List.concat(events, {adapter}Events(observed.events)), value = observed.value, pending = {adapter}Pending(observed.pending), valid = observed.valid)\n",
                 params = composition::declarations(&params),
+                event = trace.event,
                 observer = segment.observer,
                 args = args.join(", "),
             ));

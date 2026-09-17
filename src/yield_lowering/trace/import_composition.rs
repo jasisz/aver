@@ -85,7 +85,7 @@ verify {name}Direct law mapping
         } else {
             format!("{start_args}, ")
         };
-        out.push_str(&format!("\nfn {name}SourceAgrees({}) -> Bool\n    {source_from}({source_args}{name}Inputs(inputs), position, [], consumed) == {}({source_args}{name}Inputs(inputs), position, [], consumed)\n\nfn {name}MappingAgrees({}) -> Bool\n    {entry}({args}) == {name}Lift({}({source_args}{name}Inputs(inputs), position, [], consumed), inputs, events, consumed)\n", declarations(&params), trace.protocol_from, declarations(&params), trace.protocol_from));
+        out.push_str(&format!("\nfn {name}SourceAgrees({}) -> Bool\n    emptyEvents: List<{event}> = []\n    {source_from}({source_args}{name}Inputs(inputs), position, emptyEvents, consumed) == {}({source_args}{name}Inputs(inputs), position, emptyEvents, consumed)\n\nfn {name}MappingAgrees({}) -> Bool\n    emptyEvents: List<{event}> = []\n    {entry}({args}) == {name}Lift({}({source_args}{name}Inputs(inputs), position, emptyEvents, consumed), inputs, events, consumed)\n", declarations(&params), trace.protocol_from, declarations(&params), trace.protocol_from, event=trace.event));
         let explanations = format!(
             "    because {name}SourceAgrees({args})\n    because {name}MappingAgrees({args})\n    using"
         );

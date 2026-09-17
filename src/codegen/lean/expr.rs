@@ -877,11 +877,16 @@ fn emit_match(
     // Three fuel-helper emitters still call `strip_match_eq_binders`;
     // with this guard the strip only fires for the ident path,
     // preserving wrapper-return emit untouched.
+    // A slice's constructor equation also relates a matched tail to the
+    // original list. Retain it for the checked non-growing slice measure.
+    let slice = matches!(&subject.node,
+        ResolvedExpr::Call(ResolvedCallee::Builtin(name), _) if matches!(name.as_str(), "List.drop" | "List.take"));
     let needs_eq_binder = ctx.lean_match_equations.get()
-        && matches!(
-            &subject.node,
-            ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } | ResolvedExpr::Attr(_, _)
-        );
+        && (slice
+            || matches!(
+                &subject.node,
+                ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } | ResolvedExpr::Attr(_, _)
+            ));
     let emitted_match = if needs_eq_binder {
         let eq_name = format!("h_{}", line);
         format!("match {} : {} with\n{}", eq_name, subj, arm_strs.join("\n"))

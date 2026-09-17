@@ -11,6 +11,8 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Install pinned Lean
         run: |
           set -o pipefail
@@ -21,6 +23,21 @@ jobs:
         run: |
           target/debug/aver verify tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects
           target/debug/aver proof tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects --backend lean --check --sorry-budget 0 -o /tmp/imported-effects-proof
+      - name: Inspect an unfinished splice tactic
+        if: failure()
+        run: |
+          cd /tmp/imported-effects-proof
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('Looper.lean')
+          text = path.read_text()
+          lines = text.splitlines()
+          for i, line in enumerate(lines):
+              if line.startswith('  | (first') and 'fun_induction Looper.__runTrace4c6f6f706572DriveLoop outcome' in line:
+                  lines[i] = line.replace('; done))', '; all_goals trace_state; all_goals sorry))')
+          Path('LooperProbe.lean').write_text('\n'.join(lines) + '\n')
+          PY
+          lake env lean LooperProbe.lean
       - uses: actions/upload-artifact@v4
         if: always()
         with:
