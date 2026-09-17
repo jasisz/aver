@@ -1,0 +1,12 @@
+module Main
+    intent =
+        "The entry that hands one message to the command. It declares the"
+        "whole chain's effects because every one of them propagates up here."
+    exposes [main]
+    depends [App.Cli]
+    effects [Console.print, Disk.appendText]
+
+fn main() -> Result<Unit, String>
+    ? "Save one line and report it."
+    ! [Console.print, Disk.appendText]
+    App.Cli.run("out.log", "hello")

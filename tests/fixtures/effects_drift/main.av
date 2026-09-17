@@ -1,0 +1,12 @@
+module Main
+    intent =
+        "The entry that starts the walk. Its own list is a copy of the widest"
+        "list below it, so trimming the leaves has to reach up here too."
+    exposes [main]
+    depends [Infra.Ledger]
+    effects [Console.print, Disk.appendText, Time.unixMs]
+
+fn main() -> Result<Unit, String>
+    ? "Append two lines through the walk."
+    ! [Console.print, Disk.appendText, Time.unixMs]
+    Infra.Ledger.walk("out.log", ["first", "second"])

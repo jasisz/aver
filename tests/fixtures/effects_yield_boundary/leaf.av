@@ -1,0 +1,15 @@
+module Leaf
+    intent = "The one module here that reaches the capability, through a yielding helper of its own."
+    depends [Pool, Pooled]
+    exposes [forward]
+    effects [Pool.claim, yield]
+
+fn read(id: Int) -> Int
+    ? "Ask the capability for the handle of one peer."
+    ! [Pool.claim, yield]
+    Pool.claim(id)
+
+fn forward(id: Int) -> Int
+    ? "Hand one claim to the helper that makes it."
+    ! [Pool.claim, yield]
+    read(id)

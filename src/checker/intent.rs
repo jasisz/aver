@@ -198,7 +198,13 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
     }
 }
 
-fn collect_used_effects(f: &FnDef, fn_sigs: &FnSigMap) -> BTreeSet<String> {
+/// Every effect `f` reaches: the ones its own body performs plus the declared
+/// effects of everything it calls.
+///
+/// This is the computation behind the `unused-effect` warning, and
+/// [`crate::effect_surface`] iterates it to a fixpoint so `aver effects` and
+/// the warning answer with the same notion of "used".
+pub(crate) fn collect_used_effects(f: &FnDef, fn_sigs: &FnSigMap) -> BTreeSet<String> {
     let mut used = BTreeSet::new();
     for stmt in f.body.stmts() {
         match stmt {

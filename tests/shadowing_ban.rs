@@ -581,6 +581,16 @@ fn front_doors(out_dir: &Path) -> Vec<Door> {
             ],
         ),
         cli_door(
+            "effects",
+            "effects",
+            vec![
+                "effects".into(),
+                "{file}".into(),
+                "--module-root".into(),
+                module_root.clone(),
+            ],
+        ),
+        cli_door(
             "bench",
             "bench",
             vec![
