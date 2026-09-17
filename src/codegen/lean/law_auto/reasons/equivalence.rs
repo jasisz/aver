@@ -253,21 +253,19 @@ pub(super) fn candidate(
     // Advancing the right fold first helps observed prefixes, but a pure
     // continuation can already match the IH before that step. Retain the
     // established symmetric normalization as a checked fallback for adapters.
-    // Its small search budget leaves room for the observed-suffix strategy
-    // when a finite prefix makes symmetric unfolding expensive.
-    let legacy = if adapting || definitions.unary_list_maps.is_empty() {
-        let zeta = if definitions.unary_list_maps.is_empty() {
+    let legacy = if adapting || !definitions.staged_recursion {
+        let zeta = if !definitions.staged_recursion {
             ""
         } else {
             " +zetaDelta"
         };
         format!(
-            " | (set_option maxHeartbeats 40000 in (simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all{zeta} [{simp}]) | split{steps} | (solve | grind)); done))"
+            " | (simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all{zeta} [{simp}]) | split{steps} | (solve | grind)); done)"
         )
     } else {
         String::new()
     };
-    if definitions.unary_list_maps.is_empty() {
+    if !definitions.staged_recursion {
         // Pure adapters already align their induction hypotheses before the
         // right fold advances. Keep their inexpensive symmetric proof first.
         Some(format!("(first{compose}{cases}{legacy} | ({solve}))"))

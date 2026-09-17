@@ -200,7 +200,7 @@ pub(super) fn candidate(
                 // Preserve an adapter of a recursive result until its cited
                 // equation rewrites that whole result. Projecting it here
                 // duplicates unknown fields across the continuation's cases.
-                if definitions.sliced_recursion
+                if definitions.staged_recursion
                     && let Expr::FnCall(_, args) = &expr.node
                     && args.iter().any(|arg| {
                         induction::callee(arg, ctx, key.scope_str())
@@ -307,7 +307,7 @@ pub(super) fn candidate(
     // cursor projection across subsequent calls and overwhelms congruence.
     // The number of cited boundaries bounds this attempt; an unsupported
     // composition must close by another candidate or remain an obligation.
-    let zeta = if definitions.sliced_recursion {
+    let zeta = if definitions.staged_recursion {
         " +zetaDelta"
     } else {
         ""
@@ -319,7 +319,7 @@ pub(super) fn candidate(
         // call. Expose that prefix only when a direct rewrite cannot apply;
         // matching the right side first avoids splitting the helper's result
         // before the shared input prefix is known.
-        let prefix_cases = if input_match && !definitions.sliced_recursion {
+        let prefix_cases = if input_match && !definitions.staged_recursion {
             format!(
                 " | ((repeat' first | rfl | (simp_all only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (first | rfl | (first{rewrite})))"
             )
@@ -365,7 +365,7 @@ pub(super) fn candidate(
     } else {
         format!(" | ((first{opening}); first{staged})")
     };
-    let composed = if definitions.sliced_recursion {
+    let composed = if definitions.staged_recursion {
         format!("{staged}{staged_entry}{prefix}")
     } else {
         format!("{prefix}{staged}")
