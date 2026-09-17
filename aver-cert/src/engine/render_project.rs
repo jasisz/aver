@@ -1379,7 +1379,11 @@ struct SymClaimParts {
 ///
 /// Every data-carrying claim family is split this way; this sym builder and the
 /// generic `render_split_bundles` below share the same leaf-plus-aggregate shape.
-fn render_sym_claim_bundles(parts: &[SymClaimParts], host_table_lean: &str) -> (String, String) {
+fn render_sym_claim_bundles(
+    parts: &[SymClaimParts],
+    host_table_lean: &str,
+    struct_table_lean: &str,
+) -> (String, String) {
     let mut theorems = String::new();
     let mut names = Vec::with_capacity(parts.len());
     for (index, part) in parts.iter().enumerate() {
@@ -1395,6 +1399,7 @@ fn render_sym_claim_bundles(parts: &[SymClaimParts], host_table_lean: &str) -> (
         let body = format!("symFragmentClaim{index}Body");
         let code_entry = format!("symFragmentClaim{index}CodeEntry");
         let binding = format!("symFragmentClaim{index}Binding");
+        let encoded_plan = format!("symFragmentClaim{index}EncodedPlan");
         let carrier_bound = format!("symFragmentClaim{index}CarrierBound");
         let host_types = format!("symFragmentClaim{index}HostTableFuncTypes");
         let check_plan = format!("symFragmentClaim{index}CheckPlan");
@@ -1415,6 +1420,11 @@ fn render_sym_claim_bundles(parts: &[SymClaimParts], host_table_lean: &str) -> (
              -- One leaf theorem per acceptance conjunct. Each is checked and freed in\n\
              -- its own `addDecl`; the heavy ones are the `modBytes` type-section walks\n\
              -- and the function-binding decode.\n\
+             -- Pin the symbolic encoding before transporting byte-derived leaf proofs.\n\
+             -- A mismatched role table must fail here, without comparing byte decoders.\n\
+             theorem {encoded_plan} :\n  \
+               AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan {host_table_lean} {struct_table_lean} AverCert.Plans.{name}SymPlan = some {plan} := by\n  \
+               rfl\n\n\
              theorem {carrier_bound} :\n  \
                AverCert.AcceptedArtifact.symFragmentCarrierBound AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen {carrier} {host_table_lean} {plan} = true := by\n  \
                rfl\n\n\
@@ -1443,7 +1453,9 @@ fn render_sym_claim_bundles(parts: &[SymClaimParts], host_table_lean: &str) -> (
              -- prepares the goal shape; the `exact` holds no heavy reduction.\n\
              theorem {accepted} :\n  \
                AverCert.AcceptedArtifact.symFragmentClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen (symFragmentClaims.get ⟨{index}, by decide⟩) := by\n  \
-               dsimp [symFragmentClaims, AverCert.AcceptedArtifact.symFragmentClaimAccepted, AverCert.AcceptedArtifact.symFragmentPlanAccepted, AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted]\n  \
+               dsimp only [AverCert.AcceptedArtifact.symFragmentClaimAccepted, AverCert.AcceptedArtifact.symFragmentPlanAccepted]\n  \
+               rw [{encoded_plan}]\n  \
+               dsimp [symFragmentClaims, AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted]\n  \
                exact ⟨{carrier_bound}, {host_types}, rfl, rfl, ⟨{body}, {code_entry}, {binding}, ⟨⟨{check_plan}, {lower_body}, {lower_code}, {func_binding}⟩, {func_type}, {nominal}, rfl, rfl⟩⟩⟩\n\n"
         ));
         names.push(accepted);
@@ -2848,7 +2860,8 @@ fn render_artifact_expr_fragment_claims(
     // the aggregate combining the already-checked constants. This keeps the
     // per-claim kernel peak at the largest single leaf instead of the whole
     // witness tuple. The other nine families still emit one opaque theorem.
-    let (sym_bundles, sym_proof) = render_sym_claim_bundles(&sym_parts, host_table_lean);
+    let (sym_bundles, sym_proof) =
+        render_sym_claim_bundles(&sym_parts, host_table_lean, struct_table_lean);
     let (string_bundles, string_proof) = render_string_concat_claim_bundles(&string_parts);
     let (string_eq_bundles, string_eq_proof) = render_string_eq_claim_bundles(&string_eq_parts);
     let construct_claim_count = construct_parts.len();
