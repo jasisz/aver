@@ -108,7 +108,7 @@ pub(super) fn candidate(
     // instead of treating the two tails as unrelated induction arguments.
     // These are local checked lemmas: a non-map list function simply fails
     // this candidate, rather than receiving a shape-based theorem.
-    let (map_lemmas, map_facts) = induction::checked_map_lemmas(
+    let map_lemmas = induction::checked_map_lemmas(
         &maps
             .iter()
             .filter(|fd| fd.params.len() == 1)
@@ -182,9 +182,9 @@ pub(super) fn candidate(
         .chain(step_helpers)
         .collect::<Vec<_>>()
         .join(", ");
-    let equations = map_facts
-        .into_iter()
-        .chain(converters.iter().map(|name| format!("= {name}.eq_def")))
+    let equations = converters
+        .iter()
+        .map(|name| format!("= {name}.eq_def"))
         .collect::<Vec<_>>()
         .join(", ");
     let steps = folds
