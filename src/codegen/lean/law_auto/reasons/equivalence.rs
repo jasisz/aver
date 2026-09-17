@@ -189,8 +189,13 @@ pub(super) fn candidate(
     } else {
         format!("all_goals (try (first{steps})); ")
     };
+    let completed = if definitions.completed.is_empty() {
+        String::new()
+    } else {
+        format!(" | (solve | simp only [{}])", definitions.completed)
+    };
     let solve = format!(
-        "simp only [beq_iff_eq{heads}]; {start}{first_step}all_goals (repeat' first | assumption | rfl | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
+        "simp only [beq_iff_eq{heads}]; {start}{first_step}all_goals (repeat' first | assumption | rfl{completed} | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
     );
     // Finite helper chains often return records containing a mapped remainder.
     // Split only a constructor prefix before substitution duplicates those

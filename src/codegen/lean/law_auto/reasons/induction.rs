@@ -150,6 +150,7 @@ pub(super) struct Definitions {
     /// expanding the implementations summarized by cited transition laws.
     pub(super) list_steps: String,
     pub(super) list_maps: String,
+    pub(super) completed: String,
     pub(super) heads: String,
     /// Equations of outer calls and their direct arguments, without the full cone.
     pub(super) head_equations: String,
@@ -182,6 +183,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     let mut out = BTreeMap::new();
     let mut list_steps = BTreeSet::new();
     let mut list_maps = BTreeSet::new();
+    let mut completed = BTreeSet::new();
     let mut unfold_once = Vec::new();
     let law_calls = |builtin: &str| {
         law.because
@@ -206,7 +208,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
             // splice. Its checked equation reduces that one boundary without
             // unfolding another recursive call on an unknown outcome.
             if super::composition::first_constructor_branch(fd) {
-                out.insert(format!("{}.eq_1", lean_name(fd, ctx)), false);
+                completed.insert(format!("{}.eq_1", lean_name(fd, ctx)));
             }
             if fd.return_type.starts_with("List<") {
                 list_maps.insert(lean_name(fd, ctx));
@@ -317,6 +319,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     Definitions {
         list_steps: list_steps.into_iter().collect::<Vec<_>>().join(", "),
         list_maps: list_maps.into_iter().collect::<Vec<_>>().join(", "),
+        completed: completed.into_iter().collect::<Vec<_>>().join(", "),
         heads,
         head_equations: head_equations.join(", "),
         structural_reason: law.because.iter().any(|reason| {
