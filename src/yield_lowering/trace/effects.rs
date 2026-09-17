@@ -12,6 +12,8 @@ impl Model<'_> {
         let mut reached = Vec::new();
         let mut imports = Vec::new();
         self.reachable(root, &mut reached, &mut imports)?;
+        let imported: Vec<_> = imports.iter().map(|p| self.import_signature(p)).collect();
+        reached.extend(imported.iter());
         for function in reached {
             let drive = self.child_drive(function);
             // Only root and composition drivers actually present in the model.

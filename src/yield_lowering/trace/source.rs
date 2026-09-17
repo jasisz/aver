@@ -1,8 +1,8 @@
 //! A state-passing translation of the preserved direct-style source.
 //!
-//! This visitor does not inspect the lowering's segments, liveness, state
-//! variants or answer bodies. A source call receives the unconsumed input
-//! list and returns its remainder, position and observations to its caller.
+//! Source mode visits retained definitions; protocol mode instruments the real
+//! generated segments separately. Both thread the unconsumed input list,
+//! position and observations through calls with the same answer semantics.
 use super::*;
 use build::*;
 
@@ -69,8 +69,12 @@ impl<'a> Compiler<'a> {
             params,
             self.model.result_type(self.function),
             Some(
-                "Observe the retained source, threading only executed answers through calls."
-                    .into(),
+                if self.protocol_segments {
+                    "Observe a generated protocol segment with the shared answer-tape semantics."
+                } else {
+                    "Observe the retained source, threading only executed answers through calls."
+                }
+                .into(),
             ),
             vec![],
             body,
