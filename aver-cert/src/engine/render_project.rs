@@ -1453,6 +1453,7 @@ fn render_sym_claim_bundles(
              -- prepares the goal shape; the `exact` holds no heavy reduction.\n\
              theorem {accepted} :\n  \
                AverCert.AcceptedArtifact.symFragmentClaimAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen (symFragmentClaims.get ⟨{index}, by decide⟩) := by\n  \
+               simp only [symFragmentClaims, List.get_cons_zero, List.get_cons_succ]\n  \
                dsimp only [AverCert.AcceptedArtifact.symFragmentClaimAccepted, AverCert.AcceptedArtifact.symFragmentPlanAccepted]\n  \
                rw [{encoded_plan}]\n  \
                dsimp [symFragmentClaims, AverCert.AcceptedArtifact.exprFragmentPlanAccepted, AverCert.ExprFragmentAccepted.accepted]\n  \
