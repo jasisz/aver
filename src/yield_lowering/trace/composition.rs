@@ -4,6 +4,17 @@
 use super::*;
 pub(super) mod samples;
 
+/// Observed finite imports also benefit from their owning module's checked
+/// interface. Unproved finite helpers retain the existing expansion path.
+fn compositional_import(protocol: &ProcessProtocol) -> bool {
+    protocol.trace.as_ref().is_some_and(|trace| {
+        trace.recursive
+            || (!trace.segments.is_empty()
+                && trace.cursor.is_some()
+                && trace.correspondence.is_some())
+    })
+}
+
 impl Model<'_> {
     pub(super) fn has_recursion(&self) -> bool {
         let mut reached = Vec::new();
@@ -27,9 +38,7 @@ impl Model<'_> {
             || (!reached
                 .iter()
                 .any(|fd| fd.name != root.name && calls_itself(fd))
-                && !imports
-                    .iter()
-                    .any(|p| p.trace.as_ref().is_some_and(|t| t.recursive)))
+                && !imports.iter().any(|p| compositional_import(p)))
         {
             return vec![];
         }
@@ -75,9 +84,7 @@ impl Model<'_> {
         if !reached
             .iter()
             .any(|fd| fd.name != self.protocol.fn_name && calls_itself(fd))
-            && !imports
-                .iter()
-                .any(|p| p.trace.as_ref().is_some_and(|t| t.recursive))
+            && !imports.iter().any(|p| compositional_import(p))
         {
             return Ok(String::new());
         }

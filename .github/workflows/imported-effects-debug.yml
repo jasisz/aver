@@ -24,6 +24,14 @@ jobs:
           target/debug/aver verify tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects
           set -o pipefail
           target/debug/aver proof tests/fixtures/yield_imported_effects/main.av --module-root tests/fixtures/yield_imported_effects --backend lean --check --sorry-budget 0 -o /tmp/imported-effects-proof 2>&1 | tee /tmp/imported-effects-proof.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: imported-effects-base
+          path: |
+            /tmp/imported-effects-proof.log
+            /tmp/imported-effects-proof/**/*.lean
+            /tmp/imported-effects-proof/*.json
       - name: Inspect imported entry and splice goals
         if: failure()
         run: |

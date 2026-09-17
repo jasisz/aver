@@ -25,10 +25,10 @@ fn imported_in_place_effects_have_universal_mapping_and_splice_laws() {
     .unwrap();
     let laws = manifest["laws"].as_array().unwrap();
     // Eight owning-module laws, eight nested-wrapper laws, and twenty
-    // caller laws (including mapping, splice and cursor obligations).
+    // caller laws plus five finite-import composition laws.
     assert_eq!(
         laws.len(),
-        36,
+        41,
         "missing composition obligations: {manifest}"
     );
     for law in laws {
@@ -103,7 +103,7 @@ verify detectsCorruption
     assert!(!run.status.success(), "false laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
-    assert_eq!(summary["universal_laws"], 36, "{summary}");
+    assert_eq!(summary["universal_laws"], 41, "{summary}");
     for name in ["dropped", "reordered", "resetPosition"] {
         assert_eq!(
             summary["obligations"][format!("corrupt.{name}.implication")],
