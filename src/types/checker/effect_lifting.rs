@@ -90,7 +90,7 @@ fn classify_effect(cfg: &LiftConfig, method: &str) -> Option<RegisteredEffectCla
 }
 
 /// The Oracle call indices claimed so far in one lifting scope — one body,
-/// or one branch of a `!` / `?!` group.
+/// one branch of a `!` / `?!` group, or one arm of a `match`.
 ///
 /// Each operation counts its own calls, matching what the VM hands a stub in
 /// `take_oracle_coordinates`. The two numberings are written down twice, once
@@ -119,10 +119,30 @@ impl OracleCounters {
         self.per_effect.get(effect).copied().unwrap_or(0)
     }
 
+    /// The call indices claimed so far, to restart a sibling scope from. The
+    /// generated binding names are deliberately left out: they are names, not
+    /// coordinates, and two siblings must not mint the same one.
+    fn call_indices(&self) -> HashMap<String, u32> {
+        self.per_effect.clone()
+    }
+
+    /// Restart every operation from `indices`.
+    fn restart_from(&mut self, indices: &HashMap<String, u32>) {
+        self.per_effect = indices.clone();
+    }
+
     fn next_fresh_binding(&mut self) -> u32 {
         let next = self.fresh_bindings;
         self.fresh_bindings += 1;
         next
+    }
+}
+
+/// Keep, for every operation either scope names, the larger of the two counts.
+fn keep_longest(into: &mut HashMap<String, u32>, from: &HashMap<String, u32>) {
+    for (effect, count) in from {
+        let slot = into.entry(effect.clone()).or_insert(0);
+        *slot = (*slot).max(*count);
     }
 }
 
@@ -663,18 +683,27 @@ fn lift_expr(
 
         Expr::Match { subject, arms } => {
             let new_subject = lift_expr(subject, cfg, path_expr, counters)?;
+            // Exactly one arm runs, and the VM charges only the calls that
+            // run, so every arm is numbered from the indices the match was
+            // reached at. Continuing one running count across the arms
+            // numbered a second arm's first call above what the VM hands it,
+            // and every law whose subject can take that arm exported a
+            // theorem the kernel refutes while `verify` passed.
+            let at_match = counters.call_indices();
+            let mut after_match = at_match.clone();
             let mut new_arms = Vec::with_capacity(arms.len());
             for arm in arms {
-                // v0: counter continues across arms — this is correct for
-                // cases-style `match` on a runtime value (only one arm
-                // executes, but statically we don't know which). Branch
-                // lifting in a later commit gives each arm its own counter
-                // under a branch-aware path extension.
-                new_arms.push(MatchArm::new(
-                    arm.pattern.clone(),
-                    lift_expr(&arm.body, cfg, path_expr, counters)?,
-                ));
+                counters.restart_from(&at_match);
+                let body = lift_expr(&arm.body, cfg, path_expr, counters)?;
+                keep_longest(&mut after_match, &counters.call_indices());
+                new_arms.push(MatchArm::new(arm.pattern.clone(), body));
             }
+            // A call after the match is numbered from the busiest arm, which
+            // is exact while the arms make the same number of calls and is
+            // the closest a static index can come when they do not. See
+            // "Where a run and an exported proof number differently" in
+            // `docs/oracle.md`.
+            counters.restart_from(&after_match);
             Expr::Match {
                 subject: Box::new(new_subject),
                 arms: new_arms,

@@ -54,6 +54,32 @@ verify twoReadsWithClock law scriptedPeer
     twoReadsWithClock() => 7009
 "#;
 
+/// One `match` whose arms both read the same operation, followed by a third
+/// read. Exactly one arm runs, so the run charges the operation twice: index 0
+/// inside the arm that was taken and index 1 after the match.
+const ARMS: &str = r#"module ArmCallIndex
+    intent = "Only the arm that runs is charged."
+    exposes [pick]
+    effects [Random.int]
+
+fn pick(flag: Int) -> Int
+    ? "Both arms read the peer, and one more read follows the match."
+    ! [Random.int]
+    chosen = match flag
+        0 -> Random.int(1, 6)
+        _ -> Random.int(1, 6)
+    after = Random.int(1, 6)
+    chosen * 10 + after
+
+fn peer(path: BranchPath, call: Int, low: Int, high: Int) -> Result<Int, String>
+    ? "The peer reports the index it was handed."
+    Result.Ok(call)
+
+verify pick law armsAreNumberedFromTheMatch
+    given rnd: Random.int = [peer]
+    pick(1) => 1
+"#;
+
 #[test]
 fn vm_numbers_each_operation_from_zero() {
     let items = parse_source(MIXED).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
@@ -78,16 +104,16 @@ fn vm_numbers_each_operation_from_zero() {
     );
 }
 
-fn export_mixed(backend: &str, file: &str) -> String {
+fn export(program: &str, slug: &str, backend: &str, file: &str) -> String {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("test-out")
-        .join(format!("oracle-call-index-{backend}"));
+        .join(format!("oracle-call-index-{slug}-{backend}"));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("create output dir");
-    let source = root.join("mixed.av");
-    std::fs::write(&source, MIXED).expect("write source");
+    let source = root.join(format!("{slug}.av"));
+    std::fs::write(&source, program).expect("write source");
 
     let output = Command::new(aver_bin)
         .arg("proof")
@@ -109,7 +135,7 @@ fn export_mixed(backend: &str, file: &str) -> String {
 
 #[test]
 fn exported_lean_numbers_each_operation_from_zero() {
-    let lean = export_mixed("lean", "MixedCallIndex.lean");
+    let lean = export(MIXED, "mixed", "lean", "MixedCallIndex.lean");
     for call in [
         "rnd_Random_int path 0 0 100",
         "rnd_Time_unixMs path 0",
@@ -129,7 +155,7 @@ fn exported_lean_numbers_each_operation_from_zero() {
 
 #[test]
 fn exported_dafny_numbers_each_operation_from_zero() {
-    let dafny = export_mixed("dafny", "MixedCallIndex.dfy");
+    let dafny = export(MIXED, "mixed", "dafny", "MixedCallIndex.dfy");
     for call in [
         "rnd_Random_int(path, 0, 0, 100)",
         "rnd_Time_unixMs(path, 0)",
@@ -144,5 +170,48 @@ fn exported_dafny_numbers_each_operation_from_zero() {
     assert!(
         !dafny.contains("rnd_Random_int(path, 2, 0, 100)"),
         "index 2 means the lifter still shares one counter across operations:\n{dafny}"
+    );
+}
+
+#[test]
+fn vm_charges_only_the_arm_that_runs() {
+    let items = parse_source(ARMS).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let results = run_verify_for_items_vm_with_mode(
+        items,
+        None,
+        Some(env!("CARGO_MANIFEST_DIR")),
+        "regression_oracle_call_index_arms.av",
+        ExpansionMode::Declared,
+    )
+    .expect("verify run");
+
+    assert_eq!(results.len(), 1, "one verify block");
+    let result = &results[0];
+    assert_eq!(
+        (result.passed, result.failed),
+        (1, 0),
+        "the arm that runs reads the peer at index 0 and the read after the match at index 1, \
+         because the arm that was not taken made no call at all"
+    );
+}
+
+#[test]
+fn exported_lean_numbers_match_arms_from_the_match() {
+    let lean = export(ARMS, "arms", "lean", "ArmCallIndex.lean");
+    let taken = lean.matches("rnd_Random_int path 0 1 6").count();
+    assert_eq!(
+        taken, 2,
+        "each arm starts from the index the match was reached at, so both arms read index 0; \
+         one occurrence means the lifter still carries the first arm's call into the second \
+         and the exported law is false wherever the second arm runs:\n{lean}"
+    );
+    assert!(
+        lean.contains("rnd_Random_int path 1 1 6"),
+        "the read after the match is index 1 for whichever arm ran, because both arms make one \
+         call:\n{lean}"
+    );
+    assert!(
+        !lean.contains("rnd_Random_int path 2 1 6"),
+        "index 2 means the arms were summed instead of numbered from the match:\n{lean}"
     );
 }
