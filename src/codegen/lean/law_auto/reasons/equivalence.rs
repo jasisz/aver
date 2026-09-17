@@ -180,7 +180,7 @@ pub(super) fn candidate(
         // Expose Bool facts in the IH before solving a consumed-prefix step;
         // the guarded drop equation lets arithmetic relate Int cursor deltas.
         return Some(format!(
-            "(simp only [beq_iff_eq{heads}]; {start}all_goals simp only [{simp}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le] at *; all_goals grind [List.drop_cons]; done)"
+            "(simp only [beq_iff_eq{heads}]; {start}all_goals simp +zetaDelta only [{simp}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le] at *; all_goals grind [List.drop_cons]; done)"
         ));
     }
     // Expose the matching right-hand step before splitting result projections

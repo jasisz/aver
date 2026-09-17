@@ -202,7 +202,7 @@ pub(super) fn candidate(
     // finite helper. A cons-tail IH is too narrow for that checked decrease;
     // length induction provides the equation for every shorter suffix.
     let steps = format!(
-        "all_goals ({steps}); all_goals (repeat' first | (simp_all [{step_simp}, {excluded}]) | split); all_goals (simp_all [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals grind [List.drop_cons, List.length_drop, List.length_cons, {equations}]; done"
+        "all_goals ({steps}); all_goals (repeat' first | (simp_all +zetaDelta [{step_simp}, {excluded}]) | split); all_goals (simp_all +zetaDelta [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals grind [List.drop_cons, List.length_drop, List.length_cons, {equations}]; done"
     );
     let induction = if crate::codegen::recursion::detect::single_list_structural_param_index(driver)
         .is_some()
