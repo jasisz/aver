@@ -1,0 +1,3 @@
+Compiled /private/tmp/aver-waterfall-spike/tools/waterfall/tree.av → /private/tmp/waterfall-pilot/tree/baseline/ [Lean 4]
+  cd /private/tmp/waterfall-pilot/tree/baseline && lake build
+{"backend":"lean","bounded_laws":0,"budget":0,"build_errors":0,"manifest":"proof_manifest.json","model_panicked":false,"passed":false,"sorries":1,"sorry_laws":["fastElements.accumulator"],"universal":false,"universal_laws":0}

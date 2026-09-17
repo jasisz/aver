@@ -1,0 +1,26 @@
+COMPACT success=true attempts=70 nodes=12 depth=2 rawHeartbeats=1326614 strength=1 moves=[simp,
+ simp,
+ function induction,
+ intro]
+Try this:
+  [apply] (
+    expose_names
+    intro _
+    expose_names
+    fun_induction elements tree
+    expose_names
+    focus ((simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [WaterfallTree.fastElements]; done))
+    expose_names
+    focus
+      ((simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [WaterfallTree.fastElements,
+            WaterfallTree.elements];
+          done)))
+'WaterfallTree.fastElements_law_accumulator' depends on axioms: [propext, Quot.sound]
+Try this:
+  [apply] (
+    expose_names
+    focus
+      ((simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [fastElements_law_accumulator,
+            WaterfallTree.fastElements, WaterfallTree.elements];
+          done)))
+'WaterfallTree.fastElements_law_traversal' depends on axioms: [propext, Quot.sound]

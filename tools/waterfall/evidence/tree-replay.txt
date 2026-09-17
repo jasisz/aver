@@ -1,0 +1,25 @@
+TreeReplay.lean:57:12: warning: This simp argument is unused:
+  WaterfallTree.elements
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [WaterfallTree.fastElements]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'WaterfallTree.fastElements_law_accumulator' depends on axioms: [propext, Quot.sound]
+TreeReplay.lean:67:12: warning: This simp argument is unused:
+  WaterfallTree.fastElements
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [fastElements_law_accumulator,
+    WaterfallTree.elements]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+TreeReplay.lean:67:40: warning: This simp argument is unused:
+  WaterfallTree.elements
+
+Hint: Omit it from the simp argument list.
+  [apply] simp_all (config := { maxSteps := 100000, maxDischargeDepth := 2 }) [fastElements_law_accumulator,
+    WaterfallTree.fastElements]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'WaterfallTree.fastElements_law_traversal' depends on axioms: [propext, Quot.sound]
