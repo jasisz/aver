@@ -108,17 +108,13 @@ pub(super) fn candidate(
     // instead of treating the two tails as unrelated induction arguments.
     // These are local checked lemmas: a non-map list function simply fails
     // this candidate, rather than receiving a shape-based theorem.
-    let mut map_lemmas = String::new();
-    let mut map_facts = Vec::new();
-    for (index, fd) in maps.iter().filter(|fd| fd.params.len() == 1).enumerate() {
-        let name = induction::lean_name(fd, ctx);
-        let length = format!("__aver_transport_length_{index}");
-        let drop = format!("__aver_transport_drop_{index}");
-        map_lemmas.push_str(&format!(
-            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by intro xs; induction xs <;> simp_all [{name}]); have {drop} : ∀ xs n, {name} (List.drop n xs) = List.drop n ({name} xs) := (by intro xs n; induction xs generalizing n <;> cases n <;> simp_all [{name}]); "
-        ));
-        map_facts.extend([length, drop]);
-    }
+    let (map_lemmas, map_facts) = induction::checked_map_lemmas(
+        &maps
+            .iter()
+            .filter(|fd| fd.params.len() == 1)
+            .map(|fd| induction::lean_name(fd, ctx))
+            .collect::<Vec<_>>(),
+    );
     // Calls producing a fold's state stay opaque. Expanding their patterns is
     // unrelated to transporting that fold's observations across a list map.
     let boundary: BTreeSet<_> = folds

@@ -38,6 +38,22 @@ pub(super) fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
     }
 }
 
+/// Prove map/suffix properties locally rather than trusting the function's
+/// shape. A length-changing function makes this candidate fail normally.
+pub(super) fn checked_map_lemmas(names: &[String]) -> (String, Vec<String>) {
+    let mut proofs = String::new();
+    let mut facts = Vec::new();
+    for (index, name) in names.iter().enumerate() {
+        let length = format!("__aver_transport_length_{index}");
+        let drop = format!("__aver_transport_drop_{index}");
+        proofs.push_str(&format!(
+            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by intro xs; induction xs <;> simp_all [{name}]); have {drop} : ∀ xs n, {name} (List.drop n xs) = List.drop n ({name} xs) := (by intro xs n; induction xs generalizing n <;> cases n <;> simp_all [{name}]); "
+        ));
+        facts.extend([length, drop]);
+    }
+    (proofs, facts)
+}
+
 pub(super) fn plan(
     vb: &VerifyBlock,
     index: usize,
@@ -150,6 +166,7 @@ pub(super) struct Definitions {
     /// expanding the implementations summarized by cited transition laws.
     pub(super) list_steps: String,
     pub(super) list_maps: String,
+    pub(super) unary_list_maps: Vec<String>,
     pub(super) completed: String,
     pub(super) heads: String,
     /// Equations of outer calls and their direct arguments, without the full cone.
@@ -183,6 +200,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     let mut out = BTreeMap::new();
     let mut list_steps = BTreeSet::new();
     let mut list_maps = BTreeSet::new();
+    let mut unary_list_maps = BTreeSet::new();
     let mut completed = BTreeSet::new();
     let mut unfold_once = Vec::new();
     let law_calls = |builtin: &str| {
@@ -212,6 +230,9 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
             }
             if fd.return_type.starts_with("List<") {
                 list_maps.insert(lean_name(fd, ctx));
+                if fd.params.len() == 1 {
+                    unary_list_maps.insert(lean_name(fd, ctx));
+                }
             }
         }
         // Subtractive countdown equations expose fixed-width steps. Keep
@@ -319,6 +340,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     Definitions {
         list_steps: list_steps.into_iter().collect::<Vec<_>>().join(", "),
         list_maps: list_maps.into_iter().collect::<Vec<_>>().join(", "),
+        unary_list_maps: unary_list_maps.into_iter().collect(),
         completed: completed.into_iter().collect::<Vec<_>>().join(", "),
         heads,
         head_equations: head_equations.join(", "),
