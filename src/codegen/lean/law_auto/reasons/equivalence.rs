@@ -208,11 +208,11 @@ pub(super) fn candidate(
                 .filter(|name| *name != adapter)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(" | (solve | (conv => rhs; simp only [{step_simp}]); assumption)")
+            format!(" | (solve | simp_all +zetaDelta only [{step_simp}])")
         })
         .unwrap_or_default();
     let solve = format!(
-        "simp only [beq_iff_eq{heads}]; {start}{first_step}all_goals (repeat' first | assumption | rfl{completed}{recursive} | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
+        "simp only [beq_iff_eq{heads}]; {start}{first_step}all_goals (repeat' first | assumption | rfl{completed}{recursive} | (simp_all +zetaDelta [{simp}]) | split{steps} | (solve | grind)); done"
     );
     // Finite helper chains often return records containing a mapped remainder.
     // Split only a constructor prefix before substitution duplicates those
