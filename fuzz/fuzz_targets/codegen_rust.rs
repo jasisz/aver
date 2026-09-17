@@ -82,11 +82,16 @@ fn main() {
         let Ok(prepared) = aver::source::load_compile_deps(&items, module_root) else {
             return;
         };
-        let aver::source::PreparedCompileDeps { modules, loaded } = prepared;
+        let aver::source::PreparedCompileDeps {
+            modules,
+            loaded,
+            marked,
+        } = prepared;
         let mut result = aver::ir::pipeline::run(
             &mut items,
             PipelineConfig {
                 typecheck: Some(TypecheckMode::WithCheckedLoaded(&loaded)),
+                marked,
                 run_interp_lower: true,
                 run_buffer_build: true,
                 run_chars_fusion: true,
