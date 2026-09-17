@@ -6,6 +6,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 
+- **Compiled native Work jobs transfer typed tasks and results without rebuilding provider value trees.** Compiler-owned bindings keep the existing job engine, limits, cancellation, and Wait semantics. Recording/replay and explicit host bindings retain the public provider format.
+
 - **Lean explanation proofs preserve computation boundaries before expanding helpers.** Explanations first use checked equations for outer calls and their immediate adapters; wrapper composition first reuses cited laws. This avoids consumer proof timeouts without increasing heartbeat or admission budgets.
 
 - **Native Work tasks transfer their prepared arguments without a second deep copy.** Generated provider dispatch can consume its owned argument buffer; existing providers retain their borrowed implementation by default. Contract lookup, diagnostics, and replay behavior use the same boundaries.

@@ -1818,17 +1818,35 @@ fn emit_mir_capability_call(
         })
         .collect::<Vec<_>>();
 
+    let job_kind = (operation.canonical_name.ends_with(".begin")
+        || operation.canonical_name.ends_with(".take"))
+        && ctx.codegen.is_some_and(|codegen| {
+            crate::capability::work::is_job_kind(&codegen.capabilities, &operation.module)
+        });
+    let native_begin = job_kind && operation.canonical_name.ends_with(".begin");
+    let native_take = job_kind && operation.canonical_name.ends_with(".take");
     let invoke_with = |names: &[String]| {
+        let encoder = if native_begin {
+            "encode_work_task"
+        } else {
+            "encode"
+        };
         let encoded = names
             .iter()
             .map(|name| {
                 format!(
-                    "crate::provider_support::encode({}, {:?})",
+                    "crate::provider_support::{encoder}({}, {:?})",
                     name, operation.module
                 )
             })
             .collect::<Vec<_>>()
             .join(", ");
+        if native_take {
+            return format!(
+                "{{ let answer: {} = crate::provider_support::invoke_work_take({:?}, {:?}, vec![{}], {:?}); answer }}",
+                return_type, operation.module, operation.canonical_name, encoded, expected
+            );
+        }
         format!(
             "crate::provider_support::invoke::<{}>({:?}, {:?}, vec![{}], {}, {:?})",
             return_type, operation.module, operation.canonical_name, encoded, minted, expected

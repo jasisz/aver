@@ -1,5 +1,7 @@
 //! Native capability-provider support emitted into generated Rust projects.
 
+mod native_work;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
@@ -97,14 +99,36 @@ pub(super) fn generate_provider_runtime(
     work_kinds: &[WorkKindEmit],
     work_max_jobs: Option<usize>,
 ) -> String {
+    let native_work = crate::capability::work::job_kinds(contracts)
+        .iter()
+        .any(|(_, kind)| kind.is_ok());
+    let state_type = if native_work {
+        "ProviderState"
+    } else {
+        "NativeProviderRegistry"
+    };
     let mut out = String::new();
     out.push_str(
         "use std::sync::OnceLock;\n\
-         use aver_rt::provider::{NativeProviderRegistry, ProviderBinding, ProviderCodec, ProviderContractSpec, ProviderValue};\n\n\
-         static PROVIDERS: OnceLock<NativeProviderRegistry> = OnceLock::new();\n\n",
+         use aver_rt::provider::{NativeProviderRegistry, ProviderBinding, ProviderCodec, ProviderContractSpec, ProviderValue};\n\n",
     );
 
-    out.push_str("fn build_registry(bindings: Vec<ProviderBinding>, include_defaults: bool) -> Result<NativeProviderRegistry, String> {\n");
+    writeln!(
+        out,
+        "static PROVIDERS: OnceLock<{state_type}> = OnceLock::new();\n"
+    )
+    .unwrap();
+    if native_work {
+        out.push_str("struct ProviderState { registry: NativeProviderRegistry, native_work: std::collections::BTreeSet<String> }\n");
+        out.push_str(native_work::SUPPORT);
+        let enabled = if runtime_policy_from_env {
+            "!crate::aver_replay::is_effect_tracking_active()"
+        } else {
+            "true"
+        };
+        writeln!(out, "fn native_work_enabled() -> bool {{ {enabled} }}").unwrap();
+    }
+    writeln!(out, "fn build_registry(bindings: Vec<ProviderBinding>, include_defaults: bool) -> Result<{state_type}, String> {{").unwrap();
     out.push_str("    let mut registry = NativeProviderRegistry::new(vec![\n");
     for contract in contracts.contracts() {
         let operations = contracts
@@ -165,6 +189,9 @@ pub(super) fn generate_provider_runtime(
         .unwrap();
     }
 
+    if native_work {
+        out.push_str("    let mut native_work = std::collections::BTreeSet::new();\n");
+    }
     for kind in work_kinds {
         let Some(contract) = contracts.contract(&kind.capability) else {
             continue;
@@ -183,10 +210,25 @@ pub(super) fn generate_provider_runtime(
         .unwrap();
     }
 
+    if native_work {
+        for kind in work_kinds {
+            writeln!(
+                out,
+                "    if include_defaults {{ native_work.insert({:?}.to_string()); }}",
+                kind.capability
+            )
+            .unwrap();
+        }
+    }
     out.push_str(
         "    let mut supplied = std::collections::BTreeSet::new();\n\
-         for binding in bindings {\n\
-             if !supplied.insert(binding.capability().to_string()) {\n\
+         for binding in bindings {\n",
+    );
+    if native_work {
+        out.push_str("    native_work.remove(binding.capability());\n");
+    }
+    out.push_str(
+        "    if !supplied.insert(binding.capability().to_string()) {\n\
                  return Err(format!(\"error[capability-provider-duplicate]: capability '{}' has more than one host-supplied provider binding\", binding.capability()));\n\
              }\n\
              if registry.binding(binding.capability()).is_some() {\n\
@@ -194,10 +236,13 @@ pub(super) fn generate_provider_runtime(
              } else {\n\
                  registry.bind(binding)?;\n\
              }\n\
-         }\n\
-         Ok(registry)\n\
-         }\n\n",
+         }\n",
     );
+    out.push_str(if native_work {
+        "    Ok(ProviderState { registry, native_work })\n}\n\n"
+    } else {
+        "    Ok(registry)\n}\n\n"
+    });
 
     out.push_str(
         "/// Install the native providers for this generated artifact. The set is\n\
@@ -217,10 +262,13 @@ pub(super) fn generate_provider_runtime(
              PROVIDERS.get_or_init(|| build_registry(Vec::new(), true).expect(\"compiler-shipped provider bindings must match embedded contracts\"));\n\
          }\n\n\
          pub fn registry() -> &'static NativeProviderRegistry {\n\
-             ensure_default_provider_bindings();\n\
-             PROVIDERS.get().expect(\"provider registry initialized\")\n\
-         }\n\n",
+             ensure_default_provider_bindings();\n",
     );
+    out.push_str(if native_work {
+        "    &PROVIDERS.get().expect(\"provider registry initialized\").registry\n}\n\n"
+    } else {
+        "    PROVIDERS.get().expect(\"provider registry initialized\")\n}\n\n"
+    });
 
     if !work_kinds.is_empty() {
         writeln!(
@@ -243,9 +291,10 @@ pub(super) fn generate_provider_runtime(
              /// function `aver.toml` bound, and hand the answer back as a value.\n\
              fn {}(__task: ProviderValue) -> Result<ProviderValue, String> {{\n\
                  let __registry = registry();\n\
-                 let __task = ProviderCodec::from_provider_value(__task, __registry, {capability:?}, None)\n\
+                 let (__task, __native) = decode_work_value(__task, __registry, {capability:?}, None)\n\
                      .map_err(|why| format!(\"work: job kind '{capability}' was handed an unusable task: {{}}\", why))?;\n\
                  let __produced = {};\n\
+                 if __native {{ return Ok(pack_native_work(__produced)); }}\n\
                  __produced.into_provider_value(__registry, {capability:?})\n\
                      .map_err(|why| format!(\"work: job kind '{capability}' produced an unusable result: {{}}\", why))\n\
              }}\n",

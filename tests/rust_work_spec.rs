@@ -930,3 +930,6 @@ mod map_replay_regression {
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|error| panic!("{error}"));
 }
+
+#[path = "rust_work_spec/native_transfer.rs"]
+mod native_transfer;
