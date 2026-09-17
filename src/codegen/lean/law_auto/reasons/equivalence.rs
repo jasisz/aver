@@ -203,7 +203,7 @@ pub(super) fn candidate(
     let completed = if definitions.completed.is_empty() {
         String::new()
     } else {
-        format!(" | (solve | simp only [{}])", definitions.completed)
+        format!(" | (simp_all only [{}])", definitions.completed)
     };
     // Preserve the application appearing in the recursive IH while reducing
     // the other fold's step. Expanding its result adapter first duplicates
