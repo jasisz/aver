@@ -99,9 +99,10 @@ oracle argument rather than a host call in the Lean artifact.
 
 A local yielding process also supports plain cases with an exact stub for every
 request operation. These cases drive its generated protocol on the VM; they do
-not call its live answer module. The process driver shares the normal Oracle
-counter with in-place effects and charges no counter for self yields. Direct
-process cases currently have no proof-export or WASM-stub model. See
+not call its live answer module. A request kind is numbered like any other
+operation: each request operation counts its own calls, in-place effects do not
+move it, and a self yield charges no index at all. Direct process cases currently
+have no proof-export or WASM-stub model. See
 [testing a process](language.md#testing-a-process-with-request-stubs).
 
 ## Trace-aware cases
@@ -122,29 +123,37 @@ Here `.result` is the function's return value under the stub, and `.trace` is th
 
 ## Effect classification
 
-Oracle has a fixed built-in effect set:
+A classification is not a table in the compiler: it is the `oracle = ...`
+attribute on the operation in its capability source, so a capability the program
+declares is classified the same way the shipped ones are. The shipped set is:
 
 | Namespace | Method | Dimension |
 |---|---|---|
 | `Args` | `get` | snapshot |
 | `Env` | `get` | snapshot |
-| `Env` | `set` | output |
+| `Env` | `set` | generative + output |
 | `Console` | `readLine` | generative |
+| `Console` | `print`, `error`, `warn` | output |
 | `Random` | `int`, `float` | generative |
+| `Process` | `stopRequested` | generative |
 | `Time` | `now`, `unixMs` | generative |
-| `Time` | `sleep` | output |
+| `Time` | `sleep` | generative + output |
 | `Disk` | `readText`, `readBytes`, `readBytesAt`, `size`, `exists`, `listDir` | generative |
 | `Disk` | `writeText`, `appendText`, `writeBytes`, `appendBytes`, `delete`, `deleteDir`, `makeDir`, `sync` | generative + output |
 | `Http` | `get`, `head`, `delete`, `post`, `put`, `patch` | generative + output |
 | `Tcp` | `send`, `sendBytes`, `ping` | generative + output |
-| `Tcp` | `connect`, `readLine`, `readBytes`, `readNow`, `writeLine`, `writeBytes`, `writeNow`, `close` | generative + output |
-| `Console` | `print`, `error`, `warn` | output |
+| `Tcp` | `connect`, `beginConnect`, `dialled`, `listen`, `accept`, `peerAddress`, `poll` | generative + output |
+| `Tcp` | `readLine`, `readBytes`, `readSome`, `readNow`, `writeLine`, `writeBytes`, `writeNow` | generative + output |
+| `Tcp` | `close`, `closeDial`, `closeListener` | generative + output |
+| `Wait` | `poll` | generative + output |
+| `Work` | `cancel` | generative + output |
 | `Terminal` | `readKey` | generative |
 | `Terminal` | `size` | snapshot |
-| `Terminal` | `clear`, `moveTo`, `print`, `hideCursor`, `showCursor`, `flush` | output |
-| `Terminal` | `enableRawMode`, `disableRawMode`, `setColor`, `resetColor` | output |
+| `Terminal` | `clear`, `moveTo`, `print`, `hideCursor`, `showCursor`, `flush` | generative + output |
+| `Terminal` | `enableRawMode`, `disableRawMode`, `setColor`, `resetColor` | generative + output |
 
-Anything outside this set is not modeled by Oracle.
+Every non-`output` operation above is stubbable through `given`. An operation
+with no `oracle` attribute is not modeled by Oracle and belongs in record/replay.
 
 ## Effect stubs are stateless
 
@@ -197,7 +206,8 @@ fn stubEnv(key: String) -> Option<String>
 
 ### Generative and generative + output
 
-Generative stubs receive a leading `BranchPath` and per-branch call counter.
+Generative stubs receive a leading `BranchPath` and the call index of their own
+operation.
 
 ```aver
 fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
@@ -207,6 +217,14 @@ fn fakeFetch(path: BranchPath, n: Int, url: String)
 ```
 
 The original effect arguments are appended after `(path, n)`.
+
+`n` counts the calls of that one operation on that one branch path, from 0. It
+does not count what the function under test does between two of them, so
+`fairDie` sees 0 then 1 whether or not the code reads the clock, logs a line, or
+writes to a socket in between. That is what lets a stub be scripted by call
+number: `match n` is a reply script for that operation and nothing else moves it.
+Two different operations therefore share no numbering at all, and each `!` / `?!`
+branch restarts every operation at 0 under its own path.
 
 ### Output
 
@@ -218,6 +236,64 @@ verify hello trace
 ```
 
 `given out: Console.print = [...]` is rejected because output effects have no return value to replace.
+
+## Driving a socket state machine with a scripted peer
+
+A resource such as `Tcp.Connection` can only be minted by a provider, so a case
+cannot build one and pass it in. Mint it inside the function under test, then
+drive the exchange over it. A minting operation's stub receives the witness in an
+extra slot after `(path, n)`, and returning it is the whole of a successful dial:
+
+```aver
+fn greet(host: String, port: Int) -> Result<String, String>
+    ? "Mint the connection inside the function under test, then drive the exchange over it."
+    ! [Tcp.connect, Tcp.writeLine, Tcp.readLine, Tcp.close]
+    connection = Tcp.connect(host, port)?
+    Tcp.writeLine(connection, "HELLO")?
+    version = Tcp.readLine(connection)?
+    Tcp.writeLine(connection, "READY")?
+    banner = Tcp.readLine(connection)?
+    Tcp.close(connection)?
+    Result.Ok("{version}/{banner}")
+
+fn peerAnswers(path: BranchPath, call: Int, fresh: Tcp.Connection, host: String, port: Int) -> Result<Tcp.Connection, String>
+    ? "The dial succeeds and hands back the witness the provider would have minted."
+    Result.Ok(fresh)
+
+fn peerSpeaks(path: BranchPath, call: Int, connection: Tcp.Connection) -> Result<String, String>
+    ? "The reply script: the peer announces its version, then its banner."
+    match call
+        0 -> Result.Ok("V2")
+        _ -> Result.Ok("OK")
+
+fn peerListens(path: BranchPath, call: Int, connection: Tcp.Connection, line: String) -> Result<Unit, String>
+    ? "The peer accepts every line written to it."
+    Result.Ok(Unit)
+
+fn peerHangsUp(path: BranchPath, call: Int, connection: Tcp.Connection) -> Result<Unit, String>
+    ? "Closing the connection succeeds."
+    Result.Ok(Unit)
+
+verify greet
+    given dial: Tcp.connect = [peerAnswers]
+    given reads: Tcp.readLine = [peerSpeaks]
+    given writes: Tcp.writeLine = [peerListens]
+    given closes: Tcp.close = [peerHangsUp]
+    greet("example.test", 79) => Result.Ok("V2/OK")
+```
+
+`peerSpeaks` is a reply script over `Tcp.readLine` alone: read 0 is the version,
+read 1 is the banner. The dial, the two writes and the close do not appear in its
+numbering, so adding a log line or a clock read to `greet` does not rewrite the
+script. Three rules bound what this pattern can express:
+
+- Every operation `greet` reaches needs its own `given`, or the case aborts
+  before host dispatch.
+- Resource identity is unobservable, so a stub cannot tell which connection it is
+  being asked about. Script by call order, not by peer.
+- Stubs are stateless. A `writeLine` does not change what the next `readLine`
+  returns; if the exchange is a request/response pair, write that pairing into
+  the script by hand, as `peerSpeaks` does.
 
 ## Multiple stubs
 
@@ -497,7 +573,9 @@ the two real options today.
 > assumption. The guard observes the same oracle the case body sees:
 > for the declared case the user's stub fires, for each hostile-profile
 > case the corresponding profile fn fires. No state model, no session
-> types — just a predicate over oracle outputs at counter indices.
+> types — just a predicate over oracle outputs at that operation's own call
+> indices, so `clock(root, 0)` and `clock(root, 1)` are the first two clock
+> reads whatever else runs between them.
 >
 > **`when` itself must be pure.** Calls like `clock(root, 1)` inside a
 > guard are *queries on the oracle* installed for this case, not runtime

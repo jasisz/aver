@@ -72,7 +72,7 @@
                 <code>twoFloatsDistinct</code> reads <code>Random.float</code>
                 twice and compares the results. Its law supplies
                 <code>distinctStub</code>, a deterministic oracle whose result
-                depends on the per-branch call counter.
+                depends on the call index of <code>Random.float</code> itself.
             </p>
             <pre class="article-code"><code>fn distinctStub(path: BranchPath, n: Int) -&gt; Float
     ? "Stub returning n+1 as a Float — different value per call counter."
@@ -191,7 +191,7 @@ proof gate: failed</code></pre>
             <h2>Proof export</h2>
             <p>
                 Oracle lifting turns the effect into an explicit proof parameter,
-                addressed by <code>BranchPath</code> and a per-branch counter. A
+                addressed by <code>BranchPath</code> and that operation's own call index. A
                 universal form of this law would need to establish that
                 <code>twoFloatsDistinct</code> returns true for every admissible
                 <code>Random.float</code> oracle. A constant oracle is an immediate

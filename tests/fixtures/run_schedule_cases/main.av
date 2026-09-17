@@ -43,10 +43,10 @@ fn beginStub(path: BranchPath, index: Int, fresh: Work.Job, task: Int) -> Result
     Result.Ok(fresh)
 
 fn pendingThenReady(path: BranchPath, index: Int, job: Work.Job) -> Result<Option<Int>, String>
-    ? "Begin is observation 0; each turn observes stop, wait, clock, then take. Takes 4 and 8 return pending and the sole result; any later take is an error."
+    ? "Takes are numbered among themselves, whatever the turn observes around them. Take 0 is pending, take 1 returns the sole result; any later take is an error."
     match index
-        4 -> Result.Ok(Option.None)
-        8 -> Result.Ok(Option.Some(10))
+        0 -> Result.Ok(Option.None)
+        1 -> Result.Ok(Option.Some(10))
         _ -> Result.Err("a settled job was taken again")
 
 fn falselyReady(path: BranchPath, index: Int, items: Map<Int, Wait.Item>, timeout: Int) -> Result<List<Int>, String>

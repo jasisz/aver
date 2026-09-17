@@ -866,7 +866,8 @@ impl VM {
                     // helper-boundary emissions under verify-trace.
                     self.runtime.sync_caller_fn_id(fn_id);
                     if let Some(stub_fn_id) = self.runtime.oracle_stub_for(builtin.name()) {
-                        let result = self.dispatch_oracle_stub(stub_fn_id, &args, false)?;
+                        let result =
+                            self.dispatch_oracle_stub(builtin.name(), stub_fn_id, &args, false)?;
                         self.stack.push(result);
                         continue;
                     }

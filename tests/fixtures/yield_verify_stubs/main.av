@@ -60,7 +60,7 @@ verify checkpoint
     checkpoint(2) => Result.Err("refused")
 
 fn clocked(id: Int) -> Int
-    ? "An in-place effect and a request share the existing Oracle coordinates."
+    ? "An in-place effect and a request each number their own calls, so the clock does not move the request ordinal."
     ! [Pool.claim, Time.unixMs, yield]
     now = Time.unixMs()
     match Pool.claim(id)
@@ -89,10 +89,10 @@ fn refused(path: BranchPath, index: Int, value: Int) -> Result<Int, String>
 verify clocked
     given clock: Time.unixMs = [timeStub]
     given answer: Pool.claim = [numbered]
-    clocked(2) => 112
+    clocked(2) => 102
 
 fn notified(id: Int) -> Option<Int>
-    ? "Even a Unit request consumes one Oracle coordinate before the next kind."
+    ? "A Unit request of one kind leaves the next kind's request ordinal at zero."
     ! [Pool.claim, Pool.notice, yield]
     Pool.notice(id)
     Pool.claim(id)
@@ -103,4 +103,4 @@ fn noticeStub(path: BranchPath, index: Int, id: Int) -> Unit
 verify notified
     given notice: Pool.notice = [noticeStub]
     given answer: Pool.claim = [numbered]
-    notified(2) => Option.Some(12)
+    notified(2) => Option.Some(2)
