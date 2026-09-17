@@ -510,6 +510,8 @@ Where it runs:
 - wasm-gc: the runner and Wasmtime packs execute jobs on host threads, enforce `max-jobs`, and support cancellation. Raw modules expose `aver:work/v1`; the JavaScript adapter uses workers and drives a generated coordinator between waits. See `docs/wasm-work.md`.
 - wasip2: jobs currently run inline at `begin`; `max-jobs` is ignored with `warning[work-max-jobs-ignored]`. Generated loops keep `View.stopping = false` and end through their policy or normal exhaustion; explicit `Process.stopRequested` calls are rejected.
 
+**Give `max-jobs` headroom.** The end of a job's body frees its slot; `Work.cancel` sets the flag and drops the answer, and the running count falls once the body settles. The VM stops the body at its next cancellation check, wasm-gc traps it at the next epoch check, and generated Rust checks no flag, so there it runs to completion. Because `begin` refuses at the limit rather than waiting, a program that cancels a job and begins its replacement in the same turn, which is what a retry after an owner-side error looks like, asks for a slot the cancelled job still holds, and a limit set to exactly the steady-state need refuses the retry. Leave one spare slot per job that may be retried at once on the VM and on wasm-gc, and twice the steady-state need on `--target rust` if every job may be replaced. `wasip2` has nothing to size.
+
 **Driving the protocol by hand.** The generated names are compiler-defined and callable, so a program without a `[run]` table drives a process itself. For `loop` the compiler generates, in the same module: `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind (state only when the operation returns `Unit`) and `__loopAnswerYield(__state)`. The original function is removed:
 
 ```aver
@@ -638,6 +640,40 @@ Map lookup:
 match Map.get(ages, "alice")
     Option.Some(age) -> "Alice is {age}"
     Option.None -> "Unknown"
+```
+
+Bounded outbox for `Tcp.writeNow`. A non-blocking write takes a prefix, so the program carries the queue: the payload at the head, how many of its bytes have gone, the rest behind it. Register the `Sending` key only while bytes remain, and when the outbox is full let the slow peer pay for it. A bulk producer, one request answered by many large payloads, must not enqueue them all at once: it keeps the list of what was asked for and renders the next payload once the queue is under its watermark, so a healthy peer is not dropped for reading slower than the program produces.
+
+```aver
+record Outbox
+    head: Bytes
+    queue: List<Bytes>
+    asked: List<Int>
+
+fn flush(connection: Tcp.Connection, outbox: Outbox) -> Result<Outbox, String>
+    ? "One non-blocking write from the head; what the socket did not take stays as data."
+    ! [Tcp.writeNow]
+    accepted = Tcp.writeNow(connection, outbox.head)?
+    rest = Bytes.drop(outbox.head, accepted)
+    match Bytes.len(rest) > 0
+        true -> Result.Ok(Outbox.update(outbox, head = rest))
+        false -> match outbox.queue
+            [] -> Result.Ok(Outbox.update(outbox, head = Bytes.empty()))
+            [next, ..later] -> Result.Ok(Outbox.update(outbox, head = next, queue = later))
+
+fn interest(key: Int, connection: Tcp.Connection, outbox: Outbox, items: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>
+    ? "Ask for writability only while the outbox still holds bytes."
+    match Bytes.len(outbox.head) > 0
+        true -> Map.set(items, key, Wait.Item.Socket(Tcp.Socket.Sending(connection)))
+        false -> items
+
+fn topUp(outbox: Outbox) -> Outbox
+    ? "Render the next payload the peer asked for only under the watermark."
+    match List.len(outbox.queue) < 4
+        false -> outbox
+        true -> match outbox.asked
+            [] -> outbox
+            [next, ..later] -> Outbox.update(outbox, queue = List.concat(outbox.queue, [render(next)]), asked = later)
 ```
 
 ### Common mistakes to avoid
