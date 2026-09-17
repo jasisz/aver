@@ -31,13 +31,26 @@ jobs:
           from pathlib import Path
           path = Path('Looper.lean')
           text = path.read_text()
-          lines = text.splitlines()
-          for i, line in enumerate(lines):
-              if line.startswith('  | (first') and 'fun_induction Looper.__runTrace4c6f6f706572DriveLoop outcome' in line:
-                  lines[i] = line.replace("all_goals (repeat' first", "all_goals (try (conv => rhs; simp only [Looper.__runInLoopAt1, Looper.__runJoin1]); trace_state; repeat' first").replace('; done))', '; all_goals trace_state; all_goals sorry))')
-          Path('LooperProbe.lean').write_text('\n'.join(lines) + '\n')
+          import subprocess
+          prefix = text.split('-- verify law ')[0]
+          statement = next(line for line in text.splitlines() if line.startswith('theorem __aver_reason_') and 'Splice__runInLoopAt1Observed_law_splice_implication :' in line)
+          stem = 'Looper.__runTrace4c6f6f706572'
+          small = 'Looper.__runInLoopAt1, Looper.__runJoin1'
+          completed = f'{stem}Drive.eq_1, {stem}DriveLoop.eq_1'
+          full = f'{small}, {stem}Splice__runInLoopAt1, {completed}'
+          begin = f'intro outcome inputs position events consumed; simp only [beq_iff_eq, {stem}Splice__runInLoopAt1Observed, {stem}Splice__runInLoopAt1Drive]; fun_induction {stem}DriveLoop outcome inputs position events consumed; all_goals (try (conv => rhs; rw [{stem}Drive.eq_def])); '
+          probes = [
+              f"all_goals (repeat' first | assumption | rfl | (split at *) | (simp_all [{full}])); all_goals trace_state; all_goals sorry",
+              f"all_goals (repeat' first | assumption | rfl | (solve | simp_all only [{small}, {completed}]) | (split at *)); all_goals (try simp_all [{full}]); all_goals trace_state; all_goals sorry",
+              f"all_goals (try (rename_i ih; rw [ih])); all_goals (try (conv => rhs; simp only [{small}])); all_goals (try (congr 1)); all_goals (repeat' first | rfl | (simp_all only [{full}]) | (split at *)); all_goals trace_state; all_goals sorry",
+          ]
+          for i, tactic in enumerate(probes):
+              name = f'LooperProbe{i}.lean'
+              Path(name).write_text(prefix + statement + '\n  ' + begin + tactic + '\nend Looper\n')
+              print(f'PROBE {i}', flush=True)
+              result = subprocess.run(['lake', 'env', 'lean', name], timeout=90)
+              print(f'PROBE {i} EXIT {result.returncode}', flush=True)
           PY
-          lake env lean LooperProbe.lean
       - uses: actions/upload-artifact@v4
         if: always()
         with:
