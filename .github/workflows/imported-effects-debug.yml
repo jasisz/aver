@@ -34,7 +34,7 @@ jobs:
           lines = text.splitlines()
           for i, line in enumerate(lines):
               if line.startswith('  | (first') and 'fun_induction Looper.__runTrace4c6f6f706572DriveLoop outcome' in line:
-                  lines[i] = line.replace('; done))', '; all_goals trace_state; all_goals sorry))')
+                  lines[i] = line.replace("all_goals (repeat' first", "all_goals (trace_state; repeat' first").replace('; done))', '; all_goals trace_state; all_goals sorry))')
           Path('LooperProbe.lean').write_text('\n'.join(lines) + '\n')
           PY
           lake env lean LooperProbe.lean
