@@ -247,7 +247,29 @@ jobs:
         if: matrix.mode == 'nextest'
         env:
           AVER_CERT_PHASE_TIMEOUT_SECS: ${{ matrix.phase_timeout_secs || 900 }}
-        run: >-
-          cargo nextest run -p aver-lang --features wasm --test ${{ matrix.suite }}
-          -E '${{ matrix.filter }}'
-          --partition slice:${{ matrix.partition }}
+          AVER_CERT_MEMORY_LIMIT_MB: '2048'
+        # Diagnostic branch only: one test, bounded resident memory, resource log.
+        run: |
+          python3 -u - <<'PYMON' &
+          import os, signal, subprocess, time
+          tick = 0
+          while True:
+              rows = subprocess.run(['ps', '-C', 'lean,lake', '-o', 'pid=,rss='], capture_output=True, text=True).stdout
+              workers = [tuple(map(int, row.split())) for row in rows.splitlines()]
+              rss = sum(size for _, size in workers)
+              if tick % 15 == 0:
+                  print(f'Lean/Lake RSS total: {rss // 1024} MiB; workers={workers}', flush=True)
+              if rss > 6 * 1024 * 1024:
+                  print(f'DIAGNOSTIC RSS LIMIT: {rss // 1024} MiB; stopping Lean/Lake', flush=True)
+                  for pid, _ in workers:
+                      try:
+                          os.kill(pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+              tick += 1
+              time.sleep(1)
+          PYMON
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+          cargo test -p aver-lang --features wasm --test cert_verify_spec \
+            cert_tripwire_declines_tampered_int_sign_cmp_plan -- --exact --nocapture

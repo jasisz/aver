@@ -8164,6 +8164,7 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
         "isNonNegField must carry no host call at all:\n{plans_text}"
     );
 
+    eprintln!("int-sign tripwire: check clean certificate");
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "clean intcompare certificate must check:\n{report}");
     assert!(
@@ -8180,10 +8181,16 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
     // tamper proves it got past the re-encoding equality.
     let tamper =
         |name: &str, edit: &dyn Fn(&str) -> String, expect_pins: &[&str], absent_pins: &[&str]| {
+            eprintln!("int-sign tripwire: check tamper {name}");
+            let started = std::time::Instant::now();
             let dir = temp_dir(&format!("cert-intcompare-tamper-{name}"));
             copy_dir(&out_dir, &dir);
             tamper_cert_lean_files(&dir.join("cert"), name, edit);
             let (ok, out) = aver_check(&dir.join("intcompare.wasm"), &dir.join("cert"));
+            eprintln!(
+                "int-sign tripwire: {name} finished in {:?}:\n{out}",
+                started.elapsed()
+            );
             assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
             assert!(
                 !out.contains("CERTIFIED") && !out.contains("CHECKED"),
