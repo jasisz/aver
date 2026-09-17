@@ -35,20 +35,23 @@ jobs:
           index = next(i for i, line in enumerate(lines) if line.startswith('  | (') and 'with | h inputs __aver_transport_ih' in line)
           tactic = lines[index][4:].replace('; done))', '; all_goals trace_state; all_goals sorry))')
           for variant in ['steps', 'finish']:
-              probe = tactic.replace('; all_goals grind [', '; all_goals (try grind [').replace(']; all_goals trace_state', ']); all_goals trace_state')
+              probe = tactic
               if variant == 'steps':
                   probe = probe.split('; all_goals (simp_all +zetaDelta [Looper.')[0] + '; all_goals trace_state; all_goals sorry))'
               name = f'WrapperTransport{variant}.lean'
               Path(name).write_text('\n'.join(lines[:index-1]) + '\n  ' + probe + '\nend Wrapper\n')
               print(f'PROBE {variant}', flush=True)
-              result = subprocess.run(['lake', 'env', 'lean', name], timeout=90)
+              result = subprocess.run(['lake', 'env', 'lean', name], timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              Path(name + '.log').write_text(result.stdout)
+              print('\n'.join(line for line in result.stdout.splitlines() if 'error:' in line or line.startswith('case ')), flush=True)
               print(f'PROBE {variant} EXIT {result.returncode}', flush=True)
           statement = next(line for line in lines if line.startswith('theorem __aver_reason_') and 'Cursor_law_boundedSuffix_implication :' in line)
           tactic = next(line.strip()[2:] for line in lines if line.strip().startswith('| (') and 'fun_induction Wrapper.__runTrace57726170706572Drive outcome' in line)
-          tactic = tactic.replace('; all_goals grind [', '; all_goals (try grind [').replace(']; done)', ']); all_goals trace_state; all_goals sorry)')
           prefix = text.split('-- verify law ')[0]
           Path('WrapperCursor.lean').write_text(prefix + statement + '\n  intro outcome inputs position events consumed\n  ' + tactic + '\nend Wrapper\n')
-          subprocess.run(['lake', 'env', 'lean', 'WrapperCursor.lean'], timeout=90)
+          result = subprocess.run(['lake', 'env', 'lean', 'WrapperCursor.lean'], timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          Path('WrapperCursor.lean.log').write_text(result.stdout)
+          print('\n'.join(line for line in result.stdout.splitlines() if 'error:' in line or line.startswith('case ')), flush=True)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
@@ -57,4 +60,5 @@ jobs:
           path: |
             /tmp/imported-effects-proof/**/*.lean
             /tmp/imported-effects-proof/*.json
+            /tmp/imported-effects-proof/*.log
             /tmp/imported-effects-proof/lean-toolchain
