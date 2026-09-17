@@ -151,6 +151,9 @@ pub(super) struct Definitions {
     pub(super) list_steps: String,
     pub(super) list_maps: String,
     pub(super) heads: String,
+    /// Equations of outer calls and their direct arguments, without the full cone.
+    pub(super) head_equations: String,
+    pub(super) structural_reason: bool,
     pub(super) simp: String,
     pub(super) grind: String,
     pub(super) unfold_once: Vec<(String, bool)>,
@@ -274,10 +277,45 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         .into_iter()
         .collect::<Vec<_>>()
         .join(", ");
+    // Explanations can expose a conclusion through an immediate argument
+    // adapter (e.g. encode(decode(item))). Keep deeper implementation calls
+    // opaque, and leave ordinary citation-only laws on their existing route.
+    let mut head_seen = HashSet::new();
+    let mut head_equations = law
+        .because
+        .iter()
+        .chain([&law.lhs, &law.rhs])
+        .filter(|_| !law.because.is_empty())
+        .flat_map(|expr| {
+            let mut calls = vec![expr];
+            crate::codegen::expr_walk::for_each_child(expr, &mut |child| calls.push(child));
+            calls
+        })
+        .filter_map(|expr| callee(expr, ctx, scope.as_deref()))
+        .map(|fd| lean_name(fd, ctx))
+        .filter(|name| out.contains_key(name) || out.contains_key(&format!("= {name}.eq_def")))
+        .filter(|name| head_seen.insert(name.clone()))
+        .map(|name| format!("= {name}.eq_def"))
+        .collect::<Vec<_>>();
+    // Register explanation equations before the goal's adapters: this lets
+    // matching expose known facts before expanding the terms they describe.
+    if !head_equations.is_empty() {
+        if law_calls("List.concat") {
+            head_equations.extend([
+                "List.cons_append".to_string(),
+                "List.nil_append".to_string(),
+            ]);
+        }
+        head_equations.push("List.reverse_reverse".to_string());
+    }
     Definitions {
         list_steps: list_steps.into_iter().collect::<Vec<_>>().join(", "),
         list_maps: list_maps.into_iter().collect::<Vec<_>>().join(", "),
         heads,
+        head_equations: head_equations.join(", "),
+        structural_reason: law.because.iter().any(|reason| {
+            callee(reason, ctx, scope.as_deref()).is_some_and(|fd| list_measure(fd, ctx).is_some())
+        }),
         map_facts,
         map_remove_facts,
         unfold_once: unfold_once

@@ -143,8 +143,19 @@ fn solver(
         // particular, closed `because` computations are checked by kernel
         // reduction, without native_decide or a builtin-specific lemma list.
         format!("{indent}| rfl"),
-        format!("{indent}| (simp_all +zetaDelta [{simp_defs}]; done)"),
     ];
+    // Try the law's own equations before expanding its implementation cone.
+    // In particular, an induction hypothesis can summarize an opaque element
+    // transformation; opening that transformation only enlarges the search.
+    if definitions.structural_reason && !definitions.head_equations.is_empty() {
+        lines.push(format!(
+            "{indent}| (grind only [{}])",
+            definitions.head_equations
+        ));
+    }
+    lines.push(format!(
+        "{indent}| (simp_all +zetaDelta [{simp_defs}]; done)"
+    ));
     // Apply a cited conclusion before arithmetic normalization can erase its
     // matching syntax. This is one theorem application, with every remaining
     // premise checked from the current context; no recursive rewrite loop.
@@ -298,6 +309,11 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 {
                     lines.push(format!("  | {candidate}"));
                 }
+                if let Some(candidate) =
+                    composition::summary_candidate(law, ctx, &definitions, fact_count)
+                {
+                    lines.push(format!("  | {candidate}"));
+                }
                 // Compose equations before spending work on induction. Bool
                 // invariants go straight to induction: matching a predicate
                 // on an arbitrary recursive result can itself exhaust isDefEq.
@@ -432,7 +448,8 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         } else {
             0
         };
-        if !definitions.heads.is_empty() || direct_facts > 0 {
+        let conclusion_equations = final_step && !definitions.head_equations.is_empty();
+        if !definitions.heads.is_empty() || direct_facts > 0 || conclusion_equations {
             let structured = lines.split_off(strategy_start);
             let excluded = (0..fact_count)
                 .map(|i| format!("-_fact{i}"))
@@ -452,6 +469,12 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             .collect::<Vec<_>>()
             .join(", ");
             lines.push("  first".to_string());
+            // The explanation is already a checked hypothesis here. Its
+            // equation may expose the conclusion before wrappers or induction
+            // expand unrelated recursive implementations.
+            if conclusion_equations {
+                lines.push(format!("  | (grind only [{}])", definitions.head_equations));
+            }
             if !definitions.heads.is_empty() {
                 lines.push(format!("  | ({shallow})"));
             }
