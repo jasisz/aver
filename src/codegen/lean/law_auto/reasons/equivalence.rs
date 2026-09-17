@@ -253,9 +253,14 @@ pub(super) fn candidate(
     // Advancing the right fold first helps observed prefixes, but a pure
     // continuation can already match the IH before that step. Retain the
     // established symmetric normalization as a checked fallback for adapters.
-    let legacy = if adapting {
+    let legacy = if adapting || definitions.unary_list_maps.is_empty() {
+        let zeta = if definitions.unary_list_maps.is_empty() {
+            ""
+        } else {
+            " +zetaDelta"
+        };
         format!(
-            " | (simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all +zetaDelta [{simp}]) | split{steps} | (solve | grind)); done)"
+            " | (simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all{zeta} [{simp}]) | split{steps} | (solve | grind)); done)"
         )
     } else {
         String::new()
