@@ -208,7 +208,7 @@ pub(super) fn candidate(
                 .filter(|name| *name != adapter)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(" | (solve | simp_all only [{step_simp}])")
+            format!(" | (solve | (conv => rhs; simp only [{step_simp}]); assumption)")
         })
         .unwrap_or_default();
     let solve = format!(
