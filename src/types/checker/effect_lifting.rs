@@ -1007,6 +1007,14 @@ pub fn type_to_annotation(ty: &Type) -> String {
         ),
         Type::List(inner) => format!("List<{}>", type_to_annotation(inner)),
         Type::Vector(inner) => format!("Vector<{}>", type_to_annotation(inner)),
+        Type::Tuple(items) => format!(
+            "Tuple<{}>",
+            items
+                .iter()
+                .map(type_to_annotation)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Type::Map(k, v) => format!("Map<{}, {}>", type_to_annotation(k), type_to_annotation(v)),
         Type::Fn(params, ret, effects) => {
             let ps = params
@@ -1305,6 +1313,18 @@ mod tests {
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
+
+    #[test]
+    fn oracle_annotations_preserve_nested_tuples() {
+        let annotation = "Fn(BranchPath, Int, Kv.Handle, List<Tuple<Bytes, Bytes>>) -> Result<Tuple<Int, Option<Tuple<Bool, String>>>, String>";
+        let ty = crate::types::parse_type_str_strict(annotation).expect("valid oracle type");
+        let rendered = type_to_annotation(&ty);
+        assert_eq!(
+            crate::types::parse_type_str_strict(&rendered),
+            Ok(ty),
+            "oracle parameter and reply tuples must survive annotation rendering: {rendered}"
+        );
+    }
 
     fn parse_body(src: &str) -> FnBody {
         let full = format!("fn lift__test() -> Unit\n{}\n", src);

@@ -168,6 +168,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Lean proof export preserves tuple types in capability oracle signatures.** A verified function calling an operation with arguments such as `List<Tuple<Bytes, Bytes>>` now exports its pure-branch cases instead of panicking while rendering the lifted function. Fixes [#1389](https://github.com/jasisz/aver/issues/1389).
+
 - **A claim-free certificate builds under the pinned Lean 4.33.1 wall again.** The obligation-claim theorem used to close its goal by `dsimp` alone; under 4.33.1 that leaves the empty `List.map … ++ …` chain unreduced, so an admission-only package failed to build where 4.32.2 succeeded. The generated proof now ends in the explicit `exact` the goal always admitted definitionally. Closes [#1357](https://github.com/jasisz/aver/issues/1357).
 
 - **A certified package no longer spends its heartbeat budget unfolding Unicode case alternatives.** `AverUnicodeCase.toLower` reduces through `String.toList`/`String.ofList`, and a `termination_by`/`mutual` body that matches on a call reaching it made the elaborator's smart-unfolding path evaluate the marked match alternatives over symbolic data until the 200,000-heartbeat `whnf` limit — the deterministic timeout the payment-ops certificate lane died on. Every emitted `def`/`mutual` command now carries `set_option smartUnfolding false in`: elaborating the definition takes the plain `whnf` path that stops at the first stuck application, while theorems and law proofs keep the default unfolding they rely on, and nothing about the option changes what the kernel accepts.

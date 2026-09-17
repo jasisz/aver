@@ -1,0 +1,13 @@
+module Main
+    intent = "The proof regression entry."
+    exposes []
+    depends [Infra.Store]
+    effects [Console.print, Infra.Kv.applyAll, Infra.Kv.open]
+
+fn main() -> Unit
+    ! [Console.print, Infra.Kv.applyAll, Infra.Kv.open]
+    match Infra.Kv.open("x")
+        Result.Ok(handle) -> match Infra.Store.applied(Infra.Store.Store.Database(handle), [])
+            Result.Ok(store) -> Console.print("ok")
+            Result.Err(why) -> Console.print(why)
+        Result.Err(why) -> Console.print(why)
