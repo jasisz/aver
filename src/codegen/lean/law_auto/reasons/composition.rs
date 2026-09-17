@@ -315,7 +315,7 @@ pub(super) fn candidate(
         // before the shared input prefix is known.
         let prefix_cases = if input_match {
             format!(
-                " | ((repeat' first | rfl | (first{rewrite}) | (simp_all +zetaDelta only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (try (first{rewrite})))"
+                " | ((repeat' first | rfl | (first{rewrite}) | (simp_all +zetaDelta only [{plain}, {excluded}]) | (symm; split <;> symm){opening}); all_goals (try (first{rewrite})))"
             )
         } else {
             String::new()

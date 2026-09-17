@@ -260,5 +260,11 @@ pub(super) fn candidate(
     } else {
         String::new()
     };
-    Some(format!("(first{compose}{cases} | ({solve}){legacy})"))
+    if definitions.unary_list_maps.is_empty() {
+        // Pure adapters already align their induction hypotheses before the
+        // right fold advances. Keep their inexpensive symmetric proof first.
+        Some(format!("(first{compose}{cases}{legacy} | ({solve}))"))
+    } else {
+        Some(format!("(first{compose}{cases} | ({solve}){legacy})"))
+    }
 }

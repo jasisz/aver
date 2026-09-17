@@ -36,7 +36,12 @@ jobs:
           text = Path('ImportedEffects.lean').read_text().replace('namespace ImportedEffects', 'set_option linter.unusedSimpArgs false\nnamespace ImportedEffects', 1)
           lines = text.splitlines()
           definitions = text.split('-- verify law ')[0]
+          from concurrent.futures import ThreadPoolExecutor
+          executor = ThreadPoolExecutor(max_workers=2)
+          futures = []
           def probe(name, source):
+              futures.append(executor.submit(run_probe, name, source))
+          def run_probe(name, source):
               Path(name + '.lean').write_text(source)
               process = subprocess.Popen(['lake', 'env', 'lean', name + '.lean'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
               try:
@@ -75,6 +80,9 @@ jobs:
           probe('Tail', prefix + tactic + '\nend ImportedEffects\n')
           normalized = tactic[tactic.index('(simp only [Bool.and_eq_true'):].split('; first', 1)[0]
           probe('TailNormalized', prefix + normalized + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
+          for future in futures:
+              future.result()
+          executor.shutdown()
           PYPROBE
       - uses: actions/upload-artifact@v4
         if: always()
@@ -92,31 +100,6 @@ jobs:
           for fixture in yield_recursive_traces yield_recursive_imports yield_request_traces; do
             target/debug/aver proof tests/fixtures/$fixture/main.av --module-root tests/fixtures/$fixture --backend lean --check --sorry-budget 0 -o /tmp/$fixture > /tmp/$fixture.log 2>&1 || true
           done
-          python3 - <<'PYOLD'
-          from pathlib import Path
-          import subprocess
-          import re
-          for fixture, module, suffix in [('yield_recursive_traces', 'RecursiveTraces', 'Splice__repeatedInLoopAt2Observed_law_splice_implication :'), ('yield_recursive_imports', 'Looper', '__loopSourceTraceFrom_law_correspondence_implication :')]:
-              root = Path('/tmp') / fixture
-              text = (root / (module + '.lean')).read_text().replace('namespace ' + module, 'set_option linter.unusedSimpArgs false\nnamespace ' + module, 1)
-              lines = text.splitlines()
-              index = next(i for i, line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
-              tactic = next(line.strip()[2:] for line in lines[index:] if line.strip().startswith('| (first') and 'fun_induction' in line)
-              source = text.split('-- verify law ')[0] + '\n'.join(lines[index:index+2]) + '\n  ' + tactic + '\nend ' + module + '\n'
-              (root / 'Primary.lean').write_text(source)
-              result = subprocess.run(['lake', 'env', 'lean', 'Primary.lean'], cwd=root, timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-              (root / 'Primary.log').write_text(result.stdout)
-              print(module, 'PRIMARY EXIT', result.returncode)
-              if module == 'RecursiveTraces':
-                  setup = tactic.split('; all_goals (try dsimp only)')[0]
-                  full = re.search(r'solve \| simp_all \+zetaDelta \[([^]]*)\]', tactic).group(1)
-                  steps = ' | '.join(dict.fromkeys(re.findall(r'\(conv => rhs; rw \[[^]]*\]\)', tactic)))
-                  legacy = setup + "; all_goals (repeat' first | assumption | rfl | (simp_all +zetaDelta [" + full + "]) | split | " + steps + " | (solve | grind)); done))"
-                  (root / 'Legacy.lean').write_text(text.split('-- verify law ')[0] + '\n'.join(lines[index:index+2]) + '\n  ' + legacy + '\nend ' + module + '\n')
-                  result = subprocess.run(['lake', 'env', 'lean', 'Legacy.lean'], cwd=root, timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                  (root / 'Legacy.log').write_text(result.stdout)
-                  print(module, 'LEGACY EXIT', result.returncode)
-          PYOLD
       - uses: actions/upload-artifact@v4
         if: always()
         with:
