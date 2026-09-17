@@ -48,6 +48,10 @@ jobs:
               Path(name + '.lean.log').write_text(output)
               print(name, 'EXIT', process.returncode, flush=True)
               print('\n'.join(line for line in output.splitlines() if 'error:' in line or line.startswith('case ')), flush=True)
+          mapping_defs = definitions + ''.join('-- verify law ' + block for block in text.split('-- verify law ')[1:] if block.startswith('__repeatedTrace') and ('Events.append ' in block.splitlines()[0] or 'Events.singleton ' in block.splitlines()[0]))
+          index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and 'Direct_law_mapping_implication :' in line and 'repeated' in line)
+          first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
+          probe('Mapping', mapping_defs + '\n'.join(lines[index:first]) + '\n  ' + lines[first+1].strip()[2:] + '\nend ImportedEffects\n')
           for name, suffix in [('Early', '__earlySourceTraceFrom_law_correspondence_implication :'), ('Cursor', '__repeatedTrace496d706f7274656445666665637473Cursor_law_boundedSuffix_implication :')]:
               index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
               first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
@@ -57,6 +61,9 @@ jobs:
                   tactic = lines[first+1].strip()[2:]
               prefix = definitions + '\n'.join(lines[index:first]) + '\n  '
               probe(name, prefix + tactic + '\nend ImportedEffects\n')
+              if name == 'Early':
+                  direct = '(simp only [beq_iff_eq,' + tactic.rsplit(' | (simp only [beq_iff_eq,',1)[1][:-1]
+                  probe('EarlyDirect', prefix + direct + '\nend ImportedEffects\n')
               if name == 'Cursor':
                   steps = tactic.split('; all_goals grind [')[0]
                   probe(name + 'Steps', prefix + steps + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
@@ -82,7 +89,7 @@ jobs:
       - name: Check existing recursive compositions
         if: always()
         run: |
-          for fixture in yield_recursive_traces yield_recursive_imports; do
+          for fixture in yield_recursive_traces yield_recursive_imports yield_request_traces; do
             target/debug/aver proof tests/fixtures/$fixture/main.av --module-root tests/fixtures/$fixture --backend lean --check --sorry-budget 0 -o /tmp/$fixture > /tmp/$fixture.log 2>&1 || true
           done
           python3 - <<'PYOLD'
@@ -121,3 +128,5 @@ jobs:
             /tmp/yield_recursive_imports/*.lean
             /tmp/yield_recursive_imports/*.log
             /tmp/yield_recursive_imports.log
+            /tmp/yield_request_traces/*.lean
+            /tmp/yield_request_traces.log
