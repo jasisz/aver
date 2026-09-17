@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 /// Compose cited summaries while leaving their recursive implementations opaque.
 pub(super) fn summary_candidate(
+    block: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
     definitions: &Definitions,
@@ -43,6 +44,18 @@ pub(super) fn summary_candidate(
                 .then(|| induction::lean_name(fd, ctx))
         })
         .collect();
+    // A law about an arbitrary recursive history still needs induction when
+    // its citations summarize only the individual transition. Do not expand
+    // that history before the existing induction candidate can use them.
+    if let Some(id) = ctx.law_target_fn_id(&block.fn_name)
+        && ctx.recursive_fns.contains(&id)
+    {
+        let key = &ctx.symbol_table.fn_entry(id).key;
+        let fd = ctx.fn_def_by_name(&key.name, key.scope_str())?;
+        if !summarized.contains(&induction::lean_name(fd, ctx)) {
+            return None;
+        }
+    }
     let mut equations: Vec<_> = definitions
         .grind
         .split(", ")

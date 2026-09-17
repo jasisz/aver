@@ -310,7 +310,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                     lines.push(format!("  | {candidate}"));
                 }
                 if let Some(candidate) =
-                    composition::summary_candidate(law, ctx, &definitions, fact_count)
+                    composition::summary_candidate(vb, law, ctx, &definitions, fact_count)
                 {
                     lines.push(format!("  | {candidate}"));
                 }
