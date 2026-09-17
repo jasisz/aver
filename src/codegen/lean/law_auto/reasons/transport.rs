@@ -3,7 +3,7 @@
 //! singleton and append facts summarize maps without expanding arbitrary tails.
 use super::induction;
 use crate::ast::{BinOp, Expr, Stmt, VerifyBlock, VerifyLaw};
-use crate::codegen::lean::expr::aver_name_to_lean;
+use crate::codegen::lean::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
 use crate::codegen::{CodegenContext, common};
 use std::collections::BTreeSet;
 
@@ -87,6 +87,7 @@ pub(super) fn candidate(
     // Deeper imports may contribute further recursive helpers to its cone;
     // their presence does not change this transport obligation.
     let mut right_folds = BTreeSet::new();
+    let mut right_calls = Vec::new();
     let owner = common::fn_owning_scope_for(ctx, right_fn);
     for stmt in right_fn.body.stmts() {
         let (Stmt::Expr(expr) | Stmt::Binding(_, _, expr)) = stmt;
@@ -96,6 +97,12 @@ pub(super) fn candidate(
                 && !fd.return_type.starts_with("List<")
             {
                 right_folds.insert(induction::lean_name(fd, ctx));
+                if !right_calls
+                    .iter()
+                    .any(|call: &crate::ast::Spanned<Expr>| call.node == expr.node)
+                {
+                    right_calls.push(expr.clone());
+                }
             }
         });
     }
@@ -113,6 +120,71 @@ pub(super) fn candidate(
         .collect();
     if folds.len() != 2 {
         return None;
+    }
+    // Materialize a cited invariant at the current right-hand computation
+    // before its equation hides that call. In a consumed-prefix step its
+    // remaining-length bound also proves that the cursor advanced, which a
+    // bound on the recursive suffix alone cannot establish.
+    let mut boundary_facts = String::new();
+    if let [call] = right_calls.as_slice()
+        && let Expr::FnCall(_, values) = &right.node
+        && values.len() == right_fn.params.len()
+    {
+        let bindings = right_fn
+            .params
+            .iter()
+            .zip(values)
+            .map(|((name, _), value)| (name.as_str(), value))
+            .collect();
+        let call = super::super::shared::substitute_expr(call, &bindings);
+        if let Expr::FnCall(_, args) = &call.node
+            && let Some(fold) = induction::callee(&call, ctx, scope.as_deref())
+        {
+            let arguments = args
+                .iter()
+                .map(|arg| {
+                    format!(
+                        "({})",
+                        emit_expr(&resolve_rewrite_output(arg, ctx, None), ctx)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut citations = selected.clone();
+            citations.sort();
+            for (index, citation) in citations.iter().enumerate() {
+                let Some((function, _)) = citation.rsplit_once('.') else {
+                    continue;
+                };
+                let Some(id) = ctx
+                    .symbol_table
+                    .resolve_fn_id_in(function, scope.as_deref())
+                else {
+                    continue;
+                };
+                let key = &ctx.symbol_table.fn_entry(id).key;
+                let Some(predicate) = ctx.fn_def_by_name(&key.name, key.scope_str()) else {
+                    continue;
+                };
+                if predicate.return_type == "Bool"
+                    && predicate
+                        .params
+                        .iter()
+                        .map(|(_, ty)| ty)
+                        .eq(fold.params.iter().map(|(_, ty)| ty))
+                {
+                    boundary_facts.push_str(&format!(
+                        "have _aver_transport_boundary_{index} := _fact{index} {arguments}; "
+                    ));
+                }
+            }
+            if !boundary_facts.is_empty() {
+                boundary_facts.push_str(&format!(
+                    "have _aver_transport_step := {}.eq_def {arguments}; ",
+                    induction::lean_name(fold, ctx)
+                ));
+            }
+        }
     }
     let maps: Vec<_> = functions
         .iter()
@@ -251,7 +323,7 @@ pub(super) fn candidate(
         format!("induction {input}{generalizing}; {steps}")
     } else {
         format!(
-            "induction {input} using (measure List.length).wf.induction{generalizing} with | h {input} _aver_transport_ih => (dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at *; cases {input}; {steps})"
+            "induction {input} using (measure List.length).wf.induction{generalizing} with | h {input} _aver_transport_ih => (dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at *; {boundary_facts}cases {input}; {steps})"
         )
     };
     let normalize = (0..fact_count).map(|i| format!("(try simp only [{plain}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at _fact{i}); ")).collect::<String>();
