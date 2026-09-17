@@ -329,6 +329,71 @@ fn narrow(path: String, n: Int) -> Result<String, String>
     );
 }
 
+const FORWARDED_CALLBACK_TAIL: &str = r#"module ForwardTail
+    intent =
+        "A named callback handed to a forwarding slot from a tail call."
+    exposes [loopX, loopY]
+    effects [Console.print, Time.unixMs]
+
+fn stamp(n: Int) -> Int
+    ? "Reads the clock."
+    ! [Time.unixMs]
+    Time.unixMs() + n
+
+fn loopX(n: Int) -> Int
+    ? "Prints, then hands the named callback over."
+    ! [Console.print]
+    Console.print("x")
+    loopY(n - 1, stamp)
+
+fn loopY(n: Int, f: Fn(Int) -> Int ! [_]) -> Int
+    ? "Applies the callback, or hands back."
+    ! [Console.print]
+    match n < 1
+        true -> f(n)
+        false -> loopX(n - 1)
+"#;
+
+#[test]
+fn a_tail_call_that_hands_over_a_named_callback_charges_the_callbacks_effects() {
+    // A parameter typed `! [_]` forwards its concrete argument's effects to the call
+    // site. That half of forwarding was also skipped in tail position.
+    let missing: Vec<String> = errors_for("fwdtail.av", FORWARDED_CALLBACK_TAIL)
+        .into_iter()
+        .filter(|message| message.contains("does not declare it"))
+        .collect();
+    assert_reports(
+        &missing,
+        &[
+            "Function 'loopX' passes callback 'stamp' with effect 'Time.unixMs' to 'loopY', but 'loopX' does not declare it",
+        ],
+        "named callback forwarded through a tail call",
+    );
+}
+
+#[test]
+fn declaring_the_forwarded_callbacks_effect_settles_the_tail_call() {
+    let source = FORWARDED_CALLBACK_TAIL.replace(
+        "    ! [Console.print]\n",
+        "    ! [Console.print, Time.unixMs]\n",
+    );
+    assert_reports(
+        &errors_for("fwdtail_declared.av", &source),
+        &[],
+        "the group declares what the forwarded callback performs",
+    );
+    let unused: Vec<String> = warnings_for("fwdtail_declared.av", &source)
+        .into_iter()
+        .filter(|(slug, _)| slug == "unused-effect")
+        .map(|(_, summary)| summary)
+        .collect();
+    assert!(
+        unused.is_empty(),
+        "expected no unused-effect warning, got:\n  {}",
+        unused.join("\n  ")
+    );
+}
+
 #[test]
 fn a_call_to_an_imported_module_in_tail_position_stays_charged() {
     // A call across a module boundary is written with a dotted path and is never rewritten
