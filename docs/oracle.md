@@ -224,7 +224,9 @@ does not count what the function under test does between two of them, so
 writes to a socket in between. That is what lets a stub be scripted by call
 number: `match n` is a reply script for that operation and nothing else moves it.
 Two different operations therefore share no numbering at all, and each `!` / `?!`
-branch restarts every operation at 0 under its own path.
+branch restarts every operation at 0 under its own path. "Where a run and an
+exported proof number differently" below names the shapes where the exported
+proof numbers a call otherwise than the run does.
 
 ### Output
 
@@ -236,6 +238,18 @@ verify hello trace
 ```
 
 `given out: Console.print = [...]` is rejected because output effects have no return value to replace.
+
+### Where a run and an exported proof number differently
+
+`aver verify` numbers the calls of a whole case. The Lean and Dafny that `aver proof` exports number the calls of one function body at a time. Straight-line code, `?` bindings, `?!` propagation, independent products and the arms of a `match` agree, and three shapes do not. In each of them `aver verify` reports the run correctly, the export writes down a different index, and the theorem it emits asserts a value the model does not produce, so the proof step fails and the law does not certify.
+
+- A call into an effectful helper. The helper's body restarts every operation at 0 in the export, while the run keeps counting across the call. A function that reads the peer once and then calls a helper that reads it again hands the helper's read index 1 at run time and index 0 in the export.
+- A recursive call that carries no index. Every turn restarts at 0 in the export. A loop reading the peer once per turn hands its read index 0, then 1, then 2 at run time, and index 0 in every turn of the export.
+- A second operation inside a polled loop. A function declaring `Process.stopRequested` carries one index through its recursion, and that index counts polls. Every other operation in that function is numbered from the poll count, so the export agrees with the run only while that operation is called exactly once per poll. Two clock reads per poll part company on the second turn.
+
+One approximation sits beside those three. After a `match` whose arms call one operation a different number of times, the export numbers the calls that follow the match from the busiest arm. Arms that make the same number of calls, which is the ordinary shape, agree with the run exactly.
+
+A stub that answers from its arguments instead of its call index is immune to all four. Script a stub by call number within one function body, and keep helper boundaries and recursion out of the function whose law you want to certify.
 
 ## Driving a socket state machine with a scripted peer
 

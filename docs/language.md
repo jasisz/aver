@@ -291,7 +291,7 @@ verify pickOne law usesOracle
     Result.Ok(pickOne()) => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
-Inside any cases-form `verify <fn>` block, `given` can bind a capability operation or classified effect to one or more Aver stub functions for those explicit runtime cases. A pure capability stub has the operation's contract signature unchanged; an effectful/generative stub uses the Oracle shape with leading `BranchPath` and call index. In `verify <fn> law <name>`, proof export can additionally quantify over the oracle itself. Add `trace` when you want `.result` and `.trace.*` assertions over collected classified effect emissions.
+Inside any cases-form `verify <fn>` block, `given` can bind a capability operation or classified effect to one or more Aver stub functions for those explicit runtime cases. A pure capability stub has the operation's contract signature unchanged; an effectful/generative stub uses the Oracle shape with leading `BranchPath` and call index. The call index counts the calls of that one operation, and `docs/oracle.md` lists the shapes where an exported proof numbers a call otherwise than the run does. In `verify <fn> law <name>`, proof export can additionally quantify over the oracle itself. Add `trace` when you want `.result` and `.trace.*` assertions over collected classified effect emissions.
 
 A plain case may call a function with a non-empty effect declaration as long as
 that concrete execution never reaches an effectful operation, or every reached
