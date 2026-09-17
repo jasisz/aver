@@ -7,6 +7,85 @@ use crate::ast::{BinOp, Expr, VerifyBlock, VerifyLaw};
 use crate::codegen::{CodegenContext, common};
 use std::collections::BTreeSet;
 
+/// Compose cited summaries while leaving their recursive implementations opaque.
+pub(super) fn summary_candidate(
+    block: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    definitions: &Definitions,
+    fact_count: usize,
+) -> Option<String> {
+    let selected = law.using.as_ref()?;
+    if fact_count == 0 || !law.because.is_empty() {
+        return None;
+    }
+    let scope = ctx.active_module_scope();
+    let mut empty_cases = BTreeSet::new();
+    let summarized: BTreeSet<_> = selected
+        .iter()
+        .filter_map(|selected| selected.rsplit_once('.'))
+        .filter_map(|(function, _)| {
+            let id = ctx
+                .symbol_table
+                .resolve_fn_id_in(function, scope.as_deref())?;
+            let key = &ctx.symbol_table.fn_entry(id).key;
+            let fd = ctx.fn_def_by_name(&key.name, key.scope_str())?;
+            if induction::list_measure(fd, ctx).is_some()
+                && let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts()
+                && let Expr::Match { arms, .. } = &expr.node
+                && arms
+                    .first()
+                    .is_some_and(|arm| matches!(arm.pattern, crate::ast::Pattern::EmptyList))
+            {
+                empty_cases.insert(induction::lean_name(fd, ctx));
+            }
+            ctx.recursive_fns
+                .contains(&id)
+                .then(|| induction::lean_name(fd, ctx))
+        })
+        .collect();
+    // A law about an arbitrary recursive history still needs induction when
+    // its citations summarize only the individual transition. Do not expand
+    // that history before the existing induction candidate can use them.
+    if let Some(id) = ctx.law_target_fn_id(&block.fn_name)
+        && ctx.recursive_fns.contains(&id)
+    {
+        let key = &ctx.symbol_table.fn_entry(id).key;
+        let fd = ctx.fn_def_by_name(&key.name, key.scope_str())?;
+        if !summarized.contains(&induction::lean_name(fd, ctx)) {
+            return None;
+        }
+    }
+    let mut equations: Vec<_> = definitions
+        .grind
+        .split(", ")
+        .filter(|entry| !entry.is_empty())
+        .filter(|entry| {
+            !summarized.contains(entry.trim_start_matches("= ").trim_end_matches(".eq_def"))
+        })
+        .map(str::to_string)
+        .collect();
+    // A summary may mention its empty result. Its completed constructor is
+    // safe to reduce without opening the recursive computation on arbitrary input.
+    for name in &empty_cases {
+        equations.push(format!("{name}.eq_1"));
+    }
+    equations.extend(
+        [
+            "List.reverse_cons",
+            "List.reverse_append",
+            "List.reverse_reverse",
+            "List.reverse_nil",
+            "List.nil_append",
+            "List.append_nil",
+            "List.cons_append",
+            "List.append_assoc",
+        ]
+        .map(str::to_string),
+    );
+    Some(format!("(grind only [{}])", equations.join(", ")))
+}
+
 pub(super) fn candidate(
     block: &VerifyBlock,
     law: &VerifyLaw,
@@ -242,8 +321,20 @@ pub(super) fn candidate(
     } else {
         String::new()
     };
+    // First open only the law's outer wrappers. Their matches may enclose a
+    // computation already summarized by a citation; unfolding its helpers
+    // before applying that summary can make a small composition intractable.
+    let shallow_defs = [definitions.heads.as_str(), facts.as_str()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let shallow = format!(
+        "(simp only [{}]; (repeat' first | rfl | (simp_all only [{shallow_defs}]) | split); done)",
+        definitions.heads
+    );
     Some(format!(
-        "(simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{prefix}{staged} | (grind only [{steps}]))"
+        "(first | {shallow} | (simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{prefix}{staged} | (grind only [{steps}])))"
     ))
 }
 

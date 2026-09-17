@@ -1,0 +1,96 @@
+module OpaqueSteps
+    intent = "Batch composition depends on the fold equations, not the element encoding."
+    effects []
+
+fn encode(data: List<Int>) -> List<Int>
+    match List.len(data) < 76
+        true -> List.prepend(List.len(data), data)
+        false -> match List.len(data) < 256
+            true -> List.concat([76, List.len(data)], data)
+            false -> match List.len(data) < 65536
+                true -> List.concat([77, Int.mod(List.len(data), 256), Int.div(List.len(data), 256)], data)
+                false -> List.concat([78, Int.mod(List.len(data), 256), Int.mod(Int.div(List.len(data), 256), 256), Int.div(List.len(data), 65536)], data)
+
+fn without(values: List<List<Int>>, target: List<Int>) -> List<List<Int>>
+    match values
+        [] -> []
+        [head, ..tail] -> match head == target
+            true -> without(tail, target)
+            false -> List.prepend(head, without(tail, target))
+
+fn batches(values: List<List<Int>>, items: List<List<Int>>) -> List<List<Int>>
+    match items
+        [] -> values
+        [head, ..tail] -> batches(without(values, encode(head)), tail)
+
+verify batches law concatenates
+    given values: List<List<Int>> = [[], [[0], [1, 7], [2, 8, 9]]]
+    given left: List<List<Int>> = [[], [[]], [[7], [8, 9]]]
+    given right: List<List<Int>> = [[], [[7]]]
+    because reason(values, left, right)
+    using []
+    batches(values, List.concat(left, right)) => batches(batches(values, left), right)
+
+fn reason(values: List<List<Int>>, left: List<List<Int>>, right: List<List<Int>>) -> Bool
+    match left
+        [] -> batches(values, List.concat(left, right)) == batches(batches(values, left), right)
+        [head, ..tail] -> Bool.and(reason(without(values, encode(head)), tail, right), batches(values, List.concat(left, right)) == batches(batches(values, left), right))
+
+fn batchResult(values: List<List<Int>>, items: List<List<Int>>) -> Result<List<List<Int>>, String>
+    ? "An empty input is an error; successful inputs use the batch transformation."
+    match values
+        [] -> Result.Err("empty input")
+        [_, .._] -> Result.Ok(batches(values, items))
+
+verify batchResult law concatenates
+    given values: List<List<Int>> = [[], [[0], [1, 7], [2, 8, 9]]]
+    given left: List<List<Int>> = [[], [[]], [[7], [8, 9]]]
+    given right: List<List<Int>> = [[], [[7]]]
+    using [batches.concatenates]
+    batchResult(values, List.concat(left, right)) => finishResult(batchResult(values, left), right)
+
+fn finishResult(result: Result<List<List<Int>>, String>, items: List<List<Int>>) -> Result<List<List<Int>>, String>
+    ? "Continue a successful batch and preserve an earlier error."
+    match result
+        Result.Err(message) -> Result.Err(message)
+        Result.Ok(values) -> Result.Ok(batches(values, items))
+
+fn readLast(items: List<Int>) -> Int
+    match List.reverse(items)
+        [] -> 0
+        [head, .._] -> head
+
+fn writeOne(value: Int) -> List<Int>
+    encode([value])
+
+verify writeOne law explainedReconstruction
+    given items: List<Int> = [[], [1, 7], [1, 9], [2, 7, 9]]
+    when reconstructionReason(items)
+    because reconstructionReason(items)
+    using []
+    writeOne(readLast(items)) => items
+
+fn reconstructionReason(items: List<Int>) -> Bool
+    match List.reverse(items)
+        [] -> writeOne(readLast(items)) == items
+        [head, ..tail] -> writeOne(head) == List.reverse(List.prepend(head, tail))
+
+fn digestInto(items: List<Int>, acc: Int) -> Int
+    match items
+        [] -> acc
+        [head, ..tail] -> digestInto(tail, acc * 7 + head)
+
+verify digestInto law finalDigit
+    given items: List<Int> = [[], [1], [2, 3]]
+    given acc: Int = [-1, 0, 4]
+    given digit: Int = [-1, 0, 6]
+    digestInto(List.concat(items, [digit]), acc) => digestInto(items, acc) * 7 + digit
+
+fn digest(items: List<Int>) -> Int
+    digestInto(List.reverse(items), 0)
+
+verify digest law firstDigit
+    given items: List<Int> = [[], [1], [2, 3]]
+    given digit: Int = [-1, 0, 6]
+    using [digestInto.finalDigit]
+    digest(List.prepend(digit, items)) => digest(items) * 7 + digit

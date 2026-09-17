@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn batch_reasons_keep_element_transformations_opaque() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
+    }
+    let file = "tests/fixtures/law_reason_opaque_steps.av";
+    let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .args(["verify", file])
+        .output()
+        .unwrap();
+    assert!(samples.status.success(), "{}", format_output(&samples));
+    let dir = temp_output_dir("aver-opaque-step-reasons");
+    let (summary, run) = run_lean_check_json(file, &dir, 0, &[]);
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 5, "{summary}");
+    for step in ["because1", "implication"] {
+        assert_eq!(
+            summary["obligations"][format!("batches.concatenates.{step}")],
+            "universal",
+            "{summary}"
+        );
+    }
+    assert_eq!(
+        summary["obligations"]["batchResult.concatenates.implication"], "universal",
+        "{summary}"
+    );
+    assert_eq!(
+        summary["obligations"]["writeOne.explainedReconstruction.implication"], "universal",
+        "{summary}"
+    );
+    assert_eq!(
+        summary["obligations"]["digest.firstDigit.implication"], "universal",
+        "{summary}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn slice_aliases_share_descent_and_induction_on_the_remaining_input() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;
