@@ -565,11 +565,13 @@ pub fn lower(
                         // observer it belongs to.
                         public_names
                             .extend(segment.samples.iter().filter(|s| !s.is_empty()).cloned());
-                        // An importer's lift adapter cites this observation's
-                        // cursor contract instead of reopening its body, so the
-                        // wrapper the contract is stated about travels too.
+                        // An importer's adapter cites this observation's cursor
+                        // and event-prefix contracts instead of reopening its
+                        // body, so the wrappers the contracts are stated about
+                        // travel too.
                         if !segment.cursor.is_empty() {
                             public_names.push(segment.cursor.clone());
+                            public_names.push(format!("{}Prefixed", segment.observer));
                         }
                     }
                     if trace.correspondence.is_some() {

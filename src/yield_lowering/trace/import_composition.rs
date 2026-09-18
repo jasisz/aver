@@ -43,7 +43,7 @@ impl Model<'_> {
                     .map_or(segment.function.as_str(), |(_, short)| short);
                 [
                     format!("{}.segmentCursor", segment.cursor),
-                    format!("{}.eventsPrefix", segment.observer),
+                    format!("{}Prefixed.eventsPrefix", segment.observer),
                     format!("{}.step{}", trace.drive, build::capitalize(short)),
                 ]
             })

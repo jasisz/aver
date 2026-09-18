@@ -95,6 +95,12 @@ fn {name}Cursor({declared}) -> Bool
     /// continuation, for every segment but the start. All three are keyed on
     /// the generated observation shape and say nothing about what a segment
     /// computes.
+    ///
+    /// Each statement is made about a wrapper (the cursor predicate, the
+    /// prefixed form, the protocol observer), never about the observation
+    /// itself: a function that owns a law keeps the match equations in its
+    /// body, and every proof that opens the observation would then have to
+    /// normalize a dependent matcher instead of a plain one.
     pub(super) fn segment_contracts(
         &self,
         items: &mut Vec<TopLevel>,
@@ -167,7 +173,7 @@ fn {name}Cursor({declared}) -> Bool
             )?);
             text.push_str(&composition::law(
                 self,
-                &observer,
+                &format!("{observer}Prefixed"),
                 "eventsPrefix",
                 &params,
                 &format!("{observer}({args}) == {observer}Prefixed(events, {observer}({empty}))"),
