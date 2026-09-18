@@ -103,9 +103,9 @@ fn cursor_shape<'a>(
 /// Read one cited law in the scope that owns it. The same decomposition runs on
 /// a law of this file and on a law of an imported module; only the scope names
 /// differ.
-fn read_cited<'a, T>(
+fn read_cited<T>(
     law: &VerifyLaw,
-    ctx: &'a CodegenContext,
+    ctx: &CodegenContext,
     scope: Option<&str>,
     read: impl Fn(&VerifyLaw, Option<&str>) -> Option<T>,
 ) -> Vec<Option<T>> {
