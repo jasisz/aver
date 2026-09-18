@@ -226,6 +226,12 @@ pub(super) fn emit_module_with(
     // so the name-keyed representation lookups resolve them through this
     // map. Empty for single-module programs.
     registry.set_type_name_aliases(type_aliases.clone());
+    // The contract layouts, under the canonical names the provider ABI's
+    // helpers are named after. The flattened program spells a dependency's
+    // type bare; the contract, and therefore the host, spells it out.
+    if let Some(plan) = capability_wasm_gc_plan {
+        registry.set_capability_boundary_layouts(plan.boundary_layouts().clone());
+    }
     registry.install_capability_resource_aliases();
 
     // Lower the post-link resolved fns to MIR and run the shared

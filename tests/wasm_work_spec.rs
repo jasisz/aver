@@ -173,6 +173,19 @@ fn a_unit_task_runs_and_records_on_wasm_gc() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A job kind that names its dependencies' types, and those types reach
+/// further ones: `Ledger.Request` holds a `Ledger.Origin`, `Ledger.Tx` holds
+/// a `Meta.Info` written bare. The task crosses the boundary one way and the
+/// answer the other, so both directions have to move a record the job kind's
+/// own module never declares.
+#[test]
+fn a_job_kind_naming_nested_dependency_types_matches_the_vm_on_wasm_gc() {
+    assert_same_stdout("work_jobs_dependency_types", &["--wasm-gc"]);
+    let wasm = run("work_jobs_dependency_types", &["--wasm-gc"], &[])
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(wasm, "decoded block of 3 bytes from node");
+}
+
 #[cfg(feature = "wasip2")]
 #[test]
 fn a_unit_task_runs_on_wasip2() {

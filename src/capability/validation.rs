@@ -471,6 +471,80 @@ fn field_position(type_def: &TypeDef, index: usize) -> String {
     }
 }
 
+/// The same layout with every field type spelled `Owner.Name`.
+///
+/// A module writes its own and its dependencies' types bare, and a bare name
+/// means whatever that module's own scope says it means. The registry this
+/// layout lands in is keyed by canonical name and is read from the job kind's
+/// scope, where the same bare name means something else or nothing at all, so
+/// the spelling is resolved here, once, in the scope that owns it. The
+/// descriptor resolves the same way, and its rows are unchanged by this.
+fn canonical_layout(owner: &str, type_def: &TypeDef, table: &DependencyTypes) -> TypeDef {
+    let mut canonical = type_def.clone();
+    match &mut canonical {
+        TypeDef::Product { fields, .. } => {
+            for (_, source) in fields.iter_mut() {
+                *source = canonical_field_source(owner, source, table);
+            }
+        }
+        TypeDef::Sum { variants, .. } => {
+            for variant in variants.iter_mut() {
+                for source in variant.fields.iter_mut() {
+                    *source = canonical_field_source(owner, source, table);
+                }
+            }
+        }
+    }
+    canonical
+}
+
+/// One field's source text, rewritten in `owner`'s scope. A text that does
+/// not parse, and a name the table cannot resolve, are left exactly as the
+/// module wrote them: the refusal for both is raised elsewhere.
+fn canonical_field_source(owner: &str, source: &str, table: &DependencyTypes) -> String {
+    match crate::types::parse_type_str_strict(source) {
+        Ok(ty) => canonical_field_type(owner, &ty, table).display(),
+        Err(_) => source.to_string(),
+    }
+}
+
+fn canonical_field_type(owner: &str, ty: &Type, table: &DependencyTypes) -> Type {
+    let recur = |inner: &Type| Box::new(canonical_field_type(owner, inner, table));
+    match ty {
+        Type::Named { name, .. } => {
+            if matches!(name.as_str(), "Bytes" | "Bytes.Bytes")
+                || crate::stdlib::bare_stdlib_type_names().contains(name)
+            {
+                return ty.clone();
+            }
+            match table.resolve(owner, name) {
+                Some(canonical) => Type::named(canonical),
+                None => ty.clone(),
+            }
+        }
+        Type::Result(ok, err) => Type::Result(recur(ok), recur(err)),
+        Type::Map(key, value) => Type::Map(recur(key), recur(value)),
+        Type::Option(inner) => Type::Option(recur(inner)),
+        Type::List(inner) => Type::List(recur(inner)),
+        Type::Vector(inner) => Type::Vector(recur(inner)),
+        Type::Tuple(items) => Type::Tuple(
+            items
+                .iter()
+                .map(|item| canonical_field_type(owner, item, table))
+                .collect(),
+        ),
+        Type::Fn(params, result, effects) => Type::Fn(
+            params
+                .iter()
+                .map(|param| canonical_field_type(owner, param, table))
+                .collect(),
+            recur(result),
+            effects.clone(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
 /// The field source texts of one layout, in declaration order, so a refusal
 /// can point at the one that carries the resource.
 fn layout_fields(type_def: &TypeDef) -> Vec<&str> {
@@ -563,7 +637,7 @@ impl BoundaryTypeVisitor<'_, '_> {
                 if let Some(table) = imports_from {
                     let owner = dependency_owner.unwrap_or_default().to_string();
                     if self.seen.insert((position.to_string(), name.to_string())) {
-                        self.import_layout(position, &owner, name, table);
+                        self.import_named_layout(position, &owner, name, table);
                     }
                     return;
                 }
@@ -606,23 +680,59 @@ impl BoundaryTypeVisitor<'_, '_> {
         }
     }
 
+    /// The type the boundary itself names. `depends` lets a job kind reach
+    /// into that module, and `exposes` decides which of its declarations it
+    /// reaches: an ordinary fn that named a private type is refused, and a
+    /// job kind that put one in its `contract_hash` would tie its published
+    /// identity to a layout its author never offered.
+    fn import_named_layout(
+        &mut self,
+        position: &str,
+        owner: &str,
+        name: &str,
+        table: &DependencyTypes,
+    ) {
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        if !table.exposes_type(owner, bare) {
+            self.errors.push(CapabilityError::at(
+                self.operation.line,
+                format!(
+                    "operation '{}' {} names dependency type '{name}', which module '{owner}' does not expose — add '{bare}' to its `exposes` list to name it",
+                    self.operation.canonical_name, position
+                ),
+            ));
+            return;
+        }
+        self.import_layout(position, owner, name, table);
+    }
+
     /// Bind one dependency type into this contract: record its layout so the
     /// descriptor hashes it, then walk that layout for anything a job cannot
     /// carry off the turn.
     fn import_layout(&mut self, position: &str, owner: &str, name: &str, table: &DependencyTypes) {
         let Some(type_def) = table.type_def(name) else {
+            // A resource is declared, and has no layout on purpose. Say that,
+            // rather than send the author looking for a declaration that is
+            // right there in the module.
+            let missing = if table.is_resource(name) {
+                format!(
+                    "names dependency type '{name}', which is a capability resource; a job carries its task and its reply off the turn as plain data, so no type on a job boundary may hold a resource"
+                )
+            } else {
+                format!("names dependency type '{name}', which module '{owner}' does not declare")
+            };
             self.errors.push(CapabilityError::at(
                 self.operation.line,
                 format!(
-                    "operation '{}' {} names dependency type '{}', which module '{owner}' does not declare",
-                    self.operation.canonical_name, position, name
+                    "operation '{}' {position} {missing}",
+                    self.operation.canonical_name
                 ),
             ));
             return;
         };
         if self
             .imported
-            .insert(name.to_string(), type_def.clone())
+            .insert(name.to_string(), canonical_layout(owner, type_def, table))
             .is_some()
         {
             return;

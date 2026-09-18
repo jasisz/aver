@@ -960,16 +960,21 @@ mod tests {
     fn a_job_kind_naming_dependency_types_packs_their_modules_too() {
         // The layouts of the named types are inside this job kind's
         // contract_hash, and the host recomputes that hash from what the
-        // manifest carries. Without the module that declares them the
-        // recomputation cannot agree, so the manifest carries it.
+        // manifest carries. Without the modules that declare them the
+        // recomputation cannot agree, so the manifest carries them — the
+        // module the boundary names, and the one it only reaches.
         let job_source =
             include_str!("../../../tests/fixtures/work_jobs_dependency_types/decodejob.av");
         let ledger_source =
             include_str!("../../../tests/fixtures/work_jobs_dependency_types/ledger.av");
+        let meta_source =
+            include_str!("../../../tests/fixtures/work_jobs_dependency_types/meta.av");
         let job_items = aver::source::parse_source(job_source).unwrap();
         let ledger_items = aver::source::parse_source(ledger_source).unwrap();
+        let meta_items = aver::source::parse_source(meta_source).unwrap();
         let mut dependencies = aver::capability::DependencyTypes::default();
         dependencies.add_module("Ledger", &ledger_items);
+        dependencies.add_module("Meta", &meta_items);
         let (jobs, errors) =
             CapabilityRegistry::from_module_in_program("DecodeJob", &job_items, &dependencies);
         assert!(errors.is_empty(), "{errors:?}");
@@ -982,6 +987,7 @@ mod tests {
         let sources = BTreeMap::from([
             ("DecodeJob".into(), job_source.into()),
             ("Ledger".into(), ledger_source.into()),
+            ("Meta".into(), meta_source.into()),
         ]);
         let wasm = wat::parse_str("(module (func (export \"main\")))").unwrap();
         let artifacts = build_bundle_artifacts(BundleManifestInput {
@@ -1002,11 +1008,16 @@ mod tests {
         })
         .unwrap();
         let mut manifest: BundleManifest = serde_json::from_str(&artifacts.manifest_json).unwrap();
-        assert_eq!(manifest.capability_dependency_sources.len(), 1);
+        assert_eq!(manifest.capability_dependency_sources.len(), 2);
         assert_eq!(manifest.capability_dependency_sources[0].name, "Ledger");
         assert_eq!(
             manifest.capability_dependency_sources[0].source,
             ledger_source
+        );
+        assert_eq!(manifest.capability_dependency_sources[1].name, "Meta");
+        assert_eq!(
+            manifest.capability_dependency_sources[1].source,
+            meta_source
         );
 
         let directory = tempfile::tempdir().unwrap();

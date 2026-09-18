@@ -7,7 +7,7 @@ module Main
 fn main() -> Result<Unit, String>
     ? "Begins one decode job and prints what it decoded."
     ! [Console.print, DecodeJob.begin, DecodeJob.take, Wait.poll]
-    job = DecodeJob.begin(Ledger.Request(source = "block", limit = 3))?
+    job = DecodeJob.begin(Ledger.Request(source = "block", limit = 3, origin = Ledger.Origin(host = "node")))?
     pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(job)}
     collect(pending, job, 50)
 
@@ -36,5 +36,5 @@ fn report(txs: List<Ledger.Tx>) -> Result<Unit, String>
 fn printed(tx: Ledger.Tx, rest: List<Ledger.Tx>) -> Result<Unit, String>
     ? "Says what one transaction decoded to and carries on with the rest."
     ! [Console.print]
-    Console.print("decoded {tx.txid} of {tx.size} bytes")
+    Console.print("decoded {tx.txid} of {tx.size} bytes from {tx.info.label}")
     report(rest)

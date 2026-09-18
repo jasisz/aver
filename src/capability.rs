@@ -52,6 +52,7 @@ pub struct DependencyTypes {
     types: BTreeMap<String, TypeDef>,
     resources: BTreeSet<String>,
     depends: BTreeMap<String, Vec<String>>,
+    exposes: BTreeMap<String, Vec<String>>,
 }
 
 impl DependencyTypes {
@@ -69,6 +70,8 @@ impl DependencyTypes {
                 TopLevel::Module(module) => {
                     self.depends
                         .insert(scope.to_string(), module.depends.clone());
+                    self.exposes
+                        .insert(scope.to_string(), module.exposes.clone());
                 }
                 _ => {}
             }
@@ -107,6 +110,23 @@ impl DependencyTypes {
     /// writes it.
     pub fn type_def(&self, canonical_name: &str) -> Option<&TypeDef> {
         self.types.get(canonical_name)
+    }
+
+    /// Whether module `owner` offers the declaration `bare_name` to the
+    /// modules that depend on it, by the one rule the rest of the compiler
+    /// uses: an explicit `exposes` list names everything it offers, and no
+    /// list at all offers everything that does not start with `_`.
+    ///
+    /// A module this table never saw answers yes: it is not the place that
+    /// decides whether the program is complete.
+    pub fn exposes_type(&self, owner: &str, bare_name: &str) -> bool {
+        match self.exposes.get(owner) {
+            Some(exposes) => crate::visibility::is_exposed(
+                bare_name,
+                crate::visibility::declared_exposes(exposes),
+            ),
+            None => true,
+        }
     }
 
     /// Whether `canonical_name` is a capability resource: a handle the

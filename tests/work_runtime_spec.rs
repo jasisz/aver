@@ -428,12 +428,14 @@ fn a_job_kind_naming_its_dependencies_types_runs_and_records_under_their_own_nam
     // The job kind declares no mirror types at all: its task is
     // `Ledger.Request` and its reply `List<Ledger.Tx>`, the records the
     // program already had. The values cross the boundary under those names,
-    // which is what the recording has to say.
+    // which is what the recording has to say. Both records reach a further
+    // one — `Ledger.Origin` written out, `Meta.Info` written bare — so the
+    // run also holds the boundary to types no operation names.
     let out = aver("work_jobs_dependency_types", &["run"]);
     assert!(out.status.success(), "{}", format_output(&out));
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
-        text.contains("decoded block of 3 bytes"),
+        text.contains("decoded block of 3 bytes from node"),
         "{}",
         format_output(&out)
     );
@@ -454,6 +456,10 @@ fn a_job_kind_naming_its_dependencies_types_runs_and_records_under_their_own_nam
         ledger.contains("\"type\": \"Ledger.Tx\""),
         "the reply must record under the name its own module gives it:\n{ledger}"
     );
+    assert!(
+        ledger.contains("\"type\": \"Meta.Info\""),
+        "a type reached through a named type records under its own module's name too:\n{ledger}"
+    );
 
     let fixture_dir = fixture("work_jobs_dependency_types");
     let mut command = Command::new(aver_bin());
@@ -464,7 +470,7 @@ fn a_job_kind_naming_its_dependencies_types_runs_and_records_under_their_own_nam
     let text = combined(&replayed);
     assert!(replayed.status.success(), "{}", format_output(&replayed));
     assert!(
-        text.contains("decoded block of 3 bytes") && text.contains("Output:  MATCH"),
+        text.contains("decoded block of 3 bytes from node") && text.contains("Output:  MATCH"),
         "{}",
         format_output(&replayed)
     );
@@ -504,8 +510,8 @@ fn a_field_added_to_a_named_dependency_type_invalidates_the_recording() {
     let node_path = program.join("node.av");
     let node = std::fs::read_to_string(&node_path).expect("node reads");
     let widened_node = node.replace(
-        "Ledger.Tx(txid = task.source, size = task.limit)",
-        "Ledger.Tx(txid = task.source, size = task.limit, fee = 0)",
+        "size = task.limit, info =",
+        "size = task.limit, fee = 0, info =",
     );
     assert_ne!(widened_node, node, "the rewrite must change the function");
     std::fs::write(&node_path, widened_node).expect("node writes");

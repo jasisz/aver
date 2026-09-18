@@ -732,11 +732,121 @@ type Slot
 }
 
 #[test]
+fn a_dependency_resource_named_on_the_boundary_is_refused_as_a_resource() {
+    // The refusal has to say what is wrong. `Net` declares `Handle`; what it
+    // does not have is a layout, because a resource is a provider's handle.
+    let net = "\
+module Net
+    kind = capability
+    semantics = effectful
+    exposes [Handle, open]
+
+resource Handle
+
+operation open(name: String) -> Result<Net.Handle, String>
+    ? \"opens one handle\"
+    oracle = generativeOutput
+    replay = recorded
+";
+    let source = DECODE_JOB
+        .replace("depends [Work, Ledger]", "depends [Work, Ledger, Net]")
+        .replace("List<Ledger.Tx>", "Net.Handle");
+    let items = crate::source::parse_source(&source).expect("parse job kind fixture");
+    let table = dependency_types(&[("Ledger", LEDGER), ("Net", net)]);
+    let (_, errors) = CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("names dependency type 'Net.Handle', which is a capability resource")
+        }),
+        "the refusal must say it is a resource: {messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("module 'Net' does not declare")),
+        "module Net does declare it: {messages:?}"
+    );
+}
+
+#[test]
+fn a_job_kind_may_not_name_a_type_its_dependency_keeps_private() {
+    // `depends` says which module a job kind may reach into; `exposes` says
+    // what it finds there. A record its author kept back is not a layout the
+    // job kind's published identity may move with.
+    let ledger = LEDGER.replace("exposes [Request, Tx]", "exposes [Request]");
+    let items = crate::source::parse_source(DECODE_JOB).expect("parse job kind fixture");
+    let table = dependency_types(&[("Ledger", ledger.as_str())]);
+    let (_, errors) = CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|message| {
+            message.contains(
+                "names dependency type 'Ledger.Tx', which module 'Ledger' does not expose",
+            ) && message.contains("add 'Tx' to its `exposes` list")
+        }),
+        "a private layout must not enter contract_hash: {messages:?}"
+    );
+}
+
+#[test]
+fn a_dependency_layout_written_bare_is_bound_under_its_owner_s_name() {
+    // A module writes an imported type bare, and a bare name means whatever
+    // that module's scope says it means. What the job kind binds — and what
+    // the VM, the wasm-gc emitter and the codec generators read back — is the
+    // canonical name, or the layout is unreachable from the capability's own
+    // scope at run time.
+    let chain = "module Chain\n    exposes [Meta]\n\nrecord Meta\n    height: Int\n";
+    let ledger = "\
+module Ledger
+    depends [Chain]
+    exposes [Request, Tx]
+
+record Request
+    source: String
+    limit: Int
+
+record Tx
+    txid: String
+    size: Int
+    meta: Meta
+";
+    let registry = job_kind_registry(DECODE_JOB, &[("Ledger", ledger), ("Chain", chain)]);
+    let Some(TypeDef::Product { fields, .. }) = registry.boundary_type("Ledger.Tx") else {
+        panic!("the named dependency layout must be a bound boundary type");
+    };
+    assert_eq!(
+        fields
+            .iter()
+            .find(|(name, _)| name == "meta")
+            .map(|(_, source)| source.as_str()),
+        Some("Chain.Meta"),
+        "the bound layout must spell its field type canonically: {fields:?}"
+    );
+    assert!(
+        registry.boundary_type("Chain.Meta").is_some(),
+        "the layout reached through the named type must be bound as well"
+    );
+    let contract = registry.contract("DecodeJob").expect("job kind contract");
+    let types: Vec<String> = descriptor_fields(&contract.contract_descriptor)
+        .into_iter()
+        .filter(|(name, _)| name == "type")
+        .map(|(_, value)| value)
+        .collect();
+    assert!(
+        types.contains(&"Ledger::Tx = record{meta:Chain::Meta,size:Int,txid:String}".to_string()),
+        "a bare spelling and a written-out one are one identity: {types:?}"
+    );
+}
+
+#[test]
 fn a_dependency_type_the_program_does_not_declare_is_refused() {
     let items = crate::source::parse_source(DECODE_JOB).expect("parse job kind fixture");
+    // The name is offered and never declared, so the refusal is about the
+    // missing layout rather than about visibility.
     let table = dependency_types(&[(
         "Ledger",
-        "module Ledger\n    exposes [Request]\n\nrecord Request\n    source: String\n    limit: Int\n",
+        "module Ledger\n    exposes [Request, Tx]\n\nrecord Request\n    source: String\n    limit: Int\n",
     )]);
     let (_, errors) = CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
     assert!(

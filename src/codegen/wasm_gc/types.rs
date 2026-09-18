@@ -18,7 +18,7 @@
 //! subtype per constructor. Pattern matching dispatches through
 //! `ref.test` against those concrete constructor types.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use wasm_encoder::{
     AbstractHeapType, FieldType, HeapType, RefType, StorageType, StructType, ValType,
@@ -151,6 +151,14 @@ pub(super) struct TypeRegistry {
     /// exact lookups keep working and the #792 exact-name soundness rule
     /// (no suffix guessing) is preserved.
     pub(super) type_name_aliases: HashMap<String, String>,
+    /// The layouts a capability contract binds, under the canonical
+    /// `Module.Type` name the contract prints. The provider ABI's helper
+    /// names come from the contract on both sides of the boundary — the host
+    /// reads these same rows out of the registry — so the emitter walks them
+    /// as well as the flattened program's own record table, which spells a
+    /// dependency's type bare. Empty for a program with no capability whose
+    /// boundary names a represented type.
+    pub(super) capability_boundary_layouts: BTreeMap<String, crate::ast::TypeDef>,
     /// Total number of user-type slots reserved in the type section.
     /// Function types start AFTER these.
     pub(super) user_type_count: u32,
@@ -1451,6 +1459,8 @@ impl TypeRegistry {
             // `flatten_multimodule` derived; empty for single-module
             // programs and for callers that did not flatten.
             type_name_aliases: HashMap::new(),
+            // Populated post-build by `module.rs` from the capability plan.
+            capability_boundary_layouts: BTreeMap::new(),
             user_type_count: next_idx,
             string_array_type_idx,
             string_buffer_type_idx,
@@ -1881,6 +1891,21 @@ impl TypeRegistry {
             Some(canonical) => canonical.as_str(),
             None => trimmed,
         }
+    }
+
+    /// Install the layouts the program's capability contracts bind. See
+    /// `capability_boundary_layouts` for what reads them.
+    pub(super) fn set_capability_boundary_layouts(
+        &mut self,
+        layouts: BTreeMap<String, crate::ast::TypeDef>,
+    ) {
+        self.capability_boundary_layouts = layouts;
+    }
+
+    /// The layout one canonical contract name binds, if the program's
+    /// capabilities bind it.
+    pub(super) fn capability_boundary_layout(&self, name: &str) -> Option<&crate::ast::TypeDef> {
+        self.capability_boundary_layouts.get(name)
     }
 
     /// Install the flatten-derived qualified type-name aliases. See

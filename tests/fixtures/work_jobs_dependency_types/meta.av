@@ -1,0 +1,6 @@
+module Meta
+    intent = "The module that owns the label a transaction carries, reached only through a type of another module."
+    exposes [Info]
+
+record Info
+    label: String
