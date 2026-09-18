@@ -243,18 +243,21 @@ verify hello trace
 
 An exported proof never numbers a stub call differently from the way a run numbers it. Where it cannot follow the run it declines the law, names the call, the operation and the reason in the report and in the emitted file, and counts the decline, so nothing is proved about that function. `aver verify` is untouched: the run keeps its own numbering and the law still runs under its stubs.
 
-Declining is what a law needs rather than a warning about it. `aver verify` checks a law on samples while the exported theorem covers every input, so a law whose samples happen to agree with a differently numbered model would certify a statement about a function the run does not compute, with every step passing and the conclusion false. Four shapes are declined:
+Declining is what a law needs rather than a warning about it. `aver verify` checks a law on samples while the exported theorem covers every input, so a law whose samples happen to agree with a differently numbered model would certify a statement about a function the run does not compute, with every step passing and the conclusion false. Five shapes are declined:
 
 - A call into an effectful function. The callee's lifted body starts every operation at index 0 while the run keeps counting across the call. A function that reads the peer once and then calls a helper that reads it again hands the helper's read index 1 at run time and index 0 in the export.
 - A recursive call, which is that same shape seen from inside. A loop reading the peer once per turn hands its read index 0, then 1, then 2 at run time, and index 0 in every turn of the export.
 - A second operation inside a polled loop. A function declaring `Process.stopRequested` carries one index through its recursion and that index counts polls, so every other operation in the function would be numbered at the polling rate. Two clock reads per poll part company on the second turn. A poll loop that reaches no other operation is exact and still exports, because the base carried into the recursive call is that one operation's own count.
 - A call that follows a `match` whose arms call the operation a different number of times. The run charges the arm it took, and no single literal is right for every arm. Arms that call an operation equally often, which is the ordinary shape, are exact and still export.
+- A claim that reaches one operation through more than one effectful call. The claim is not a function body, so every call in it is exported at index 0, while a run numbers the operation across the guard and both sides of one case. `readOne() => readOneToo()` hands the peer index 0 on the left and index 1 on the right. Two calls that reach no operation in common are numbered from zero on both sides and still export, and the `because` lines are not counted, because a run never evaluates them.
+
+Calls inside a `!` or `?!` branch are exact wherever the rest of the body is. A branch is its own numbering scope on both sides: the run gives it a fresh slot for every operation each time it is entered, and the export numbers it from zero to match, whatever the surrounding body has already charged.
 
 The stubs a law supplies do not lift the decline, and that is deliberate: a law over a `given` bound to a function parameter is asserted for every function of that shape, index-reading ones included, so the theorem is no safer for having been demonstrated under an index-blind stub.
 
 Sampled `verify` cases are not declined. A case is one concrete evaluation `aver verify` has already run, so either the exported model computes the same value and the theorem holds of the run as well, or it computes a different one and the proof fails where a reader sees it. Neither outcome states something false about the run.
 
-To certify a law over an effectful function, keep helper boundaries and recursion out of the function the law is about. Script the stub by call number within that one body.
+To certify a law over an effectful function, keep helper boundaries and recursion out of the function the law is about, and let the claim reach each operation through one call. Script the stub by call number within that one body.
 
 ## Driving a socket state machine with a scripted peer
 
