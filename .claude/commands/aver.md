@@ -384,6 +384,8 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
     replay = recorded
 ```
 
+`T` and `R` may also be types of the modules the job kind lists in `depends`, written with their owner: `operation begin(task: Ledger.Request) -> Result<Work.Job, String>`. A job kind is the only capability that may name another module's type, because a job is answered by a function of the same program and the two ship together. The module has to be in `depends` and has to expose the type, the same two gates an ordinary fn passes. The layouts it names, and the layouts those reach, go into its `contract_hash` under the name of the module that declares each one, so adding a field to `Ledger.Request` invalidates recordings made before the edit exactly as adding a field to a record declared in the job kind's own module does. A named type that holds a capability resource anywhere inside it, a socket or a job handle, is refused, and the refusal names the field and the type. Every other capability stays closed on its own declarations.
+
 Its binding names the pure function that does the work and the three ends of the seam between the job and an answer module's state:
 
 ```toml

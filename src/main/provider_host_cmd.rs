@@ -626,12 +626,22 @@ fn work_input_rejections(
         return empty;
     };
     let mut capabilities = aver::capability::CapabilityRegistry::default();
+    let mut dependency_types = aver::capability::DependencyTypes::default();
     for module in program.report_units() {
         if module.fault.is_some() {
             continue;
         }
-        let (part, errors) =
-            aver::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
+        dependency_types.add_module(&module.dep_name, &module.items);
+    }
+    for module in program.report_units() {
+        if module.fault.is_some() {
+            continue;
+        }
+        let (part, errors) = aver::capability::CapabilityRegistry::from_module_in_program(
+            &module.dep_name,
+            &module.items,
+            &dependency_types,
+        );
         if errors.is_empty() {
             capabilities.merge(part);
         }

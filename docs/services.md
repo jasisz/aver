@@ -646,6 +646,35 @@ operation take(job: Work.Job) -> Result<Option<R>, String>
 
 `T` and `R` are ordinary data of the program (records, sums, lists, maps, scalars); no function types and no capability resources inside either. Parameter names are free; the operation names, their arity and their result shapes are not. A capability that names `Work.Job` at its boundary and does not have this shape is `error[work-shape]`.
 
+A job kind may declare `T` and `R` itself, and it may also name data types of the modules it lists in `depends`. It is the only kind of capability that may: an ordinary capability must not depend on the program it serves, so it stays closed on its own declarations and naming another module's type there is still refused. The difference is who answers. A job is answered by a function of the same program, so there is no host package tracking a layout that lives somewhere else; the job kind and the module whose type it names ship together, always.
+
+```
+module DecodeJob
+    kind = capability
+    semantics = effectful
+    depends [Work, Ledger]
+    exposes [begin, take]
+
+operation begin(task: Ledger.Request) -> Result<Work.Job, String>
+operation take(job: Work.Job) -> Result<Option<List<Ledger.Tx>>, String>
+```
+
+The price is visible and it is the point: the layouts of `Ledger.Request` and `Ledger.Tx`, and of every type those reach, are inside this job kind's `contract_hash`. Adding a field to `Ledger.Tx` moves that hash, so it invalidates recordings made before the edit and makes a deployment pack need rebuilding — exactly as adding a field to a record declared inside the job kind's own module does today. `aver capabilities` prints the one hash as before; what it now covers is written in the descriptor as a layout row per named type, under the name of the module that declares it, so a capability-local `Tx` and a dependency's `Ledger.Tx` stay two identities.
+
+The owner has to be spelled out. A bare name in a capability's operation still means that capability's own module, so nothing acquires this by accident. Two things have to be true of the name: the module is in `depends`, and the module exposes the type. `depends` says which module a job kind may reach into and `exposes` says what it finds there, the same pair of gates an ordinary fn passes when it names another module's type, so a record its author kept back never ends up inside a published `contract_hash`.
+
+Types reached *through* a named type need no further declaration: they arrive with the layout, and they are hashed with it. Each is bound under the name of the module that declares it, whichever way the module holding the field wrote it — `Ledger.Tx` may write `info: Meta.Info` or, when it depends on `Meta`, just `info: Info`, and either way the layout enters the hash as `Meta::Info` and crosses the boundary at run time as `Meta.Info`. That is what keeps a capability-local `Info` and a dependency's `Meta.Info` two identities on every backend.
+
+What a job may not carry is unchanged, and it is now checked through dependency types too. A named dependency type that holds a capability resource anywhere inside it — a connection, a dial, a listener, a job handle, or a `Tcp.Socket`, which is a sum of those — is refused at compile time, and the refusal names the field and the type:
+
+```
+operation 'Infra.BlockJobs.begin' parameter 0 names dependency type 'Infra.Tending.Kept', whose field 'sockets' has type 'Tcp.Socket', which holds capability resource 'Tcp.Listener'; a job carries its task and its reply off the turn as plain data, so no type on a job boundary may hold a resource
+```
+
+A named type the program does not declare is refused the same way, because `contract_hash` can only bind a layout it can read. A name the owning module declares as a `resource` is refused as a resource, because a resource is a provider's handle and has no layout on purpose.
+
+A deployment pack carries the modules whose types a packed job kind named, beside the job kind's own contract source, so its host recomputes the same hash without the project tree.
+
 Who runs the job is a binding in `aver.toml`, because it is a deployment choice rather than a property of the contract:
 
 ```toml
