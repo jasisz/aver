@@ -1,0 +1,17 @@
+module Ledger
+    depends [Meta]
+    intent = "The transactions this program already describes, named by the job kind rather than mirrored inside it."
+    exposes [Request, Tx, Origin]
+
+record Origin
+    host: String
+
+record Request
+    source: String
+    limit: Int
+    origin: Ledger.Origin
+
+record Tx
+    txid: String
+    size: Int
+    info: Info

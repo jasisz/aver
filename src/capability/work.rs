@@ -657,7 +657,10 @@ fn same_type(left: &Type, right: &Type) -> bool {
     }
 }
 
-fn mentions_job(ty: &Type, scope: &str) -> bool {
+/// Whether `ty` names the job handle, read in `scope`. Naming it is what
+/// makes a capability a job kind, and the contract builder asks the same
+/// question before deciding what that capability may name at its boundary.
+pub(crate) fn mentions_job(ty: &Type, scope: &str) -> bool {
     match canonicalize_type_names(ty.clone(), scope) {
         Type::Named { name, .. } => name == WORK_JOB,
         Type::Result(left, right) | Type::Map(left, right) => {

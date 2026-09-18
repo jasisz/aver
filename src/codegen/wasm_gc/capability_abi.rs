@@ -667,6 +667,19 @@ fn helper_stem(canonical: &str) -> String {
     )
 }
 
+/// The field source texts of one contract layout, in declaration order.
+fn contract_layout_fields(type_def: &crate::ast::TypeDef) -> Vec<&str> {
+    match type_def {
+        crate::ast::TypeDef::Product { fields, .. } => {
+            fields.iter().map(|(_, ty)| ty.as_str()).collect()
+        }
+        crate::ast::TypeDef::Sum { variants, .. } => variants
+            .iter()
+            .flat_map(|variant| variant.fields.iter().map(String::as_str))
+            .collect(),
+    }
+}
+
 pub(super) fn collect_type(
     ty: &Type,
     registry: &TypeRegistry,
@@ -711,6 +724,21 @@ pub(super) fn collect_type(
         // must not force per-octet Int factories.
         Type::Named { name, .. } if matches!(name.as_str(), "Bytes" | "Bytes.Bytes") => {}
         Type::Named { name, .. } if visiting.insert(name.clone()) => {
+            // The contract's own reading of this layout. A module writes a
+            // dependency's type bare and the flatten keeps that spelling,
+            // while the contract — and the host that decodes against it —
+            // writes `Module.Type`. Walk both, so a field reached one way is
+            // reachable by the name the other side asks for.
+            if let Some(definition) = registry.capability_boundary_layout(name) {
+                for field in contract_layout_fields(definition) {
+                    collect_type(
+                        &crate::types::parse_type_str(field),
+                        registry,
+                        out,
+                        visiting,
+                    );
+                }
+            }
             if let Some(fields) = registry.record_fields.get(name).or_else(|| {
                 name.rsplit_once('.')
                     .and_then(|(_, bare)| registry.record_fields.get(bare))
