@@ -74,7 +74,7 @@ pub(super) fn body_fold<'a>(
 
 /// A shared computed record can stay opaque; state constructors and scalar
 /// routers still need to reduce so the fold's next case becomes visible.
-pub(super) fn constructs_result_record(fd: &FnDef) -> bool {
+fn constructs_result_record(fd: &FnDef) -> bool {
     fd.body.stmts().iter().any(|stmt| {
         let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
         crate::codegen::expr_walk::any(expr, &mut |expr| {
