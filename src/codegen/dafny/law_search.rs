@@ -29,6 +29,7 @@ pub(super) fn reusable_ordinary_law(
     super::toplevel::sample_seed_lemma_available(vb, law, ctx)
         && !crate::codegen::common::law_lhs_has_trace_projection(&law.lhs)
         && crate::codegen::common::law_map_order_refusal(vb, law, ctx).is_none()
+        && crate::codegen::common::law_oracle_index_refusal(vb, law, ctx).is_none()
         && !matches!(
             theorem.strategy,
             crate::ir::ProofStrategy::TailRecFixedBaseFold { .. }

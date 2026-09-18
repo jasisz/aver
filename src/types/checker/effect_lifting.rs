@@ -43,7 +43,7 @@
 //! - User-defined helpers that also emit effects: their lifted form is
 //!   needed to close the call graph. v0 doesn't recurse into helpers.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use super::effect_classification::{
@@ -89,17 +89,92 @@ fn classify_effect(cfg: &LiftConfig, method: &str) -> Option<RegisteredEffectCla
     classify_with_registry(&cfg.capabilities, method)
 }
 
+/// One place where the lifted body numbers a call of an operation differently
+/// from the way the run numbers it.
+///
+/// The VM counts the calls of one operation across a whole case
+/// (`take_oracle_coordinates`); the lifter numbers the calls of one function
+/// body from the indices that body was entered at. Where a static index cannot
+/// name what the run will charge, the lifter records it here instead of
+/// writing down a number it cannot justify, and proof export refuses the law
+/// rather than stating a theorem about a function the run does not compute.
+/// `docs/oracle.md` carries the same list in prose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexDivergence {
+    /// The operation whose numbering parts company, e.g. `"Random.int"`.
+    pub operation: String,
+    /// Why the two sides cannot be made to agree here.
+    pub shape: DivergentShape,
+    /// The source line of the call that cannot be numbered.
+    pub line: SourceLine,
+}
+
+/// The shapes a static call index cannot follow. Each one is a count the run
+/// knows and the exported body does not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DivergentShape {
+    /// A call into an effectful function, a recursive one included. The
+    /// callee's lifted body starts every operation at index 0 while the run
+    /// keeps counting across the call.
+    CalleeRestartsAtZero {
+        /// The function being called, as the call site spells it.
+        callee: String,
+    },
+    /// A call into an effectful function from a body that threads the polling
+    /// base. The callee does receive a base, but it is the count of
+    /// `Process.stopRequested` calls, so every other operation is numbered at
+    /// the polling rate instead of its own.
+    CalleeCountsAtPollRate {
+        /// The function being called, as the call site spells it.
+        callee: String,
+    },
+    /// A call that follows a `match` whose arms call the operation a different
+    /// number of times. The run charges the arm it took; one static index
+    /// cannot be right for every arm.
+    CountDependsOnArm,
+}
+
+impl IndexDivergence {
+    /// The sentence a user reads on the declined law.
+    pub fn reason(&self) -> String {
+        match &self.shape {
+            DivergentShape::CalleeRestartsAtZero { callee } => format!(
+                "line {}: the call to `{}` starts `{}` again at index 0 in the exported \
+                 model, while the run keeps counting that operation across the call",
+                self.line, callee, self.operation,
+            ),
+            DivergentShape::CalleeCountsAtPollRate { callee } => format!(
+                "line {}: the call to `{}` carries only the `{}` count, so the exported \
+                 model numbers `{}` at the polling rate while the run numbers it by its \
+                 own calls",
+                self.line, callee, THREADED_EFFECT, self.operation,
+            ),
+            DivergentShape::CountDependsOnArm => format!(
+                "line {}: `{}` is called after a `match` whose arms call it a different \
+                 number of times, so the index the run charges depends on the arm taken",
+                self.line, self.operation,
+            ),
+        }
+    }
+}
+
 /// The Oracle call indices claimed so far in one lifting scope — one body,
 /// one branch of a `!` / `?!` group, or one arm of a `match`.
 ///
 /// Each operation counts its own calls, matching what the VM hands a stub in
 /// `take_oracle_coordinates`. The two numberings are written down twice, once
 /// as a literal in the emitted Lean and Dafny and once as the argument the VM
-/// passes, so they only agree while both count the same thing.
+/// passes, so they only agree while both count the same thing. Where they
+/// cannot, this scope collects the reasons rather than emitting a number that
+/// is merely close.
 #[derive(Debug, Clone, Default)]
 struct OracleCounters {
     /// Operation method name (`"Random.int"`) → calls already claimed.
     per_effect: HashMap<String, u32>,
+    /// Operations whose count at this point depends on which `match` arm ran.
+    arm_dependent: BTreeSet<String>,
+    /// Every call this scope could not number the way the run will.
+    divergences: Vec<IndexDivergence>,
     /// Names the `__qm_err_N` bindings the `?` rewrite introduces. A
     /// generated binding name, not an Oracle coordinate.
     fresh_bindings: u32,
@@ -107,7 +182,20 @@ struct OracleCounters {
 
 impl OracleCounters {
     /// Claim the next index for `effect` and advance its count.
-    fn claim(&mut self, effect: &str) -> u32 {
+    ///
+    /// A claim on an operation the arms of an earlier `match` charged
+    /// differently is the point where the approximation becomes observable:
+    /// the index emitted here is the busiest arm's, and the run charges the
+    /// arm it took. Record it and carry on, so the caller sees every such
+    /// call rather than only the first.
+    fn claim(&mut self, effect: &str, line: SourceLine) -> u32 {
+        if self.arm_dependent.contains(effect) {
+            self.divergences.push(IndexDivergence {
+                operation: effect.to_string(),
+                shape: DivergentShape::CountDependsOnArm,
+                line,
+            });
+        }
         let slot = self.per_effect.entry(effect.to_string()).or_insert(0);
         let claimed = *slot;
         *slot += 1;
@@ -127,14 +215,111 @@ impl OracleCounters {
     }
 
     /// Restart every operation from `indices`.
+    ///
+    /// Counts only. What this scope has already learned about its own
+    /// numbering — the arm-dependent operations and the divergences found so
+    /// far — survives, because a sibling arm does not undo it.
     fn restart_from(&mut self, indices: &HashMap<String, u32>) {
         self.per_effect = indices.clone();
+    }
+
+    /// Record every operation whose count after a `match` depends on the arm
+    /// the run took. `arms` holds each arm's counts, all of them reached from
+    /// the same `at_match` indices.
+    ///
+    /// An operation the arms charge equally is exact: whichever arm runs, the
+    /// next call is the same number, which is the ordinary shape and stays
+    /// exportable. An operation they charge differently has no single right
+    /// answer, so the next call of it is the divergence, not the match itself.
+    fn mark_arm_dependent(
+        &mut self,
+        at_match: &HashMap<String, u32>,
+        arms: &[HashMap<String, u32>],
+    ) {
+        let mut operations: BTreeSet<&str> = at_match.keys().map(String::as_str).collect();
+        for arm in arms {
+            operations.extend(arm.keys().map(String::as_str));
+        }
+        for operation in operations {
+            let mut counts = arms
+                .iter()
+                .map(|arm| arm.get(operation).copied().unwrap_or(0));
+            let Some(first) = counts.next() else {
+                continue;
+            };
+            if counts.any(|count| count != first) {
+                self.arm_dependent.insert(operation.to_string());
+            }
+        }
+    }
+
+    /// Take the divergences a `!` / `?!` branch scope found.
+    ///
+    /// The branch's counts stay behind: each branch numbers from zero under
+    /// its own `BranchPath`, which is what the VM's per-branch slot does too.
+    /// Its divergences do not, because a law over this body is a claim about
+    /// the branch as well.
+    fn absorb_divergences(&mut self, branch: OracleCounters) {
+        self.divergences.extend(branch.divergences);
     }
 
     fn next_fresh_binding(&mut self) -> u32 {
         let next = self.fresh_bindings;
         self.fresh_bindings += 1;
         next
+    }
+}
+
+/// Record the operations a call into `callee` numbers differently from the run.
+///
+/// A callee's lifted body starts every operation at index 0. The run does not:
+/// it keeps one count per operation for the whole case, so a caller that has
+/// already charged that operation, that charges it again after the call, or
+/// that makes the call twice, hands the stub a higher index than the export
+/// wrote down. A recursive call is this same shape seen from inside.
+///
+/// `Process.stopRequested` is the exception while the caller threads its base:
+/// that base is passed into the callee, so polling does keep counting across
+/// the call. It is the one operation whose contract relates different calls,
+/// which is why it was given the threading in the first place.
+fn record_callee_restart(
+    counters: &mut OracleCounters,
+    cfg: &LiftConfig,
+    callee: &str,
+    callee_effects: &[String],
+    line: SourceLine,
+) {
+    let mut seen = std::collections::HashSet::new();
+    for effect in callee_effects {
+        if !seen.insert(effect.as_str()) {
+            continue;
+        }
+        if effect == THREADED_EFFECT && cfg.oracle_counter_name.is_some() {
+            continue;
+        }
+        let Some(classification) = classify_effect(cfg, effect) else {
+            continue;
+        };
+        if !matches!(
+            classification.dimension,
+            EffectDimension::Generative | EffectDimension::GenerativeOutput
+        ) {
+            continue;
+        }
+        let shape = if cfg.oracle_counter_name.is_some() {
+            DivergentShape::CalleeCountsAtPollRate {
+                callee: callee.to_string(),
+            }
+        } else {
+            DivergentShape::CalleeRestartsAtZero {
+                callee: callee.to_string(),
+            }
+        };
+        counters.divergences.push(IndexDivergence {
+            operation: effect.clone(),
+            shape,
+            line,
+        });
     }
 }
 
@@ -165,10 +350,19 @@ pub enum LiftError {
 
 /// Lift a function body under the given configuration.
 pub fn lift_body(body: &FnBody, cfg: &LiftConfig) -> Result<FnBody, LiftError> {
+    Ok(lift_body_reporting(body, cfg)?.0)
+}
+
+/// [`lift_body`], keeping the calls the lifted body could not number the way
+/// the run will. Proof export consults the list before it states a law.
+pub fn lift_body_reporting(
+    body: &FnBody,
+    cfg: &LiftConfig,
+) -> Result<(FnBody, Vec<IndexDivergence>), LiftError> {
     let mut counters = OracleCounters::default();
     let root_path = spanned(Expr::Ident(cfg.path_name.clone()), 0);
     let new_stmts = lift_stmts(body.stmts(), cfg, &root_path, &mut counters)?;
-    Ok(FnBody::Block(new_stmts))
+    Ok((FnBody::Block(new_stmts), counters.divergences))
 }
 
 /// Lift a sequence of statements, CPS-desugaring `?!` when it
@@ -314,6 +508,7 @@ fn try_lift_error_prop_stmt(
         let branch_path = branch_child_path(path_expr, i as u32, item.line);
         let mut branch_counters = OracleCounters::default();
         lifted_items.push(lift_expr(item, cfg, &branch_path, &mut branch_counters)?);
+        counters.absorb_divergences(branch_counters);
     }
 
     // Build the continuation: innermost Ok arm.
@@ -360,9 +555,10 @@ fn try_lift_error_prop_stmt(
 /// A bare callee (`helper(...)`) is looked up by its name; a dotted one
 /// (`Infra.Store.get(...)`, an `Attr` chain) by the qualified name it
 /// spells, which is how a dependency module's lifted function is keyed.
-fn callee_helper_effects(callee: &Expr, cfg: &LiftConfig) -> Option<Vec<String>> {
+fn callee_helper_effects(callee: &Expr, cfg: &LiftConfig) -> Option<(String, Vec<String>)> {
     let name = dotted_callee_name(callee)?;
-    cfg.effectful_helpers.get(&name).cloned()
+    let effects = cfg.effectful_helpers.get(&name).cloned()?;
+    Some((name, effects))
 }
 
 /// The name a callee expression spells: `f`, or `A.B.f` for an `Attr`
@@ -651,12 +847,15 @@ fn lift_expr(
             // or higher-order call we pass through after recursing args.
             if let Some(effect_name) = effect_method_name(&callee.node) {
                 lift_classified_call(expr, &effect_name, args, cfg, path_expr, counters)?
-            } else if let Some(helper_effects) = callee_helper_effects(&callee.node, cfg) {
+            } else if let Some((helper_name, helper_effects)) =
+                callee_helper_effects(&callee.node, cfg)
+            {
                 // Oracle v1: call site to an effectful user helper —
                 // inject `(path, oracle...)` args so the call matches
                 // the helper's lifted arity.
                 let new_callee = lift_expr(callee, cfg, path_expr, counters)?;
                 let new_args = lift_args(args, cfg, path_expr, counters)?;
+                record_callee_restart(counters, cfg, &helper_name, &helper_effects, expr.line);
                 let mut injected = helper_injection(
                     &helper_effects,
                     cfg,
@@ -691,18 +890,22 @@ fn lift_expr(
             // theorem the kernel refutes while `verify` passed.
             let at_match = counters.call_indices();
             let mut after_match = at_match.clone();
+            let mut arm_counts: Vec<HashMap<String, u32>> = Vec::with_capacity(arms.len());
             let mut new_arms = Vec::with_capacity(arms.len());
             for arm in arms {
                 counters.restart_from(&at_match);
                 let body = lift_expr(&arm.body, cfg, path_expr, counters)?;
-                keep_longest(&mut after_match, &counters.call_indices());
+                let counts = counters.call_indices();
+                keep_longest(&mut after_match, &counts);
+                arm_counts.push(counts);
                 new_arms.push(MatchArm::new(arm.pattern.clone(), body));
             }
-            // A call after the match is numbered from the busiest arm, which
-            // is exact while the arms make the same number of calls and is
-            // the closest a static index can come when they do not. See
-            // "Where a run and an exported proof number differently" in
-            // `docs/oracle.md`.
+            // A call after the match is numbered from the busiest arm, which is
+            // exact while the arms make the same number of calls. When they do
+            // not, no static index is right for every arm, so the next call of
+            // such an operation is recorded as a divergence and any law over
+            // this body is declined instead of exported.
+            counters.mark_arm_dependent(&at_match, &arm_counts);
             counters.restart_from(&after_match);
             Expr::Match {
                 subject: Box::new(new_subject),
@@ -733,6 +936,7 @@ fn lift_expr(
                 let branch_path = branch_child_path(path_expr, i as u32, element.line);
                 let mut branch_counters = OracleCounters::default();
                 let lifted = lift_expr(element, cfg, &branch_path, &mut branch_counters)?;
+                counters.absorb_divergences(branch_counters);
                 new_elements.push(lifted);
             }
             if *is_error_prop {
@@ -795,13 +999,16 @@ fn lift_expr(
             // mismatch on the first source argument.
             let new_args = lift_args(&inner.args, cfg, path_expr, counters)?;
             let mut args = match cfg.effectful_helpers.get(&inner.target) {
-                Some(helper_effects) => helper_injection(
-                    helper_effects,
-                    cfg,
-                    path_expr,
-                    counters.claimed(THREADED_EFFECT),
-                    expr.line,
-                ),
+                Some(helper_effects) => {
+                    record_callee_restart(counters, cfg, &inner.target, helper_effects, expr.line);
+                    helper_injection(
+                        helper_effects,
+                        cfg,
+                        path_expr,
+                        counters.claimed(THREADED_EFFECT),
+                        expr.line,
+                    )
+                }
                 None => Vec::new(),
             };
             args.extend(new_args);
@@ -846,13 +1053,22 @@ fn lift_classified_call(
             // `(path, oracle...)` prefix a bare helper call gets.
             let new_args = lift_args(args, cfg, path_expr, counters)?;
             let mut injected = match cfg.effectful_helpers.get(effect_name) {
-                Some(helper_effects) => helper_injection(
-                    helper_effects,
-                    cfg,
-                    path_expr,
-                    counters.claimed(THREADED_EFFECT),
-                    original.line,
-                ),
+                Some(helper_effects) => {
+                    record_callee_restart(
+                        counters,
+                        cfg,
+                        effect_name,
+                        helper_effects,
+                        original.line,
+                    );
+                    helper_injection(
+                        helper_effects,
+                        cfg,
+                        path_expr,
+                        counters.claimed(THREADED_EFFECT),
+                        original.line,
+                    )
+                }
                 None => Vec::new(),
             };
             injected.extend(new_args);
@@ -949,7 +1165,7 @@ fn lift_classified_call(
             // Each operation numbers its own calls. The VM charges the same
             // way in `take_oracle_coordinates`, so a clock read between two
             // peer reads leaves the peer at index 1 on both sides.
-            let current_counter = counters.claim(effect_name);
+            let current_counter = counters.claim(effect_name, original.line);
             let path_arg = path_expr.clone();
             let counter_arg = oracle_counter_expr(cfg, current_counter, original.line);
             let mut new_args = vec![path_arg, counter_arg];
@@ -1245,6 +1461,34 @@ pub fn lift_fn_def_with_helpers_and_registry(
     helpers: &HashMap<String, Vec<String>>,
     capabilities: &crate::capability::CapabilityRegistry,
 ) -> Result<Option<FnDef>, LiftError> {
+    Ok(lift_fn_def_reporting(fd, helpers, capabilities)?.map(|(lifted, _)| lifted))
+}
+
+/// Every call in `fd`'s lifted body that proof export cannot number the way a
+/// run numbers it.
+///
+/// Empty means the exported body charges each operation exactly the indices
+/// the VM charges, so a law over `fd` states a theorem about the function the
+/// run computes. A non-empty list is the exporter's reason to decline; see
+/// `codegen::common::law_oracle_index_refusal`. A body that cannot be lifted
+/// at all reports nothing: proof export already drops it, and a missing
+/// oracle is its own diagnostic.
+pub fn oracle_index_divergences(
+    fd: &FnDef,
+    helpers: &HashMap<String, Vec<String>>,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> Vec<IndexDivergence> {
+    match lift_fn_def_reporting(fd, helpers, capabilities) {
+        Ok(Some((_, divergences))) => divergences,
+        Ok(None) | Err(_) => Vec::new(),
+    }
+}
+
+fn lift_fn_def_reporting(
+    fd: &FnDef,
+    helpers: &HashMap<String, Vec<String>>,
+    capabilities: &crate::capability::CapabilityRegistry,
+) -> Result<Option<(FnDef, Vec<IndexDivergence>)>, LiftError> {
     if fd.effects.is_empty() {
         return Ok(None);
     }
@@ -1358,18 +1602,21 @@ pub fn lift_fn_def_with_helpers_and_registry(
         capabilities: capabilities.clone(),
     };
 
-    let lifted_body = lift_body(&fd.body, &cfg)?;
+    let (lifted_body, divergences) = lift_body_reporting(&fd.body, &cfg)?;
 
-    Ok(Some(FnDef {
-        name: fd.name.clone(),
-        line: fd.line,
-        params: new_params,
-        return_type: fd.return_type.clone(),
-        effects: Vec::new(), // lifted form is pure
-        desc: fd.desc.clone(),
-        body: Arc::new(lifted_body),
-        resolution: None,
-    }))
+    Ok(Some((
+        FnDef {
+            name: fd.name.clone(),
+            line: fd.line,
+            params: new_params,
+            return_type: fd.return_type.clone(),
+            effects: Vec::new(), // lifted form is pure
+            desc: fd.desc.clone(),
+            body: Arc::new(lifted_body),
+            resolution: None,
+        },
+        divergences,
+    )))
 }
 
 /// Whether proof lifting must thread a dynamic oracle occurrence through this

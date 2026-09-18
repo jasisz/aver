@@ -104,7 +104,13 @@ fn vm_numbers_each_operation_from_zero() {
     );
 }
 
-fn export(program: &str, slug: &str, backend: &str, file: &str) -> String {
+/// The emitted file, and what `aver proof` told the user while emitting it.
+struct Export {
+    file: String,
+    report: String,
+}
+
+fn export(program: &str, slug: &str, backend: &str, file: &str) -> Export {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
@@ -130,12 +136,70 @@ fn export(program: &str, slug: &str, backend: &str, file: &str) -> String {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    std::fs::read_to_string(root.join(file)).unwrap_or_else(|e| panic!("read {file}: {e}"))
+    Export {
+        file: std::fs::read_to_string(root.join(file))
+            .unwrap_or_else(|e| panic!("read {file}: {e}")),
+        report: format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    }
+}
+
+/// Run the program's `verify` blocks and return how many cases passed and failed.
+fn verify(program: &str, name: &str) -> (usize, usize) {
+    let items = parse_source(program).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let results = run_verify_for_items_vm_with_mode(
+        items,
+        None,
+        Some(env!("CARGO_MANIFEST_DIR")),
+        name,
+        ExpansionMode::Declared,
+    )
+    .expect("verify run");
+    assert_eq!(results.len(), 1, "one verify block");
+    (results[0].passed, results[0].failed)
+}
+
+/// Assert that the law is declined rather than exported, with a reason naming
+/// `operation` that the user can read, and that no theorem carries its name.
+fn assert_law_declined(export: &Export, fn_name: &str, law_name: &str, operation: &str) {
+    assert!(
+        export.report.contains("declined"),
+        "`aver proof` must tell the user the law was not exported; report was:\n{}",
+        export.report
+    );
+    assert!(
+        export.report.contains(&format!("{fn_name}.{law_name}")),
+        "the declined claim must be named so the user knows which law lost its theorem; \
+         report was:\n{}",
+        export.report
+    );
+    assert!(
+        export.report.contains(operation),
+        "the reason must name the operation whose index cannot be written down; report \
+         was:\n{}",
+        export.report
+    );
+    assert!(
+        export.file.contains("is not exported"),
+        "the emitted file must carry the refusal where a reader of the proof will see it:\n{}",
+        export.file
+    );
+    let theorem = format!("theorem {fn_name}_law_{law_name}");
+    assert!(
+        !export.file.contains(&theorem),
+        "`{theorem}` was emitted for a law whose model numbers a stub differently from the \
+         run — that theorem certifies a statement about a function the run never \
+         computes:\n{}",
+        export.file
+    );
 }
 
 #[test]
 fn exported_lean_numbers_each_operation_from_zero() {
-    let lean = export(MIXED, "mixed", "lean", "MixedCallIndex.lean");
+    let lean = export(MIXED, "mixed", "lean", "MixedCallIndex.lean").file;
     for call in [
         "rnd_Random_int path 0 0 100",
         "rnd_Time_unixMs path 0",
@@ -155,7 +219,7 @@ fn exported_lean_numbers_each_operation_from_zero() {
 
 #[test]
 fn exported_dafny_numbers_each_operation_from_zero() {
-    let dafny = export(MIXED, "mixed", "dafny", "MixedCallIndex.dfy");
+    let dafny = export(MIXED, "mixed", "dafny", "MixedCallIndex.dfy").file;
     for call in [
         "rnd_Random_int(path, 0, 0, 100)",
         "rnd_Time_unixMs(path, 0)",
@@ -197,7 +261,7 @@ fn vm_charges_only_the_arm_that_runs() {
 
 #[test]
 fn exported_lean_numbers_match_arms_from_the_match() {
-    let lean = export(ARMS, "arms", "lean", "ArmCallIndex.lean");
+    let lean = export(ARMS, "arms", "lean", "ArmCallIndex.lean").file;
     let taken = lean.matches("rnd_Random_int path 0 1 6").count();
     assert_eq!(
         taken, 2,
@@ -213,5 +277,239 @@ fn exported_lean_numbers_match_arms_from_the_match() {
     assert!(
         !lean.contains("rnd_Random_int path 2 1 6"),
         "index 2 means the arms were summed instead of numbered from the match:\n{lean}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The four shapes where one static index cannot follow the run, and the
+// export declines the law instead of writing down a number it cannot justify.
+//
+// Each program below passes `aver verify`: the VM hands the stub exactly the
+// indices the law's value depends on. Each one also lifts to a model that
+// charges different indices. A law is checked on samples and proved for every
+// input, so leaving these exportable lets a law whose samples happen to agree
+// certify a statement about a function the run does not compute — a false
+// certificate, arrived at with every step passing. `docs/oracle.md` carries
+// the same four shapes in prose.
+// ---------------------------------------------------------------------------
+
+/// A helper call. `outer` reads the peer and then lets `inner` read it again;
+/// the run charges the two reads 0 and 1, and `inner`'s lifted body starts
+/// again at 0.
+const HELPER: &str = r#"module HelperRestart
+    intent = "A read in the caller and a read in the helper are two calls of one operation."
+    exposes [outer]
+    effects [Random.int]
+
+fn outer() -> Int
+    ? "Read the peer once, then let the helper read it again."
+    ! [Random.int]
+    a = Random.int(0, 100)
+    b = inner()
+    a * 1000 + b
+
+fn inner() -> Int
+    ? "Read the peer once."
+    ! [Random.int]
+    Random.int(0, 100)
+
+fn peer(path: BranchPath, call: Int, low: Int, high: Int) -> Result<Int, String>
+    ? "A scripted peer: 7 on its first call, 9 on its second."
+    match call
+        0 -> Result.Ok(7)
+        1 -> Result.Ok(9)
+        _ -> Result.Ok(0)
+
+verify outer law helperKeepsCounting
+    given rnd: Random.int = [peer]
+    outer() => 7009
+"#;
+
+/// Recursion that carries no index. Each turn reads the peer once and the run
+/// numbers the turns 0, 1, 2; the lifted body emits one literal for them all.
+const DRAIN: &str = r#"module DrainRecursion
+    intent = "Each turn of a loop reads the peer once, and the reads are numbered across turns."
+    exposes [drain]
+    effects [Random.int]
+
+fn drain(left: Int, total: Int) -> Int
+    ? "Read the peer once per turn until the counter runs out."
+    ! [Random.int]
+    match left
+        0 -> total
+        _ -> drain(left - 1, total + Random.int(0, 100))
+
+fn peerByCall(path: BranchPath, call: Int, low: Int, high: Int) -> Result<Int, String>
+    ? "The peer reports the call index it was handed."
+    Result.Ok(call)
+
+verify drain law turnsAreNumbered
+    given rnd: Random.int = [peerByCall]
+    drain(3, 0) => 3
+"#;
+
+/// A second operation inside a polled loop. The function threads the polling
+/// base, which counts polls; the clock is read twice per poll, so the two
+/// rates part company on the second turn.
+const THREADED: &str = r#"module ThreadedTwoRates
+    intent = "Two clock reads per poll, so the clock advances twice as fast as the poll."
+    exposes [follow]
+    effects [Process.stopRequested, Time.unixMs]
+
+fn follow(steps: Int) -> Int
+    ? "Read the clock twice, then poll, then continue."
+    ! [Time.unixMs, Process.stopRequested]
+    a = Time.unixMs()
+    b = Time.unixMs()
+    match Process.stopRequested()
+        true -> steps + a + b
+        false -> follow(steps + 1)
+
+fn clockByCall(path: BranchPath, call: Int) -> Int
+    ? "The clock reports the call index it was handed."
+    call
+
+fn stopAfterTwo(path: BranchPath, call: Int) -> Bool
+    ? "The third poll asks this branch to stop."
+    call >= 2
+
+verify follow law twoRates
+    given now: Time.unixMs = [clockByCall]
+    given stop: Process.stopRequested = [stopAfterTwo]
+    follow(0) => 11
+"#;
+
+/// A `match` whose arms read the peer a different number of times, with a read
+/// after it. The run charges the arm it took; the export numbers the following
+/// read from the busiest arm, so the two agree only on that one arm.
+const UNEVEN_ARMS: &str = r#"module UnevenArms
+    intent = "One arm reads the peer twice and the other once, and a read follows the match."
+    exposes [pickUneven]
+    effects [Random.int]
+
+fn pickUneven(flag: Int) -> Int
+    ? "The arms charge the peer differently, so the read after the match has no fixed index."
+    ! [Random.int]
+    chosen = match flag
+        0 -> Random.int(1, 6) + Random.int(1, 6)
+        _ -> Random.int(1, 6)
+    after = Random.int(1, 6)
+    chosen * 10 + after
+
+fn peerByCall(path: BranchPath, call: Int, low: Int, high: Int) -> Result<Int, String>
+    ? "The peer reports the call index it was handed."
+    Result.Ok(call)
+
+verify pickUneven law armsChargeDifferently
+    given rnd: Random.int = [peerByCall]
+    pickUneven(1) => 1
+"#;
+
+#[test]
+fn a_law_over_a_function_that_calls_an_effectful_helper_is_declined() {
+    assert_eq!(
+        verify(HELPER, "oracle_call_index_helper.av"),
+        (1, 0),
+        "the run hands `inner`'s read index 1, so the packed answer is 7009"
+    );
+    let lean = export(HELPER, "helper", "lean", "HelperRestart.lean");
+    assert!(
+        lean.file.contains("rnd_Random_int path 0 0 100"),
+        "the lifted helper still starts at index 0 — that is the divergence, and the law \
+         is declined rather than the numbering being faked:\n{}",
+        lean.file
+    );
+    assert_law_declined(&lean, "outer", "helperKeepsCounting", "Random.int");
+    let dafny = export(HELPER, "helper", "dafny", "HelperRestart.dfy");
+    assert_law_declined(&dafny, "outer", "helperKeepsCounting", "Random.int");
+}
+
+#[test]
+fn a_law_over_a_recursive_effectful_function_is_declined() {
+    assert_eq!(
+        verify(DRAIN, "oracle_call_index_drain.av"),
+        (1, 0),
+        "the run numbers the three turns 0, 1 and 2, so the total is 3"
+    );
+    let lean = export(DRAIN, "drain", "lean", "DrainRecursion.lean");
+    assert_law_declined(&lean, "drain", "turnsAreNumbered", "Random.int");
+    let dafny = export(DRAIN, "drain", "dafny", "DrainRecursion.dfy");
+    assert_law_declined(&dafny, "drain", "turnsAreNumbered", "Random.int");
+}
+
+#[test]
+fn a_law_over_a_second_operation_in_a_polled_loop_is_declined() {
+    assert_eq!(
+        verify(THREADED, "oracle_call_index_threaded.av"),
+        (1, 0),
+        "the run reads the clock at 0..5 over three turns, so the answer is 2 + 4 + 5"
+    );
+    let lean = export(THREADED, "threaded", "lean", "ThreadedTwoRates.lean");
+    assert!(
+        lean.report.contains("Process.stopRequested"),
+        "the reason must say that the base carried into the call counts polls, which is \
+         what makes the clock's index wrong; report was:\n{}",
+        lean.report
+    );
+    assert_law_declined(&lean, "follow", "twoRates", "Time.unixMs");
+    let dafny = export(THREADED, "threaded", "dafny", "ThreadedTwoRates.dfy");
+    assert_law_declined(&dafny, "follow", "twoRates", "Time.unixMs");
+}
+
+#[test]
+fn a_law_over_a_call_after_uneven_match_arms_is_declined() {
+    assert_eq!(
+        verify(UNEVEN_ARMS, "oracle_call_index_uneven_arms.av"),
+        (1, 0),
+        "the arm that runs reads index 0 and the read after the match reads index 1"
+    );
+    let lean = export(UNEVEN_ARMS, "uneven", "lean", "UnevenArms.lean");
+    assert_law_declined(&lean, "pickUneven", "armsChargeDifferently", "Random.int");
+    let dafny = export(UNEVEN_ARMS, "uneven", "dafny", "UnevenArms.dfy");
+    assert_law_declined(&dafny, "pickUneven", "armsChargeDifferently", "Random.int");
+}
+
+/// The other side of the gate: a `Process.stopRequested` loop is the one shape
+/// recursion is exact for, because the polling base is threaded into the
+/// recursive call. Declining it too would cost the shipped cooperative-shutdown
+/// example its theorem for no soundness gain.
+#[test]
+fn a_law_over_a_single_operation_polling_loop_still_exports() {
+    const POLL: &str = r#"module PollOnly
+    intent = "Polling alone carries its own index into the next turn."
+    exposes [follow]
+    effects [Process.stopRequested]
+
+fn follow(steps: Int) -> Int
+    ? "Continue until the process asks this branch to stop."
+    ! [Process.stopRequested]
+    match Process.stopRequested()
+        true -> steps
+        false -> follow(steps + 1)
+
+fn stopAfterThree(path: BranchPath, call: Int) -> Bool
+    ? "The fourth poll asks this branch to stop."
+    call >= 3
+
+verify follow law pollsAreCounted
+    given stop: Process.stopRequested = [stopAfterThree]
+    follow(0) => 3
+"#;
+    assert_eq!(
+        verify(POLL, "oracle_call_index_poll_only.av"),
+        (1, 0),
+        "the run polls four times and stops on the fourth"
+    );
+    let lean = export(POLL, "pollonly", "lean", "PollOnly.lean");
+    assert!(
+        lean.file.contains("theorem follow_law_pollsAreCounted"),
+        "the polling base is threaded into the recursive call, so the exported model \
+         charges the same indices the run does and the law must still be stated:\n{}",
+        lean.file
+    );
+    assert!(
+        !lean.report.contains("declined"),
+        "nothing about this law is approximate; report was:\n{}",
+        lean.report
     );
 }
