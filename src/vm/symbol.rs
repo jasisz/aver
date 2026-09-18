@@ -394,6 +394,29 @@ impl VmSymbolTable {
             .copied()
     }
 
+    /// Every value the table hands back at run time — interned
+    /// constants and namespace members — as a slot the caller can
+    /// rewrite.
+    ///
+    /// Almost all of them are immediates (symbol references, `NONE`),
+    /// but `BranchPath.Root` is a heap record, so the table is a root
+    /// holder like the globals and the chunk constants: whoever moves
+    /// arena entries under a live program has to rebase these too, or
+    /// the table keeps naming an entry that has been collected, moved,
+    /// or left behind in another arena. Two calls on an unchanged
+    /// table walk the same slots in the same order, which is what lets
+    /// a caller read the values, rebase them as a batch, and write
+    /// them back.
+    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut NanValue> {
+        self.symbols.iter_mut().flat_map(|info| {
+            let constant = match &mut info.kind {
+                Some(VmSymbolKind::Constant(value)) => Some(value),
+                _ => None,
+            };
+            constant.into_iter().chain(info.members.values_mut())
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn required_effects(&self, symbol_id: u32) -> Option<&[u32]> {
         Some(self.get(symbol_id)?.required_effects.as_slice())

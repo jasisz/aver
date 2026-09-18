@@ -297,6 +297,64 @@ fn profiling_tracks_opcodes_and_fast_returns() {
     assert_eq!(report.returns.thin_fast_returns, 1);
 }
 
+/// Same as [`compile_vm`], but with the host record types registered, so the
+/// compiler installs the `BranchPath.Root` constant instead of skipping it.
+fn compile_vm_with_service_types(src: &str) -> VM {
+    let mut lexer = Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex failed");
+    let mut parser = Parser::new(tokens);
+    let mut items = parser.parse().expect("parse failed");
+    crate::ir::pipeline::tco(&mut items);
+    crate::ir::pipeline::resolve(&mut items);
+
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let symbols = crate::ir::SymbolTable::build(&items, &[]);
+    let resolved = crate::ir::hir::resolve_program(&symbols, &items);
+    let (code, globals) =
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
+    VM::new(code, globals, arena)
+}
+
+/// The symbol table is the fourth holder of run-time values, next to the
+/// globals, the chunk constants and the match-dispatch tables — `BranchPath
+/// .Root` is an arena record it hands back by index. Before the fix nothing
+/// rebased it, so a forked context kept the parent's index over an arena that
+/// does not have that entry, and the first read of the path indexed an empty
+/// space (`aver verify examples/formal/oracle_independent_products.av`).
+#[test]
+fn parallel_base_context_rebases_the_branch_path_root_constant() {
+    let vm = compile_vm_with_service_types("fn main() -> Int\n    1\n");
+    let root_symbol = vm
+        .code
+        .symbols
+        .find("BranchPath.Root")
+        .expect("BranchPath.Root must be interned once service types exist");
+
+    let (code, globals, arena) = vm.build_parallel_base_context();
+
+    let root = code
+        .symbols
+        .resolve_constant(root_symbol)
+        .expect("BranchPath.Root must survive the fork as a constant");
+    let index = root
+        .heap_index()
+        .expect("BranchPath.Root is an arena record, not an immediate");
+    assert!(
+        Arena::is_stable_index(index),
+        "BranchPath.Root must be stable in a parallel base context, got heap index {index}"
+    );
+    let (type_id, fields) = arena.get_record(index);
+    assert_eq!(
+        Some(type_id),
+        arena.find_type_id(crate::types::branch_path::TYPE_NAME),
+        "BranchPath.Root must still name a BranchPath record"
+    );
+    assert_eq!(fields.len(), 1, "BranchPath is a one-field record");
+
+    assert_parallel_base_context_is_static_only(&code, &globals, &arena);
+}
+
 #[test]
 fn parallel_base_context_rebases_string_constants_to_stable() {
     let vm = compile_vm(
