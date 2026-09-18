@@ -45,7 +45,9 @@ const PROBE_SOURCE: &str = "module Probe\n    intent = \"Exercise an entry progr
 /// An entry with no provider call of its own, over a module that has them.
 const THIN_SOURCE: &str = "module Thin\n    intent = \"Audit a thin entry whose dependency reaches the bound capability.\"\n    depends [Composed]\n\nfn main() -> Result<Unit, String>\n    ? \"Delegate to the composed module.\"\n    Composed.main()\n";
 /// Reaches the bound capability and finishes, so the host is built before the
-/// run whose timing is measured.
+/// run whose timing is measured. Only the bound package answers `"fixed-time"`,
+/// so a run that fails here never reached the host and the timing below would
+/// have measured something else.
 #[cfg(unix)]
 const WARM_SOURCE: &str = r#"module WarmHost
     intent = "Reach the bound provider once so the cached host exists."
@@ -53,15 +55,23 @@ const WARM_SOURCE: &str = r#"module WarmHost
     effects [Time.now]
 
 fn main() -> Result<Unit, String>
-    ? "Ask the bound clock once and finish."
+    ? "Ask the bound clock once and refuse any other answer."
     ! [Time.now]
-    _stamp = Time.now()
-    Result.Ok(Unit)
+    match Time.now()
+        "fixed-time" -> Result.Ok(Unit)
+        _ -> Result.Err("the bound clock did not answer, so this run was not hosted")
 "#;
 /// Reaches the bound capability, then loops on bounded waits and stops as soon
 /// as a cooperative stop is requested. Three hundred turns of a hundred
 /// milliseconds is its own deadline: far enough away that a stop measured in
 /// the first second cannot be mistaken for the loop simply running out.
+///
+/// The loop runs only after the bound clock has answered `"fixed-time"`, which
+/// is the one answer no other clock gives. That is what keeps the signal test
+/// below about the host: the program the signal reaches printed its first line
+/// only because it was running inside the host, so a program or a planning
+/// change that no longer reaches the bound package fails the run instead of
+/// passing the test in process.
 #[cfg(unix)]
 const STOP_SOURCE: &str = r#"module StopUnderHost
     intent = "Loop on bounded waits until a cooperative stop is requested."
@@ -69,10 +79,11 @@ const STOP_SOURCE: &str = r#"module StopUnderHost
     effects [Console.print, Process.stopRequested, Time.now, Wait.poll]
 
 fn main() -> Result<Unit, String>
-    ? "Reach the bound provider once, then run the bounded loop."
+    ? "Refuse any clock but the bound one, then run the bounded loop."
     ! [Console.print, Process.stopRequested, Time.now, Wait.poll]
-    _stamp = Time.now()
-    looping(300)
+    match Time.now()
+        "fixed-time" -> looping(300)
+        _ -> Result.Err("the bound clock did not answer, so this run was not hosted")
 
 fn looping(left: Int) -> Result<Unit, String>
     ? "One turn: observe the stop request, then stop or wait again."
@@ -495,6 +506,10 @@ fn custom_wasm_gc_provider_effects_record_and_replay() {
 /// process this command waited on, the signal reached only the waiting
 /// process: it died on the spot and the program it had started ran on to its
 /// own deadline, never observing `Process.stopRequested`.
+///
+/// Both programs demand the bound clock's `"fixed-time"` before doing anything
+/// else, so every assertion below is made about a run that was on the host. The
+/// same sources run in process end with an error before printing anything.
 #[cfg(unix)]
 #[test]
 fn a_cooperative_stop_reaches_a_program_running_on_the_cached_host() {
@@ -543,9 +558,17 @@ fn a_cooperative_stop_reaches_a_program_running_on_the_cached_host() {
         let _ = printed_tx.send(lines);
     });
 
+    // The first line is printed after the bound clock answered, so reaching it
+    // is also how this test knows the run it is about to signal is the host.
     let announced = first_rx
         .recv_timeout(Duration::from_secs(120))
-        .expect("the program announced its first stop observation");
+        .unwrap_or_else(|_| {
+            let _ = child.kill();
+            panic!(
+                "the run printed nothing before its first stop observation: it refuses to loop \
+                 unless the bound clock answered, so it never reached the provider host"
+            )
+        });
     assert_eq!(announced, "asked");
 
     let signalled = Instant::now();
