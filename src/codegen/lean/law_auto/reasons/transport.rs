@@ -196,6 +196,27 @@ pub(super) fn candidate(
         .map(|i| format!("-_fact{i}"))
         .collect::<Vec<_>>()
         .join(", ");
+    // Finite observations have already been split by the step normalizer.
+    // Reopening their record constructors while simplifying the IH duplicates
+    // every projection of their nested matches. Only the outer result adapter
+    // still needs projection reduction at this stage.
+    let adapter = match right_fn.body.stmts() {
+        [Stmt::Expr(expr)] => induction::callee(expr, ctx, owner),
+        _ => None,
+    }
+    .map(|fd| induction::lean_name(fd, ctx));
+    let final_plain = functions
+        .iter()
+        .filter(|fd| {
+            let name = induction::lean_name(fd, ctx);
+            plain.contains(&name)
+                && (adapter.as_ref() == Some(&name) || !induction::constructs_result_record(fd))
+        })
+        .map(|fd| induction::lean_name(fd, ctx))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
     let plain = plain.into_iter().collect::<Vec<_>>().join(", ");
     let mapping = maps
         .iter()
@@ -203,8 +224,18 @@ pub(super) fn candidate(
         .chain(converters.iter().cloned())
         .collect::<Vec<_>>()
         .join(", ");
+    let map_count = maps
+        .iter()
+        .filter(|fd| induction::is_unary_list_map(fd, ctx))
+        .count();
     let step_simp = std::iter::once(mapping.clone())
         .chain(step_helpers)
+        .chain((0..map_count).flat_map(|i| {
+            [
+                format!("_aver_transport_length_{i}"),
+                format!("_aver_transport_drop_{i}"),
+            ]
+        }))
         .collect::<Vec<_>>()
         .join(", ");
     let equations = converters
@@ -243,7 +274,7 @@ pub(super) fn candidate(
     // finite helper. A cons-tail IH is too narrow for that checked decrease;
     // length induction provides the equation for every shorter suffix.
     let steps = format!(
-        "all_goals ({steps}); all_goals (repeat' first | (simp_all +zetaDelta [{step_simp}, {excluded}]) | split); all_goals (simp_all +zetaDelta [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals (grind [List.drop_cons, List.drop_drop, List.length_drop, List.length_cons, {equations}]); done"
+        "all_goals ({steps}); all_goals (repeat' first | (simp +zetaDelta [{step_simp}]) | split); all_goals (simp_all +zetaDelta [{final_plain}, {mapping}, List.append_assoc, {excluded}]); all_goals (grind [List.drop_cons, List.drop_drop, List.length_drop, List.length_cons, {equations}]); done"
     );
     let induction = if crate::codegen::recursion::detect::single_list_structural_param_index(driver)
         .is_some()

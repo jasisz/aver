@@ -72,22 +72,13 @@ jobs:
           mapping_tactic = lines[first+1].strip()[2:]
           probe('Mapping', mapping_prefix + mapping_tactic + '\nend ImportedEffects\n')
           probe('MappingSteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', mapping_tactic) + '\nend ImportedEffects\n')
-          probe('MappingGoalOnly', mapping_prefix + goal_only(mapping_tactic, 1) + '\nend ImportedEffects\n')
-          probe('MappingGoalOnlySteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', goal_only(mapping_tactic, 1)) + '\nend ImportedEffects\n')
           no_ih_simp = mapping_tactic.replace('simp_all +zetaDelta [', 'simp +zetaDelta [*, -_aver_transport_ih, ')
-          probe('MappingNoIHSimp', mapping_prefix + no_ih_simp + '\nend ImportedEffects\n')
-          probe('MappingNoIHSimpSteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', no_ih_simp) + '\nend ImportedEffects\n')
           split_context = goal_only(mapping_tactic, 1).replace('| split)', '| split at *)')
-          probe('MappingContext', mapping_prefix + split_context + '\nend ImportedEffects\n')
-          probe('MappingContextSteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', split_context) + '\nend ImportedEffects\n')
-          probe('MappingNoZeta', mapping_prefix + mapping_tactic.replace(' +zetaDelta', '') + '\nend ImportedEffects\n')
           mapped_inputs = re.search(r'ImportedEffects\.\w+Inputs', mapping_tactic).group()
           right_fold = re.search(r'rw \[([^] ]+\.eq_def)\]', mapping_tactic[mapping_tactic.index('rw [') + 4:]).group(1)
           current_bound = 'have _aver_boundary := _fact0 outcome (' + mapped_inputs + ' inputs) position childEvents consumed; rw [' + right_fold + '] at _aver_boundary; '
           bounded = mapping_tactic.replace('cases inputs;', current_bound + 'cases inputs;', 1)
           bounded = goal_only(bounded, 1).replace('| split)', '| split at *)')
-          probe('MappingBoundary', mapping_prefix + bounded + '\nend ImportedEffects\n')
-          probe('MappingBoundarySteps', mapping_prefix + re.sub(r'grind \[[^]]*\]', 'trace_state; sorry', bounded) + '\nend ImportedEffects\n')
           for name, suffix in [('Cursor', '__repeatedTrace496d706f7274656445666665637473Cursor_law_boundedSuffix_implication :')]:
               index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and suffix in line)
               first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
@@ -103,18 +94,18 @@ jobs:
                   finite_definitions = ', '.join(name for name in finite_definitions.split(', ') if name not in finite_names)
                   branches = ''.join(' | (fun_cases ' + name + ')' for name in finite_names)
                   finite_tactic = opening + "repeat' first" + branches + " | (simp_all +zetaDelta only [" + finite_definitions + ']' + rest
-                  probe('CursorFiniteCases', prefix + finite_tactic + '\nend ImportedEffects\n')
               if name == 'Cursor':
                   steps = tactic.split('; all_goals grind [')[0]
-                  probe('CursorSteps', prefix + steps + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
-                  probe('CursorNoZeta', prefix + tactic.replace(' +zetaDelta', '') + '\nend ImportedEffects\n')
+                  opening = tactic.split("all_goals (repeat' first", 1)[0]
+                  finite = re.search(r'simp_all \+zetaDelta only \[([^]]*)\]', tactic).group(1)
+                  equations = ', '.join('= ' + name + '.eq_def' for name in finite.split(', ') if name.startswith(('ImportedEffects.', 'Wrapper.', 'Looper.')))
+                  probe('CursorGrind', prefix + opening + 'all_goals grind [' + equations + ', List.drop_cons, List.drop_drop, List.length_drop]; done)\nend ImportedEffects\n')
           index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and 'Splice__repeatedInRunAt1Observed_law_splice_implication :' in line)
           first = next(i for i in range(index,len(lines)) if lines[i] == '  first')
           tactic = lines[first+1].strip()[2:]
           primary = tactic.rsplit(' | (simp only [beq_iff_eq', 1)[0] + ')'
           prefix = definitions + '\n'.join(lines[index:first]) + '\n  '
           probe('Splice', prefix + primary + '\nend ImportedEffects\n')
-          probe('SpliceGoalOnly', prefix + goal_only(primary) + '\nend ImportedEffects\n')
           # Check composition against the exact cited theorem types even while
           # an earlier independent mapping obligation remains open.
           index = next(i for i,line in enumerate(lines) if line.startswith('theorem __aver_reason_') and '__repeatedSourceTraceFrom_law_correspondence_implication :' in line)
