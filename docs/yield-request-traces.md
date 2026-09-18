@@ -184,26 +184,46 @@ Every module with a requested trace also checks an interface for each observed
 segment where the segment is defined: `segmentCursor` states that the
 observation leaves the tape at the suffix its own cursor reports, `eventsPrefix`
 that its incoming event history is only a prefix, and `step` that one protocol
-step is that observation followed by the generic continuation (the start
-segment has no step). The owner publishes a sample of each protocol state an
+step is that observation followed by the generic continuation (for the start
+segment, that the protocol trace from a cursor is). The owner publishes a
+sample of each protocol state an
 importer has to quantify over. A module that lifts an imported observation
 checks the lifted cursor too, citing the owner's. Each statement is made about
 a wrapper rather than about the observation itself, so no observation owns a
 law and its body keeps plain matchers.
 
-A caller reads this interface instead of an imported observer's body. Its
-mapping law cites the cursor, prefix and step of every observation it drives
-through. Its source correspondence crosses one call site at a time: the segment
-observation and the drive result at that site are named, the protocol side is
-folded into the site's splice wrapper by the splice law and the wrapper is then
-opened, so both sides continue as a match on the same named result. Its cursor
-contract cites the lifted cursor laws and proceeds by functional induction on
-its own protocol observer, naming each observation and each recursive result so
-the induction hypothesis and the cited bounds speak about the same variables;
-what remains is linear cursor arithmetic and a chain of `drop`s. Between local
-splices, a constructor-specific equation still unfolds a completed continuation
-while preserving the next unknown outcome for its own theorem. No extra axiom,
-proof budget, generated scenario bound or handwritten Lean file is required.
+A caller reads this interface instead of an imported observer's body, and that
+is an invariant of every proof rung a request-trace law can take, not a habit of
+some of them. A function another module owns that builds a trace result
+record (a record whose fields are the observation cursor) — an observation, a
+protocol observer, a segment adapter, a lift, a source trace — and that some
+law of its module reaches is never unfolded by a caller's proof: it enters no simp set, no `grind` list and no
+`eq_def` rewrite. What a rung knows about it is exactly the laws the caller's
+law cites. The boundary is read from shape and from the owner's laws, never
+from a name: a router, join or answer function of another module returns an
+outcome or a scalar and opens like any pure helper, and a finite import whose
+module states no law about it is inlined as before, since there is no interface
+to read in its place. The wrappers an interface law is stated with — the
+cursor predicate, the prefixed form, the step continuation — are that law's
+own vocabulary, and a rung that reads the citation opens them by the name the
+citation gives; the observation behind them stays closed. The one equation of
+another module a rung ever applies is the owner's protocol observer stepped
+once per token inside the mapping law's proof, where the owner observes no
+segment and so publishes no step; the routers that step exposes are pure and
+open like any helper. A caller's mapping law
+cites the cursor, prefix and step of every observation it drives through. Its
+source correspondence crosses one call site at a time: the segment observation
+and the drive result at that site are named, the protocol side is folded into
+the site's splice wrapper by the splice law and the wrapper is then opened, so
+both sides continue as a match on the same named result. Its cursor contract
+cites the lifted cursor laws and proceeds by functional induction on its own
+protocol observer, naming each observation, each token read after one and each
+recursive result so the induction hypothesis and the cited bounds speak about
+the same variables; what remains is linear cursor arithmetic and a chain of
+`drop`s. Between local splices, a constructor-specific equation still unfolds a
+completed continuation while preserving the next unknown outcome for its own
+theorem. No extra axiom, proof budget, generated scenario bound or handwritten
+Lean file is required.
 
 ## Boundary of the claim
 

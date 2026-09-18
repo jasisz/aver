@@ -70,7 +70,7 @@ fn check(args: &[&str]) {
         .unwrap();
     assert!(out.status.success(), "{}", format_output(&out));
     assert!(
-        format_output(&out).contains("34/34 cases passed"),
+        format_output(&out).contains("35/35 cases passed"),
         "{}",
         format_output(&out)
     );

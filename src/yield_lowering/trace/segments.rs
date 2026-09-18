@@ -92,9 +92,9 @@ fn {name}Cursor({declared}) -> Bool
     /// its own cursor reports; `eventsPrefix` that the incoming event history
     /// is only a prefix and no other field reads it; `step` that one step of
     /// the protocol observer is that observation followed by the generic
-    /// continuation, for every segment but the start. All three are keyed on
-    /// the generated observation shape and say nothing about what a segment
-    /// computes.
+    /// continuation, for every answered segment, and for the start that the
+    /// protocol entry from a cursor is. All three are keyed on the generated
+    /// observation shape and say nothing about what a segment computes.
     ///
     /// Each statement is made about a wrapper (the cursor predicate, the
     /// prefixed form, the protocol observer), never about the observation
@@ -211,10 +211,11 @@ fn {name}Cursor({declared}) -> Bool
     /// event, position and consumed expressions are the ones the protocol
     /// observer itself prints for the kind.
     ///
-    /// The start segment has no step. Nothing reads one: an importer's adapter
-    /// is entered with an outcome already in hand. And a law stated about the
-    /// entry point makes the entry a law owner, which keeps the match equations
-    /// in its body and changes what every law that opens it has to normalize.
+    /// The start segment's step is the protocol entry from a cursor: that
+    /// entry is the start observation followed by the generic continuation.
+    /// An importer's entry agreement reads it, with the start cursor, instead
+    /// of opening the owner's entry. A law stated about a function no longer
+    /// changes its body (#1404), so stating one about the entry moves nothing.
     fn drive_steps(&self) -> Result<String, String> {
         let u = &self.upper;
         let drive = format!("{}Drive", self.prefix);
@@ -224,17 +225,33 @@ fn {name}Cursor({declared}) -> Bool
         let root_result = self.result_type(root);
         let mut out = String::new();
         for fd in self.observed_segments() {
-            if fd.name == self.protocol.start {
-                continue;
-            }
             let observer = self.source_name(fd);
-            if !self.contractible(&self.observation_params(&fd.params)) {
+            let params = self.observation_params(&fd.params);
+            if !self.contractible(&params) {
                 continue;
             }
             let result = self.result_type(fd);
             let step = format!("{drive}Step{}", build::capitalize(&fd.name));
             out.push_str(&format!("\nfn {step}(observed: {result}) -> {root_result}\n    match observed.value\n        Option.Some(value) -> {drive}(value, observed.remaining, observed.position, observed.events, observed.consumed)\n        Option.None -> {root_result}(remaining = observed.remaining, position = observed.position, consumed = observed.consumed, events = observed.events, value = Option.None, pending = observed.pending, valid = observed.valid)\n"));
             let label = format!("step{}", build::capitalize(&fd.name));
+            // The start segment is stepped by the protocol entry itself: the
+            // trace from a cursor is the start observation followed by the
+            // generic continuation.
+            if fd.name == self.protocol.start {
+                let args = composition::names(&params);
+                out.push_str(&composition::law(
+                    self,
+                    &drive,
+                    &label,
+                    &params,
+                    &format!(
+                        "__{}ProtocolTraceFrom({args}) == {step}({observer}({args}))",
+                        self.protocol.fn_name
+                    ),
+                    &[],
+                )?);
+                continue;
+            }
             let kind = self
                 .protocol
                 .kinds

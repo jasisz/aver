@@ -1,6 +1,8 @@
 //! Compose finite observations around opaque recursive summaries. Imported
 //! citations can name wrappers absent from the current expression's call cone;
 //! expose those interfaces before asking the solver to apply their equations.
+//! Another module's trace machinery (`induction::imported_machinery`) is never
+//! among them: a cited law is read, not the function it is about.
 use super::induction::{self, Definitions};
 use crate::ast::VerifyLaw;
 use crate::codegen::{CodegenContext, common};
@@ -36,6 +38,9 @@ pub(super) fn candidate(
         for id in &theorem.function_cone {
             let key = &ctx.symbol_table.fn_entry(*id).key;
             let fd = ctx.fn_def_by_name(&key.name, key.scope_str())?;
+            if induction::imported_machinery(fd, ctx, scope.as_deref()) {
+                continue;
+            }
             if definitions
                 .unary_list_maps
                 .contains(&induction::lean_name(fd, ctx))
