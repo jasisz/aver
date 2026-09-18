@@ -98,9 +98,11 @@ fn {name}Cursor({declared}) -> Bool
     ///
     /// Each statement is made about a wrapper (the cursor predicate, the
     /// prefixed form, the protocol observer), never about the observation
-    /// itself: a function that owns a law keeps the match equations in its
-    /// body, and every proof that opens the observation would then have to
-    /// normalize a dependent matcher instead of a plain one.
+    /// itself. The wrappers date from when a function that owned a law was
+    /// emitted with dependent matchers, so every proof that opened the
+    /// observation had to normalize a heavier term (#1404); a law no longer
+    /// changes the definition it is about, and the wrappers stay because
+    /// they name the interface a caller cites without opening a body.
     ///
     /// Returns the lifted cursor laws checked here, for the protocol
     /// observer's own cursor contract to cite.

@@ -403,8 +403,11 @@ pub struct CodegenContext {
     /// bodies, verify cases and law statements all set it; positions that are
     /// not actions — a `when` premise, a trace projection — do not.
     pub lean_do_block: std::cell::Cell<bool>,
-    /// Match equations support termination and constructor-case proofs.
-    /// Nonrecursive helpers without their own laws use nondependent result matches.
+    /// Whether a `match` on a local name is emitted with a named equation
+    /// (`match h_NN : x with`). Off by default: only the body of a recursive
+    /// function turns it on, for its termination proof. Law statements,
+    /// verify cases and nonrecursive bodies use plain matchers, so stating a
+    /// law never changes the definition it is about (#1404).
     pub lean_match_equations: std::cell::Cell<bool>,
     /// Claims the exporter refused to state, keyed by identity so the
     /// same refusal seen twice counts once.
@@ -935,7 +938,7 @@ pub fn build_context(
         symbol_table,
         current_module_scope: std::cell::RefCell::new(None),
         lean_do_block: std::cell::Cell::new(false),
-        lean_match_equations: std::cell::Cell::new(true),
+        lean_match_equations: std::cell::Cell::new(false),
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),
@@ -1403,7 +1406,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         symbol_table: crate::ir::SymbolTable::default(),
         current_module_scope: std::cell::RefCell::new(None),
         lean_do_block: std::cell::Cell::new(false),
-        lean_match_equations: std::cell::Cell::new(true),
+        lean_match_equations: std::cell::Cell::new(false),
         declined_claims: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         substituted_compile_errors: std::cell::RefCell::new(Vec::new()),
         omitted_verify_cases: std::cell::RefCell::new(Vec::new()),

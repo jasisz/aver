@@ -855,10 +855,12 @@ fn emit_match(
             arm_strs.push(format!("  | {} => {}", pat, body));
         }
     }
-    // Nonrecursive helpers without their own laws disable named equations: a dependent
-    // matcher around a helper result can prevent simp from reducing its
-    // nested observations. Recursive and law-owning bodies retain the
-    // equations used by termination and constructor-case proofs.
+    // Nonrecursive bodies never carry named equations: a dependent matcher
+    // around a helper result can prevent simp from reducing its nested
+    // observations, and a body must not change because a law was stated
+    // about it (#1404) — only recursive bodies retain the equations their
+    // termination proofs consume. A constructor-case proof that needs the
+    // equation asks the tactic for it (`split` names one per branch).
     // Use `match h_NN : <ident> with …` (named form) only when the
     // subject is a local ident — that's where Lean's wf elaboration
     // needs the equation `h_NN : ident = pattern` to relate the
