@@ -489,3 +489,34 @@ fn a_nested_record_worker_is_checked_as_part_of_its_program() {
     let out = aver("work_jobs_nested_record", &["check"]);
     assert!(out.status.success(), "{}", format_output(&out));
 }
+
+// ── The wait key ────────────────────────────────────────────────────────
+
+/// One program keys every wait the same way. The key of a wait is the key of
+/// the map it was handed, and the type checker has already worked that out,
+/// so a program that keys one wait by a type of its own and another by whole
+/// numbers is refused even though neither call writes a type down.
+#[test]
+fn two_wait_keys_in_one_program_are_refused() {
+    assert_reports(
+        "wait_key_conflict",
+        &["check"],
+        "error[wait-key]: this program keys one wait set by 'Int' and another by 'Watch'",
+    );
+}
+
+/// The reading behind that refusal is the checker's own. A wait set written
+/// at the call annotates nothing, and the program is still keyed by `Watch`
+/// rather than falling back to whole numbers, so it passes and its ready keys
+/// are the type it matches on.
+#[test]
+fn a_wait_set_written_at_the_call_keys_by_the_type_it_holds() {
+    assert_no_work_diagnostic("wait_socket_only", &["check"]);
+    let out = aver("wait_socket_only", &["check"]);
+    assert!(
+        !combined(&out).contains("error[wait-key]"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(out.status.success(), "{}", format_output(&out));
+}

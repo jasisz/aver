@@ -280,14 +280,22 @@ fn analyze_prechecked_items_impl(
     // One program keys every wait the same way: a turn has one wait, the key
     // is how that program says what it is waiting for, and the keys travel
     // out of every backend through one set of helpers built from that type.
-    if let Some(message) = crate::capability::work::wait_key_conflict(items, &[]) {
+    // The key of each wait is the type the checker inferred for the map that
+    // wait was handed, so this reads `transformed`, the program the checker
+    // stamped, rather than the source as written.
+    let wait_key = [
+        crate::capability::work::wait_key_conflict(transformed, &[])
+            .map(|message| (module_decl.map(|module| module.line).unwrap_or(1), message)),
+        crate::capability::work::wait_key_undetermined(transformed, &[]),
+    ];
+    for (line, message) in wait_key.into_iter().flatten() {
         diagnostics.push(work_diagnostic(
             &crate::capability::work::WorkDiagnostic {
                 slug: crate::capability::work::WAIT_KEY,
                 severity: crate::capability::work::WorkSeverity::Error,
                 message,
             },
-            module_decl.map(|module| module.line).unwrap_or(1),
+            line,
             &source_index,
             &options.file_label,
         ));

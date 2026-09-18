@@ -1,0 +1,14 @@
+module Watcher
+    depends [Tcp, Wait]
+    intent = "Performs the one wait of a turn on behalf of the entry module, keyed by a type this module declares and written at the call."
+    exposes [Watch, waited]
+    effects [Tcp.listen, Tcp.closeListener, Wait.poll]
+
+type Watch
+    Listener
+    Peer(Int)
+
+fn waited(listener: Tcp.Listener) -> Result<List<Watch>, String>
+    ? "Waits on one listener nobody calls and answers with whatever the wait named."
+    ! [Wait.poll]
+    Wait.poll({Watch.Listener => Wait.Item.Socket(Tcp.Socket.Listening(listener))}, 10)

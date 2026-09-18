@@ -1,0 +1,13 @@
+module Main
+    depends [Tcp, Wait, Watcher]
+    intent = "Asks a dependency module to perform the one wait, so the wait key is a type the entry module never names."
+    exposes [main]
+    effects [Console.print, Tcp.listen, Tcp.closeListener, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Binds a listener nobody calls and reports how many keys the watcher's wait named."
+    ! [Console.print, Tcp.listen, Tcp.closeListener, Wait.poll]
+    listener = Tcp.listen(0, 1)?
+    ready = Watcher.waited(listener)?
+    Console.print("ready {List.len(ready)}")
+    Tcp.closeListener(listener)

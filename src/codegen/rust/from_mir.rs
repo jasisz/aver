@@ -1785,7 +1785,11 @@ fn emit_mir_capability_call(
     // pinned it to. Generated Rust names real types everywhere, so the
     // instantiation happens here rather than at the provider, and the
     // generated codec for that key type is emitted beside the program's own.
-    let key = ctx.codegen.and_then(super::wait_key_type);
+    // Reading the key walks the whole program, and `Wait.poll` is the one
+    // operation that has one, so the ordinary call never pays for it.
+    let key = (!operation.type_params.is_empty())
+        .then(|| ctx.codegen.and_then(super::wait_key_type))
+        .flatten();
     let operation = &crate::capability::work::instantiate_operation(operation, key.as_ref());
     let return_type = match ctx.codegen {
         Some(codegen) => super::types::type_to_rust_scoped(

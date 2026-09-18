@@ -834,6 +834,9 @@ fn entry_module_sections(
 
 fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) -> Vec<String> {
     let mut sections = Vec::new();
+    // One reading for the whole module: the answer is a property of the
+    // program, not of the type definition being emitted.
+    let wait_key = wait_key_type(ctx);
 
     if let Some(resource_types) =
         provider::resource_types_by_module(&ctx.capabilities).get(&module.prefix)
@@ -863,7 +866,7 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             )));
         }
         if ctx.capabilities.boundary_type(&canonical).is_some()
-            || is_wait_key_type_def(wait_key_type(ctx).as_ref(), td, Some(&module.prefix))
+            || is_wait_key_type_def(wait_key.as_ref(), td, Some(&module.prefix))
         {
             sections.push(provider::emit_represented_type_codec(
                 &module.prefix,
