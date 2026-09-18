@@ -92,7 +92,7 @@ pub(super) fn generate(
                     source: model.source_name(root),
                     drive: model.child_drive(root),
                     protocol_from: format!("__{}ProtocolTraceFrom", protocol.fn_name),
-                    segments: model.segment_exports(),
+                    segments: model.segment_exports(requested),
                     cursor: requested.then(|| format!("{}Cursor", model.prefix)),
                     correspondence: None,
                 };
@@ -325,6 +325,9 @@ impl<'a> Model<'a> {
             items.push(TopLevel::FnDef(source::Compiler::new(self, fd).compile()?));
         }
         if requested {
+            // The segment interface precedes every law that cites it: a caller
+            // reads these instead of reopening an imported observer's body.
+            self.segment_contracts(&mut items, &imports)?;
             self.cursor_contract(&mut items, root)?;
         }
         Ok(items)

@@ -18,17 +18,280 @@ impl<'a> Model<'a> {
             .collect()
     }
 
-    pub(super) fn segment_exports(&self) -> Vec<ProcessTraceSegment> {
+    pub(super) fn segment_exports(&self, requested: bool) -> Vec<ProcessTraceSegment> {
         self.observed_segments()
             .into_iter()
-            .map(|fd| ProcessTraceSegment {
-                function: fd.name.clone(),
-                observer: self.source_name(fd),
-                result: self.result_type(fd),
-                params: fd.params.clone(),
-                samples: self.segment_sample_names(fd),
+            .map(|fd| {
+                let observer = self.source_name(fd);
+                let contracted =
+                    requested && self.contractible(&self.observation_params(&fd.params));
+                ProcessTraceSegment {
+                    function: fd.name.clone(),
+                    result: self.result_type(fd),
+                    params: fd.params.clone(),
+                    cursor: if contracted {
+                        format!("{observer}Cursor")
+                    } else {
+                        String::new()
+                    },
+                    samples: self.segment_sample_names(fd),
+                    observer,
+                }
             })
             .collect()
+    }
+
+    /// Parameters of one observation: the segment's own arguments, renamed
+    /// positionally, followed by the shared observation cursor.
+    fn observation_params(&self, params: &[(String, String)]) -> Vec<(String, String)> {
+        params
+            .iter()
+            .enumerate()
+            .map(|(index, (_, ty))| (format!("arg{index}"), ty.clone()))
+            .chain([
+                ("inputs".into(), format!("List<{}Input>", self.upper)),
+                ("position".into(), "Int".into()),
+                ("events".into(), format!("List<{}Event>", self.upper)),
+                ("consumed".into(), "Int".into()),
+            ])
+            .collect()
+    }
+
+    /// Whether a law over this observation can be written here at all: every
+    /// parameter needs a sample, and a protocol state has one only where its
+    /// owner published it.
+    fn contractible(&self, params: &[(String, String)]) -> bool {
+        params
+            .iter()
+            .all(|(_, ty)| composition::samples::witness(self, ty).is_ok())
+    }
+
+    /// The cursor predicate of one observation: the shared validity template
+    /// read on the observation's own result, and the wrapper a law is stated
+    /// about.
+    fn cursor_predicate(&self, name: &str, result: &str, params: &[(String, String)]) -> String {
+        format!(
+            r#"
+fn {name}CursorValid(inputs: List<{u}Input>, consumed: Int, observed: {result}) -> Bool
+    used = observed.consumed - consumed
+    Bool.and(used >= 0, Bool.and(used <= List.len(inputs), observed.remaining == List.drop(inputs, used)))
+
+fn {name}Cursor({declared}) -> Bool
+    {name}CursorValid(inputs, consumed, {name}({args}))
+"#,
+            u = self.upper,
+            declared = composition::declarations(params),
+            args = composition::names(params),
+        )
+    }
+
+    /// Interface of the module-owned segment observations, checked where the
+    /// segments are defined so a caller never reopens an observer's body.
+    ///
+    /// `segmentCursor` states that an observation leaves the tape at the suffix
+    /// its own cursor reports; `eventsPrefix` that the incoming event history
+    /// is only a prefix and no other field reads it; `step` that one step of
+    /// the protocol observer is that observation followed by the generic
+    /// continuation. All three are keyed on the generated observation shape and
+    /// say nothing about what a segment computes.
+    pub(super) fn segment_contracts(
+        &self,
+        items: &mut Vec<TopLevel>,
+        imports: &[&'a ProcessProtocol],
+    ) -> Result<(), String> {
+        let u = &self.upper;
+        let mut text = String::new();
+        // Lifted imported observations first. An observer of this module that
+        // reads one states its own cursor through the lifted cursor, and a law
+        // cites only laws before it.
+        let mut lifted = Vec::new();
+        for protocol in imports {
+            let Some(trace) = protocol.trace.as_ref() else {
+                continue;
+            };
+            for segment in &trace.segments {
+                let signature = self.segment_signature(protocol, segment);
+                let name = self.source_name(&signature);
+                let params = self.observation_params(&segment.params);
+                if segment.cursor.is_empty() || !self.contractible(&params) {
+                    continue;
+                }
+                text.push_str(&self.cursor_predicate(
+                    &name,
+                    &self.result_type(&signature),
+                    &params,
+                ));
+                text.push_str(&composition::law(
+                    self,
+                    &format!("{name}Cursor"),
+                    "segmentCursor",
+                    &params,
+                    &format!("{name}Cursor({})", composition::names(&params)),
+                    &[format!("{}.segmentCursor", segment.cursor)],
+                )?);
+                lifted.push(name);
+            }
+        }
+        for fd in self.observed_segments() {
+            let observer = self.source_name(fd);
+            let result = self.result_type(fd);
+            let params = self.observation_params(&fd.params);
+            if !self.contractible(&params) {
+                continue;
+            }
+            let args = composition::names(&params);
+            let empty = params
+                .iter()
+                .map(|(name, _)| match name.as_str() {
+                    "events" => "[]",
+                    other => other,
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            text.push_str(&self.cursor_predicate(&observer, &result, &params));
+            text.push_str(&format!(
+                "\nfn {observer}Prefixed(events: List<{u}Event>, observed: {result}) -> {result}\n    {result}.update(observed, events = List.concat(events, observed.events))\n"
+            ));
+            text.push_str(&composition::law(
+                self,
+                &format!("{observer}Cursor"),
+                "segmentCursor",
+                &params,
+                &format!("{observer}Cursor({args})"),
+                &lifted
+                    .iter()
+                    .filter(|name| reads(items, &observer, name))
+                    .map(|name| format!("{name}Cursor.segmentCursor"))
+                    .collect::<Vec<_>>(),
+            )?);
+            text.push_str(&composition::law(
+                self,
+                &observer,
+                "eventsPrefix",
+                &params,
+                &format!("{observer}({args}) == {observer}Prefixed(events, {observer}({empty}))"),
+                &[],
+            )?);
+        }
+        text.push_str(&self.drive_steps()?);
+        if text.is_empty() {
+            return Ok(());
+        }
+        let tokens = crate::lexer::Lexer::new(&text)
+            .tokenize()
+            .map_err(|e| e.to_string())?;
+        items.extend(
+            crate::parser::Parser::new_compiler_generated(tokens)
+                .parse()
+                .map_err(|e| e.to_string())?,
+        );
+        Ok(())
+    }
+
+    /// One protocol step per observed segment: the answered request, or the
+    /// entry point for the start segment, rewritten as that observation
+    /// followed by the generic continuation. The token, event, position and
+    /// consumed expressions are the ones the protocol observer itself prints
+    /// for the kind.
+    fn drive_steps(&self) -> Result<String, String> {
+        let u = &self.upper;
+        let drive = format!("{}Drive", self.prefix);
+        let root = self
+            .source(&self.protocol.fn_name)
+            .ok_or("missing retained source")?;
+        let root_result = self.result_type(root);
+        let mut out = String::new();
+        for fd in self.observed_segments() {
+            let observer = self.source_name(fd);
+            let params = self.observation_params(&fd.params);
+            if !self.contractible(&params) {
+                continue;
+            }
+            let result = self.result_type(fd);
+            let step = format!("{drive}Step{}", build::capitalize(&fd.name));
+            out.push_str(&format!("\nfn {step}(observed: {result}) -> {root_result}\n    match observed.value\n        Option.Some(value) -> {drive}(value, observed.remaining, observed.position, observed.events, observed.consumed)\n        Option.None -> {root_result}(remaining = observed.remaining, position = observed.position, consumed = observed.consumed, events = observed.events, value = Option.None, pending = observed.pending, valid = observed.valid)\n"));
+            let label = format!("step{}", build::capitalize(&fd.name));
+            let (target, binders, claim) = if fd.name == self.protocol.start {
+                let entry = format!("__{}ProtocolTraceFrom", self.protocol.fn_name);
+                let args = composition::names(&params);
+                let claim = format!("{entry}({args}) == {step}({observer}({args}))");
+                (entry, params.clone(), claim)
+            } else {
+                let kind = self
+                    .protocol
+                    .kinds
+                    .iter()
+                    .find(|kind| kind.answer_fn == fd.name)
+                    .ok_or("observed segment answers no request kind")?;
+                let trace_name = kind
+                    .operation
+                    .as_ref()
+                    .and_then(|operation| self.operations.get(operation))
+                    .map_or(kind.name.as_str(), |kind| kind.name.as_str());
+                let call_args: Vec<String> = (0..kind.arg_types.len())
+                    .map(|index| format!("arg{index}"))
+                    .collect();
+                let mut binders: Vec<(String, String)> = kind
+                    .arg_types
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ty)| (format!("arg{index}"), ty.clone()))
+                    .collect();
+                binders.push(("state".into(), kind.state.clone()));
+                let (token, observed_args, position, events) = match &kind.answer_type {
+                    Some(answer) if kind.operation.is_some() => {
+                        binders.push(("answer".into(), answer.clone()));
+                        let mut event_args = vec!["position".to_string()];
+                        event_args.extend(call_args.clone());
+                        event_args.push("answer".into());
+                        (
+                            format!("{u}Input.Answer{trace_name}(answer)"),
+                            if answer == "Unit" {
+                                "state"
+                            } else {
+                                "state, answer"
+                            },
+                            "position + 1",
+                            format!(
+                                "List.concat(events, [{u}Event.Observed{trace_name}({})])",
+                                event_args.join(", ")
+                            ),
+                        )
+                    }
+                    _ => (
+                        format!("{u}Input.Advance"),
+                        "state",
+                        "position",
+                        "events".to_string(),
+                    ),
+                };
+                let mut fields = call_args;
+                fields.push("state".into());
+                binders.extend([
+                    ("rest".into(), format!("List<{u}Input>")),
+                    ("position".into(), "Int".into()),
+                    ("events".into(), format!("List<{u}Event>")),
+                    ("consumed".into(), "Int".into()),
+                ]);
+                let claim = format!(
+                    "{drive}({outcome}.Waiting({request}.{name}({fields})), List.prepend({token}, rest), position, events, consumed) == {step}({observer}({observed_args}, rest, {position}, {events}, consumed + 1))",
+                    outcome = self.protocol.outcome,
+                    request = self.protocol.request,
+                    name = kind.name,
+                    fields = fields.join(", "),
+                );
+                (drive.clone(), binders, claim)
+            };
+            out.push_str(&composition::law(
+                self,
+                &target,
+                &label,
+                &binders,
+                &claim,
+                &[],
+            )?);
+        }
+        Ok(out)
     }
 
     /// Public sample functions this module offers for a segment observer's
@@ -150,4 +413,28 @@ impl<'a> Model<'a> {
         }
         out
     }
+}
+
+/// Whether the compiled function named `caller` calls `callee`. An observer
+/// that reads a lifted imported observation states its own cursor through that
+/// observation's cursor, and this is how the citation is found.
+fn reads(items: &[TopLevel], caller: &str, callee: &str) -> bool {
+    let Some(fd) = items.iter().find_map(|item| match item {
+        TopLevel::FnDef(fd) if fd.name == caller => Some(fd),
+        _ => None,
+    }) else {
+        return false;
+    };
+    let mut found = false;
+    for stmt in fd.body.stmts() {
+        let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
+        crate::codegen::expr_walk::walk(expr, &mut |expr| {
+            if let Expr::FnCall(target, _) = &expr.node
+                && build::dotted_name(target).as_deref() == Some(callee)
+            {
+                found = true;
+            }
+        });
+    }
+    found
 }

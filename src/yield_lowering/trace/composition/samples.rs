@@ -268,6 +268,7 @@ mod tests {
                     ("state".into(), "Looper.__RunClaimState".into()),
                     ("answer".into(), "Option<Int>".into()),
                 ],
+                cursor: "Looper.__runTraceSource__runAnswerClaimCursor".into(),
                 samples,
             }],
             cursor: None,

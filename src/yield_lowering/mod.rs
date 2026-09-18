@@ -139,6 +139,10 @@ pub struct ProcessTraceSegment {
     pub observer: String,
     pub result: String,
     pub params: Vec<(String, String)>,
+    /// The owning module's cursor wrapper for this observation, when it checked
+    /// one, so an importer's lift adapter can cite that contract instead of
+    /// reopening the observer's body. Empty when the owner checked none.
+    pub cursor: String,
     /// One entry per parameter: the owning module's public sample function for
     /// that parameter's type, or empty when the type needs none. A protocol
     /// state is built from constructors that stay private to its owner, so an
@@ -561,6 +565,12 @@ pub fn lower(
                         // observer it belongs to.
                         public_names
                             .extend(segment.samples.iter().filter(|s| !s.is_empty()).cloned());
+                        // An importer's lift adapter cites this observation's
+                        // cursor contract instead of reopening its body, so the
+                        // wrapper the contract is stated about travels too.
+                        if !segment.cursor.is_empty() {
+                            public_names.push(segment.cursor.clone());
+                        }
                     }
                     if trace.correspondence.is_some() {
                         public_names.push(format!("__{fn_name}SourceTraceFrom"));

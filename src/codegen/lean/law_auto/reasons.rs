@@ -14,6 +14,7 @@ mod equivalence;
 mod finite;
 mod induction;
 mod list_induction;
+mod segment;
 mod transport;
 
 pub(in crate::codegen::lean) struct ReasonClaim<'a> {
@@ -288,6 +289,12 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             }
             continue;
         }
+        // A segment interface closes from its own definitions and its cited
+        // cursor laws. Its rung leads the waterfall so the saturating
+        // alternatives below never run on this shape: one of them raising an
+        // elaboration exception would abort the theorem instead of backtracking
+        // to a cheaper alternative.
+        let segment = final_step.then(|| segment::candidate(law, ctx)).flatten();
         let strategy_start = lines.len();
         if final_step {
             let mut inductive = list_induction::candidates(
@@ -504,6 +511,15 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                     lines.push(format!("  | (simp only [{}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *; with_reducible apply _fact{i} <;> (first | assumption | omega))", definitions.heads));
                 }
             }
+            lines.push("  |".to_string());
+            lines.extend(structured.into_iter().map(|line| format!("  {line}")));
+        }
+        // Last, so the whole strategy above becomes the fallback of the segment
+        // rung rather than an alternative that precedes it.
+        if let Some(candidate) = &segment {
+            let structured = lines.split_off(strategy_start);
+            lines.push("  first".to_string());
+            lines.push(format!("  | {candidate}"));
             lines.push("  |".to_string());
             lines.extend(structured.into_iter().map(|line| format!("  {line}")));
         }

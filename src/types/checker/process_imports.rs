@@ -61,6 +61,9 @@ impl TypeChecker {
                         for (_, ty) in &mut segment.params {
                             *ty = annotation(&resolve(ty));
                         }
+                        if !segment.cursor.is_empty() {
+                            segment.cursor = qualify(&segment.cursor);
+                        }
                         // A published sample is an ordinary owner-side function
                         // an importer calls by name; an unpublished one stays
                         // empty and names nothing.
