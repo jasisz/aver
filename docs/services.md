@@ -762,6 +762,15 @@ the operation does not interrupt a blocking effect or run a shutdown hook.
 See `examples/formal/process_stop_requested.av` for a recursive loop checked
 against `stopAfterThree`.
 
+The first call takes SIGINT and SIGTERM away from their default action for the
+rest of the process. From then on the two signals raise the flag and end
+nothing: the program ends when it returns, so a program that stops polling the
+flag holds its terminal until SIGKILL. Ctrl-C therefore gives the shell prompt
+back only once the program has answered the request. This holds wherever that
+handler is installed: the native VM, generated Rust, the embedded wasm-gc
+wasmtime host, and the cached provider host that runs the programs of a
+project with `[providers]`.
+
 ### `Time` namespace — use granular effects (`! [Time.now]`, `! [Time.unixMs]`, `! [Time.sleep]`)
 
 Contract source: `stdlib/capabilities/time.av`. Native VM and generated Rust share the `aver-rt` Time adapter; wasm-gc uses the existing `aver.time_*` imports and wasip2 uses WASI clocks/poll. All four bindings are checked/accounted against the same contract and model hashes.

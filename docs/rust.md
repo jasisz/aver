@@ -208,8 +208,13 @@ redirected with `AVER_PROVIDER_HOST_CACHE`. On unix the host then takes over
 the command's own process, so the process id, the terminal, the exit status
 and every signal belong to the program that is running: a SIGINT sent to
 `aver run` is the SIGINT a program observes through `Process.stopRequested`,
-exactly as in a binary built with `--target rust`. On Windows the host is a
-second process the command waits on.
+exactly as in a binary built with `--target rust`. That also means the signal
+stops ending the command: from the program's first `Process.stopRequested`
+call the handler is installed, both signals only raise its flag, and the run
+ends when the program returns. Ctrl-C gives the prompt back once the program
+has answered the request, and a program that stops polling the flag holds its
+terminal until SIGKILL. On Windows the host is a second process the command
+waits on.
 
 `aver verify` may execute a configured pure provider in a normal case. An
 exact `given name: Capability.operation = [stub]` remains a case-local
