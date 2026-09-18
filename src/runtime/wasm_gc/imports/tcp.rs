@@ -221,7 +221,10 @@ pub(super) fn dispatch(
                 .get(1)
                 .ok_or_else(|| wasmtime::Error::msg("Tcp.poll: missing timeoutMs"))?;
             let timeout = decode_guest_int(caller, timeout, "Tcp.poll: malformed timeout carrier")?;
-            let args = vec![poll_map_json(&entries), guest_int_json(&timeout)];
+            let args = vec![
+                poll_map_json(&entries, "Tcp.poll")?,
+                guest_int_json(&timeout),
+            ];
             if let Some(cached) = try_replay(caller, "Tcp.poll", args.clone())? {
                 let result = replay_poll_result(caller, &cached, &entries)?;
                 results[0] = Val::AnyRef(result);
@@ -250,10 +253,7 @@ pub(super) fn dispatch(
                     ready.sort_by(|left, right| left.numeric.cmp(&right.numeric));
                     ready.dedup_by(|left, right| left.numeric == right.numeric);
                     let refs = ready.iter().map(|entry| entry.key_ref).collect::<Vec<_>>();
-                    let json = ready
-                        .iter()
-                        .map(|entry| entry.key_json.clone())
-                        .collect::<Vec<_>>();
+                    let json = recorded_keys(&ready, "Tcp.poll")?;
                     (
                         host_result_ok_list_int_refs(caller, &refs)?,
                         json_ok(aver::replay::JsonValue::Array(json)),
@@ -920,9 +920,18 @@ fn socket_resource_id(
 
 pub(super) struct PollEntry {
     pub(super) provider_order: Vec<u8>,
-    pub(super) numeric: BigInt,
+    /// Numeric value of an `Int` key. `None` for a wait keyed by anything
+    /// else: this host is handed the key as a reference and never reads it.
+    pub(super) numeric: Option<BigInt>,
+    /// Where this entry sits in its own map's key order. The map states that
+    /// order itself, so the wait can answer in it without the host knowing
+    /// how the key compares.
+    pub(super) order: usize,
     pub(super) key_ref: wasmtime::Rooted<wasmtime::AnyRef>,
-    pub(super) key_json: aver::replay::JsonValue,
+    /// How the key records. `None` for a key this host cannot read, which
+    /// makes a recording of that wait refuse rather than write a key it
+    /// guessed at.
+    pub(super) key_json: Option<aver::replay::JsonValue>,
     /// `None` for a job: jasisz/aver#1329 lets one wait set hold both, and a
     /// job is watched by the module rather than by the reactor.
     pub(super) socket: Option<aver_rt::tcp::TcpSocket>,
@@ -1005,36 +1014,101 @@ fn decode_map_entries(
         )));
     }
 
+    // A wait set answers in the order its own map puts its keys in. The map
+    // already knows that order and exports it as the sorted list of its
+    // occupied buckets, so the host walks the buckets in it and carries a
+    // position rather than a key it would have to know how to compare. The
+    // socket poll needs none of this: its keys are whole numbers by contract,
+    // so it walks bucket by bucket and orders numerically afterwards, exactly
+    // as before. A wait with no such export is refused rather than answered
+    // in an order it did not promise.
+    let bucket_order = if wait_items {
+        Some(map_key_order(caller, &map_ref, capacity)?.ok_or_else(|| {
+            wasmtime::Error::msg(
+                "Wait.poll: this module exports no wait set key order, so the order its answer owes the caller cannot be read",
+            )
+        })?)
+    } else {
+        None
+    };
+    let walk: Vec<u32> = match &bucket_order {
+        Some(order) => order.clone(),
+        None => (0..capacity).collect(),
+    };
+
+    // A key of the program's own type sits in the map directly while a
+    // primitive key sits boxed, so the guest reads a bucket for this host
+    // whenever it exports the accessor. The socket poll reads the boxed
+    // layout in place, because its keys are whole numbers by contract.
+    let key_at = match bucket_order {
+        Some(_) => Some(
+            caller
+                .get_export("__rt_wait_set_key_at")
+                .and_then(|export| export.into_func())
+                .ok_or_else(|| {
+                    wasmtime::Error::msg("Wait.poll: this module exports no wait set bucket reader")
+                })?,
+        ),
+        None => None,
+    };
+
     let mut entries = Vec::new();
-    for index in 0..capacity {
-        let key_box_ref = match keys.get(&mut *caller, index)? {
-            Val::AnyRef(Some(value)) => value,
-            Val::AnyRef(None) => continue,
-            _ => {
-                return Err(wasmtime::Error::msg(format!(
-                    "{operation}: malformed Int key box"
-                )));
+    for (position, index) in walk.into_iter().enumerate() {
+        let key = match &key_at {
+            Some(key_at) => {
+                let mut out = [Val::AnyRef(None)];
+                key_at.call(
+                    &mut *caller,
+                    &[Val::AnyRef(Some(map_ref)), Val::I32(index as i32)],
+                    &mut out,
+                )?;
+                out[0]
+            }
+            None => {
+                let key_box_ref = match keys.get(&mut *caller, index)? {
+                    Val::AnyRef(Some(value)) => value,
+                    Val::AnyRef(None) => continue,
+                    _ => {
+                        return Err(wasmtime::Error::msg(format!(
+                            "{operation}: malformed Int key box"
+                        )));
+                    }
+                };
+                let key_box = key_box_ref.as_struct(&*caller)?.ok_or_else(|| {
+                    wasmtime::Error::msg(format!("{operation}: malformed Int key box"))
+                })?;
+                key_box.field(&mut *caller, 0)?
             }
         };
-        let key_box = key_box_ref
-            .as_struct(&*caller)?
-            .ok_or_else(|| wasmtime::Error::msg(format!("{operation}: malformed Int key box")))?;
-        let key = key_box.field(&mut *caller, 0)?;
+        if matches!(key, Val::AnyRef(None)) {
+            continue;
+        }
         let key_ref = match &key {
             Val::AnyRef(Some(value)) => *value,
             _ => {
                 return Err(wasmtime::Error::msg(format!(
-                    "{operation}: malformed Int key"
+                    "{operation}: malformed map key"
                 )));
             }
         };
-        let key = decode_guest_int(caller, &key, "Tcp.poll: malformed Int key")?;
-        let key_value = aver_rt::AverInt::from_str(&key.display)
-            .map_err(|_| wasmtime::Error::msg(format!("{operation}: malformed Int key")))?;
-        let provider_order = aver_rt::provider::provider_value_order_key(
-            &aver_rt::provider::ProviderValue::Int(key_value),
-        )
-        .map_err(wasmtime::Error::msg)?;
+        // `Tcp.poll` is keyed by whole numbers and stays so. A wait may be
+        // keyed by anything a map accepts, so the numeric read is attempted
+        // and allowed to fail: what the wait needs from a key is the
+        // reference it was handed and where the map puts it.
+        let numeric = read_int_key(caller, &key, operation, !wait_items)?;
+        let provider_order = match &numeric {
+            Some(key) => {
+                let key_value = aver_rt::AverInt::from_str(&key.display)
+                    .map_err(|_| wasmtime::Error::msg(format!("{operation}: malformed Int key")))?;
+                aver_rt::provider::provider_value_order_key(&aver_rt::provider::ProviderValue::Int(
+                    key_value,
+                ))
+                .map_err(wasmtime::Error::msg)?
+            }
+            None => Vec::new(),
+        };
+        let key_json = numeric.as_ref().map(guest_int_json);
+        let numeric_value = numeric.as_ref().map(|key| key.big.clone());
 
         let mut socket_value = values.get(&mut *caller, index)?;
         // One wait set holds both kinds of thing. A `Wait.Item.Job` is ready
@@ -1047,9 +1121,10 @@ fn decode_map_entries(
                     let job_id = wait_item_job_id(caller, &socket_value)?;
                     entries.push(PollEntry {
                         provider_order,
-                        numeric: key.big.clone(),
+                        numeric: numeric_value,
+                        order: position,
                         key_ref,
-                        key_json: guest_int_json(&key),
+                        key_json,
                         socket: None,
                         job_id: Some(job_id),
                         socket_json: json_wait_item(
@@ -1127,9 +1202,10 @@ fn decode_map_entries(
         let socket_json = json_socket(variant, resource_json);
         entries.push(PollEntry {
             provider_order,
-            numeric: key.big.clone(),
+            numeric: numeric_value,
+            order: position,
             key_ref,
-            key_json: guest_int_json(&key),
+            key_json,
             socket: Some(socket),
             job_id: None,
             socket_json: if wait_items {
@@ -1140,6 +1216,80 @@ fn decode_map_entries(
         });
     }
     Ok(entries)
+}
+
+/// The occupied buckets of one map, in the order that map puts its keys in.
+///
+/// `__rt_wait_set_order` is the map's own `order_slots` helper under a name
+/// the host knows: it collects the occupied buckets and sorts them by the
+/// same canonical key order `Map.keys` uses. Reading the order from the guest
+/// is what lets a wait be keyed by any type a map accepts — the host never
+/// compares a key, it only asks where the map put it.
+///
+/// `None` when the module exports no such helper, which is every module built
+/// before the wait key became a choice and every module whose wait keys are
+/// whole numbers the caller sorts numerically anyway.
+fn map_key_order(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    map: &wasmtime::Rooted<wasmtime::AnyRef>,
+    capacity: u32,
+) -> Result<Option<Vec<u32>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let Some(order_fn) = caller
+        .get_export("__rt_wait_set_order")
+        .and_then(|export| export.into_func())
+    else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    order_fn.call(&mut *caller, &[Val::AnyRef(Some(*map))], &mut out)?;
+    let Val::AnyRef(Some(order_ref)) = out[0] else {
+        return Ok(None);
+    };
+    let order = order_ref
+        .as_array(&*caller)?
+        .ok_or_else(|| wasmtime::Error::msg("Wait.poll: malformed wait set key order"))?;
+    let len = order.len(&*caller)?;
+    let mut buckets = Vec::with_capacity(len as usize);
+    for index in 0..len {
+        let Val::I32(bucket) = order.get(&mut *caller, index)? else {
+            return Err(wasmtime::Error::msg(
+                "Wait.poll: malformed wait set key order entry",
+            ));
+        };
+        if bucket < 0 || bucket as u32 >= capacity {
+            return Err(wasmtime::Error::msg(
+                "Wait.poll: wait set key order names a bucket outside the map",
+            ));
+        }
+        buckets.push(bucket as u32);
+    }
+    Ok(Some(buckets))
+}
+
+/// Read one map key as a whole number.
+///
+/// `required` is true for the socket poll, whose keys are whole numbers by
+/// contract, and false for the wait, whose key is whatever the caller keyed
+/// its map by: there, a key this host cannot read as a number is an ordinary
+/// key that travels by reference, not an error.
+fn read_int_key(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    key: &wasmtime::Val,
+    operation: &str,
+    required: bool,
+) -> Result<Option<GuestInt>, wasmtime::Error> {
+    match decode_guest_int(caller, key, "Tcp.poll: malformed Int key") {
+        Ok(value) => Ok(Some(value)),
+        Err(error) => {
+            if required {
+                Err(error)
+            } else {
+                let _ = operation;
+                Ok(None)
+            }
+        }
+    }
 }
 
 /// The `$variant` shape one `Wait.Item` records as, matching the VM's.
@@ -1232,16 +1382,49 @@ pub(in crate::runtime::wasm_gc) fn job_handle_id(
     }
 }
 
-pub(super) fn poll_map_json(entries: &[PollEntry]) -> aver::replay::JsonValue {
-    let pairs = entries
-        .iter()
-        .map(|entry| {
-            aver::replay::JsonValue::Array(vec![entry.key_json.clone(), entry.socket_json.clone()])
-        })
-        .collect();
+pub(super) fn poll_map_json(
+    entries: &[PollEntry],
+    operation: &str,
+) -> Result<aver::replay::JsonValue, wasmtime::Error> {
+    let mut pairs = Vec::with_capacity(entries.len());
+    for entry in entries {
+        pairs.push(aver::replay::JsonValue::Array(vec![
+            recorded_key(entry, operation)?,
+            entry.socket_json.clone(),
+        ]));
+    }
     let mut marker = serde_json::Map::new();
     marker.insert("$map".to_string(), aver::replay::JsonValue::Array(pairs));
-    aver::replay::JsonValue::Object(marker)
+    Ok(aver::replay::JsonValue::Object(marker))
+}
+
+/// How one wait-set key records.
+///
+/// A recording states the values an effect was given and the values it
+/// answered, and a wasm-gc module hands this host its keys as bare
+/// references: whole numbers it can read, anything else it cannot. Rather
+/// than write a key it guessed at, a recording of such a wait is refused —
+/// the same program records and replays on the bytecode VM and under
+/// `--target rust`, where the key crosses as a value of a known type.
+fn recorded_key(
+    entry: &PollEntry,
+    operation: &str,
+) -> Result<aver::replay::JsonValue, wasmtime::Error> {
+    entry.key_json.clone().ok_or_else(|| {
+        wasmtime::Error::msg(format!(
+            "{operation}: recording a wait keyed by anything but Int is not supported on wasm-gc; record this program on the bytecode VM or under --target rust"
+        ))
+    })
+}
+
+pub(super) fn recorded_keys(
+    entries: &[&PollEntry],
+    operation: &str,
+) -> Result<Vec<aver::replay::JsonValue>, wasmtime::Error> {
+    entries
+        .iter()
+        .map(|entry| recorded_key(entry, operation))
+        .collect()
 }
 
 pub(super) fn replay_poll_result(
@@ -1249,13 +1432,39 @@ pub(super) fn replay_poll_result(
     cached: &aver::replay::JsonValue,
     entries: &[PollEntry],
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    replay_ready_result(caller, cached, entries, false)
+}
+
+/// The same, for the one wait of a turn.
+///
+/// A wait answers through its own factories, because its keys are the
+/// program's own type while the socket poll's are always whole numbers, and
+/// the two families are named apart for exactly that reason.
+pub(super) fn replay_wait_result(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    cached: &aver::replay::JsonValue,
+    entries: &[PollEntry],
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    replay_ready_result(caller, cached, entries, true)
+}
+
+fn replay_ready_result(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    cached: &aver::replay::JsonValue,
+    entries: &[PollEntry],
+    wait: bool,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
     let aver::replay::JsonValue::Object(marker) = cached else {
         return Err(wasmtime::Error::msg(
             "replay decode Tcp.poll: expected Result",
         ));
     };
     if let Some(aver::replay::JsonValue::String(error)) = marker.get("$err") {
-        return host_result_err_list_int(caller, error);
+        return if wait {
+            super::factories::host_wait_result_err(caller, error)
+        } else {
+            host_result_err_list_int(caller, error)
+        };
     }
     let Some(aver::replay::JsonValue::Array(keys)) = marker.get("$ok") else {
         return Err(wasmtime::Error::msg(
@@ -1266,7 +1475,7 @@ pub(super) fn replay_poll_result(
     for key in keys {
         let entry = entries
             .iter()
-            .find(|entry| &entry.key_json == key)
+            .find(|entry| entry.key_json.as_ref() == Some(key))
             .ok_or_else(|| {
                 wasmtime::Error::msg(
                     "replay decode Tcp.poll: ready ID is absent from the input Map",
@@ -1274,7 +1483,11 @@ pub(super) fn replay_poll_result(
             })?;
         refs.push(entry.key_ref);
     }
-    host_result_ok_list_int_refs(caller, &refs)
+    if wait {
+        super::factories::host_wait_result_ok(caller, &refs)
+    } else {
+        host_result_ok_list_int_refs(caller, &refs)
+    }
 }
 
 pub(super) fn guest_int_json(value: &GuestInt) -> aver::replay::JsonValue {

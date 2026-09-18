@@ -499,6 +499,7 @@ Rules:
 - an answer module runs inside the turn, so a slow answer stalls every process; an answer with effects is allowed and `warning[answer-shape]` says so
 - `Disk` operations stay synchronous inside the turn, and the turn budget does not see that time
 - `Wait.poll` is one wait over sockets and jobs; `Tcp.poll` is the same wait over sockets only
+- a wait set is keyed by any type a map accepts, so a program waiting on several kinds of thing at once names each kind with a constructor instead of agreeing on an arithmetic convention: with `type Watch` declaring `Peer(Int)`, `Listener` and `Job`, `Wait.poll` takes `Map<Watch, Wait.Item>` and answers `List<Watch>` in that map's own key order, which is by constructor name and then payload. `Int` is one such key and needs no change; one program uses one wait key type, and a wait set written empty at the call names no key of its own, so under a key of the program's own write its type down: `idle: Map<Watch, Wait.Item> = {}`
 - a job is pure, its result is data, and a recording replays it: `begin`, `take` and the wait are served back in the recorded turns; the VM and wasm-gc run the job's function again beside them, a `--target rust` binary serves the recorded results without running it, and a wasip2 component records nothing
 - `yield` is an effect: declare it in `! [...]` and cover it in the module's `effects [...]`; the entry module's `effects [...]` is widened by what the loop generates into it
 - a process takes no parameters and answers `Unit`; a yielding helper of the same module may take parameters, and a tail call enters its protocol while a non-tail call nests its state under `In<G>At<N>`
@@ -647,6 +648,11 @@ match Map.get(ages, "alice")
 Bounded outbox for `Tcp.writeNow`. A non-blocking write takes a prefix, so the program carries the queue: the payload at the head, how many of its bytes have gone, the rest behind it. Register the `Sending` key only while bytes remain, and when the outbox is full let the slow peer pay for it. A bulk producer, one request answered by many large payloads, must not enqueue them all at once: it keeps the list of what was asked for and renders the next payload once the queue is under its watermark, so a healthy peer is not dropped for reading slower than the program produces.
 
 ```aver
+type Watch
+    Peer(Int)
+    Write(Int)
+    Listener
+
 record Outbox
     head: Bytes
     queue: List<Bytes>
@@ -663,10 +669,10 @@ fn flush(connection: Tcp.Connection, outbox: Outbox) -> Result<Outbox, String>
             [] -> Result.Ok(Outbox.update(outbox, head = Bytes.empty()))
             [next, ..later] -> Result.Ok(Outbox.update(outbox, head = next, queue = later))
 
-fn interest(key: Int, connection: Tcp.Connection, outbox: Outbox, items: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>
-    ? "Ask for writability only while the outbox still holds bytes."
+fn interest(peer: Int, connection: Tcp.Connection, outbox: Outbox, items: Map<Watch, Wait.Item>) -> Map<Watch, Wait.Item>
+    ? "Ask for writability only while the outbox still holds bytes. A wait set is keyed by what the program is waiting for, so a write interest and the peer's own readability are two constructors rather than two integers that must not collide."
     match Bytes.len(outbox.head) > 0
-        true -> Map.set(items, key, Wait.Item.Socket(Tcp.Socket.Sending(connection)))
+        true -> Map.set(items, Watch.Write(peer), Wait.Item.Socket(Tcp.Socket.Sending(connection)))
         false -> items
 
 fn topUp(outbox: Outbox) -> Outbox

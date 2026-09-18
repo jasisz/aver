@@ -5,8 +5,10 @@ import { WorkCodec, workManifest } from "./codec.mjs";
 export async function createWorkHost(module, options = {}) {
     const maxJobs = options.maxJobs ?? Math.min(globalThis.navigator?.hardwareConcurrency ?? 4, 8);
     if (!Number.isSafeInteger(maxJobs) || maxJobs < 1) throw new Error("work: maxJobs must be a positive integer");
-    const WorkerClass = options.Worker ?? globalThis.Worker ?? (await import("node:worker_threads")).Worker;
     const manifest = workManifest(module);
+    const WorkerClass = manifest.kinds.length
+        ? options.Worker ?? globalThis.Worker ?? (await import("node:worker_threads")).Worker
+        : null;
     const jobs = new Map(), slots = new Set(), listeners = new Set(), dead = [];
     let nextId = 0n, running = 0, closed = false, stopping = false, fatal;
     let instance, codec;
@@ -127,13 +129,20 @@ export async function createWorkHost(module, options = {}) {
         slots.clear(); jobs.clear();
     }
     try {
-        await Promise.all(Array.from({ length: maxJobs }, newSlot));
+        // A program that runs no job of its own needs no workers. It still
+        // needs this host: its wait is decoded and answered here.
+        await Promise.all(Array.from({ length: manifest.kinds.length ? maxJobs : 0 }, newSlot));
         instance = await WebAssembly.instantiate(module, imports);
         codec = new WorkCodec(instance.exports, manifest);
     } catch (error) { await close(); throw error; }
 
     async function wait(waitSet, timeout) {
-        const entries = codec.decode("Map<Int, Wait.Item>", waitSet);
+        // The wait set is keyed by whatever the program keys its waits by, and
+        // the descriptor says which type that is. Keys are values here like
+        // any other: this host correlates them and hands them back, and never
+        // reads one.
+        if (!manifest.wait) throw new Error("work: this module declares no wait set");
+        const entries = codec.decode(manifest.wait.set, waitSet);
         const duration = codec.decode("Int", timeout);
         if (duration < 0n) throw new Error("Wait.poll: timeoutMs must be non-negative");
         const deadline = performance.now() + Number(duration);
@@ -159,7 +168,27 @@ export async function createWorkHost(module, options = {}) {
                     ready.push(...await Promise.race([changed, sockets, new Promise(resolve => { timer = setTimeout(() => resolve([]), Math.min(remaining, 2147483647)); })]));
                 } else if (socketEntries.length) ready.push(...await sockets);
             } finally { listeners.delete(wake); clearTimeout(timer); abort.abort(); }
-            if (ready.length || performance.now() >= deadline || stopping) return codec.encode("List<Int>", [...new Set(ready)].sort((a,b) => a < b ? -1 : a > b ? 1 : 0));
+            // Answer in the order the program's own map puts its keys in.
+            // `codec.decode` of a Map walks `Map.keys`, so `entries` is
+            // already in that order and a key's position in it is that order:
+            // no comparison of keys happens here, which is what lets the key
+            // be a type this host has never seen. Every ready key is placed
+            // back in that list first, so the answer is ordered and deduped by
+            // position rather than by what a key compares or hashes as. A key
+            // that is not in the list is a `pollSockets` adapter answering
+            // with something other than the keys it was handed, which is
+            // refused rather than answered in an order the contract denies.
+            if (ready.length || performance.now() >= deadline || stopping) {
+                const at = new Map(entries.map(([key], index) => [key, index]));
+                const positions = new Set();
+                for (const key of ready) {
+                    const index = at.get(key);
+                    if (index === undefined) throw new Error("Wait.poll: pollSockets answered with a key that is not one of the keys it was handed; answer with the key values out of the entries argument itself");
+                    positions.add(index);
+                }
+                const answer = [...positions].sort((a, b) => a - b).map(index => entries[index][0]);
+                return codec.encode(manifest.wait.ready, answer);
+            }
         }
     }
     const socketsIfPresent = (promise, entries) => entries.length ? promise : [];

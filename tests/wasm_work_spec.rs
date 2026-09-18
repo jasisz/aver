@@ -296,6 +296,33 @@ fn one_wait_set_over_a_socket_and_a_job_matches_the_vm_on_wasm_gc() {
     assert_same_stdout("work_jobs_socket_wait", &["--wasm-gc"]);
 }
 
+/// The same wait, keyed by a type the program declares instead of by an
+/// arithmetic convention on whole numbers. `Wait.poll` takes a `Map<K,
+/// Wait.Item>` for any key a map accepts, so the ready keys come back as
+/// values the program matches on. Every backend has to agree about that: the
+/// key crosses the provider boundary carried rather than read, and the
+/// answer comes back in the order the program's own map puts its keys in.
+#[test]
+fn a_wait_keyed_by_a_program_type_matches_the_vm_on_wasm_gc() {
+    assert_same_stdout("wait_keys_variant", &["--wasm-gc"]);
+}
+
+/// The same, keyed by a type a dependency module declares, with the wait set
+/// written at the call. The key reaches the module's own boundary types by
+/// name from the type the checker inferred for that map.
+#[test]
+fn a_wait_key_declared_in_a_dependency_module_matches_the_vm_on_wasm_gc() {
+    assert_same_stdout("wait_key_in_dep", &["--wasm-gc"]);
+}
+
+/// A program that waits and binds no job kind at all. Before the wait's own
+/// ABI was emitted for it, a compiled module carried no descriptor and no
+/// helpers for its wait set, so an external host could not decode one.
+#[test]
+fn a_waiting_program_with_no_job_kind_matches_the_vm_on_wasm_gc() {
+    assert_same_stdout("wait_socket_only", &["--wasm-gc"]);
+}
+
 // ── The generated coordinator ───────────────────────────────────────────
 
 /// A job that never answers: the generated turn hands the failure to the

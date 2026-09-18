@@ -101,10 +101,16 @@ fn write_capability(out: &mut String, item: &CapabilityItem) -> Result<()> {
         }
         CapabilityItem::Operation(op) => {
             let params: Vec<String> = op.params.iter().map(|(n, t)| format!("{n}: {t}")).collect();
+            let type_params = if op.type_params.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", op.type_params.join(", "))
+            };
             writeln!(
                 out,
-                "operation {}({}) -> {}",
+                "operation {}{}({}) -> {}",
                 op.name,
+                type_params,
                 params.join(", "),
                 op.return_type
             )?;

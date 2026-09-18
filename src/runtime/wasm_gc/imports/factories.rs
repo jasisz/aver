@@ -724,6 +724,81 @@ pub(crate) fn host_result_err_list_int(
     })
 }
 
+/// Build the `Result<List<K>, String>::Ok(keys)` the one wait answers, where
+/// `K` is whatever this program keys its waits by.
+///
+/// The keys are the very references the guest handed this host inside its
+/// wait set, put back in the order the guest's own map puts them in. The host
+/// builds the list through the module's own factories, so it never has to
+/// know what a key is: `__rt_wait_keys_cons` takes a reference and a tail,
+/// and nothing here looks inside either.
+pub(crate) fn host_wait_result_ok(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    items: &[wasmtime::Rooted<wasmtime::AnyRef>],
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let nil = caller
+        .get_export("__rt_wait_keys_nil")
+        .and_then(|export| export.into_func());
+    let cons = caller
+        .get_export("__rt_wait_keys_cons")
+        .and_then(|export| export.into_func());
+    let factory = caller
+        .get_export("__rt_result_wait_keys_ok")
+        .and_then(|export| export.into_func());
+    let (Some(nil), Some(cons), Some(factory)) = (nil, cons, factory) else {
+        return Ok(None);
+    };
+    let mut tail = [Val::AnyRef(None)];
+    nil.call(&mut *caller, &[], &mut tail)?;
+    let mut current = match &tail[0] {
+        Val::AnyRef(value) => *value,
+        _ => None,
+    };
+    for item in items.iter().rev() {
+        let mut next = [Val::AnyRef(None)];
+        cons.call(
+            &mut *caller,
+            &[Val::AnyRef(Some(*item)), Val::AnyRef(current)],
+            &mut next,
+        )?;
+        current = match &next[0] {
+            Val::AnyRef(value) => *value,
+            _ => None,
+        };
+    }
+    let mut result = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(current)], &mut result)?;
+    Ok(match &result[0] {
+        Val::AnyRef(value) => *value,
+        _ => None,
+    })
+}
+
+/// The failing half of [`host_wait_result_ok`].
+pub(crate) fn host_wait_result_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let text = match lm_string_from_host(caller, text)? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_wait_keys_err")
+        .and_then(|export| export.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut result = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(text))], &mut result)?;
+    Ok(match &result[0] {
+        Val::AnyRef(value) => *value,
+        _ => None,
+    })
+}
+
 /// Build a `Result<Bytes, String>::Ok(bytes)` ref. Packed and boxed modules
 /// copy the whole payload through linear memory in one boundary crossing. The
 /// element-wise path is retained as a defensive fallback for older modules.

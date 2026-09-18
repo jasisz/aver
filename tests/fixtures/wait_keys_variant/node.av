@@ -1,0 +1,10 @@
+module Node
+    intent = "The pure function one countdown job runs."
+    exposes [countdown]
+    effects []
+
+fn countdown(task: Int) -> Int
+    ? "Counts down to zero. A large enough start keeps the job running for the whole turn."
+    match task < 1
+        true -> 0
+        false -> countdown(task - 1)

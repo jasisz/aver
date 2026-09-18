@@ -2173,6 +2173,30 @@ impl TypeChecker {
         }
     }
 
+    /// `ty` with every type variable replaced by the same type.
+    ///
+    /// The one caller is the hint a generic capability operation offers an
+    /// argument that has no type of its own: with nothing to bind the
+    /// variable to, the operation's own default stands in for all of them.
+    pub(super) fn instantiate_all_vars(ty: &Type, bound: &Type) -> Type {
+        let go = |ty: &Type| Self::instantiate_all_vars(ty, bound);
+        match ty {
+            Type::Var(_) => bound.clone(),
+            Type::Result(ok, err) => Type::Result(Box::new(go(ok)), Box::new(go(err))),
+            Type::Option(inner) => Type::Option(Box::new(go(inner))),
+            Type::List(inner) => Type::List(Box::new(go(inner))),
+            Type::Vector(inner) => Type::Vector(Box::new(go(inner))),
+            Type::Map(key, value) => Type::Map(Box::new(go(key)), Box::new(go(value))),
+            Type::Tuple(items) => Type::Tuple(items.iter().map(go).collect()),
+            Type::Fn(params, ret, effects) => Type::Fn(
+                params.iter().map(go).collect(),
+                Box::new(go(ret)),
+                effects.clone(),
+            ),
+            other => other.clone(),
+        }
+    }
+
     pub(super) fn instantiate_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         match ty {
             Type::Var(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),

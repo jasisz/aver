@@ -4,11 +4,16 @@ const utf8 = new TextEncoder();
 const text = new TextDecoder();
 export const identifier = (name) => "n" + Array.from(utf8.encode(name), b => b.toString(16).padStart(2, "0")).join("");
 
+// A module carries one descriptor if it has either door: job kinds it can be
+// asked to run, or a wait a host has to decode. A program that waits on
+// sockets without running a job of its own has the second and not the first,
+// so `kinds` may legitimately be empty.
 export function workManifest(module) {
     const sections = WebAssembly.Module.customSections(module, "aver:work/v1");
     if (sections.length !== 1) throw new Error("work: expected one aver:work/v1 descriptor");
     const manifest = JSON.parse(text.decode(sections[0]));
     if (manifest.version !== 1) throw new Error("work: unsupported ABI version");
+    manifest.kinds ??= [];
     return manifest;
 }
 

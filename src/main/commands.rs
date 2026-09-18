@@ -6583,6 +6583,25 @@ fn reject_unsupported_capability_targets(
     }
 }
 
+/// Refuse a program that does not agree with itself about the type its wait
+/// sets are keyed by.
+///
+/// Every backend names one wait's whole family of helpers from one key type,
+/// and it reads that type from the entry module and every module the entry
+/// depends on at once. `aver check` analyses one file at a time, so a program
+/// whose modules disagree agrees with itself in each of them and only
+/// disagrees here. Without this the backend picks one of the keys and renders
+/// a program that declares the wait set under that key and fills it under the
+/// other.
+fn reject_wait_key_disagreement(items: &[TopLevel], modules: &[ModuleInfo]) {
+    let refusal = aver::capability::work::wait_key_conflict(items, modules)
+        .or_else(|| aver::capability::work::wait_key_undetermined(items, modules));
+    if let Some((_, message)) = refusal {
+        eprintln!("{}", message.red());
+        process::exit(1);
+    }
+}
+
 pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     let CompileOptions {
         file,
@@ -6732,6 +6751,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         &ctx.capabilities,
         aver::provider::CapabilityTarget::Rust,
     );
+    reject_wait_key_disagreement(&ctx.items, &ctx.modules);
     if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
         eprintln!("{}", err.red());
         process::exit(1);
@@ -6892,6 +6912,7 @@ fn cmd_compile_wasm_gc(
             .capabilities,
         aver::provider::CapabilityTarget::WasmGc,
     );
+    reject_wait_key_disagreement(&items, &dep_modules);
     let capabilities = &result
         .typecheck
         .as_ref()
@@ -7485,6 +7506,7 @@ fn cmd_compile_wasip2(
                 .capabilities,
             aver::provider::CapabilityTarget::Wasip2,
         );
+        reject_wait_key_disagreement(&items, &dep_modules);
         let capabilities = &result
             .typecheck
             .as_ref()

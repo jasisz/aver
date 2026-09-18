@@ -747,11 +747,19 @@ fn entry_module_sections(
 ) -> Vec<String> {
     let mut sections = Vec::new();
 
+    let wait_key = wait_key_type(ctx);
     for td in &ctx.type_defs {
         if is_shared_runtime_type(td) {
             continue;
         }
         sections.push(toplevel::emit_public_type_def(td, ctx));
+        // A wait set's key crosses to the provider, so the program's own key
+        // type needs the same boundary codec a capability's boundary type
+        // gets. The provider never reads a key; the codec is what carries it
+        // out and back.
+        if is_wait_key_type_def(wait_key.as_ref(), td, None) {
+            sections.push(provider::emit_represented_type_codec("", td, ctx));
+        }
         if ctx.emit_replay_runtime {
             sections.push(replay::emit_replay_value_impl(
                 td,
@@ -826,6 +834,9 @@ fn entry_module_sections(
 
 fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) -> Vec<String> {
     let mut sections = Vec::new();
+    // One reading for the whole module: the answer is a property of the
+    // program, not of the type definition being emitted.
+    let wait_key = wait_key_type(ctx);
 
     if let Some(resource_types) =
         provider::resource_types_by_module(&ctx.capabilities).get(&module.prefix)
@@ -854,7 +865,9 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
                 ctx, "Bytes",
             )));
         }
-        if ctx.capabilities.boundary_type(&canonical).is_some() {
+        if ctx.capabilities.boundary_type(&canonical).is_some()
+            || is_wait_key_type_def(wait_key.as_ref(), td, Some(&module.prefix))
+        {
             sections.push(provider::emit_represented_type_codec(
                 &module.prefix,
                 td,
@@ -3226,4 +3239,38 @@ verify count
             "Walk holds Bodies.Progress, which holds a Float, so it can carry neither, got:\n{emitted}"
         );
     }
+}
+
+/// The type this program keys its wait sets by, as the Rust backend needs it:
+/// to name `Wait.poll`'s concrete signature and to emit a provider codec for
+/// the key beside the program's own types.
+///
+/// A program that keys two waits differently is refused at the compile door,
+/// over this same whole program, so a disagreement here cannot reach a
+/// generated crate; this reads the same annotations and answers `None` when
+/// the program names no wait at all.
+pub(super) fn wait_key_type(ctx: &CodegenContext) -> Option<crate::ast::Type> {
+    crate::capability::work::wait_key_type(&ctx.items, &ctx.modules)
+}
+
+/// Whether `type_def`, declared in `module`, is the type this program keys
+/// its wait sets by. The entry module writes a bare name; a dependency's is
+/// reached through its own prefix, and either spelling may appear in the
+/// annotation that named the wait set.
+fn is_wait_key_type_def(
+    wait_key: Option<&crate::ast::Type>,
+    type_def: &crate::ast::TypeDef,
+    module: Option<&str>,
+) -> bool {
+    // backend-link-stage: the wait key reaches this backend by its spelled
+    // name on purpose. The checker's stamp carries a `TypeId` of the checker's
+    // own table, which this backend's symbol table does not know, so
+    // `forget_type_ids` drops it before the key is handed over and the name is
+    // the only identity left to link the program's type by.
+    let Some(crate::ast::Type::Named { name, .. }) = wait_key else {
+        return false;
+    };
+    let declared = crate::codegen::common::type_def_name(type_def);
+    let qualified = module.map(|module| format!("{module}.{declared}"));
+    name == declared || qualified.is_some_and(|qualified| *name == qualified)
 }

@@ -194,6 +194,7 @@ impl WorkDiagnostic {
 }
 
 pub const WORK_SHAPE: &str = "work-shape";
+pub const WAIT_KEY: &str = "wait-key";
 pub const WORK_BINDING: &str = "work-binding";
 pub const ANSWER_SHAPE: &str = "answer-shape";
 pub const ANSWER_BINDING: &str = "answer-binding";
@@ -1582,5 +1583,441 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             "unexpected message: {}",
             errors[0].message
         );
+    }
+}
+
+/// Every key type this program's wait sets are keyed by, and every wait whose
+/// key this reading could not name.
+#[derive(Debug, Default, Clone)]
+pub struct WaitKeys {
+    /// One entry per distinct key type, by the spelling it displays under.
+    pub keys: BTreeMap<String, WaitKeyUse>,
+    /// The source line of every `Wait.poll` call whose wait set has no key
+    /// here.
+    pub unresolved: Vec<usize>,
+}
+
+/// One key type, and what the program wrote to give it.
+#[derive(Debug, Clone)]
+pub struct WaitKeyUse {
+    /// The key type itself.
+    pub key: Type,
+    /// The line of the first wait this key was read from.
+    pub line: usize,
+    /// Every wait with this key was handed a set written empty at the call.
+    /// Such a set holds nothing, so it names no key of its own, and the key
+    /// it carries is the one the checker fills in for an argument that names
+    /// none. That is a different mistake from two kinds of wait meeting in
+    /// one program, and it has a different repair.
+    pub only_empty: bool,
+}
+
+/// Every wait this program performs, keyed by the type the type checker
+/// inferred for the map each `Wait.poll` was handed.
+///
+/// `Wait.poll` takes a `Map<K, Wait.Item>` for any key a map accepts, and the
+/// key a program means is the key of the map it passes. The type checker has
+/// already worked that out and left it on the argument node, so this reads
+/// the answer rather than guessing at one: a map written inline at the call,
+/// bound to a name, or built by another function and handed over all say the
+/// same thing here, and none of them has to be annotated for it.
+///
+/// A wait whose argument carries no inferred type is listed in
+/// [`WaitKeys::unresolved`] instead of defaulting to anything. The front
+/// doors refuse such a program, because a key nobody can name is the one case
+/// where the backends would each pick their own.
+pub fn wait_keys(
+    items: &[crate::ast::TopLevel],
+    modules: &[crate::codegen::ModuleInfo],
+) -> WaitKeys {
+    use crate::ast::TopLevel;
+    let mut found = WaitKeys::default();
+    for item in items {
+        if let TopLevel::FnDef(fd) = item {
+            note_waits_of_fn(fd, &mut found);
+        }
+    }
+    for module in modules {
+        // A shipped capability's own source states the contract and writes its
+        // hostile profiles at one instantiation. Neither is a wait this
+        // program performs.
+        if crate::stdlib::has_shipped_provider(&module.prefix) {
+            continue;
+        }
+        for fd in &module.fn_defs {
+            note_waits_of_fn(fd, &mut found);
+        }
+    }
+    found
+}
+
+/// The type one program keys its wait sets by.
+///
+/// A turn has one wait, and every backend carries the keys of that wait
+/// through one set of helpers built from this type. Two keys in one program
+/// are what [`wait_key_conflict`] refuses, at every compile door and at
+/// `check` for the file that holds both, so the preference below only decides
+/// what a refused program renders as. `None` means the program never waits.
+pub fn wait_key_type(
+    items: &[crate::ast::TopLevel],
+    modules: &[crate::codegen::ModuleInfo],
+) -> Option<Type> {
+    let found = wait_keys(items, modules);
+    found
+        .keys
+        .values()
+        .find(|used| used.key != Type::Int)
+        .or_else(|| found.keys.values().next())
+        .map(|used| used.key.clone())
+}
+
+/// The message for a program that keys one wait one way and another wait
+/// another way, and the line to report it on, or `None` when it keys them all
+/// the same way.
+///
+/// The rule is not a backend limitation dressed up as a language rule: a turn
+/// has one wait, its keys are the program's own way of saying what it is
+/// waiting for, and two ways of saying that in one program is the collision
+/// the key type exists to remove.
+///
+/// A set written empty at the call is the one way to reach this message
+/// without meaning two kinds of wait: it holds nothing, so it names no key of
+/// its own and carries the one the checker fills in. The repair there is to
+/// write the type on that one set, so this says that instead and points at
+/// the empty set rather than at two kinds the program does not have.
+pub fn wait_key_conflict(
+    items: &[crate::ast::TopLevel],
+    modules: &[crate::codegen::ModuleInfo],
+) -> Option<(usize, String)> {
+    let found = wait_keys(items, modules);
+    let mut keys = found.keys.values();
+    let first = keys.next()?;
+    let second = keys.next()?;
+    if found.keys.len() == 2
+        && let Some(empty) = found.keys.values().find(|used| used.only_empty)
+        && let Some(named) = found.keys.values().find(|used| !used.only_empty)
+    {
+        return Some((
+            empty.line,
+            format!(
+                "this wait set is written empty, so it names no key of its own and is read as keyed by '{}', while the rest of this program keys its waits by '{}'. Bind it to a name that writes the type down, `items: Map<{}, Wait.Item> = {{}}`, and hand that name to Wait.poll",
+                empty.key.display(),
+                named.key.display(),
+                named.key.display()
+            ),
+        ));
+    }
+    Some((
+        second.line,
+        format!(
+            "this program keys one wait set by '{}' and another by '{}'. A turn has one wait, and its keys are how the program says what it is waiting for, so one program keys every wait the same way; name both kinds as constructors of one type and match on it",
+            first.key.display(),
+            second.key.display()
+        ),
+    ))
+}
+
+/// The message for a wait whose key type nothing in the program settles, and
+/// the line it sits on.
+///
+/// Every backend names the wait's helpers from one key type. A wait set whose
+/// type the checker could not infer leaves each of them to pick its own, so
+/// the program is refused here instead.
+pub fn wait_key_undetermined(
+    items: &[crate::ast::TopLevel],
+    modules: &[crate::codegen::ModuleInfo],
+) -> Option<(usize, String)> {
+    let line = *wait_keys(items, modules).unresolved.first()?;
+    Some((
+        line,
+        "this wait set does not say what it is keyed by, and every backend names the wait's helpers from that one type. Bind the map to a name that writes the type down, `items: Map<Int, Wait.Item> = ...` with the key type this wait uses, and hand that name to Wait.poll".to_string(),
+    ))
+}
+
+fn note_waits_of_fn(fd: &crate::ast::FnDef, found: &mut WaitKeys) {
+    use crate::ast::Stmt;
+    for stmt in fd.body.stmts() {
+        let expr = match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+        };
+        for_each_expr(expr, &mut |expr| note_wait_call(expr, fd, found));
+    }
+}
+
+fn note_wait_call(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    fd: &crate::ast::FnDef,
+    found: &mut WaitKeys,
+) {
+    use crate::ast::Expr;
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return;
+    };
+    if dotted_path(&callee.node).as_deref() != Some(WAIT_POLL) {
+        return;
+    }
+    let Some(set) = args.first() else {
+        return;
+    };
+    let line = if expr.line > 0 { expr.line } else { fd.line };
+    // A set written empty at the call holds nothing. It names no key of its
+    // own, so the key read below is the one the checker fills in for an
+    // argument that names none, and saying which waits were written that way
+    // is what lets the refusal name the right repair.
+    let empty = matches!(&set.node, Expr::MapLiteral(entries) if entries.is_empty());
+    match wait_set_key_of_argument(set, fd) {
+        Some(key) => {
+            let used = found.keys.entry(key.display()).or_insert(WaitKeyUse {
+                key,
+                line,
+                only_empty: empty,
+            });
+            used.only_empty = used.only_empty && empty;
+        }
+        None => found.unresolved.push(line),
+    }
+}
+
+/// The key of the wait set one `Wait.poll` call was handed.
+///
+/// The type checker stamps every expression it infers, so the argument states
+/// its own type whenever the program has been checked. A program reaching a
+/// backend through a door that does not check first still has its written
+/// types, so a name whose binding or parameter writes `Map<K, Wait.Item>` is
+/// read here too.
+fn wait_set_key_of_argument(
+    set: &crate::ast::Spanned<crate::ast::Expr>,
+    fd: &crate::ast::FnDef,
+) -> Option<Type> {
+    if let Some(key) = set.ty().and_then(wait_set_key_of_type) {
+        return Some(key);
+    }
+    let name = binding_name(&set.node)?;
+    written_type_of_name(fd, name).and_then(|ty| wait_set_key(&ty))
+}
+
+fn binding_name(expr: &crate::ast::Expr) -> Option<&str> {
+    use crate::ast::Expr;
+    match expr {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name),
+        _ => None,
+    }
+}
+
+/// The type `fd` writes down for `name`: its parameter's, or the annotation
+/// on the binding that introduced it.
+fn written_type_of_name(fd: &crate::ast::FnDef, name: &str) -> Option<String> {
+    use crate::ast::Stmt;
+    for (param, ty) in &fd.params {
+        if param == name {
+            return Some(ty.clone());
+        }
+    }
+    for stmt in fd.body.stmts() {
+        if let Stmt::Binding(bound, Some(annotation), _) = stmt
+            && bound == name
+        {
+            return Some(annotation.clone());
+        }
+    }
+    None
+}
+
+/// The dotted name a callee expression spells, `Wait.poll` however it is
+/// written: as an attribute of a namespace, or as one resolved name.
+fn dotted_path(expr: &crate::ast::Expr) -> Option<String> {
+    use crate::ast::Expr;
+    match expr {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::Attr(obj, field) => Some(format!("{}.{field}", dotted_path(&obj.node)?)),
+        _ => None,
+    }
+}
+
+fn for_each_expr(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    visit: &mut impl FnMut(&crate::ast::Spanned<crate::ast::Expr>),
+) {
+    use crate::ast::{Expr, StrPart};
+    visit(expr);
+    match &expr.node {
+        Expr::Attr(inner, _) | Expr::Neg(inner) | Expr::ErrorProp(inner) => {
+            for_each_expr(inner, visit)
+        }
+        Expr::Constructor(_, Some(inner)) => for_each_expr(inner, visit),
+        Expr::FnCall(callee, args) => {
+            for_each_expr(callee, visit);
+            for arg in args {
+                for_each_expr(arg, visit);
+            }
+        }
+        Expr::BinOp(_, left, right) => {
+            for_each_expr(left, visit);
+            for_each_expr(right, visit);
+        }
+        Expr::Match { subject, arms } => {
+            for_each_expr(subject, visit);
+            for arm in arms {
+                for_each_expr(&arm.body, visit);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let StrPart::Parsed(inner) = part {
+                    for_each_expr(inner, visit);
+                }
+            }
+        }
+        Expr::List(elements) | Expr::Tuple(elements) | Expr::IndependentProduct(elements, _) => {
+            for element in elements {
+                for_each_expr(element, visit);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                for_each_expr(key, visit);
+                for_each_expr(value, visit);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, value) in fields {
+                for_each_expr(value, visit);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            for_each_expr(base, visit);
+            for (_, value) in updates {
+                for_each_expr(value, visit);
+            }
+        }
+        Expr::TailCall(data) => {
+            for arg in &data.args {
+                for_each_expr(arg, visit);
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {}
+    }
+}
+
+/// The key of a `Map<K, Wait.Item>` written anywhere inside `annotation`.
+fn wait_set_key(annotation: &str) -> Option<Type> {
+    wait_set_key_of_type(&crate::types::parse_type_str_strict(annotation).ok()?)
+}
+
+/// The same, for a type that is already parsed.
+///
+/// The generic contract's own `Map<K, Wait.Item>` is the signature rather
+/// than a choice a program made, so a type variable is not an answer.
+fn wait_set_key_of_type(ty: &Type) -> Option<Type> {
+    fn walk(ty: &Type, out: &mut Option<Type>) {
+        match ty {
+            Type::Map(key, value) if is_wait_item(value) => *out = Some((**key).clone()),
+            Type::Map(key, value) => {
+                walk(key, out);
+                walk(value, out);
+            }
+            Type::Result(left, right) => {
+                walk(left, out);
+                walk(right, out);
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => walk(inner, out),
+            Type::Tuple(items) => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
+            Type::Fn(params, ret, _) => {
+                for param in params {
+                    walk(param, out);
+                }
+                walk(ret, out);
+            }
+            _ => {}
+        }
+    }
+    let mut out = None;
+    walk(ty, &mut out);
+    out.filter(|key| !matches!(key, Type::Var(_)))
+        .map(|key| forget_type_ids(&key))
+}
+
+/// The same type with every resolved identity dropped, leaving the names.
+///
+/// A key read off a checker stamp carries the identities that checker
+/// resolved, and each backend resolves the same names in a table of its own.
+/// The key is consumed by name everywhere it goes — the operation's rendered
+/// signature, the boundary type spellings, the codec emitted beside the
+/// program's own types — so carrying one table's identities into another's
+/// lookup is how a dependency module's key type becomes an identity that
+/// table has never heard of.
+fn forget_type_ids(ty: &Type) -> Type {
+    match ty {
+        Type::Named { name, .. } => Type::Named {
+            id: None,
+            name: name.clone(),
+        },
+        Type::Result(ok, err) => Type::Result(
+            Box::new(forget_type_ids(ok)),
+            Box::new(forget_type_ids(err)),
+        ),
+        Type::Option(inner) => Type::Option(Box::new(forget_type_ids(inner))),
+        Type::List(inner) => Type::List(Box::new(forget_type_ids(inner))),
+        Type::Vector(inner) => Type::Vector(Box::new(forget_type_ids(inner))),
+        Type::Map(key, value) => Type::Map(
+            Box::new(forget_type_ids(key)),
+            Box::new(forget_type_ids(value)),
+        ),
+        Type::Tuple(items) => Type::Tuple(items.iter().map(forget_type_ids).collect()),
+        other => other.clone(),
+    }
+}
+
+fn is_wait_item(ty: &Type) -> bool {
+    matches!(ty, Type::Named { name, .. } if name == "Wait.Item" || name == "Item")
+}
+
+/// One capability operation with its type parameter replaced by the concrete
+/// type this program pinned it to.
+///
+/// Every backend that renders an operation's signature into its own types
+/// goes through here, so the generic contract is stated once and the concrete
+/// shapes are derived rather than repeated.
+pub fn instantiate_operation(
+    operation: &crate::capability::CapabilityOperation,
+    key: Option<&Type>,
+) -> crate::capability::CapabilityOperation {
+    if operation.type_params.is_empty() {
+        return operation.clone();
+    }
+    // A program that names no wait set keys its waits by whole numbers, which
+    // is what the contract meant before the key became a choice.
+    let key = key.cloned().unwrap_or(Type::Int);
+    let mut instantiated = operation.clone();
+    instantiated.params = operation
+        .params
+        .iter()
+        .map(|(name, ty)| (name.clone(), substitute_type_params(ty, &key)))
+        .collect();
+    instantiated.return_type = substitute_type_params(&operation.return_type, &key);
+    instantiated.type_params = Vec::new();
+    instantiated
+}
+
+fn substitute_type_params(ty: &Type, key: &Type) -> Type {
+    let go = |ty: &Type| substitute_type_params(ty, key);
+    match ty {
+        Type::Var(_) => key.clone(),
+        Type::Result(ok, err) => Type::Result(Box::new(go(ok)), Box::new(go(err))),
+        Type::Option(inner) => Type::Option(Box::new(go(inner))),
+        Type::List(inner) => Type::List(Box::new(go(inner))),
+        Type::Vector(inner) => Type::Vector(Box::new(go(inner))),
+        Type::Map(map_key, value) => Type::Map(Box::new(go(map_key)), Box::new(go(value))),
+        Type::Tuple(items) => Type::Tuple(items.iter().map(go).collect()),
+        Type::Fn(params, ret, effects) => Type::Fn(
+            params.iter().map(go).collect(),
+            Box::new(go(ret)),
+            effects.clone(),
+        ),
+        other => other.clone(),
     }
 }

@@ -1568,6 +1568,46 @@ impl TypeRegistry {
         None
     }
 
+    /// The type this module keys its wait sets by, read off the map slot the
+    /// wait set itself registered.
+    ///
+    /// `Wait.poll` takes a `Map<K, Wait.Item>` for any key a map accepts, and
+    /// the helpers that carry those keys out of the host are built per key
+    /// type, before any body is walked. One program keys one wait, which is
+    /// checked before codegen. `Int` is the default a wait set with nothing
+    /// in it takes, so a key the program actually chose outranks it, and two
+    /// such keys resolve to the smallest spelling so the emitted module stays
+    /// a function of its source.
+    pub(super) fn wait_set_key(&self) -> Option<String> {
+        let mut keys: Vec<&str> = self
+            .map_types
+            .keys()
+            .filter_map(|name| {
+                let inner = name.strip_prefix("Map<")?.strip_suffix(">")?;
+                let (key, value) = inner.rsplit_once(',')?;
+                (value.trim() == "Wait.Item").then_some(key.trim())
+            })
+            .collect();
+        keys.sort_unstable();
+        keys.iter()
+            .find(|key| **key != "Int")
+            .or_else(|| keys.first())
+            .map(|key| (*key).to_string())
+    }
+
+    /// The wait set, its keys, and the answer the wait gives back, spelled
+    /// for this module's key type. Every backend site that needs one of the
+    /// four asks here rather than writing `Int` into a string.
+    pub(super) fn wait_set_type_names(&self) -> Option<WaitSetTypeNames> {
+        let key = self.wait_set_key()?;
+        Some(WaitSetTypeNames {
+            set: format!("Map<{key},Wait.Item>"),
+            list: format!("List<{key}>"),
+            result: format!("Result<List<{key}>,String>"),
+            key,
+        })
+    }
+
     pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
         let normalized = normalize_compound(canonical);
         let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
@@ -3574,4 +3614,18 @@ mod byte_payload_tests {
             std::collections::BTreeSet::from(["Bytes.Bytes".to_string()])
         );
     }
+}
+
+/// The four type names one wait set is carried through on wasm-gc.
+#[derive(Debug, Clone)]
+pub(super) struct WaitSetTypeNames {
+    /// The key type as the program writes it, `Int` for a program that never
+    /// chose another.
+    pub(super) key: String,
+    /// `Map<K,Wait.Item>` — what the guest hands the host.
+    pub(super) set: String,
+    /// `List<K>` — the ready keys.
+    pub(super) list: String,
+    /// `Result<List<K>,String>` — what the wait answers.
+    pub(super) result: String,
 }

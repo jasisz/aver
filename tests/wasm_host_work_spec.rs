@@ -91,6 +91,9 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
         "work_jobs_record",
         "work_jobs_unit_task",
         "work_jobs_unit_result",
+        // A program that waits and binds no job kind: the adapter has to
+        // accept a module that declares none and still decode its wait set.
+        "wait_socket_only",
     ] {
         let fixture = repo_root().join("tests/fixtures").join(name);
         let output = bounded(
@@ -115,10 +118,16 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
             .arg(out.path().join("run_guide_example/main.wasm"))
             .arg(out.path().join("work_jobs_record/main.wasm"))
             .arg(out.path().join("work_jobs_unit_task/main.wasm"))
-            .arg(out.path().join("work_jobs_unit_result/main.wasm")),
+            .arg(out.path().join("work_jobs_unit_result/main.wasm"))
+            .arg(out.path().join("wait_socket_only/main.wasm")),
     );
     assert!(output.status.success(), "{}", format_output(&output));
     assert!(String::from_utf8_lossy(&output.stdout).contains("worker ABI passed"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("socket-only wait ABI passed"),
+        "{}",
+        format_output(&output)
+    );
     if major >= 24 {
         assert!(String::from_utf8_lossy(&output.stdout).contains("JSPI Work main passed"));
     }

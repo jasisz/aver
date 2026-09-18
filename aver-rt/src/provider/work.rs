@@ -78,21 +78,26 @@ enum WaitItem {
 fn wait_items(
     operation: &str,
     value: &ProviderValue,
-) -> Result<Vec<(crate::AverInt, WaitItem)>, ProviderFault> {
+) -> Result<Vec<(ProviderValue, WaitItem)>, ProviderFault> {
     let ProviderValue::Map(entries) = value else {
         return Err(ProviderFault::new(
             "invalid_arguments",
-            format!("{operation} expects a Map<Int, Wait.Item>"),
+            format!("{operation} expects a Map<K, Wait.Item>"),
         ));
     };
     let mut items = Vec::with_capacity(entries.len());
     for (key, item) in entries {
-        let ProviderValue::Int(key) = key else {
+        // The key is whatever the caller keyed its map by. This provider
+        // correlates it and orders it and never reads it, so the only key it
+        // refuses is one whose identity it could not tell apart from another:
+        // a capability resource has no observable identity, so readiness for
+        // one would be delivered as readiness for the other.
+        if matches!(key, ProviderValue::Resource(_)) {
             return Err(ProviderFault::new(
                 "invalid_arguments",
-                format!("{operation} expects Int map keys"),
+                format!("{operation} cannot key a wait set by a capability resource"),
             ));
-        };
+        }
         let ProviderValue::Variant {
             type_name,
             variant,
@@ -215,7 +220,7 @@ impl CapabilityProvider for StandardWaitProvider {
             return Err(ProviderFault::new(
                 "invalid_arguments",
                 format!(
-                    "{operation} expects (Map<Int, Wait.Item> items, Int timeoutMs), got {} argument(s)",
+                    "{operation} expects (Map<K, Wait.Item> items, Int timeoutMs), got {} argument(s)",
                     args.len()
                 ),
             ));
@@ -340,10 +345,15 @@ impl CapabilityProvider for StandardWaitProvider {
             }
         }
 
-        ready.sort();
-        ready.dedup();
+        // The contract answers in the order the caller's own map puts its
+        // keys in, whatever that map is keyed by. Two passes over the jobs can
+        // report the same one twice, so equal keys collapse after the sort.
+        ready.sort_by(super::compare_map_keys);
+        ready.dedup_by(|left, right| {
+            super::compare_map_keys(left, right) == std::cmp::Ordering::Equal
+        });
         Ok(ProviderValue::ResultOk(Box::new(ProviderValue::List(
-            ready.into_iter().map(ProviderValue::Int).collect(),
+            ready,
         ))))
     }
 }

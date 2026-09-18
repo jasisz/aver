@@ -777,18 +777,39 @@ impl TypeChecker {
                 // List<T>. Falls back to standalone inference when
                 // the callee is unresolvable (eg. dotted-builtin without
                 // a fn_sig, or callable values).
-                let formal_params: Option<Vec<Type>> = match &fn_expr.node {
-                    Expr::Ident(name) => self.find_fn_sig(name).map(|s| s.params.clone()),
-                    _ => Self::callee_key(&fn_expr.node)
-                        .and_then(|key| self.find_fn_sig(&key).map(|s| s.params.clone())),
+                let callee_name: Option<String> = match &fn_expr.node {
+                    Expr::Ident(name) => Some(name.clone()),
+                    _ => Self::callee_key(&fn_expr.node),
                 };
+                let formal_params: Option<Vec<Type>> = callee_name
+                    .as_deref()
+                    .and_then(|name| self.find_fn_sig(name).map(|s| s.params.clone()));
+                // A capability operation generic over a key takes its default
+                // instantiation as the hint it offers an argument that says
+                // nothing of its own. The only such argument is an empty
+                // collection literal — `Wait.poll({}, 100)` is a wait on
+                // nothing at all — and whole numbers are what that call has
+                // always meant. A program that keys its waits by a type of
+                // its own and still wants an empty wait set annotates it.
+                let default_key = callee_name
+                    .as_deref()
+                    .and_then(|name| self.capabilities.operation(name))
+                    .filter(|operation| !operation.type_params.is_empty())
+                    .map(|_| Type::Int);
                 let arg_types: Vec<Type> = args
                     .iter()
                     .enumerate()
                     .map(|(i, a)| {
-                        let expected = formal_params
+                        let formal = formal_params.as_ref().and_then(|p| p.get(i));
+                        let instantiated = match (&default_key, formal) {
+                            (Some(key), Some(formal)) if !type_is_fully_concrete(formal) => {
+                                Some(Self::instantiate_all_vars(formal, key))
+                            }
+                            _ => None,
+                        };
+                        let expected = instantiated
                             .as_ref()
-                            .and_then(|p| p.get(i))
+                            .or(formal)
                             .filter(|t| type_is_fully_concrete(t));
                         self.infer_type_with_expected(a, expected)
                     })
@@ -824,6 +845,18 @@ impl TypeChecker {
                                         got
                                     ),
                                 );
+                            }
+                        }
+                        // A capability operation generic over a key that no
+                        // argument pinned: `Wait.poll({}, 100)` is a wait on
+                        // nothing at all, and nothing in it says what it
+                        // would have been waiting for. The key settles on
+                        // whole numbers, which is what that call has always
+                        // meant and what every program written before the
+                        // key was a choice means by it.
+                        if let Some(operation) = tc.capabilities.operation(display_name) {
+                            for param in &operation.type_params {
+                                subst.entry(param.clone()).or_insert(Type::Int);
                             }
                         }
                         Self::instantiate_type(&sig.ret, &subst)

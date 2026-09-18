@@ -1,0 +1,14 @@
+module Main
+    depends [Tcp, Wait, Watcher]
+    intent = "Keys its own wait by whole numbers while the module it depends on keys one by a type of its own, so the two keys meet only when the whole program is read at once."
+    exposes [main]
+    effects [Console.print, Tcp.listen, Tcp.closeListener, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Asks the watcher to wait, waits again on the same listener under a number, and reports both counts."
+    ! [Console.print, Tcp.listen, Tcp.closeListener, Wait.poll]
+    listener = Tcp.listen(0, 1)?
+    ready = Watcher.waited(listener)?
+    numbered = Wait.poll({1 => Wait.Item.Socket(Tcp.Socket.Listening(listener))}, 1)?
+    Console.print("ready {List.len(ready)} and {List.len(numbered)}")
+    Tcp.closeListener(listener)

@@ -26,6 +26,13 @@ impl Parser {
 
         let name = self.expect_user_identifier("Expected operation name", "operation names")?;
 
+        // `operation poll<K>(...)` — the one key type a builtin wait is
+        // generic over, written the way `Map<K, V>` already writes one.
+        // Only a capability this compiler ships may declare one; the rule
+        // that refuses it everywhere else lives in `src/capability.rs`,
+        // where the owning module is known.
+        let type_params = self.parse_operation_type_params(&name)?;
+
         self.expect_exact(&TokenKind::LParen)?;
         let params = self.parse_params()?;
         self.expect_exact(&TokenKind::RParen)?;
@@ -123,6 +130,7 @@ impl Parser {
         Ok(Operation {
             name,
             line,
+            type_params,
             params,
             return_type,
             desc,
@@ -131,6 +139,35 @@ impl Parser {
             hostile,
             unmodelled,
         })
+    }
+
+    /// `<K>` between an operation's name and its parameter list.
+    ///
+    /// One name, always. A second would need a rule for how the descriptor
+    /// orders them and a second instantiation site in every backend, and no
+    /// operation has ever wanted one, so the refusal says so rather than
+    /// letting a program discover it two backends later.
+    fn parse_operation_type_params(&mut self, name: &str) -> Result<Vec<String>, ParseError> {
+        if !self.check_exact(&TokenKind::Lt) {
+            return Ok(Vec::new());
+        }
+        self.advance(); // consume `<`
+        let param = self.expect_user_identifier(
+            &format!("Expected a type parameter name after 'operation {name}<'"),
+            "type parameter names",
+        )?;
+        if !crate::ast::name_is_type_like(&param) {
+            return Err(self.error(format!(
+                "Operation type parameter '{param}' must be written like a type name: a capital letter first."
+            )));
+        }
+        if self.check_exact(&TokenKind::Comma) {
+            return Err(self.error(format!(
+                "Operation '{name}' declares more than one type parameter. An operation is generic over at most one type."
+            )));
+        }
+        self.expect_exact(&TokenKind::Gt)?;
+        Ok(vec![param])
     }
 
     /// `resource ConnectionToken` — no fields, ever. An indented block

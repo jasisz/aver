@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createWorkHost } from "./host.mjs";
 
-const [parallelFile, guideFile, recordFile, unitFile, unitResultFile] = process.argv.slice(2);
+const [parallelFile, guideFile, recordFile, unitFile, unitResultFile, socketOnlyFile] = process.argv.slice(2);
 const host = await createWorkHost(await WebAssembly.compile(await readFile(parallelFile)), { maxJobs: 2 });
 try {
     const { exports: e } = host.instance, c = host.codec;
@@ -63,6 +63,55 @@ for (const [file, task, expected] of [
 }
 console.log("worker ABI passed");
 
+// A program that waits without running a job of its own. It declares no job
+// kind, so this host starts no worker, and its wait set is keyed by a type of
+// the program rather than by whole numbers: the host moves the keys through
+// the module's own ABI helpers and never reads one.
+{
+    let adapter = () => [];
+    const host = await createWorkHost(await WebAssembly.compile(await readFile(socketOnlyFile)), {
+        maxJobs: 1,
+        pollSockets: (entries, timeoutMs, signal) => adapter(entries, timeoutMs, signal),
+    });
+    try {
+        assert.deepEqual(host.manifest.kinds, [], "a socket-only program declares no job kind");
+        assert.equal(host.manifest.wait.set, "Map<Watch, Wait.Item>");
+        assert.equal(host.manifest.wait.key, "Watch");
+        assert.equal(host.manifest.wait.ready, "List<Watch>");
+        const keys = [{ variant: "Listener", fields: [] }, { variant: "Peer", fields: [7n] }];
+        const encoded = host.codec.encode(host.manifest.wait.ready, keys);
+        assert.deepEqual(host.codec.decode(host.manifest.wait.ready, encoded), keys);
+        const ready = await host.wait(
+            host.codec.encode(host.manifest.wait.set, []),
+            host.codec.encode("Int", 0n),
+        );
+        assert.deepEqual(host.codec.decode(host.manifest.wait.ready, ready), []);
+
+        // A wait over two sockets, handed over in the opposite order to the one
+        // the program's map puts them in. The answer is owed in the map's order,
+        // once per key, whatever order the socket adapter reported them in.
+        const listening = id => ({ variant: "Socket", fields: [{ variant: "Listening", fields: [{ id }] }] });
+        const set = host.codec.encode(host.manifest.wait.set, [
+            [{ variant: "Peer", fields: [7n] }, listening("tcp-listener-2")],
+            [{ variant: "Listener", fields: [] }, listening("tcp-listener-1")],
+        ]);
+        const order = host.codec.decode(host.manifest.wait.set, set).map(([key]) => key);
+        assert.deepEqual(order, keys, "a map orders a variant key by its constructor");
+        adapter = entries => [...entries].reverse().map(([key]) => key).concat(entries[0][0]);
+        const both = await host.wait(set, host.codec.encode("Int", 0n));
+        assert.deepEqual(host.codec.decode(host.manifest.wait.ready, both), order);
+
+        // A socket adapter that answers with a key it built rather than one it
+        // was handed cannot be placed in that order, and is refused by name.
+        adapter = () => [{ variant: "Listener", fields: [] }];
+        await assert.rejects(
+            host.wait(set, host.codec.encode("Int", 0n)),
+            /pollSockets answered with a key that is not one of the keys it was handed/,
+        );
+    } finally { await host.close(); }
+    console.log("socket-only wait ABI passed");
+}
+
 // JSPI lets a hand-written main yield inside Wait.poll. Both workers must
 // make progress while that Wasm stack is suspended, and cancel must stop
 // the infinite worker before the host closes.
@@ -72,9 +121,9 @@ if (typeof WebAssembly.Suspending === "function") {
     const wait_poll = new WebAssembly.Suspending(async (items, timeout) => {
         try {
             const ready = await jspi.wait(items, timeout);
-            return jspi.instance.exports.__rt_result_list_int_string_ok(ready);
+            return jspi.instance.exports.__rt_result_wait_keys_ok(ready);
         } catch (error) {
-            return jspi.instance.exports.__rt_result_list_int_string_err(jspi.codec.stringIn(String(error)));
+            return jspi.instance.exports.__rt_result_wait_keys_err(jspi.codec.stringIn(String(error)));
         }
     });
     jspi = await createWorkHost(await WebAssembly.compile(await readFile(parallelFile)), {

@@ -117,12 +117,18 @@ pub(super) fn collect_results_from_builtin_uses(
                     if let Some(operation) =
                         crate::stdlib::standard_capability_registry_ref().operation(dotted)
                     {
-                        collect_results_from_str(
-                            &operation.return_type.display(),
-                            out,
-                            order,
-                            next_idx,
-                        );
+                        // An operation generic over a key answers a different
+                        // concrete shape in every program, so its slots are
+                        // registered where the program's own key type is
+                        // known rather than read off the contract here.
+                        if operation.type_params.is_empty() {
+                            collect_results_from_str(
+                                &operation.return_type.display(),
+                                out,
+                                order,
+                                next_idx,
+                            );
+                        }
                         // The wasip2 byte reader reuses a text-shaped internal
                         // helper before adapting its carrier to Bytes.
                         if dotted == "Disk.readBytes" {

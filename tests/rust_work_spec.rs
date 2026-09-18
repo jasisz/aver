@@ -282,6 +282,30 @@ fn one_wait_set_over_a_socket_and_a_job_matches_the_vm() {
     assert_same_stdout("work_jobs_socket_wait");
 }
 
+/// The same wait, keyed by a type the program declares rather than by an
+/// arithmetic convention on whole numbers. `Wait.poll` takes a `Map<K,
+/// Wait.Item>` for any key a map accepts, so the generated crate has to name
+/// that key in the operation's signature and emit a provider codec for it
+/// beside the program's own types. The key crosses the provider boundary
+/// carried rather than read, and the ready key comes back as a value the
+/// program matches on.
+#[test]
+fn a_wait_keyed_by_a_program_type_matches_the_vm() {
+    assert_same_stdout("wait_keys_variant");
+}
+
+/// The same, with the key type declared in a dependency module and the wait
+/// set written at the call rather than bound to an annotated name. Nothing in
+/// the entry module names `Watch`, so the generated crate has to reach the
+/// type through the module that declares it and emit its codec there. The key
+/// travels by name: an identity resolved in one table is not an identity in
+/// another, and carrying one into the other is how this shape used to abort
+/// the compile.
+#[test]
+fn a_wait_key_declared_in_a_dependency_module_matches_the_vm() {
+    assert_same_stdout("wait_key_in_dep");
+}
+
 /// At `[work] max-jobs = 1` a second `begin` refuses instead of blocking the
 /// turn, with the engine's own message. The limit reaches the generated
 /// bootstrap from the manifest at compile time, so this also proves the
