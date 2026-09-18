@@ -227,10 +227,14 @@ pub(super) fn emit_module_with(
             "Wait.Item".to_string(),
             format!("List<{key}>"),
             format!("Result<List<{key}>,String>"),
-            // The decimal bridge an external host moves a full-ℤ `Int`
-            // through answers this, and a key can carry an `Int` inside it.
-            "Result<Int,String>".to_string(),
         ]);
+        // The decimal bridge an external host moves a full-ℤ `Int` through
+        // answers this, and a key can carry an `Int` inside it. Only a program
+        // an external host drives has that bridge, so a wasip2 component
+        // interns exactly the wait types it interned before.
+        if matches!(target, super::TargetMode::AverBridge) {
+            capability_boundary_types.push("Result<Int,String>".to_string());
+        }
     }
     let mut registry = TypeRegistry::build_with_handler_and_capabilities(
         items,
@@ -679,14 +683,17 @@ pub(super) fn emit_module_with(
     // not an i64 approximation. Give external hosts decimal bridges built
     // from the same parser/formatter ordinary Aver code uses.
     //
-    // A wait set is such a boundary too. Its keys are the program's own type,
-    // an external host decodes them through the same ABI helpers, and a key
-    // with an `Int` anywhere inside it needs these bridges. This is why
-    // admitting the keyed wait moves the certificate wall for a program that
-    // waits: two more helpers are registered, and every fn index after them
-    // shifts.
+    // A wait set an external host decodes is such a boundary too. Its keys are
+    // the program's own type, that host reads them through the same ABI
+    // helpers, and a key with an `Int` anywhere inside it needs these bridges.
+    // This is why admitting the keyed wait moves the certificate wall for a
+    // program that waits on this target: two more helpers are registered, and
+    // every fn index after them shifts. A wasip2 component reaches its wait
+    // through canonical ABI imports instead, so it registers neither bridge
+    // and keeps the helpers it had.
     if capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum())
-        || registry.wait_set_type_names().is_some()
+        || (matches!(target, super::TargetMode::AverBridge)
+            && registry.wait_set_type_names().is_some())
     {
         builtin_registry.register(BuiltinName::IntFromString);
         builtin_registry.register(BuiltinName::StringFromInt);
@@ -2274,6 +2281,7 @@ pub(super) fn emit_module_with(
         &registry,
         &effect_registry,
         packed_sequence_helpers.ops_for("Bytes").map(|ops| ops.pack),
+        matches!(target, super::TargetMode::AverBridge),
     )?;
     // The wait set an external host decodes carries the program's own key
     // type, and a key with an `Int` anywhere inside it needs the same
@@ -3300,7 +3308,10 @@ pub(super) fn emit_module_with(
     // occupied buckets by the same canonical key order `Map.keys` uses — so
     // the host reads the wait set through it and never has to state a key
     // order of its own. That is what lets the key be any type a map accepts.
-    if let Some(names) = registry.wait_set_type_names()
+    // Only an external host walks the set this way; a wasip2 component's
+    // lowering reads the set itself and carries no export for it.
+    if matches!(target, super::TargetMode::AverBridge)
+        && let Some(names) = registry.wait_set_type_names()
         && let Some(helpers) = map_helpers.kv_helpers(&names.set)
     {
         exports.export("__rt_wait_set_order", ExportKind::Func, helpers.order_slots);
@@ -8172,6 +8183,11 @@ fn allocate_result_pair(
     *next_fn_idx += 1;
 }
 
+/// `external_wait` is true for the target whose host is handed the wait set
+/// and builds the answer: it gets the wait's own family of factories, named
+/// from the program's key type. On every other target the wait reaches its
+/// host another way, and it answers through the socket poll's family exactly
+/// as it did before the key was a choice.
 fn allocate_factory_exports(
     types: &mut TypeSection,
     next_type_idx: &mut u32,
@@ -8179,6 +8195,7 @@ fn allocate_factory_exports(
     registry: &TypeRegistry,
     effect_registry: &EffectRegistry,
     bytes_pack_fn: Option<u32>,
+    external_wait: bool,
 ) -> Result<FactoryExports, WasmGcError> {
     let mut fx = FactoryExports {
         bytes_pack_fn,
@@ -8989,8 +9006,12 @@ fn allocate_factory_exports(
     }
 
     // The socket poll answers `Result<List<Int>, String>`: its keys are the
-    // caller's `Map<Int, Tcp.Socket>` keys and stay whole numbers.
-    if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
+    // caller's `Map<Int, Tcp.Socket>` keys and stay whole numbers. A wait no
+    // external host walks answers through this same family, which is where it
+    // answered before the key was a choice.
+    if effect_registry.iter().any(|e| e == EffectName::TcpPoll)
+        || (!external_wait && effect_registry.iter().any(|e| e == EffectName::WaitPoll))
+    {
         let result_idx =
             registry
                 .result_type_idx("Result<List<Int>,String>")
@@ -9052,7 +9073,7 @@ fn allocate_factory_exports(
     // key this program keys its waits by. `Int` is one such K, so a program
     // that never chose another gets a family whose bodies match the socket
     // poll's and whose names say which door they belong to.
-    if effect_registry.iter().any(|e| e == EffectName::WaitPoll) {
+    if external_wait && effect_registry.iter().any(|e| e == EffectName::WaitPoll) {
         let names = registry
             .wait_set_type_names()
             .ok_or(WasmGcError::Validation(
