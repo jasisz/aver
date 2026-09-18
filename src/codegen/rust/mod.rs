@@ -3245,9 +3245,10 @@ verify count
 /// to name `Wait.poll`'s concrete signature and to emit a provider codec for
 /// the key beside the program's own types.
 ///
-/// A program that keys two waits differently is refused at check time, so a
-/// disagreement here cannot reach a generated crate; this reads the same
-/// annotations and answers `None` when the program names no wait at all.
+/// A program that keys two waits differently is refused at the compile door,
+/// over this same whole program, so a disagreement here cannot reach a
+/// generated crate; this reads the same annotations and answers `None` when
+/// the program names no wait at all.
 pub(super) fn wait_key_type(ctx: &CodegenContext) -> Option<crate::ast::Type> {
     crate::capability::work::wait_key_type(&ctx.items, &ctx.modules)
 }

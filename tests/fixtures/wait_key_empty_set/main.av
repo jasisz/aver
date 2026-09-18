@@ -1,0 +1,18 @@
+module Main
+    depends [Tcp, Wait]
+    intent = "Keys its waits by a type of its own and writes one of them empty at the call, which is the turn with nothing to watch."
+    exposes [main]
+    effects [Console.print, Tcp.listen, Tcp.closeListener, Wait.poll]
+
+type Watch
+    Listener
+    Peer(Int)
+
+fn main() -> Result<Unit, String>
+    ? "Waits on a listener nobody calls, then waits on nothing at all, and reports both counts."
+    ! [Console.print, Tcp.listen, Tcp.closeListener, Wait.poll]
+    listener = Tcp.listen(0, 1)?
+    ready = Wait.poll({Watch.Listener => Wait.Item.Socket(Tcp.Socket.Listening(listener))}, 10)?
+    idle = Wait.poll({}, 10)?
+    Console.print("ready {List.len(ready)} and idle {List.len(idle)}")
+    Tcp.closeListener(listener)

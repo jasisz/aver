@@ -1588,10 +1588,25 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
 #[derive(Debug, Default, Clone)]
 pub struct WaitKeys {
     /// One entry per distinct key type, by the spelling it displays under.
-    pub keys: BTreeMap<String, Type>,
+    pub keys: BTreeMap<String, WaitKeyUse>,
     /// The source line of every `Wait.poll` call whose wait set has no key
     /// here.
     pub unresolved: Vec<usize>,
+}
+
+/// One key type, and what the program wrote to give it.
+#[derive(Debug, Clone)]
+pub struct WaitKeyUse {
+    /// The key type itself.
+    pub key: Type,
+    /// The line of the first wait this key was read from.
+    pub line: usize,
+    /// Every wait with this key was handed a set written empty at the call.
+    /// Such a set holds nothing, so it names no key of its own, and the key
+    /// it carries is the one the checker fills in for an argument that names
+    /// none. That is a different mistake from two kinds of wait meeting in
+    /// one program, and it has a different repair.
+    pub only_empty: bool,
 }
 
 /// Every wait this program performs, keyed by the type the type checker
@@ -1637,9 +1652,9 @@ pub fn wait_keys(
 ///
 /// A turn has one wait, and every backend carries the keys of that wait
 /// through one set of helpers built from this type. Two keys in one program
-/// are what [`wait_key_conflict`] refuses at check time, so the preference
-/// below only decides what a refused program renders as. `None` means the
-/// program never waits.
+/// are what [`wait_key_conflict`] refuses, at every compile door and at
+/// `check` for the file that holds both, so the preference below only decides
+/// what a refused program renders as. `None` means the program never waits.
 pub fn wait_key_type(
     items: &[crate::ast::TopLevel],
     modules: &[crate::codegen::ModuleInfo],
@@ -1648,29 +1663,54 @@ pub fn wait_key_type(
     found
         .keys
         .values()
-        .find(|key| **key != Type::Int)
+        .find(|used| used.key != Type::Int)
         .or_else(|| found.keys.values().next())
-        .cloned()
+        .map(|used| used.key.clone())
 }
 
 /// The message for a program that keys one wait one way and another wait
-/// another way, or `None` when it keys them all the same way.
+/// another way, and the line to report it on, or `None` when it keys them all
+/// the same way.
 ///
 /// The rule is not a backend limitation dressed up as a language rule: a turn
 /// has one wait, its keys are the program's own way of saying what it is
 /// waiting for, and two ways of saying that in one program is the collision
 /// the key type exists to remove.
+///
+/// A set written empty at the call is the one way to reach this message
+/// without meaning two kinds of wait: it holds nothing, so it names no key of
+/// its own and carries the one the checker fills in. The repair there is to
+/// write the type on that one set, so this says that instead and points at
+/// the empty set rather than at two kinds the program does not have.
 pub fn wait_key_conflict(
     items: &[crate::ast::TopLevel],
     modules: &[crate::codegen::ModuleInfo],
-) -> Option<String> {
-    let mut keys = wait_keys(items, modules).keys.into_values();
+) -> Option<(usize, String)> {
+    let found = wait_keys(items, modules);
+    let mut keys = found.keys.values();
     let first = keys.next()?;
     let second = keys.next()?;
-    Some(format!(
-        "this program keys one wait set by '{}' and another by '{}'. A turn has one wait, and its keys are how the program says what it is waiting for, so one program keys every wait the same way; name both kinds as constructors of one type and match on it",
-        first.display(),
-        second.display()
+    if found.keys.len() == 2
+        && let Some(empty) = found.keys.values().find(|used| used.only_empty)
+        && let Some(named) = found.keys.values().find(|used| !used.only_empty)
+    {
+        return Some((
+            empty.line,
+            format!(
+                "this wait set is written empty, so it names no key of its own and is read as keyed by '{}', while the rest of this program keys its waits by '{}'. Bind it to a name that writes the type down, `items: Map<{}, Wait.Item> = {{}}`, and hand that name to Wait.poll",
+                empty.key.display(),
+                named.key.display(),
+                named.key.display()
+            ),
+        ));
+    }
+    Some((
+        second.line,
+        format!(
+            "this program keys one wait set by '{}' and another by '{}'. A turn has one wait, and its keys are how the program says what it is waiting for, so one program keys every wait the same way; name both kinds as constructors of one type and match on it",
+            first.key.display(),
+            second.key.display()
+        ),
     ))
 }
 
@@ -1716,13 +1756,22 @@ fn note_wait_call(
     let Some(set) = args.first() else {
         return;
     };
+    let line = if expr.line > 0 { expr.line } else { fd.line };
+    // A set written empty at the call holds nothing. It names no key of its
+    // own, so the key read below is the one the checker fills in for an
+    // argument that names none, and saying which waits were written that way
+    // is what lets the refusal name the right repair.
+    let empty = matches!(&set.node, Expr::MapLiteral(entries) if entries.is_empty());
     match wait_set_key_of_argument(set, fd) {
         Some(key) => {
-            found.keys.entry(key.display()).or_insert(key);
+            let used = found.keys.entry(key.display()).or_insert(WaitKeyUse {
+                key,
+                line,
+                only_empty: empty,
+            });
+            used.only_empty = used.only_empty && empty;
         }
-        None => found
-            .unresolved
-            .push(if expr.line > 0 { expr.line } else { fd.line }),
+        None => found.unresolved.push(line),
     }
 }
 

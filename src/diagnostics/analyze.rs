@@ -284,8 +284,7 @@ fn analyze_prechecked_items_impl(
     // wait was handed, so this reads `transformed`, the program the checker
     // stamped, rather than the source as written.
     let wait_key = [
-        crate::capability::work::wait_key_conflict(transformed, &[])
-            .map(|message| (module_decl.map(|module| module.line).unwrap_or(1), message)),
+        crate::capability::work::wait_key_conflict(transformed, &[]),
         crate::capability::work::wait_key_undetermined(transformed, &[]),
     ];
     for (line, message) in wait_key.into_iter().flatten() {
