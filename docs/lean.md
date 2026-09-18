@@ -369,6 +369,8 @@ bool keys on. A robust CI budget pins all four together:
 `sorries == X`, `universal == true`, `universal_laws == N`,
 `bounded_laws == M`.
 
+The manifest (`proof_manifest.json` in the output directory) also carries a content hash per emitted declaration (`definitions`, keyed `Root.name`) and per law or obligation script (`scripts`, keyed by the same `fn.law` identities as the records). They exist for one question: when a law stops closing, did its own proof change, or did the model under it change? `aver proof file.av --check --compare-manifest <earlier proof_manifest.json>` answers it for every claim that did not close — a record at tier `failed`, a theorem that carries a `sorry`, or a claim the build located a hard error in — as `--compare-manifest: <claim>: script unchanged; changed definitions in its cone: <names>`, where the cone is every emitted declaration the claim's theorem opens, transitively. `--check-json` carries the same report as a `changed` object keyed by claim, each entry with `script` (`same`, `changed`, or `new` when the earlier manifest has no record of the claim) and `definitions` (the changed cone members, sorted). The comparison is diagnostic only: it never changes `passed`, the tiers or the exit code, and an earlier manifest that cannot be read or carries no hashes is a harness error (exit 2) rather than a report that says nothing changed. Hashes ignore comment lines and the line-numbered hypothesis names of recursive matchers, so adding a line above a definition does not change it.
+
 ### Step zero: which law failed?
 
 Start with a source-level explanation:

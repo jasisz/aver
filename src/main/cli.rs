@@ -807,6 +807,17 @@ pub(super) enum Commands {
         /// `--gate` against the committed baseline only.
         #[arg(long)]
         write_baseline: Option<String>,
+        /// Compare this run against an earlier `proof_manifest.json`. For
+        /// every claim that did not close, report whether the claim's own
+        /// proof script changed and which emitted definitions in its cone
+        /// (the declarations its theorem opens, transitively) changed since
+        /// that manifest, using the per-declaration hashes every manifest
+        /// now carries. Diagnostic only: never changes `passed` or the exit
+        /// code. `--check-json` adds a `changed` object keyed by claim. Implies
+        /// a verifier run; Lean-only. Exit 2 when the earlier manifest cannot
+        /// be read or carries no hashes.
+        #[arg(long, requires = "check_mode")]
+        compare_manifest: Option<String>,
     },
     /// Hand the bundled Aver agent material to your agent setup. The language
     /// guide and the toolchain guide ship inside the binary; this writes them

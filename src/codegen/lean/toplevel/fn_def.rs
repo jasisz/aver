@@ -551,17 +551,17 @@ pub(super) fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) 
         };
         super::expr::resolved_expr_contains_error_prop(expr)
     });
-    // The function's own law tactics use its match equations to retain
-    // constructor premises. Nonrecursive helpers need no termination evidence;
-    // their callers instead benefit from directly reducing the returned value.
-    let owns_law = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .any(|law| law.fn_id == fn_id);
+    // Named match equations exist for well-founded recursion only: the
+    // `decreasing_by` script needs `h_NN : ident = pattern` to relate the
+    // recursive argument to the matched constructor. A nonrecursive body is
+    // emitted the same way whether or not a law is stated about it, so
+    // writing a law never changes the definition it is about, and every proof
+    // that opens the function sees the same plain matcher (#1404). A rung that
+    // wants a constructor equation introduces one on the tactic side (`split`
+    // supplies `heq : ident = pattern` per branch on a plain `match`).
     let previous = ctx
         .lean_match_equations
-        .replace(ctx.recursive_fns.contains(&fn_id) || owns_law);
+        .replace(ctx.recursive_fns.contains(&fn_id));
     let emitted = if fn_returns_result_typed(rfd) && uses_error_prop {
         emit_fn_body_result_do(resolved_body, ctx)
     } else {
