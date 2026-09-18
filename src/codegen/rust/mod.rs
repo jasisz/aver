@@ -3262,6 +3262,11 @@ fn is_wait_key_type_def(
     type_def: &crate::ast::TypeDef,
     module: Option<&str>,
 ) -> bool {
+    // backend-link-stage: the wait key reaches this backend by its spelled
+    // name on purpose. The checker's stamp carries a `TypeId` of the checker's
+    // own table, which this backend's symbol table does not know, so
+    // `forget_type_ids` drops it before the key is handed over and the name is
+    // the only identity left to link the program's type by.
     let Some(crate::ast::Type::Named { name, .. }) = wait_key else {
         return false;
     };
