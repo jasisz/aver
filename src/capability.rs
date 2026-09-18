@@ -38,6 +38,162 @@ pub fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
     validation::canonicalize_type_names(ty, scope)
 }
 
+/// What the rest of the program declares, as a capability contract needs to
+/// see it: every module's plain data types under their canonical name, and
+/// every capability resource name the program mints.
+///
+/// A job kind — a capability of Work shape — may name a data type from a
+/// module it depends on, and that type's layout enters its `contract_hash`.
+/// Building the contract therefore needs the layouts, and refusing a type
+/// that hides a resource needs the resource names. An ordinary capability
+/// reads neither: it stays closed on its own declarations.
+#[derive(Debug, Clone, Default)]
+pub struct DependencyTypes {
+    types: BTreeMap<String, TypeDef>,
+    resources: BTreeSet<String>,
+    depends: BTreeMap<String, Vec<String>>,
+}
+
+impl DependencyTypes {
+    /// Record one parsed module under the canonical path its dependants use.
+    pub fn add_module(&mut self, scope: &str, items: &[TopLevel]) {
+        for item in items {
+            match item {
+                TopLevel::TypeDef(td) => {
+                    self.types
+                        .insert(format!("{scope}.{}", type_def_name(td)), td.clone());
+                }
+                TopLevel::Capability(CapabilityItem::Resource { name, .. }) => {
+                    self.resources.insert(format!("{scope}.{name}"));
+                }
+                TopLevel::Module(module) => {
+                    self.depends
+                        .insert(scope.to_string(), module.depends.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The canonical name of the type `spelling` refers to inside `owner`.
+    ///
+    /// A module may write an imported type bare, so a bare name is the
+    /// module's own declaration when it has one and otherwise the one
+    /// declaration of that name among the modules it depends on. A name that
+    /// two dependencies both declare resolves to neither: the layout would be
+    /// ambiguous, and an ambiguous layout is not one a hash may bind.
+    pub fn resolve(&self, owner: &str, spelling: &str) -> Option<String> {
+        if spelling.contains('.') {
+            return Some(spelling.to_string());
+        }
+        let own = format!("{owner}.{spelling}");
+        if self.types.contains_key(&own) || self.resources.contains(&own) {
+            return Some(own);
+        }
+        let mut found = None;
+        for dependency in self.depends.get(owner).into_iter().flatten() {
+            let candidate = format!("{dependency}.{spelling}");
+            if self.types.contains_key(&candidate) || self.resources.contains(&candidate) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(candidate);
+            }
+        }
+        found.or(Some(own))
+    }
+
+    /// The layout of one type, addressed the way every module but its own
+    /// writes it.
+    pub fn type_def(&self, canonical_name: &str) -> Option<&TypeDef> {
+        self.types.get(canonical_name)
+    }
+
+    /// Whether `canonical_name` is a capability resource: a handle the
+    /// provider owns, with no layout a contract could bind. The compiler
+    /// ships some of these itself, and a program's own capability modules
+    /// declare the rest.
+    pub fn is_resource(&self, canonical_name: &str) -> bool {
+        self.resources.contains(canonical_name)
+            || crate::stdlib::embedded_capability_resources().contains(canonical_name)
+    }
+
+    /// The resource `canonical_name` holds somewhere inside it, if any.
+    ///
+    /// A resource answers with itself. A type answers with the first resource
+    /// its layout reaches: `Tcp.Socket` is an ordinary sum whose every
+    /// variant carries a provider handle, and a job may no more carry it than
+    /// carry the handle directly.
+    pub fn resource_within(&self, canonical_name: &str) -> Option<String> {
+        self.resource_within_seen(canonical_name, &mut BTreeSet::new())
+    }
+
+    fn resource_within_seen(
+        &self,
+        canonical_name: &str,
+        visiting: &mut BTreeSet<String>,
+    ) -> Option<String> {
+        if self.is_resource(canonical_name) {
+            return Some(canonical_name.to_string());
+        }
+        if !visiting.insert(canonical_name.to_string()) {
+            return None;
+        }
+        let type_def = self.type_def(canonical_name)?;
+        let owner = canonical_name
+            .rsplit_once('.')
+            .map_or("", |(owner, _)| owner);
+        let sources: Vec<String> = match type_def {
+            TypeDef::Product { fields, .. } => fields.iter().map(|(_, ty)| ty.clone()).collect(),
+            TypeDef::Sum { variants, .. } => variants
+                .iter()
+                .flat_map(|variant| variant.fields.iter().cloned())
+                .collect(),
+        };
+        for source in sources {
+            let Ok(ty) = crate::types::parse_type_str_strict(&source) else {
+                continue;
+            };
+            let mut spelled = BTreeSet::new();
+            collect_spelled_names(&ty, &mut spelled);
+            for name in spelled {
+                let Some(canonical) = self.resolve(owner, &name) else {
+                    continue;
+                };
+                if let Some(found) = self.resource_within_seen(&canonical, visiting) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Every named type in `ty`, spelled exactly as its module wrote it.
+fn collect_spelled_names(ty: &Type, out: &mut BTreeSet<String>) {
+    match ty {
+        Type::Named { name, .. } => {
+            out.insert(name.clone());
+        }
+        Type::Result(left, right) | Type::Map(left, right) => {
+            collect_spelled_names(left, out);
+            collect_spelled_names(right, out);
+        }
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            collect_spelled_names(inner, out)
+        }
+        Type::Tuple(items) | Type::Fn(items, _, _) => {
+            for item in items {
+                collect_spelled_names(item, out);
+            }
+            if let Type::Fn(_, ret, _) = ty {
+                collect_spelled_names(ret, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilitySemantics {
     Pure,
@@ -139,6 +295,11 @@ pub struct CapabilityContract {
     pub model_descriptor: Vec<u8>,
     pub contract_hash: String,
     pub model_hash: String,
+    /// Canonical names of the dependency types this contract's boundary
+    /// named, layouts included. Empty for every capability but a job kind
+    /// that named one. A deployment pack reads it to learn which modules it
+    /// has to carry so the hash can be recomputed away from the project tree.
+    pub imported_types: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -302,9 +463,28 @@ impl CapabilityRegistry {
     /// Build contracts from one parsed module. `scope` is the canonical
     /// dependency path used at call sites; for an entry module it should be
     /// the declared module name.
+    ///
+    /// A module read on its own sees no other module, so a job kind that
+    /// names a dependency type needs [`Self::from_module_in_program`]. Every
+    /// caller that has the rest of the program in hand passes it.
     pub fn from_module(
         scope: &str,
         items: &[TopLevel],
+    ) -> (CapabilityRegistry, Vec<CapabilityError>) {
+        Self::from_module_in_program(scope, items, &DependencyTypes::default())
+    }
+
+    /// Build contracts from one parsed module, with the program's other
+    /// declarations available.
+    ///
+    /// The only thing `dependencies` changes is what a job kind may name at
+    /// its boundary. Every other contract is built identically, and a job
+    /// kind that names nothing from a dependency keeps the identity it
+    /// already published.
+    pub fn from_module_in_program(
+        scope: &str,
+        items: &[TopLevel],
+        dependencies: &DependencyTypes,
     ) -> (CapabilityRegistry, Vec<CapabilityError>) {
         let mut registry = CapabilityRegistry::default();
         let mut errors = Vec::new();
@@ -464,12 +644,32 @@ impl CapabilityRegistry {
             .collect();
         let mut locally_declared: BTreeSet<String> = type_defs.keys().cloned().collect();
         locally_declared.extend(resources.iter().cloned());
-        validate_boundary_type_ownership(
+        // Naming `Work.Job` at the boundary is what makes a capability a job
+        // kind, and it is the whole gate on this privilege: a job is answered
+        // by a function of the same program, so there is no host ABI for a
+        // dependency's layout to move behind `contract_hash`. `Work` and
+        // `Wait` read the handle rather than mint one, exactly as
+        // `work::job_kinds` excludes them.
+        let is_job_kind = scope != work::WORK_MODULE
+            && scope != work::WAIT_MODULE
+            && operations.iter().any(|operation| {
+                operation
+                    .params
+                    .iter()
+                    .any(|(_, ty)| work::mentions_job(ty, scope))
+                    || work::mentions_job(&operation.return_type, scope)
+            });
+        let imported_types = validate_boundary_type_ownership(
             scope,
             &operations,
             &locally_declared,
             &type_defs,
             &module.depends,
+            if is_job_kind {
+                Some(dependencies)
+            } else {
+                None
+            },
             &mut errors,
         );
         let reachable_types = reachable_type_defs(&operations, &type_defs);
@@ -489,6 +689,8 @@ impl CapabilityRegistry {
             &operations,
             &resources,
             &reachable_types,
+            &imported_types,
+            dependencies,
         );
         let contract_hash = hash_descriptor(&contract_descriptor);
         let model_descriptor =
@@ -500,6 +702,7 @@ impl CapabilityRegistry {
             model_hash: hash_descriptor(&model_descriptor),
             contract_descriptor,
             model_descriptor,
+            imported_types: imported_types.keys().cloned().collect(),
         };
 
         for name in resources {
@@ -516,6 +719,15 @@ impl CapabilityRegistry {
             registry
                 .boundary_types
                 .insert(format!("{scope}.{name}"), type_def.clone());
+        }
+        // A dependency layout the contract binds is a boundary type like any
+        // other: the VM's value conversion, the wasm-gc plan and the Rust
+        // codec generator all ask this table for it, under the canonical name
+        // the descriptor prints. Its owning module declares it, so the Rust
+        // backend emits the codec beside the struct the program already has
+        // rather than declaring a second one.
+        for (canonical, type_def) in imported_types {
+            registry.boundary_types.insert(canonical, type_def);
         }
         for operation in operations {
             registry

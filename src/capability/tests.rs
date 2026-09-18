@@ -485,3 +485,338 @@ fn nested_boundary_layouts_cannot_hide_foreign_types() {
         assert!(error_messages(&local).is_empty());
     }
 }
+
+// ── A job kind may name the program's own data types ────────────────────
+//
+// The author's boundary: only a capability of Work shape, only plain data,
+// only from a module it lists in `depends`, and the layout it names enters
+// `contract_hash` exactly as a layout declared inside the job module does.
+
+const LEDGER: &str = "\
+module Ledger
+    exposes [Request, Tx]
+
+record Request
+    source: String
+    limit: Int
+
+record Tx
+    txid: String
+    size: Int
+";
+
+const DECODE_JOB: &str = "\
+module DecodeJob
+    kind = capability
+    semantics = effectful
+    depends [Work, Ledger]
+    exposes [begin, take]
+
+operation begin(task: Ledger.Request) -> Result<Work.Job, String>
+    ? \"starts one decode job\"
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<List<Ledger.Tx>>, String>
+    ? \"collects one finished decode job\"
+    oracle = generativeOutput
+    replay = recorded
+";
+
+fn dependency_types(sources: &[(&str, &str)]) -> DependencyTypes {
+    let mut table = DependencyTypes::default();
+    for (module, source) in sources {
+        let items = crate::source::parse_source(source).expect("parse dependency module");
+        table.add_module(module, &items);
+    }
+    table
+}
+
+/// The same table a program's check builds, with the standard capability a
+/// fixture names already in it — `check.rs` records every loaded module, and
+/// the compiler's own modules load like any other.
+fn dependency_types_with_standard(sources: &[(&str, &str)], standard: &[&str]) -> DependencyTypes {
+    let mut table = dependency_types(sources);
+    for module in standard {
+        let embedded = crate::stdlib::find(module).expect("embedded module is present");
+        let items = crate::source::parse_source(embedded.source).expect("embedded parses");
+        table.add_module(module, &items);
+    }
+    table
+}
+
+fn job_kind_registry(source: &str, deps: &[(&str, &str)]) -> CapabilityRegistry {
+    let items = crate::source::parse_source(source).expect("parse job kind fixture");
+    let table = dependency_types(deps);
+    let (registry, errors) =
+        CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
+    assert!(errors.is_empty(), "job kind contract errors: {errors:?}");
+    registry
+}
+
+#[test]
+fn a_job_kind_may_name_a_plain_data_type_of_a_module_it_depends_on() {
+    let registry = job_kind_registry(DECODE_JOB, &[("Ledger", LEDGER)]);
+    let contract = registry.contract("DecodeJob").expect("job kind contract");
+    let fields = descriptor_fields(&contract.contract_descriptor);
+    let types: Vec<&str> = fields
+        .iter()
+        .filter(|(name, _)| name == "type")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    assert!(
+        types.contains(&"Ledger::Request = record{limit:Int,source:String}"),
+        "the task's dependency layout is not bound by contract_hash: {types:?}"
+    );
+    assert!(
+        types.contains(&"Ledger::Tx = record{size:Int,txid:String}"),
+        "the reply's dependency layout is not bound by contract_hash: {types:?}"
+    );
+    let ops: Vec<&str> = fields
+        .iter()
+        .filter(|(name, _)| name == "op")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    assert_eq!(
+        ops,
+        vec![
+            "begin(Ledger::Request) -> Result<Work::Job,String>",
+            "take(Work::Job) -> Result<Option<List<Ledger::Tx>>,String>",
+        ],
+        "operation rows do not name the dependency types canonically"
+    );
+    assert!(
+        registry.boundary_type("Ledger.Tx").is_some(),
+        "the dependency layout is not in the registry the runtimes read"
+    );
+}
+
+#[test]
+fn a_field_added_to_a_dependency_type_moves_the_job_kind_contract_hash() {
+    let before = job_kind_registry(DECODE_JOB, &[("Ledger", LEDGER)]);
+    let widened = LEDGER.replace("    size: Int\n", "    size: Int\n    fee: Int\n");
+    let after = job_kind_registry(DECODE_JOB, &[("Ledger", widened.as_str())]);
+    assert_ne!(
+        before.contract("DecodeJob").expect("before").contract_hash,
+        after.contract("DecodeJob").expect("after").contract_hash,
+        "a field added to a named dependency type must invalidate old recordings"
+    );
+}
+
+#[test]
+fn a_job_kind_may_not_name_a_type_of_a_module_it_does_not_depend_on() {
+    let source = DECODE_JOB.replace("depends [Work, Ledger]", "depends [Work]");
+    let items = crate::source::parse_source(&source).expect("parse job kind fixture");
+    let table = dependency_types(&[("Ledger", LEDGER)]);
+    let (_, errors) = CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("cross-module boundary type 'Ledger.Request'")),
+        "a dependency the module never declared must stay refused: {errors:?}"
+    );
+}
+
+#[test]
+fn an_ordinary_capability_may_not_name_a_type_of_a_module_it_depends_on() {
+    let source = "\
+module Ripemd
+    kind = capability
+    semantics = pure
+    depends [Ledger]
+    exposes [hash]
+
+operation hash(tx: Ledger.Tx) -> Ledger.Tx
+    ? \"hashes one transaction\"
+";
+    let items = crate::source::parse_source(source).expect("parse capability fixture");
+    let table = dependency_types(&[("Ledger", LEDGER)]);
+    let (_, errors) = CapabilityRegistry::from_module_in_program("Ripemd", &items, &table);
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    for position in ["parameter 0", "result"] {
+        assert!(
+            messages.iter().any(|message| message.contains(&format!(
+                "{position} uses cross-module boundary type 'Ledger.Tx'"
+            ))),
+            "a capability that is not a job kind must stay closed on its own types: {messages:?}"
+        );
+    }
+}
+
+#[test]
+fn a_dependency_type_carrying_a_resource_is_refused_by_field_and_type() {
+    let kept = "\
+module Tending
+    depends [Tcp]
+    exposes [Kept]
+
+record Kept
+    sockets: Map<Int, Tcp.Socket>
+    seen: Int
+";
+    let source = DECODE_JOB
+        .replace("depends [Work, Ledger]", "depends [Work, Tending]")
+        .replace("Ledger.Request", "Tending.Kept")
+        .replace("List<Ledger.Tx>", "Int");
+    let items = crate::source::parse_source(&source).expect("parse job kind fixture");
+    let table = dependency_types_with_standard(&[("Tending", kept)], &["Tcp"]);
+    let (_, errors) = CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("dependency type 'Tending.Kept'")
+                && message.contains("field 'sockets'")
+                && message.contains("has type 'Tcp.Socket'")
+                && message.contains("holds capability resource 'Tcp.")
+        }),
+        "the refusal must name the field and the type: {messages:?}"
+    );
+}
+
+#[test]
+fn a_dependency_field_that_is_a_resource_is_refused_by_name() {
+    let kept = "\
+module Tending
+    depends [Tcp]
+    exposes [Kept]
+
+record Kept
+    live: Tcp.Connection
+    seen: Int
+";
+    let source = DECODE_JOB
+        .replace("depends [Work, Ledger]", "depends [Work, Tending]")
+        .replace("Ledger.Request", "Tending.Kept")
+        .replace("List<Ledger.Tx>", "Int");
+    let items = crate::source::parse_source(&source).expect("parse job kind fixture");
+    let table = dependency_types(&[("Tending", kept)]);
+    let (_, errors) = CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("dependency type 'Tending.Kept'")
+                && message.contains("field 'live'")
+                && message.contains("carries capability resource 'Tcp.Connection'")
+        }),
+        "the refusal must name the field and the resource: {messages:?}"
+    );
+}
+
+#[test]
+fn a_dependency_variant_carrying_a_resource_is_refused_by_variant_and_type() {
+    let held = "\
+module Held
+    depends [Work]
+    exposes [Slot]
+
+type Slot
+    Empty
+    Running(Work.Job)
+";
+    let source = DECODE_JOB
+        .replace("depends [Work, Ledger]", "depends [Work, Held]")
+        .replace("Ledger.Request", "Held.Slot")
+        .replace("List<Ledger.Tx>", "Int");
+    let items = crate::source::parse_source(&source).expect("parse job kind fixture");
+    let table = dependency_types(&[("Held", held)]);
+    let (_, errors) = CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
+    let messages: Vec<&str> = errors.iter().map(|error| error.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("dependency type 'Held.Slot'")
+                && message.contains("variant 'Running'")
+                && message.contains("capability resource 'Work.Job'")
+        }),
+        "the refusal must name the variant and the type: {messages:?}"
+    );
+}
+
+#[test]
+fn a_dependency_type_the_program_does_not_declare_is_refused() {
+    let items = crate::source::parse_source(DECODE_JOB).expect("parse job kind fixture");
+    let table = dependency_types(&[(
+        "Ledger",
+        "module Ledger\n    exposes [Request]\n\nrecord Request\n    source: String\n    limit: Int\n",
+    )]);
+    let (_, errors) = CapabilityRegistry::from_module_in_program("DecodeJob", &items, &table);
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("names dependency type 'Ledger.Tx', which module 'Ledger' does not declare")),
+        "a name with no layout must not reach contract_hash: {errors:?}"
+    );
+}
+
+#[test]
+fn a_dependency_layout_nested_in_another_module_still_enters_the_hash() {
+    let chain = "module Chain\n    exposes [Meta]\n\nrecord Meta\n    height: Int\n";
+    let ledger = "\
+module Ledger
+    depends [Chain]
+    exposes [Request, Tx]
+
+record Request
+    source: String
+    limit: Int
+
+record Tx
+    txid: String
+    size: Int
+    meta: Chain.Meta
+";
+    let registry = job_kind_registry(DECODE_JOB, &[("Ledger", ledger), ("Chain", chain)]);
+    let contract = registry.contract("DecodeJob").expect("job kind contract");
+    let types: Vec<String> = descriptor_fields(&contract.contract_descriptor)
+        .into_iter()
+        .filter(|(name, _)| name == "type")
+        .map(|(_, value)| value)
+        .collect();
+    assert!(
+        types.contains(&"Chain::Meta = record{height:Int}".to_string()),
+        "a layout reached through a dependency type must be hashed too: {types:?}"
+    );
+    assert!(
+        types.contains(&"Ledger::Tx = record{meta:Chain::Meta,size:Int,txid:String}".to_string()),
+        "the dependency layout must name its own module's types canonically: {types:?}"
+    );
+}
+
+#[test]
+fn a_job_kind_naming_no_dependency_type_keeps_its_contract_hash() {
+    let source = "\
+module Scorer
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    exposes [begin, take, Task, Report]
+
+record Task
+    text: String
+    weight: Int
+
+record Report
+    score: Int
+    label: String
+
+operation begin(task: Task) -> Result<Work.Job, String>
+    ? \"starts one scoring job\"
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Report>, String>
+    ? \"collects one finished scoring job\"
+    oracle = generativeOutput
+    replay = recorded
+";
+    let items = crate::source::parse_source(source).expect("parse job kind fixture");
+    let (closed, closed_errors) = CapabilityRegistry::from_module("Scorer", &items);
+    assert!(closed_errors.is_empty(), "{closed_errors:?}");
+    let table = dependency_types(&[("Ledger", LEDGER)]);
+    let (open, open_errors) = CapabilityRegistry::from_module_in_program("Scorer", &items, &table);
+    assert!(open_errors.is_empty(), "{open_errors:?}");
+    assert_eq!(
+        closed.contract("Scorer").expect("closed").contract_hash,
+        open.contract("Scorer").expect("open").contract_hash,
+        "a job kind that names no dependency type must keep the identity it already published"
+    );
+}

@@ -1,0 +1,11 @@
+module Ledger
+    intent = "The transactions this program already describes, named by the job kind rather than mirrored inside it."
+    exposes [Request, Tx]
+
+record Request
+    source: String
+    limit: Int
+
+record Tx
+    txid: String
+    size: Int

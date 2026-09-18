@@ -422,3 +422,164 @@ fn a_hostile_wait_that_reports_everything_ready_leaves_the_law_standing() {
     );
     assert!(text.contains("0 failed"), "{}", format_output(&out));
 }
+
+#[test]
+fn a_job_kind_naming_its_dependencies_types_runs_and_records_under_their_own_names() {
+    // The job kind declares no mirror types at all: its task is
+    // `Ledger.Request` and its reply `List<Ledger.Tx>`, the records the
+    // program already had. The values cross the boundary under those names,
+    // which is what the recording has to say.
+    let out = aver("work_jobs_dependency_types", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("decoded block of 3 bytes"),
+        "{}",
+        format_output(&out)
+    );
+
+    let dir = scratch("dependency-types");
+    let recorded = aver(
+        "work_jobs_dependency_types",
+        &["run", "--record", dir.to_str().expect("utf-8 scratch path")],
+    );
+    assert!(recorded.status.success(), "{}", format_output(&recorded));
+    let recording = only_recording(&dir);
+    let ledger = std::fs::read_to_string(&recording).expect("recording reads");
+    assert!(
+        ledger.contains("\"type\": \"Ledger.Request\""),
+        "the task must record under the name its own module gives it:\n{ledger}"
+    );
+    assert!(
+        ledger.contains("\"type\": \"Ledger.Tx\""),
+        "the reply must record under the name its own module gives it:\n{ledger}"
+    );
+
+    let fixture_dir = fixture("work_jobs_dependency_types");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&fixture_dir);
+    command.arg("replay").arg(&recording);
+    command.arg("--check-args");
+    let replayed = command.output().expect("aver replays");
+    let text = combined(&replayed);
+    assert!(replayed.status.success(), "{}", format_output(&replayed));
+    assert!(
+        text.contains("decoded block of 3 bytes") && text.contains("Output:  MATCH"),
+        "{}",
+        format_output(&replayed)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_field_added_to_a_named_dependency_type_invalidates_the_recording() {
+    // The price of naming the program's own types: the job kind's identity
+    // now moves with their layout, so a recording made before the edit is
+    // refused rather than replayed against a program that no longer matches.
+    // The edit happens in a copy, because the fixture is shared.
+    let dir = scratch("dependency-types-drift");
+    let program = dir.join("program");
+    copy_fixture("work_jobs_dependency_types", &program);
+
+    let recordings = dir.join("recordings");
+    std::fs::create_dir_all(&recordings).expect("recording directory");
+    let mut record = Command::new(aver_bin());
+    record.current_dir(&program);
+    record.arg("run").arg("main.av");
+    record.arg("--module-root").arg(&program);
+    record
+        .arg("--record")
+        .arg(recordings.to_str().expect("utf-8 scratch path"));
+    let recorded = record.output().expect("aver records");
+    assert!(recorded.status.success(), "{}", format_output(&recorded));
+    let recording = only_recording(&recordings);
+
+    // Widen the named type and keep the program compiling, so the only thing
+    // that changed is the layout the job kind's contract binds.
+    let ledger_path = program.join("ledger.av");
+    let ledger = std::fs::read_to_string(&ledger_path).expect("ledger reads");
+    let widened = ledger.replace("    size: Int\n", "    size: Int\n    fee: Int\n");
+    assert_ne!(widened, ledger, "the rewrite must change the module");
+    std::fs::write(&ledger_path, widened).expect("ledger writes");
+    let node_path = program.join("node.av");
+    let node = std::fs::read_to_string(&node_path).expect("node reads");
+    let widened_node = node.replace(
+        "Ledger.Tx(txid = task.source, size = task.limit)",
+        "Ledger.Tx(txid = task.source, size = task.limit, fee = 0)",
+    );
+    assert_ne!(widened_node, node, "the rewrite must change the function");
+    std::fs::write(&node_path, widened_node).expect("node writes");
+
+    let mut replay = Command::new(aver_bin());
+    replay.current_dir(&program);
+    replay.arg("replay").arg(&recording);
+    let out = replay.output().expect("aver replays");
+    let text = combined(&out);
+    assert!(
+        text.contains("fail[replay-error]")
+            && text.contains("replay contract mismatch for 'DecodeJob'"),
+        "a recording made against the old layout must be refused by contract identity:\n{text}"
+    );
+    assert!(
+        !text.contains("Output:  MATCH"),
+        "the recording must not be served against the new layout:\n{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Copy one fixture into a scratch directory, so a test that edits a module
+/// cannot disturb a test running beside it.
+fn copy_fixture(name: &str, into: &Path) {
+    std::fs::create_dir_all(into).expect("fixture copy directory");
+    for entry in std::fs::read_dir(fixture(name)).expect("fixture directory") {
+        let entry = entry.expect("fixture entry");
+        if entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            std::fs::copy(entry.path(), into.join(entry.file_name())).expect("fixture file copies");
+        }
+    }
+}
+
+#[test]
+fn the_proof_model_declares_a_named_dependency_type_once_in_its_own_module() {
+    // A dependency layout is in the job kind's contract and in the registry
+    // the runtimes read, but the proof model already has it: it belongs to a
+    // module the export materialises. Emitting it a second time under a
+    // canonical boundary name would give the model two types where the
+    // program has one.
+    let dir = scratch("dependency-types-proof");
+    let out = dir.join("proof");
+    let fixture_dir = fixture("work_jobs_dependency_types");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&fixture_dir);
+    command.arg("proof").arg("main.av");
+    command.arg("--module-root").arg(&fixture_dir);
+    command.arg("-o").arg(&out);
+    let exported = command.output().expect("aver exports the proof project");
+    assert!(exported.status.success(), "{}", format_output(&exported));
+
+    let ledger = std::fs::read_to_string(out.join("Ledger.lean")).expect("Ledger.lean exists");
+    assert_eq!(
+        ledger.matches("structure Tx where").count(),
+        1,
+        "the dependency type belongs to its own module, once:\n{ledger}"
+    );
+    let mut elsewhere = Vec::new();
+    for entry in std::fs::read_dir(&out).expect("proof project directory") {
+        let entry = entry.expect("proof project entry");
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "lean")
+            || path.file_name().is_some_and(|name| name == "Ledger.lean")
+        {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("lean module reads");
+        if text.contains("structure Ledger.Tx where") || text.contains("structure Tx where") {
+            elsewhere.push(path.display().to_string());
+        }
+    }
+    assert!(
+        elsewhere.is_empty(),
+        "the dependency layout was declared again outside its own module: {elsewhere:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

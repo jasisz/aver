@@ -397,16 +397,27 @@ pub(super) fn validate_resource_map_keys(
 /// row without hashing that type's layout, so a dependency could mutate the
 /// provider ABI while contract_hash stayed fixed. Bare names are local only
 /// when a represented or resource declaration proves ownership; an imported bare
-/// alias must not be silently qualified into the capability's own scope. Fail
-/// closed until descriptors can bind cross-module identities transitively.
+/// alias must not be silently qualified into the capability's own scope.
+///
+/// A job kind is the one exception, and `imports` is what carries it: passed
+/// `Some(table)`, this admits a plain data type declared by a module the
+/// capability lists in `depends`, descends its layout, and returns every
+/// layout it reached so the descriptor can hash them. A job is answered by a
+/// function of the same program, so there is no host ABI behind which a
+/// dependency could move; recordings are what `contract_hash` guards there,
+/// and hashing the layouts is exactly what keeps them honest. Passed `None` —
+/// every ordinary capability — nothing changes: a capability must not depend
+/// on the user's program.
 pub(super) fn validate_boundary_type_ownership(
     scope: &str,
     operations: &[CapabilityOperation],
     locally_declared: &BTreeSet<String>,
     type_defs: &BTreeMap<String, &TypeDef>,
     dependencies: &[String],
+    imports: Option<&DependencyTypes>,
     errors: &mut Vec<CapabilityError>,
-) {
+) -> BTreeMap<String, TypeDef> {
+    let mut imported = BTreeMap::new();
     for operation in operations {
         let mut visitor = BoundaryTypeVisitor {
             scope,
@@ -414,6 +425,8 @@ pub(super) fn validate_boundary_type_ownership(
             locally_declared,
             type_defs,
             dependencies,
+            imports,
+            imported: &mut imported,
             seen: BTreeSet::new(),
             errors,
         };
@@ -422,6 +435,7 @@ pub(super) fn validate_boundary_type_ownership(
         }
         visitor.visit("result", &operation.return_type);
     }
+    imported
 }
 
 struct BoundaryTypeVisitor<'a, 'errors> {
@@ -430,8 +444,43 @@ struct BoundaryTypeVisitor<'a, 'errors> {
     locally_declared: &'a BTreeSet<String>,
     type_defs: &'a BTreeMap<String, &'a TypeDef>,
     dependencies: &'a [String],
+    imports: Option<&'a DependencyTypes>,
+    imported: &'a mut BTreeMap<String, TypeDef>,
     seen: BTreeSet<(String, String)>,
     errors: &'errors mut Vec<CapabilityError>,
+}
+
+/// Where a field that carries a resource sits, said the way its author wrote
+/// it: `field 'sockets'` in a record, `variant 'Running'` in a sum.
+fn field_position(type_def: &TypeDef, index: usize) -> String {
+    match type_def {
+        TypeDef::Product { fields, .. } => fields
+            .get(index)
+            .map(|(name, _)| format!("field '{name}'"))
+            .unwrap_or_else(|| format!("field {index}")),
+        TypeDef::Sum { variants, .. } => {
+            let mut seen = 0usize;
+            for variant in variants {
+                if index < seen + variant.fields.len() {
+                    return format!("variant '{}'", variant.name);
+                }
+                seen += variant.fields.len();
+            }
+            format!("field {index}")
+        }
+    }
+}
+
+/// The field source texts of one layout, in declaration order, so a refusal
+/// can point at the one that carries the resource.
+fn layout_fields(type_def: &TypeDef) -> Vec<&str> {
+    match type_def {
+        TypeDef::Product { fields, .. } => fields.iter().map(|(_, ty)| ty.as_str()).collect(),
+        TypeDef::Sum { variants, .. } => variants
+            .iter()
+            .flat_map(|variant| variant.fields.iter().map(String::as_str))
+            .collect(),
+    }
 }
 
 impl BoundaryTypeVisitor<'_, '_> {
@@ -494,6 +543,30 @@ impl BoundaryTypeVisitor<'_, '_> {
                         }
                     }
                 }
+                // A job kind may name a data type of a module it depends on.
+                // The owner has to be spelled out — a bare name still means
+                // this module, so nothing acquires the privilege by accident.
+                let dependency_owner =
+                    name.rsplit_once('.')
+                        .map(|(owner, _)| owner)
+                        .filter(|owner| {
+                            self.dependencies
+                                .iter()
+                                .any(|dependency| dependency == owner)
+                        });
+                let imports_from = self.imports.filter(|_| {
+                    !belongs_to_capability
+                        && !is_standard_bytes
+                        && !is_embedded_resource
+                        && dependency_owner.is_some()
+                });
+                if let Some(table) = imports_from {
+                    let owner = dependency_owner.unwrap_or_default().to_string();
+                    if self.seen.insert((position.to_string(), name.to_string())) {
+                        self.import_layout(position, &owner, name, table);
+                    }
+                    return;
+                }
                 if !belongs_to_capability
                     && !is_standard_bytes
                     && !is_embedded_resource
@@ -521,6 +594,147 @@ impl BoundaryTypeVisitor<'_, '_> {
                 }
                 if let Type::Fn(_, ret, _) = ty {
                     self.visit(position, ret);
+                }
+            }
+            Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => {}
+        }
+    }
+
+    /// Bind one dependency type into this contract: record its layout so the
+    /// descriptor hashes it, then walk that layout for anything a job cannot
+    /// carry off the turn.
+    fn import_layout(&mut self, position: &str, owner: &str, name: &str, table: &DependencyTypes) {
+        let Some(type_def) = table.type_def(name) else {
+            self.errors.push(CapabilityError::at(
+                self.operation.line,
+                format!(
+                    "operation '{}' {} names dependency type '{}', which module '{owner}' does not declare",
+                    self.operation.canonical_name, position, name
+                ),
+            ));
+            return;
+        };
+        if self
+            .imported
+            .insert(name.to_string(), type_def.clone())
+            .is_some()
+        {
+            return;
+        }
+        for (index, source) in layout_fields(type_def).into_iter().enumerate() {
+            let Ok(field) = crate::types::parse_type_str_strict(source) else {
+                continue;
+            };
+            self.visit_dependency_field(position, owner, name, type_def, index, &field, table);
+        }
+    }
+
+    /// One field of a dependency layout. Plain data descends; a resource, a
+    /// function or a name with no layout stops here, and the refusal says
+    /// which field it was.
+    #[allow(clippy::too_many_arguments)]
+    fn visit_dependency_field(
+        &mut self,
+        position: &str,
+        owner: &str,
+        holder: &str,
+        type_def: &TypeDef,
+        index: usize,
+        ty: &Type,
+        table: &DependencyTypes,
+    ) {
+        match ty {
+            Type::Named { name, .. } => {
+                if matches!(name.as_str(), "Bytes" | "Bytes.Bytes")
+                    || crate::stdlib::bare_stdlib_type_names().contains(name)
+                {
+                    return;
+                }
+                // A module may write an imported type bare, so the owner of a
+                // bare field type is whichever module declares it.
+                let Some(canonical) = table.resolve(owner, name) else {
+                    self.errors.push(CapabilityError::at(
+                        self.operation.line,
+                        format!(
+                            "operation '{}' {} names dependency type '{holder}', whose {} has type '{name}', which more than one module '{owner}' depends on declares; contract_hash can only bind a layout it can name",
+                            self.operation.canonical_name,
+                            position,
+                            field_position(type_def, index)
+                        ),
+                    ));
+                    return;
+                };
+                // A resource answers for itself; an ordinary type that holds
+                // one anywhere inside answers the same way, and the message
+                // names what the field carries rather than the handle buried
+                // under it. `Tcp.Socket` is a sum of provider handles, and a
+                // job may no more carry it than carry a handle directly.
+                if let Some(resource) = table.resource_within(&canonical) {
+                    let carries = if resource == canonical {
+                        format!("carries capability resource '{resource}'")
+                    } else {
+                        format!(
+                            "has type '{canonical}', which holds capability resource '{resource}'"
+                        )
+                    };
+                    self.errors.push(CapabilityError::at(
+                        self.operation.line,
+                        format!(
+                            "operation '{}' {} names dependency type '{holder}', whose {} {carries}; a job carries its task and its reply off the turn as plain data, so no type on a job boundary may hold a resource",
+                            self.operation.canonical_name,
+                            position,
+                            field_position(type_def, index)
+                        ),
+                    ));
+                    return;
+                }
+                let next_owner = canonical
+                    .rsplit_once('.')
+                    .map(|(owner, _)| owner.to_string())
+                    .unwrap_or_default();
+                if table.type_def(&canonical).is_none() {
+                    self.errors.push(CapabilityError::at(
+                        self.operation.line,
+                        format!(
+                            "operation '{}' {} names dependency type '{holder}', whose {} has type '{canonical}', which no module of this program declares; contract_hash can only bind a layout it can read",
+                            self.operation.canonical_name,
+                            position,
+                            field_position(type_def, index)
+                        ),
+                    ));
+                    return;
+                }
+                self.import_layout(position, &next_owner, &canonical, table);
+            }
+            Type::Fn(_, _, _) => {
+                self.errors.push(CapabilityError::at(
+                    self.operation.line,
+                    format!(
+                        "operation '{}' {} names dependency type '{holder}', whose {} is a function; a job carries its task and its reply off the turn as plain data, so no type on a job boundary may hold a function",
+                        self.operation.canonical_name,
+                        position,
+                        field_position(type_def, index)
+                    ),
+                ));
+            }
+            Type::Result(left, right) | Type::Map(left, right) => {
+                self.visit_dependency_field(position, owner, holder, type_def, index, left, table);
+                self.visit_dependency_field(position, owner, holder, type_def, index, right, table);
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.visit_dependency_field(position, owner, holder, type_def, index, inner, table);
+            }
+            Type::Tuple(items) => {
+                for item in items {
+                    self.visit_dependency_field(
+                        position, owner, holder, type_def, index, item, table,
+                    );
                 }
             }
             Type::Int
