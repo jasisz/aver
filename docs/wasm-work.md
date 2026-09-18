@@ -57,10 +57,14 @@ await host.runCoordinator();
 The adapter includes Console.print, Time.unixMs and cooperative stopping.
 Supply other synchronous imports through `options.imports`. A combined socket
 wait additionally needs `options.pollSockets(entries, timeoutMs, signal)`, which
-returns a promise of ready keys. Entries are `[BigInt key, decoded Wait.Item]`
-pairs; the AbortSignal cancels an outstanding poll when another wake wins.
-The callback must support a zero-timeout readiness probe. Its timeout uses
-milliseconds and its result keys are BigInts.
+returns a promise of ready keys. Entries are `[key, decoded Wait.Item]` pairs, and
+the key is whatever type the program keys its wait by: a whole number arrives as a
+BigInt, a key of the program's own type as its decoded value. The callback answers
+with keys taken out of the `entries` it was handed rather than keys it built itself,
+because the wait orders and dedups its answer by where each key sits in that list;
+a key from anywhere else is refused by name. The AbortSignal cancels an outstanding
+poll when another wake wins. The callback must support a zero-timeout readiness
+probe. Its timeout uses milliseconds.
 
 `host.stop()` requests cooperative coordinator stopping. `host.close()` stops
 workers and releases host resources. `runCoordinator()` closes its host on

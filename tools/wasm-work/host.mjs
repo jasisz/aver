@@ -172,11 +172,21 @@ export async function createWorkHost(module, options = {}) {
             // `codec.decode` of a Map walks `Map.keys`, so `entries` is
             // already in that order and a key's position in it is that order:
             // no comparison of keys happens here, which is what lets the key
-            // be a type this host has never seen.
+            // be a type this host has never seen. Every ready key is placed
+            // back in that list first, so the answer is ordered and deduped by
+            // position rather than by what a key compares or hashes as. A key
+            // that is not in the list is a `pollSockets` adapter answering
+            // with something other than the keys it was handed, which is
+            // refused rather than answered in an order the contract denies.
             if (ready.length || performance.now() >= deadline || stopping) {
-                const order = new Map(entries.map(([key], index) => [key, index]));
-                const seen = new Set(ready);
-                const answer = [...seen].sort((a, b) => order.get(a) - order.get(b));
+                const at = new Map(entries.map(([key], index) => [key, index]));
+                const positions = new Set();
+                for (const key of ready) {
+                    const index = at.get(key);
+                    if (index === undefined) throw new Error("Wait.poll: pollSockets answered with a key that is not one of the keys it was handed; answer with the key values out of the entries argument itself");
+                    positions.add(index);
+                }
+                const answer = [...positions].sort((a, b) => a - b).map(index => entries[index][0]);
                 return codec.encode(manifest.wait.ready, answer);
             }
         }

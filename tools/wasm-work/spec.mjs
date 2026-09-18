@@ -68,7 +68,11 @@ console.log("worker ABI passed");
 // the program rather than by whole numbers: the host moves the keys through
 // the module's own ABI helpers and never reads one.
 {
-    const host = await createWorkHost(await WebAssembly.compile(await readFile(socketOnlyFile)), { maxJobs: 1 });
+    let adapter = () => [];
+    const host = await createWorkHost(await WebAssembly.compile(await readFile(socketOnlyFile)), {
+        maxJobs: 1,
+        pollSockets: (entries, timeoutMs, signal) => adapter(entries, timeoutMs, signal),
+    });
     try {
         assert.deepEqual(host.manifest.kinds, [], "a socket-only program declares no job kind");
         assert.equal(host.manifest.wait.set, "Map<Watch, Wait.Item>");
@@ -82,6 +86,28 @@ console.log("worker ABI passed");
             host.codec.encode("Int", 0n),
         );
         assert.deepEqual(host.codec.decode(host.manifest.wait.ready, ready), []);
+
+        // A wait over two sockets, handed over in the opposite order to the one
+        // the program's map puts them in. The answer is owed in the map's order,
+        // once per key, whatever order the socket adapter reported them in.
+        const listening = id => ({ variant: "Socket", fields: [{ variant: "Listening", fields: [{ id }] }] });
+        const set = host.codec.encode(host.manifest.wait.set, [
+            [{ variant: "Peer", fields: [7n] }, listening("tcp-listener-2")],
+            [{ variant: "Listener", fields: [] }, listening("tcp-listener-1")],
+        ]);
+        const order = host.codec.decode(host.manifest.wait.set, set).map(([key]) => key);
+        assert.deepEqual(order, keys, "a map orders a variant key by its constructor");
+        adapter = entries => [...entries].reverse().map(([key]) => key).concat(entries[0][0]);
+        const both = await host.wait(set, host.codec.encode("Int", 0n));
+        assert.deepEqual(host.codec.decode(host.manifest.wait.ready, both), order);
+
+        // A socket adapter that answers with a key it built rather than one it
+        // was handed cannot be placed in that order, and is refused by name.
+        adapter = () => [{ variant: "Listener", fields: [] }];
+        await assert.rejects(
+            host.wait(set, host.codec.encode("Int", 0n)),
+            /pollSockets answered with a key that is not one of the keys it was handed/,
+        );
     } finally { await host.close(); }
     console.log("socket-only wait ABI passed");
 }
