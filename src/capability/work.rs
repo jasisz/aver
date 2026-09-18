@@ -194,6 +194,7 @@ impl WorkDiagnostic {
 }
 
 pub const WORK_SHAPE: &str = "work-shape";
+pub const WAIT_KEY: &str = "wait-key";
 pub const WORK_BINDING: &str = "work-binding";
 pub const ANSWER_SHAPE: &str = "answer-shape";
 pub const ANSWER_BINDING: &str = "answer-binding";
@@ -1579,5 +1580,232 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             "unexpected message: {}",
             errors[0].message
         );
+    }
+}
+
+/// The type one program keys its wait sets by.
+///
+/// `Wait.poll` takes a `Map<K, Wait.Item>` for any key a map accepts, and a
+/// program writes one concrete key type: a turn has one wait, and every
+/// backend carries the keys of that wait through one set of helpers. Reading
+/// the choice off the program's own type annotations is what lets a backend
+/// build those helpers before it walks a body.
+///
+/// `Int` is the answer for every program written before the key became a
+/// choice, because that is what those programs annotate, and it is also what
+/// the shipped `Wait` contract's own hostile profiles annotate. So a key a
+/// program actually chose outranks it here, and two such keys in one program
+/// are what [`wait_key_conflict`] refuses at check time. `None` means the
+/// program never names a wait set at all.
+pub fn wait_key_type(
+    items: &[crate::ast::TopLevel],
+    modules: &[crate::codegen::ModuleInfo],
+) -> Option<Type> {
+    let keys = wait_key_types(items, modules);
+    keys.values()
+        .find(|key| **key != Type::Int)
+        .or_else(|| keys.values().next())
+        .cloned()
+}
+
+/// The message for a program that keys one wait one way and another wait
+/// another way, or `None` when it keys them all the same way.
+///
+/// The rule is not a backend limitation dressed up as a language rule: a turn
+/// has one wait, its keys are the program's own way of saying what it is
+/// waiting for, and two ways of saying that in one program is the collision
+/// the key type exists to remove.
+pub fn wait_key_conflict(
+    items: &[crate::ast::TopLevel],
+    modules: &[crate::codegen::ModuleInfo],
+) -> Option<String> {
+    let keys = wait_key_types(items, modules);
+    let mut keys = keys.into_values();
+    let first = keys.next()?;
+    let second = keys.next()?;
+    Some(format!(
+        "this program keys one wait set by '{}' and another by '{}'. A turn has one wait, and its keys are how the program says what it is waiting for, so one program keys every wait the same way; name both kinds as constructors of one type and match on it",
+        first.display(),
+        second.display()
+    ))
+}
+
+fn wait_key_types(
+    items: &[crate::ast::TopLevel],
+    modules: &[crate::codegen::ModuleInfo],
+) -> BTreeMap<String, Type> {
+    let mut found: BTreeMap<String, Type> = BTreeMap::new();
+    let note = |annotation: &str, found: &mut BTreeMap<String, Type>| {
+        // The generic contract's own `Map<K, Wait.Item>` is the signature, not
+        // a choice a program made.
+        if let Some(key) = wait_set_key(annotation)
+            && !matches!(key, Type::Var(_))
+        {
+            found.entry(key.display()).or_insert(key);
+        }
+    };
+    for annotation in type_annotations_of_items(items) {
+        note(&annotation, &mut found);
+    }
+    for module in modules {
+        // A shipped capability's own source states the contract, not a
+        // program's choice: `Wait` writes the generic signature and writes its
+        // hostile profiles at one instantiation, and neither is a wait this
+        // program makes.
+        if crate::stdlib::has_shipped_provider(&module.prefix) {
+            continue;
+        }
+        for fd in &module.fn_defs {
+            for annotation in type_annotations_of_fn(fd) {
+                note(&annotation, &mut found);
+            }
+        }
+        for type_def in &module.type_defs {
+            for annotation in type_annotations_of_type_def(type_def) {
+                note(&annotation, &mut found);
+            }
+        }
+        for item in &module.capability_items {
+            for annotation in type_annotations_of_capability_item(item) {
+                note(&annotation, &mut found);
+            }
+        }
+    }
+    found
+}
+
+/// The key of a `Map<K, Wait.Item>` written anywhere inside `annotation`.
+fn wait_set_key(annotation: &str) -> Option<Type> {
+    fn walk(ty: &Type, out: &mut Option<Type>) {
+        match ty {
+            Type::Map(key, value) if is_wait_item(value) => *out = Some((**key).clone()),
+            Type::Map(key, value) => {
+                walk(key, out);
+                walk(value, out);
+            }
+            Type::Result(left, right) => {
+                walk(left, out);
+                walk(right, out);
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => walk(inner, out),
+            Type::Tuple(items) => {
+                for item in items {
+                    walk(item, out);
+                }
+            }
+            Type::Fn(params, ret, _) => {
+                for param in params {
+                    walk(param, out);
+                }
+                walk(ret, out);
+            }
+            _ => {}
+        }
+    }
+    let ty = crate::types::parse_type_str_strict(annotation).ok()?;
+    let mut out = None;
+    walk(&ty, &mut out);
+    out
+}
+
+fn is_wait_item(ty: &Type) -> bool {
+    matches!(ty, Type::Named { name, .. } if name == "Wait.Item" || name == "Item")
+}
+
+/// Every type the source of these items writes down: function parameters and
+/// results, the fields of declared types, capability operation boundaries,
+/// and annotated bindings inside bodies.
+fn type_annotations_of_items(items: &[crate::ast::TopLevel]) -> Vec<String> {
+    use crate::ast::TopLevel;
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            TopLevel::FnDef(fd) => out.extend(type_annotations_of_fn(fd)),
+            TopLevel::TypeDef(type_def) => out.extend(type_annotations_of_type_def(type_def)),
+            TopLevel::Capability(item) => out.extend(type_annotations_of_capability_item(item)),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn type_annotations_of_fn(fd: &crate::ast::FnDef) -> Vec<String> {
+    use crate::ast::Stmt;
+    let mut out: Vec<String> = fd.params.iter().map(|(_, ty)| ty.clone()).collect();
+    out.push(fd.return_type.clone());
+    for stmt in fd.body.stmts() {
+        if let Stmt::Binding(_, Some(annotation), _) = stmt {
+            out.push(annotation.clone());
+        }
+    }
+    out
+}
+
+fn type_annotations_of_type_def(type_def: &crate::ast::TypeDef) -> Vec<String> {
+    use crate::ast::TypeDef;
+    match type_def {
+        TypeDef::Product { fields, .. } => fields.iter().map(|(_, ty)| ty.clone()).collect(),
+        TypeDef::Sum { variants, .. } => variants
+            .iter()
+            .flat_map(|variant| variant.fields.iter().cloned())
+            .collect(),
+    }
+}
+
+fn type_annotations_of_capability_item(item: &crate::ast::CapabilityItem) -> Vec<String> {
+    use crate::ast::CapabilityItem;
+    match item {
+        CapabilityItem::Operation(operation) => {
+            let mut out: Vec<String> = operation.params.iter().map(|(_, ty)| ty.clone()).collect();
+            out.push(operation.return_type.clone());
+            out
+        }
+        CapabilityItem::Resource { .. } => Vec::new(),
+    }
+}
+
+/// One capability operation with its type parameter replaced by the concrete
+/// type this program pinned it to.
+///
+/// Every backend that renders an operation's signature into its own types
+/// goes through here, so the generic contract is stated once and the concrete
+/// shapes are derived rather than repeated.
+pub fn instantiate_operation(
+    operation: &crate::capability::CapabilityOperation,
+    key: Option<&Type>,
+) -> crate::capability::CapabilityOperation {
+    if operation.type_params.is_empty() {
+        return operation.clone();
+    }
+    // A program that names no wait set keys its waits by whole numbers, which
+    // is what the contract meant before the key became a choice.
+    let key = key.cloned().unwrap_or(Type::Int);
+    let mut instantiated = operation.clone();
+    instantiated.params = operation
+        .params
+        .iter()
+        .map(|(name, ty)| (name.clone(), substitute_type_params(ty, &key)))
+        .collect();
+    instantiated.return_type = substitute_type_params(&operation.return_type, &key);
+    instantiated.type_params = Vec::new();
+    instantiated
+}
+
+fn substitute_type_params(ty: &Type, key: &Type) -> Type {
+    let go = |ty: &Type| substitute_type_params(ty, key);
+    match ty {
+        Type::Var(_) => key.clone(),
+        Type::Result(ok, err) => Type::Result(Box::new(go(ok)), Box::new(go(err))),
+        Type::Option(inner) => Type::Option(Box::new(go(inner))),
+        Type::List(inner) => Type::List(Box::new(go(inner))),
+        Type::Vector(inner) => Type::Vector(Box::new(go(inner))),
+        Type::Map(map_key, value) => Type::Map(Box::new(go(map_key)), Box::new(go(value))),
+        Type::Tuple(items) => Type::Tuple(items.iter().map(go).collect()),
+        Type::Fn(params, ret, effects) => Type::Fn(
+            params.iter().map(go).collect(),
+            Box::new(go(ret)),
+            effects.clone(),
+        ),
+        other => other.clone(),
     }
 }

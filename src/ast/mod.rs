@@ -736,6 +736,11 @@ impl CapabilityItem {
 pub struct Operation {
     pub name: String,
     pub line: usize,
+    /// `operation poll<K>(...)` — the key type one builtin operation is
+    /// generic over, the way `Map` is generic over its key. Empty for every
+    /// ordinary operation, and only a capability this compiler ships may
+    /// declare one: a program writes concrete types.
+    pub type_params: Vec<String>,
     pub params: Vec<(String, String)>,
     pub return_type: String,
     pub desc: Option<String>,

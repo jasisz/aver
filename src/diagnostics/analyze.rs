@@ -277,6 +277,21 @@ fn analyze_prechecked_items_impl(
     // name: every static front door (`aver check`, `aver audit`, the LSP and
     // the playground) reaches the program through this analysis.
     let module_decl = crate::visibility::module_decl(items);
+    // One program keys every wait the same way: a turn has one wait, the key
+    // is how that program says what it is waiting for, and the keys travel
+    // out of every backend through one set of helpers built from that type.
+    if let Some(message) = crate::capability::work::wait_key_conflict(items, &[]) {
+        diagnostics.push(work_diagnostic(
+            &crate::capability::work::WorkDiagnostic {
+                slug: crate::capability::work::WAIT_KEY,
+                severity: crate::capability::work::WorkSeverity::Error,
+                message,
+            },
+            module_decl.map(|module| module.line).unwrap_or(1),
+            &source_index,
+            &options.file_label,
+        ));
+    }
     for finding in crate::capability::work::gate(
         &tc_result.capabilities,
         project_provider_manifest(options).as_ref(),

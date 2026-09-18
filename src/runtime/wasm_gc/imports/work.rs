@@ -4,11 +4,11 @@
 //! their original recording hooks and immediate job readiness.
 
 use super::super::RunWasmGcHost;
-use super::factories::{host_result_err_list_int, host_result_ok_list_int_refs};
+use super::factories::{host_wait_result_err, host_wait_result_ok};
 use super::replay_glue::{json_ok, record_effect_if_recording, try_replay};
 use super::tcp::{
     PollEntry, decode_guest_int, decode_wait_entries, guest_int_json, job_handle_id,
-    json_capability_resource, poll_map_json, replay_poll_result,
+    json_capability_resource, poll_map_json,
 };
 
 pub(super) fn dispatch(
@@ -27,9 +27,19 @@ pub(super) fn dispatch(
                 .ok_or_else(|| wasmtime::Error::msg("Wait.poll: missing timeoutMs"))?;
             let timeout =
                 decode_guest_int(caller, timeout, "Wait.poll: malformed timeout carrier")?;
-            let args = vec![poll_map_json(&entries), guest_int_json(&timeout)];
+            // A wait set is the largest argument any door renders, and a key
+            // this host cannot read refuses the render outright, so a run
+            // that records nothing never asks for one.
+            let args = if super::replay_glue::replay_is_active(caller) {
+                vec![
+                    poll_map_json(&entries, "Wait.poll")?,
+                    guest_int_json(&timeout),
+                ]
+            } else {
+                Vec::new()
+            };
             if let Some(cached) = try_replay(caller, "Wait.poll", args.clone())? {
-                let result = replay_poll_result(caller, &cached, &entries)?;
+                let result = super::tcp::replay_wait_result(caller, &cached, &entries)?;
                 results[0] = Val::AnyRef(result);
                 return Ok(true);
             }
@@ -37,17 +47,18 @@ pub(super) fn dispatch(
             let (result_ref, outcome) = match wait(caller, &entries, &timeout)? {
                 Ok(ready) => {
                     let refs = ready.iter().map(|entry| entry.key_ref).collect::<Vec<_>>();
-                    let json = ready
-                        .iter()
-                        .map(|entry| entry.key_json.clone())
-                        .collect::<Vec<_>>();
+                    let json = if super::replay_glue::replay_is_active(caller) {
+                        super::tcp::recorded_keys(&ready, "Wait.poll")?
+                    } else {
+                        Vec::new()
+                    };
                     (
-                        host_result_ok_list_int_refs(caller, &refs)?,
+                        host_wait_result_ok(caller, &refs)?,
                         json_ok(aver::replay::JsonValue::Array(json)),
                     )
                 }
                 Err(error) => (
-                    host_result_err_list_int(caller, &error)?,
+                    host_wait_result_err(caller, &error)?,
                     super::replay_glue::json_err(&error),
                 ),
             };
@@ -185,8 +196,11 @@ fn wait<'entries>(
             Err(error) => return Ok(Err(error)),
         }
     }
-    ready.sort_by(|left, right| left.numeric.cmp(&right.numeric));
-    ready.dedup_by(|left, right| left.numeric == right.numeric);
+    // The entries came off the map in its own key order, so the wait answers
+    // in it by sorting on where each entry sat. Two passes over the jobs can
+    // name the same entry twice; the same position collapses them.
+    ready.sort_by_key(|entry| entry.order);
+    ready.dedup_by_key(|entry| entry.order);
     Ok(Ok(ready))
 }
 
@@ -252,8 +266,8 @@ fn wait_host<'a>(
             }));
         }
         if !ready.is_empty() || Instant::now() >= deadline {
-            ready.sort_by(|left, right| left.numeric.cmp(&right.numeric));
-            ready.dedup_by(|left, right| left.numeric == right.numeric);
+            ready.sort_by_key(|entry| entry.order);
+            ready.dedup_by_key(|entry| entry.order);
             return Ok(ready);
         }
         if handles.is_empty() {

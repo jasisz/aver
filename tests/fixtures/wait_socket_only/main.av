@@ -1,0 +1,25 @@
+module Main
+    depends [Tcp, Wait]
+    intent = "Waits on one socket and binds no job kind at all, so an external host has to decode a wait set from a module that runs no worker."
+    exposes [main]
+    effects [Console.print, Tcp.listen, Tcp.closeListener, Wait.poll]
+
+type Watch
+    Listener
+    Peer(Int)
+
+fn main() -> Result<Unit, String>
+    ? "Waits on a listener nobody calls until the timeout, and reports that nothing became ready."
+    ! [Console.print, Tcp.listen, Tcp.closeListener, Wait.poll]
+    listener = Tcp.listen(0, 1)?
+    items: Map<Watch, Wait.Item> = {Watch.Listener => Wait.Item.Socket(Tcp.Socket.Listening(listener))}
+    ready = Wait.poll(items, 10)?
+    reported(ready)?
+    Tcp.closeListener(listener)
+
+fn reported(ready: List<Watch>) -> Result<Unit, String>
+    ? "A listener nobody called is not ready, so the wait names nothing."
+    ! [Console.print]
+    match ready
+        [] -> Result.Ok(Console.print("waited alone"))
+        [_, ..rest] -> Result.Err("wait: the listener nobody called was reported ready, and {List.len(rest)} more")

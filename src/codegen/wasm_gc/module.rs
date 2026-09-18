@@ -204,11 +204,22 @@ pub(super) fn emit_module_with(
             .iter()
             .any(|effect| effect.node == crate::capability::work::WAIT_POLL)
     }) {
+        // The key is whatever this program keys its waits by, and `Int` for a
+        // program that never chose another. Everything downstream — the
+        // import's parameter type, the factories the host answers through,
+        // the ABI helpers an external host walks the set with — is named from
+        // this one reading.
+        let key = crate::capability::work::wait_key_type(items, &[])
+            .unwrap_or(crate::ast::Type::Int)
+            .display();
         capability_boundary_types.extend([
-            "Map<Int,Wait.Item>".to_string(),
+            format!("Map<{key},Wait.Item>"),
             "Wait.Item".to_string(),
-            "List<Int>".to_string(),
-            "Result<List<Int>,String>".to_string(),
+            format!("List<{key}>"),
+            format!("Result<List<{key}>,String>"),
+            // The decimal bridge an external host moves a full-ℤ `Int`
+            // through answers this, and a key can carry an `Int` inside it.
+            "Result<Int,String>".to_string(),
         ]);
     }
     let mut registry = TypeRegistry::build_with_handler_and_capabilities(
@@ -657,7 +668,16 @@ pub(super) fn emit_module_with(
     // A custom capability boundary carrying `Int` exposes the full ℤ value,
     // not an i64 approximation. Give external hosts decimal bridges built
     // from the same parser/formatter ordinary Aver code uses.
-    if capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum()) {
+    //
+    // A wait set is such a boundary too. Its keys are the program's own type,
+    // an external host decodes them through the same ABI helpers, and a key
+    // with an `Int` anywhere inside it needs these bridges. This is why
+    // admitting the keyed wait moves the certificate wall for a program that
+    // waits: two more helpers are registered, and every fn index after them
+    // shifts.
+    if capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum())
+        || registry.wait_set_type_names().is_some()
+    {
         builtin_registry.register(BuiltinName::IntFromString);
         builtin_registry.register(BuiltinName::StringFromInt);
     }
@@ -2245,9 +2265,14 @@ pub(super) fn emit_module_with(
         &effect_registry,
         packed_sequence_helpers.ops_for("Bytes").map(|ops| ops.pack),
     )?;
-    let capability_int_abi = capability_wasm_gc_plan
-        .filter(|plan| plan.force_bignum())
-        .map(|_| {
+    // The wait set an external host decodes carries the program's own key
+    // type, and a key with an `Int` anywhere inside it needs the same
+    // full-ℤ bridges a capability boundary needs. A program that waits has
+    // that boundary whether or not it declares a capability of its own.
+    let capability_int_needed = capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum())
+        || registry.wait_set_type_names().is_some();
+    let capability_int_abi = capability_int_needed
+        .then(|| {
             Ok(super::capability_abi::IntAbiHelpers {
                 from_i64: registry.aint_from_i64_fn_idx.ok_or_else(|| {
                     WasmGcError::Validation("capability Int ABI lacks from-i64 bridge".into())
@@ -3251,6 +3276,16 @@ pub(super) fn emit_module_with(
     // `run` export when binding the metadata-declared component
     // surface to the core module.
     let mut exports = ExportSection::new();
+    // The one wait of a turn answers in the order its own map puts its keys
+    // in. The map already knows that order — `order_slots` heapsorts its
+    // occupied buckets by the same canonical key order `Map.keys` uses — so
+    // the host reads the wait set through it and never has to state a key
+    // order of its own. That is what lets the key be any type a map accepts.
+    if let Some(names) = registry.wait_set_type_names()
+        && let Some(helpers) = map_helpers.kv_helpers(&names.set)
+    {
+        exports.export("__rt_wait_set_order", ExportKind::Func, helpers.order_slots);
+    }
     let start_export_name: &str = match (target, proxy_mode) {
         (super::TargetMode::AverBridge, _) => "_start",
         (super::TargetMode::Wasip2, false) => "wasi:cli/run@0.2.4#run",
@@ -6064,7 +6099,15 @@ pub(super) fn emit_module_with(
         module.section(&names);
     }
 
-    if work_imports.count() > 0 {
+    // The descriptor is what an external host reads to move values in and out
+    // of this module: the job kinds it may submit, and the types its wait set
+    // is built from. A program that waits without running any job of its own
+    // still needs the second half — the host cannot decode a wait set without
+    // it — so the descriptor is emitted whenever either door exists, and a
+    // program with no job kinds simply lists none.
+    let waits = matches!(target, super::TargetMode::AverBridge)
+        && effect_registry.iter().any(|e| e == EffectName::WaitPoll);
+    if work_imports.count() > 0 || waits {
         module.section(&wasm_encoder::CustomSection {
             name: std::borrow::Cow::Borrowed("aver:work/v1"),
             data: std::borrow::Cow::Owned(super::work_manifest::render(job_kinds, &registry)?),
@@ -7917,6 +7960,20 @@ struct FactoryExports {
     result_bytes_string_err: Option<FactorySlot>,
     list_int_cons: Option<FactorySlot>,
     list_int_nil: Option<FactorySlot>,
+    /// `Wait.poll` host/replay builders, over the key type this program keys
+    /// its waits by. They are a separate family from the `List<Int>` pair
+    /// above because the socket poll stays keyed by whole numbers while the
+    /// wait is keyed by whatever the program chose; when the program chose
+    /// `Int` the two families have identical bodies and different names.
+    wait_keys_cons: Option<FactorySlot>,
+    wait_keys_nil: Option<FactorySlot>,
+    /// Read the key in one bucket of the wait set. A primitive key travels
+    /// boxed inside the map and a key of the program's own type does not, so
+    /// the guest does the reading and the host asks for a bucket, whatever
+    /// the key's shape.
+    wait_set_key_at: Option<FactorySlot>,
+    result_wait_keys_string_ok: Option<FactorySlot>,
+    result_wait_keys_string_err: Option<FactorySlot>,
     /// When Bytes is proof-packed, the host-facing Ok factory still accepts
     /// the private `List<Int>` it historically received and calls this bridge
     /// before storing the Result payload.
@@ -8912,12 +8969,9 @@ fn allocate_factory_exports(
         *next_fn_idx += 1;
     }
 
-    // The one wait of a turn answers the same `Result<List<Int>, String>` the
-    // socket poll does, and the host builds it through the same factories.
-    if effect_registry
-        .iter()
-        .any(|e| e == EffectName::TcpPoll || e == EffectName::WaitPoll)
-    {
+    // The socket poll answers `Result<List<Int>, String>`: its keys are the
+    // caller's `Map<Int, Tcp.Socket>` keys and stay whole numbers.
+    if effect_registry.iter().any(|e| e == EffectName::TcpPoll) {
         let result_idx =
             registry
                 .result_type_idx("Result<List<Int>,String>")
@@ -8972,6 +9026,83 @@ fn allocate_factory_exports(
             result_ref,
             &mut fx.result_list_int_string_ok,
             &mut fx.result_list_int_string_err,
+        );
+    }
+
+    // The one wait of a turn answers `Result<List<K>, String>` for whatever
+    // key this program keys its waits by. `Int` is one such K, so a program
+    // that never chose another gets a family whose bodies match the socket
+    // poll's and whose names say which door they belong to.
+    if effect_registry.iter().any(|e| e == EffectName::WaitPoll) {
+        let names = registry
+            .wait_set_type_names()
+            .ok_or(WasmGcError::Validation(
+                "Wait.poll factory requires a Map<K,Wait.Item> slot".into(),
+            ))?;
+        let result_idx = registry.result_type_idx(&names.result).ok_or_else(|| {
+            WasmGcError::Validation(format!("Wait.poll factory requires {} slot", names.result))
+        })?;
+        let list_idx = registry.list_type_idx(&names.list).ok_or_else(|| {
+            WasmGcError::Validation(format!("Wait.poll factory requires {} slot", names.list))
+        })?;
+        let string_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Wait.poll factory requires String slot".into(),
+            ))?;
+        let result_ref = ref_null(result_idx);
+        let list_ref = ref_null(list_idx);
+        let string_ref = ref_null(string_idx);
+        // The host puts back exactly the reference the guest handed it and
+        // never looks inside, so a key crosses this door as a bare reference
+        // whatever its type is. The cons body casts it back to the type its
+        // own cell holds, which is a check the engine makes for free on a
+        // reference that came out of that very map.
+        let key_ref = ValType::Ref(wasm_encoder::RefType::ANYREF);
+
+        types.ty().function([key_ref, list_ref], [list_ref]);
+        fx.wait_keys_cons = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([], [list_ref]);
+        fx.wait_keys_nil = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        let map = registry.map_slots(&names.set).ok_or_else(|| {
+            WasmGcError::Validation(format!("Wait.poll factory requires {} slot", names.set))
+        })?;
+        let map_ref = ref_null(map.map);
+        // Both accessors answer a bare reference. The host reads a key not at
+        // all and an item only through the same shape probes every other door
+        // uses, so naming a concrete type here would buy nothing and would
+        // bind this door to how one sum happens to be laid out.
+        let any_ref = ValType::Ref(wasm_encoder::RefType::ANYREF);
+
+        types.ty().function([map_ref, ValType::I32], [any_ref]);
+        fx.wait_set_key_at = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        allocate_result_pair(
+            types,
+            next_type_idx,
+            next_fn_idx,
+            &[list_ref],
+            &[string_ref],
+            result_ref,
+            &mut fx.result_wait_keys_string_ok,
+            &mut fx.result_wait_keys_string_err,
         );
     }
 
@@ -9089,6 +9220,21 @@ impl FactoryExports {
         }
         if let Some(s) = self.list_int_nil {
             exports.export("__rt_list_int_nil", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.wait_keys_cons {
+            exports.export("__rt_wait_keys_cons", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.wait_keys_nil {
+            exports.export("__rt_wait_keys_nil", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.wait_set_key_at {
+            exports.export("__rt_wait_set_key_at", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_wait_keys_string_ok {
+            exports.export("__rt_result_wait_keys_ok", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_wait_keys_string_err {
+            exports.export("__rt_result_wait_keys_err", ExportKind::Func, s.fn_idx);
         }
         if let Some(s) = self.tcp_connection_make {
             exports.export(
@@ -9520,6 +9666,48 @@ impl FactoryExports {
                     .expect("checked at allocation"),
             )?);
         }
+        if self.wait_keys_cons.is_some() {
+            let names = registry
+                .wait_set_type_names()
+                .expect("checked at allocation");
+            codes.function(&emit_factory_list_cons_any(registry, &names.list)?);
+        }
+        if self.wait_keys_nil.is_some() {
+            let names = registry
+                .wait_set_type_names()
+                .expect("checked at allocation");
+            codes.function(&emit_factory_list_nil(registry, &names.list)?);
+        }
+        if self.wait_set_key_at.is_some() {
+            let names = registry
+                .wait_set_type_names()
+                .expect("checked at allocation");
+            codes.function(&emit_factory_wait_set_key_at(registry, &names)?);
+        }
+        if self.result_wait_keys_string_ok.is_some() {
+            let names = registry
+                .wait_set_type_names()
+                .expect("checked at allocation");
+            codes.function(&emit_factory_result_ok(
+                registry,
+                &names.result,
+                registry
+                    .string_array_type_idx
+                    .expect("checked at allocation"),
+            )?);
+        }
+        if self.result_wait_keys_string_err.is_some() {
+            let names = registry
+                .wait_set_type_names()
+                .expect("checked at allocation");
+            codes.function(&emit_factory_result_err(
+                registry,
+                &names.result,
+                registry
+                    .list_type_idx(&names.list)
+                    .expect("checked at allocation"),
+            )?);
+        }
         Ok(())
     }
 
@@ -9574,6 +9762,11 @@ impl FactoryExports {
             self.list_int_nil,
             self.result_list_int_string_ok,
             self.result_list_int_string_err,
+            self.wait_keys_cons,
+            self.wait_keys_nil,
+            self.wait_set_key_at,
+            self.result_wait_keys_string_ok,
+            self.result_wait_keys_string_err,
         ]
         .into_iter()
         .flatten()
@@ -9790,23 +9983,68 @@ fn emit_factory_result_bytes_string_ok(
 fn emit_factory_list_int_cons(
     registry: &TypeRegistry,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
-    let list_idx = registry
-        .list_type_idx("List<Int>")
-        .expect("checked at allocation");
+    emit_factory_list_cons(registry, "List<Int>")
+}
+
+fn emit_factory_list_int_nil(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    emit_factory_list_nil(registry, "List<Int>")
+}
+
+/// `cons(head, tail) -> List<T>` for one instantiation: a cons cell is a
+/// struct of head and tail, so the body is one `struct.new`.
+fn emit_factory_list_cons(
+    registry: &TypeRegistry,
+    list: &str,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    emit_factory_list_cons_from(registry, list, false)
+}
+
+/// The same, for a head that arrives as a bare reference.
+///
+/// The one wait of a turn answers with keys the host was handed and never
+/// read, so they arrive back here untyped and are cast to the cell's own
+/// element type on the way in.
+fn emit_factory_list_cons_any(
+    registry: &TypeRegistry,
+    list: &str,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    emit_factory_list_cons_from(registry, list, true)
+}
+
+fn emit_factory_list_cons_from(
+    registry: &TypeRegistry,
+    list: &str,
+    cast_head: bool,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let list_idx = registry.list_type_idx(list).expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
+    if cast_head {
+        let element = TypeRegistry::list_element_type(list).ok_or(WasmGcError::Validation(
+            format!("list `{list}` has no parsable element type"),
+        ))?;
+        if let Some(ValType::Ref(wasm_encoder::RefType {
+            heap_type: heap_type @ wasm_encoder::HeapType::Concrete(_),
+            ..
+        })) = super::types::aver_to_wasm(element, Some(registry))?
+        {
+            f.instruction(&Instruction::RefCastNullable(heap_type));
+        }
+    }
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)
 }
 
-fn emit_factory_list_int_nil(
+/// `nil() -> List<T>`: the empty list is the null reference of its own type.
+fn emit_factory_list_nil(
     registry: &TypeRegistry,
+    list: &str,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
-    let list_idx = registry
-        .list_type_idx("List<Int>")
-        .expect("checked at allocation");
+    let list_idx = registry.list_type_idx(list).expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         list_idx,
@@ -9974,6 +10212,36 @@ fn emit_factory_tcp_poll_key_at(
         struct_type_index: key_box,
         field_index: 0,
     });
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Read the key in one bucket of the wait set.
+///
+/// A primitive key is held boxed inside the map and a key of the program's
+/// own type is held directly, so the unboxing belongs here rather than in a
+/// host that would have to know which it was looking at.
+fn emit_factory_wait_set_key_at(
+    registry: &TypeRegistry,
+    names: &super::types::WaitSetTypeNames,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let map = registry
+        .map_slots(&names.set)
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: map.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::ArrayGet(map.keys_array));
+    if let Some(key_box) = registry.primitive_key_box_idx(&names.key) {
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: key_box,
+            field_index: 0,
+        });
+    }
     f.instruction(&Instruction::End);
     Ok(f)
 }

@@ -11,6 +11,21 @@ use super::super::RunWasmGcHost;
 /// byte-compatible with the VM's — `aver replay <file>` consumes
 /// either without branching on backend. No-op in Replay mode (the
 /// `EffectReplayState::replay_effect` path already advances position).
+/// Whether this run is writing a recording or reading one back.
+///
+/// A door whose arguments cost something to render asks first: the one wait
+/// of a turn renders its whole wait set, and a wait keyed by a type this host
+/// cannot read refuses rather than recording a key it guessed at. A run that
+/// is doing neither must not pay that price or that refusal.
+pub(crate) fn replay_is_active(caller: &wasmtime::Caller<'_, RunWasmGcHost>) -> bool {
+    caller.data().recorder.as_ref().is_some_and(|recorder| {
+        matches!(
+            recorder.mode(),
+            aver::replay::EffectReplayMode::Record | aver::replay::EffectReplayMode::Replay
+        )
+    })
+}
+
 pub(crate) fn record_effect_if_recording(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     effect_type: &str,

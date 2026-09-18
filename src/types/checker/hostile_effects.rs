@@ -194,6 +194,34 @@ mod tests {
         };
         use crate::types::checker::run_type_check_full;
 
+        /// Whether one stub type is one oracle type with its type variable
+        /// replaced by the same type everywhere.
+        ///
+        /// Leaves are compared rendered, for the reason the caller states:
+        /// the classification table names nominals before the module graph
+        /// assigns them ids while a typechecked signature carries them.
+        fn instantiates_rendered(want: &Type, got: &Type, bound: &mut Option<String>) -> bool {
+            match (want, got) {
+                (Type::Var(_), got) => {
+                    let got = got.display();
+                    *bound.get_or_insert_with(|| got.clone()) == got
+                }
+                (Type::Result(a, b), Type::Result(c, d)) | (Type::Map(a, b), Type::Map(c, d)) => {
+                    instantiates_rendered(a, c, bound) && instantiates_rendered(b, d, bound)
+                }
+                (Type::Option(a), Type::Option(b))
+                | (Type::List(a), Type::List(b))
+                | (Type::Vector(a), Type::Vector(b)) => instantiates_rendered(a, b, bound),
+                (Type::Tuple(a), Type::Tuple(b)) => {
+                    a.len() == b.len()
+                        && a.iter()
+                            .zip(b)
+                            .all(|(a, b)| instantiates_rendered(a, b, bound))
+                }
+                (want, got) => want.display() == got.display(),
+            }
+        }
+
         // The method list is derived, not written down. Hand-listing it meant
         // an effect could gain profiles without ever being checked here, which
         // is the failure this test exists to prevent one level down.
@@ -272,9 +300,25 @@ mod tests {
                     });
                 let got_params: Vec<String> = stub_params.iter().map(|t| t.display()).collect();
                 let got_ret = stub_ret.display();
+                // An operation generic over a key — `Wait.poll` is the one —
+                // has an oracle whose signature carries that type variable,
+                // while a profile is an ordinary function and writes one
+                // concrete type in its place. The rendered comparison below
+                // therefore also passes when the stub is the oracle with that
+                // variable replaced by the same type throughout, which is
+                // what the capability validation accepts when it binds the
+                // profile.
+                let mut bound = None;
+                let instantiated = oracle_params.len() == stub_params.len()
+                    && oracle_params
+                        .iter()
+                        .zip(stub_params)
+                        .all(|(want, got)| instantiates_rendered(want, got, &mut bound))
+                    && instantiates_rendered(&oracle_ret, stub_ret, &mut bound)
+                    && bound.is_some();
 
                 assert!(
-                    got_params == want_params,
+                    instantiated || got_params == want_params,
                     "{}/{}: hostile stub takes a different parameter list than an oracle \
                      for {} — a user binding this stub in a `given` gets a type error\n  \
                      oracle: {}\n  stub:   {}\n\nbody:\n{}",
@@ -286,7 +330,7 @@ mod tests {
                     p.stub_body
                 );
                 assert!(
-                    got_ret == want_ret,
+                    instantiated || got_ret == want_ret,
                     "{}/{}: hostile stub returns {} where an oracle for {} returns {}\n\nbody:\n{}",
                     method,
                     p.name,

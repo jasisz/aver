@@ -96,6 +96,11 @@ pub struct CapabilityOperation {
     pub name: String,
     pub line: usize,
     pub exposed: bool,
+    /// The key type this operation is generic over, if any. Exactly the way
+    /// `Map` is generic over its key: the operation's own signature names it,
+    /// and each call site pins it to one concrete type the program wrote.
+    /// Only a capability this compiler ships may declare one.
+    pub type_params: Vec<String>,
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
     pub semantics: CapabilitySemantics,
@@ -571,10 +576,28 @@ fn parse_operation(
     op: &crate::ast::Operation,
     errors: &mut Vec<CapabilityError>,
 ) -> Option<CapabilityOperation> {
+    // A type parameter is a compiler-shipped surface. A program declares its
+    // own capabilities, and a program writes concrete types: refusing it here,
+    // by name, keeps `<K>` from becoming a way to write generics in a program.
+    if !op.type_params.is_empty() && !crate::stdlib::has_shipped_provider(scope) {
+        errors.push(CapabilityError::at(
+            op.line,
+            format!(
+                "operation '{}.{}' declares a type parameter, and only a capability this compiler ships may do that; write the concrete type this operation carries",
+                scope, op.name
+            ),
+        ));
+    }
+    let type_params = if crate::stdlib::has_shipped_provider(scope) {
+        op.type_params.clone()
+    } else {
+        Vec::new()
+    };
+    let generic = |ty: Type| bind_type_params(ty, &type_params);
     let mut params = Vec::new();
     for (name, source) in &op.params {
         match crate::types::parse_type_str_strict(source) {
-            Ok(ty) => params.push((name.clone(), ty)),
+            Ok(ty) => params.push((name.clone(), generic(ty))),
             Err(unknown) => errors.push(CapabilityError::at(
                 op.line,
                 format!(
@@ -584,7 +607,7 @@ fn parse_operation(
             )),
         }
     }
-    let return_type = match crate::types::parse_type_str_strict(&op.return_type) {
+    let return_type = match crate::types::parse_type_str_strict(&op.return_type).map(generic) {
         Ok(ty) => ty,
         Err(unknown) => {
             errors.push(CapabilityError::at(
@@ -745,6 +768,7 @@ fn parse_operation(
             &op.name,
             (!module.exposes.is_empty()).then_some(module.exposes.as_slice()),
         ),
+        type_params,
         params,
         return_type,
         semantics,
@@ -754,6 +778,29 @@ fn parse_operation(
         hostile: op.hostile.clone(),
         unmodelled: op.unmodelled.clone(),
     })
+}
+
+/// Turn every mention of a declared type parameter into a real type variable.
+///
+/// `parse_type_str_strict` reads a bare capitalised word as a named type, so
+/// `Map<K, Wait.Item>` arrives as a map keyed by a type called `K`. This is
+/// the one place that rewrite happens; after it, `K` is a `Type::Var` and
+/// every checker and backend that already understands one understands this.
+fn bind_type_params(ty: Type, type_params: &[String]) -> Type {
+    if type_params.is_empty() {
+        return ty;
+    }
+    let bind = |ty: Type| bind_type_params(ty, type_params);
+    match ty {
+        Type::Named { name, .. } if type_params.contains(&name) => Type::Var(name),
+        Type::Result(ok, err) => Type::Result(Box::new(bind(*ok)), Box::new(bind(*err))),
+        Type::Option(inner) => Type::Option(Box::new(bind(*inner))),
+        Type::List(inner) => Type::List(Box::new(bind(*inner))),
+        Type::Vector(inner) => Type::Vector(Box::new(bind(*inner))),
+        Type::Map(key, value) => Type::Map(Box::new(bind(*key)), Box::new(bind(*value))),
+        Type::Tuple(items) => Type::Tuple(items.into_iter().map(bind).collect()),
+        other => other,
+    }
 }
 
 fn type_contains_fn(ty: &Type) -> bool {

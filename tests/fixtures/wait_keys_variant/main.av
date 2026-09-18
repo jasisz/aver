@@ -1,0 +1,45 @@
+module Main
+    depends [Node, Validation, Tcp, Wait, Work]
+    intent = "Waits once over a listening socket and a job together, keyed by a type of its own rather than by an arithmetic convention."
+    exposes [main]
+    effects [Console.print, Tcp.listen, Tcp.closeListener, Validation.begin, Validation.take, Wait.poll]
+
+type Watch
+    Peer(Int)
+    Listener
+    Job
+
+fn main() -> Result<Unit, String>
+    ? "Binds a listener nobody calls, starts one short job, waits over both, and reports which of the two the wait named."
+    ! [Console.print, Tcp.listen, Tcp.closeListener, Validation.begin, Validation.take, Wait.poll]
+    listener = Tcp.listen(0, 1)?
+    job = Validation.begin(200000)?
+    items: Map<Watch, Wait.Item> = {Watch.Listener => Wait.Item.Socket(Tcp.Socket.Listening(listener)), Watch.Job => Wait.Item.Job(job)}
+    ready = Wait.poll(items, 2000)?
+    reported(ready)?
+    answered(job)?
+    Tcp.closeListener(listener)
+
+fn reported(ready: List<Watch>) -> Result<Unit, String>
+    ? "Prints the one thing the wait named, and refuses any other report."
+    ! [Console.print]
+    match ready
+        [watch, ..rest] -> match List.len(rest) == 0
+            true -> named(watch)
+            false -> Result.Err("wait: the listener nobody called was reported ready")
+        [] -> Result.Err("wait: the one wait reported nothing before its timeout")
+
+fn named(watch: Watch) -> Result<Unit, String>
+    ? "A ready key is matched on, not decoded from an integer."
+    ! [Console.print]
+    match watch
+        Watch.Job -> Result.Ok(Console.print("the wait reported the job"))
+        Watch.Listener -> Result.Err("wait: the listener nobody called was reported ready")
+        Watch.Peer(_) -> Result.Err("wait: no peer was in the wait set")
+
+fn answered(job: Work.Job) -> Result<Unit, String>
+    ? "Prints what the job answered, so the wait's report is checked against the job itself."
+    ! [Console.print, Validation.take]
+    match Validation.take(job)?
+        Option.None -> Result.Err("work: the wait reported a job that had not finished")
+        Option.Some(answer) -> Result.Ok(Console.print("counted to {answer}"))

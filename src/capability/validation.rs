@@ -59,9 +59,26 @@ pub(super) fn validate_hostile_profiles(
             let actual_return = crate::types::parse_type_str_strict(&fd.return_type)
                 .ok()
                 .map(|ty| canonicalize_type_names(ty, &operation.module));
-            if actual_params.as_ref() != Some(&expected_params)
-                || actual_return.as_ref() != Some(&expected_return)
-            {
+            // A profile for a generic operation is written at one
+            // instantiation: it is an ordinary function and a program writes
+            // concrete types. The operation's type parameter therefore
+            // matches whatever concrete type the profile named in its place,
+            // as long as it named the same one throughout.
+            let signature_matches = match (&actual_params, &actual_return) {
+                (Some(actual_params), Some(actual_return)) => {
+                    let mut binding = BTreeMap::new();
+                    expected_params.len() == actual_params.len()
+                        && expected_params
+                            .iter()
+                            .zip(actual_params)
+                            .all(|(expected, actual)| {
+                                instantiates_to(expected, actual, &mut binding)
+                            })
+                        && instantiates_to(&expected_return, actual_return, &mut binding)
+                }
+                _ => false,
+            };
+            if !signature_matches {
                 let expected = Type::Fn(expected_params, Box::new(expected_return), vec![]);
                 errors.push(CapabilityError::at(
                     fd.line,
@@ -74,6 +91,45 @@ pub(super) fn validate_hostile_profiles(
                 ));
             }
         }
+    }
+}
+
+/// True when `actual` is `expected` with each type parameter replaced by one
+/// concrete type, consistently. `expected` is an operation's own signature,
+/// so the only type variables in it are the ones the operation declared.
+pub(super) fn instantiates_to(
+    expected: &Type,
+    actual: &Type,
+    binding: &mut BTreeMap<String, Type>,
+) -> bool {
+    fn all(expected: &[Type], actual: &[Type], binding: &mut BTreeMap<String, Type>) -> bool {
+        expected.len() == actual.len()
+            && expected
+                .iter()
+                .zip(actual)
+                .all(|(expected, actual)| instantiates_to(expected, actual, binding))
+    }
+    match (expected, actual) {
+        (Type::Var(name), actual) => {
+            binding
+                .entry(name.clone())
+                .or_insert_with(|| actual.clone())
+                == actual
+        }
+        (Type::Result(a, b), Type::Result(c, d)) => {
+            instantiates_to(a, c, binding) && instantiates_to(b, d, binding)
+        }
+        (Type::Map(a, b), Type::Map(c, d)) => {
+            instantiates_to(a, c, binding) && instantiates_to(b, d, binding)
+        }
+        (Type::Option(a), Type::Option(b))
+        | (Type::List(a), Type::List(b))
+        | (Type::Vector(a), Type::Vector(b)) => instantiates_to(a, b, binding),
+        (Type::Tuple(a), Type::Tuple(b)) => all(a, b, binding),
+        (Type::Fn(a, ar, ae), Type::Fn(b, br, be)) => {
+            all(a, b, binding) && instantiates_to(ar, br, binding) && ae == be
+        }
+        (expected, actual) => expected == actual,
     }
 }
 

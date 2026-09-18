@@ -117,63 +117,66 @@ impl CapabilityAbi {
         next_type_idx: &mut u32,
         next_fn_idx: &mut u32,
     ) -> Result<Self, WasmGcError> {
-        let Some(plan) = plan else {
-            return Ok(Self::default());
-        };
         let mut boundary = BTreeMap::<String, Type>::new();
+        let collect = |name: &str, boundary: &mut BTreeMap<String, Type>| {
+            if registry.map_slots(name).is_some() || registry.result_type_idx(name).is_some() {
+                collect_type(
+                    &crate::types::parse_type_str(name),
+                    registry,
+                    boundary,
+                    &mut HashSet::new(),
+                );
+            }
+        };
+        // The wait set an external host has to decode, whether or not this
+        // program runs a job of its own. A socket-only program reaches the
+        // same one wait through the same door, and without these helpers the
+        // host cannot read its keys or build the answer.
+        let wait = registry.wait_set_type_names();
+        if let Some(wait) = &wait {
+            collect(&wait.set, &mut boundary);
+            collect(&wait.list, &mut boundary);
+            collect(&wait.result, &mut boundary);
+            // The generated coordinator answers `Result<Unit, String>` when
+            // its run finishes, and a host driving that run decodes it.
+            collect("Result<Unit,String>", &mut boundary);
+        }
         // jasisz/aver#1329 — a job kind is answered by the program, so it has
         // no interface here, but the recorder still reads its task and its
         // answer across the same boundary: give both the ABI helpers the host
         // decodes them with.
-        for kind in plan.job_kinds() {
-            collect_type(
-                &kind.begin.return_type,
-                registry,
-                &mut boundary,
-                &mut HashSet::new(),
-            );
-            for ty in kind.recorded_types() {
-                collect_type(&ty, registry, &mut boundary, &mut HashSet::new());
-            }
-        }
-        if !plan.job_kinds().is_empty() {
-            if registry.result_type_idx("Result<Int,String>").is_some() {
+        if let Some(plan) = plan {
+            for kind in plan.job_kinds() {
                 collect_type(
-                    &crate::types::parse_type_str("Result<Int,String>"),
+                    &kind.begin.return_type,
                     registry,
                     &mut boundary,
                     &mut HashSet::new(),
                 );
-            }
-            if registry.map_slots("Map<Int,Wait.Item>").is_some() {
-                collect_type(
-                    &crate::types::parse_type_str("Map<Int,Wait.Item>"),
-                    registry,
-                    &mut boundary,
-                    &mut HashSet::new(),
-                );
-            }
-            if registry.result_type_idx("Result<Unit,String>").is_some() {
-                collect_type(
-                    &crate::types::parse_type_str("Result<Unit,String>"),
-                    registry,
-                    &mut boundary,
-                    &mut HashSet::new(),
-                );
-            }
-        }
-        for interface in plan.interfaces() {
-            for operation in &interface.operations {
-                for ty in &operation.abi_params {
-                    collect_type(ty, registry, &mut boundary, &mut HashSet::new());
+                for ty in kind.recorded_types() {
+                    collect_type(&ty, registry, &mut boundary, &mut HashSet::new());
                 }
-                collect_type(
-                    &operation.abi_result,
-                    registry,
-                    &mut boundary,
-                    &mut HashSet::new(),
-                );
             }
+            if !plan.job_kinds().is_empty() {
+                collect("Result<Int,String>", &mut boundary);
+                collect("Result<Unit,String>", &mut boundary);
+            }
+            for interface in plan.interfaces() {
+                for operation in &interface.operations {
+                    for ty in &operation.abi_params {
+                        collect_type(ty, registry, &mut boundary, &mut HashSet::new());
+                    }
+                    collect_type(
+                        &operation.abi_result,
+                        registry,
+                        &mut boundary,
+                        &mut HashSet::new(),
+                    );
+                }
+            }
+        }
+        if boundary.is_empty() {
+            return Ok(Self::default());
         }
 
         let mut abi = Self::default();

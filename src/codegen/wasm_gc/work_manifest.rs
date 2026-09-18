@@ -22,11 +22,21 @@ pub(super) fn render(
             super::capability_abi::collect_type(&ty, registry, &mut boundary, &mut HashSet::new());
         }
     }
-    for name in [
-        "Map<Int,Wait.Item>",
-        "Result<Unit,String>",
-        "Result<Int,String>",
-    ] {
+    // The wait set is named by the key this program keys its waits by, so an
+    // external host reads the four type names out of the descriptor rather
+    // than assuming whole numbers. `waitSet` and `ready` below say which they
+    // are; the descriptors themselves are what the host moves values through.
+    let wait = registry.wait_set_type_names();
+    let mut names = vec![
+        "Result<Unit,String>".to_string(),
+        "Result<Int,String>".to_string(),
+    ];
+    if let Some(wait) = &wait {
+        names.push(wait.set.clone());
+        names.push(wait.list.clone());
+        names.push(wait.result.clone());
+    }
+    for name in &names {
         if registry.map_slots(name).is_some() || registry.result_type_idx(name).is_some() {
             super::capability_abi::collect_type(
                 &crate::types::parse_type_str(name),
@@ -45,7 +55,25 @@ pub(super) fn render(
         "payload": kind.shape.payload.display(), "run": format!("__work_v1_run_{index}"),
         "boxedTask": kind.recorded_types()[0].display(), "answer": kind.recorded_types()[1].display(),
     })).collect();
-    serde_json::to_vec(&json!({"version": 1, "kinds": kinds, "types": descriptors}))
+    let mut manifest = serde_json::Map::new();
+    manifest.insert("version".to_string(), json!(1));
+    manifest.insert("kinds".to_string(), json!(kinds));
+    manifest.insert("types".to_string(), json!(descriptors));
+    if let Some(wait) = &wait {
+        // The names here address the descriptors above, which are keyed the
+        // way a type prints rather than the way the registry normalises one.
+        let named = |name: &str| crate::types::parse_type_str(name).display();
+        manifest.insert(
+            "wait".to_string(),
+            json!({
+                "set": named(&wait.set),
+                "key": named(&wait.key),
+                "ready": named(&wait.list),
+                "answer": named(&wait.result),
+            }),
+        );
+    }
+    serde_json::to_vec(&Value::Object(manifest))
         .map_err(|error| WasmGcError::Validation(format!("work ABI metadata: {error}")))
 }
 

@@ -80,9 +80,9 @@ preserved, so a JSPI embedding can delegate to the same combined wait:
 let host;
 const wait_poll = new WebAssembly.Suspending(async (items, timeout) => {
     try {
-        return host.instance.exports.__rt_result_list_int_string_ok(await host.wait(items, timeout));
+        return host.instance.exports.__rt_result_wait_keys_ok(await host.wait(items, timeout));
     } catch (error) {
-        return host.instance.exports.__rt_result_list_int_string_err(host.codec.stringIn(String(error)));
+        return host.instance.exports.__rt_result_wait_keys_err(host.codec.stringIn(String(error)));
     }
 });
 host = await createWorkHost(module, { imports: { aver: { wait_poll } }, pollSockets });
@@ -104,11 +104,35 @@ used here; deploying a Work artifact requires a host implementing this ABI.
 ## ABI v1
 
 The module contains exactly one JSON custom section named `aver:work/v1`.
-It declares `version`, ordered `kinds`, and `types`. Each kind names its task,
-payload, boxed task, take result and worker export. Type descriptors refer to
-the existing `__cap_abi_*` construction and inspection exports documented in
+It declares `version`, ordered `kinds`, `types`, and, for a module that waits,
+`wait`. Each kind names its task, payload, boxed task, take result and worker
+export. Type descriptors refer to the existing `__cap_abi_*` construction and
+inspection exports documented in
 [the capability ABI](wasm-gc-custom-capabilities.md#host-bridge-exports).
 The descriptor is part of the compiled artifact; pack byte checks cover it.
+
+A module carries the descriptor if it has either door. `kinds` is empty for a
+program that waits and runs no job of its own, and a host must accept that:
+such a program still hands its wait set across this ABI, and before the wait
+half was emitted for it a host had nothing to decode one with. `wait` names
+the four types the wait is carried through — `set` is the `Map<K, Wait.Item>`
+the guest hands over, `key` is `K`, `ready` is `List<K>` and `answer` is
+`Result<List<K>, String>` — because the key is whatever the program keys its
+waits by rather than always a whole number. A host reads those names out of
+the descriptor and moves the values through the `__cap_abi_*` helpers named
+after them; it never reads a key. The ready keys go back in the order the
+program's own map puts its keys in, which is the order `Map.keys` shows and
+the order a `decode` of the wait set already returns them in.
+
+`__rt_result_wait_keys_ok(List<K>)` and `__rt_result_wait_keys_err(String)`
+build the wait's answer, and `__rt_wait_keys_cons(anyref, List<K>)` /
+`__rt_wait_keys_nil()` build the list a JSPI embedding hands to the first of
+them. They replace the `__rt_result_list_int_string_*` pair a wait used to
+answer through, which now belongs to `Tcp.poll` alone. `__rt_wait_set_order(map)`
+answers the occupied buckets of a wait set in its own key order and
+`__rt_wait_set_key_at(map, bucket)` reads one key out; the native Wasmtime host
+reads a wait set through those two, and a JavaScript host reads the same set
+through the `__cap_abi_*` helpers the descriptor names instead.
 
 | Import in `aver:work/v1` | Wasm signature | Responsibility |
 | --- | --- | --- |

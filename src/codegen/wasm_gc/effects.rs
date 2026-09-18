@@ -740,7 +740,7 @@ impl EffectName {
             // The one wait carries the whole `Map<Int, Wait.Item>`: the host
             // splits sockets from jobs, because it owns the sockets and every
             // job key is ready the moment its job began.
-            Self::WaitPoll => Ok(vec![map_int_wait_item_ref_ty(registry)?, any_ref_ty()]),
+            Self::WaitPoll => Ok(vec![wait_set_ref_ty(registry)?, any_ref_ty()]),
             // The handle only has to be identifiable: the module has already
             // cancelled it, and the recording names the job it was.
             Self::WorkCancel => Ok(vec![any_ref_ty()]),
@@ -898,7 +898,18 @@ impl EffectName {
                 "Result<Http.Response,String>",
             )?]),
             Self::RecordEnterGroup | Self::RecordSetBranch | Self::RecordExitGroup => Ok(vec![]),
-            Self::WaitPoll => Ok(vec![result_ref_ty(registry, "Result<List<Int>,String>")?]),
+            // The wait answers in the key this program keys its waits by, so
+            // the import's result type is named from that key the same way
+            // its parameter is.
+            Self::WaitPoll => {
+                let names = registry
+                    .wait_set_type_names()
+                    .ok_or(WasmGcError::Validation(
+                        "Wait.poll requires a `Map<K, Wait.Item>` slot but none was registered"
+                            .into(),
+                    ))?;
+                Ok(vec![result_ref_ty(registry, &names.result)?])
+            }
             Self::WorkCancel | Self::WorkBegin => Ok(vec![]),
             Self::WorkTake => Ok(vec![any_ref_ty()]),
         }
@@ -1492,13 +1503,20 @@ impl EffectName {
     }
 }
 
-/// The one wait's parameter: the caller's whole wait set.
-fn map_int_wait_item_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
-    let slots = registry
-        .map_slots("Map<Int,Wait.Item>")
+/// The one wait's parameter: the caller's whole wait set, keyed by whatever
+/// this program keys its waits by.
+fn wait_set_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let names = registry
+        .wait_set_type_names()
         .ok_or(WasmGcError::Validation(
-            "Wait.poll requires `Map<Int, Wait.Item>` slot but none was registered".into(),
+            "Wait.poll requires a `Map<K, Wait.Item>` slot but none was registered".into(),
         ))?;
+    let slots = registry.map_slots(&names.set).ok_or_else(|| {
+        WasmGcError::Validation(format!(
+            "Wait.poll requires `{}` slot but none was registered",
+            names.set
+        ))
+    })?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(slots.map),

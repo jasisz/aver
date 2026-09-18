@@ -15,6 +15,13 @@ pub(super) fn to_provider_value(
     native: &NativeProviderRegistry,
 ) -> Result<ProviderValue, String> {
     match (ty, value) {
+        // A type variable in an operation's signature says the provider
+        // carries this value and never reads it. `Wait.poll`'s key is the one
+        // such position: the caller owns its keys, the wait correlates and
+        // orders them, and nothing at the boundary interprets them. So the
+        // value crosses by its own shape rather than against a declared
+        // boundary type, and the capability contract binds no layout for it.
+        (Type::Var(_), value) => opaque_to_provider(value),
         (Type::Int, Value::Int(value)) => Ok(ProviderValue::Int(value.clone())),
         (Type::Float, Value::Float(value)) => Ok(ProviderValue::Float(*value)),
         (Type::Str, Value::Str(value)) => Ok(ProviderValue::String(value.clone())),
@@ -114,6 +121,10 @@ pub(super) fn from_provider_value(
     native: &NativeProviderRegistry,
 ) -> Result<Value, String> {
     match (ty, value) {
+        // The other half of the carried-not-read position: what the provider
+        // hands back under a type variable is one of the values it was given,
+        // so it comes back by its own shape.
+        (Type::Var(_), value) => opaque_from_provider(value),
         (Type::Int, ProviderValue::Int(value)) => Ok(Value::Int(value)),
         (Type::Float, ProviderValue::Float(value)) => Ok(Value::Float(value)),
         (Type::Str, ProviderValue::String(value)) => Ok(Value::Str(value)),
@@ -218,6 +229,115 @@ pub(super) fn from_provider_value(
 
 fn is_standard_bytes(name: &str) -> bool {
     matches!(name, "Bytes" | "Bytes.Bytes")
+}
+
+/// Carry one value across a boundary position the operation declared as a
+/// type variable, by its own shape.
+///
+/// No contract is consulted, because none binds this position: the operation
+/// said the provider does not read it. A capability resource is refused all
+/// the same. Resource identity is deliberately unobservable, so a resource
+/// here would be a key the provider cannot tell apart from another, and the
+/// caller would get readiness for the wrong one.
+fn opaque_to_provider(value: &Value) -> Result<ProviderValue, String> {
+    let each = |values: &[Value]| -> Result<Vec<ProviderValue>, String> {
+        values.iter().map(opaque_to_provider).collect()
+    };
+    match value {
+        Value::Int(value) => Ok(ProviderValue::Int(value.clone())),
+        Value::Float(value) => Ok(ProviderValue::Float(*value)),
+        Value::Str(value) => Ok(ProviderValue::String(value.clone())),
+        Value::Bool(value) => Ok(ProviderValue::Bool(*value)),
+        Value::Unit => Ok(ProviderValue::Unit),
+        Value::Ok(value) => Ok(ProviderValue::ResultOk(Box::new(opaque_to_provider(value)?))),
+        Value::Err(value) => Ok(ProviderValue::ResultErr(Box::new(opaque_to_provider(
+            value,
+        )?))),
+        Value::Some(value) => Ok(ProviderValue::OptionSome(Box::new(opaque_to_provider(
+            value,
+        )?))),
+        Value::None => Ok(ProviderValue::OptionNone),
+        Value::Tuple(values) => Ok(ProviderValue::Tuple(each(values)?)),
+        Value::List(values) => Ok(ProviderValue::List(
+            values.iter().map(opaque_to_provider).collect::<Result<_, _>>()?,
+        )),
+        Value::Vector(values) => Ok(ProviderValue::Vector(
+            values.iter().map(opaque_to_provider).collect::<Result<_, _>>()?,
+        )),
+        Value::Variant {
+            type_name,
+            variant,
+            fields,
+        } => Ok(ProviderValue::Variant {
+            type_name: type_name.clone(),
+            variant: variant.clone(),
+            fields: each(fields)?,
+        }),
+        Value::Record { type_name, fields } => Ok(ProviderValue::Record {
+            type_name: type_name.clone(),
+            fields: fields
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), opaque_to_provider(value)?)))
+                .collect::<Result<Vec<_>, String>>()?,
+        }),
+        Value::CapabilityResource(_) => Err(
+            "a capability resource cannot cross a boundary position the provider does not read; resource identity is not observable".to_string(),
+        ),
+        other => Err(format!(
+            "value of shape {} cannot cross a boundary position the provider does not read",
+            crate::value::aver_repr(other)
+        )),
+    }
+}
+
+/// The inverse of [`opaque_to_provider`]: one of the values the provider was
+/// handed, coming back.
+fn opaque_from_provider(value: ProviderValue) -> Result<Value, String> {
+    let each = |values: Vec<ProviderValue>| {
+        values
+            .into_iter()
+            .map(opaque_from_provider)
+            .collect::<Result<Vec<_>, String>>()
+    };
+    match value {
+        ProviderValue::Int(value) => Ok(Value::Int(value)),
+        ProviderValue::Float(value) => Ok(Value::Float(value)),
+        ProviderValue::String(value) => Ok(Value::Str(value)),
+        ProviderValue::Bool(value) => Ok(Value::Bool(value)),
+        ProviderValue::Unit => Ok(Value::Unit),
+        ProviderValue::ResultOk(value) => Ok(Value::Ok(Box::new(opaque_from_provider(*value)?))),
+        ProviderValue::ResultErr(value) => Ok(Value::Err(Box::new(opaque_from_provider(*value)?))),
+        ProviderValue::OptionSome(value) => {
+            Ok(Value::Some(Box::new(opaque_from_provider(*value)?)))
+        }
+        ProviderValue::OptionNone => Ok(Value::None),
+        ProviderValue::Tuple(values) => Ok(Value::Tuple(each(values)?)),
+        ProviderValue::List(values) => Ok(crate::value::list_from_vec(each(values)?)),
+        ProviderValue::Vector(values) => {
+            Ok(Value::Vector(aver_rt::AverVector::from_vec(each(values)?)))
+        }
+        ProviderValue::Variant {
+            type_name,
+            variant,
+            fields,
+        } => Ok(Value::Variant {
+            type_name,
+            variant,
+            fields: each(fields)?.into(),
+        }),
+        ProviderValue::Record { type_name, fields } => Ok(Value::Record {
+            type_name,
+            fields: fields
+                .into_iter()
+                .map(|(name, value)| Ok((name, opaque_from_provider(value)?)))
+                .collect::<Result<Vec<_>, String>>()?
+                .into(),
+        }),
+        other => Err(format!(
+            "provider returned {} in a position it does not read",
+            other.shape()
+        )),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -1781,6 +1781,12 @@ fn emit_mir_capability_call(
     args: &[Spanned<MirExpr>],
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
+    // An operation generic over a key carries the concrete type this program
+    // pinned it to. Generated Rust names real types everywhere, so the
+    // instantiation happens here rather than at the provider, and the
+    // generated codec for that key type is emitted beside the program's own.
+    let key = ctx.codegen.and_then(super::wait_key_type);
+    let operation = &crate::capability::work::instantiate_operation(operation, key.as_ref());
     let return_type = match ctx.codegen {
         Some(codegen) => super::types::type_to_rust_scoped(
             &operation.return_type,

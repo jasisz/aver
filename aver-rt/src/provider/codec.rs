@@ -496,3 +496,110 @@ pub fn provider_value_order_key(value: &ProviderValue) -> Result<Vec<u8>, String
     encode(value, &mut out)?;
     Ok(out)
 }
+
+/// Order two provider-bound values the way a Map orders its keys, so a
+/// capability that hands keys back hands them back in the order the caller's
+/// own map puts them in.
+///
+/// This is the language's map order, stated once more at the provider
+/// boundary: `Int` numerically, `String` by codepoint, `Bool` false-first, a
+/// sequence componentwise, a record by its FIELD NAMES, a variant by its
+/// CONSTRUCTOR NAME and then its payload. It is not
+/// [`provider_value_order_key`], which frames values structurally so a map
+/// crossing the boundary has *some* stable order; that one puts `10` before
+/// `2` because it compares decimal digits.
+///
+/// `Float`, `Map` and `Vector` cannot key a map, so a value carrying one
+/// never reaches here through a key position; the arms that would compare
+/// them fall through to the shape tag, which is a total order and keeps the
+/// sort from cycling.
+pub fn compare_map_keys(left: &ProviderValue, right: &ProviderValue) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    fn sequence(left: &[ProviderValue], right: &[ProviderValue]) -> Ordering {
+        for (left, right) in left.iter().zip(right) {
+            let ordering = compare_map_keys(left, right);
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+        }
+        left.len().cmp(&right.len())
+    }
+    /// Records carry their fields in layout order on both sides, so one
+    /// permutation — the fields taken alphabetically — orders both.
+    fn by_field_name(
+        left: &[(String, ProviderValue)],
+        right: &[(String, ProviderValue)],
+    ) -> Ordering {
+        let mut order: Vec<usize> = (0..left.len()).collect();
+        order.sort_by(|&a, &b| left[a].0.cmp(&left[b].0));
+        for index in order {
+            let Some(right) = right.get(index) else {
+                return Ordering::Greater;
+            };
+            let ordering = compare_map_keys(&left[index].1, &right.1);
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+        }
+        left.len().cmp(&right.len())
+    }
+    /// Distinguishes two values of different shapes. Only reached by a pair a
+    /// map could not hold together, and only to keep the order total.
+    fn shape_tag(value: &ProviderValue) -> u8 {
+        match value {
+            ProviderValue::Unit => 0,
+            ProviderValue::Bool(_) => 1,
+            ProviderValue::Int(_) => 2,
+            ProviderValue::Float(_) => 3,
+            ProviderValue::String(_) => 4,
+            ProviderValue::Bytes(_) => 5,
+            ProviderValue::OptionNone => 6,
+            ProviderValue::OptionSome(_) => 7,
+            ProviderValue::ResultOk(_) => 8,
+            ProviderValue::ResultErr(_) => 9,
+            ProviderValue::Tuple(_) => 10,
+            ProviderValue::List(_) => 11,
+            ProviderValue::Vector(_) => 12,
+            ProviderValue::Map(_) => 13,
+            ProviderValue::Record { .. } => 14,
+            ProviderValue::Variant { .. } => 15,
+            ProviderValue::Resource(_) => 16,
+        }
+    }
+    match (left, right) {
+        (ProviderValue::Unit, ProviderValue::Unit) => Ordering::Equal,
+        (ProviderValue::Bool(left), ProviderValue::Bool(right)) => left.cmp(right),
+        (ProviderValue::Int(left), ProviderValue::Int(right)) => left.cmp(right),
+        (ProviderValue::Float(left), ProviderValue::Float(right)) => left.total_cmp(right),
+        (ProviderValue::String(left), ProviderValue::String(right)) => left.cmp(right),
+        (ProviderValue::Bytes(left), ProviderValue::Bytes(right)) => left.cmp(right),
+        (ProviderValue::OptionNone, ProviderValue::OptionNone) => Ordering::Equal,
+        (ProviderValue::OptionSome(left), ProviderValue::OptionSome(right))
+        | (ProviderValue::ResultOk(left), ProviderValue::ResultOk(right))
+        | (ProviderValue::ResultErr(left), ProviderValue::ResultErr(right)) => {
+            compare_map_keys(left, right)
+        }
+        (ProviderValue::Tuple(left), ProviderValue::Tuple(right))
+        | (ProviderValue::List(left), ProviderValue::List(right))
+        | (ProviderValue::Vector(left), ProviderValue::Vector(right)) => sequence(left, right),
+        (
+            ProviderValue::Record { fields: left, .. },
+            ProviderValue::Record { fields: right, .. },
+        ) => by_field_name(left, right),
+        (
+            ProviderValue::Variant {
+                variant: left_variant,
+                fields: left,
+                ..
+            },
+            ProviderValue::Variant {
+                variant: right_variant,
+                fields: right,
+                ..
+            },
+        ) => left_variant
+            .cmp(right_variant)
+            .then_with(|| sequence(left, right)),
+        (left, right) => shape_tag(left).cmp(&shape_tag(right)),
+    }
+}

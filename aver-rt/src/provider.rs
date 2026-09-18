@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use crate::AverInt;
 
 pub use args::{STANDARD_ARGS_FINGERPRINT, STANDARD_ARGS_NATIVE_IDENTITY, StandardArgsProvider};
-pub use codec::{ProviderCodec, provider_value_order_key};
+pub use codec::{ProviderCodec, compare_map_keys, provider_value_order_key};
 pub use console::{
     STANDARD_CONSOLE_FINGERPRINT, STANDARD_CONSOLE_NATIVE_IDENTITY, StandardConsoleProvider,
 };
