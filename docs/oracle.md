@@ -224,9 +224,9 @@ does not count what the function under test does between two of them, so
 writes to a socket in between. That is what lets a stub be scripted by call
 number: `match n` is a reply script for that operation and nothing else moves it.
 Two different operations therefore share no numbering at all, and each `!` / `?!`
-branch restarts every operation at 0 under its own path. "Where a run and an
-exported proof number differently" below names the shapes where the exported
-proof numbers a call otherwise than the run does.
+branch restarts every operation at 0 under its own path. "Where a law is
+declined instead of exported" below names the shapes an exported proof cannot
+number the way a run does, and which it declines rather than approximate.
 
 ### Output
 
@@ -239,17 +239,22 @@ verify hello trace
 
 `given out: Console.print = [...]` is rejected because output effects have no return value to replace.
 
-### Where a run and an exported proof number differently
+### Where a law is declined instead of exported
 
-`aver verify` numbers the calls of a whole case. The Lean and Dafny that `aver proof` exports number the calls of one function body at a time. Straight-line code, `?` bindings, `?!` propagation, independent products and the arms of a `match` agree, and three shapes do not. In each of them `aver verify` reports the run correctly, the export writes down a different index, and the theorem it emits asserts a value the model does not produce, so the proof step fails and the law does not certify.
+An exported proof never numbers a stub call differently from the way a run numbers it. Where it cannot follow the run it declines the law, names the call, the operation and the reason in the report and in the emitted file, and counts the decline, so nothing is proved about that function. `aver verify` is untouched: the run keeps its own numbering and the law still runs under its stubs.
 
-- A call into an effectful helper. The helper's body restarts every operation at 0 in the export, while the run keeps counting across the call. A function that reads the peer once and then calls a helper that reads it again hands the helper's read index 1 at run time and index 0 in the export.
-- A recursive call that carries no index. Every turn restarts at 0 in the export. A loop reading the peer once per turn hands its read index 0, then 1, then 2 at run time, and index 0 in every turn of the export.
-- A second operation inside a polled loop. A function declaring `Process.stopRequested` carries one index through its recursion, and that index counts polls. Every other operation in that function is numbered from the poll count, so the export agrees with the run only while that operation is called exactly once per poll. Two clock reads per poll part company on the second turn.
+Declining is what a law needs rather than a warning about it. `aver verify` checks a law on samples while the exported theorem covers every input, so a law whose samples happen to agree with a differently numbered model would certify a statement about a function the run does not compute, with every step passing and the conclusion false. Four shapes are declined:
 
-One approximation sits beside those three. After a `match` whose arms call one operation a different number of times, the export numbers the calls that follow the match from the busiest arm. Arms that make the same number of calls, which is the ordinary shape, agree with the run exactly.
+- A call into an effectful function. The callee's lifted body starts every operation at index 0 while the run keeps counting across the call. A function that reads the peer once and then calls a helper that reads it again hands the helper's read index 1 at run time and index 0 in the export.
+- A recursive call, which is that same shape seen from inside. A loop reading the peer once per turn hands its read index 0, then 1, then 2 at run time, and index 0 in every turn of the export.
+- A second operation inside a polled loop. A function declaring `Process.stopRequested` carries one index through its recursion and that index counts polls, so every other operation in the function would be numbered at the polling rate. Two clock reads per poll part company on the second turn. A poll loop that reaches no other operation is exact and still exports, because the base carried into the recursive call is that one operation's own count.
+- A call that follows a `match` whose arms call the operation a different number of times. The run charges the arm it took, and no single literal is right for every arm. Arms that call an operation equally often, which is the ordinary shape, are exact and still export.
 
-A stub that answers from its arguments instead of its call index is immune to all four. Script a stub by call number within one function body, and keep helper boundaries and recursion out of the function whose law you want to certify.
+The stubs a law supplies do not lift the decline, and that is deliberate: a law over a `given` bound to a function parameter is asserted for every function of that shape, index-reading ones included, so the theorem is no safer for having been demonstrated under an index-blind stub.
+
+Sampled `verify` cases are not declined. A case is one concrete evaluation `aver verify` has already run, so either the exported model computes the same value and the theorem holds of the run as well, or it computes a different one and the proof fails where a reader sees it. Neither outcome states something false about the run.
+
+To certify a law over an effectful function, keep helper boundaries and recursion out of the function the law is about. Script the stub by call number within that one body.
 
 ## Driving a socket state machine with a scripted peer
 
