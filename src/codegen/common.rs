@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
     Expr, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel, TypeDef, TypeVariant,
@@ -2126,11 +2126,17 @@ pub fn law_oracle_index_refusal(
     ctx: &CodegenContext,
 ) -> Option<OracleIndexRefusal> {
     let scope = ctx.active_module_scope();
-    let mut roots: Vec<&Spanned<Expr>> = vec![&law.lhs, &law.rhs];
-    roots.extend(&law.because);
+    // What one case of this law evaluates under one numbering: the guard, then
+    // each side of the claim. `because` is not in here — it is a proof sketch
+    // the run never evaluates, so nothing in it is charged against the case's
+    // counters. It joins `roots` below all the same, because a step can reach
+    // a body whose own numbering is off.
+    let mut charged_roots: Vec<&Spanned<Expr>> = vec![&law.lhs, &law.rhs];
     if let Some(when) = law.when.as_ref() {
-        roots.push(when);
+        charged_roots.push(when);
     }
+    let mut roots: Vec<&Spanned<Expr>> = charged_roots.clone();
+    roots.extend(&law.because);
 
     // The same cone `map_order_refusal` walks, and for the same reason: a
     // helper can hide the shape from the claim's own syntax, and a law over a
@@ -2183,24 +2189,144 @@ pub fn law_oracle_index_refusal(
         }
     }
 
-    let (function, divergence) = found.into_iter().min_by_key(|(function, divergence)| {
+    let body_divergence = found.into_iter().min_by_key(|(function, divergence)| {
         (
             function.clone(),
             divergence.line,
             divergence.operation.clone(),
         )
-    })?;
-    let reason = format!("in `{}`, {}", function, divergence.reason());
+    });
+    let (subject, reason) = match body_divergence {
+        Some((function, divergence)) => (
+            format!("the call index of `{}`", divergence.operation),
+            format!("in `{}`, {}", function, divergence.reason()),
+        ),
+        None => repeated_claim_call(&charged_roots, ctx, scope.as_deref())?,
+    };
     record_declined_claim(
         ctx,
         crate::codegen::DeclineKind::Law,
         format!("{}.{}", vb.fn_name, law.name),
         reason.clone(),
     );
-    Some(OracleIndexRefusal {
-        subject: format!("the call index of `{}`", divergence.operation),
-        reason,
-    })
+    Some(OracleIndexRefusal { subject, reason })
+}
+
+/// The `(subject, reason)` of a claim that charges one operation through more
+/// than one effectful call, or `None` when it reaches each operation once.
+///
+/// Every call in a claim is emitted at `(BranchPath.Root, 0)`: the claim is not
+/// a function body, so there is no earlier call in it for the exporter to count
+/// from. A run has no such boundary. `aver verify` installs the stubs once per
+/// case and numbers each operation across the guard and both sides of the
+/// claim, so `readOne() => readOneToo()` hands the peer index 0 on the left and
+/// index 1 on the right while the export writes 0 for both.
+///
+/// It is the quietest shape of all, because it needs no helper and no
+/// recursion: two ordinary calls of two exact functions. Under an index-blind
+/// stub the law passes `aver verify` and exports a theorem quantified over
+/// every stub of that shape, index-reading ones included — the exact false
+/// certificate `docs/oracle.md` promises the export does not produce.
+///
+/// Operations are compared per operation, not per call. Two calls that reach
+/// nothing in common are numbered from zero on both sides and stay exportable:
+/// a claim that reads a clock on one side and a peer on the other charges each
+/// operation exactly once.
+fn repeated_claim_call(
+    roots: &[&Spanned<Expr>],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> Option<(String, String)> {
+    let mut called: Vec<String> = Vec::new();
+    for root in roots {
+        collect_called_names(root, &mut called);
+    }
+    // Operation → the calls in this claim that reach it, in claim order. A
+    // name that appears twice is charged twice: `readOne() + readOne()` is two
+    // calls of one function, and the run numbers them 0 and 1.
+    let mut chargers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut reached: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for name in called {
+        let operations = reached
+            .entry(name.clone())
+            .or_insert_with(|| generative_operations_reached(ctx, &name, scope))
+            .clone();
+        for operation in operations {
+            chargers.entry(operation).or_default().push(name.clone());
+        }
+    }
+    // The first operation by name, so the sentence the user reads is the same
+    // on every run and on both backends.
+    let (operation, callers) = chargers
+        .into_iter()
+        .find(|(_, callers)| callers.len() > 1)?;
+    let mut distinct: Vec<String> = Vec::new();
+    for caller in &callers {
+        if !distinct.contains(caller) {
+            distinct.push(caller.clone());
+        }
+    }
+    let calls = match distinct.as_slice() {
+        [only] if callers.len() == 2 => format!("`{only}` twice"),
+        [only] => format!("`{only}` {} times", callers.len()),
+        names => {
+            let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+            quoted.join(" and ")
+        }
+    };
+    let reason = format!(
+        "the claim calls {calls}, and a run numbers `{operation}` across the guard and both \
+         sides of one case, so the later call is charged from where the earlier one left off \
+         while the export numbers every call in the claim from index 0"
+    );
+    Some((format!("the call index of `{operation}`"), reason))
+}
+
+/// Every generative operation a call to `name` can reach, its own declared
+/// effects and those of everything its body calls.
+///
+/// Declared effects are what the lifter reads too, so this asks the same
+/// question the emit site answers. Output effects take no oracle and snapshot
+/// effects take no index, so neither can be numbered differently; only
+/// generative and generative-output operations are counted.
+fn generative_operations_reached(
+    ctx: &CodegenContext,
+    name: &str,
+    scope: Option<&str>,
+) -> BTreeSet<String> {
+    use crate::types::checker::effect_classification::{EffectDimension, classify_with_registry};
+
+    let mut pending: Vec<(Option<String>, String)> =
+        vec![(scope.map(str::to_string), name.to_string())];
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut operations: BTreeSet<String> = BTreeSet::new();
+    while let Some((written_in, name)) = pending.pop() {
+        let Some((owner, fd)) = reached_fn_def(ctx, &name, written_in.as_deref()) else {
+            continue;
+        };
+        if !seen.insert(fn_def_identity(owner, fd)) {
+            continue;
+        }
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+            };
+            push_called_names(expr, owner, &mut pending);
+        }
+        for effect in &fd.effects {
+            let Some(classification) = classify_with_registry(&ctx.capabilities, &effect.node)
+            else {
+                continue;
+            };
+            if matches!(
+                classification.dimension,
+                EffectDimension::Generative | EffectDimension::GenerativeOutput
+            ) {
+                operations.insert(effect.node.clone());
+            }
+        }
+    }
+    operations
 }
 
 /// Every effectful function a body written in `scope` can call, keyed the way

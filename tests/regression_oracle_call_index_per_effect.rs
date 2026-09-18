@@ -513,3 +513,86 @@ verify follow law pollsAreCounted
         lean.report
     );
 }
+
+// ---------------------------------------------------------------------------
+// The fifth shape: the claim itself reaches one operation through more than
+// one effectful call. The run numbers an operation across the whole case, so
+// the claim's second call is charged from where the first left off, while the
+// export numbers every call in the claim from `(BranchPath.Root, 0)`.
+// ---------------------------------------------------------------------------
+
+/// Two reads, one on each side of the claim, under a peer that answers with
+/// the index it was handed. The run answers 0 on the left and 1 on the right,
+/// which is the numbering the export cannot write down.
+const TWO_CALLS_INDEXED: &str = r#"module TwoCallsIndexed
+    intent = "Both sides of the claim read the peer, and the peer answers by call number."
+    exposes [readOne, readOneToo]
+    effects [Random.int]
+
+fn readOne() -> Int
+    ? "Read the peer once."
+    ! [Random.int]
+    Random.int(0, 100)
+
+fn readOneToo() -> Int
+    ? "Read the peer once, again."
+    ! [Random.int]
+    Random.int(0, 100)
+
+fn peerByCall(path: BranchPath, call: Int, low: Int, high: Int) -> Result<Int, String>
+    ? "The peer reports the call index it was handed."
+    Result.Ok(call)
+
+verify readOne law bothSidesRead
+    given rnd: Random.int = [peerByCall]
+    readOne() => readOneToo()
+"#;
+
+/// The same claim under a peer that ignores the index. `aver verify` passes,
+/// because nothing the law asserts depends on the numbering, and that is how
+/// this shape reaches export.
+const TWO_CALLS_BLIND: &str = r#"module TwoCallsBlind
+    intent = "Both sides of the claim read the peer, and the peer ignores the call number."
+    exposes [readOne, readOneToo]
+    effects [Random.int]
+
+fn readOne() -> Int
+    ? "Read the peer once."
+    ! [Random.int]
+    Random.int(0, 100)
+
+fn readOneToo() -> Int
+    ? "Read the peer once, again."
+    ! [Random.int]
+    Random.int(0, 100)
+
+fn blind(path: BranchPath, call: Int, low: Int, high: Int) -> Result<Int, String>
+    ? "A peer that answers the same whatever index it is handed."
+    Result.Ok(42)
+
+verify readOne law bothSidesRead
+    given rnd: Random.int = [blind]
+    readOne() => readOneToo()
+"#;
+
+#[test]
+fn a_law_whose_claim_makes_two_effectful_calls_is_declined() {
+    assert_eq!(
+        verify(TWO_CALLS_INDEXED, "oracle_call_index_two_calls_indexed.av"),
+        (0, 1),
+        "the run numbers the claim's two reads 0 and 1, so a peer answering with its index \
+         breaks the very law an index-blind peer satisfies — that gap is what the export \
+         must not certify"
+    );
+    assert_eq!(
+        verify(TWO_CALLS_BLIND, "oracle_call_index_two_calls_blind.av"),
+        (1, 0),
+        "under an index-blind peer the same claim passes, which is how this shape reaches \
+         export in the first place"
+    );
+    let lean = export(TWO_CALLS_BLIND, "twocalls", "lean", "TwoCallsBlind.lean");
+    assert_law_declined(&lean, "readOne", "bothSidesRead", "Random.int");
+    let dafny = export(TWO_CALLS_BLIND, "twocalls", "dafny", "TwoCallsBlind.dfy");
+    assert_law_declined(&dafny, "readOne", "bothSidesRead", "Random.int");
+}
+
