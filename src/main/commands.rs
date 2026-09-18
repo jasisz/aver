@@ -7927,6 +7927,7 @@ pub(super) fn cmd_proof(
     waterfall: &super::proof_waterfall::Options,
     gate: Option<&str>,
     write_baseline: Option<&str>,
+    compare_manifest: Option<&str>,
 ) {
     if waterfall.waterfall.is_some()
         && (!matches!(backend, super::cli::ProofBackend::Lean)
@@ -8206,7 +8207,12 @@ pub(super) fn cmd_proof(
     // `--gate` / `--write-baseline` also imply a verifier run (they recompute
     // the current manifest). So run the check harness when ANY of these is set
     // even without an explicit `--check`.
-    if check || check_json || gate.is_some() || write_baseline.is_some() {
+    if check
+        || check_json
+        || gate.is_some()
+        || write_baseline.is_some()
+        || compare_manifest.is_some()
+    {
         // For Dafny, hand the harness the real entry module filename so it
         // verifies the file that carries the verify-law lemmas (not an
         // arbitrary dependency module).
@@ -8234,6 +8240,7 @@ pub(super) fn cmd_proof(
             dafny_entry,
             gate,
             write_baseline,
+            compare_manifest,
             &duplicate_laws,
             &declined,
             &ctx.items,
@@ -8473,6 +8480,11 @@ fn run_proof_check(
     // per-law manifest is produced — see `run_proof_check`'s manifest block).
     gate: Option<&str>,
     write_baseline: Option<&str>,
+    // `--compare-manifest`: an earlier `proof_manifest.json`. For every claim
+    // that did not close, report whether its own script changed and which
+    // definitions in its cone changed since that manifest (Lean-only,
+    // informational; never touches `passed` or the exit code).
+    compare_manifest: Option<&str>,
     // Source-level `fn.law` identities declared by more than one `verify ...
     // law` block (see `duplicate_law_identities`). The ratchet fails CLOSED
     // (exit 2) on any duplicate before it can collapse two distinct law blocks
@@ -8783,6 +8795,18 @@ fn run_proof_check(
         manifest.obligations = audit.obligations.clone();
         manifest
     });
+    // Declaration and script hashes of the emitted project (Lean only). Read
+    // off the files lake built, so they cover the export as checked, whatever
+    // the audit recorded — a build that failed hard still gets its hashes.
+    let fingerprints = manifest
+        .is_some()
+        .then(|| proof_fingerprints::Fingerprints::scan(output_dir));
+    if let (Some(m), Some(fp)) = (manifest.as_mut(), fingerprints.as_ref()) {
+        m.fingerprints = proof_fingerprints::Recorded {
+            definitions: fp.definitions.clone(),
+            scripts: fp.scripts.clone(),
+        };
+    }
     let mut open_goals: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     // `--explain` residuals borrowed from HEALTHY (proven) laws — see the
@@ -8927,6 +8951,70 @@ fn run_proof_check(
     if let Some(m) = &manifest {
         write_proof_manifest(output_dir, m);
     }
+    // `--compare-manifest` (Lean only): for every claim that did not close —
+    // a record at tier `failed` or `missing`, a theorem carrying the
+    // gate-build sorry, or a claim the build located a hard error in — say
+    // whether its own script changed and which definitions in its cone
+    // changed since the earlier manifest. Diagnostic only: never touches
+    // `passed` or the exit code. An unreadable manifest, or one written
+    // before the hashes existed, is a harness error (exit 2) rather than a
+    // report that says nothing changed.
+    let changed: Option<std::collections::BTreeMap<String, proof_fingerprints::Change>> =
+        match (compare_manifest, fingerprints.as_ref(), manifest.as_ref()) {
+            (Some(path), Some(fp), Some(m)) => {
+                let previous = std::fs::read_to_string(path)
+                .map_err(|e| format!("cannot read {path}: {e}"))
+                .and_then(|raw| {
+                    serde_json::from_str::<serde_json::Value>(&raw)
+                        .map_err(|e| format!("{path} is not valid JSON: {e}"))
+                })
+                .map(|value| proof_fingerprints::recorded_from_json(&value))
+                .and_then(|recorded| {
+                    if recorded.definitions.is_empty() && recorded.scripts.is_empty() {
+                        Err(format!(
+                            "{path} carries no declaration hashes (written before they existed?)"
+                        ))
+                    } else {
+                        Ok(recorded)
+                    }
+                });
+                let previous = match previous {
+                    Ok(previous) => previous,
+                    Err(e) => {
+                        eprintln!("{}", format!("--compare-manifest: {e}").red());
+                        std::process::exit(2);
+                    }
+                };
+                let mut open: std::collections::BTreeSet<String> = m
+                    .laws
+                    .iter()
+                    .chain(&m.obligations)
+                    .filter(|record| matches!(record.tier, LawTier::Failed | LawTier::Missing))
+                    .map(|record| record.law.clone())
+                    .collect();
+                open.extend(sorry_laws.iter().cloned());
+                open.extend(proof_explain::failed_claims(
+                    output_dir,
+                    &format!("{stdout}{stderr}"),
+                ));
+                Some(
+                    open.into_iter()
+                        .map(|identity| {
+                            let change = fp.compare(&previous, &identity);
+                            (identity, change)
+                        })
+                        .collect(),
+                )
+            }
+            (Some(_), _, _) => {
+                eprintln!(
+                    "{}",
+                    "--compare-manifest: only the Lean backend writes a manifest".red()
+                );
+                std::process::exit(2);
+            }
+            (None, _, _) => None,
+        };
 
     let dafny_diagnostics = proof_sources
         .filter(|_| matches!(backend, super::cli::ProofBackend::Dafny))
@@ -9082,6 +9170,30 @@ fn run_proof_check(
                 ),
             );
         }
+        // `--compare-manifest` ONLY: per open claim, whether its own script
+        // changed (`same` / `changed` / `new`) and the definitions in its cone
+        // whose hash differs from the earlier manifest. Present (possibly
+        // empty) whenever the flag was given, so a consumer can tell "compared,
+        // every claim closed" from "not compared".
+        if let Some(changed) = &changed {
+            let mut entries = serde_json::Map::new();
+            for (identity, change) in changed {
+                let mut e = serde_json::Map::new();
+                e.insert("script".into(), change.script.into());
+                e.insert(
+                    "definitions".into(),
+                    serde_json::Value::Array(
+                        change
+                            .definitions
+                            .iter()
+                            .map(|d| serde_json::Value::String(d.clone()))
+                            .collect(),
+                    ),
+                );
+                entries.insert(identity.clone(), serde_json::Value::Object(e));
+            }
+            obj.insert("changed".into(), serde_json::Value::Object(entries));
+        }
         // `--explain` ONLY: surface the per-law residuals inline so an agent
         // consumer reads them WITHOUT opening the sidecar. Keyed by `fn.law`
         // identity. Emitted only when `--explain` produced at least one residual
@@ -9157,6 +9269,30 @@ fn run_proof_check(
                 for obligation in &audit.obligations {
                     println!("  {}: {}", obligation.law, obligation.tier.as_str());
                 }
+            }
+        }
+        if let Some(changed) = &changed {
+            if changed.is_empty() {
+                println!("--compare-manifest: every claim closed; nothing to compare");
+            }
+            for (identity, change) in changed {
+                let definitions = if change.definitions.is_empty() {
+                    "no definition in its cone changed".to_string()
+                } else {
+                    format!(
+                        "changed definitions in its cone: {}",
+                        change.definitions.join(", ")
+                    )
+                };
+                let script = match change.script {
+                    "same" => "script unchanged",
+                    "changed" => "script changed",
+                    _ => "not in the earlier manifest",
+                };
+                println!(
+                    "{}",
+                    format!("--compare-manifest: {identity}: {script}; {definitions}").yellow()
+                );
             }
         }
         let (metric, budget_desc) = match backend {
@@ -9462,12 +9598,20 @@ struct ProofManifest {
     /// in which it never existed. Serialized only when non-empty, so an
     /// unaffected corpus's manifest stays byte-for-byte identical.
     declined: Vec<aver::codegen::DeclinedClaim>,
+    /// Content hashes of the emitted declarations (`definitions`, keyed by
+    /// root-qualified name) and of every law and obligation script
+    /// (`scripts`, keyed by identity). `--compare-manifest` reads them back
+    /// from an earlier manifest to say what changed under a claim that did
+    /// not close. Informational — never gates the ratchet.
+    fingerprints: proof_fingerprints::Recorded,
 }
 
 #[path = "law_reason_report.rs"]
 mod law_reason_report;
 #[path = "proof_explain/mod.rs"]
 mod proof_explain;
+#[path = "proof_fingerprints.rs"]
+mod proof_fingerprints;
 
 /// The file-level audit records as one per-law manifest, keyed on the `fn.law`
 /// identity and sorted by it for byte-reproducibility.
@@ -9485,6 +9629,7 @@ fn build_proof_manifest(
         laws: by_label.into_values().collect(),
         obligations: Vec::new(),
         declined: declined.to_vec(),
+        fingerprints: proof_fingerprints::Recorded::default(),
     }
 }
 
@@ -9541,6 +9686,25 @@ fn proof_manifest_to_json(manifest: &ProofManifest) -> String {
             "obligations".into(),
             serde_json::Value::Array(records(&manifest.obligations)),
         );
+    }
+    // Declaration and script hashes (`BTreeMap`s, so the keys serialize
+    // sorted). Written only when the export was scanned, so a manifest built
+    // without emitted files keeps its bytes.
+    for (key, table) in [
+        ("definitions", &manifest.fingerprints.definitions),
+        ("scripts", &manifest.fingerprints.scripts),
+    ] {
+        if !table.is_empty() {
+            root.insert(
+                key.into(),
+                serde_json::Value::Object(
+                    table
+                        .iter()
+                        .map(|(name, hash)| (name.clone(), hash.clone().into()))
+                        .collect(),
+                ),
+            );
+        }
     }
     // Declined claims, sorted by identity for byte-reproducibility. Written
     // ONLY when there are any, so a corpus with no refusal keeps the exact
@@ -9638,6 +9802,9 @@ fn parse_proof_manifest(raw: &str) -> Result<ProofManifest, String> {
         // (the comparator iterates the baseline law set). Read as empty rather
         // than parsed, so an older baseline stays loadable.
         declined: Vec::new(),
+        // Tolerantly read: absent on a manifest written before the hashes
+        // existed, and never gates the ratchet.
+        fingerprints: proof_fingerprints::recorded_from_json(&value),
     })
 }
 
@@ -12504,7 +12671,34 @@ mod tests {
             laws,
             obligations: Vec::new(),
             declined: Vec::new(),
+            fingerprints: Default::default(),
         }
+    }
+
+    #[test]
+    fn manifest_fingerprints_roundtrip_and_stay_absent_when_empty() {
+        // A manifest without scanned declarations writes neither table, so
+        // its bytes are unchanged; a scanned one round-trips both tables.
+        let plain = manifest(vec![law("a.one", super::LawTier::Universal, &[])]);
+        let json = super::proof_manifest_to_json(&plain);
+        assert!(!json.contains("\"definitions\""), "{json}");
+        assert!(!json.contains("\"scripts\""), "{json}");
+        let mut scanned = manifest(vec![law("a.one", super::LawTier::Universal, &[])]);
+        scanned
+            .fingerprints
+            .definitions
+            .insert("Main.f".to_string(), "00ff".to_string());
+        scanned
+            .fingerprints
+            .scripts
+            .insert("a.one".to_string(), "ab12".to_string());
+        let json = super::proof_manifest_to_json(&scanned);
+        let parsed = super::parse_proof_manifest(&json).expect("parses back");
+        assert_eq!(
+            parsed.fingerprints.definitions.get("Main.f").unwrap(),
+            "00ff"
+        );
+        assert_eq!(parsed.fingerprints.scripts.get("a.one").unwrap(), "ab12");
     }
 
     #[test]

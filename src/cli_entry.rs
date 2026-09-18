@@ -535,6 +535,7 @@ fn main_impl(
             waterfall,
             gate,
             write_baseline,
+            compare_manifest,
         } => {
             commands::cmd_proof(
                 file,
@@ -554,6 +555,7 @@ fn main_impl(
                 waterfall,
                 gate.as_deref(),
                 write_baseline.as_deref(),
+                compare_manifest.as_deref(),
             );
         }
         Commands::AgentConnect { global, print } => {

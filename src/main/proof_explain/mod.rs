@@ -25,6 +25,13 @@ use serde_json::{Value, json};
 pub(super) use source::Catalog;
 use std::collections::BTreeMap;
 
+/// The claim identities the counted build located a hard error in (a tactic
+/// that escaped its `sorry` floor, a timeout). These carry no manifest record,
+/// so `--compare-manifest` needs them by name.
+pub(super) fn failed_claims(dir: &str, output: &str) -> Vec<String> {
+    backend::failures(dir, output).claims.into_keys().collect()
+}
+
 pub(super) fn collect(
     catalog: &Catalog,
     manifest: Option<&ProofManifest>,
