@@ -14,6 +14,20 @@ pub(in crate::yield_lowering::trace) fn witness(
     })
 }
 
+/// Stops of an imported process state, as its owner published them: the
+/// variant name and the declared type of each live variable it carries. A
+/// module never declares the state type of a process it imports, so this is
+/// the only layout a sample of such a stop can be written from.
+fn imported_stops<'a>(model: &Model<'a>, name: &str) -> Option<&'a [(String, Vec<String>)]> {
+    model.imported.values().find_map(|protocol| {
+        protocol
+            .kinds
+            .iter()
+            .find(|kind| kind.state == name)
+            .map(|kind| kind.variants.as_slice())
+    })
+}
+
 fn value(model: &Model<'_>, ty: &Type, active: &mut Vec<String>) -> Option<String> {
     Some(match ty {
         Type::Int => "0".into(),
@@ -47,7 +61,11 @@ fn value(model: &Model<'_>, ty: &Type, active: &mut Vec<String>) -> Option<Strin
                 | TypeDef::Product {
                     name: candidate, ..
                 } => candidate == name,
-            })?;
+            });
+            let stops = td.is_none().then(|| imported_stops(model, name)).flatten();
+            if td.is_none() && stops.is_none() {
+                return None;
+            }
             active.push(name.clone());
             let mut field = |annotation: &str| {
                 value(
@@ -56,25 +74,35 @@ fn value(model: &Model<'_>, ty: &Type, active: &mut Vec<String>) -> Option<Strin
                     active,
                 )
             };
+            let constructor = |variant: &str, values: Vec<String>| {
+                let payload = if values.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", values.join(", "))
+                };
+                format!("{name}.{variant}{payload}")
+            };
             let result = match td {
-                TypeDef::Sum { variants, .. } => variants.iter().find_map(|variant| {
+                Some(TypeDef::Sum { variants, .. }) => variants.iter().find_map(|variant| {
                     let values = variant
                         .fields
                         .iter()
                         .map(|ty| field(ty))
                         .collect::<Option<Vec<_>>>()?;
-                    let payload = if values.is_empty() {
-                        String::new()
-                    } else {
-                        format!("({})", values.join(", "))
-                    };
-                    Some(format!("{name}.{}{payload}", variant.name))
+                    Some(constructor(&variant.name, values))
                 }),
-                TypeDef::Product { fields, .. } => fields
+                Some(TypeDef::Product { fields, .. }) => fields
                     .iter()
                     .map(|(n, t)| field(t).map(|v| format!("{n} = {v}")))
                     .collect::<Option<Vec<_>>>()
                     .map(|fields| format!("{name}({})", fields.join(", "))),
+                None => stops.into_iter().flatten().find_map(|(variant, live)| {
+                    let values = live
+                        .iter()
+                        .map(|ty| field(ty))
+                        .collect::<Option<Vec<_>>>()?;
+                    Some(constructor(variant, values))
+                }),
             };
             active.pop();
             result?

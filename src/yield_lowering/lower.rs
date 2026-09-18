@@ -1814,7 +1814,12 @@ impl<'a> Lowering<'a> {
                     variants: kind
                         .variants
                         .iter()
-                        .map(|variant| (variant.name.clone(), variant.fields.len()))
+                        .map(|variant| {
+                            (
+                                variant.name.clone(),
+                                variant.fields.iter().map(|(_, ty)| ty.clone()).collect(),
+                            )
+                        })
                         .collect(),
                 })
                 .collect(),

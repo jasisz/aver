@@ -164,9 +164,11 @@ pub struct ProtocolKind {
     pub state: String,
     /// `__peerAnswerClaim`.
     pub answer_fn: String,
-    /// The state type's variants: one per stop of this kind, with how many
-    /// live variables it carries.
-    pub variants: Vec<(String, usize)>,
+    /// The state type's variants: one per stop of this kind, with the declared
+    /// type of each live variable it carries, in order. A caller reads the
+    /// layout to write a sample of an imported stop it can never construct by
+    /// name; the arity is the length of the list.
+    pub variants: Vec<(String, Vec<String>)>,
 }
 
 impl YieldLoweringReport {

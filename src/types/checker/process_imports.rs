@@ -79,6 +79,13 @@ impl TypeChecker {
                     for ty in &mut kind.arg_types {
                         *ty = annotation(&resolve(ty));
                     }
+                    // A stop's live variables are written in the owner's names;
+                    // an importer reads the layout to sample the stop.
+                    for (_, live) in &mut kind.variants {
+                        for ty in live.iter_mut() {
+                            *ty = annotation(&resolve(ty));
+                        }
+                    }
                     if let Some(ty) = &mut kind.answer_type {
                         *ty = annotation(&resolve(ty));
                     }
