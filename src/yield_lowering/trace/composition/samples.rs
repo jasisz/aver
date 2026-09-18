@@ -110,3 +110,106 @@ fn value(model: &Model<'_>, ty: &Type, active: &mut Vec<String>) -> Option<Strin
         _ => return None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::yield_lowering::ProtocolKind;
+
+    fn stop(variant: &str, live: &[&str]) -> (String, Vec<String>) {
+        (
+            variant.to_string(),
+            live.iter().map(|ty| (*ty).to_string()).collect(),
+        )
+    }
+
+    /// An exported process whose single request kind stops in `state`.
+    fn owner(state: &str, variants: Vec<(String, Vec<String>)>) -> ProcessProtocol {
+        ProcessProtocol {
+            fn_name: "run".into(),
+            params: vec![],
+            return_type: "Int".into(),
+            start: "__runStart".into(),
+            request: "__RunRequest".into(),
+            outcome: "__RunOutcome".into(),
+            kinds: vec![ProtocolKind {
+                name: "Claim".into(),
+                operation: Some("Pool.claim".into()),
+                arg_types: vec!["Int".into()],
+                answer_type: Some("Option<Int>".into()),
+                state: state.into(),
+                answer_fn: "__runAnswerClaim".into(),
+                variants,
+            }],
+            nests: vec![],
+            trace: None,
+        }
+    }
+
+    fn published(variants: Vec<(String, Vec<String>)>) -> HashMap<String, ProcessProtocol> {
+        HashMap::from([(
+            "Looper.run".to_string(),
+            owner("Looper.__RunClaimState", variants),
+        )])
+    }
+
+    #[test]
+    fn samples_an_imported_stop_from_the_published_layout() {
+        let imported = published(vec![
+            stop("InLoopAt1", &["Looper.__LoopClaimState"]),
+            stop("Await1", &["Int", "Int"]),
+        ]);
+        let local = owner("__RunClaimState", vec![]);
+        let fn_sigs = FnSigs::new();
+        let model = Model {
+            protocol: &local,
+            sources: &[],
+            type_defs: vec![],
+            segments: &[],
+            fn_sigs: &fn_sigs,
+            imported: &imported,
+            local_protocols: &[],
+            prefix: String::new(),
+            upper: String::new(),
+            operations: HashMap::new(),
+            kinds: vec![],
+        };
+
+        // The importing module never declares the state type, so the stop is
+        // written from the owner's layout, in the owner's names. The variant
+        // carrying a private helper's state is passed over for one that is
+        // constructible here.
+        assert_eq!(
+            witness(&model, "Looper.__RunClaimState").unwrap(),
+            "Looper.__RunClaimState.Await1(0, 0)"
+        );
+        // The private helper's own stop is not a published kind, so it has no
+        // layout and no sample.
+        assert!(witness(&model, "Looper.__LoopClaimState").is_err());
+    }
+
+    #[test]
+    fn declines_an_imported_stop_that_only_carries_an_unpublished_state() {
+        let imported = published(vec![stop("InLoopAt1", &["Looper.__LoopClaimState"])]);
+        let local = owner("__RunClaimState", vec![]);
+        let fn_sigs = FnSigs::new();
+        let model = Model {
+            protocol: &local,
+            sources: &[],
+            type_defs: vec![],
+            segments: &[],
+            fn_sigs: &fn_sigs,
+            imported: &imported,
+            local_protocols: &[],
+            prefix: String::new(),
+            upper: String::new(),
+            operations: HashMap::new(),
+            kinds: vec![],
+        };
+
+        // Naming the helper's state in the importing module is a visibility
+        // question the layout cannot answer, so the whole sample is declined
+        // rather than written as a constructor that does not resolve.
+        assert!(witness(&model, "Looper.__RunClaimState").is_err());
+    }
+}
