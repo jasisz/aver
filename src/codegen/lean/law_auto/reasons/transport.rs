@@ -144,6 +144,12 @@ pub(super) fn candidate(
         .flat_map(|fd| fd.params.iter().map(|(_, ty)| ty.as_str()))
         .filter(|ty| !ty.starts_with("List<") && !["Int", "Bool", "String"].contains(ty))
         .collect();
+    let nested_observations = functions.iter().any(|fd| {
+        induction::constructs_result_record(fd)
+            && !folds.iter().any(|fold| {
+                common::fn_owning_scope_for(ctx, fold) == common::fn_owning_scope_for(ctx, fd)
+            })
+    });
     let plain: BTreeSet<_> = functions
         .iter()
         .copied()
@@ -210,7 +216,9 @@ pub(super) fn candidate(
         .filter(|fd| {
             let name = induction::lean_name(fd, ctx);
             plain.contains(&name)
-                && (adapter.as_ref() == Some(&name) || !induction::constructs_result_record(fd))
+                && (!nested_observations
+                    || adapter.as_ref() == Some(&name)
+                    || !induction::constructs_result_record(fd))
         })
         .map(|fd| induction::lean_name(fd, ctx))
         .collect::<BTreeSet<_>>()
@@ -273,8 +281,13 @@ pub(super) fn candidate(
     // A fold may continue on a drop of the current tail after observing a
     // finite helper. A cons-tail IH is too narrow for that checked decrease;
     // length induction provides the equation for every shorter suffix.
+    let step_normalize = if nested_observations {
+        format!("simp +zetaDelta [{step_simp}]")
+    } else {
+        format!("simp_all +zetaDelta [{step_simp}, {excluded}]")
+    };
     let steps = format!(
-        "all_goals ({steps}); all_goals (repeat' first | (simp +zetaDelta [{step_simp}]) | split); all_goals (simp_all +zetaDelta [{final_plain}, {mapping}, List.append_assoc, {excluded}]); all_goals (grind [List.drop_cons, List.drop_drop, List.length_drop, List.length_cons, {equations}]); done"
+        "all_goals ({steps}); all_goals (repeat' first | ({step_normalize}) | split); all_goals (simp_all +zetaDelta [{final_plain}, {mapping}, List.append_assoc, {excluded}]); all_goals (grind [List.drop_cons, List.drop_drop, List.length_drop, List.length_cons, {equations}]); done"
     );
     let induction = if crate::codegen::recursion::detect::single_list_structural_param_index(driver)
         .is_some()
