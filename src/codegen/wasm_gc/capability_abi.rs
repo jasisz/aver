@@ -18,6 +18,7 @@ use super::CapabilityWasmGcPlan;
 use super::WasmGcError;
 use super::maps::MapKVHelpers;
 use super::packed_sequences::PackedSequenceOps;
+use super::types::WaitSetTypeNames;
 use super::types::{TypeRegistry, aver_to_wasm};
 
 #[derive(Debug, Clone)]
@@ -108,8 +109,10 @@ pub(super) struct CollectionAbiHelpers<'a> {
 }
 
 impl CapabilityAbi {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn allocate(
         plan: Option<&CapabilityWasmGcPlan>,
+        wait: Option<&WaitSetTypeNames>,
         registry: &TypeRegistry,
         int_helpers: Option<IntAbiHelpers>,
         collection_helpers: &CollectionAbiHelpers<'_>,
@@ -131,9 +134,10 @@ impl CapabilityAbi {
         // The wait set an external host has to decode, whether or not this
         // program runs a job of its own. A socket-only program reaches the
         // same one wait through the same door, and without these helpers the
-        // host cannot read its keys or build the answer.
-        let wait = registry.wait_set_type_names();
-        if let Some(wait) = &wait {
+        // host cannot read its keys or build the answer. The caller passes
+        // `None` for a target whose host reaches the wait another way, so an
+        // artifact for that target keeps the helpers and the indices it had.
+        if let Some(wait) = wait {
             collect(&wait.set, &mut boundary);
             collect(&wait.list, &mut boundary);
             collect(&wait.result, &mut boundary);

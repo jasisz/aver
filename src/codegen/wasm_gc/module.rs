@@ -212,6 +212,16 @@ pub(super) fn emit_module_with(
         let key = crate::capability::work::wait_key_type(items, &[])
             .unwrap_or(crate::ast::Type::Int)
             .display();
+        // The wasip2 lowering of `Wait.poll` reads the wait set through the
+        // `Map<Int, Wait.Item>` slots it names directly, so a key of another
+        // type has no lowering there. Say so here, where the target and the
+        // key are both known, rather than let the wiring fail later on a
+        // missing helper index.
+        if key != "Int" && matches!(target, super::TargetMode::Wasip2) {
+            return Err(WasmGcError::Validation(format!(
+                "Wait.poll keyed by '{key}' has no --target wasip2 lowering; wait by 'Int' for this target, or compile this program to --target wasm-gc"
+            )));
+        }
         capability_boundary_types.extend([
             format!("Map<{key},Wait.Item>"),
             "Wait.Item".to_string(),
@@ -2269,8 +2279,16 @@ pub(super) fn emit_module_with(
     // type, and a key with an `Int` anywhere inside it needs the same
     // full-ℤ bridges a capability boundary needs. A program that waits has
     // that boundary whether or not it declares a capability of its own.
-    let capability_int_needed = capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum())
-        || registry.wait_set_type_names().is_some();
+    //
+    // Only a program an external host drives has it. A wasip2 component
+    // reaches its wait through the canonical ABI imports the wasip2 lowering
+    // emits, so it gets neither these bridges nor the wait ABI helpers, and
+    // its function indices stay where they were.
+    let wait_abi = matches!(target, super::TargetMode::AverBridge)
+        .then(|| registry.wait_set_type_names())
+        .flatten();
+    let capability_int_needed =
+        capability_wasm_gc_plan.is_some_and(|plan| plan.force_bignum()) || wait_abi.is_some();
     let capability_int_abi = capability_int_needed
         .then(|| {
             Ok(super::capability_abi::IntAbiHelpers {
@@ -2299,6 +2317,7 @@ pub(super) fn emit_module_with(
         .transpose()?;
     let capability_abi = super::capability_abi::CapabilityAbi::allocate(
         capability_wasm_gc_plan,
+        wait_abi.as_ref(),
         &registry,
         capability_int_abi,
         &super::capability_abi::CollectionAbiHelpers {
