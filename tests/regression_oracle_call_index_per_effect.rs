@@ -596,3 +596,136 @@ fn a_law_whose_claim_makes_two_effectful_calls_is_declined() {
     assert_law_declined(&dafny, "readOne", "bothSidesRead", "Random.int");
 }
 
+// ---------------------------------------------------------------------------
+// The other side of the gate again: two shapes the export numbers exactly, so
+// declining them would cost a law its theorem for no soundness gain.
+// ---------------------------------------------------------------------------
+
+/// Polling inside an independent product. The run gives each branch its own
+/// slot and starts every operation in it at zero on each entry, so the branch
+/// reads are index 0 in every turn of the loop however far the threaded
+/// polling base has advanced at the sequential level.
+const POLL_BRANCH: &str = r#"module PollBranch
+    intent = "A poll loop that also polls inside an independent product."
+    exposes [follow]
+    effects [Process.stopRequested]
+
+fn tag(pair: Tuple<Bool, Bool>) -> Int
+    ? "Pack the two branch answers into one digit each."
+    match pair
+        (true, true) -> 100
+        (true, false) -> 10
+        (false, true) -> 1
+        (false, false) -> 0
+
+fn follow(steps: Int) -> Int
+    ? "Poll twice in a product, then poll at the root, then continue."
+    ! [Process.stopRequested]
+    pair = (Process.stopRequested(), Process.stopRequested())!
+    match Process.stopRequested()
+        true -> steps * 1000 + tag(pair)
+        false -> follow(steps + 1)
+
+fn stopAfterTwo(path: BranchPath, call: Int) -> Bool
+    ? "The third poll of any one branch asks it to stop."
+    call >= 2
+
+verify follow law branchPollsStartAtZero
+    given stop: Process.stopRequested = [stopAfterTwo]
+    follow(0) => 2000
+"#;
+
+#[test]
+fn a_poll_inside_an_independent_product_is_numbered_from_zero() {
+    assert_eq!(
+        verify(POLL_BRANCH, "oracle_call_index_poll_branch.av"),
+        (1, 0),
+        "each branch polls at index 0 in every turn, so both branch answers are false and \
+         the third root poll stops the loop on turn 2"
+    );
+    let lean = export(POLL_BRANCH, "pollbranch", "lean", "PollBranch.lean");
+    for call in [
+        "rnd_Process_stopRequested (BranchPath.child path 0) 0",
+        "rnd_Process_stopRequested (BranchPath.child path 1) 0",
+    ] {
+        assert!(
+            lean.file.contains(call),
+            "a branch numbers its own calls from zero the way the run does; `{call}` is \
+             missing from:\n{}",
+            lean.file
+        );
+    }
+    assert!(
+        !lean.file.contains("(BranchPath.child path 0) oracleIndex"),
+        "carrying the sequential polling base into a branch numbers the branch at the \
+         loop's turn count while the run numbers it from zero, so the exported model \
+         computes a different function from the second turn on:\n{}",
+        lean.file
+    );
+    assert!(
+        !lean.report.contains("declined"),
+        "the branch numbering is exact once the base stays outside it, so the law keeps \
+         its theorem; report was:\n{}",
+        lean.report
+    );
+}
+
+/// An uneven inner `match` inside one arm of an outer `match`, a sibling arm
+/// that reads once, and nothing after the outer match. Every index in the
+/// lifted body is the one the run charges, because the arm that is uneven is
+/// never followed by a call whose index would depend on it.
+const SIBLING_ARM: &str = r#"module SiblingArm
+    intent = "An uneven inner match in one arm, a sibling arm beside it, and nothing after."
+    exposes [pick]
+    effects [Random.int]
+
+fn pick(a: Int, b: Int) -> Int
+    ? "The uneven inner match is the last thing its own arm does."
+    ! [Random.int]
+    match a
+        0 -> match b
+            0 -> Random.int(1, 6) * 10 + Random.int(1, 6)
+            _ -> Random.int(1, 6)
+        _ -> Random.int(1, 6)
+
+fn peerByCall(path: BranchPath, call: Int, low: Int, high: Int) -> Result<Int, String>
+    ? "The peer reports the call index it was handed."
+    Result.Ok(call)
+
+verify pick law siblingArmIsExact
+    given rnd: Random.int = [peerByCall]
+    pick(0, 0) => 1
+"#;
+
+#[test]
+fn an_arm_beside_an_uneven_inner_match_still_exports() {
+    assert_eq!(
+        verify(SIBLING_ARM, "oracle_call_index_sibling_arm.av"),
+        (1, 0),
+        "the two reads of the inner arm are indices 0 and 1, so the packed answer is 1"
+    );
+    let lean = export(SIBLING_ARM, "siblingarm", "lean", "SiblingArm.lean");
+    assert!(
+        !lean.report.contains("declined"),
+        "no call follows the uneven match, so nothing in this body is approximate and the \
+         law must keep its theorem; report was:\n{}",
+        lean.report
+    );
+    assert!(
+        lean.file.contains("theorem pick_law_siblingArmIsExact"),
+        "an exact body exports its law:\n{}",
+        lean.file
+    );
+    assert_eq!(
+        lean.file.matches("rnd_Random_int path 0 1 6").count(),
+        3,
+        "each arm starts from the index its own match was reached at, so three of the four \
+         reads are index 0:\n{}",
+        lean.file
+    );
+    assert!(
+        !lean.file.contains("rnd_Random_int path 2 1 6"),
+        "index 2 means an arm carried a sibling's calls:\n{}",
+        lean.file
+    );
+}

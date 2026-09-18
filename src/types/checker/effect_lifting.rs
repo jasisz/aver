@@ -66,6 +66,15 @@ pub struct LiftConfig {
     /// instead of restarting every lifted body at literal zero. Functions
     /// without that capability keep the v1 static call-site counters.
     pub oracle_counter_name: Option<String>,
+    /// Whether the expression being lifted sits inside a `!` / `?!` branch.
+    ///
+    /// A branch is its own numbering scope on both sides: the lifter gives it
+    /// fresh counters, and the run gives it a fresh per-operation slot on
+    /// every entry (`ReplayState::enter_group` and `set_branch`). The
+    /// sequential polling base above is therefore not the branch's base, and
+    /// adding it numbered a branch read at the loop's turn count while the run
+    /// numbered it from zero.
+    pub in_branch_scope: bool,
     /// Map from effect method (`"Random.int"`) → local binding name
     /// (`"rnd"`) the lifted body should call in place of the effect.
     pub oracles: HashMap<String, String>,
@@ -214,13 +223,27 @@ impl OracleCounters {
         self.per_effect.clone()
     }
 
-    /// Restart every operation from `indices`.
+    /// The operations that are arm-dependent at this point, to restart a
+    /// sibling scope from.
+    fn arm_dependent(&self) -> BTreeSet<String> {
+        self.arm_dependent.clone()
+    }
+
+    /// Restart this scope at the counts and the arm-dependent operations it
+    /// was reached with.
     ///
-    /// Counts only. What this scope has already learned about its own
-    /// numbering — the arm-dependent operations and the divergences found so
-    /// far — survives, because a sibling arm does not undo it.
-    fn restart_from(&mut self, indices: &HashMap<String, u32>) {
+    /// Both travel together, because both describe how the next call of an
+    /// operation is numbered. Restoring the counts alone let a nested `match`
+    /// in one arm mark an operation arm-dependent for its SIBLING arm, which
+    /// starts from the same point and knows nothing about it: a body whose
+    /// every index is exact was declined, naming a call in the sibling arm as
+    /// though it followed the uneven match.
+    ///
+    /// The divergences found so far are not restored. They are findings about
+    /// this body, and a sibling arm does not undo one.
+    fn restart_from(&mut self, indices: &HashMap<String, u32>, arm_dependent: &BTreeSet<String>) {
         self.per_effect = indices.clone();
+        self.arm_dependent = arm_dependent.clone();
     }
 
     /// Record every operation whose count after a `match` depends on the arm
@@ -503,11 +526,17 @@ fn try_lift_error_prop_stmt(
 
     // Lift each branch with its own BranchPath.child(path, i) and a
     // fresh per-branch oracle counter.
+    let branch_cfg = branch_scope_cfg(cfg);
     let mut lifted_items: Vec<Spanned<Expr>> = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
         let branch_path = branch_child_path(path_expr, i as u32, item.line);
         let mut branch_counters = OracleCounters::default();
-        lifted_items.push(lift_expr(item, cfg, &branch_path, &mut branch_counters)?);
+        lifted_items.push(lift_expr(
+            item,
+            &branch_cfg,
+            &branch_path,
+            &mut branch_counters,
+        )?);
         counters.absorb_divergences(branch_counters);
     }
 
@@ -628,8 +657,29 @@ fn helper_injection(
     injected
 }
 
+/// The config a `!` / `?!` branch is lifted under: this one, marked as a
+/// branch scope.
+///
+/// Only the numbering changes. The branch still sees the same oracles, the
+/// same helpers and the same threaded parameter name, so a helper called from
+/// inside a branch still receives a base — the branch's own count, written as
+/// a literal, which is what the run has charged that operation in this branch
+/// by the time the call is made.
+fn branch_scope_cfg(cfg: &LiftConfig) -> LiftConfig {
+    LiftConfig {
+        in_branch_scope: true,
+        ..cfg.clone()
+    }
+}
+
 fn oracle_counter_expr(cfg: &LiftConfig, offset: u32, line: SourceLine) -> Spanned<Expr> {
     let literal = || spanned(Expr::Literal(Literal::Int(offset as i64)), line);
+    // Inside a branch the run restarts every operation at zero, so the offset
+    // this scope counted is already the absolute index and the threaded base
+    // belongs to the sequential level it was taken from.
+    if cfg.in_branch_scope {
+        return literal();
+    }
     let Some(base) = &cfg.oracle_counter_name else {
         return literal();
     };
@@ -889,14 +939,21 @@ fn lift_expr(
             // and every law whose subject can take that arm exported a
             // theorem the kernel refutes while `verify` passed.
             let at_match = counters.call_indices();
+            let at_match_arm_dependent = counters.arm_dependent();
             let mut after_match = at_match.clone();
+            // An operation an ARM left arm-dependent is still arm-dependent
+            // after the match: that arm's own count is the busiest inner arm's
+            // rather than a number the run agrees on, so comparing it with a
+            // sibling's decides nothing.
+            let mut after_arm_dependent = at_match_arm_dependent.clone();
             let mut arm_counts: Vec<HashMap<String, u32>> = Vec::with_capacity(arms.len());
             let mut new_arms = Vec::with_capacity(arms.len());
             for arm in arms {
-                counters.restart_from(&at_match);
+                counters.restart_from(&at_match, &at_match_arm_dependent);
                 let body = lift_expr(&arm.body, cfg, path_expr, counters)?;
                 let counts = counters.call_indices();
                 keep_longest(&mut after_match, &counts);
+                after_arm_dependent.extend(counters.arm_dependent());
                 arm_counts.push(counts);
                 new_arms.push(MatchArm::new(arm.pattern.clone(), body));
             }
@@ -905,8 +962,8 @@ fn lift_expr(
             // not, no static index is right for every arm, so the next call of
             // such an operation is recorded as a divergence and any law over
             // this body is declined instead of exported.
+            counters.restart_from(&after_match, &after_arm_dependent);
             counters.mark_arm_dependent(&at_match, &arm_counts);
-            counters.restart_from(&after_match);
             Expr::Match {
                 subject: Box::new(new_subject),
                 arms: new_arms,
@@ -931,11 +988,12 @@ fn lift_expr(
             // invariance lemma 1 (branch locality) follows because each
             // branch's lifted form reads only from its own (path, counters)
             // slot of the oracle.
+            let branch_cfg = branch_scope_cfg(cfg);
             let mut new_elements = Vec::with_capacity(elements.len());
             for (i, element) in elements.iter().enumerate() {
                 let branch_path = branch_child_path(path_expr, i as u32, element.line);
                 let mut branch_counters = OracleCounters::default();
-                let lifted = lift_expr(element, cfg, &branch_path, &mut branch_counters)?;
+                let lifted = lift_expr(element, &branch_cfg, &branch_path, &mut branch_counters)?;
                 counters.absorb_divergences(branch_counters);
                 new_elements.push(lifted);
             }
@@ -1380,6 +1438,7 @@ pub fn lower_pure_question_bang_fn(fd: &FnDef) -> Result<Option<FnDef>, LiftErro
     let cfg = LiftConfig {
         path_name: "path".to_string(),
         oracle_counter_name: None,
+        in_branch_scope: false,
         oracles: HashMap::new(),
         fresh_resources: HashMap::new(),
         effectful_helpers: HashMap::new(),
@@ -1596,6 +1655,7 @@ fn lift_fn_def_reporting(
     let cfg = LiftConfig {
         path_name,
         oracle_counter_name,
+        in_branch_scope: false,
         oracles: oracles_map,
         fresh_resources,
         effectful_helpers: helpers.clone(),
@@ -1679,6 +1739,7 @@ mod tests {
         LiftConfig {
             path_name: "path".to_string(),
             oracle_counter_name: None,
+            in_branch_scope: false,
             oracles: oracles
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
