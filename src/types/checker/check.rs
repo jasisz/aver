@@ -128,8 +128,21 @@ impl TypeChecker {
         let entry_scope = Self::module_decl(entry_items)
             .map(|m| m.name.as_str())
             .unwrap_or("");
-        let (mut registry, errors) =
-            crate::capability::CapabilityRegistry::from_module(entry_scope, entry_items);
+        // A job kind may name a data type of a module it depends on, so the
+        // contract builder needs the program's other declarations in hand
+        // before it builds any contract. Every module the program loaded is
+        // in the table; `depends` is what decides which of them a given
+        // capability may name.
+        let mut dependency_types = crate::capability::DependencyTypes::default();
+        dependency_types.add_module(entry_scope, entry_items);
+        for module in loaded {
+            dependency_types.add_module(&module.dep_name, &module.items);
+        }
+        let (mut registry, errors) = crate::capability::CapabilityRegistry::from_module_in_program(
+            entry_scope,
+            entry_items,
+            &dependency_types,
+        );
         self.errors
             .extend(errors.into_iter().map(|error| TypeError {
                 message: error.message,
@@ -139,8 +152,11 @@ impl TypeChecker {
                 secondary: None,
             }));
         for module in loaded {
-            let (next, next_errors) =
-                crate::capability::CapabilityRegistry::from_module(&module.dep_name, &module.items);
+            let (next, next_errors) = crate::capability::CapabilityRegistry::from_module_in_program(
+                &module.dep_name,
+                &module.items,
+                &dependency_types,
+            );
             registry.merge(next);
             let display_path = module_root
                 .and_then(|root| module.path.strip_prefix(root).ok())

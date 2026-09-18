@@ -1,0 +1,12 @@
+module Store
+    intent =
+        "The one module that touches the disk. Its author wrote both the"
+        "namespace and the one method under it, which is wider than the minimum"
+        "and is still the minimum the report computes."
+    exposes [save]
+    effects [Disk]
+
+fn save(file: String, line: String) -> Result<Unit, String>
+    ? "Append one line to the file."
+    ! [Disk, Disk.appendText]
+    Disk.appendText(file, line)

@@ -1,0 +1,12 @@
+module Mid
+    intent =
+        "Every function here reaches the capability only through an imported"
+        "yielding helper, so nothing in this module's own body names the"
+        "capability. Its boundary still has to carry what its functions declare."
+    depends [Pool, Pooled, Leaf]
+    effects [Pool.claim, yield]
+
+fn hop(id: Int) -> Int
+    ? "Forward one claim through the imported helper."
+    ! [Pool.claim, yield]
+    Leaf.forward(id)

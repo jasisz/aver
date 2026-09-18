@@ -21,6 +21,7 @@ pub mod codegen;
 #[cfg(feature = "runtime")]
 pub mod config;
 pub mod diagnostics;
+pub mod effect_surface;
 pub mod effects;
 mod file_materialization;
 #[cfg(all(feature = "runtime", feature = "tty-render"))]

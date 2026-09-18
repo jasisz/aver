@@ -1,0 +1,21 @@
+module Ledger
+    intent =
+        "A pair of steps that hand one walk back and forth. Each of them"
+        "declares more than it reaches, and because they call each other the"
+        "extra entries keep each other alive until the minimum is computed"
+        "from below."
+    exposes [walk]
+    effects [Console.print, Disk.appendText, Time.unixMs]
+
+fn walk(file: String, lines: List<String>) -> Result<Unit, String>
+    ? "Walk the lines, one appended line per step."
+    ! [Console.print, Disk.appendText, Time.unixMs]
+    match lines
+        [] -> Result.Ok(Unit)
+        [head, ..tail] -> stepped(file, head, tail)
+
+fn stepped(file: String, line: String, rest: List<String>) -> Result<Unit, String>
+    ? "Append one line, then hand the rest back to the walk."
+    ! [Console.print, Disk.appendText, Time.unixMs]
+    _written = Disk.appendText(file, line)?
+    walk(file, rest)

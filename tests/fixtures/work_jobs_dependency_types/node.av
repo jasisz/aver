@@ -1,0 +1,9 @@
+module Node
+    depends [Ledger, Meta]
+    intent = "The pure function one decode job runs, over the program's own types."
+    exposes [decode]
+    effects []
+
+fn decode(task: Ledger.Request) -> List<Ledger.Tx>
+    ? "Decodes one request into the transactions it names."
+    [Ledger.Tx(txid = task.source, size = task.limit, info = Meta.Info(label = task.origin.host))]

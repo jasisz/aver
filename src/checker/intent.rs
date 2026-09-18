@@ -105,30 +105,44 @@ fn args_match_params(args: &[Spanned<Expr>], param_names: &[&str]) -> bool {
         .all(|(arg, expected)| matches!(&arg.node, Expr::Ident(name) if name == *expected))
 }
 
+/// What one call site uses: the target's own effects, plus those of any named
+/// function handed to a parameter marked `! [_]`, which forwards them here. The
+/// checker charges a call in tail position the same way, so both call shapes go
+/// through this and the lint cannot come out narrower than the obligation.
+fn insert_call_effects(
+    callee_name: &str,
+    args: &[Spanned<Expr>],
+    fn_sigs: &FnSigMap,
+    out: &mut BTreeSet<String>,
+) {
+    let Some((params, _, effects)) = fn_sigs.get(callee_name) else {
+        return;
+    };
+    for effect in effects {
+        out.insert(effect.clone());
+    }
+    for (param, argument) in params.iter().zip(args.iter()) {
+        let crate::types::Type::Fn(_, _, callback_slot_effects) = param else {
+            continue;
+        };
+        if !crate::effects::forwards_callback_effects(callback_slot_effects) {
+            continue;
+        }
+        if let Some(callback_name) = dotted_name(argument)
+            && let Some((_, _, callback_effects)) = fn_sigs.get(&callback_name)
+        {
+            for effect in callback_effects {
+                out.insert(effect.clone());
+            }
+        }
+    }
+}
+
 fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut BTreeSet<String>) {
     match &expr.node {
         Expr::FnCall(callee, args) => {
-            if let Some(callee_name) = dotted_name(callee)
-                && let Some((params, _, effects)) = fn_sigs.get(&callee_name)
-            {
-                for effect in effects {
-                    out.insert(effect.clone());
-                }
-                for (param, argument) in params.iter().zip(args.iter()) {
-                    let crate::types::Type::Fn(_, _, callback_slot_effects) = param else {
-                        continue;
-                    };
-                    if !crate::effects::forwards_callback_effects(callback_slot_effects) {
-                        continue;
-                    }
-                    if let Some(callback_name) = dotted_name(argument)
-                        && let Some((_, _, callback_effects)) = fn_sigs.get(&callback_name)
-                    {
-                        for effect in callback_effects {
-                            out.insert(effect.clone());
-                        }
-                    }
-                }
+            if let Some(callee_name) = dotted_name(callee) {
+                insert_call_effects(&callee_name, args, fn_sigs, out);
             }
             collect_used_effects_expr(callee, fn_sigs, out);
             for arg in args {
@@ -137,11 +151,7 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
         }
         Expr::TailCall(boxed) => {
             let TailCallData { target, args, .. } = boxed.as_ref();
-            if let Some((_, _, effects)) = fn_sigs.get(target) {
-                for effect in effects {
-                    out.insert(effect.clone());
-                }
-            }
+            insert_call_effects(target, args, fn_sigs, out);
             for arg in args {
                 collect_used_effects_expr(arg, fn_sigs, out);
             }
@@ -198,7 +208,13 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
     }
 }
 
-fn collect_used_effects(f: &FnDef, fn_sigs: &FnSigMap) -> BTreeSet<String> {
+/// Every effect `f` reaches: the ones its own body performs plus the declared
+/// effects of everything it calls.
+///
+/// This is the computation behind the `unused-effect` warning, and
+/// [`crate::effect_surface`] iterates it to a fixpoint so `aver effects` and
+/// the warning answer with the same notion of "used".
+pub(crate) fn collect_used_effects(f: &FnDef, fn_sigs: &FnSigMap) -> BTreeSet<String> {
     let mut used = BTreeSet::new();
     for stmt in f.body.stmts() {
         match stmt {

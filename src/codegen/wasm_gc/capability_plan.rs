@@ -5,7 +5,7 @@
 //! operation. An external embedder supplies those functions directly; the
 //! stock CLI can also adapt a configured Rust provider through the same ABI.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::ast::Type;
 use crate::capability::{CapabilityContract, CapabilityOperation, CapabilityRegistry};
@@ -36,6 +36,7 @@ pub struct CapabilityWasmGcPlan {
     interfaces: Vec<CapabilityWasmGcInterfacePlan>,
     resource_types: BTreeSet<String>,
     named_boundary_types: BTreeSet<String>,
+    boundary_layouts: BTreeMap<String, crate::ast::TypeDef>,
     force_bignum: bool,
     job_kinds: Vec<crate::capability::work::JobKindPlan>,
 }
@@ -175,10 +176,20 @@ impl CapabilityWasmGcPlan {
                 })
             });
 
+        // The layouts every contract of this program binds, canonical name
+        // and all. The provider ABI names its helpers after the contract on
+        // both sides of the boundary, so the emitter needs the same rows the
+        // host reads back.
+        let boundary_layouts = registry
+            .boundary_types()
+            .map(|(name, type_def)| (name.clone(), type_def.clone()))
+            .collect();
+
         Ok(Self {
             interfaces,
             resource_types,
             named_boundary_types,
+            boundary_layouts,
             force_bignum,
             job_kinds,
         })
@@ -224,6 +235,10 @@ impl CapabilityWasmGcPlan {
 
     pub fn named_boundary_types(&self) -> &BTreeSet<String> {
         &self.named_boundary_types
+    }
+
+    pub fn boundary_layouts(&self) -> &BTreeMap<String, crate::ast::TypeDef> {
+        &self.boundary_layouts
     }
 
     pub fn boundary_type_strings(&self) -> Vec<String> {

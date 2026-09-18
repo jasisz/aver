@@ -1180,6 +1180,108 @@ impl TypeChecker {
         None
     }
 
+    /// Charge one call site with the effects its target declares.
+    ///
+    /// `callee` is the call target as the checker resolves it, `effects` that
+    /// target's declared effect list, and `call_line` the line the call sits on.
+    /// Every call site goes through here, in tail position or not: the obligation
+    /// a call carries is a property of the call, not of where the result goes.
+    fn check_callee_effect_obligation(
+        &mut self,
+        callee_name: &str,
+        effects: &[String],
+        call_line: usize,
+        caller_name: &str,
+        caller_effects: &[String],
+    ) {
+        let err_line = if call_line > 0 {
+            call_line
+        } else {
+            self.current_fn_line.unwrap_or(1)
+        };
+        // Imported source signatures are available for protocol
+        // composition only inside another yielding function.
+        let calls_a_yield_fn = !caller_effects
+            .iter()
+            .any(|e| e == crate::yield_lowering::YIELD_EFFECT)
+            && callee_name.contains('.')
+            && effects
+                .iter()
+                .any(|e| e == crate::yield_lowering::YIELD_EFFECT);
+        if calls_a_yield_fn {
+            self.error_at_line(
+                err_line,
+                if self.imported_processes.contains_key(callee_name) {
+                    crate::yield_lowering::removed_call_recipe(callee_name)
+                } else {
+                    crate::yield_lowering::direct_call_recipe(caller_name, callee_name)
+                },
+            );
+        }
+        for effect in effects.iter().filter(|_| !calls_a_yield_fn) {
+            // A direct callback parameter typed `Fn(...) ! [_]`
+            // forwards the concrete callback's effects to the
+            // outer call site. `_` is not an effect the helper
+            // itself performs, so its body does not declare it.
+            if effect == crate::effects::FORWARDED_CALLBACK_EFFECT {
+                continue;
+            }
+            if !self.caller_has_effect(caller_effects, effect) {
+                self.error_at_line(err_line, format!(
+                    "Function '{}' calls '{}' which has effect '{}', but '{}' does not declare it",
+                    caller_name, callee_name, effect, caller_name
+                ));
+            }
+        }
+    }
+
+    /// The other half of forwarding: at `helper(..., namedFn)`, pair callback
+    /// parameters marked `! [_]` with their direct named arguments and require the
+    /// argument's exact effects from the caller. Function values cannot escape
+    /// argument position in Aver, so this remains fully static.
+    fn check_forwarded_callback_arguments(
+        &mut self,
+        callee_name: &str,
+        args: &[Spanned<Expr>],
+        caller_name: &str,
+        caller_effects: &[String],
+    ) {
+        let Some(sig) = self.find_fn_sig(callee_name).cloned() else {
+            return;
+        };
+        for (expected, argument) in sig.params.iter().zip(args.iter()) {
+            let Type::Fn(_, _, expected_effects) = expected else {
+                continue;
+            };
+            if !crate::effects::forwards_callback_effects(expected_effects) {
+                continue;
+            }
+            let Some((callback_name, callback_effects)) = self.callable_effects(&argument.node)
+            else {
+                continue;
+            };
+            let err_line = if argument.line > 0 {
+                argument.line
+            } else {
+                self.current_fn_line.unwrap_or(1)
+            };
+            for effect in callback_effects {
+                if effect == crate::effects::FORWARDED_CALLBACK_EFFECT {
+                    continue;
+                }
+                if !self.caller_has_effect(caller_effects, &effect) {
+                    self.error_at_line(
+                        err_line,
+                        format!(
+                            "Function '{}' passes callback '{}' with effect '{}' to '{}', but '{}' does not declare it",
+                            caller_name, callback_name, effect, callee_name, caller_name
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     pub(super) fn check_effects_in_expr(
         &mut self,
         expr: &Spanned<Expr>,
@@ -1189,91 +1291,21 @@ impl TypeChecker {
         match &expr.node {
             Expr::FnCall(fn_expr, args) => {
                 if let Some((callee_name, effects)) = self.callable_effects(&fn_expr.node) {
-                    let err_line = if expr.line > 0 {
-                        expr.line
-                    } else {
-                        self.current_fn_line.unwrap_or(1)
-                    };
-                    // Imported source signatures are available for protocol
-                    // composition only inside another yielding function.
-                    let calls_a_yield_fn = !caller_effects
-                        .iter()
-                        .any(|e| e == crate::yield_lowering::YIELD_EFFECT)
-                        && callee_name.contains('.')
-                        && effects
-                            .iter()
-                            .any(|e| e == crate::yield_lowering::YIELD_EFFECT);
-                    if calls_a_yield_fn {
-                        self.error_at_line(
-                            err_line,
-                            if self.imported_processes.contains_key(&callee_name) {
-                                crate::yield_lowering::removed_call_recipe(&callee_name)
-                            } else {
-                                crate::yield_lowering::direct_call_recipe(caller_name, &callee_name)
-                            },
-                        );
-                    }
-                    for effect in effects.iter().filter(|_| !calls_a_yield_fn) {
-                        // A direct callback parameter typed `Fn(...) ! [_]`
-                        // forwards the concrete callback's effects to the
-                        // outer call site. `_` is not an effect the helper
-                        // itself performs, so its body does not declare it.
-                        if effect == crate::effects::FORWARDED_CALLBACK_EFFECT {
-                            continue;
-                        }
-                        if !self.caller_has_effect(caller_effects, effect) {
-                            self.error_at_line(err_line, format!(
-                                "Function '{}' calls '{}' which has effect '{}', but '{}' does not declare it",
-                                caller_name, callee_name, effect, caller_name
-                            ));
-                        }
-                    }
+                    self.check_callee_effect_obligation(
+                        &callee_name,
+                        &effects,
+                        expr.line,
+                        caller_name,
+                        caller_effects,
+                    );
                 }
-
-                // The other half of forwarding: at `helper(..., namedFn)`,
-                // pair callback parameters marked `! [_]` with their direct
-                // named arguments and require the argument's exact effects
-                // from the caller. Function values cannot escape argument
-                // position in Aver, so this remains fully static.
-                if let Some(callee_name) = Self::callee_key(&fn_expr.node)
-                    && let Some(sig) = self.find_fn_sig(&callee_name).cloned()
-                {
-                    for (expected, argument) in sig.params.iter().zip(args.iter()) {
-                        let Type::Fn(_, _, expected_effects) = expected else {
-                            continue;
-                        };
-                        if !crate::effects::forwards_callback_effects(expected_effects) {
-                            continue;
-                        }
-                        let Some((callback_name, callback_effects)) =
-                            self.callable_effects(&argument.node)
-                        else {
-                            continue;
-                        };
-                        let err_line = if argument.line > 0 {
-                            argument.line
-                        } else {
-                            self.current_fn_line.unwrap_or(1)
-                        };
-                        for effect in callback_effects {
-                            if effect == crate::effects::FORWARDED_CALLBACK_EFFECT {
-                                continue;
-                            }
-                            if !self.caller_has_effect(caller_effects, &effect) {
-                                self.error_at_line(
-                                    err_line,
-                                    format!(
-                                        "Function '{}' passes callback '{}' with effect '{}' to '{}', but '{}' does not declare it",
-                                        caller_name,
-                                        callback_name,
-                                        effect,
-                                        callee_name,
-                                        caller_name
-                                    ),
-                                );
-                            }
-                        }
-                    }
+                if let Some(callee_name) = Self::callee_key(&fn_expr.node) {
+                    self.check_forwarded_callback_arguments(
+                        &callee_name,
+                        args,
+                        caller_name,
+                        caller_effects,
+                    );
                 }
                 self.check_effects_in_expr(fn_expr, caller_name, caller_effects);
                 for arg in args {
@@ -1328,6 +1360,27 @@ impl TypeChecker {
                 }
             }
             Expr::TailCall(boxed) => {
+                // The tail-call rewrite runs before the checker does, so this node
+                // was `target(args)` in the source. It carries the same obligation:
+                // the caller declares what the target declares. Resolving the target
+                // through the same door an ordinary call uses keeps the two from
+                // drifting apart, which is how this edge went unchecked before.
+                let target = crate::ast::Expr::Ident(boxed.target.clone());
+                if let Some((callee_name, effects)) = self.callable_effects(&target) {
+                    self.check_callee_effect_obligation(
+                        &callee_name,
+                        &effects,
+                        expr.line,
+                        caller_name,
+                        caller_effects,
+                    );
+                }
+                self.check_forwarded_callback_arguments(
+                    &boxed.target,
+                    &boxed.args,
+                    caller_name,
+                    caller_effects,
+                );
                 for arg in &boxed.args {
                     self.check_effects_in_expr(arg, caller_name, caller_effects);
                 }

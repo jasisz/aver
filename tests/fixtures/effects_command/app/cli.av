@@ -1,0 +1,19 @@
+module Cli
+    intent =
+        "The command that turns one message into one saved line and one line"
+        "on the console."
+    exposes [run]
+    depends [Infra.Store]
+    effects [Console.print, Disk.appendText]
+
+fn run(file: String, message: String) -> Result<Unit, String>
+    ? "Save the message, then say that it was saved."
+    ! [Console.print, Disk.appendText]
+    _saved = Infra.Store.save(file, message)?
+    announced(message)
+
+fn announced(message: String) -> Result<Unit, String>
+    ? "Say on the console what was just written."
+    ! [Console.print]
+    Console.print("saved: {message}")
+    Result.Ok(Unit)

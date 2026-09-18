@@ -292,6 +292,26 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Report every declared effect list against the minimum the checker
+    /// computes for it, and optionally rewrite the lists to that minimum
+    Effects {
+        /// Aver file or directory
+        file: String,
+        /// Resolve `depends [...]` from this root (default: current working directory)
+        #[arg(long)]
+        module_root: Option<String>,
+        /// Emit the versioned deterministic report as JSON
+        #[arg(long)]
+        json: bool,
+        /// Rewrite every `! [...]` and every module `effects [...]` to the
+        /// computed minimum, through the formatter's own layout
+        #[arg(long)]
+        write: bool,
+        /// Compare the effect surface at a git revision with the working tree
+        /// and separate propagation from functions whose body changed
+        #[arg(long, value_name = "REV")]
+        since: Option<String>,
+    },
     /// Run the verify blocks of every module in the program: the entry
     /// plus everything it reaches through `depends [...]`
     Verify {

@@ -6,7 +6,8 @@
 //! flag and no prompt. Programs that reach no bound capability run in
 //! process, wasm-gc reuses the same binding through its generated raw ABI,
 //! while backends with no provider adapter refuse instead of running without
-//! the configured implementation.
+//! the configured implementation. The host is where the program then runs, so
+//! a signal addressed to the command has to reach it.
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
@@ -15,7 +16,7 @@ use aver_cmd::{aver_bin, repo_root};
 
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 const SHAPES_SOURCE: &str = include_str!("fixtures/native_provider_composed/Shapes.av");
 const MAIN_SOURCE: &str = include_str!("fixtures/native_provider_composed/main.av");
@@ -43,6 +44,81 @@ const REPLAY_WASM_SOURCE: &str = include_str!("fixtures/native_provider_replay/w
 const PROBE_SOURCE: &str = "module Probe\n    intent = \"Exercise an entry program smaller than the project manifest.\"\n\nfn main() -> Unit\n    Unit\n";
 /// An entry with no provider call of its own, over a module that has them.
 const THIN_SOURCE: &str = "module Thin\n    intent = \"Audit a thin entry whose dependency reaches the bound capability.\"\n    depends [Composed]\n\nfn main() -> Result<Unit, String>\n    ? \"Delegate to the composed module.\"\n    Composed.main()\n";
+/// Reaches the bound capability and finishes, so the host is built before the
+/// run whose timing is measured. Only the bound package answers `"fixed-time"`,
+/// so a run that fails here never reached the host and the timing below would
+/// have measured something else.
+#[cfg(unix)]
+const WARM_SOURCE: &str = r#"module WarmHost
+    intent = "Reach the bound provider once so the cached host exists."
+    depends [Time]
+    effects [Time.now]
+
+fn main() -> Result<Unit, String>
+    ? "Ask the bound clock once and refuse any other answer."
+    ! [Time.now]
+    match Time.now()
+        "fixed-time" -> Result.Ok(Unit)
+        _ -> Result.Err("the bound clock did not answer, so this run was not hosted")
+"#;
+/// Reaches the bound capability, then loops on bounded waits and stops as soon
+/// as a cooperative stop is requested. Three hundred turns of a hundred
+/// milliseconds is its own deadline: far enough away that a stop measured in
+/// the first second cannot be mistaken for the loop simply running out.
+///
+/// The loop runs only after the bound clock has answered `"fixed-time"`, which
+/// is the one answer no other clock gives. That is what keeps the signal test
+/// below about the host: the program the signal reaches printed its first line
+/// only because it was running inside the host, so a program or a planning
+/// change that no longer reaches the bound package fails the run instead of
+/// passing the test in process.
+#[cfg(unix)]
+const STOP_SOURCE: &str = r#"module StopUnderHost
+    intent = "Loop on bounded waits until a cooperative stop is requested."
+    depends [Time]
+    effects [Console.print, Process.stopRequested, Time.now, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Refuse any clock but the bound one, then run the bounded loop."
+    ! [Console.print, Process.stopRequested, Time.now, Wait.poll]
+    match Time.now()
+        "fixed-time" -> looping(300)
+        _ -> Result.Err("the bound clock did not answer, so this run was not hosted")
+
+fn looping(left: Int) -> Result<Unit, String>
+    ? "One turn: observe the stop request, then stop or wait again."
+    ! [Console.print, Process.stopRequested, Wait.poll]
+    match left <= 0
+        true -> Result.Err("reached its own deadline with no stop request")
+        false -> checked(left, Process.stopRequested())
+
+fn checked(left: Int, stop: Bool) -> Result<Unit, String>
+    ? "Stop cooperatively on the first true observation."
+    ! [Console.print, Process.stopRequested, Wait.poll]
+    match stop
+        true -> stopping()
+        false -> waiting(left)
+
+fn stopping() -> Result<Unit, String>
+    ? "Report the cooperative stop and finish successfully."
+    ! [Console.print]
+    Console.print("stopped")
+    Result.Ok(Unit)
+
+fn waiting(left: Int) -> Result<Unit, String>
+    ? "Announce the first observation, then wait a bounded hundred milliseconds."
+    ! [Console.print, Process.stopRequested, Wait.poll]
+    _said = announced(left)
+    _ready = Wait.poll({}, 100)?
+    looping(left - 1)
+
+fn announced(left: Int) -> Unit
+    ? "Print the marker exactly once, after the first observation."
+    ! [Console.print]
+    match left >= 300
+        true -> Console.print("asked")
+        false -> Unit
+"#;
 
 fn report(output: &Output) -> String {
     format!(
@@ -52,15 +128,23 @@ fn report(output: &Output) -> String {
     )
 }
 
-fn run_aver(cache: &Path, args: &[&str]) -> Output {
-    Command::new(aver_bin())
-        .args(args)
+/// An `aver` command pointed at `cache` for its provider host, ready to be
+/// run to completion or spawned and watched.
+fn aver_host_command(cache: &Path) -> Command {
+    let mut command = Command::new(aver_bin());
+    command
         .env("AVER_PROVIDER_HOST_CACHE", cache)
         .env("CARGO_NET_OFFLINE", "true")
         // Hermetic tests should not depend on a developer's compiler wrapper
         // socket being reachable from the child provider build.
         .env_remove("RUSTC_WRAPPER")
-        .env_remove("RUSTC_WORKSPACE_WRAPPER")
+        .env_remove("RUSTC_WORKSPACE_WRAPPER");
+    command
+}
+
+fn run_aver(cache: &Path, args: &[&str]) -> Output {
+    aver_host_command(cache)
+        .args(args)
         .output()
         .expect("run aver provider-host command")
 }
@@ -413,6 +497,128 @@ fn custom_wasm_gc_provider_effects_record_and_replay() {
     let replayed = run_aver(&cache, &["replay", &recording_path, "--wasm-gc", "--test"]);
     assert!(replayed.status.success(), "{}", report(&replayed));
     assert!(report(&replayed).contains("MATCH"), "{}", report(&replayed));
+}
+
+/// A cooperative stop has to reach the process that runs the program.
+///
+/// The host is where the program runs once a project binds a provider, so a
+/// SIGINT sent to `aver run` has to land there. While the host was a child
+/// process this command waited on, the signal reached only the waiting
+/// process: it died on the spot and the program it had started ran on to its
+/// own deadline, never observing `Process.stopRequested`.
+///
+/// Both programs demand the bound clock's `"fixed-time"` before doing anything
+/// else, so every assertion below is made about a run that was on the host. The
+/// same sources run in process end with an error before printing anything.
+#[cfg(unix)]
+#[test]
+fn a_cooperative_stop_reaches_a_program_running_on_the_cached_host() {
+    use std::io::{BufRead, BufReader};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let temp = tempfile::tempdir().expect("provider-host stop test root");
+    let cache = temp.path().join("cache");
+    let app = temp.path().join("app");
+    let provider = repo_root().join("tests/fixtures/native_provider_host");
+    fs::create_dir_all(&app).expect("create app root");
+    fs::write(app.join("warm.av"), WARM_SOURCE).expect("write warm fixture");
+    fs::write(app.join("stop.av"), STOP_SOURCE).expect("write stop fixture");
+    fs::write(
+        app.join("aver.toml"),
+        binding_manifest(&provider, "Time", "fixed_time_binding"),
+    )
+    .expect("write provider manifest");
+    let module_root = app.to_string_lossy().into_owned();
+    let warm_path = app.join("warm.av").to_string_lossy().into_owned();
+    let stop_path = app.join("stop.av").to_string_lossy().into_owned();
+
+    // Build the host first, so the interval measured below holds the program
+    // and none of Cargo.
+    let warm = run_aver(&cache, &["run", &warm_path, "--module-root", &module_root]);
+    assert!(warm.status.success(), "{}", report(&warm));
+
+    let mut child = aver_host_command(&cache)
+        .args(["run", &stop_path, "--module-root", &module_root])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn a hosted aver run");
+    let stdout = child.stdout.take().expect("hosted run has piped stdout");
+    // Everything the run says on stderr, for the failure messages below: a run
+    // that ends before its first line would otherwise leave no trace of why.
+    let stderr = child.stderr.take().expect("hosted run has piped stderr");
+    let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let text: String = BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+            .map(|line| line + "\n")
+            .collect();
+        let _ = stderr_tx.send(text);
+    });
+    let (first_tx, first_rx) = mpsc::channel::<String>();
+    let (printed_tx, printed_rx) = mpsc::channel::<Vec<String>>();
+    std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if lines.is_empty() {
+                let _ = first_tx.send(line.clone());
+            }
+            lines.push(line);
+        }
+        let _ = printed_tx.send(lines);
+    });
+
+    // The first line is printed after the bound clock answered, so reaching it
+    // is also how this test knows the run it is about to signal is the host.
+    // A runner that has to build the host first can take minutes to get here;
+    // the interval this test measures starts only at the signal below.
+    let announced = first_rx
+        .recv_timeout(Duration::from_secs(600))
+        .unwrap_or_else(|_| {
+            let _ = child.kill();
+            let status = child.wait().ok();
+            let said = stderr_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap_or_default();
+            panic!(
+                "the run printed nothing before its first stop observation: it refuses to loop \
+                 unless the bound clock answered, so it never reached the provider host \
+                 (exit: {status:?})\nstderr:\n{said}"
+            )
+        });
+    assert_eq!(announced, "asked");
+
+    let signalled = Instant::now();
+    let signal = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("send SIGINT to the aver process");
+    assert!(signal.success(), "kill -INT reported {signal}");
+
+    let printed = printed_rx
+        .recv_timeout(Duration::from_secs(20))
+        .unwrap_or_else(|_| {
+            let _ = child.kill();
+            panic!(
+                "SIGINT did not stop the hosted program: it was still running {:?} after the \
+                 signal, with its own thirty-second deadline still ahead of it",
+                signalled.elapsed()
+            )
+        });
+    let stopped = signalled.elapsed();
+    let status = child.wait().expect("hosted aver run exits");
+
+    assert!(
+        printed.contains(&"stopped".to_string()),
+        "the program printed {printed:?} instead of stopping cooperatively"
+    );
+    assert!(
+        stopped < Duration::from_secs(10),
+        "the cooperative stop took {stopped:?}"
+    );
+    assert!(status.success(), "hosted aver run exited with {status}");
 }
 
 #[test]

@@ -1,0 +1,40 @@
+module Main
+    depends [Ledger, DecodeJob, Node, Wait, Work]
+    intent = "Starts one decode job, waits for it, and prints the transactions it answered with."
+    exposes [main]
+    effects [Console.print, DecodeJob.begin, DecodeJob.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Begins one decode job and prints what it decoded."
+    ! [Console.print, DecodeJob.begin, DecodeJob.take, Wait.poll]
+    job = DecodeJob.begin(Ledger.Request(source = "block", limit = 3, origin = Ledger.Origin(host = "node")))?
+    pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(job)}
+    collect(pending, job, 50)
+
+fn collect(pending: Map<Int, Wait.Item>, job: Work.Job, turns: Int) -> Result<Unit, String>
+    ? "One turn per call: wait once, take the job when it is ready, and stop when it answered."
+    ! [Console.print, DecodeJob.take, Wait.poll]
+    match turns < 1
+        true -> Result.Err("work: the job did not finish within the turns allowed")
+        false -> turn(pending, job, turns)
+
+fn turn(pending: Map<Int, Wait.Item>, job: Work.Job, turns: Int) -> Result<Unit, String>
+    ? "The body of one turn: the one wait, then the take it allows."
+    ! [Console.print, DecodeJob.take, Wait.poll]
+    _ready = Wait.poll(pending, 200)?
+    match DecodeJob.take(job)?
+        Option.None -> collect(pending, job, turns - 1)
+        Option.Some(txs) -> report(txs)
+
+fn report(txs: List<Ledger.Tx>) -> Result<Unit, String>
+    ? "Says what the job decoded, one line per transaction."
+    ! [Console.print]
+    match txs
+        [] -> Result.Ok(Unit)
+        [tx, ..rest] -> printed(tx, rest)
+
+fn printed(tx: Ledger.Tx, rest: List<Ledger.Tx>) -> Result<Unit, String>
+    ? "Says what one transaction decoded to and carries on with the rest."
+    ! [Console.print]
+    Console.print("decoded {tx.txid} of {tx.size} bytes from {tx.info.label}")
+    report(rest)

@@ -263,7 +263,11 @@ fn format_module_effects_declaration(indent: &str, effects: &[String]) -> Vec<St
     format_bracketed_effect_list(indent, "effects ", effects)
 }
 
-fn format_bracketed_effect_list(indent: &str, lead: &str, effects: &[String]) -> Vec<String> {
+/// The formatter's own layout for one bracketed effect list: sorted, inline
+/// while it fits in 100 columns, one line per namespace group when it does
+/// not. `aver effects --write` renders through this so a rewritten list is
+/// already what `aver format --check` wants.
+pub fn format_bracketed_effect_list(indent: &str, lead: &str, effects: &[String]) -> Vec<String> {
     let effects = sorted_effects(effects);
     let inline = format!("{}{}[{}]", indent, lead, effects.join(", "));
     if inline.len() <= 100 {
