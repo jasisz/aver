@@ -25,6 +25,12 @@ have _aver_seg_link : ∀ (a b c : Int), b ≤ c → a ≤ b → a ≤ c := (by 
 have _aver_seg_chain : ∀ {α : Type} (l : List α) (c x y : Int), y - x ≤ ((l.drop (x - c).toNat).length : Int) → c ≤ x → x - c ≤ (l.length : Int) → y - c ≤ (l.length : Int) := (by intro α l c x y h2 h0 h1; simp only [List.length_drop] at h2; omega); \
 have _aver_seg_drop_chain : ∀ {α : Type} (l : List α) (c x y : Int), c ≤ x → x ≤ y → (l.drop (x - c).toNat).drop (y - x).toNat = l.drop (y - c).toNat := (by intro α l c x y h0 h1; have hk : (x - c).toNat + (y - x).toNat = (y - c).toNat := (by omega); rw [List.drop_drop, hk]); ";
 
+/// Suffix steps a boundary proof needs: composing two drops, and moving a
+/// cursor past the one token this step consumed. Proved inline, so the rung
+/// adds no axiom and no prelude entry.
+const TRANSPORT_STEPS: &str = "have _aver_seg_drop_add : ∀ {α : Type} (l : List α) (m n : Nat), (l.drop m).drop n = l.drop (m + n) := (by intro α l m n; induction m generalizing l with | zero => simp | succ m ih => cases l with | nil => simp | cons x xs => rw [List.drop_succ_cons, ih, show m + 1 + n = m + n + 1 by omega, List.drop_succ_cons]); \
+have _aver_seg_drop_shift : ∀ {α : Type} (x : α) (rest : List α) (c c1 : Int), c + 1 ≤ c1 → rest.drop (c1 - (c + 1)).toNat = (x :: rest).drop (c1 - c).toNat := (by intro α x rest c c1 h; rw [show (c1 - c).toNat = (c1 - (c + 1)).toNat + 1 by omega, List.drop_succ_cons]); ";
+
 /// A helper the rung may unfold: effect free, not recursive, and owned by a
 /// scope the law can see.
 fn is_finite(fd: &FnDef, ctx: &CodegenContext) -> bool {
@@ -94,14 +100,15 @@ fn cursor_shape<'a>(
     Some((wrapper, valid, finite(observed, ctx, scope)?))
 }
 
-/// The cursor laws this law cites, in the order the harness numbers its facts,
-/// each one decomposed like the law itself. A cited law that is not a cursor
-/// law leaves a gap, so the numbering stays aligned with `_fact{i}`.
-fn cited_cursors<'a>(
+/// Read one cited law in the scope that owns it. The same decomposition runs on
+/// a law of this file and on a law of an imported module; only the scope names
+/// differ.
+fn read_cited<'a, T>(
     law: &VerifyLaw,
     ctx: &'a CodegenContext,
     scope: Option<&str>,
-) -> Vec<Option<(&'a FnDef, &'a FnDef, &'a FnDef)>> {
+    read: impl Fn(&VerifyLaw, Option<&str>) -> Option<T>,
+) -> Vec<Option<T>> {
     let Some(using) = law.using.as_ref() else {
         return Vec::new();
     };
@@ -117,7 +124,7 @@ fn cited_cursors<'a>(
                     VerifyKind::Law(cited_law)
                         if *cited == format!("{}.{}", block.fn_name, cited_law.name) =>
                     {
-                        cursor_shape(cited_law, ctx, scope)
+                        read(cited_law, scope)
                     }
                     _ => None,
                 });
@@ -131,7 +138,7 @@ fn cited_cursors<'a>(
                             == format!("{}.{}.{}", module.prefix, block.fn_name, cited_law.name))
                         .then(|| {
                             ctx.with_module_scope(Some(&module.prefix), || {
-                                cursor_shape(cited_law, ctx, Some(&module.prefix))
+                                read(cited_law, Some(&module.prefix))
                             })
                         })
                         .flatten()
@@ -140,6 +147,19 @@ fn cited_cursors<'a>(
             })
         })
         .collect()
+}
+
+/// The cursor laws this law cites, in the order the harness numbers its facts,
+/// each one decomposed like the law itself. A cited law that is not a cursor
+/// law leaves a gap, so the numbering stays aligned with `_fact{i}`.
+fn cited_cursors<'a>(
+    law: &VerifyLaw,
+    ctx: &'a CodegenContext,
+    scope: Option<&str>,
+) -> Vec<Option<(&'a FnDef, &'a FnDef, &'a FnDef)>> {
+    read_cited(law, ctx, scope, |cited, scope| {
+        cursor_shape(cited, ctx, scope)
+    })
 }
 
 /// `{observation}Cursor(args) holds`: the observation leaves the tape at the
@@ -345,6 +365,268 @@ fn step(law: &VerifyLaw, ctx: &CodegenContext, scope: Option<&str>) -> Option<St
     ))
 }
 
+/// What one cited law says, read from its statement alone.
+enum Cited<'a> {
+    /// One observation leaves the tape at the suffix its own cursor reports:
+    /// the wrapper the claim is about and the predicate it reads.
+    Cursor(&'a FnDef, &'a FnDef),
+    /// A whole protocol observer does, for every outcome and tape: the wrapper,
+    /// the predicate and the observer itself.
+    Bounded(&'a FnDef, &'a FnDef, &'a FnDef),
+    /// An observation reads its incoming event history only as a prefix: the
+    /// observation and its prefixed form.
+    Prefix(&'a FnDef, &'a FnDef),
+    /// One step of a protocol observer is an observation plus the generic
+    /// continuation: the step wrapper and the observation it carries.
+    Step(&'a FnDef, &'a FnDef),
+    /// A list map distributes over an append, or answers a single cell.
+    Append,
+    Singleton,
+}
+
+/// Decompose one cited law. Everything is read from the statement's shape: a
+/// claim about a validity predicate, an observation compared with its prefixed
+/// form, a step wrapper applied to one observation, or a list map over an
+/// append or a single cell.
+fn classify<'a>(
+    law: &VerifyLaw,
+    ctx: &'a CodegenContext,
+    scope: Option<&str>,
+) -> Option<Cited<'a>> {
+    if !claims_true(law) {
+        return None;
+    }
+    if let Some(wrapper) = finite(&law.lhs, ctx, scope)
+        && let Some(body) = sole_expression(wrapper)
+        && let Some(valid) = finite(body, ctx, scope)
+        && let Expr::FnCall(_, arguments) = &body.node
+        && let [_, _, observed] = arguments.as_slice()
+    {
+        let called = induction::callee(observed, ctx, scope)?;
+        return Some(match finite(observed, ctx, scope) {
+            Some(_) => Cited::Cursor(wrapper, valid),
+            None => Cited::Bounded(wrapper, valid, called),
+        });
+    }
+    let Expr::BinOp(BinOp::Eq, left, right) = &law.lhs.node else {
+        return None;
+    };
+    let observer = induction::callee(left, ctx, scope)?;
+    if induction::is_unary_list_map(observer, ctx) {
+        return Some(match right.node {
+            Expr::List(_) => Cited::Singleton,
+            _ => Cited::Append,
+        });
+    }
+    let wrapper = finite(right, ctx, scope)?;
+    let Expr::FnCall(_, arguments) = &right.node else {
+        return None;
+    };
+    match arguments.as_slice() {
+        // The prefixed form carries the history and the same observation.
+        [_, observed] if finite(observed, ctx, scope)?.name == observer.name => {
+            Some(Cited::Prefix(observer, wrapper))
+        }
+        // The step wrapper carries the observation this step produces.
+        [observed] => Some(Cited::Step(wrapper, finite(observed, ctx, scope)?)),
+        _ => None,
+    }
+}
+
+/// Finite helpers reachable from one function, itself included.
+fn revealed<'a>(fd: &'a FnDef, ctx: &'a CodegenContext, scope: Option<&str>) -> Vec<&'a FnDef> {
+    let mut found = vec![fd];
+    let mut index = 0;
+    while index < found.len() {
+        for callee in direct_callees(found[index], ctx, scope) {
+            if is_finite(callee, ctx) && !found.iter().any(|seen| seen.name == callee.name) {
+                found.push(callee);
+            }
+        }
+        index += 1;
+    }
+    found
+}
+
+/// `{adapter}Direct(args) == {adapter}Mapped(args)`: driving an imported
+/// outcome through the caller's own tape is the caller's lift of driving it in
+/// the owning module.
+///
+/// The two sides walk the same tape, so the proof is one induction on it. Each
+/// step rewrites the owning module's protocol step and the prefix of its event
+/// history — both cited — and then says nothing more about the observation than
+/// its cited cursor. The imported observer is never unfolded.
+fn transport(law: &VerifyLaw, ctx: &CodegenContext, scope: Option<&str>) -> Option<String> {
+    if !claims_true(law) {
+        return None;
+    }
+    let Expr::BinOp(BinOp::Eq, left, right) = &law.lhs.node else {
+        return None;
+    };
+    // The direct side drives the caller's own tape; the mapped side lifts the
+    // owning module's drive of the transported tape.
+    let direct = finite(left, ctx, scope)?;
+    let mapped = finite(right, ctx, scope)?;
+    let import_drive = induction::callee(sole_expression(direct)?, ctx, scope)?;
+    let lift = induction::callee(sole_expression(mapped)?, ctx, scope)?;
+    let Expr::FnCall(_, arguments) = &sole_expression(mapped)?.node else {
+        return None;
+    };
+    let child_drive = induction::callee(arguments.first()?, ctx, scope)?;
+    if induction::list_measure(import_drive, ctx).is_none()
+        || induction::list_measure(child_drive, ctx).is_none()
+    {
+        return None;
+    }
+    let map = |fd: &FnDef| -> Option<&FnDef> {
+        direct_callees(fd, ctx, scope)
+            .into_iter()
+            .find(|callee| induction::is_unary_list_map(callee, ctx))
+    };
+    let events = map(direct)?;
+    let inputs = map(mapped)?;
+    let event = direct_callees(events, ctx, scope).into_iter().next()?;
+    let Expr::Match { arms: cells, .. } = &sole_expression(event)?.node else {
+        return None;
+    };
+    // Every cited law has to be one this rung can read, or it has nothing to
+    // say about the observation that law is about.
+    let cited: Vec<Cited> = read_cited(law, ctx, scope, |cited, scope| classify(cited, ctx, scope))
+        .into_iter()
+        .collect::<Option<_>>()?;
+    let mut prepare = String::new();
+    let (mut equations, mut cleared, mut reveal, mut suffix, mut lower) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut bounded, mut steps, mut prefixes) = (None, Vec::new(), Vec::new());
+    for (index, shape) in cited.iter().enumerate() {
+        match shape {
+            Cited::Cursor(wrapper, valid) => {
+                prepare.push_str(&format!(
+                    "(simp only [{}, {}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, ge_iff_le, Int.sub_nonneg, forall_and] at _fact{index}); (obtain ⟨_aver_seg_ge{index}, _aver_seg_le{index}, _aver_seg_rem{index}⟩ := _fact{index}); ",
+                    induction::lean_name(wrapper, ctx),
+                    induction::lean_name(valid, ctx),
+                ));
+                cleared.push(format!("_aver_seg_le{index} _aver_seg_rem{index}"));
+                suffix.push(format!("_aver_seg_rem{index}"));
+                lower.push(format!("exact _aver_seg_ge{index} .."));
+            }
+            Cited::Bounded(wrapper, valid, observed) => {
+                bounded = Some((
+                    index,
+                    induction::lean_name(wrapper, ctx),
+                    induction::lean_name(valid, ctx),
+                    induction::lean_name(observed, ctx),
+                ));
+                cleared.push(format!("_fact{index}"));
+            }
+            Cited::Prefix(observer, prefixed) => {
+                prefixes.push((index, observer.name.clone()));
+                equations.push(index);
+                reveal.push(induction::lean_name(prefixed, ctx));
+            }
+            Cited::Step(template, observer) => {
+                steps.push((index, observer.name.clone()));
+                equations.push(index);
+                reveal.push(induction::lean_name(template, ctx));
+            }
+            Cited::Append | Cited::Singleton => equations.push(index),
+        }
+    }
+    let (bounded_index, cursor, valid, observed) = bounded?;
+    if steps.is_empty() || suffix.is_empty() {
+        return None;
+    }
+    // One alternative per answerable kind: the step this branch takes, then the
+    // prefix of the observation it produced.
+    let arms = steps
+        .iter()
+        .map(|(step, observer)| {
+            let prefix = prefixes
+                .iter()
+                .find_map(|(index, name)| (name == observer).then_some(*index))?;
+            Some(format!("rw [_fact{step}, _fact{prefix}]"))
+        })
+        .collect::<Option<Vec<_>>>()?
+        .join(" | ");
+    for index in &equations {
+        cleared.push(format!("_fact{index}"));
+    }
+    let names = |items: Vec<&FnDef>| {
+        items
+            .into_iter()
+            .map(|fd| induction::lean_name(fd, ctx))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let lift_names = names(revealed(lift, ctx, scope));
+    let tape_names = names(vec![inputs, direct_callees(inputs, ctx, scope).first()?]);
+    let adapters = names(
+        direct_callees(import_drive, ctx, scope)
+            .into_iter()
+            .filter(|callee| is_finite(callee, ctx))
+            .collect(),
+    );
+    let lower = format!("first | omega | {}", lower.join(" | "));
+    let transported = induction::checked_map_lemmas(&[induction::lean_name(inputs, ctx)], true);
+    // A step is applied with the tape one token shorter, so the recursion's own
+    // measure is the hypothesis this rung has to discharge each time.
+    let step_ih = |bound: &str| {
+        format!(
+            "exact Eq.trans (ih _ (by simp only [List.length_drop, List.length_cons]; omega) _ _ _ _ _) (_aver_seg_lift_shift _ _ _ _ _ _ (by {bound}) (_aver_seg_drive_ge _ _ _ _ _))"
+        )
+    };
+    Some(format!(
+        "({prepare}(simp only [beq_iff_eq] at {equations}); \
+         {TRANSPORT_STEPS}{transported}\
+         (have _aver_seg_lift_shift : ∀ (D : _) (x : _) (rest : _) (evs : _) (cc c1 : Int), cc + 1 ≤ c1 → c1 ≤ D.consumed → {lift} D (rest.drop (Int.toNat (c1 - (cc + 1)))) evs c1 = {lift} D (x :: rest) evs cc := (by intro D x rest evs cc c1 h1 hD; simp only [{lift}, _aver_seg_drop_add]; have hk : Int.toNat (D.consumed - cc) = (Int.toNat (c1 - (cc + 1)) + Int.toNat (D.consumed - c1)) + 1 := (by omega); rw [hk, List.drop_succ_cons])); \
+         (have _aver_seg_drive_ge : ∀ (o : _) (i : _) (p : Int) (e : _) (cc : Int), cc ≤ ({observed} o i p e cc).consumed := (by intro o i p e cc; have h := _fact{bounded_index} o i p e cc; simp only [{cursor}, {valid}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, ge_iff_le] at h; omega)); \
+         (simp only [beq_iff_eq, {direct}, {mapped}]); \
+         (induction inputs using (measure List.length).wf.induction generalizing outcome position events childEvents consumed with | h inputs ih => \
+         (dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at ih); \
+         (rw [{import_drive}.eq_def]); (repeat' split); (all_goals (try dsimp only)); \
+         (all_goals (first \
+         | (rw [{child_drive}.eq_def]; simp [{lift_names}]; done) \
+         | (simp only [{tape_names}]; rw [{child_drive}.eq_def]; simp [{lift_names}]; done) \
+         | (simp only [{tape_names}]; (first | {arms}); \
+         (simp only [{adapters}, {reveal}, {suffix}, _aver_transport_drop_0]); (repeat' split); \
+         (all_goals (simp only [List.append_assoc])); \
+         (all_goals (simp only [← List.append_assoc, {reversed}, ← _fact{singleton}, ← _fact{append}])); \
+         (all_goals (clear {cleared} _aver_transport_length_0 _aver_transport_drop_0 _aver_seg_drop_add)); \
+         (all_goals (first \
+         | rfl \
+         | ({step_one}) \
+         | (simp only [{lift}, {event}]; first | rfl | (rw [_aver_seg_drop_shift _ _ _ _ (by {lower})]; done)) \
+         | ({step_two}) \
+         | (simp_all only [Option.some.injEq, reduceCtorEq] <;> ({step_one})))))))); done)",
+        equations = equations
+            .iter()
+            .map(|index| format!("_fact{index}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        lift = induction::lean_name(lift, ctx),
+        direct = induction::lean_name(direct, ctx),
+        mapped = induction::lean_name(mapped, ctx),
+        import_drive = induction::lean_name(import_drive, ctx),
+        child_drive = induction::lean_name(child_drive, ctx),
+        event = induction::lean_name(event, ctx),
+        reveal = reveal.join(", "),
+        suffix = suffix.join(", "),
+        cleared = cleared.join(" "),
+        reversed = (1..=cells.len())
+            .map(|arm| format!("← {}.eq_{arm}", induction::lean_name(event, ctx)))
+            .collect::<Vec<_>>()
+            .join(", "),
+        singleton = cited
+            .iter()
+            .position(|shape| matches!(shape, Cited::Singleton))?,
+        append = cited
+            .iter()
+            .position(|shape| matches!(shape, Cited::Append))?,
+        step_one = step_ih(&lower),
+        step_two = step_ih(&lower.replace("first | omega | ", "first | ")),
+    ))
+}
+
 pub(super) fn candidate(law: &VerifyLaw, ctx: &CodegenContext) -> Option<String> {
     // The segment interface stands on its own definitions and on cited cursor
     // laws; a law that explains itself in steps is a different obligation.
@@ -355,4 +637,5 @@ pub(super) fn candidate(law: &VerifyLaw, ctx: &CodegenContext) -> Option<String>
     cursor(law, ctx, scope.as_deref())
         .or_else(|| events_prefix(law, ctx, scope.as_deref()))
         .or_else(|| step(law, ctx, scope.as_deref()))
+        .or_else(|| transport(law, ctx, scope.as_deref()))
 }

@@ -23,6 +23,32 @@ impl Model<'_> {
         let drive = self.child_drive(fd);
         let result = self.result_type(fd);
         let u = &self.upper;
+        // What the owning module checked about each observation this adapter
+        // drives through: the suffix its cursor reports, the prefix of its
+        // event history, and the protocol step that produces it. A caller reads
+        // these instead of the observation's body. The start observation is not
+        // among them — an adapter is entered with an outcome already in hand —
+        // and citing it would carry the whole entry point into the cone of
+        // every law that cites this one. An observation whose owner checked
+        // none of these contributes nothing, and the law falls back to
+        // unfolding.
+        let interface = trace
+            .segments
+            .iter()
+            .filter(|segment| !segment.cursor.is_empty() && segment.function != protocol.start)
+            .flat_map(|segment| {
+                let short = segment
+                    .function
+                    .rsplit_once('.')
+                    .map_or(segment.function.as_str(), |(_, short)| short);
+                [
+                    format!("{}.segmentCursor", segment.cursor),
+                    format!("{}.eventsPrefix", segment.observer),
+                    format!("{}.step{}", trace.drive, build::capitalize(short)),
+                ]
+            })
+            .map(|law| format!(", {law}"))
+            .collect::<String>();
         let mut out = self.drive(protocol, fd, &drive);
         out.push_str(&format!(r#"
 verify {name}Events law append
@@ -49,7 +75,7 @@ verify {name}Direct law mapping
     given events: List<{u}Event> = [[]]
     given childEvents: List<{event}> = [[]]
     given consumed: Int = [0]
-    using [{cursor_law}.boundedSuffix, {name}Events.append, {name}Events.singleton]
+    using [{cursor_law}.boundedSuffix, {name}Events.append, {name}Events.singleton{interface}]
     {name}Direct(outcome, inputs, position, events, childEvents, consumed) == {name}Mapped(outcome, inputs, position, events, childEvents, consumed) holds
 "#, outcome=protocol.outcome, event=trace.event, child_drive=trace.drive, sample=composition::samples::witness(self, &fd.return_type)?));
         let params: Vec<_> = fd
