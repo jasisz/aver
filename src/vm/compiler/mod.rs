@@ -766,6 +766,12 @@ impl ProgramCompiler {
     /// referencing it. Follows the same pattern as `Option.None`
     /// which is installed as an immediate constant in
     /// `bootstrap_core_symbols`.
+    ///
+    /// This is the one symbol-table value that is a heap reference
+    /// rather than an immediate, which is why the table is a root
+    /// holder: `VM::collect_stable_roots` and
+    /// `VM::build_parallel_base_context` rebase it alongside the
+    /// chunk constants and the globals.
     fn install_branch_path_root_constant(&mut self, arena: &mut Arena) -> Result<(), CompileError> {
         // Guard: micro-benchmarks and unit tests often build a VM
         // without calling `register_service_types` first. When the

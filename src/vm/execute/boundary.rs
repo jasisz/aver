@@ -36,6 +36,13 @@ impl VM {
             && !self.result_uses_frame_local_heap(frame, result)
     }
 
+    /// Compact the stable space, keeping what the live program still names.
+    ///
+    /// The symbol table joins the frame roots, the globals and the chunk
+    /// constants here. It holds values of its own — `BranchPath.Root` is an
+    /// arena record — and this collection rebuilds the stable space from its
+    /// roots alone, so a value it does not see is dropped and every index
+    /// after it moves.
     pub(super) fn collect_stable_roots(&mut self, frame_roots: &mut [NanValue]) {
         let root_count = frame_roots.len();
         let global_count = self.globals.len();
@@ -51,6 +58,8 @@ impl VM {
         for chunk in &self.code.functions {
             all_roots.extend(chunk.constants.iter().copied());
         }
+        let symbols_offset = all_roots.len();
+        all_roots.extend(self.code.symbols.values_mut().map(|value| *value));
         self.arena.collect_stable_from_roots(&mut all_roots);
 
         frame_roots.copy_from_slice(&all_roots[..root_count]);
@@ -68,6 +77,14 @@ impl VM {
                 .constants
                 .copy_from_slice(&all_roots[constant_offset..constant_offset + len]);
             constant_offset += len;
+        }
+        for (slot, value) in self
+            .code
+            .symbols
+            .values_mut()
+            .zip(all_roots[symbols_offset..].iter().copied())
+        {
+            *slot = value;
         }
     }
 

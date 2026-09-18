@@ -265,6 +265,15 @@ impl VM {
         for global in &self.globals {
             roots.push(base_arena.deep_import(*global, &self.arena));
         }
+        // The symbol table travels with `code` and holds run-time values of
+        // its own — `BranchPath.Root` is an arena record. Import them on the
+        // same footing as the constants and the globals; left alone they would
+        // still name entries of the parent's arena, which this one does not
+        // have.
+        let symbols_start = roots.len();
+        for value in code.symbols.values_mut() {
+            roots.push(base_arena.deep_import(*value, &self.arena));
+        }
         base_arena.promote_roots_to_stable(&mut roots, false);
 
         // Freeze the parallel context into a fresh static-only arena so child
@@ -315,7 +324,14 @@ impl VM {
                 .copy_from_slice(&roots[offset..offset + len]);
             offset += len;
         }
-        let globals = roots[globals_start..].to_vec();
+        for (slot, value) in code
+            .symbols
+            .values_mut()
+            .zip(roots[symbols_start..].iter().copied())
+        {
+            *slot = value;
+        }
+        let globals = roots[globals_start..symbols_start].to_vec();
         (code, globals, base_arena)
     }
 
