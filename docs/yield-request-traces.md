@@ -180,11 +180,30 @@ its real router. This includes effects before the first request, effects after
 an answer, and early errors. The retained-source observer remains independent
 of these segment bodies.
 
-Proof search keeps a summarized adapter opaque until its theorem rewrites the
-call. Between splices, a constructor-specific equation unfolds a completed
-continuation while preserving the next unknown outcome for its own theorem.
-No extra axiom, proof budget, generated scenario bound or handwritten Lean file
-is required.
+Every module with a requested trace also checks an interface for each observed
+segment where the segment is defined: `segmentCursor` states that the
+observation leaves the tape at the suffix its own cursor reports, `eventsPrefix`
+that its incoming event history is only a prefix, and `step` that one protocol
+step is that observation followed by the generic continuation (the start
+segment has no step). The owner publishes a sample of each protocol state an
+importer has to quantify over. A module that lifts an imported observation
+checks the lifted cursor too, citing the owner's. Each statement is made about
+a wrapper rather than about the observation itself, so no observation owns a
+law and its body keeps plain matchers.
+
+A caller reads this interface instead of an imported observer's body. Its
+mapping law cites the cursor, prefix and step of every observation it drives
+through. Its source correspondence crosses one call site at a time: the segment
+observation and the drive result at that site are named, the protocol side is
+folded into the site's splice wrapper by the splice law and the wrapper is then
+opened, so both sides continue as a match on the same named result. Its cursor
+contract cites the lifted cursor laws and proceeds by functional induction on
+its own protocol observer, naming each observation and each recursive result so
+the induction hypothesis and the cited bounds speak about the same variables;
+what remains is linear cursor arithmetic and a chain of `drop`s. Between local
+splices, a constructor-specific equation still unfolds a completed continuation
+while preserving the next unknown outcome for its own theorem. No extra axiom,
+proof budget, generated scenario bound or handwritten Lean file is required.
 
 ## Boundary of the claim
 

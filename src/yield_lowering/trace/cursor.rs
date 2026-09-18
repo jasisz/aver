@@ -4,10 +4,14 @@
 use super::*;
 
 impl Model<'_> {
+    /// `cursors` are the segment cursor laws checked before this contract:
+    /// the observer drives through those observations, and its own bound is
+    /// read from theirs instead of from their bodies.
     pub(super) fn cursor_contract(
         &self,
         items: &mut Vec<TopLevel>,
         root: &FnDef,
+        cursors: &[String],
     ) -> Result<(), String> {
         let drive_name = self.child_drive(root);
         let drive = items
@@ -48,9 +52,10 @@ verify {cursor} law boundedSuffix
     given position: Int = [0]
     given events: List<{u}Event> = [[]]
     given consumed: Int = [0]
-    using []
+    using [{using}]
     {cursor}({args}) holds
 "#,
+            using = cursors.join(", "),
             outcome = self.protocol.outcome,
             sample = composition::samples::witness(self, &root.return_type)?
         );

@@ -327,8 +327,8 @@ impl<'a> Model<'a> {
         if requested {
             // The segment interface precedes every law that cites it: a caller
             // reads these instead of reopening an imported observer's body.
-            self.segment_contracts(&mut items, &imports)?;
-            self.cursor_contract(&mut items, root)?;
+            let cursors = self.segment_contracts(&mut items, &imports)?;
+            self.cursor_contract(&mut items, root, &cursors)?;
         }
         Ok(items)
     }

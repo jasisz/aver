@@ -9,6 +9,7 @@ use crate::codegen::lean::{
     expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output},
 };
 
+mod boundary;
 mod composition;
 mod equivalence;
 mod finite;
@@ -314,6 +315,13 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             let saturate = inductive.is_empty() || !law.because.is_empty();
             if !inductive.is_empty() {
                 lines.push("  first".to_string());
+                // A caller's correspondence across imported call sites crosses
+                // one boundary at a time and never opens another module. It
+                // leads: the alternatives below normalize through the boundary
+                // and exhaust elaboration two sites deep.
+                if let Some(candidate) = boundary::candidate(vb, law, ctx, fact_count) {
+                    lines.push(format!("  | {candidate}"));
+                }
                 if let Some(candidate) = transport::candidate(vb, law, ctx, fact_count) {
                     lines.push(format!("  | {candidate}"));
                 }

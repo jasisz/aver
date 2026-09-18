@@ -101,11 +101,14 @@ fn {name}Cursor({declared}) -> Bool
     /// itself: a function that owns a law keeps the match equations in its
     /// body, and every proof that opens the observation would then have to
     /// normalize a dependent matcher instead of a plain one.
+    ///
+    /// Returns the lifted cursor laws checked here, for the protocol
+    /// observer's own cursor contract to cite.
     pub(super) fn segment_contracts(
         &self,
         items: &mut Vec<TopLevel>,
         imports: &[&'a ProcessProtocol],
-    ) -> Result<(), String> {
+    ) -> Result<Vec<String>, String> {
         let u = &self.upper;
         let mut text = String::new();
         // Lifted imported observations first. An observer of this module that
@@ -139,6 +142,12 @@ fn {name}Cursor({declared}) -> Bool
                 lifted.push(name);
             }
         }
+        // The protocol observer's own cursor contract reads the lifted
+        // observations' cursors; its own segments it still opens itself.
+        let cursors: Vec<String> = lifted
+            .iter()
+            .map(|name| format!("{name}Cursor.segmentCursor"))
+            .collect();
         for fd in self.observed_segments() {
             let observer = self.source_name(fd);
             let result = self.result_type(fd);
@@ -182,7 +191,7 @@ fn {name}Cursor({declared}) -> Bool
         }
         text.push_str(&self.drive_steps()?);
         if text.is_empty() {
-            return Ok(());
+            return Ok(cursors);
         }
         let tokens = crate::lexer::Lexer::new(&text)
             .tokenize()
@@ -192,7 +201,7 @@ fn {name}Cursor({declared}) -> Bool
                 .parse()
                 .map_err(|e| e.to_string())?,
         );
-        Ok(())
+        Ok(cursors)
     }
 
     /// One protocol step per answered request segment: the answer, rewritten

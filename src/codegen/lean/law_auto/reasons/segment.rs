@@ -1,13 +1,17 @@
-//! Interface lemmas for a module-owned segment observation.
+//! Interface lemmas for a module-owned segment observation, and the cursor
+//! contract of a protocol observer that reads them.
 //!
-//! Three shapes, all finite: a cursor predicate applied to one observation, an
+//! Three finite shapes: a cursor predicate applied to one observation, an
 //! observation compared with its own prefixed form, and one step of a protocol
 //! observer written as an observation followed by the generic continuation.
-//! Each is recognised from the shape of the law's statement alone — never from
-//! what an observation computes — and each unfolds only the law's own wrappers,
-//! the observation it is stated about and, for a step, one equation of the
-//! observer being stepped. A lifted imported observation is never opened: the
-//! cited cursor law is the only thing said about it.
+//! One recursive shape: the cursor predicate applied to the whole observer,
+//! closed by functional induction from the cited cursor laws of the
+//! observations it drives through. Each is recognised from the shape of the
+//! law's statement alone — never from what an observation computes — and each
+//! unfolds only the law's own wrappers, the observation it is stated about
+//! and, for a step, one equation of the observer being stepped. A lifted
+//! imported observation is never opened: the cited cursor law is the only
+//! thing said about it.
 use super::induction;
 use crate::ast::{BinOp, Expr, FnDef, Literal, Spanned, Stmt, VerifyKind, VerifyLaw};
 use crate::codegen::{CodegenContext, common};
@@ -33,12 +37,12 @@ have _aver_seg_drop_shift : ∀ {α : Type} (x : α) (rest : List α) (c c1 : In
 
 /// A helper the rung may unfold: effect free, not recursive, and owned by a
 /// scope the law can see.
-fn is_finite(fd: &FnDef, ctx: &CodegenContext) -> bool {
+pub(super) fn is_finite(fd: &FnDef, ctx: &CodegenContext) -> bool {
     common::fn_id_for_decl(ctx, fd)
         .is_some_and(|id| fd.effects.is_empty() && !ctx.recursive_fns.contains(&id))
 }
 
-fn finite<'a>(
+pub(super) fn finite<'a>(
     expr: &Spanned<Expr>,
     ctx: &'a CodegenContext,
     scope: Option<&str>,
@@ -48,20 +52,24 @@ fn finite<'a>(
 }
 
 /// The single result expression of a helper whose body is one expression.
-fn sole_expression(fd: &FnDef) -> Option<&Spanned<Expr>> {
+pub(super) fn sole_expression(fd: &FnDef) -> Option<&Spanned<Expr>> {
     match fd.body.stmts() {
         [Stmt::Expr(expr)] => Some(expr),
         _ => None,
     }
 }
 
-fn claims_true(law: &VerifyLaw) -> bool {
+pub(super) fn claims_true(law: &VerifyLaw) -> bool {
     matches!(law.rhs.node, Expr::Literal(Literal::Bool(true)))
 }
 
 /// Functions this one calls directly, in call order and without repeats. One
 /// level only: the rung reveals a wrapper, never a cone.
-fn direct_callees<'a>(fd: &FnDef, ctx: &'a CodegenContext, scope: Option<&str>) -> Vec<&'a FnDef> {
+pub(super) fn direct_callees<'a>(
+    fd: &FnDef,
+    ctx: &'a CodegenContext,
+    scope: Option<&str>,
+) -> Vec<&'a FnDef> {
     let mut found: Vec<&FnDef> = Vec::new();
     for stmt in fd.body.stmts() {
         let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
@@ -103,7 +111,7 @@ fn cursor_shape<'a>(
 /// Read one cited law in the scope that owns it. The same decomposition runs on
 /// a law of this file and on a law of an imported module; only the scope names
 /// differ.
-fn read_cited<T>(
+pub(super) fn read_cited<T>(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     scope: Option<&str>,
@@ -617,6 +625,142 @@ fn transport(law: &VerifyLaw, ctx: &CodegenContext, scope: Option<&str>) -> Opti
     ))
 }
 
+/// `{cursor}(outcome, tape, …) holds` for a whole protocol observer: every
+/// outcome, every tape.
+///
+/// Functional induction on the observer gives one case per arm, each with the
+/// observations that arm makes as named lets and the recursive call's bound
+/// as its hypothesis. At each observation the rung names it and reads the
+/// cited cursor law about it; then it names the recursive result. The
+/// induction hypothesis is rewritten through the same names, so the cursor
+/// arithmetic that remains is linear in the named consumed counters and the
+/// suffix equation is a chain of `drop`s. Observations whose arguments carry
+/// another observation are named after it. Nothing an observation computes
+/// is unfolded.
+fn bounded(law: &VerifyLaw, ctx: &CodegenContext, scope: Option<&str>) -> Option<String> {
+    if !claims_true(law) {
+        return None;
+    }
+    let wrapper = finite(&law.lhs, ctx, scope)?;
+    let body = sole_expression(wrapper)?;
+    let valid = finite(body, ctx, scope)?;
+    let Expr::FnCall(_, arguments) = &body.node else {
+        return None;
+    };
+    let [_, _, observed] = arguments.as_slice() else {
+        return None;
+    };
+    let observer = induction::callee(observed, ctx, scope)?;
+    if is_finite(observer, ctx) {
+        return None;
+    }
+    // The observer is applied to exactly the wrapper's parameters, in order:
+    // those are the variables the induction runs over.
+    let Expr::FnCall(_, args) = &observed.node else {
+        return None;
+    };
+    let names = args
+        .iter()
+        .map(|arg| match &arg.node {
+            Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if names.len() != wrapper.params.len()
+        || names
+            .iter()
+            .zip(&wrapper.params)
+            .any(|(name, (param, _))| name != param)
+    {
+        return None;
+    }
+    let cited = cited_cursors(law, ctx, scope);
+    if cited.is_empty() || cited.iter().any(Option::is_none) {
+        return None;
+    }
+    let observations: Vec<(usize, &FnDef, &FnDef, &FnDef)> = cited
+        .iter()
+        .enumerate()
+        .filter_map(|(index, shape)| shape.as_ref().map(|(w, v, o)| (index, *w, *v, *o)))
+        .collect();
+    let owner = common::fn_owning_scope_for(ctx, observer);
+    let cited_names: Vec<String> = observations
+        .iter()
+        .map(|(_, _, _, o)| o.name.clone())
+        .collect();
+    // An observation whose arguments in the observer's body carry another
+    // cited observation reads that one's result, so it is named after it.
+    let carried = |name: &str| -> usize {
+        let mut inner: Vec<String> = Vec::new();
+        for stmt in observer.body.stmts() {
+            let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
+            crate::codegen::expr_walk::walk(expr, &mut |expr| {
+                if let Expr::FnCall(_, call_args) = &expr.node
+                    && induction::callee(expr, ctx, owner).is_some_and(|fd| fd.name == name)
+                {
+                    for arg in call_args {
+                        crate::codegen::expr_walk::walk(arg, &mut |sub| {
+                            if let Some(fd) = induction::callee(sub, ctx, owner)
+                                && fd.name != name
+                                && cited_names.contains(&fd.name)
+                                && !inner.contains(&fd.name)
+                            {
+                                inner.push(fd.name.clone());
+                            }
+                        });
+                    }
+                }
+            });
+        }
+        inner.len()
+    };
+    let ranks: Vec<usize> = observations
+        .iter()
+        .map(|(_, _, _, o)| carried(&o.name))
+        .collect();
+    let mut order: Vec<usize> = (0..observations.len()).collect();
+    order.sort_by_key(|&i| ranks[i]);
+    let observations: Vec<_> = order.into_iter().map(|i| observations[i]).collect();
+    let holes = |fd: &FnDef| " _".repeat(fd.params.len());
+    let mut prepare = String::new();
+    let mut name_observations = String::new();
+    for (k, (index, cited_wrapper, cited_valid, cited_observer)) in observations.iter().enumerate()
+    {
+        let k = k + 1;
+        prepare.push_str(&format!(
+            "(simp only [{}, {}, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, ge_iff_le] at _fact{index}); ",
+            induction::lean_name(cited_wrapper, ctx),
+            induction::lean_name(cited_valid, ctx),
+        ));
+        name_observations.push_str(&format!(
+            "all_goals (try ((conv => pattern {obs}{holes}); (generalize _aver_cur_h{k} : {obs}{holes} = _aver_cur_s{k}); (have _aver_cur_f{k} := _aver_cur_h{k} ▸ _fact{index}{holes}); (obtain ⟨_aver_cur_a{k}, _aver_cur_b{k}, _aver_cur_c{k}⟩ : _ ∧ _ ∧ _ := _aver_cur_f{k}); (try simp only [_aver_cur_h{k}] at _aver_cur_i1); (try simp only [_aver_cur_h{k}] at _aver_cur_i2); (try simp only [_aver_cur_h{k}] at _aver_cur_i3))); ",
+            obs = induction::lean_name(cited_observer, ctx),
+            holes = holes(cited_observer),
+        ));
+    }
+    let drive = induction::lean_name(observer, ctx);
+    Some(format!(
+        "({STEPS}{TRANSPORT_STEPS}{prepare}(simp only [{wrapper}, {valid}, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, ge_iff_le]); \
+(fun_induction {drive} {names}); \
+all_goals (try ((rename_i _aver_cur_ih); (obtain ⟨_aver_cur_i1, _aver_cur_i2, _aver_cur_i3⟩ : _ ∧ _ ∧ _ := _aver_cur_ih))); \
+all_goals (try simp +zetaDelta only [] at *); \
+{name_observations}\
+all_goals (try ((conv => pattern {drive}{drive_holes}); (generalize _aver_cur_hr : {drive}{drive_holes} = _aver_cur_r); (try simp only [_aver_cur_hr] at _aver_cur_i1); (try simp only [_aver_cur_hr] at _aver_cur_i2); (try simp only [_aver_cur_hr] at _aver_cur_i3))); \
+all_goals (try simp only [List.length_drop, List.length_cons, List.length_nil, Int.sub_nonneg] at *); \
+all_goals (refine ⟨by omega, by omega, ?_⟩); \
+all_goals (try simp only [Int.sub_self, Int.toNat_zero, List.drop_zero]); \
+all_goals (try rfl); \
+all_goals (try rw [_aver_cur_i3]); \
+all_goals (try (repeat rw [_aver_seg_drop_chain _ _ _ _ (by omega) (by omega)])); \
+all_goals (try (rw [← _aver_seg_drop_shift _ _ _ _ (by omega)])); \
+all_goals rfl; done)",
+        wrapper = induction::lean_name(wrapper, ctx),
+        valid = induction::lean_name(valid, ctx),
+        names = names.join(" "),
+        drive_holes = holes(observer),
+    ))
+}
+
 pub(super) fn candidate(law: &VerifyLaw, ctx: &CodegenContext) -> Option<String> {
     // The segment interface stands on its own definitions and on cited cursor
     // laws; a law that explains itself in steps is a different obligation.
@@ -625,6 +769,7 @@ pub(super) fn candidate(law: &VerifyLaw, ctx: &CodegenContext) -> Option<String>
     }
     let scope = ctx.active_module_scope();
     cursor(law, ctx, scope.as_deref())
+        .or_else(|| bounded(law, ctx, scope.as_deref()))
         .or_else(|| events_prefix(law, ctx, scope.as_deref()))
         .or_else(|| step(law, ctx, scope.as_deref()))
         .or_else(|| transport(law, ctx, scope.as_deref()))
