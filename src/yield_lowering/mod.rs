@@ -127,8 +127,30 @@ pub struct ProcessTrace {
     /// Owning-module observers and law dependencies used by import adapters.
     pub drive: String,
     pub protocol_from: String,
+    /// Pure observations of actual effectful Start/Answer bodies in their owner.
+    pub segments: Vec<ProcessTraceSegment>,
     pub cursor: Option<String>,
     pub correspondence: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessTraceSegment {
+    pub function: String,
+    pub observer: String,
+    pub result: String,
+    pub params: Vec<(String, String)>,
+    /// The owning module's cursor wrapper for this observation, when it checked
+    /// one, so an importer's lift adapter can cite that contract instead of
+    /// reopening the observer's body. Empty when the owner checked none.
+    pub cursor: String,
+    /// One entry per parameter: the owning module's public sample function for
+    /// that parameter's type, or empty when the type needs none. A protocol
+    /// state is built from constructors that stay private to its owner, so an
+    /// importer that must quantify over one calls the owner's sample instead of
+    /// spelling a constructor it cannot name. A type nobody publishes keeps an
+    /// empty entry and stays unsampled, so the law is declined rather than
+    /// written against a name that does not resolve.
+    pub samples: Vec<String>,
 }
 
 /// Public source signature and its lowered protocol, retained across module loading.
@@ -154,9 +176,11 @@ pub struct ProtocolKind {
     pub state: String,
     /// `__peerAnswerClaim`.
     pub answer_fn: String,
-    /// The state type's variants: one per stop of this kind, with how many
-    /// live variables it carries.
-    pub variants: Vec<(String, usize)>,
+    /// The state type's variants: one per stop of this kind, with the declared
+    /// type of each live variable it carries, in order. A caller reads the
+    /// layout to write a sample of an imported stop it can never construct by
+    /// name; the arity is the length of the list.
+    pub variants: Vec<(String, Vec<String>)>,
 }
 
 impl YieldLoweringReport {
@@ -533,6 +557,23 @@ pub fn lower(
                         trace.protocol_from.clone(),
                     ]);
                     public_names.extend(trace.cursor.iter().cloned());
+                    for segment in &trace.segments {
+                        public_names.extend([segment.observer.clone(), segment.result.clone()]);
+                        // An importer quantifying over this segment's state
+                        // calls the sample instead of naming a constructor the
+                        // owner keeps private, so the sample travels with the
+                        // observer it belongs to.
+                        public_names
+                            .extend(segment.samples.iter().filter(|s| !s.is_empty()).cloned());
+                        // An importer's adapter cites this observation's cursor
+                        // and event-prefix contracts instead of reopening its
+                        // body, so the wrappers the contracts are stated about
+                        // travel too.
+                        if !segment.cursor.is_empty() {
+                            public_names.push(segment.cursor.clone());
+                            public_names.push(format!("{}Prefixed", segment.observer));
+                        }
+                    }
                     if trace.correspondence.is_some() {
                         public_names.push(format!("__{fn_name}SourceTraceFrom"));
                     }

@@ -27,6 +27,82 @@ pub(super) fn callee<'a>(
     ctx.fn_def_by_name(&key.name, key.scope_str())
 }
 
+/// Follow transparent outer wrappers to the fold being compared.
+pub(super) fn outer_fold<'a>(
+    expr: &Spanned<Expr>,
+    ctx: &'a CodegenContext,
+    scope: Option<&str>,
+) -> Option<&'a FnDef> {
+    let mut fd = callee(expr, ctx, scope)?;
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(lean_name(fd, ctx)) {
+            return None;
+        }
+        if list_measure(fd, ctx).is_some() {
+            return Some(fd);
+        }
+        let [crate::ast::Stmt::Expr(body)] = fd.body.stmts() else {
+            return None;
+        };
+        fd = callee(body, ctx, common::fn_owning_scope_for(ctx, fd))?;
+    }
+}
+
+/// A finite prefix can surround the compared fold with matches instead of
+/// a direct wrapper call. Select its unique direct recursive boundary.
+pub(super) fn body_fold<'a>(
+    expr: &Spanned<Expr>,
+    ctx: &'a CodegenContext,
+    scope: Option<&str>,
+) -> Option<&'a FnDef> {
+    let fd = callee(expr, ctx, scope)?;
+    let mut folds = BTreeMap::new();
+    for stmt in fd.body.stmts() {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::walk(expr, &mut |expr| {
+            if let Some(called) = callee(expr, ctx, common::fn_owning_scope_for(ctx, fd))
+                && list_measure(called, ctx).is_some()
+                && !called.return_type.starts_with("List<")
+            {
+                folds.insert(lean_name(called, ctx), called);
+            }
+        });
+    }
+    (folds.len() == 1).then(|| *folds.values().next().unwrap())
+}
+
+/// A shared computed record can stay opaque; state constructors and scalar
+/// routers still need to reduce so the fold's next case becomes visible.
+pub(super) fn constructs_result_record(fd: &FnDef) -> bool {
+    fd.body.stmts().iter().any(|stmt| {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::any(expr, &mut |expr| {
+            matches!(&expr.node,
+            Expr::RecordCreate { type_name, .. } if type_name == &fd.return_type)
+        })
+    })
+}
+
+/// Common finite record calls can remain opaque while the recursive steps align.
+pub(super) fn direct_finite_calls(fd: &FnDef, ctx: &CodegenContext) -> BTreeSet<String> {
+    let mut calls = BTreeSet::new();
+    for stmt in fd.body.stmts() {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::walk(expr, &mut |expr| {
+            if let Some(called) = callee(expr, ctx, common::fn_owning_scope_for(ctx, fd))
+                && called.effects.is_empty()
+                && constructs_result_record(called)
+                && common::fn_id_for_decl(ctx, called)
+                    .is_some_and(|id| !ctx.recursive_fns.contains(&id))
+            {
+                calls.insert(lean_name(called, ctx));
+            }
+        });
+    }
+    calls
+}
+
 pub(super) fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
     match common::fn_owning_scope_for(ctx, fd) {
         Some(scope) => format!(
@@ -36,6 +112,92 @@ pub(super) fn lean_name(fd: &FnDef, ctx: &CodegenContext) -> String {
         ),
         None => super::super::shared::entry_qualified_lean_name(ctx, &fd.name),
     }
+}
+
+/// Prove map/suffix properties locally rather than trusting the function's
+/// shape. A length-changing function makes this candidate fail normally.
+/// A single underscore keeps these hypotheses visible to `grind`; Lean marks
+/// double-underscore hypothesis names as implementation details and skips them.
+pub(super) fn checked_map_lemmas(names: &[String], slices_first: bool) -> String {
+    let mut proofs = String::new();
+    for (index, name) in names.iter().enumerate() {
+        let length = format!("_aver_transport_length_{index}");
+        let drop = format!("_aver_transport_drop_{index}");
+        let (drop_prop, orient) = if slices_first {
+            (
+                format!("List.drop n ({name} xs) = {name} (List.drop n xs)"),
+                "symm; ",
+            )
+        } else {
+            (
+                format!("{name} (List.drop n xs) = List.drop n ({name} xs)"),
+                "",
+            )
+        };
+        proofs.push_str(&format!(
+            "have {length} : ∀ xs, List.length ({name} xs) = List.length xs := (by intro xs; induction xs with | nil => simp only [{name}, List.length_nil] | cons x xs ih => simpa only [{name}, List.length_cons] using congrArg Nat.succ ih); have {drop} : ∀ xs n, {drop_prop} := (by intro xs n; {orient}induction xs generalizing n with | nil => simp only [{name}, List.drop_nil] | cons x xs ih => cases n with | zero => rfl | succ n => simpa only [{name}, List.drop_succ_cons] using ih n); "
+        ));
+    }
+    proofs
+}
+
+/// Select one-output-per-cell recursions for the locally checked map facts.
+/// Other list observers (notably reversal) need their own proof strategy.
+pub(super) fn is_unary_list_map(fd: &FnDef, ctx: &CodegenContext) -> bool {
+    if fd.params.len() != 1 {
+        return false;
+    }
+    let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts() else {
+        return false;
+    };
+    let Expr::Match { arms, .. } = &expr.node else {
+        return false;
+    };
+    let [nil, cons] = arms.as_slice() else {
+        return false;
+    };
+    let crate::ast::Pattern::Cons(_, tail) = &cons.pattern else {
+        return false;
+    };
+    if !matches!(nil.pattern, crate::ast::Pattern::EmptyList)
+        || !matches!(&nil.body.node, Expr::List(items) if items.is_empty())
+    {
+        return false;
+    }
+    let Some((name, args)) = super::super::shared::call_name_args(&cons.body) else {
+        return false;
+    };
+    if name != "List.prepend" || args.len() != 2 {
+        return false;
+    }
+    let Some(recursive) = callee(&args[1], ctx, common::fn_owning_scope_for(ctx, fd)) else {
+        return false;
+    };
+    if common::fn_id_for_decl(ctx, recursive) != common::fn_id_for_decl(ctx, fd) {
+        return false;
+    }
+    let Expr::FnCall(_, values) = &args[1].node else {
+        return false;
+    };
+    matches!(values.as_slice(), [value] if matches!(&value.node, Expr::Ident(name) | Expr::Resolved { name, .. } if name == tail))
+}
+
+/// Equations for visible cells of a two-arm list map; arbitrary tails stay opaque.
+pub(super) fn map_constructor_equations(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
+    let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { arms, .. } = &expr.node else {
+        return None;
+    };
+    if arms.len() != 2
+        || !matches!(arms[0].pattern, crate::ast::Pattern::EmptyList)
+        || !matches!(arms[1].pattern, crate::ast::Pattern::Cons(..))
+    {
+        return None;
+    }
+    let name = lean_name(fd, ctx);
+    Some(format!("= {name}.eq_1, = {name}.eq_2"))
 }
 
 pub(super) fn plan(
@@ -143,6 +305,26 @@ pub(super) fn plan(
     ))
 }
 
+/// A fold can consume a finite prefix before its recursive call. Such a
+/// step needs staged normalization even when its final tail is structural.
+fn nested_list_matches(fd: &FnDef) -> bool {
+    fn visit(expr: &Spanned<Expr>, depth: usize) -> bool {
+        let depth = depth
+            + usize::from(matches!(&expr.node, Expr::Match { arms, .. }
+            if arms.iter().any(|arm| matches!(arm.pattern, crate::ast::Pattern::Cons(..)))));
+        if depth > 1 {
+            return true;
+        }
+        let mut nested = false;
+        crate::codegen::expr_walk::for_each_child(expr, &mut |child| nested |= visit(child, depth));
+        nested
+    }
+    fd.body.stmts().iter().any(|stmt| {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        visit(expr, 0)
+    })
+}
+
 /// Walk only this law's calls, resolving every edge in its owner's scope.
 /// Unsupported recursive functions stay opaque; no fuel equation is imported.
 pub(super) struct Definitions {
@@ -150,6 +332,10 @@ pub(super) struct Definitions {
     /// expanding the implementations summarized by cited transition laws.
     pub(super) list_steps: String,
     pub(super) list_maps: String,
+    pub(super) unary_list_maps: Vec<String>,
+    pub(super) completed: String,
+    /// A checked fold consumes an observed prefix or recurs on a computed suffix.
+    pub(super) staged_recursion: bool,
     pub(super) heads: String,
     /// Equations of outer calls and their direct arguments, without the full cone.
     pub(super) head_equations: String,
@@ -182,6 +368,9 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     let mut out = BTreeMap::new();
     let mut list_steps = BTreeSet::new();
     let mut list_maps = BTreeSet::new();
+    let mut unary_list_maps = BTreeSet::new();
+    let mut completed = BTreeSet::new();
+    let mut staged_recursion = false;
     let mut unfold_once = Vec::new();
     let law_calls = |builtin: &str| {
         law.because
@@ -201,9 +390,22 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         map_remove_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.remove");
         let recursive = ctx.recursive_fns.contains(&id);
         if list_measure(fd, ctx).is_some() {
+            staged_recursion |=
+                crate::codegen::recursion::detect::single_list_structural_param_index(fd).is_none()
+                    || (super::composition::first_constructor_branch(fd)
+                        && nested_list_matches(fd));
             list_steps.insert(lean_name(fd, ctx));
+            // A terminal constructor may also occur on the left after a
+            // splice. Its checked equation reduces that one boundary without
+            // unfolding another recursive call on an unknown outcome.
+            if super::composition::first_constructor_branch(fd) {
+                completed.insert(format!("{}.eq_1", lean_name(fd, ctx)));
+            }
             if fd.return_type.starts_with("List<") {
                 list_maps.insert(lean_name(fd, ctx));
+                if is_unary_list_map(fd, ctx) {
+                    unary_list_maps.insert(lean_name(fd, ctx));
+                }
             }
         }
         // Subtractive countdown equations expose fixed-width steps. Keep
@@ -311,6 +513,9 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     Definitions {
         list_steps: list_steps.into_iter().collect::<Vec<_>>().join(", "),
         list_maps: list_maps.into_iter().collect::<Vec<_>>().join(", "),
+        unary_list_maps: unary_list_maps.into_iter().collect(),
+        completed: completed.into_iter().collect::<Vec<_>>().join(", "),
+        staged_recursion,
         heads,
         head_equations: head_equations.join(", "),
         structural_reason: law.because.iter().any(|reason| {

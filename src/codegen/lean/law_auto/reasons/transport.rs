@@ -83,14 +83,35 @@ pub(super) fn candidate(
             ctx.fn_def_by_name(&key.name, key.scope_str())
         })
         .collect();
+    // Only the two folds compared by this law are induction boundaries.
+    // Deeper imports may contribute further recursive helpers to its cone;
+    // their presence does not change this transport obligation.
+    let mut right_folds = BTreeSet::new();
+    let owner = common::fn_owning_scope_for(ctx, right_fn);
+    for stmt in right_fn.body.stmts() {
+        let (Stmt::Expr(expr) | Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::walk(expr, &mut |expr| {
+            if let Some(fd) = induction::callee(expr, ctx, owner)
+                && induction::list_measure(fd, ctx).is_some()
+                && !fd.return_type.starts_with("List<")
+            {
+                right_folds.insert(induction::lean_name(fd, ctx));
+            }
+        });
+    }
+    if right_folds.len() != 1 {
+        return None;
+    }
+    let driver_name = induction::lean_name(driver, ctx);
     let folds: Vec<_> = functions
         .iter()
         .copied()
         .filter(|fd| {
-            induction::list_measure(fd, ctx).is_some() && !fd.return_type.starts_with("List<")
+            let name = induction::lean_name(fd, ctx);
+            name == driver_name || right_folds.contains(&name)
         })
         .collect();
-    if folds.len() != 2 || !folds.iter().any(|fd| fd.name == driver.name) {
+    if folds.len() != 2 {
         return None;
     }
     let maps: Vec<_> = functions
@@ -103,6 +124,19 @@ pub(super) fn candidate(
     if maps.is_empty() {
         return None;
     }
+    // A finite helper can inspect another mapped cell before the recursive
+    // fold resumes. Relate that cell's tail to a slice of the original input
+    // instead of treating the two tails as unrelated induction arguments.
+    // These are local checked lemmas: a non-map list function simply fails
+    // this candidate, rather than receiving a shape-based theorem.
+    let map_lemmas = induction::checked_map_lemmas(
+        &maps
+            .iter()
+            .filter(|fd| induction::is_unary_list_map(fd, ctx))
+            .map(|fd| induction::lean_name(fd, ctx))
+            .collect::<Vec<_>>(),
+        true,
+    );
     // Calls producing a fold's state stay opaque. Expanding their patterns is
     // unrelated to transporting that fold's observations across a list map.
     let boundary: BTreeSet<_> = folds
@@ -115,6 +149,9 @@ pub(super) fn candidate(
         .copied()
         .filter(|fd| {
             fd.effects.is_empty()
+                // Normalize the compared interfaces; a deeper import is a
+                // shared computation whose result should remain opaque.
+                && folds.iter().any(|fold| common::fn_owning_scope_for(ctx, fold) == common::fn_owning_scope_for(ctx, fd))
                 && !boundary.contains(fd.return_type.as_str())
                 && common::fn_id_for_decl(ctx, fd)
                     .is_some_and(|id| !ctx.recursive_fns.contains(&id))
@@ -136,6 +173,25 @@ pub(super) fn candidate(
             });
         }
     }
+    // Expose finite computations performed by a fold before splitting their
+    // returned observations. Result adapters around the complete fold stay
+    // opaque until the two steps agree.
+    let mut step_helpers = BTreeSet::new();
+    let mut pending = folds.clone();
+    while let Some(fd) = pending.pop() {
+        let owner = common::fn_owning_scope_for(ctx, fd);
+        for stmt in fd.body.stmts() {
+            let (Stmt::Expr(expr) | Stmt::Binding(_, _, expr)) = stmt;
+            crate::codegen::expr_walk::walk(expr, &mut |expr| {
+                if let Some(callee) = induction::callee(expr, ctx, owner) {
+                    let name = induction::lean_name(callee, ctx);
+                    if plain.contains(&name) && step_helpers.insert(name) {
+                        pending.push(callee);
+                    }
+                }
+            });
+        }
+    }
     let excluded = (0..fact_count)
         .map(|i| format!("-_fact{i}"))
         .collect::<Vec<_>>()
@@ -147,9 +203,17 @@ pub(super) fn candidate(
         .chain(converters.iter().cloned())
         .collect::<Vec<_>>()
         .join(", ");
+    let step_simp = std::iter::once(mapping.clone())
+        .chain(step_helpers)
+        .collect::<Vec<_>>()
+        .join(", ");
     let equations = converters
         .iter()
         .map(|name| format!("= {name}.eq_def"))
+        .chain(
+            maps.iter()
+                .filter_map(|fd| induction::map_constructor_equations(fd, ctx)),
+        )
         .collect::<Vec<_>>()
         .join(", ");
     let steps = folds
@@ -174,11 +238,26 @@ pub(super) fn candidate(
     } else {
         format!(" generalizing {others}")
     };
+    let input = aver_name_to_lean(input);
+    // A fold may continue on a drop of the current tail after observing a
+    // finite helper. A cons-tail IH is too narrow for that checked decrease;
+    // length induction provides the equation for every shorter suffix.
+    let steps = format!(
+        "all_goals ({steps}); all_goals (repeat' first | (simp_all +zetaDelta [{step_simp}, {excluded}]) | split); all_goals (simp_all +zetaDelta [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals (grind [List.drop_cons, List.drop_drop, List.length_drop, List.length_cons, {equations}]); done"
+    );
+    let induction = if crate::codegen::recursion::detect::single_list_structural_param_index(driver)
+        .is_some()
+    {
+        format!("induction {input}{generalizing}; {steps}")
+    } else {
+        format!(
+            "induction {input} using (measure List.length).wf.induction{generalizing} with | h {input} _aver_transport_ih => (dsimp only [WellFoundedRelation.rel, measure, invImage, InvImage, Nat.lt_wfRel] at *; cases {input}; {steps})"
+        )
+    };
     let normalize = (0..fact_count).map(|i| format!("(try simp only [{plain}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at _fact{i}); ")).collect::<String>();
     Some(format!(
-        "({normalize}simp only [beq_iff_eq, {}, {}]; induction {}{generalizing}; all_goals ({steps}); all_goals (repeat' first | (simp_all [{mapping}, {excluded}]) | split); all_goals (simp_all [{plain}, {mapping}, List.append_assoc, {excluded}]); all_goals grind [List.drop_cons, {equations}]; done)",
+        "({normalize}{map_lemmas}simp only [beq_iff_eq, {}, {}]; {induction})",
         induction::lean_name(left_fn, ctx),
         induction::lean_name(right_fn, ctx),
-        aver_name_to_lean(input)
     ))
 }

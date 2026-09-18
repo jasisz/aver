@@ -1147,7 +1147,7 @@ fn write_laws(protocols: &[ProcessProtocol], jobs: &[Job]) -> String {
         let Some(kind) = protocol.kinds.iter().find(|kind| kind.operation.is_none()) else {
             continue;
         };
-        let Some((variant, _)) = kind.variants.iter().find(|(_, arity)| *arity == 0) else {
+        let Some((variant, _)) = kind.variants.iter().find(|(_, live)| live.is_empty()) else {
             continue;
         };
         let upper = marker_variant(&protocol.fn_name);
@@ -1330,7 +1330,7 @@ fn sample_request(protocol: &ProcessProtocol) -> Option<String> {
         .kinds
         .iter()
         .find(|kind| kind.operation.is_none())?;
-    let (variant, _) = kind.variants.iter().find(|(_, arity)| *arity == 0)?;
+    let (variant, _) = kind.variants.iter().find(|(_, live)| live.is_empty())?;
     Some(format!(
         "{}.{}({}.{variant})",
         protocol.request, kind.name, kind.state

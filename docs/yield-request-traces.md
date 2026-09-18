@@ -10,9 +10,8 @@ This is the compiler validation surface for #1376. It is separate from the
 coordinator's finite-history invariants and from provider answer-stability
 laws. Recursive helpers compose through explicit helper and splice laws,
 including imports whose owning module supplies its source correspondence and
-cursor contract. Imported segments with in-place effects still need an
-owning-module observation interface; the compiler rejects those model requests
-explicitly. The existing refusal to export stubbed direct process
+cursor contract. In-place effects in imported segments use pure observations
+exported by their owning module. The existing refusal to export stubbed direct process
 cases as proofs remains in place.
 
 ## Two independent inputs to the model generator
@@ -23,7 +22,7 @@ these definitions; it does not reconstruct source behavior from machine states,
 liveness or generated continuation bodies. Imported observers stay in their
 owning module, where their private functions and layouts remain available.
 
-The protocol observer folds the actual generated entry points. When a local
+The protocol observer folds the actual generated entry points. When a
 segment contains an in-place capability call, a separate traversal instruments
 that generated segment with the same answer-tape semantics. This observes code
 on each side independently; both observers share the meaning of consuming an
@@ -173,11 +172,38 @@ imports, tail entry, private recursion, arbitrary initial cursors, Unit answers,
 early errors and tokens belonging only to the caller. The latter must remain
 unchanged when the child rejects them.
 
-Proof search keeps a summarized adapter opaque until its theorem rewrites the
-call. Between splices, a constructor-specific equation unfolds a completed
-continuation while preserving the next unknown outcome for its own theorem.
-No extra axiom, proof budget, generated scenario bound or handwritten Lean file
-is required.
+An effectful imported `Start` or `Answer` has a separate module-owned observer
+generated from that actual segment. It can stop on an in-place operation before
+producing a protocol outcome. Its result carries the same cursor fields and an
+optional outcome; the caller adapts the tape and observations before continuing
+its real router. This includes effects before the first request, effects after
+an answer, and early errors. The retained-source observer remains independent
+of these segment bodies.
+
+Every module with a requested trace also checks an interface for each observed
+segment where the segment is defined: `segmentCursor` states that the
+observation leaves the tape at the suffix its own cursor reports, `eventsPrefix`
+that its incoming event history is only a prefix, and `step` that one protocol
+step is that observation followed by the generic continuation (the start
+segment has no step). The owner publishes a sample of each protocol state an
+importer has to quantify over. A module that lifts an imported observation
+checks the lifted cursor too, citing the owner's. Each statement is made about
+a wrapper rather than about the observation itself, so no observation owns a
+law and its body keeps plain matchers.
+
+A caller reads this interface instead of an imported observer's body. Its
+mapping law cites the cursor, prefix and step of every observation it drives
+through. Its source correspondence crosses one call site at a time: the segment
+observation and the drive result at that site are named, the protocol side is
+folded into the site's splice wrapper by the splice law and the wrapper is then
+opened, so both sides continue as a match on the same named result. Its cursor
+contract cites the lifted cursor laws and proceeds by functional induction on
+its own protocol observer, naming each observation and each recursive result so
+the induction hypothesis and the cited bounds speak about the same variables;
+what remains is linear cursor arithmetic and a chain of `drop`s. Between local
+splices, a constructor-specific equation still unfolds a completed continuation
+while preserving the next unknown outcome for its own theorem. No extra axiom,
+proof budget, generated scenario bound or handwritten Lean file is required.
 
 ## Boundary of the claim
 
@@ -195,11 +221,10 @@ computations retain the ordinary exporter's recursion and proof requirements.
 Combining a local recursive source cone with an imported nested call requires
 the imported helper's owning-module contracts even when that helper is finite.
 A generated model is not itself universal credit: an unproved equality remains
-an open obligation. #1376 stays open for imported in-place effects and the
-broader source/driver correspondence.
+an open obligation. #1376 stays open for the broader source/driver correspondence.
 
 The owning module records whether its source observer or any reachable helper
 is recursive. A finite caller of a recursive helper therefore retains this marker. An internal
 `Yield` kind is not itself evidence of recursion: a finite tail-entry chain also
 has that kind. Importing finite observers therefore retains those boundaries;
-recursive imported subtraces still require the pending composition theorem.
+recursive imported subtraces use the checked composition contracts above.

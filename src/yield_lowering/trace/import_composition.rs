@@ -23,6 +23,32 @@ impl Model<'_> {
         let drive = self.child_drive(fd);
         let result = self.result_type(fd);
         let u = &self.upper;
+        // What the owning module checked about each observation this adapter
+        // drives through: the suffix its cursor reports, the prefix of its
+        // event history, and the protocol step that produces it. A caller reads
+        // these instead of the observation's body. The start observation is not
+        // among them — an adapter is entered with an outcome already in hand —
+        // and citing it would carry the whole entry point into the cone of
+        // every law that cites this one. An observation whose owner checked
+        // none of these contributes nothing, and the law falls back to
+        // unfolding.
+        let interface = trace
+            .segments
+            .iter()
+            .filter(|segment| !segment.cursor.is_empty() && segment.function != protocol.start)
+            .flat_map(|segment| {
+                let short = segment
+                    .function
+                    .rsplit_once('.')
+                    .map_or(segment.function.as_str(), |(_, short)| short);
+                [
+                    format!("{}.segmentCursor", segment.cursor),
+                    format!("{}Prefixed.eventsPrefix", segment.observer),
+                    format!("{}.step{}", trace.drive, build::capitalize(short)),
+                ]
+            })
+            .map(|law| format!(", {law}"))
+            .collect::<String>();
         let mut out = self.drive(protocol, fd, &drive);
         out.push_str(&format!(r#"
 verify {name}Events law append
@@ -49,7 +75,7 @@ verify {name}Direct law mapping
     given events: List<{u}Event> = [[]]
     given childEvents: List<{event}> = [[]]
     given consumed: Int = [0]
-    using [{cursor_law}.boundedSuffix, {name}Events.append, {name}Events.singleton]
+    using [{cursor_law}.boundedSuffix, {name}Events.append, {name}Events.singleton{interface}]
     {name}Direct(outcome, inputs, position, events, childEvents, consumed) == {name}Mapped(outcome, inputs, position, events, childEvents, consumed) holds
 "#, outcome=protocol.outcome, event=trace.event, child_drive=trace.drive, sample=composition::samples::witness(self, &fd.return_type)?));
         let params: Vec<_> = fd
@@ -74,7 +100,11 @@ verify {name}Direct law mapping
             "correspondence",
             &params,
             &format!("{name}({args}) == {entry}({args})"),
-            &[source_law.clone(), format!("{name}Direct.mapping")],
+            &[
+                source_law.clone(),
+                format!("{name}Direct.mapping"),
+                format!("{cursor_law}.boundedSuffix"),
+            ],
         )?;
         let source_from = source_law
             .rsplit_once('.')
@@ -85,7 +115,7 @@ verify {name}Direct law mapping
         } else {
             format!("{start_args}, ")
         };
-        out.push_str(&format!("\nfn {name}SourceAgrees({}) -> Bool\n    {source_from}({source_args}{name}Inputs(inputs), position, [], consumed) == {}({source_args}{name}Inputs(inputs), position, [], consumed)\n\nfn {name}MappingAgrees({}) -> Bool\n    {name}Direct({}({start_args}), inputs, position, events, [], consumed) == {name}Mapped({}({start_args}), inputs, position, events, [], consumed)\n", declarations(&params), trace.protocol_from, declarations(&params), protocol.start, protocol.start));
+        out.push_str(&format!("\nfn {name}SourceAgrees({}) -> Bool\n    emptyEvents: List<{event}> = []\n    {source_from}({source_args}{name}Inputs(inputs), position, emptyEvents, consumed) == {}({source_args}{name}Inputs(inputs), position, emptyEvents, consumed)\n\nfn {name}MappingAgrees({}) -> Bool\n    emptyEvents: List<{event}> = []\n    {entry}({args}) == {name}Lift({}({source_args}{name}Inputs(inputs), position, emptyEvents, consumed), inputs, events, consumed)\n", declarations(&params), trace.protocol_from, declarations(&params), trace.protocol_from, event=trace.event));
         let explanations = format!(
             "    because {name}SourceAgrees({args})\n    because {name}MappingAgrees({args})\n    using"
         );

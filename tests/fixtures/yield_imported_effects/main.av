@@ -1,0 +1,78 @@
+module ImportedEffects
+    intent = "Preserve imported in-place observations across repetition, recursion and early errors."
+    depends [Pool, Pooled, Looper, Wrapper]
+    exposes [repeated, tail, early]
+    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs, yield]
+
+fn repeated(n: Int) -> Int
+    ! [Pool.claim, Pool.notice, Time.unixMs, yield]
+    first = Wrapper.run(n)
+    second = Wrapper.run(first)
+    Pool.notice(first + second)
+    first + second
+
+fn tail(n: Int) -> Int
+    ! [Pool.claim, Time.unixMs, yield]
+    Looper.run(n)
+
+fn early(n: Int) -> Result<Int, String>
+    ? "Propagate an imported early error with the original unconsumed suffix."
+    ! [Pool.finish, Time.unixMs, yield]
+    value = Looper.fallible(n)?
+    Result.Ok(value + 2)
+
+verify __repeatedSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__RepeatedTraceInput> = [[]]
+    using []
+    __repeatedSourceTrace(n, inputs) == __repeatedProtocolTrace(n, inputs) holds
+
+verify __tailSourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__TailTraceInput> = [[]]
+    using []
+    __tailSourceTrace(n, inputs) == __tailProtocolTrace(n, inputs) holds
+
+verify __earlySourceTrace law correspondence
+    given n: Int = [2]
+    given inputs: List<__EarlyTraceInput> = [[]]
+    using []
+    __earlySourceTrace(n, inputs) == __earlyProtocolTrace(n, inputs) holds
+
+fn beforeRequest() -> Bool
+    observed = __tailSourceTrace(2, [__TailTraceInput.Advance])
+    Bool.and(observed == __tailProtocolTrace(2, [__TailTraceInput.Advance]), Bool.and(observed.position == 0, Bool.and(observed.consumed == 1, observed.pending == Option.Some(__TailTraceQuery.HostTimeUnixMs))))
+
+fn afterRequest() -> Bool
+    inputs = [__TailTraceInput.Advance, __TailTraceInput.AnswerHostTimeUnixMs(10), __TailTraceInput.AnswerClaim(Option.None)]
+    observed = __tailSourceTrace(2, inputs)
+    Bool.and(observed == __tailProtocolTrace(2, inputs), Bool.and(observed.position == 2, Bool.and(observed.consumed == 3, observed.pending == Option.Some(__TailTraceQuery.HostTimeUnixMs))))
+
+fn earlyError() -> Bool
+    inputs = [__EarlyTraceInput.AnswerHostTimeUnixMs(10), __EarlyTraceInput.AnswerFinish(Result.Err("stop")), __EarlyTraceInput.Foreign]
+    observed = __earlySourceTraceFrom(2, inputs, 7, [__EarlyTraceEvent.Empty], 20)
+    expected: Result<Int, String> = Result.Err("stop")
+    events = [__EarlyTraceEvent.Empty, __EarlyTraceEvent.ObservedHostTimeUnixMs(7, 10), __EarlyTraceEvent.ObservedFinish(8, 2, Result.Err("stop"))]
+    Bool.and(observed == __earlyProtocolTraceFrom(2, inputs, 7, [__EarlyTraceEvent.Empty], 20), Bool.and(observed.value == Option.Some(expected), Bool.and(observed.remaining == [__EarlyTraceInput.Foreign], Bool.and(observed.events == events, Bool.and(observed.position == 9, observed.consumed == 22)))))
+
+fn callerOnlyToken() -> Bool
+    inputs = [__RepeatedTraceInput.AnswerHostTimeUnixMs(10), __RepeatedTraceInput.AnswerNotice(Unit)]
+    observed = __repeatedSourceTrace(2, inputs)
+    Bool.and(observed == __repeatedProtocolTrace(2, inputs), Bool.and(Bool.not(observed.valid), Bool.and(observed.remaining == [__RepeatedTraceInput.AnswerNotice(Unit)], Bool.and(observed.position == 1, observed.consumed == 1))))
+
+fn completedHistory() -> Bool
+    inputs = [__RepeatedTraceInput.AnswerHostTimeUnixMs(10), __RepeatedTraceInput.AnswerClaim(Option.Some(7)), __RepeatedTraceInput.AnswerHostTimeUnixMs(13), __RepeatedTraceInput.Advance, __RepeatedTraceInput.AnswerHostTimeUnixMs(20), __RepeatedTraceInput.AnswerClaim(Option.None), __RepeatedTraceInput.AnswerHostTimeUnixMs(24), __RepeatedTraceInput.AnswerHostTimeUnixMs(5), __RepeatedTraceInput.AnswerHostTimeUnixMs(30), __RepeatedTraceInput.AnswerClaim(Option.None), __RepeatedTraceInput.AnswerHostTimeUnixMs(33), __RepeatedTraceInput.AnswerHostTimeUnixMs(6), __RepeatedTraceInput.AnswerNotice(Unit), __RepeatedTraceInput.Foreign]
+    observed = __repeatedSourceTraceFrom(2, inputs, 0 - 4, [__RepeatedTraceEvent.Empty], 10)
+    events = [__RepeatedTraceEvent.Empty, __RepeatedTraceEvent.ObservedHostTimeUnixMs(0 - 4, 10), __RepeatedTraceEvent.ObservedClaim(0 - 3, 2, Option.Some(7)), __RepeatedTraceEvent.ObservedHostTimeUnixMs(0 - 2, 13), __RepeatedTraceEvent.ObservedHostTimeUnixMs(0 - 1, 20), __RepeatedTraceEvent.ObservedClaim(0, 7, Option.None), __RepeatedTraceEvent.ObservedHostTimeUnixMs(1, 24), __RepeatedTraceEvent.ObservedHostTimeUnixMs(2, 5), __RepeatedTraceEvent.ObservedHostTimeUnixMs(3, 30), __RepeatedTraceEvent.ObservedClaim(4, 17, Option.None), __RepeatedTraceEvent.ObservedHostTimeUnixMs(5, 33), __RepeatedTraceEvent.ObservedHostTimeUnixMs(6, 6), __RepeatedTraceEvent.ObservedNotice(7, 44, Unit)]
+    Bool.and(observed == __repeatedProtocolTraceFrom(2, inputs, 0 - 4, [__RepeatedTraceEvent.Empty], 10), Bool.and(observed.value == Option.Some(44), Bool.and(observed.events == events, Bool.and(observed.position == 8, Bool.and(observed.consumed == 23, observed.remaining == [__RepeatedTraceInput.Foreign])))))
+
+verify beforeRequest
+    beforeRequest() => true
+verify afterRequest
+    afterRequest() => true
+verify earlyError
+    earlyError() => true
+verify callerOnlyToken
+    callerOnlyToken() => true
+verify completedHistory
+    completedHistory() => true

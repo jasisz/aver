@@ -197,6 +197,21 @@ pub(super) fn candidate(
         for stmt in fd.body.stmts() {
             let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
             crate::codegen::expr_walk::walk(expr, &mut |expr| {
+                // Preserve an adapter of a recursive result until its cited
+                // equation rewrites that whole result. Projecting it here
+                // duplicates unknown fields across the continuation's cases.
+                if definitions.staged_recursion
+                    && let Expr::FnCall(_, args) = &expr.node
+                    && args.iter().any(|arg| {
+                        induction::callee(arg, ctx, key.scope_str())
+                            .is_some_and(|fd| induction::list_measure(fd, ctx).is_some())
+                    })
+                    && let Some(adapter) = induction::callee(expr, ctx, key.scope_str())
+                    && adapter.effects.is_empty()
+                    && induction::list_measure(adapter, ctx).is_none()
+                {
+                    opaque.insert(induction::lean_name(adapter, ctx));
+                }
                 if let Some(callee) = induction::callee(expr, ctx, key.scope_str())
                     && induction::list_measure(callee, ctx).is_some()
                     && let Expr::FnCall(_, args) = &expr.node
@@ -292,6 +307,11 @@ pub(super) fn candidate(
     // cursor projection across subsequent calls and overwhelms congruence.
     // The number of cited boundaries bounds this attempt; an unsupported
     // composition must close by another candidate or remain an obligation.
+    let zeta = if definitions.staged_recursion {
+        " +zetaDelta"
+    } else {
+        ""
+    };
     let staged = if splices.is_empty() {
         String::new()
     } else {
@@ -299,24 +319,28 @@ pub(super) fn candidate(
         // call. Expose that prefix only when a direct rewrite cannot apply;
         // matching the right side first avoids splitting the helper's result
         // before the shared input prefix is known.
-        let prefix_cases = if input_match {
+        let prefix_cases = if input_match && !definitions.staged_recursion {
             format!(
                 " | ((repeat' first | rfl | (simp_all only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (first | rfl | (first{rewrite})))"
+            )
+        } else if input_match {
+            format!(
+                " | ((repeat' first | rfl | (first{rewrite}) | (simp_all{zeta} only [{plain}, {excluded}]) | (symm; split <;> symm)); all_goals (try (first{rewrite})))"
             )
         } else {
             String::new()
         };
         let step = format!(
-            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all only [{staged_plain}, {excluded}]))); "
+            "all_goals (first | rfl | ((first | (first{rewrite}){prefix_cases}); all_goals (try split); all_goals (try simp_all{zeta} only [{staged_plain}, {excluded}]))); "
         );
         format!(
-            " | ({}all_goals (repeat' first | rfl | (simp_all [{completion}, {equations}, {excluded}]) | split); done)",
+            " | ({}all_goals (repeat' first | rfl | (simp_all{zeta} [{completion}, {equations}, {excluded}]) | split); done)",
             step.repeat(splices.len())
         )
     };
     let prefix = if input_match {
         format!(
-            " | ((first{opening}); (try simp only [{plain}]); (repeat' first | rfl | (simp_all only [{facts}]) | split); all_goals ({reverse}); all_goals (simp_all only [{completion}, {equations}]); done)"
+            " | ((first{opening}); (try simp only [{plain}]); (repeat' first | rfl | (simp_all{zeta} only [{facts}]) | split); all_goals ({reverse}); all_goals (simp_all{zeta} only [{completion}, {equations}]); done)"
         )
     } else {
         String::new()
@@ -330,11 +354,24 @@ pub(super) fn candidate(
         .collect::<Vec<_>>()
         .join(", ");
     let shallow = format!(
-        "(simp only [{}]; (repeat' first | rfl | (simp_all only [{shallow_defs}]) | split); done)",
+        "(simp only [{}]; (repeat' first | rfl | (simp_all{zeta} only [{shallow_defs}]) | split); done)",
         definitions.heads
     );
+    // A suspended entry may put one recursive equation outside every cited
+    // boundary. Open that outer step once, then resume summary composition;
+    // opening repeatedly would descend into the summarized helper itself.
+    let staged_entry = if staged.is_empty() || opening.is_empty() {
+        String::new()
+    } else {
+        format!(" | ((first{opening}); first{staged})")
+    };
+    let composed = if definitions.staged_recursion {
+        format!("{staged}{staged_entry}{prefix}")
+    } else {
+        format!("{prefix}{staged}")
+    };
     Some(format!(
-        "(first | {shallow} | (simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{prefix}{staged} | (grind only [{steps}])))"
+        "(first | {shallow} | (simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, {plain}] at *; simp only [{facts}]; first{composed} | (grind only [{steps}])))"
     ))
 }
 
@@ -359,7 +396,7 @@ fn parameter_match(fd: &crate::ast::FnDef, lists_only: bool) -> bool {
 /// A constructor-specific equation advances a completed boundary without
 /// unfolding a different call whose outcome is still unknown. The first flat
 /// branch has Lean's first kernel-generated equation, irrespective of names.
-fn first_constructor_branch(fd: &crate::ast::FnDef) -> bool {
+pub(super) fn first_constructor_branch(fd: &crate::ast::FnDef) -> bool {
     let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts() else {
         return false;
     };

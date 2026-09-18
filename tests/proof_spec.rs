@@ -1052,5 +1052,7 @@ mod dafny_explain;
 #[path = "proof_spec/shared_reason_imports.rs"]
 mod shared_reason_imports;
 
+#[path = "proof_spec/imported_effects.rs"]
+mod imported_effects;
 #[path = "proof_spec/request_traces.rs"]
 mod request_traces;

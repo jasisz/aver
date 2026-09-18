@@ -38,6 +38,7 @@ pub(super) fn candidate(
     let mut call = left.clone();
     let mut visited = std::collections::HashSet::new();
     let mut induction_call = None;
+    let mut result_adapter = None;
     let mut wrappers = Vec::new();
     while let Some(fd) = induction::callee(&call, ctx, scope.as_deref()) {
         if !visited.insert(fd.name.clone()) || !fd.effects.is_empty() {
@@ -109,6 +110,7 @@ pub(super) fn candidate(
                 Some(emit_expr(&resolve_rewrite_output(arg, ctx, None), ctx))
             });
             if induction_call.is_some() {
+                result_adapter = Some(induction::lean_name(fd, ctx));
                 break;
             }
         }
@@ -145,7 +147,38 @@ pub(super) fn candidate(
         Some(call) => format!("fun_induction {call}; "),
         None => String::new(),
     };
-    let simp = [definitions.simp.clone(), definitions.list_maps.clone()]
+    // An adapter comparison can call the very same finite helper on both
+    // sides. Preserve that shared result: projecting its implementation before
+    // applying the recursive IH needlessly duplicates every nested branch.
+    let mut shared = std::collections::BTreeSet::new();
+    if result_adapter.is_some() && definitions.staged_recursion {
+        let left_fold = induction::outer_fold(&call, ctx, scope.as_deref()).or_else(|| {
+            let Expr::FnCall(_, args) = &call.node else {
+                return None;
+            };
+            args.iter()
+                .find_map(|arg| induction::outer_fold(arg, ctx, scope.as_deref()))
+        });
+        if let (Some(left), Some(right)) = (
+            left_fold,
+            induction::outer_fold(right, ctx, scope.as_deref())
+                .or_else(|| induction::body_fold(right, ctx, scope.as_deref())),
+        ) {
+            let mut left = induction::direct_finite_calls(left, ctx);
+            if let Some(adapter) = induction::callee(&call, ctx, scope.as_deref()) {
+                left.extend(induction::direct_finite_calls(adapter, ctx));
+            }
+            let right = induction::direct_finite_calls(right, ctx);
+            shared.extend(left.intersection(&right).cloned());
+        }
+    }
+    let finite = definitions
+        .simp
+        .split(", ")
+        .filter(|name| !shared.contains(*name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let simp = [finite, definitions.list_maps.clone()]
         .into_iter()
         .filter(|s| !s.is_empty())
         .chain((0..fact_count).map(|i| format!("-_fact{i}")))
@@ -177,12 +210,50 @@ pub(super) fn candidate(
         // not induction on an incidental list projection or Bool wrapper.
         // Expose Bool facts in the IH before solving a consumed-prefix step;
         // the guarded drop equation lets arithmetic relate Int cursor deltas.
+        if !definitions.unary_list_maps.is_empty() {
+            let lemmas = induction::checked_map_lemmas(&definitions.unary_list_maps, true);
+            // A finite imported helper may inspect a mapped suffix before the
+            // fold resumes. Split those finite matches, retaining the checked
+            // length/drop equations that relate it to the original tape.
+            return Some(format!(
+                "({lemmas}simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | (simp_all +zetaDelta only [{simp}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le]) | split at *); all_goals grind [List.drop_cons, List.drop_drop, List.length_drop]; done)"
+            ));
+        }
         return Some(format!(
-            "(simp only [beq_iff_eq{heads}]; {start}all_goals simp only [{simp}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le] at *; all_goals grind [List.drop_cons]; done)"
+            "(simp only [beq_iff_eq{heads}]; {start}all_goals simp +zetaDelta only [{simp}, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, List.length_cons, List.drop_zero, Int.sub_self, Int.toNat_zero, ge_iff_le] at *; all_goals grind [List.drop_cons]; done)"
         ));
     }
+    // Expose the matching right-hand step before splitting result projections
+    // on the left. Otherwise a splice can branch on an unknown recursive
+    // result before its induction hypothesis has a matching right-hand call.
+    let first_step = if start.is_empty() {
+        String::new()
+    } else {
+        format!("all_goals (try dsimp only); all_goals (try (first{steps})); ")
+    };
+    let completed = if definitions.completed.is_empty() {
+        String::new()
+    } else {
+        format!(" | (simp_all only [{}])", definitions.completed)
+    };
+    // Preserve the application appearing in the recursive IH while reducing
+    // the other fold's step. Expanding its result adapter first duplicates
+    // projections of an unknown recursive result and obscures the equality.
+    // Keep this progress and split finite observations before exposing the
+    // adapter. Terminal branches can still use the full simplifier below.
+    let adapting = result_adapter.is_some();
+    let recursive = result_adapter
+        .map(|adapter| {
+            let step_simp = simp
+                .split(", ")
+                .filter(|name| *name != adapter)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(" | (simp_all +zetaDelta [{step_simp}]) | (solve | with_reducible grind only [List.length_drop, List.length_cons]) | (solve | simp_all +zetaDelta [{simp}]) | (split at *){steps}")
+        })
+        .unwrap_or_default();
     let solve = format!(
-        "simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all [{simp}]) | split{steps} | (solve | grind)); done"
+        "simp only [beq_iff_eq{heads}]; {start}{first_step}all_goals (repeat' first | assumption | rfl{completed}{recursive} | (simp_all +zetaDelta [{simp}]) | split{steps} | (solve | grind)); done"
     );
     // Finite helper chains often return records containing a mapped remainder.
     // Split only a constructor prefix before substitution duplicates those
@@ -206,5 +277,26 @@ pub(super) fn candidate(
     } else {
         String::new()
     };
-    Some(format!("(first{compose}{cases} | ({solve}))"))
+    // Advancing the right fold first helps observed prefixes, but a pure
+    // continuation can already match the IH before that step. Retain the
+    // established symmetric normalization as a checked fallback for adapters.
+    let legacy = if adapting || !definitions.staged_recursion {
+        let zeta = if !definitions.staged_recursion {
+            ""
+        } else {
+            " +zetaDelta"
+        };
+        format!(
+            " | (simp only [beq_iff_eq{heads}]; {start}all_goals (repeat' first | assumption | rfl | (simp_all{zeta} [{simp}]) | split{steps} | (solve | grind)); done)"
+        )
+    } else {
+        String::new()
+    };
+    if !definitions.staged_recursion {
+        // Pure adapters already align their induction hypotheses before the
+        // right fold advances. Keep their inexpensive symmetric proof first.
+        Some(format!("(first{compose}{cases}{legacy} | ({solve}))"))
+    } else {
+        Some(format!("(first{compose}{cases} | ({solve}){legacy})"))
+    }
 }

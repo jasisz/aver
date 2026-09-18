@@ -54,6 +54,25 @@ impl TypeChecker {
                     trace.source = qualify(&trace.source);
                     trace.drive = qualify(&trace.drive);
                     trace.protocol_from = qualify(&trace.protocol_from);
+                    for segment in &mut trace.segments {
+                        segment.function = qualify(&segment.function);
+                        segment.observer = qualify(&segment.observer);
+                        segment.result = qualify(&segment.result);
+                        for (_, ty) in &mut segment.params {
+                            *ty = annotation(&resolve(ty));
+                        }
+                        if !segment.cursor.is_empty() {
+                            segment.cursor = qualify(&segment.cursor);
+                        }
+                        // A published sample is an ordinary owner-side function
+                        // an importer calls by name; an unpublished one stays
+                        // empty and names nothing.
+                        for sample in &mut segment.samples {
+                            if !sample.is_empty() {
+                                *sample = qualify(sample);
+                            }
+                        }
+                    }
                     trace.cursor = trace.cursor.as_ref().map(|name| qualify(name));
                     trace.correspondence = trace.correspondence.as_ref().map(|name| qualify(name));
                     for operation in &mut trace.operations {
@@ -70,6 +89,13 @@ impl TypeChecker {
                     kind.answer_fn = qualify(&kind.answer_fn);
                     for ty in &mut kind.arg_types {
                         *ty = annotation(&resolve(ty));
+                    }
+                    // A stop's live variables are written in the owner's names;
+                    // an importer reads the layout to sample the stop.
+                    for (_, live) in &mut kind.variants {
+                        for ty in live.iter_mut() {
+                            *ty = annotation(&resolve(ty));
+                        }
                     }
                     if let Some(ty) = &mut kind.answer_type {
                         *ty = annotation(&resolve(ty));

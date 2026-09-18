@@ -1,8 +1,8 @@
 //! A state-passing translation of the preserved direct-style source.
 //!
-//! This visitor does not inspect the lowering's segments, liveness, state
-//! variants or answer bodies. A source call receives the unconsumed input
-//! list and returns its remainder, position and observations to its caller.
+//! Source mode visits retained definitions; protocol mode instruments the real
+//! generated segments separately. Both thread the unconsumed input list,
+//! position and observations through calls with the same answer semantics.
 use super::*;
 use build::*;
 
@@ -27,6 +27,7 @@ pub(super) struct Compiler<'a> {
     function: &'a FnDef,
     fresh: usize,
     inlining: Vec<String>,
+    protocol_segments: bool,
 }
 
 impl<'a> Compiler<'a> {
@@ -36,6 +37,14 @@ impl<'a> Compiler<'a> {
             function,
             fresh: 0,
             inlining: Vec::new(),
+            protocol_segments: false,
+        }
+    }
+
+    pub(super) fn for_protocol(model: &'a Model<'a>, function: &'a FnDef) -> Self {
+        Self {
+            protocol_segments: true,
+            ..Self::new(model, function)
         }
     }
 
@@ -60,8 +69,12 @@ impl<'a> Compiler<'a> {
             params,
             self.model.result_type(self.function),
             Some(
-                "Observe the retained source, threading only executed answers through calls."
-                    .into(),
+                if self.protocol_segments {
+                    "Observe a generated protocol segment with the shared answer-tape semantics."
+                } else {
+                    "Observe the retained source, threading only executed answers through calls."
+                }
+                .into(),
             ),
             vec![],
             body,
@@ -179,6 +192,7 @@ impl<'a> Compiler<'a> {
                         .source(&name)
                         .is_some_and(|fd| !fd.effects.is_empty())
                         || self.model.imported.contains_key(&name))
+                    || (self.protocol_segments && self.model.imported_segment(&name).is_some())
             }),
             _ => false,
         })
@@ -311,6 +325,12 @@ impl<'a> Compiler<'a> {
                     .imported
                     .get(name)
                     .map(|p| self.model.import_signature(p))
+            })
+            .or_else(|| {
+                self.protocol_segments
+                    .then(|| self.model.imported_segment(name))
+                    .flatten()
+                    .map(|(protocol, segment)| self.model.segment_signature(protocol, segment))
             });
         if let Some(helper) = helper {
             if name == self.function.name {
@@ -323,6 +343,13 @@ impl<'a> Compiler<'a> {
                 ]);
                 return Ok(call(&self.model.source_name(self.function), args, 0));
             }
+            // An imported segment adapter reconstructs its remainder as this
+            // exact drop. Keep that shape at the call site too: a subsequent
+            // protocol step then visibly consumes a suffix of its input, and
+            // the ordinary list-length termination proof can check it.
+            let segment_cursor = (self.protocol_segments
+                && self.model.imported_segment(name).is_some())
+            .then(|| (cursor.inputs.clone(), cursor.consumed.clone()));
             let mut arguments = args;
             arguments.extend([
                 cursor.inputs,
@@ -336,7 +363,26 @@ impl<'a> Compiler<'a> {
             let field =
                 |name: &str| Spanned::new(Expr::Attr(Box::new(ident(&result, 0)), name.into()), 0);
             let current = Cursor {
-                inputs: field("remaining"),
+                inputs: segment_cursor.map_or_else(
+                    || field("remaining"),
+                    |(inputs, consumed)| {
+                        call(
+                            "List.drop",
+                            vec![
+                                inputs,
+                                Spanned::new(
+                                    Expr::BinOp(
+                                        BinOp::Sub,
+                                        Box::new(field("consumed")),
+                                        Box::new(consumed),
+                                    ),
+                                    0,
+                                ),
+                            ],
+                            0,
+                        )
+                    },
+                ),
                 position: field("position"),
                 events: field("events"),
                 consumed: field("consumed"),
