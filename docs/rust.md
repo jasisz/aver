@@ -204,7 +204,12 @@ registry and panic/fault isolation. VM runs additionally retain the resource
 store, replay, and provenance behavior. Changing only `.av` source does not
 rebuild the host. Changing a local provider source lets Cargo perform an
 incremental rebuild. The cache defaults to the platform user cache and can be
-redirected with `AVER_PROVIDER_HOST_CACHE`.
+redirected with `AVER_PROVIDER_HOST_CACHE`. On unix the host then takes over
+the command's own process, so the process id, the terminal, the exit status
+and every signal belong to the program that is running: a SIGINT sent to
+`aver run` is the SIGINT a program observes through `Process.stopRequested`,
+exactly as in a binary built with `--target rust`. On Windows the host is a
+second process the command waits on.
 
 `aver verify` may execute a configured pure provider in a normal case. An
 exact `given name: Capability.operation = [stub]` remains a case-local

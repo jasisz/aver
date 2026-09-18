@@ -174,6 +174,8 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **SIGINT and SIGTERM reach a program run from a project that binds a provider.** When `aver.toml` binds a capability to a Rust package, `aver run`, `aver verify` and `aver audit` execute the program inside the cached provider host. That host used to be a second process the command started and waited on, so a signal sent to `aver` reached the waiting process alone: it died where it stood, and the program it had started ran on with `Process.stopRequested()` still false until it hit its own deadline, while the same program compiled with `--target rust` stopped at once. On unix the host now takes over the command's own process instead of running beside it, so the process id, the terminal, the signal and the exit status all belong to the program that is running. Windows keeps the second process and the behaviour it had.
+
 - **Lean proof export preserves tuple types in capability oracle signatures.** A verified function calling an operation with arguments such as `List<Tuple<Bytes, Bytes>>` now exports its pure-branch cases instead of panicking while rendering the lifted function. Fixes [#1389](https://github.com/jasisz/aver/issues/1389).
 
 - **A claim-free certificate builds under the pinned Lean 4.33.1 wall again.** The obligation-claim theorem used to close its goal by `dsimp` alone; under 4.33.1 that leaves the empty `List.map … ++ …` chain unreduced, so an admission-only package failed to build where 4.32.2 succeeded. The generated proof now ends in the explicit `exact` the goal always admitted definitionally. Closes [#1357](https://github.com/jasisz/aver/issues/1357).

@@ -189,6 +189,37 @@ fn run_cached_host_with_profile(
         }
         command.env("AVER_WASMTIME_PACK_HOST", &bundle_binary);
     }
+    hand_over_to_host(&mut command, &binary)
+}
+
+/// Run the host this command's arguments were prepared for.
+///
+/// On unix the host takes over this process rather than running beside it. The
+/// program is what the command exists to run, so the process a caller signals,
+/// the terminal's foreground process and the status a shell reads all have to
+/// be the program's. While the host was a second process this command waited
+/// on, a SIGINT or SIGTERM addressed to `aver` stopped the waiting process
+/// alone and left the program running with no stop request to observe through
+/// `Process.stopRequested`. `exec` returns only when the host could not be
+/// started at all.
+#[cfg(unix)]
+fn hand_over_to_host(command: &mut Command, binary: &Path) -> Result<ExitStatus, String> {
+    use std::io::Write;
+    use std::os::unix::process::CommandExt;
+
+    // No Rust cleanup runs once the process image is replaced, so anything
+    // already buffered here has to reach its stream first.
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    let error = command.exec();
+    Err(format!(
+        "failed to start cached provider host '{}': {error}",
+        binary.display()
+    ))
+}
+
+#[cfg(not(unix))]
+fn hand_over_to_host(command: &mut Command, binary: &Path) -> Result<ExitStatus, String> {
     command.status().map_err(|error| {
         format!(
             "failed to start cached provider host '{}': {error}",
