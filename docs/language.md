@@ -291,7 +291,7 @@ verify pickOne law usesOracle
     Result.Ok(pickOne()) => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
-Inside any cases-form `verify <fn>` block, `given` can bind a capability operation or classified effect to one or more Aver stub functions for those explicit runtime cases. A pure capability stub has the operation's contract signature unchanged; an effectful/generative stub uses the Oracle shape with leading `BranchPath` and call index. In `verify <fn> law <name>`, proof export can additionally quantify over the oracle itself. Add `trace` when you want `.result` and `.trace.*` assertions over collected classified effect emissions.
+Inside any cases-form `verify <fn>` block, `given` can bind a capability operation or classified effect to one or more Aver stub functions for those explicit runtime cases. A pure capability stub has the operation's contract signature unchanged; an effectful/generative stub uses the Oracle shape with leading `BranchPath` and call index. The call index counts the calls of that one operation, and `docs/oracle.md` lists the shapes where an exported proof numbers a call otherwise than the run does. In `verify <fn> law <name>`, proof export can additionally quantify over the oracle itself. Add `trace` when you want `.result` and `.trace.*` assertions over collected classified effect emissions.
 
 A plain case may call a function with a non-empty effect declaration as long as
 that concrete execution never reaches an effectful operation, or every reached
@@ -462,17 +462,20 @@ verify pair
 ```
 
 The full example is `tests/fixtures/yield_verify_stubs/`. Its `numbered` stub
-has signature `(BranchPath, Int, Int) -> Option<Int>`: the second argument is
-the per-branch Oracle counter, and the third is the requested peer. The verifier
-starts the generated protocol and answers each request with the selected stub.
+has signature `(BranchPath, Int, Int) -> Option<Int>`: the second argument is the
+number of `Pool.claim` requests this branch has already made, and the third is
+the requested peer. The verifier starts the generated protocol and answers each
+request with the selected stub.
 It exercises the lowered continuation, including local and imported nested helpers, self yields
 and `?` propagation. Stubs return operation results, not `Now`/`Later` replies;
 the live answer module is not consulted.
 
-Each case starts fresh Oracle coordinates. Request calls and in-place effects
-share the normal counter; a self yield consumes no answer. An in-place effect
-still needs its own stub if reached. Existing step limits and
-`[[verify.costly]]` settings use the source process name.
+Each case starts fresh Oracle coordinates. Every operation counts its own calls,
+so a request kind is numbered among the calls of that same kind: `Pool.claim` and
+`Pool.finish` each start at 0, and an in-place `Time.unixMs()` between two
+`Pool.claim` requests leaves the second request at index 1. A self yield consumes
+no answer and no index. An in-place effect still needs its own stub if reached.
+Existing step limits and `[[verify.costly]]` settings use the source process name.
 
 This first surface runs in `aver verify` on the VM. Direct process laws,
 `trace` blocks, direct calls to an imported process from a verify block, WASM request stubs and proof export of

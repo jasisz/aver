@@ -186,7 +186,9 @@ fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>
 Rules:
 - `given name: Effect.method = [stubFn, ...]` binds a stub for the classified effect. Multi-value list expands cartesian with cases; one `given` per effect — duplicates are rejected
 - Stub signature for generative and generative-output effects (`Random.*`, `Process.stopRequested`, `Http.*`, `Disk.*`, `Tcp.*`, `Console.readLine`, `Time.*`, `Env.set`, and every `Terminal.*` operation except `size`): `(path: BranchPath, k: Int, args...) -> ReturnType`
-- Stub signature for snapshot effects (`Args.get`, `Env.get`, `Terminal.size`): `(args...) -> ReturnType` — no path/counter prefix
+- `k` is the call index of that one operation on that branch path, counted from 0. Other operations never move it, so `match k` is a reply script for that operation alone and stays correct when the function under test adds a clock read or a log line between two calls
+- Script a stub by call index within one function body, and let the claim reach the operation through one call. An exported proof numbers one body at a time, so it cannot follow a run across a call into an effectful helper, on each turn of a recursion, past a `match` whose arms call the operation a different number of times, or across two calls in one claim, which a run numbers in sequence while the export numbers each from 0; `aver proof` declines such a law with a named reason instead of numbering it differently, and sampled cases still export. `docs/oracle.md` names the five shapes
+- Stub signature for snapshot effects (`Args.get`, `Env.get`, `Terminal.size`): `(args...) -> ReturnType` — no path or call-index prefix
 - Output-only effects (`Console.print/.error/.warn`) don't need stubs; they append to the trace directly
 - `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths
 - Case LHS projections:

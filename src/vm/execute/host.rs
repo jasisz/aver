@@ -158,11 +158,12 @@ impl VM {
                 self.runtime.sync_caller_fn_id(caller_fn_id);
                 // If the current verify-law case installed a stub for
                 // this effect method, redirect the call to the stub
-                // with prepended (BranchPath.root, counter, …).
+                // with prepended (BranchPath.root, call index, …).
                 // The structural-trace state below supplies the actual
-                // branch path and per-branch counter inside `!` / `?!`.
+                // branch path, and the index counts this operation's own
+                // calls on that path.
                 if let Some(stub_fn_id) = self.runtime.oracle_stub_for(builtin.name()) {
-                    return self.dispatch_oracle_stub(stub_fn_id, args, false);
+                    return self.dispatch_oracle_stub(builtin.name(), stub_fn_id, args, false);
                 }
                 return self.runtime.invoke_builtin(
                     &self.code.symbols,
@@ -321,12 +322,15 @@ impl VM {
     /// Oracle v1: dispatch an effect call to its verify-time stub.
     ///
     /// The stub has the Aver signature
-    /// `(BranchPath, Int, orig_args...) -> T` — v0 threads the root
-    /// path and a per-verify-run counter; branch-aware path extension
-    /// follows once the dispatcher sees `enter_group` / `set_branch`
-    /// during lifted-body evaluation.
+    /// `(BranchPath, Int, orig_args...) -> T` — the `Int` is the number of
+    /// calls this operation has already taken on this branch path, so a
+    /// scripted stub can answer by call number without counting what the
+    /// function under test does between two of its calls. The path is the
+    /// root until the dispatcher sees `enter_group` / `set_branch` during
+    /// lifted-body evaluation.
     pub(super) fn dispatch_oracle_stub(
         &mut self,
+        operation: &str,
         stub_fn_id: u32,
         args: &[NanValue],
         include_fresh_resource: bool,
@@ -335,20 +339,14 @@ impl VM {
         // collector before redirecting. The recorded event uses the
         // original effect method name + pre-stub args, matching what the
         // user asserts about via `.trace.contains(Effect.method(...))`.
-        // Reverse-lookup once: the name drives both trace recording and
-        // the snapshot-dimension branch for stub-arg construction below.
-        let original_effect: Option<String> = self
-            .runtime
-            .oracle_stubs
-            .iter()
-            .find_map(|(effect, fn_id)| (*fn_id == stub_fn_id).then(|| effect.clone()));
-
-        if self.runtime.trace_collecting
-            && let Some(effect_name) = &original_effect
-        {
+        // The name comes from the call site, not from a reverse lookup of the
+        // stub id: two operations may legally be bound to the same stub fn
+        // (`Disk.delete` and `Disk.makeDir` share a signature), and the call
+        // index below is keyed by this name.
+        if self.runtime.trace_collecting {
             let arg_vals: Vec<crate::value::Value> =
                 args.iter().map(|a| a.to_value(&self.arena)).collect();
-            self.runtime.record_trace_event(effect_name, &arg_vals);
+            self.runtime.record_trace_event(operation, &arg_vals);
         }
 
         // Oracle v1: snapshot-dimension effects (Args.get, Env.get) are
@@ -359,9 +357,7 @@ impl VM {
         // invocations stay distinct; output effects never reach this
         // path (they have no oracle).
         use crate::types::checker::effect_classification::{EffectDimension, classify};
-        let is_snapshot = original_effect
-            .as_deref()
-            .and_then(classify)
+        let is_snapshot = classify(operation)
             .map(|c| matches!(c.dimension, EffectDimension::Snapshot))
             .unwrap_or(false);
 
@@ -369,13 +365,15 @@ impl VM {
             return self.call_function(stub_fn_id, args);
         }
 
-        // Generative / generative+output path: thread (BranchPath,
-        // counter) from the VM's structural-trace state. Outside any
-        // `!`/`?!` group the dewey is empty (BranchPath.root) and the
-        // counter is the VM-level oracle_counter; inside a group,
-        // dewey is the branch-indexed path and the counter is the
-        // per-branch slot from enter_group's effect_count_stack.
-        let (dewey, counter) = self.runtime.take_oracle_coordinates();
+        // Generative / generative+output path: thread (BranchPath, call
+        // index) from the VM's structural-trace state. The index counts the
+        // calls of THIS operation, so a clock read or a log line between two
+        // peer reads leaves the peer's numbering alone. Outside any `!`/`?!`
+        // group the dewey is empty (BranchPath.root) and the index comes
+        // from the VM-level map; inside a group, dewey is the branch-indexed
+        // path and the index comes from the per-branch map enter_group
+        // pushed.
+        let (dewey, counter) = self.runtime.take_oracle_coordinates(operation);
 
         // Build BranchPath(dewey) record — matches the arena registration
         // from vm::register_service_types and the Aver-source opaque
@@ -454,7 +452,7 @@ impl VM {
             if !capability.effectful {
                 return self.call_function(stub_fn_id, args);
             }
-            return self.dispatch_oracle_stub(stub_fn_id, args, capability.mints_resource);
+            return self.dispatch_oracle_stub(&name, stub_fn_id, args, capability.mints_resource);
         }
 
         if capability.effectful && self.runtime.trace_collecting {

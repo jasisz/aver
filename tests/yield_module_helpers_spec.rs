@@ -166,11 +166,16 @@ fn imported_helpers_run_and_verify_on_wasm_gc() {
     }
 }
 
+/// An imported segment reaches a request and an in-place effect, and each of
+/// them numbers its own calls. `Pool.claim` is the request's call 0, so
+/// `requestStub` answers `2 + 0`, and `Time.unixMs` is the clock's call 0, so
+/// `clockStub` answers `100 + 0`. The caller adds one, which is 103. A reported
+/// 104 means the clock is back to reading the request's ordinal.
 #[test]
-fn imported_segments_propagate_in_place_effects_and_share_stub_coordinates() {
+fn imported_segments_propagate_in_place_effects_and_number_each_operation() {
     let dir = fixture();
     std::fs::write(dir.path().join("looper.av"), "module Looper\n    intent = \"A request followed by an inline clock read.\"\n    depends [Pool, Pooled]\n    exposes [once]\n\nfn once(id: Int) -> Int\n    ! [Pool.claim, Time.unixMs, yield]\n    answer = Pool.claim(id)\n    answer + Time.unixMs()\n").unwrap();
-    std::fs::write(dir.path().join("main.av"), "module Client\n    intent = \"Exercise effects of an imported generated continuation.\"\n    depends [Looper, Pool, Pooled]\n\nfn parent() -> Int\n    ! [Pool.claim, Time.unixMs, yield]\n    value = Looper.once(2)\n    value + 1\n\nfn requestStub(path: BranchPath, index: Int, id: Int) -> Int\n    id + index\n\nfn clockStub(path: BranchPath, index: Int) -> Int\n    100 + index\n\nverify parent\n    given request: Pool.claim = [requestStub]\n    given clock: Time.unixMs = [clockStub]\n    parent() => 104\n").unwrap();
+    std::fs::write(dir.path().join("main.av"), "module Client\n    intent = \"Exercise effects of an imported generated continuation.\"\n    depends [Looper, Pool, Pooled]\n\nfn parent() -> Int\n    ! [Pool.claim, Time.unixMs, yield]\n    value = Looper.once(2)\n    value + 1\n\nfn requestStub(path: BranchPath, index: Int, id: Int) -> Int\n    id + index\n\nfn clockStub(path: BranchPath, index: Int) -> Int\n    100 + index\n\nverify parent\n    given request: Pool.claim = [requestStub]\n    given clock: Time.unixMs = [clockStub]\n    parent() => 103\n").unwrap();
     let out = invoke(dir.path(), "verify", &[]);
     assert!(out.status.success(), "{}", format_output(&out));
     assert!(format_output(&out).contains("1/1 cases passed"));

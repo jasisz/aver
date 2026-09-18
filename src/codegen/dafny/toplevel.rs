@@ -1791,6 +1791,12 @@ pub fn emit_law_samples(
     if crate::codegen::common::law_map_order_refusal(vb, law, ctx).is_some() {
         return None;
     }
+    // Mirror of the Lean gate on stub call indices. The lifted body Dafny
+    // receives is the same one Lean receives, so a law refused on one backend
+    // is refused on the other or the two certify different things.
+    if crate::codegen::common::law_oracle_index_refusal(vb, law, ctx).is_some() {
+        return None;
+    }
 
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
@@ -3223,6 +3229,15 @@ pub(super) fn emit_verify_law(
     // no body here, so Dafny would neither confirm nor refute an iteration
     // order claim — it would pass by saying nothing.
     if let Some(refusal) = crate::codegen::common::law_map_order_refusal(vb, law, ctx) {
+        return format!(
+            "// Law {}.{}{}: {} is not exported — {}",
+            fn_name, law_name, suffix, refusal.subject, refusal.reason,
+        );
+    }
+
+    // Mirror of the Lean gate on stub call indices, for the same reason: both
+    // backends read one lifted body, so both refuse the same law.
+    if let Some(refusal) = crate::codegen::common::law_oracle_index_refusal(vb, law, ctx) {
         return format!(
             "// Law {}.{}{}: {} is not exported — {}",
             fn_name, law_name, suffix, refusal.subject, refusal.reason,

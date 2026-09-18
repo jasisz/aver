@@ -63,7 +63,11 @@ pub(super) struct VmRuntime {
     /// operation must have an exact `given` stub before the VM may cross the
     /// host boundary. A concrete path that dispatches no effect remains valid.
     plain_verify_fn: Option<String>,
-    pub(super) oracle_counter: u32,
+    /// Oracle call index per operation name, for the sequential level of
+    /// one expanded verify case. A stub is handed the number of calls its
+    /// own operation has already taken, so a clock read between two peer
+    /// reads does not renumber the peer.
+    pub(super) oracle_call_indices: std::collections::HashMap<String, u32>,
     /// Oracle v1: during a verify-trace case, the VM collects every
     /// effect emission the LHS impl makes — effect method name + argument
     /// snapshot as a JSON-ish value list. The verify runner reads this
@@ -138,7 +142,7 @@ impl VmRuntime {
             providers: std::sync::Arc::new(crate::provider::ProviderRegistry::standard()),
             oracle_stubs: std::collections::HashMap::new(),
             plain_verify_fn: None,
-            oracle_counter: 0,
+            oracle_call_indices: std::collections::HashMap::new(),
             collected_trace_events: Vec::new(),
             collected_trace_coords: Vec::new(),
             trace_collecting: false,
@@ -289,13 +293,13 @@ impl VmRuntime {
     /// Callable shape is checked before the VM runs the case.
     pub(super) fn install_oracle_stubs(&mut self, stubs: std::collections::HashMap<String, u32>) {
         self.oracle_stubs = stubs;
-        self.oracle_counter = 0;
+        self.oracle_call_indices.clear();
     }
 
-    /// Clear the verify-time stub map and reset the Oracle counter.
+    /// Clear the verify-time stub map and reset the Oracle call indices.
     pub(super) fn clear_oracle_stubs(&mut self) {
         self.oracle_stubs.clear();
-        self.oracle_counter = 0;
+        self.oracle_call_indices.clear();
     }
 
     pub(super) fn oracle_stub_for(&self, operation_name: &str) -> Option<u32> {
@@ -419,21 +423,29 @@ impl VmRuntime {
         self.replay_state.set_branch(index);
     }
 
-    /// Oracle v1: grab the current (path, counter) pair for an oracle-
-    /// stub dispatch and advance the counter. If we're inside a `!`/`?!`
-    /// group, use the replay state's branch-aware tracking; otherwise
-    /// fall back to the VM-level `oracle_counter` that covers flat
+    /// Oracle v1: grab the current (path, call index) pair for an oracle-
+    /// stub dispatch of `operation` and advance that operation's index.
+    /// The index counts the calls of `operation` alone, so every stub reads
+    /// the same numbering whatever else the function under test reaches.
+    /// If we're inside a `!`/`?!` group, use the replay state's per-branch
+    /// tracking; otherwise use the VM-level map that covers flat
     /// (root-level) effect calls.
-    pub(super) fn take_oracle_coordinates(&mut self) -> (String, u32) {
+    pub(super) fn take_oracle_coordinates(&mut self, operation: &str) -> (String, u32) {
         if self.replay_state.is_inside_group() {
             let path = self.replay_state.oracle_path_string();
-            let counter = self.replay_state.oracle_branch_counter().unwrap_or(0);
-            self.replay_state.bump_oracle_branch_counter();
-            (path, counter)
+            let index = self
+                .replay_state
+                .take_oracle_branch_call_index(operation)
+                .unwrap_or(0);
+            (path, index)
         } else {
-            let c = self.oracle_counter;
-            self.oracle_counter += 1;
-            (String::new(), c)
+            let slot = self
+                .oracle_call_indices
+                .entry(operation.to_string())
+                .or_insert(0);
+            let index = *slot;
+            *slot += 1;
+            (String::new(), index)
         }
     }
 

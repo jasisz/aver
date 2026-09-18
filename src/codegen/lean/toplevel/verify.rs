@@ -762,6 +762,18 @@ fn emit_verify_law_block(
         );
         return (header, case_index_start + vb.cases.len());
     }
+    // A law is proved for every input and checked on samples, so a lifted body
+    // that numbers a stub's calls differently from the run would certify a
+    // statement about a function the run does not compute. Refuse it here
+    // instead. Sampled cases below keep exporting: a case is one concrete
+    // evaluation `aver verify` already ran.
+    if let Some(refusal) = crate::codegen::common::law_oracle_index_refusal(vb, law, ctx) {
+        let header = format!(
+            "-- verify law {}.{}: {} is not exported — {}",
+            fn_name, law_name, refusal.subject, refusal.reason,
+        );
+        return (header, case_index_start + vb.cases.len());
+    }
     let spec_ref = canonical_spec_ref(&vb.fn_name, law, ctx);
     let theorem_base = match &spec_ref {
         Some(spec_ref) => format!(
@@ -1944,6 +1956,11 @@ pub(crate) fn law_as_lemma_statement(
     // theorem, so it must not be offered as a citable lemma either — a
     // `simp [<name>]` on it would reference a name that was never emitted.
     if crate::codegen::common::law_map_order_refusal(vb, law, ctx).is_some() {
+        return None;
+    }
+    // Same reasoning for a law refused over a stub call index it cannot
+    // number: no theorem is emitted, so no later law may cite it.
+    if crate::codegen::common::law_oracle_index_refusal(vb, law, ctx).is_some() {
         return None;
     }
     // A referenceable lemma must actually be EMITTED as a `∀`-theorem with the

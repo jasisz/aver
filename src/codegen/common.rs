@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
     Expr, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel, TypeDef, TypeVariant,
@@ -2079,6 +2079,299 @@ pub fn verify_case_map_order_refusal(vb: &VerifyBlock, ctx: &CodegenContext) -> 
         format!("{}: {}", refusal.subject, refusal.reason),
     );
     Some(refusal)
+}
+
+/// What the exporter would not state about a stub's call index, and why. See
+/// [`law_oracle_index_refusal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OracleIndexRefusal {
+    /// The property that is not carried into the export, phrased as the
+    /// subject of the emitted comment.
+    pub subject: String,
+    /// One sentence naming the call whose index cannot be written down.
+    pub reason: String,
+}
+
+/// Why a law over an effectful function cannot be exported, or `None` when
+/// every operation its cone reaches is numbered the way a run numbers it.
+///
+/// `aver verify` numbers the calls of one operation across a whole case. The
+/// Lean and Dafny that `aver proof` exports number the calls of one function
+/// body from the indices that body was entered at, and write the result down
+/// as a literal. Straight-line code, `?` bindings, `?!` propagation,
+/// independent products and `match` arms that call an operation equally often
+/// agree exactly. Three shapes cannot: a call into an effectful function, a
+/// recursive one included, whose lifted body starts every operation again at
+/// zero; that same call from a body threading the polling base, which carries
+/// only the `Process.stopRequested` count into it; and a call that follows a
+/// `match` whose arms charge the operation differently.
+///
+/// The gap is not loud. A law is checked on samples and proved for every
+/// input, so a law whose samples happen to agree exports a theorem about a
+/// function the run does not compute, and it certifies. Refusing is the
+/// fail-closed answer. The shapes come from
+/// [`crate::types::checker::effect_lifting::oracle_index_divergences`], which
+/// reports them from the emit site itself rather than re-deriving them here:
+/// a second opinion about what counts as a call is exactly how the two sides
+/// drifted apart in the first place.
+///
+/// Sampled cases are deliberately left alone. A case is one concrete
+/// evaluation that `aver verify` already ran, so either the model computes the
+/// same value and the theorem is true of the run too, or it does not and the
+/// proof fails where a reader can see it. Neither outcome certifies something
+/// false.
+pub fn law_oracle_index_refusal(
+    vb: &VerifyBlock,
+    law: &crate::ast::VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<OracleIndexRefusal> {
+    let scope = ctx.active_module_scope();
+    // What one case of this law evaluates under one numbering: the guard, then
+    // each side of the claim. `because` is not in here — it is a proof sketch
+    // the run never evaluates, so nothing in it is charged against the case's
+    // counters. It joins `roots` below all the same, because a step can reach
+    // a body whose own numbering is off.
+    let mut charged_roots: Vec<&Spanned<Expr>> = vec![&law.lhs, &law.rhs];
+    if let Some(when) = law.when.as_ref() {
+        charged_roots.push(when);
+    }
+    let mut roots: Vec<&Spanned<Expr>> = charged_roots.clone();
+    roots.extend(&law.because);
+
+    // The same cone `map_order_refusal` walks, and for the same reason: a
+    // helper can hide the shape from the claim's own syntax, and a law over a
+    // spec function reaches the effectful body through the spec.
+    let mut pending: Vec<(Option<String>, String)> = vec![(scope.clone(), vb.fn_name.clone())];
+    for root in roots.iter().copied().chain(
+        vb.cases
+            .iter()
+            .flat_map(|(lhs, rhs)| [lhs, rhs].into_iter()),
+    ) {
+        push_called_names(root, scope.as_deref(), &mut pending);
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    // Every divergence the cone holds, not the first one found: the walk order
+    // is a stack, and a refusal that names a different call each time it runs
+    // would be a diff in the emitted comment for no reason.
+    let mut found: Vec<(
+        String,
+        crate::types::checker::effect_lifting::IndexDivergence,
+    )> = Vec::new();
+    // One helper map per scope, not per function: the map is whole-program and
+    // a cone usually lives in one or two modules.
+    let mut helpers_by_scope: HashMap<Option<String>, HashMap<String, Vec<String>>> =
+        HashMap::new();
+    while let Some((written_in, name)) = pending.pop() {
+        let Some((owner, fd)) = reached_fn_def(ctx, &name, written_in.as_deref()) else {
+            continue;
+        };
+        if !seen.insert(fn_def_identity(owner, fd)) {
+            continue;
+        }
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+            };
+            push_called_names(expr, owner, &mut pending);
+        }
+        if fd.effects.is_empty() {
+            continue;
+        }
+        let helpers = helpers_by_scope
+            .entry(owner.map(str::to_string))
+            .or_insert_with(|| effectful_helper_effects(ctx, owner));
+        for divergence in crate::types::checker::effect_lifting::oracle_index_divergences(
+            fd,
+            helpers,
+            &ctx.capabilities,
+        ) {
+            found.push((fn_def_identity(owner, fd), divergence));
+        }
+    }
+
+    let body_divergence = found.into_iter().min_by_key(|(function, divergence)| {
+        (
+            function.clone(),
+            divergence.line,
+            divergence.operation.clone(),
+        )
+    });
+    let (subject, reason) = match body_divergence {
+        Some((function, divergence)) => (
+            format!("the call index of `{}`", divergence.operation),
+            format!("in `{}`, {}", function, divergence.reason()),
+        ),
+        None => repeated_claim_call(&charged_roots, ctx, scope.as_deref())?,
+    };
+    record_declined_claim(
+        ctx,
+        crate::codegen::DeclineKind::Law,
+        format!("{}.{}", vb.fn_name, law.name),
+        reason.clone(),
+    );
+    Some(OracleIndexRefusal { subject, reason })
+}
+
+/// The `(subject, reason)` of a claim that charges one operation through more
+/// than one effectful call, or `None` when it reaches each operation once.
+///
+/// Every call in a claim is emitted at `(BranchPath.Root, 0)`: the claim is not
+/// a function body, so there is no earlier call in it for the exporter to count
+/// from. A run has no such boundary. `aver verify` installs the stubs once per
+/// case and numbers each operation across the guard and both sides of the
+/// claim, so `readOne() => readOneToo()` hands the peer index 0 on the left and
+/// index 1 on the right while the export writes 0 for both.
+///
+/// It is the quietest shape of all, because it needs no helper and no
+/// recursion: two ordinary calls of two exact functions. Under an index-blind
+/// stub the law passes `aver verify` and exports a theorem quantified over
+/// every stub of that shape, index-reading ones included — the exact false
+/// certificate `docs/oracle.md` promises the export does not produce.
+///
+/// Operations are compared per operation, not per call. Two calls that reach
+/// nothing in common are numbered from zero on both sides and stay exportable:
+/// a claim that reads a clock on one side and a peer on the other charges each
+/// operation exactly once.
+fn repeated_claim_call(
+    roots: &[&Spanned<Expr>],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> Option<(String, String)> {
+    let mut called: Vec<String> = Vec::new();
+    for root in roots {
+        collect_called_names(root, &mut called);
+    }
+    // Operation → the calls in this claim that reach it, in claim order. A
+    // name that appears twice is charged twice: `readOne() + readOne()` is two
+    // calls of one function, and the run numbers them 0 and 1.
+    let mut chargers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut reached: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for name in called {
+        let operations = reached
+            .entry(name.clone())
+            .or_insert_with(|| generative_operations_reached(ctx, &name, scope))
+            .clone();
+        for operation in operations {
+            chargers.entry(operation).or_default().push(name.clone());
+        }
+    }
+    // The first operation by name, so the sentence the user reads is the same
+    // on every run and on both backends.
+    let (operation, callers) = chargers
+        .into_iter()
+        .find(|(_, callers)| callers.len() > 1)?;
+    let mut distinct: Vec<String> = Vec::new();
+    for caller in &callers {
+        if !distinct.contains(caller) {
+            distinct.push(caller.clone());
+        }
+    }
+    let calls = match distinct.as_slice() {
+        [only] if callers.len() == 2 => format!("`{only}` twice"),
+        [only] => format!("`{only}` {} times", callers.len()),
+        names => {
+            let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+            quoted.join(" and ")
+        }
+    };
+    let reason = format!(
+        "the claim calls {calls}, and a run numbers `{operation}` across the guard and both \
+         sides of one case, so the later call is charged from where the earlier one left off \
+         while the export numbers every call in the claim from index 0"
+    );
+    Some((format!("the call index of `{operation}`"), reason))
+}
+
+/// Every generative operation a call to `name` can reach, its own declared
+/// effects and those of everything its body calls.
+///
+/// Declared effects are what the lifter reads too, so this asks the same
+/// question the emit site answers. Output effects take no oracle and snapshot
+/// effects take no index, so neither can be numbered differently; only
+/// generative and generative-output operations are counted.
+fn generative_operations_reached(
+    ctx: &CodegenContext,
+    name: &str,
+    scope: Option<&str>,
+) -> BTreeSet<String> {
+    use crate::types::checker::effect_classification::{EffectDimension, classify_with_registry};
+
+    let mut pending: Vec<(Option<String>, String)> =
+        vec![(scope.map(str::to_string), name.to_string())];
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut operations: BTreeSet<String> = BTreeSet::new();
+    while let Some((written_in, name)) = pending.pop() {
+        let Some((owner, fd)) = reached_fn_def(ctx, &name, written_in.as_deref()) else {
+            continue;
+        };
+        if !seen.insert(fn_def_identity(owner, fd)) {
+            continue;
+        }
+        for stmt in fd.body.stmts() {
+            let expr = match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr,
+            };
+            push_called_names(expr, owner, &mut pending);
+        }
+        for effect in &fd.effects {
+            let Some(classification) = classify_with_registry(&ctx.capabilities, &effect.node)
+            else {
+                continue;
+            };
+            if matches!(
+                classification.dimension,
+                EffectDimension::Generative | EffectDimension::GenerativeOutput
+            ) {
+                operations.insert(effect.node.clone());
+            }
+        }
+    }
+    operations
+}
+
+/// Every effectful function a body written in `scope` can call, keyed the way
+/// its call site spells it: a dependency module's function by the qualified
+/// name, this scope's own by the bare name.
+///
+/// This is the map `emit_lifted_effectful_functions` hands the lifter, built
+/// from the whole program instead of from one proof cone. Wider is the right
+/// error here: a callee missing from the map is a call the lifter treats as
+/// pure, which is a divergence the refusal would never see.
+fn effectful_helper_effects(
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> HashMap<String, Vec<String>> {
+    let declared = |fd: &FnDef| -> Vec<String> {
+        fd.effects
+            .iter()
+            .map(|e| e.node.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut helpers: HashMap<String, Vec<String>> = HashMap::new();
+    for module in &ctx.modules {
+        for fd in &module.fn_defs {
+            if fd.effects.is_empty() {
+                continue;
+            }
+            helpers.insert(format!("{}.{}", module.prefix, fd.name), declared(fd));
+        }
+    }
+    let own: &[FnDef] = match scope {
+        None => &ctx.fn_defs,
+        Some(prefix) => ctx
+            .modules
+            .iter()
+            .find(|module| module.prefix == prefix)
+            .map(|module| module.fn_defs.as_slice())
+            .unwrap_or(&[]),
+    };
+    for fd in own {
+        if fd.effects.is_empty() {
+            continue;
+        }
+        helpers.insert(fd.name.clone(), declared(fd));
+    }
+    helpers
 }
 
 /// Record a claim the exporter would not state, for the driver to report and

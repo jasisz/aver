@@ -47,6 +47,11 @@ pub struct EffectReplayState {
     branch_stack: Vec<u32>,
     /// Per-product stack of per-branch effect emission counters.
     effect_count_stack: Vec<u32>,
+    /// Per-product stack of per-branch Oracle call indices, keyed by
+    /// operation name. Separate from `effect_count_stack`: the recording
+    /// tape numbers every emission of a branch in one sequence, while an
+    /// Oracle stub is handed the count of its own operation's calls.
+    oracle_call_stack: Vec<std::collections::HashMap<String, u32>>,
     /// Next group id to assign.
     next_group_id: u32,
     /// Indices within replay_effects consumed from current group (for unordered match).
@@ -138,6 +143,7 @@ impl EffectReplayState {
         self.group_stack.clear();
         self.branch_stack.clear();
         self.effect_count_stack.clear();
+        self.oracle_call_stack.clear();
     }
 
     /// Enter an independent product group for recording. Returns the group id.
@@ -147,6 +153,8 @@ impl EffectReplayState {
         self.group_stack.push(id);
         self.branch_stack.push(0); // start at branch 0
         self.effect_count_stack.push(0);
+        self.oracle_call_stack
+            .push(std::collections::HashMap::new());
         id
     }
 
@@ -155,6 +163,7 @@ impl EffectReplayState {
         self.group_stack.pop();
         self.branch_stack.pop();
         self.effect_count_stack.pop();
+        self.oracle_call_stack.pop();
     }
 
     /// Oracle v1: id of the innermost `!`/`?!` group currently being
@@ -178,6 +187,9 @@ impl EffectReplayState {
         }
         if let Some(last) = self.effect_count_stack.last_mut() {
             *last = 0;
+        }
+        if let Some(last) = self.oracle_call_stack.last_mut() {
+            last.clear();
         }
     }
 
@@ -372,6 +384,7 @@ impl EffectReplayState {
         self.group_stack.clear();
         self.branch_stack.clear();
         self.effect_count_stack.clear();
+        self.oracle_call_stack.clear();
         self.next_group_id = 0;
         self.group_consumed.clear();
     }
@@ -400,16 +413,18 @@ impl EffectReplayState {
         self.current_branch_path()
     }
 
-    /// Oracle v1: current per-branch effect-occurrence counter, or `None`
-    /// if outside any group (caller should use a VM-level root counter).
-    pub fn oracle_branch_counter(&self) -> Option<u32> {
-        self.current_effect_occurrence()
-    }
-
-    /// Oracle v1: bump the current per-branch counter (no-op outside any
-    /// group — caller tracks the root counter separately).
-    pub fn bump_oracle_branch_counter(&mut self) {
-        self.bump_effect_occurrence();
+    /// Oracle v1: take the current per-branch call index of `operation` and
+    /// advance it, or `None` outside any group (the caller tracks the root
+    /// indices separately). The index counts the calls of that operation in
+    /// this branch, independently of every other operation the branch
+    /// reaches, and independently of the recording tape's own per-branch
+    /// emission counter.
+    pub fn take_oracle_branch_call_index(&mut self, operation: &str) -> Option<u32> {
+        let slot = self.oracle_call_stack.last_mut()?;
+        let index = slot.entry(operation.to_string()).or_insert(0);
+        let taken = *index;
+        *index += 1;
+        Some(taken)
     }
 
     /// Oracle v1: is the runtime currently inside at least one `!`/`?!`
