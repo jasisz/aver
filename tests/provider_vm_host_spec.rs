@@ -94,7 +94,7 @@ fn looping(left: Int) -> Result<Unit, String>
 
 fn checked(left: Int, stop: Bool) -> Result<Unit, String>
     ? "Stop cooperatively on the first true observation."
-    ! [Console.print, Wait.poll]
+    ! [Console.print, Process.stopRequested, Wait.poll]
     match stop
         true -> stopping()
         false -> waiting(left)
@@ -107,7 +107,7 @@ fn stopping() -> Result<Unit, String>
 
 fn waiting(left: Int) -> Result<Unit, String>
     ? "Announce the first observation, then wait a bounded hundred milliseconds."
-    ! [Console.print, Wait.poll]
+    ! [Console.print, Process.stopRequested, Wait.poll]
     _said = announced(left)
     _ready = Wait.poll({}, 100)?
     looping(left - 1)
