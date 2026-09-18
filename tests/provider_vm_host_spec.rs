@@ -541,10 +541,22 @@ fn a_cooperative_stop_reaches_a_program_running_on_the_cached_host() {
     let mut child = aver_host_command(&cache)
         .args(["run", &stop_path, "--module-root", &module_root])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn a hosted aver run");
     let stdout = child.stdout.take().expect("hosted run has piped stdout");
+    // Everything the run says on stderr, for the failure messages below: a run
+    // that ends before its first line would otherwise leave no trace of why.
+    let stderr = child.stderr.take().expect("hosted run has piped stderr");
+    let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let text: String = BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+            .map(|line| line + "\n")
+            .collect();
+        let _ = stderr_tx.send(text);
+    });
     let (first_tx, first_rx) = mpsc::channel::<String>();
     let (printed_tx, printed_rx) = mpsc::channel::<Vec<String>>();
     std::thread::spawn(move || {
@@ -560,13 +572,20 @@ fn a_cooperative_stop_reaches_a_program_running_on_the_cached_host() {
 
     // The first line is printed after the bound clock answered, so reaching it
     // is also how this test knows the run it is about to signal is the host.
+    // A runner that has to build the host first can take minutes to get here;
+    // the interval this test measures starts only at the signal below.
     let announced = first_rx
-        .recv_timeout(Duration::from_secs(120))
+        .recv_timeout(Duration::from_secs(600))
         .unwrap_or_else(|_| {
             let _ = child.kill();
+            let status = child.wait().ok();
+            let said = stderr_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap_or_default();
             panic!(
                 "the run printed nothing before its first stop observation: it refuses to loop \
-                 unless the bound clock answered, so it never reached the provider host"
+                 unless the bound clock answered, so it never reached the provider host \
+                 (exit: {status:?})\nstderr:\n{said}"
             )
         });
     assert_eq!(announced, "asked");
