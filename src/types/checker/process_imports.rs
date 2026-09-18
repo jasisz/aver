@@ -61,6 +61,14 @@ impl TypeChecker {
                         for (_, ty) in &mut segment.params {
                             *ty = annotation(&resolve(ty));
                         }
+                        // A published sample is an ordinary owner-side function
+                        // an importer calls by name; an unpublished one stays
+                        // empty and names nothing.
+                        for sample in &mut segment.samples {
+                            if !sample.is_empty() {
+                                *sample = qualify(sample);
+                            }
+                        }
                     }
                     trace.cursor = trace.cursor.as_ref().map(|name| qualify(name));
                     trace.correspondence = trace.correspondence.as_ref().map(|name| qualify(name));

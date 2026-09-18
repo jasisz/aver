@@ -139,6 +139,14 @@ pub struct ProcessTraceSegment {
     pub observer: String,
     pub result: String,
     pub params: Vec<(String, String)>,
+    /// One entry per parameter: the owning module's public sample function for
+    /// that parameter's type, or empty when the type needs none. A protocol
+    /// state is built from constructors that stay private to its owner, so an
+    /// importer that must quantify over one calls the owner's sample instead of
+    /// spelling a constructor it cannot name. A type nobody publishes keeps an
+    /// empty entry and stays unsampled, so the law is declined rather than
+    /// written against a name that does not resolve.
+    pub samples: Vec<String>,
 }
 
 /// Public source signature and its lowered protocol, retained across module loading.
@@ -547,6 +555,12 @@ pub fn lower(
                     public_names.extend(trace.cursor.iter().cloned());
                     for segment in &trace.segments {
                         public_names.extend([segment.observer.clone(), segment.result.clone()]);
+                        // An importer quantifying over this segment's state
+                        // calls the sample instead of naming a constructor the
+                        // owner keeps private, so the sample travels with the
+                        // observer it belongs to.
+                        public_names
+                            .extend(segment.samples.iter().filter(|s| !s.is_empty()).cloned());
                     }
                     if trace.correspondence.is_some() {
                         public_names.push(format!("__{fn_name}SourceTraceFrom"));

@@ -26,8 +26,54 @@ impl<'a> Model<'a> {
                 observer: self.source_name(fd),
                 result: self.result_type(fd),
                 params: fd.params.clone(),
+                samples: self.segment_sample_names(fd),
             })
             .collect()
+    }
+
+    /// Public sample functions this module offers for a segment observer's
+    /// parameters, one entry per parameter in order, empty where the parameter
+    /// needs none or this module cannot build one.
+    ///
+    /// Only a nominal type earns a sample: everything else is written out by
+    /// any module that needs it. A protocol state, by contrast, is built from
+    /// constructors that stay inside the module that declared them, so the
+    /// owner is the only place a value of one can be written.
+    pub(super) fn segment_sample_names(&self, fd: &'a FnDef) -> Vec<String> {
+        let observer = self.source_name(fd);
+        fd.params
+            .iter()
+            .enumerate()
+            .map(|(index, (_, ty))| {
+                let nominal = matches!(
+                    crate::types::parse_type_str_strict(ty),
+                    Ok(Type::Named { .. })
+                );
+                if nominal && composition::samples::witness(self, ty).is_ok() {
+                    format!("{observer}Sample{index}")
+                } else {
+                    String::new()
+                }
+            })
+            .collect()
+    }
+
+    /// The sample functions themselves. Each one is a constant: a value of the
+    /// parameter's type, written with the constructors visible here.
+    pub(super) fn segment_samples(&self) -> String {
+        let mut out = String::new();
+        for fd in self.observed_segments() {
+            for ((_, ty), name) in fd.params.iter().zip(self.segment_sample_names(fd)) {
+                let Ok(value) = composition::samples::witness(self, ty) else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                out.push_str(&format!("\nfn {name}() -> {ty}\n    {value}\n"));
+            }
+        }
+        out
     }
 
     pub(super) fn imported_segment(

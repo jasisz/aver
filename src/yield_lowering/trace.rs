@@ -278,6 +278,9 @@ impl<'a> Model<'a> {
             .collect();
         all.extend(imported_segments.iter());
         let mut text = self.surface(&all);
+        // Samples come first: a law of this module, and a law of any module
+        // that imports it, reads them when it quantifies over a protocol state.
+        text.push_str(&self.segment_samples());
         for protocol in &imports {
             text.push_str(&self.adapter(protocol)?);
             text.push_str(&self.segment_adapters(protocol));
