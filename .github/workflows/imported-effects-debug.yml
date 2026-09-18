@@ -135,6 +135,20 @@ jobs:
           probe('RepeatedComposition', prefix + tactic + '\nend ImportedEffects\n')
           normalized = tactic[tactic.index('(simp only [Bool.and_eq_true'):].split('; first', 1)[0]
           probe('RepeatedNormalized', prefix + normalized + '; all_goals trace_state; all_goals sorry)\nend ImportedEffects\n')
+          choices = tactic[tactic.index('(simp only [Bool.and_eq_true'):].split('; first', 1)[1]
+          for label in ['Staged', 'Opened']:
+              start = choices.index('(')
+              depth = 0
+              for end in range(start, len(choices)):
+                  depth += (choices[end] == '(') - (choices[end] == ')')
+                  if depth == 0:
+                      break
+              stage = choices[start:end+1]
+              choices = choices[end+1:]
+              # Keep failures visible; do not let the expansive fallback hide
+              # the boundary at which a cited summary stopped matching.
+              stage = stage.replace('; done)', '; all_goals trace_state; all_goals sorry)')
+              probe('Repeated' + label, prefix + normalized + '; ' + stage + ')\nend ImportedEffects\n')
           for future in futures:
               future.result()
           executor.shutdown()
