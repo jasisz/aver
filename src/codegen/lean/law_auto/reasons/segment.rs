@@ -326,8 +326,8 @@ fn events_prefix(law: &VerifyLaw, ctx: &CodegenContext, scope: Option<&str>) -> 
 /// protocol observer is that observation followed by the generic continuation.
 ///
 /// The right side is the step wrapper applied to exactly one observation. The
-/// left side is the observer being stepped: one equation of it when it
-/// recurses, otherwise the entry wrapper itself.
+/// left side is the recursive observer being stepped, opened by its own
+/// equation exactly once.
 fn step(law: &VerifyLaw, ctx: &CodegenContext, scope: Option<&str>) -> Option<String> {
     if !claims_true(law) {
         return None;
@@ -344,24 +344,14 @@ fn step(law: &VerifyLaw, ctx: &CodegenContext, scope: Option<&str>) -> Option<St
     };
     let observer = finite(observed, ctx, scope)?;
     let stepped = induction::callee(left, ctx, scope)?;
-    let opening = match finite(left, ctx, scope) {
-        // A finite entry is revealed with everything else it needs.
-        Some(entry) => format!(
-            "(simp only [beq_iff_eq, {}, {}, {}])",
-            induction::lean_name(entry, ctx),
-            induction::lean_name(wrapper, ctx),
-            induction::lean_name(observer, ctx),
-        ),
-        // A recursive observer is opened by its own equation, exactly once.
-        None => format!(
-            "(simp only [beq_iff_eq]); (rw [{}.eq_def]); (simp only [{}, {}])",
-            induction::lean_name(stepped, ctx),
-            induction::lean_name(wrapper, ctx),
-            induction::lean_name(observer, ctx),
-        ),
-    };
+    if finite(left, ctx, scope).is_some() {
+        return None;
+    }
     Some(format!(
-        "({opening}; (repeat' split); (all_goals (first | rfl | (simp_all; done))); done)"
+        "((simp only [beq_iff_eq]); (rw [{}.eq_def]); (simp only [{}, {}]); (repeat' split); (all_goals (first | rfl | (simp_all; done))); done)",
+        induction::lean_name(stepped, ctx),
+        induction::lean_name(wrapper, ctx),
+        induction::lean_name(observer, ctx),
     ))
 }
 

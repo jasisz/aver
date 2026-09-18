@@ -40,12 +40,12 @@ fn source_request_traces_are_universal_including_in_place_effects() {
     for key in ["bounded_laws", "build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
-    // Fifteen trace obligations, and six more for the segment interface: this
+    // Fifteen trace obligations, and five more for the segment interface: this
     // process observes two effectful segments, `__timedStart` and
-    // `__timedAnswerClaim`, and each one contributes a cursor bound, an
-    // event-history prefix and a protocol step.
-    assert_eq!(summary["universal_laws"], 21, "{summary}");
-    audit(dir.path(), 21);
+    // `__timedAnswerClaim`. Each one contributes a cursor bound and an
+    // event-history prefix, and the answered one a protocol step.
+    assert_eq!(summary["universal_laws"], 20, "{summary}");
+    audit(dir.path(), 20);
 }
 
 #[test]
@@ -130,9 +130,9 @@ verify detects
     );
     assert!(!run.status.success(), "false laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
-    // The same twenty-one as above: the segment interface says nothing about
-    // the corrupted claims below and none of them cites it.
-    assert_eq!(summary["universal_laws"], 21, "{summary}");
+    // The same twenty as above: the segment interface says nothing about the
+    // corrupted claims below and none of them cites it.
+    assert_eq!(summary["universal_laws"], 20, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     for name in [
         "dropped",
@@ -387,12 +387,12 @@ fn recursive_splices_preserve_nominal_arguments_early_errors_and_in_place_effect
     for key in ["bounded_laws", "build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
-    // Five trace obligations, and six more for the segment interface: this
-    // process observes `__checkedStart` and `__checkedAnswerYield`, and each
-    // one contributes a cursor bound, an event-history prefix and a protocol
-    // step.
-    assert_eq!(summary["universal_laws"], 11, "{summary}");
-    audit(dir.path(), 11);
+    // Five trace obligations, and five more for the segment interface: this
+    // process observes `__checkedStart` and `__checkedAnswerYield`. Each one
+    // contributes a cursor bound and an event-history prefix, and the answered
+    // one a protocol step.
+    assert_eq!(summary["universal_laws"], 10, "{summary}");
+    audit(dir.path(), 10);
 }
 
 #[test]

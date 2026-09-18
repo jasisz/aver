@@ -25,10 +25,14 @@ fn imported_in_place_effects_have_universal_mapping_and_splice_laws() {
     .unwrap();
     let laws = manifest["laws"].as_array().unwrap();
     // Eight owning-module laws, eight nested-wrapper laws, and twenty
-    // caller laws plus five finite-import composition laws.
+    // caller laws plus five finite-import composition laws; then the segment
+    // interface: a cursor bound and an event-history prefix per observed
+    // segment, a protocol step per answered one, and a lifted cursor per
+    // imported segment. That is thirteen more in the owning module, eleven in
+    // the nested wrapper and twenty-seven in the caller.
     assert_eq!(
         laws.len(),
-        41,
+        92,
         "missing composition obligations: {manifest}"
     );
     for law in laws {
@@ -103,7 +107,7 @@ verify detectsCorruption
     assert!(!run.status.success(), "false laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
-    assert_eq!(summary["universal_laws"], 41, "{summary}");
+    assert_eq!(summary["universal_laws"], 92, "{summary}");
     for name in ["dropped", "reordered", "resetPosition"] {
         assert_eq!(
             summary["obligations"][format!("corrupt.{name}.implication")],

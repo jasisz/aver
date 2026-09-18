@@ -92,8 +92,9 @@ fn {name}Cursor({declared}) -> Bool
     /// its own cursor reports; `eventsPrefix` that the incoming event history
     /// is only a prefix and no other field reads it; `step` that one step of
     /// the protocol observer is that observation followed by the generic
-    /// continuation. All three are keyed on the generated observation shape and
-    /// say nothing about what a segment computes.
+    /// continuation, for every segment but the start. All three are keyed on
+    /// the generated observation shape and say nothing about what a segment
+    /// computes.
     pub(super) fn segment_contracts(
         &self,
         items: &mut Vec<TopLevel>,
@@ -188,11 +189,15 @@ fn {name}Cursor({declared}) -> Bool
         Ok(())
     }
 
-    /// One protocol step per observed segment: the answered request, or the
-    /// entry point for the start segment, rewritten as that observation
-    /// followed by the generic continuation. The token, event, position and
-    /// consumed expressions are the ones the protocol observer itself prints
-    /// for the kind.
+    /// One protocol step per answered request segment: the answer, rewritten
+    /// as that observation followed by the generic continuation. The token,
+    /// event, position and consumed expressions are the ones the protocol
+    /// observer itself prints for the kind.
+    ///
+    /// The start segment has no step. Nothing reads one: an importer's adapter
+    /// is entered with an outcome already in hand. And a law stated about the
+    /// entry point makes the entry a law owner, which keeps the match equations
+    /// in its body and changes what every law that opens it has to normalize.
     fn drive_steps(&self) -> Result<String, String> {
         let u = &self.upper;
         let drive = format!("{}Drive", self.prefix);
@@ -202,89 +207,83 @@ fn {name}Cursor({declared}) -> Bool
         let root_result = self.result_type(root);
         let mut out = String::new();
         for fd in self.observed_segments() {
+            if fd.name == self.protocol.start {
+                continue;
+            }
             let observer = self.source_name(fd);
-            let params = self.observation_params(&fd.params);
-            if !self.contractible(&params) {
+            if !self.contractible(&self.observation_params(&fd.params)) {
                 continue;
             }
             let result = self.result_type(fd);
             let step = format!("{drive}Step{}", build::capitalize(&fd.name));
             out.push_str(&format!("\nfn {step}(observed: {result}) -> {root_result}\n    match observed.value\n        Option.Some(value) -> {drive}(value, observed.remaining, observed.position, observed.events, observed.consumed)\n        Option.None -> {root_result}(remaining = observed.remaining, position = observed.position, consumed = observed.consumed, events = observed.events, value = Option.None, pending = observed.pending, valid = observed.valid)\n"));
             let label = format!("step{}", build::capitalize(&fd.name));
-            let (target, binders, claim) = if fd.name == self.protocol.start {
-                let entry = format!("__{}ProtocolTraceFrom", self.protocol.fn_name);
-                let args = composition::names(&params);
-                let claim = format!("{entry}({args}) == {step}({observer}({args}))");
-                (entry, params.clone(), claim)
-            } else {
-                let kind = self
-                    .protocol
-                    .kinds
-                    .iter()
-                    .find(|kind| kind.answer_fn == fd.name)
-                    .ok_or("observed segment answers no request kind")?;
-                let trace_name = kind
-                    .operation
-                    .as_ref()
-                    .and_then(|operation| self.operations.get(operation))
-                    .map_or(kind.name.as_str(), |kind| kind.name.as_str());
-                let call_args: Vec<String> = (0..kind.arg_types.len())
-                    .map(|index| format!("arg{index}"))
-                    .collect();
-                let mut binders: Vec<(String, String)> = kind
-                    .arg_types
-                    .iter()
-                    .enumerate()
-                    .map(|(index, ty)| (format!("arg{index}"), ty.clone()))
-                    .collect();
-                binders.push(("state".into(), kind.state.clone()));
-                let (token, observed_args, position, events) = match &kind.answer_type {
-                    Some(answer) if kind.operation.is_some() => {
-                        binders.push(("answer".into(), answer.clone()));
-                        let mut event_args = vec!["position".to_string()];
-                        event_args.extend(call_args.clone());
-                        event_args.push("answer".into());
-                        (
-                            format!("{u}Input.Answer{trace_name}(answer)"),
-                            if answer == "Unit" {
-                                "state"
-                            } else {
-                                "state, answer"
-                            },
-                            "position + 1",
-                            format!(
-                                "List.concat(events, [{u}Event.Observed{trace_name}({})])",
-                                event_args.join(", ")
-                            ),
-                        )
-                    }
-                    _ => (
-                        format!("{u}Input.Advance"),
-                        "state",
-                        "position",
-                        "events".to_string(),
-                    ),
-                };
-                let mut fields = call_args;
-                fields.push("state".into());
-                binders.extend([
-                    ("rest".into(), format!("List<{u}Input>")),
-                    ("position".into(), "Int".into()),
-                    ("events".into(), format!("List<{u}Event>")),
-                    ("consumed".into(), "Int".into()),
-                ]);
-                let claim = format!(
-                    "{drive}({outcome}.Waiting({request}.{name}({fields})), List.prepend({token}, rest), position, events, consumed) == {step}({observer}({observed_args}, rest, {position}, {events}, consumed + 1))",
-                    outcome = self.protocol.outcome,
-                    request = self.protocol.request,
-                    name = kind.name,
-                    fields = fields.join(", "),
-                );
-                (drive.clone(), binders, claim)
+            let kind = self
+                .protocol
+                .kinds
+                .iter()
+                .find(|kind| kind.answer_fn == fd.name)
+                .ok_or("observed segment answers no request kind")?;
+            let trace_name = kind
+                .operation
+                .as_ref()
+                .and_then(|operation| self.operations.get(operation))
+                .map_or(kind.name.as_str(), |kind| kind.name.as_str());
+            let call_args: Vec<String> = (0..kind.arg_types.len())
+                .map(|index| format!("arg{index}"))
+                .collect();
+            let mut binders: Vec<(String, String)> = kind
+                .arg_types
+                .iter()
+                .enumerate()
+                .map(|(index, ty)| (format!("arg{index}"), ty.clone()))
+                .collect();
+            binders.push(("state".into(), kind.state.clone()));
+            let (token, observed_args, position, events) = match &kind.answer_type {
+                Some(answer) if kind.operation.is_some() => {
+                    binders.push(("answer".into(), answer.clone()));
+                    let mut event_args = vec!["position".to_string()];
+                    event_args.extend(call_args.clone());
+                    event_args.push("answer".into());
+                    (
+                        format!("{u}Input.Answer{trace_name}(answer)"),
+                        if answer == "Unit" {
+                            "state"
+                        } else {
+                            "state, answer"
+                        },
+                        "position + 1",
+                        format!(
+                            "List.concat(events, [{u}Event.Observed{trace_name}({})])",
+                            event_args.join(", ")
+                        ),
+                    )
+                }
+                _ => (
+                    format!("{u}Input.Advance"),
+                    "state",
+                    "position",
+                    "events".to_string(),
+                ),
             };
+            let mut fields = call_args;
+            fields.push("state".into());
+            binders.extend([
+                ("rest".into(), format!("List<{u}Input>")),
+                ("position".into(), "Int".into()),
+                ("events".into(), format!("List<{u}Event>")),
+                ("consumed".into(), "Int".into()),
+            ]);
+            let claim = format!(
+                "{drive}({outcome}.Waiting({request}.{name}({fields})), List.prepend({token}, rest), position, events, consumed) == {step}({observer}({observed_args}, rest, {position}, {events}, consumed + 1))",
+                outcome = self.protocol.outcome,
+                request = self.protocol.request,
+                name = kind.name,
+                fields = fields.join(", "),
+            );
             out.push_str(&composition::law(
                 self,
-                &target,
+                &drive,
                 &label,
                 &binders,
                 &claim,
