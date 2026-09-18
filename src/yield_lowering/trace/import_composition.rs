@@ -4,6 +4,13 @@
 use super::composition::{declarations, law, names};
 use super::*;
 
+/// The segment's own name, without the module it was reached through.
+fn short(function: &str) -> &str {
+    function
+        .rsplit_once('.')
+        .map_or(function, |(_, short)| short)
+}
+
 impl Model<'_> {
     pub(super) fn import_composition(
         &self,
@@ -27,28 +34,49 @@ impl Model<'_> {
         // drives through: the suffix its cursor reports, the prefix of its
         // event history, and the protocol step that produces it. A caller reads
         // these instead of the observation's body. The start observation is not
-        // among them — an adapter is entered with an outcome already in hand —
-        // and citing it would carry the whole entry point into the cone of
-        // every law that cites this one. An observation whose owner checked
-        // none of these contributes nothing, and the law falls back to
-        // unfolding.
+        // among them — an adapter is entered with an outcome already in hand.
+        // The correspondence below reads it instead: its cursor and the entry's
+        // step relate this adapter's entry to the owner's trace from a cursor.
+        // An observation whose owner checked none of these contributes
+        // nothing, and the law falls back to unfolding.
         let interface = trace
             .segments
             .iter()
             .filter(|segment| !segment.cursor.is_empty() && segment.function != protocol.start)
             .flat_map(|segment| {
-                let short = segment
-                    .function
-                    .rsplit_once('.')
-                    .map_or(segment.function.as_str(), |(_, short)| short);
                 [
                     format!("{}.segmentCursor", segment.cursor),
                     format!("{}Prefixed.eventsPrefix", segment.observer),
-                    format!("{}.step{}", trace.drive, build::capitalize(short)),
+                    format!(
+                        "{}.step{}",
+                        trace.drive,
+                        build::capitalize(short(&segment.function))
+                    ),
                 ]
             })
             .map(|law| format!(", {law}"))
             .collect::<String>();
+        let mut citations = vec![
+            source_law.clone(),
+            format!("{name}Direct.mapping"),
+            format!("{cursor_law}.boundedSuffix"),
+        ];
+        citations.extend(
+            trace
+                .segments
+                .iter()
+                .filter(|segment| !segment.cursor.is_empty() && segment.function == protocol.start)
+                .flat_map(|segment| {
+                    [
+                        format!("{}.segmentCursor", segment.cursor),
+                        format!(
+                            "{}.step{}",
+                            trace.drive,
+                            build::capitalize(short(&segment.function))
+                        ),
+                    ]
+                }),
+        );
         let mut out = self.drive(protocol, fd, &drive);
         out.push_str(&format!(r#"
 verify {name}Events law append
@@ -100,11 +128,7 @@ verify {name}Direct law mapping
             "correspondence",
             &params,
             &format!("{name}({args}) == {entry}({args})"),
-            &[
-                source_law.clone(),
-                format!("{name}Direct.mapping"),
-                format!("{cursor_law}.boundedSuffix"),
-            ],
+            &citations,
         )?;
         let source_from = source_law
             .rsplit_once('.')

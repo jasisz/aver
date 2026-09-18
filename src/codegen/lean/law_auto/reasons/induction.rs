@@ -1,5 +1,8 @@
 //! Functional induction for explanations with an existing checked recursion measure.
 //! Recursion contracts and kernel-generated equations remain the source of truth.
+//! The definition lists every rung draws on are assembled here, and one filter
+//! keeps another module's trace machinery out of all of them:
+//! `imported_machinery`, read from shape and from the owner's laws.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -82,6 +85,65 @@ pub(super) fn constructs_result_record(fd: &FnDef) -> bool {
             Expr::RecordCreate { type_name, .. } if type_name == &fd.return_type)
         })
     })
+}
+
+/// The observation cursor every generated trace result carries, as
+/// `yield_lowering::trace::surface` declares the record.
+const TRACE_RESULT_FIELDS: [&str; 7] = [
+    "remaining",
+    "position",
+    "consumed",
+    "events",
+    "value",
+    "pending",
+    "valid",
+];
+
+/// A function that builds a trace result record: a record of its own return
+/// type whose fields are exactly the observation cursor. That is the shape of
+/// an observation, a protocol observer, a segment adapter, a lift and a source
+/// trace; a recursive observer builds one in its leaves, so recursion adds
+/// nothing to the shape, and a recursive list function of another module is
+/// opened by its equations as before.
+pub(super) fn constructs_trace_record(fd: &FnDef) -> bool {
+    fd.body.stmts().iter().any(|stmt| {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::any(expr, &mut |expr| {
+            matches!(&expr.node,
+            Expr::RecordCreate { type_name, fields }
+                if type_name == &fd.return_type
+                    && fields.len() == TRACE_RESULT_FIELDS.len()
+                    && TRACE_RESULT_FIELDS
+                        .iter()
+                        .all(|name| fields.iter().any(|(field, _)| field == name)))
+        })
+    })
+}
+
+/// Trace machinery another module owns and has stated laws about: a function
+/// outside the law's own scope that builds a trace result record and that
+/// some law of its own module reaches. No rung unfolds one: not in a simp
+/// set, not through `eq_def`, not in a grind equation list. What a rung knows
+/// about it is exactly the laws the law cites. A router, join or answer
+/// function of another module returns an outcome or a scalar and stays open
+/// like any pure helper; so does a finite import whose module states nothing
+/// about it, since there is no interface to read in its place. Read from
+/// shape and from the owner's laws, never from a name. The wrappers an
+/// interface law is stated with — the cursor predicate, the prefixed form,
+/// the step continuation — are that law's own vocabulary: a rung that reads
+/// the citation opens them, by the name the citation gives, and never a
+/// definition list.
+pub(super) fn imported_machinery(fd: &FnDef, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+    let owner = common::fn_owning_scope_for(ctx, fd);
+    let Some(id) = common::fn_id_for_decl(ctx, fd) else {
+        return false;
+    };
+    owner != scope
+        && constructs_trace_record(fd)
+        && ctx.proof_ir.law_theorems.iter().any(|theorem| {
+            ctx.symbol_table.fn_entry(theorem.fn_id).key.scope_str() == owner
+                && theorem.function_cone.contains(&id)
+        })
 }
 
 /// Common finite record calls can remain opaque while the recursive steps align.
@@ -386,6 +448,9 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) else {
             continue;
         };
+        if imported_machinery(fd, ctx, scope.as_deref()) {
+            continue;
+        }
         map_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.set");
         map_remove_facts |= super::super::shared::fn_body_calls_builtin(fd, "Map.remove");
         let recursive = ctx.recursive_fns.contains(&id);
@@ -446,7 +511,9 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
                 && crate::codegen::lean::toplevel::emit_native_mutual_group(fns, ctx).is_some()
             {
                 for fd in fns {
-                    if common::fn_id_for_decl(ctx, fd).is_some_and(|id| seen.contains(&id)) {
+                    if common::fn_id_for_decl(ctx, fd).is_some_and(|id| seen.contains(&id))
+                        && !imported_machinery(fd, ctx, scope.as_deref())
+                    {
                         out.insert(format!("= {}.eq_def", lean_name(fd, ctx)), true);
                     }
                 }
@@ -459,6 +526,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
     for reason in &law.because {
         if let Some(fd) = callee(reason, ctx, scope.as_deref())
             && list_measure(fd, ctx).is_some()
+            && !imported_machinery(fd, ctx, scope.as_deref())
         {
             out.insert(format!("= {}.eq_def", lean_name(fd, ctx)), true);
         }
@@ -471,6 +539,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         .filter_map(|expr| callee(expr, ctx, scope.as_deref()))
         .filter(|fd| {
             fd.effects.is_empty()
+                && !imported_machinery(fd, ctx, scope.as_deref())
                 && common::fn_id_for_decl(ctx, fd)
                     .is_some_and(|id| !ctx.recursive_fns.contains(&id))
         })

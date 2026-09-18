@@ -2,6 +2,8 @@
 //! Only pure nonrecursive definitions unfold during normalization. Checked
 //! recursive equations are offered to `grind` after the citations rewrite the
 //! goal, so a completed helper can reduce without expanding its whole history.
+//! Another module's trace machinery (`induction::imported_machinery`) is in
+//! no list here: not unfolded, not stepped, not handed to `grind`.
 use super::induction::{self, Definitions};
 use crate::ast::{BinOp, Expr, VerifyBlock, VerifyLaw};
 use crate::codegen::{CodegenContext, common};
@@ -31,6 +33,7 @@ pub(super) fn summary_candidate(
             let key = &ctx.symbol_table.fn_entry(id).key;
             let fd = ctx.fn_def_by_name(&key.name, key.scope_str())?;
             if induction::list_measure(fd, ctx).is_some()
+                && !induction::imported_machinery(fd, ctx, scope.as_deref())
                 && let [crate::ast::Stmt::Expr(expr)] = fd.body.stmts()
                 && let Expr::Match { arms, .. } = &expr.node
                 && arms
@@ -191,7 +194,11 @@ pub(super) fn candidate(
         let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) else {
             continue;
         };
-        if ctx.recursive_fns.contains(&id) {
+        // Another module's machinery calls only its own; nothing it calls is a
+        // boundary of this law.
+        if ctx.recursive_fns.contains(&id)
+            || induction::imported_machinery(fd, ctx, scope.as_deref())
+        {
             continue;
         }
         for stmt in fd.body.stmts() {
@@ -209,6 +216,7 @@ pub(super) fn candidate(
                     && let Some(adapter) = induction::callee(expr, ctx, key.scope_str())
                     && adapter.effects.is_empty()
                     && induction::list_measure(adapter, ctx).is_none()
+                    && !induction::imported_machinery(adapter, ctx, scope.as_deref())
                 {
                     opaque.insert(induction::lean_name(adapter, ctx));
                 }
@@ -218,6 +226,7 @@ pub(super) fn candidate(
                 {
                     for arg in args {
                         if let Some(boundary) = induction::callee(arg, ctx, key.scope_str())
+                            && !induction::imported_machinery(boundary, ctx, scope.as_deref())
                             && let Expr::FnCall(_, values) = &arg.node
                             && values.iter().all(|value| match &value.node {
                                 Expr::Ident(name) | Expr::Resolved { name, .. } => {
@@ -244,7 +253,7 @@ pub(super) fn candidate(
         let Some(fd) = ctx.fn_def_by_name(&key.name, key.scope_str()) else {
             continue;
         };
-        if !fd.effects.is_empty() {
+        if !fd.effects.is_empty() || induction::imported_machinery(fd, ctx, scope.as_deref()) {
             continue;
         }
         input_match |= !ctx.recursive_fns.contains(&id) && parameter_match(fd, true);

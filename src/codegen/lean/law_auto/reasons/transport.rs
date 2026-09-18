@@ -1,6 +1,9 @@
 //! Induct on the original input when two checked folds communicate through
 //! list maps. Keep result adapters opaque until the input branches agree;
 //! singleton and append facts summarize maps without expanding arbitrary tails.
+//! Both folds are stepped by their own equations, so a fold that is another
+//! module's trace machinery (`induction::imported_machinery`) declines the
+//! rung, and no such function enters its simp or grind lists.
 use super::induction;
 use crate::ast::{BinOp, Expr, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::lean::expr::aver_name_to_lean;
@@ -111,14 +114,22 @@ pub(super) fn candidate(
             name == driver_name || right_folds.contains(&name)
         })
         .collect();
-    if folds.len() != 2 {
+    // Both folds are stepped by their own equations, so neither may be
+    // another module's machinery.
+    if folds.len() != 2
+        || folds
+            .iter()
+            .any(|fd| induction::imported_machinery(fd, ctx, scope.as_deref()))
+    {
         return None;
     }
     let maps: Vec<_> = functions
         .iter()
         .copied()
         .filter(|fd| {
-            induction::list_measure(fd, ctx).is_some() && fd.return_type.starts_with("List<")
+            induction::list_measure(fd, ctx).is_some()
+                && fd.return_type.starts_with("List<")
+                && !induction::imported_machinery(fd, ctx, scope.as_deref())
         })
         .collect();
     if maps.is_empty() {
@@ -149,9 +160,7 @@ pub(super) fn candidate(
         .copied()
         .filter(|fd| {
             fd.effects.is_empty()
-                // Normalize the compared interfaces; a deeper import is a
-                // shared computation whose result should remain opaque.
-                && folds.iter().any(|fold| common::fn_owning_scope_for(ctx, fold) == common::fn_owning_scope_for(ctx, fd))
+                && !induction::imported_machinery(fd, ctx, scope.as_deref())
                 && !boundary.contains(fd.return_type.as_str())
                 && common::fn_id_for_decl(ctx, fd)
                     .is_some_and(|id| !ctx.recursive_fns.contains(&id))

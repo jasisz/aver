@@ -439,9 +439,21 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 }
             }
         } else {
-            if let Some(candidate) = finite::candidate(law, ctx, &definitions, fact_count) {
+            // An import's entry agreement reads the owner's start step and
+            // cursor; it leads, since the alternatives below would open the
+            // owner's entry or exhaust elaboration on it.
+            let leading: Vec<String> = [
+                boundary::entry(law, &law.because[index], ctx, fact_count),
+                finite::candidate(law, ctx, &definitions, fact_count),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if !leading.is_empty() {
                 lines.push("  first".to_string());
-                lines.push(format!("  | {candidate}"));
+                for candidate in leading {
+                    lines.push(format!("  | {candidate}"));
+                }
                 lines.push("  |".to_string());
             }
             let finite_start = lines.len();

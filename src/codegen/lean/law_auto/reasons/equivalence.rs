@@ -2,6 +2,8 @@
 //! time on the right. Functional induction on a left-hand list recursion
 //! supplies the exact recursive calls, including changing accumulator values.
 //! This is a proof search candidate, never a recognition rule granting credit.
+//! Wrappers are peeled and folds inducted on only up to another module's trace
+//! machinery (`induction::imported_machinery`), which no list here names.
 use super::induction::{self, Definitions};
 use crate::ast::{BinOp, Expr, FnBody, Spanned, Stmt, VerifyLaw};
 use crate::codegen::CodegenContext;
@@ -41,7 +43,10 @@ pub(super) fn candidate(
     let mut result_adapter = None;
     let mut wrappers = Vec::new();
     while let Some(fd) = induction::callee(&call, ctx, scope.as_deref()) {
-        if !visited.insert(fd.name.clone()) || !fd.effects.is_empty() {
+        if !visited.insert(fd.name.clone())
+            || !fd.effects.is_empty()
+            || induction::imported_machinery(fd, ctx, scope.as_deref())
+        {
             break;
         }
         if let Some(measure) = induction::list_measure(fd, ctx) {
@@ -96,6 +101,9 @@ pub(super) fn candidate(
         if let Expr::FnCall(_, args) = &call.node {
             induction_call = args.iter().find_map(|arg| {
                 let nested = induction::callee(arg, ctx, scope.as_deref())?;
+                if induction::imported_machinery(nested, ctx, scope.as_deref()) {
+                    return None;
+                }
                 let measure = induction::list_measure(nested, ctx)?;
                 let Expr::FnCall(_, values) = &arg.node else {
                     return None;
@@ -191,6 +199,7 @@ pub(super) fn candidate(
         .collect::<String>();
     if let Some(fd) = induction::callee(right, ctx, scope.as_deref())
         && induction::list_measure(fd, ctx).is_none()
+        && !induction::imported_machinery(fd, ctx, scope.as_deref())
     {
         wrappers.push(induction::lean_name(fd, ctx));
     }
@@ -269,6 +278,7 @@ pub(super) fn candidate(
     let roots = [left, right]
         .iter()
         .filter_map(|call| induction::callee(call, ctx, scope.as_deref()))
+        .filter(|fd| !induction::imported_machinery(fd, ctx, scope.as_deref()))
         .map(|fd| induction::lean_name(fd, ctx))
         .collect::<Vec<_>>()
         .join(", ");

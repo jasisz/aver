@@ -15,9 +15,17 @@
 //! folded into the splice wrapper by the site's law and the wrapper is then
 //! opened, which puts both sides in the same shape: a match on the drive
 //! result. Nothing owned by another module is unfolded.
+//!
+//! The same file closes an import's entry agreement: the caller's entry into
+//! the owner's protocol against the lift of the owner's trace from a cursor,
+//! read through the owner's cited start step and start cursor. There the only
+//! thing of the owner's that opens is the step continuation the citation is
+//! stated with.
 use super::induction;
-use super::segment::{claims_true, direct_callees, finite, is_finite, read_cited, sole_expression};
-use crate::ast::{BinOp, Expr, FnDef, Stmt, VerifyBlock, VerifyLaw};
+use super::segment::{
+    self, claims_true, direct_callees, finite, is_finite, read_cited, sole_expression,
+};
+use crate::ast::{BinOp, Expr, FnDef, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::{CodegenContext, common};
 
 /// What one cited law says, read from its statement alone.
@@ -187,10 +195,148 @@ all_goals (first | ((simp only [_aver_bnd_rv{k}]); done) | ((simp only [_aver_bn
     ))
 }
 
+/// The caller's entry into an import agrees with the lift of the owner's
+/// trace: `{entry}(args) == {lift}({protocolFrom}(…), …)`, the second
+/// explanation of an import's correspondence. The entry observes the owner's
+/// start segment through the caller's adapter and drives the outcome; by the
+/// cited start step, the owner's trace from a cursor is that same observation
+/// followed by the owner's continuation. The observation is named and its
+/// cited cursor read on the name; on an outcome the two continuations meet
+/// through the cited mapping law, the owner's cited cursor contract and a
+/// chain of two `drop`s. The owner's entry, observation and drive are never
+/// unfolded; the step wrapper the citation is stated with is.
+pub(super) fn entry(
+    law: &VerifyLaw,
+    reason: &Spanned<Expr>,
+    ctx: &CodegenContext,
+    fact_count: usize,
+) -> Option<String> {
+    if fact_count == 0 {
+        return None;
+    }
+    let scope = ctx.active_module_scope();
+    let scope = scope.as_deref();
+    let agrees = finite(reason, ctx, scope)?;
+    // One comparison, after a binding for the empty history.
+    let Some(Stmt::Expr(claim)) = agrees.body.stmts().last() else {
+        return None;
+    };
+    let Expr::BinOp(BinOp::Eq, left, right) = &claim.node else {
+        return None;
+    };
+    let start = finite(left, ctx, scope)?;
+    let lift = finite(right, ctx, scope)?;
+    let Expr::FnCall(_, lifted) = &right.node else {
+        return None;
+    };
+    if !induction::callee(lifted.first()?, ctx, scope)
+        .is_some_and(|owner_entry| induction::imported_machinery(owner_entry, ctx, scope))
+    {
+        return None;
+    }
+    let callees = direct_callees(start, ctx, scope);
+    let adapter = callees
+        .iter()
+        .copied()
+        .find(|fd| is_finite(fd, ctx) && induction::constructs_result_record(fd))?;
+    let drive = callees.iter().copied().find(|fd| !is_finite(fd, ctx))?;
+    let inner = direct_callees(adapter, ctx, scope);
+    let observation = inner
+        .iter()
+        .copied()
+        .find(|fd| induction::imported_machinery(fd, ctx, scope))?;
+    let tape = inner
+        .iter()
+        .copied()
+        .find(|fd| induction::is_unary_list_map(fd, ctx))?;
+    let cited = read_cited(law, ctx, scope, |cited, scope| {
+        segment::classify(cited, ctx, scope)
+    });
+    let (mut step, mut cursor, mut mapping) = (None, None, None);
+    for (index, shape) in cited.iter().enumerate() {
+        match shape {
+            Some(segment::Cited::Step(wrapper, observer)) if observer.name == observation.name => {
+                step = Some((index, *wrapper));
+            }
+            Some(segment::Cited::Cursor(wrapper, valid, observed))
+                if observed.name == observation.name =>
+            {
+                cursor = Some((index, *wrapper, *valid));
+            }
+            Some(segment::Cited::Mapping(direct, mapped))
+                if sole_expression(direct)
+                    .and_then(|body| induction::callee(body, ctx, scope))
+                    .is_some_and(|fd| fd.name == drive.name) =>
+            {
+                mapping = Some((index, *direct, *mapped));
+            }
+            _ => {}
+        }
+    }
+    let (step_index, step_wrapper) = step?;
+    let (cursor_index, cursor_wrapper, cursor_valid) = cursor?;
+    let (mapping_index, direct, mapped) = mapping?;
+    // The owner's continuation, as named by the step wrapper it was cited with.
+    let owner_drive = direct_callees(
+        step_wrapper,
+        ctx,
+        common::fn_owning_scope_for(ctx, step_wrapper),
+    )
+    .into_iter()
+    .find(|fd| !is_finite(fd, ctx))?;
+    let (bounded_index, bounded_wrapper, bounded_valid) =
+        cited
+            .iter()
+            .enumerate()
+            .find_map(|(index, shape)| match shape {
+                Some(segment::Cited::Bounded(wrapper, valid, observer))
+                    if observer.name == owner_drive.name =>
+                {
+                    Some((index, *wrapper, *valid))
+                }
+                _ => None,
+            })?;
+    let holes = |fd: &FnDef| " _".repeat(fd.params.len());
+    Some(format!(
+        "({transport}(have _aver_ent_chain : ∀ {{α : Type}} (l : List α) (c x y : Int), c ≤ x → x ≤ y → (l.drop (x - c).toNat).drop (y - x).toNat = l.drop (y - c).toNat := (by intro α l c x y h0 h1; have hk : (x - c).toNat + (y - x).toNat = (y - c).toNat := (by omega); rw [List.drop_drop, hk])); \
+(simp only [beq_iff_eq] at _fact{step_index}); \
+(simp only [{cursor_wrapper}, {cursor_valid}, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, ge_iff_le] at _fact{cursor_index}); \
+(simp only [{bounded_wrapper}, {bounded_valid}, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, ge_iff_le] at _fact{bounded_index}); \
+(simp only [beq_iff_eq, {direct}, {mapped}] at _fact{mapping_index}); \
+(simp only [beq_iff_eq, {agrees}, {start}, {adapter}]); \
+(rw [_fact{step_index}]); \
+(generalize _aver_ent_h : {observation}{observation_holes} = _aver_ent_o); \
+(have _aver_ent_f := _aver_ent_h ▸ _fact{cursor_index}{observation_holes}); \
+(obtain ⟨_aver_ent_ge, _aver_ent_le, _aver_ent_rem⟩ : _ ∧ _ ∧ _ := _aver_ent_f); \
+(simp only [{step_wrapper}]); \
+(cases _aver_ent_v : _aver_ent_o.value); \
+all_goals (try simp only [_aver_ent_v]); \
+all_goals (first | ((simp only [{lift}]); done) | ((rw [_aver_ent_rem, _aver_transport_drop_0, _fact{mapping_index}]); (generalize _aver_ent_hd : {owner_drive}{drive_holes} = _aver_ent_d); (have _aver_ent_g := _aver_ent_hd ▸ _fact{bounded_index}{drive_holes}); (obtain ⟨_aver_ent_dge, _aver_ent_dle, _aver_ent_drem⟩ : _ ∧ _ ∧ _ := _aver_ent_g); (simp only [{lift}]); (rw [_aver_ent_chain _ _ _ _ (by omega) (by omega)]); done)); done)",
+        transport = induction::checked_map_lemmas(&[induction::lean_name(tape, ctx)], true),
+        cursor_wrapper = induction::lean_name(cursor_wrapper, ctx),
+        cursor_valid = induction::lean_name(cursor_valid, ctx),
+        bounded_wrapper = induction::lean_name(bounded_wrapper, ctx),
+        bounded_valid = induction::lean_name(bounded_valid, ctx),
+        direct = induction::lean_name(direct, ctx),
+        mapped = induction::lean_name(mapped, ctx),
+        agrees = induction::lean_name(agrees, ctx),
+        start = induction::lean_name(start, ctx),
+        adapter = induction::lean_name(adapter, ctx),
+        observation = induction::lean_name(observation, ctx),
+        observation_holes = holes(observation),
+        step_wrapper = induction::lean_name(step_wrapper, ctx),
+        lift = induction::lean_name(lift, ctx),
+        owner_drive = induction::lean_name(owner_drive, ctx),
+        drive_holes = holes(owner_drive),
+    ))
+}
+
 /// Close what remains after the last site: the caller's own continuation on a
 /// named drive result. Its routers, joins and answers open, and so does its
 /// own protocol drive; nothing that builds a trace record or reaches into
-/// another module does, and the drives crossed above stay named.
+/// another module does, and the drives crossed above stay named. That is
+/// stricter than `induction::imported_machinery`: this rung names every
+/// foreign term it meets and has no use for another module's routers.
 fn finish(
     block: &VerifyBlock,
     law: &VerifyLaw,
