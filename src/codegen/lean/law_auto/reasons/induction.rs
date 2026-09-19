@@ -399,6 +399,15 @@ pub(super) struct Definitions {
     /// A checked fold consumes an observed prefix or recurs on a computed suffix.
     pub(super) staged_recursion: bool,
     pub(super) heads: String,
+    /// One of the outer wrappers matches on a local name. Such a
+    /// body used to carry the matcher's equation while a law was stated about
+    /// it (#1404 removed that coupling), and the alternative that reveals
+    /// every wrapper and then saturates now walks the unresolved matcher
+    /// instead: on a production corpus that is a deterministic timeout, which
+    /// aborts the whole portfolio rather than backtracking (jasisz/aver#1408).
+    /// The wrappers are still revealed by the alternatives that open one
+    /// computation at a time.
+    pub(super) heads_match_parameter: bool,
     /// Equations of outer calls and their direct arguments, without the full cone.
     pub(super) head_equations: String,
     pub(super) structural_reason: bool,
@@ -412,6 +421,25 @@ pub(super) struct Definitions {
     /// The same for `Map.remove`: a branch that drops one entry needs the
     /// removal's own size fact, which the `set` family does not carry.
     pub(super) map_remove_facts: bool,
+}
+
+/// Whether this body matches on a local name: the shape the emitter gives a
+/// named equation inside a recursive body, and a plain matcher everywhere
+/// else. The subject may be a parameter or a binder an enclosing match
+/// introduced; what matters is that the revealed body still holds a matcher
+/// the goal has not resolved.
+fn matches_on_a_name(fd: &FnDef) -> bool {
+    fd.body.stmts().iter().any(|stmt| {
+        let (crate::ast::Stmt::Expr(expr) | crate::ast::Stmt::Binding(_, _, expr)) = stmt;
+        crate::codegen::expr_walk::any(expr, &mut |expr| {
+            matches!(&expr.node, Expr::Match { subject, arms }
+            if arms.len() > 1
+                && matches!(
+                    subject.node,
+                    Expr::Ident(_) | Expr::Resolved { .. } | Expr::Attr(_, _)
+                ))
+        })
+    })
 }
 
 pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Definitions {
@@ -532,7 +560,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         }
     }
     // Only outer calls: retain computations passed as arguments as opaque terms.
-    let heads = law
+    let head_defs = law
         .because
         .iter()
         .chain([&law.lhs, &law.rhs])
@@ -543,6 +571,10 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
                 && common::fn_id_for_decl(ctx, fd)
                     .is_some_and(|id| !ctx.recursive_fns.contains(&id))
         })
+        .collect::<Vec<_>>();
+    let heads_match_parameter = head_defs.iter().any(|fd| matches_on_a_name(fd));
+    let heads = head_defs
+        .iter()
         .map(|fd| lean_name(fd, ctx))
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -586,6 +618,7 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
         completed: completed.into_iter().collect::<Vec<_>>().join(", "),
         staged_recursion,
         heads,
+        heads_match_parameter,
         head_equations: head_equations.join(", "),
         structural_reason: law.because.iter().any(|reason| {
             callee(reason, ctx, scope.as_deref()).is_some_and(|fd| list_measure(fd, ctx).is_some())

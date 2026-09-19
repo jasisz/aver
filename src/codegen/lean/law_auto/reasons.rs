@@ -343,7 +343,13 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                     // Reveal nonrecursive outer wrappers so cited conclusions
                     // match the source call they summarize. Recursive callees
                     // stay opaque; unfolding the full cone defeats composition.
-                    if !definitions.heads.is_empty() {
+                    // Revealing every wrapper and then saturating is offered
+                    // only while no wrapper matches on a parameter of its own:
+                    // that matcher is unresolved in the revealed body, and
+                    // saturating over it is a deterministic timeout, which
+                    // aborts the portfolio instead of backtracking to the
+                    // alternatives below (jasisz/aver#1408).
+                    if !definitions.heads.is_empty() && !definitions.heads_match_parameter {
                         lines.push(format!("  | (simp only [{}, Bool.and_eq_true, beq_iff_eq, List.contains_eq_mem] at *; with_reducible grind only)", definitions.heads));
                     }
                 }
