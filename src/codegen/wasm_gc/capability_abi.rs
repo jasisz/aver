@@ -699,6 +699,9 @@ fn field_type_in_layout(field: &str, layout: &str, registry: &TypeRegistry) -> T
 fn qualified_in_module(ty: &Type, module: &str, registry: &TypeRegistry) -> Type {
     let inner = |ty: &Type| Box::new(qualified_in_module(ty, module, registry));
     match ty {
+        // backend-link-stage: the field came from the contract's source text,
+        // which carries no type id, so the module's own spelling is all there
+        // is to key on here.
         Type::Named { name, .. } if !name.contains('.') => {
             let qualified = format!("{module}.{name}");
             let known = registry.record_type_idx(&qualified).is_some()
