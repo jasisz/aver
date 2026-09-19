@@ -680,6 +680,54 @@ fn contract_layout_fields(type_def: &crate::ast::TypeDef) -> Vec<&str> {
     }
 }
 
+/// One field of a contract layout, read as the module that declares the
+/// layout spells it. A module writes its own type bare, and the contract —
+/// with the host that decodes against it — writes `Module.Type`, so a bare
+/// field name is qualified with the layout's own module before it travels
+/// any further. Two modules may declare the same bare name, so nothing is
+/// guessed: the qualified name is used only when the registry knows it.
+fn field_type_in_layout(field: &str, layout: &str, registry: &TypeRegistry) -> Type {
+    let parsed = crate::types::parse_type_str(field);
+    let Some((module, _)) = layout.rsplit_once('.') else {
+        return parsed;
+    };
+    qualified_in_module(&parsed, module, registry)
+}
+
+/// The same reading, applied wherever a name sits inside the field's type: a
+/// bare name in `List<Input>` is that module's `Input` too.
+fn qualified_in_module(ty: &Type, module: &str, registry: &TypeRegistry) -> Type {
+    let inner = |ty: &Type| Box::new(qualified_in_module(ty, module, registry));
+    match ty {
+        // backend-link-stage: the field came from the contract's source text,
+        // which carries no type id, so the module's own spelling is all there
+        // is to key on here.
+        Type::Named { name, .. } if !name.contains('.') => {
+            let qualified = format!("{module}.{name}");
+            let known = registry.record_type_idx(&qualified).is_some()
+                || registry.sum_root_type_idx(&qualified).is_some()
+                || registry.capability_boundary_layout(&qualified).is_some();
+            if known {
+                Type::named(qualified)
+            } else {
+                ty.clone()
+            }
+        }
+        Type::List(item) => Type::List(inner(item)),
+        Type::Vector(item) => Type::Vector(inner(item)),
+        Type::Option(item) => Type::Option(inner(item)),
+        Type::Result(left, right) => Type::Result(inner(left), inner(right)),
+        Type::Map(key, value) => Type::Map(inner(key), inner(value)),
+        Type::Tuple(items) => Type::Tuple(
+            items
+                .iter()
+                .map(|item| qualified_in_module(item, module, registry))
+                .collect(),
+        ),
+        _ => ty.clone(),
+    }
+}
+
 pub(super) fn collect_type(
     ty: &Type,
     registry: &TypeRegistry,
@@ -732,7 +780,7 @@ pub(super) fn collect_type(
             if let Some(definition) = registry.capability_boundary_layout(name) {
                 for field in contract_layout_fields(definition) {
                     collect_type(
-                        &crate::types::parse_type_str(field),
+                        &field_type_in_layout(field, name, registry),
                         registry,
                         out,
                         visiting,
