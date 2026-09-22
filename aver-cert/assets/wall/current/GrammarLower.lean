@@ -457,4 +457,34 @@ def codeEntryBytes (M : MCtx) (p : FnPlan) : Option (List Nat) :=
       (uleb32 entry.length).map (· ++ entry)
   | _, _, _ => none
 
+/-! ## S-3: the byte fact behind the exact `ref.test`
+
+The audited interpreter's `ref.test` compares type indices EXACTLY, while
+wasm GC tests subtyping. The variant cascade relies on `ref.test (ref $C)`,
+so the certificate is sound only if no represented value has a struct type
+that is a strict subtype of (or equivalent to) another constructor's struct.
+The emitter declares every user type in ONE rec group that opens the type
+section, a sum's root as a non-final empty struct and each constructor as
+`sub final root (struct …)` (`module.rs`, `mk_sub_struct(fields, true,
+Some(root))`). The pin below is the byte image of that declaration header;
+`GrammarSound.ctor_refTest_exact` shows it makes the exact test the wasm
+test. The acceptance (P4) must check `S3Pin` against the rec group's entries
+by slice equality, together with `sumOk`. -/
+
+open AverCert.PlanBytes in
+/-- The type-section header of a constructor struct: `0x4f` (`sub final`),
+    one supertype, the sum's root. -/
+def ctorEntryHeader (root : Nat) : Option (List Nat) :=
+  (uleb32 root).map ([0x4f, 0x01] ++ ·)
+
+/-- The S-3 pin over `entries`, the byte image of the rec group that opens
+    the type section (entry `k` is the subtype declared at type index `k`):
+    every constructor struct of sum `tid` (constructors `0 … ncs-1`) is an
+    entry of that group and is declared `sub final` under the sum's root. -/
+def S3Pin (M : MCtx) (tid ncs : Nat) (entries : List (List Nat)) : Bool :=
+  (List.range ncs).all fun c =>
+    match entries[M.ctorStruct tid c]?, ctorEntryHeader (M.sumRoot tid) with
+    | some e, some h => h.isPrefixOf e
+    | _, _ => false
+
 end AverCert.Grammar

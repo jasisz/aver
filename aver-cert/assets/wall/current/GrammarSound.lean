@@ -21,7 +21,11 @@
    count `X.n`; the scratch locals (subject scratch, const-compare scratch)
    sit at or above it and are free for the templates to overwrite. A match
    reads its stashed subject only before any arm body runs, so a nested match
-   reusing the same scratch is harmless. -/
+   reusing the same scratch is harmless.
+
+   The interpreter's `ref.test` is exact while wasm GC tests subtyping; the
+   S-3 section below shows the two agree on constructor structs under the
+   byte pin `GrammarLower.S3Pin`, which the acceptance must check. -/
 import GrammarLower
 import InterpreterSequencing
 
@@ -1069,6 +1073,64 @@ theorem run_localSet (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee
     wRunF host ar callee (.localSet j :: ys) wl (w :: st) =
       wRunF host ar callee ys (wl.set j w) st := by
   simp [wRunF]
+
+/-! ## S-3: the exact `ref.test` on constructor structs is the wasm test
+
+`declaredFinal` / `inRecGroup` read the pinned rec-group entries through the
+binary format (`subtype ::= 0x4f vec(typeidx) comptype` is `sub final`).
+`GcTestSpec` states the two wasm GC facts the argument uses: subtyping is
+reflexive, and a type declared final has no subtype in its own rec group
+other than itself (validation rejects a `sub` naming a final type, and
+distinct positions of one rec group are distinct types under iso-recursive
+equivalence). Under `S3Pin`, the interpreter's `t = ty` and the wasm
+`t <: ty` agree on every pair of constructor structs of one sum, which are
+the only pairs a typed cascade tests. -/
+
+def declaredFinal (entries : List (List Nat)) (idx : Nat) : Prop :=
+  ∃ e, entries[idx]? = some e ∧ e.head? = some 0x4f
+
+def inRecGroup (entries : List (List Nat)) (idx : Nat) : Prop :=
+  idx < entries.length
+
+structure GcTestSpec (entries : List (List Nat)) (sub : Nat → Nat → Prop) : Prop where
+  refl : ∀ t, sub t t
+  final_sub : ∀ t ty, inRecGroup entries t → inRecGroup entries ty →
+    declaredFinal entries ty → sub t ty → t = ty
+
+theorem s3Pin_facts {M : MCtx} {tid ncs : Nat} {entries : List (List Nat)}
+    (h : S3Pin M tid ncs entries = true) {c : Nat} (hc : c < ncs) :
+    declaredFinal entries (M.ctorStruct tid c) ∧ inRecGroup entries (M.ctorStruct tid c) := by
+  unfold S3Pin at h
+  simp only [List.all_eq_true, List.mem_range] at h
+  have hc' := h c hc
+  split at hc'
+  · rename_i e hd he hh
+    refine ⟨⟨e, he, ?_⟩, ?_⟩
+    · unfold ctorEntryHeader at hh
+      cases hu : AverCert.PlanBytes.uleb32 (M.sumRoot tid) with
+      | none => simp [hu] at hh
+      | some u =>
+          simp only [hu, Option.map_some, Option.some.injEq] at hh
+          subst hh
+          cases e with
+          | nil => simp [List.isPrefixOf] at hc'
+          | cons x xs =>
+              simp only [List.cons_append, List.isPrefixOf, Bool.and_eq_true, beq_iff_eq] at hc'
+              simp [hc'.1]
+    · rcases Nat.lt_or_ge (M.ctorStruct tid c) entries.length with hl | hl
+      · exact hl
+      · rw [List.getElem?_eq_none hl] at he; cases he
+  · cases hc'
+
+/-- Under the pin, the interpreter's exact `ref.test` on two constructors of
+    one sum is the wasm subtype test. -/
+theorem ctor_refTest_exact {M : MCtx} {tid ncs : Nat} {entries : List (List Nat)}
+    {sub : Nat → Nat → Prop} (hspec : GcTestSpec entries sub)
+    (hpin : S3Pin M tid ncs entries = true) {a b : Nat} (ha : a < ncs) (hb : b < ncs) :
+    M.ctorStruct tid a = M.ctorStruct tid b ↔ sub (M.ctorStruct tid a) (M.ctorStruct tid b) := by
+  obtain ⟨_, hga⟩ := s3Pin_facts hpin ha
+  obtain ⟨hfb, hgb⟩ := s3Pin_facts hpin hb
+  exact ⟨fun h => h ▸ hspec.refl _, hspec.final_sub _ _ hga hgb hfb⟩
 
 /-! ## The agreement theorem
 
