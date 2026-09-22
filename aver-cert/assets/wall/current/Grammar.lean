@@ -1,4 +1,4 @@
-/- Grammar — the one-grammar certificate plan (P2a/P2b, not yet wired).
+/- Grammar — the one-grammar certificate plan (P2a-P2c, not yet wired).
 
    The plan IS the optimized MIR function body (`src/ir/mir/expr.rs`
    `MirExpr`), restricted to an admitted subset and printed 1:1 into this
@@ -12,19 +12,22 @@
 
    Admitted subset (and how it maps to `MirExpr`):
 
-   * `literal (.int k)` / `literal (.bool b)` — `Literal(Int)` (always in the
-     i64 band; `Literal::BigInt` is declined) and `Literal(Bool)`.
+   * `literal (.int k)` / `literal (.bool b)` / `literal (.float bits)` /
+     `literal (.str bytes)` — `Literal(Int)` (always in the i64 band;
+     `Literal::BigInt` is declined), `Literal(Bool)`, `Literal(Float)` by its
+     bit pattern and `Literal(Str)` by its UTF-8 bytes.
    * `local slot` — `Local`; the slot is the resolver `LocalId`, which is the
      wasm local index 1:1.
    * `let_ binding value body` — a NAMED `Let` (an empty `binding_name`, the
      synthetic drop form, is declined).
    * `call (.fn idx) args` — `Call { callee: Fn(..) }`, the callee by its
      wasm function index; `call (.builtin b) args` — `Call { callee:
-     Builtin(..) }` for `Bool.and`, `Bool.or`, `Bool.not`.
+     Builtin(..) }` for `Bool.and`, `Bool.or`, `Bool.not`, `List.prepend`.
    * `tailCall target args` — `TailCall`, target by wasm function index.
    * `binOp op lhs rhs` — `BinOp` with `ast::BinOp` minus `Div`, over two
-     `Int` operands (arithmetic and the six comparisons) or two `Bool`
-     operands (`==` and `!=`).
+     `Int` operands (arithmetic and the six comparisons), two `Bool`
+     operands (`==` and `!=`), two `Float` operands (the comparisons but
+     `!=`; no arithmetic) or two `String` operands (`+`, `==`, `!=`).
    * `neg e` — `Neg` on `Int`.
    * `ifThenElse c t e` — `IfThenElse`.
    * `recordCreate tid fields` — `RecordCreate` whose fields are written in
@@ -34,26 +37,33 @@
    * `project tid field base` — `Project`, the field by declared index.
    * `call (.lazy b) [opt, dflt]` — `Call { callee: Builtin(..) }` for
      `Option.withDefault` / `Result.withDefault` (the boxed path: the default
-     is evaluated only on the `None` / `Err` side, as the emitter does).
+     is evaluated only on the `None` / `Err` side, as the emitter does), and
+     the fused `Option.withDefault(Vector.get(v, i), <literal>)` over two
+     bare locals (the emitter's bounds-checked `array.get`).
+   * `interp parts` — `InterpolatedStr` whose parts are all `String` (a
+     literal part printed as a string literal).
+   * `list t []` — the empty `List(..)` literal, with its element type.
    * `construct c ty args` — `Construct`; `c` is the constructor
      (`MirCtor::User(CtorId)` as type id + constructor index, or a built-in
      `Some`/`None`/`Ok`/`Err`) and `ty` is the node's stamped type
      (`Option<T>`, `Result<T, E>` or the sum), which the emitter reads for
      the struct index and the default filler.
    * `match_ subject arms` — `Match`, the arms 1:1 (`MirMatchArm` pattern and
-     body). Patterns: `wild`, `litInt`, `litBool`, `bind slot`,
-     `ctor c bindings` (the bindings are the resolver slots, `noSlot` for
-     `_`). The typing admits exactly the arm shapes the emitter lowers with
-     first-match meaning: an Int literal cascade with a catch-all last, a
-     two-arm Bool match, the two-arm Option / Result tag dispatch, and a user
-     variant `ref.test` cascade of two or more arms that covers every
-     constructor.
+     body). Patterns: `wild`, `litInt`, `litBool`, `litStr`, `bind slot`,
+     `ctor c bindings`, `tuple bindings` (the bindings are the resolver
+     slots, `noSlot` for `_`). The typing admits exactly the arm shapes the
+     emitter lowers with first-match meaning: an Int literal cascade with a
+     catch-all last, a two-arm Bool match, the two-arm Option / Result tag
+     dispatch, a user variant `ref.test` cascade of two or more arms that
+     covers every constructor, a String literal cascade with `_` last, and
+     the single-arm flat tuple destructure.
 
-   Values: `SVal` has nested records (`record tid fields`), user variants
-   (`variant tid ctor fields`) and Option / Result values that carry their
-   instantiation, so records and sums with Int, Bool, record, variant,
-   Option and Result fields are all covered. String, lists, tuples and Float
-   are P2c. -/
+   Values: `SVal` has nested records (`record tid fields`; a one-field record
+   is a newtype, represented as its field's value), user variants (`variant
+   tid ctor fields`), Option / Result values that carry their instantiation,
+   Floats (bits), Strings (bytes), Vectors, Lists (`nil` / `cons`) and opaque
+   pass-through values (a `Map` field). A tuple instantiation is a record
+   type id of the type table. -/
 import RecordComputeBridge
 
 namespace AverCert.Grammar
@@ -72,6 +82,15 @@ inductive Ty where
   | option (t : Ty)
   | result (t e : Ty)
   | eqref
+  | float
+  | string
+  /-- `Vector<T>`: a wasm array of the element representation. -/
+  | vec (t : Ty)
+  /-- `List<T>`: `null` or a cons cell struct `{head, tail}`. -/
+  | list (t : Ty)
+  /-- A type the plan only passes through (a `Map` field of a constructor):
+      no operation reads it, and its values are the wasm values themselves. -/
+  | opaque (tid : Nat)
 deriving DecidableEq, Repr
 
 structure Sig where
@@ -83,6 +102,10 @@ deriving DecidableEq, Repr
 inductive Lit where
   | int (k : Int)
   | bool (b : Bool)
+  /-- `Literal(Float)` by its IEEE-754 bit pattern. -/
+  | float (bits : UInt64)
+  /-- `Literal(Str)` by its UTF-8 bytes. -/
+  | str (bytes : List Nat)
 deriving DecidableEq, Repr
 
 /-- `ast::BinOp` without `Div`. -/
@@ -93,6 +116,11 @@ deriving DecidableEq, Repr
 /-- `MirCallee::Builtin`, admitted part (by dotted name). -/
 inductive Builtin where
   | boolAnd | boolOr | boolNot
+  /-- `List.prepend(head, tail)`: one cons cell. -/
+  | listPrepend
+  /-- `Vector.get(v, i)`: admitted only fused under `Option.withDefault` with
+      a literal default (the emitter's bounds-checked `array.get`). -/
+  | vecGet
 deriving DecidableEq, Repr
 
 /-- Builtins whose second argument the emitter evaluates only on one side
@@ -125,6 +153,10 @@ inductive Pat where
   | litBool (b : Bool)
   | bind (slot : Nat)
   | ctor (c : CtorTag) (bindings : List Nat)
+  /-- `Literal(Str)` pattern, by its bytes. -/
+  | litStr (bytes : List Nat)
+  /-- A flat tuple destructure: one slot per component (`noSlot` for `_`). -/
+  | tuple (bindings : List Nat)
 deriving DecidableEq, Repr
 
 mutual
@@ -142,6 +174,12 @@ mutual
     | project (tid : Nat) (field : Nat) (base : Expr)
     | match_ (subject : Expr) (arms : Arms)
     | construct (c : CtorTag) (ty : Ty) (args : List Expr)
+    /-- `InterpolatedStr` whose parts are all `String`: a literal part is
+        printed as a string literal, an embed as its expression. -/
+    | interp (parts : List Expr)
+    /-- `List(items)` with its element type (the stamped instantiation);
+        only the empty literal `[]` is admitted. -/
+    | list (elem : Ty) (items : List Expr)
   /-- The arms of a `Match`, in source order. -/
   inductive Arms where
     | nil
@@ -154,6 +192,19 @@ def BinOp.isArith : BinOp → Bool
 
 def BinOp.isEquality : BinOp → Bool
   | .eq | .neq => true
+  | _ => false
+
+/-- The Float comparisons the emitter lowers to one `f64` instruction
+    (`!=` would need `f64.ne`, which the interpreter does not model). -/
+def BinOp.isFloatCmp : BinOp → Bool
+  | .eq | .lt | .gt | .lte | .gte => true
+  | _ => false
+
+/-- The operations on two `String` operands: `+` (concatenation) and
+    `==` / `!=` (the ordering comparisons call a helper this grammar does
+    not admit). -/
+def BinOp.isStrOp : BinOp → Bool
+  | .add | .eq | .neq => true
   | _ => false
 
 /-- Module context: the byte-derived indices a lowering needs (Int carrier,
@@ -179,6 +230,21 @@ structure MCtx where
   optStruct : Ty → Nat := fun _ => 0
   resStruct : Ty → Ty → Nat := fun _ _ => 0
   mag : Nat := 0
+  /-- The String array type (`$string`, `(array (mut i8))`). -/
+  str : Nat := 0
+  /-- The passive data segment holding a string literal's bytes. -/
+  strSeg : List Nat → Nat := fun _ => 0
+  /-- The `Vector<String>` array type the concatenation helper takes. -/
+  strVec : Nat := 0
+  /-- `__wasmgc_concat_n`, `__wasmgc_string_eq`, `__aint_to_index`. -/
+  concat : Nat := 0
+  streq : Nat := 0
+  toIndex : Nat := 0
+  /-- The array type of `Vector<T>`, the cons struct of `List<T>`, and the
+      heap type of an opaque type. -/
+  vecStruct : Ty → Nat := fun _ => 0
+  listStruct : Ty → Nat := fun _ => 0
+  opaqueStruct : Nat → Nat := fun _ => 0
 
 /-- One function's plan: signature, the resolver slot count (parameters and
     every binder; the const-compare scratch local sits at this index), the
@@ -219,10 +285,18 @@ def sumOk (M : MCtx) (tid : Nat) : Bool :=
           M.ctorStruct tid a != M.ctorStruct tid b || a == b
   | none => false
 
+/-- A one-field record is a newtype: the emitter erases it to its field's
+    value (`newtype_underlying`), so its values are represented as that
+    value. -/
+def MCtx.newtype (M : MCtx) (tid : Nat) : Bool :=
+  match M.recFields tid with
+  | some [_] => true
+  | _ => false
+
 /-- A type with a default filler value (the emitter's `emit_default_value`). -/
 def Ty.hasDefault : Ty → Bool
-  | .eqref => false
-  | _ => true
+  | .int | .bool | .record _ | .sum _ | .option _ | .result _ _ => true
+  | _ => false
 
 def Pat.isWild : Pat → Bool
   | .wild => true
@@ -270,6 +344,21 @@ def resPick : Pat → Pat → Option (Bool × Nat × Nat)
   | .ctor .err [b], .wild => some (true, noSlot, b)
   | _, _ => none
 
+/-- The fused `Option.withDefault(Vector.get(v, i), <literal>)` shape
+    (`emit_mir_option_with_default`): the vector and index slots when the
+    vector and the index are bare locals. Any other operand shape is
+    declined (the emitter re-evaluates both operands per read). -/
+def vecGetOr? : LazyBuiltin → Expr → Expr → Option (Nat × Nat)
+  | .optWithDefault, .call (.builtin .vecGet) [.local v, .local i], .literal _ => some (v, i)
+  | _, _, _ => none
+
+/-- Every part of an interpolation is a `String`, and there is one. -/
+def allStr : List Ty → Bool
+  | [] => false
+  | [.string] => true
+  | .string :: ts => allStr ts
+  | _ => false
+
 /-- One binder of a built-in payload. -/
 def bindOne (n : Nat) (Γ : Nat → Option Ty) (b : Nat) (t : Ty) : Option (Nat → Option Ty) :=
   bindTys n Γ [b] [t]
@@ -296,6 +385,7 @@ def builtinTy : Builtin → List Ty → Option Ty
   | .boolAnd, [.bool, .bool] => some .bool
   | .boolOr, [.bool, .bool] => some .bool
   | .boolNot, [.bool] => some .bool
+  | .listPrepend, [t, .list t'] => if t = t' then some (.list t) else none
   | _, _ => none
 
 /-- `withDefault` over a subject and default of these types. -/
@@ -321,6 +411,8 @@ mutual
       Expr → Option Ty
     | .literal (.int k) => if AverCert.PlanCheck.inI64Band k then some .int else none
     | .literal (.bool _) => some .bool
+    | .literal (.float _) => some .float
+    | .literal (.str _) => some .string
     | .local i => Γ i
     | .let_ b v body =>
         if b < n ∧ Γ b = none then
@@ -346,6 +438,9 @@ mutual
         match tyOf M n Γ false l, tyOf M n Γ false r with
         | some .int, some .int => if op.isArith then some .int else some .bool
         | some .bool, some .bool => if op.isEquality then some .bool else none
+        | some .float, some .float => if op.isFloatCmp then some .bool else none
+        | some .string, some .string =>
+            if op = .add then some .string else if op.isStrOp then some .bool else none
         | _, _ => none
     | .neg e =>
         match tyOf M n Γ false e with
@@ -367,14 +462,28 @@ mutual
     | .call (.lazy lb) args =>
         match args with
         | [o, d] =>
-            match tyOf M n Γ false o, tyOf M n Γ false d with
-            | some to, some td => lazyTy lb to td
-            | _, _ => none
+            match vecGetOr? lb o d with
+            | some (v, i) =>
+                match Γ v, Γ i, tyOf M n Γ false d with
+                | some (.vec t), some .int, some td => if td = t then some t else none
+                | _, _, _ => none
+            | none =>
+                match tyOf M n Γ false o, tyOf M n Γ false d with
+                | some to, some td => lazyTy lb to td
+                | _, _ => none
         | _ => none
     | .construct c ty args =>
         match tysOf M n Γ args with
         | some ts => ctorTy M c ty ts
         | none => none
+    | .interp parts =>
+        match tysOf M n Γ parts with
+        | some ts => if allStr ts then some .string else none
+        | none => none
+    | .list t items =>
+        match items with
+        | [] => some (.list t)
+        | _ => none
     | .match_ s arms =>
         match tyOf M n Γ false s with
         | some .int => if arms.firstLit then tyIntArms M n Γ tail arms else none
@@ -385,6 +494,8 @@ mutual
             if sumOk M tid ∧ varExhaustive M tid arms ∧ 2 ≤ arms.length then
               tyVarArms M n Γ tail tid arms
             else none
+        | some .string => tyStrArms M n Γ tail arms
+        | some (.record tid) => tyTupArms M n Γ tail tid arms
         | _ => none
   def tysOf (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : List Expr → Option (List Ty)
     | [] => some []
@@ -474,6 +585,36 @@ mutual
               | some a, some c => if a = c then some a else none
               | _, _ => none
           | none => none
+  /-- String literal cascade (`emit_mir_string_match`): literal arms, then
+      one `_` as the last arm (the emitter tests every literal arm before
+      its single default, so a default anywhere else would not be
+      first-match, and a binder default would never be bound). -/
+  def tyStrArms (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tail : Bool) : Arms → Option Ty
+    | .nil => none
+    | .cons p b rest =>
+        match p, rest with
+        | .litStr _, _ =>
+            match tyOf M n Γ tail b, tyStrArms M n Γ tail rest with
+            | some t, some t' => if t = t' then some t else none
+            | _, _ => none
+        | .wild, .nil => tyOf M n Γ tail b
+        | _, _ => none
+  /-- The single-arm flat tuple destructure (`emit_mir_tuple_match`) over a
+      tuple instantiation, which the type table lists as a record of two or
+      more fields; at least one component is bound (so the destructure reads
+      the stashed subject). -/
+  def tyTupArms (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tail : Bool) (tid : Nat) :
+      Arms → Option Ty
+    | .cons (.tuple bs) b .nil =>
+        match M.recFields tid with
+        | some fts =>
+            if 2 ≤ fts.length ∧ bs.any (· != noSlot) then
+              match bindTys n Γ bs fts with
+              | some Γ' => tyOf M n Γ' tail b
+              | none => none
+            else none
+        | none => none
+    | _ => none
 end
 
 /-! ## Source values -/
@@ -489,6 +630,17 @@ inductive SVal where
   | some (t : Ty) (v : SVal)
   | ok (t e : Ty) (v : SVal)
   | err (t e : Ty) (v : SVal)
+  /-- A Float by its IEEE-754 bit pattern. -/
+  | f (bits : UInt64)
+  /-- A String by its UTF-8 bytes. -/
+  | s (bytes : List Nat)
+  /-- A `Vector<t>`. -/
+  | vec (t : Ty) (vs : List SVal)
+  /-- The empty `List<t>` and a cons cell of a `List<t>`. -/
+  | nil (t : Ty)
+  | cons (t : Ty) (h tl : SVal)
+  /-- A value of an opaque type: the wasm value itself. -/
+  | w (v : CertPrelude.WVal)
 deriving Repr
 
 mutual
@@ -505,11 +657,21 @@ mutual
     | .some t v, .option t' => t = t' ∧ HasTy M v t
     | .ok t e v, .result t' e' => t = t' ∧ e = e' ∧ HasTy M v t
     | .err t e v, .result t' e' => t = t' ∧ e = e' ∧ HasTy M v e
+    | .f _, .float => True
+    | .s _, .string => True
+    | .vec t vs, .vec t' => t = t' ∧ HasTyAll M vs t
+    | .nil t, .list t' => t = t'
+    | .cons t h tl, .list t' => t = t' ∧ HasTy M h t ∧ HasTy M tl (.list t)
+    | .w _, .opaque _ => True
     | _, _ => False
   def HasTyL (M : MCtx) : List SVal → List Ty → Prop
     | [], [] => True
     | v :: vs, t :: ts => HasTy M v t ∧ HasTyL M vs ts
     | _, _ => False
+  /-- Every element has type `t`. -/
+  def HasTyAll (M : MCtx) : List SVal → Ty → Prop
+    | [], _ => True
+    | v :: vs, t => HasTy M v t ∧ HasTyAll M vs t
 end
 
 /-! ## Source semantics
@@ -535,10 +697,38 @@ def boolBin : BinOp → Bool → Bool → Option SVal
   | .neq, x, y => some (.b (x != y))
   | _, _, _ => none
 
+/-- Float comparisons, read exactly as the audited interpreter reads the
+    `f64` instruction the emitter picks (IEEE-754: every comparison with a
+    NaN is false, and `-0.0 == 0.0`). -/
+def floatBin : BinOp → UInt64 → UInt64 → Option SVal
+  | .eq, x, y => some (.b (CertPrelude.f x == CertPrelude.f y))
+  | .lt, x, y => some (.b (decide (CertPrelude.f x < CertPrelude.f y)))
+  | .gt, x, y => some (.b (decide (CertPrelude.f y < CertPrelude.f x)))
+  | .lte, x, y => some (.b (decide (CertPrelude.f x ≤ CertPrelude.f y)))
+  | .gte, x, y => some (.b (decide (CertPrelude.f y ≤ CertPrelude.f x)))
+  | _, _, _ => none
+
+/-- String concatenation and byte equality. -/
+def strBin : BinOp → List Nat → List Nat → Option SVal
+  | .add, x, y => some (.s (x ++ y))
+  | .eq, x, y => some (.b (x == y))
+  | .neq, x, y => some (.b (x != y))
+  | _, _, _ => none
+
+/-- The bytes of a list of Strings, concatenated in order. -/
+def strCat : List SVal → Option (List Nat)
+  | [] => some []
+  | .s x :: rest => (strCat rest).map (x ++ ·)
+  | _ => none
+
 def builtinEval : Builtin → List SVal → Option SVal
   | .boolAnd, [.b x, .b y] => some (.b (x && y))
   | .boolOr, [.b x, .b y] => some (.b (x || y))
   | .boolNot, [.b x] => some (.b (!x))
+  | .listPrepend, [h, .nil t] => some (.cons t h (.nil t))
+  | .listPrepend, [h, .cons t x r] => some (.cons t h (.cons t x r))
+  | .vecGet, [.vec t vs, .i n] =>
+      if 0 ≤ n ∧ n < vs.length then (vs[n.toNat]?).map (.some t) else some (.none t)
   | _, _ => none
 
 /-- The value a constructor node builds. -/
@@ -563,6 +753,8 @@ def patMatch : Pat → SVal → Option (List Nat × List SVal)
   | .ctor .none bs, .none _ => some (bs, [])
   | .ctor .ok bs, .ok _ _ v => some (bs, [v])
   | .ctor .err bs, .err _ _ v => some (bs, [v])
+  | .litStr k, .s x => if x = k then some ([], []) else none
+  | .tuple bs, .record _ fs => some (bs, fs)
   | _, _ => none
 
 /-- Bind the binders in order, skipping `noSlot`; `none` on a length
@@ -577,6 +769,8 @@ mutual
       Expr → Option SVal
     | .literal (.int k) => some (.i k)
     | .literal (.bool v) => some (.b v)
+    | .literal (.float bits) => some (.f bits)
+    | .literal (.str bytes) => some (.s bytes)
     | .local i => env i
     | .let_ b v body =>
         match eval F env v with
@@ -598,6 +792,8 @@ mutual
         match eval F env l, eval F env r with
         | some (.i x), some (.i y) => some (intBin op x y)
         | some (.b x), some (.b y) => boolBin op x y
+        | some (.f x), some (.f y) => floatBin op x y
+        | some (.s x), some (.s y) => strBin op x y
         | _, _ => none
     | .neg e =>
         match eval F env e with
@@ -634,6 +830,14 @@ mutual
         match eval F env s with
         | some v => evalArms F env v arms
         | none => none
+    | .interp parts =>
+        match evalArgs F env parts with
+        | some vs => (strCat vs).map .s
+        | none => none
+    | .list t items =>
+        match items with
+        | [] => some (.nil t)
+        | _ => none
   def evalArgs (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
       List Expr → Option (List SVal)
     | [] => some []
@@ -682,7 +886,7 @@ def FnPlan.lctx (p : FnPlan) : LCtx :=
     the declared result type in tail position. -/
 def planTyped (M : MCtx) (p : FnPlan) : Bool :=
   decide (p.sig.params.length ≤ p.nslots) &&
-    decide (p.lctx.cmp < p.sig.params.length + p.locals.length) &&
+    decide (p.nslots ≤ p.sig.params.length + p.locals.length) &&
     decide (tyOf M p.nslots (paramsΓ p.sig.params) true p.body = some p.sig.ret)
 
 /-- The meaning of a group of functions (one SCC), fuel-indexed exactly as

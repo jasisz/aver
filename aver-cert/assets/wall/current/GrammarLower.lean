@@ -1,6 +1,6 @@
 /- GrammarLower — the lowering of a `Grammar` plan to wasm-gc, as a port of
    the MIR emitter (`src/codegen/wasm_gc/body/from_mir/**`) for exactly the
-   admitted nodes (P2a/P2b, not yet wired).
+   admitted nodes (P2a-P2c, not yet wired).
 
    `lowerB` makes the emitter's choices from the same tree, by the same
    predicates, and never from a plan flag:
@@ -36,7 +36,20 @@
      `ref.cast` + `struct.get` per field;
    * `withDefault` stashes the carrier and runs the default only in `else`;
    * `Construct` pushes the tag, the payload and the default filler of the
-     other side, then `struct.new` (`constructors.rs`).
+     other side, then `struct.new` (`constructors.rs`);
+   * a Float comparison is one `f64` instruction; a String literal is
+     `array.new_data $string seg` over its data segment; String `+` and an
+     interpolation build a `Vector<String>` and call `__wasmgc_concat_n`;
+     String `==` / `!=` call `__wasmgc_string_eq` (plus `i32.eqz`);
+   * a String `Match` stashes the subject and cascades over the literal arms,
+     each `ref.cast (ref null $string)` + literal + `__wasmgc_string_eq`;
+   * a tuple destructure stashes the subject and reads each bound component
+     with `ref.cast` + `struct.get` (`emit_mir_tuple_match`);
+   * `[]` is `ref.null` of the list's cons struct, `List.prepend` is
+     `struct.new` of it;
+   * the fused `Vector.get`-or-default re-reads the vector and the index
+     locals, converts the index through `__aint_to_index`, and bounds-checks
+     it signed `>= 0` and unsigned `< array.len` before `array.get`.
 
    ONE lowering carries both images: `lowerB` yields instructions whose `if`
    carries its block type. `eraseL` forgets the block types (the audited
@@ -57,12 +70,21 @@ inductive BI where
   /-- `ref.null ht`: the interpreter's `refNull`, with its heap type for
       the bytes. -/
   | nullOf (ht : Nat)
+  /-- `array.new_data ty seg`: the interpreter's `arrayNewData` carries the
+      segment's bytes; the byte image names the segment, whose contents the
+      acceptance pins to exactly `bytes`. -/
+  | newData (ty seg : Nat) (bytes : List Nat)
+  /-- `ref.cast (ref null ht)`: the interpreter's `refCast`, which rejects a
+      null the wasm cast would pass (that only makes a run fail). -/
+  | castNull (ht : Nat)
 
 mutual
   def eraseI : BI → WInstr
     | .op i => i
     | .ifElse _ t e => .ifElse (eraseL t) (eraseL e)
     | .nullOf _ => .refNull
+    | .newData ty _ bytes => .arrayNewData ty bytes
+    | .castNull ht => .refCast ht
   def eraseL : List BI → List WInstr
     | [] => []
     | x :: xs => eraseI x :: eraseL xs
@@ -142,10 +164,52 @@ def boolCmpInstr : BinOp → WInstr
   | .eq => .i32Eq
   | _ => .i32Ne
 
-def builtinInstr : Builtin → WInstr
-  | .boolAnd => .i32And
-  | .boolOr => .i32Or
-  | .boolNot => .i32Eqz
+/-- The instruction a builtin call ends with, given its argument types:
+    one `i32` instruction for the Bool builtins, `struct.new` of the tail's
+    cons struct for `List.prepend`. -/
+def builtinTail (M : MCtx) : Builtin → Option (List Ty) → List BI
+  | .boolAnd, _ => [.op .i32And]
+  | .boolOr, _ => [.op .i32Or]
+  | .boolNot, _ => [.op .i32Eqz]
+  | .listPrepend, some [_, .list t] => [.op (.structNew (M.listStruct t) 2)]
+  | _, _ => []
+
+/-- The `f64` comparison of a Float `BinOp`. -/
+def floatCmpInstr : BinOp → WInstr
+  | .eq => .f64Eq
+  | .lt => .f64Lt
+  | .gt => .f64Gt
+  | .lte => .f64Le
+  | _ => .f64Ge
+
+/-- A string literal: `array.new_data $string seg` over offset 0 and the
+    literal's length (`emit_string_literal_bytes`). -/
+def strLitB (M : MCtx) (bytes : List Nat) : List BI :=
+  [.op (.i32Const 0), .op (.i32Const bytes.length), .newData M.str (M.strSeg bytes) bytes]
+
+/-- Concatenate the `n` Strings on the stack: a `Vector<String>` of them, then
+    `__wasmgc_concat_n` (`emit_mir_string_binop`, `emit_mir_interpolated_str`). -/
+def concatB (M : MCtx) (n : Nat) : List BI :=
+  [.op (.arrayNewFixed M.strVec n), .op (.call M.concat)]
+
+/-- The tail of a `String` `BinOp` after both operands. -/
+def strOpTail (M : MCtx) : BinOp → List BI
+  | .add => concatB M 2
+  | .eq => [.op (.call M.streq)]
+  | _ => [.op (.call M.streq), .op .i32Eqz]
+
+/-- `Option.withDefault(Vector.get(v, i), d)` fused
+    (`emit_mir_option_with_default`): the index through `__aint_to_index`,
+    tested `>= 0` and (unsigned) `< array.len`, both halves evaluated, then
+    `array.get` or the default. `dc` is the default's code. -/
+def vecGetOrB (M : MCtx) (v i : Nat) (t : Ty) (dc : List BI) : List BI :=
+  [ .op (.localGet i), .op (.call M.toIndex), .op (.i32Const 0), .op .i32GeS,
+    .op (.localGet i), .op (.call M.toIndex), .op (.localGet v), .op .arrayLen, .op .i32LtU,
+    .op .i32And,
+    .ifElse (some t)
+      [.op (.localGet v), .op (.localGet i), .op (.call M.toIndex),
+        .op (.arrayGet (M.vecStruct t))]
+      dc ]
 
 /-- `emit_default_value`: the filler of the unused payload field. -/
 def dfltB (M : MCtx) : Ty → List BI
@@ -155,7 +219,7 @@ def dfltB (M : MCtx) : Ty → List BI
   | .sum tid => [.nullOf (M.sumRoot tid)]
   | .option t => [.nullOf (M.optStruct t)]
   | .result t e => [.nullOf (M.resStruct t e)]
-  | .eqref => []
+  | _ => []
 
 /-- Read field `i` of the struct `idx` held (as `eqref`) in the subject
     scratch `ss` into binder `b`; nothing for an ignored binder. -/
@@ -178,6 +242,8 @@ mutual
   def lowerB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool) : Expr → List BI
     | .literal (.int k) => [.op (.i64Const k), .op (.call M.box)]
     | .literal (.bool v) => [.op (.i32Const (if v then 1 else 0))]
+    | .literal (.float bits) => [.op (.f64Const bits)]
+    | .literal (.str bytes) => strLitB M bytes
     | .local i => [.op (.localGet i)]
     | .let_ b v body =>
         lowerB M X Γ false v ++ [.op (.localSet b)] ++
@@ -185,12 +251,17 @@ mutual
             | some T => upd Γ b T
             | none => Γ) tail body
     | .call (.fn f) args => lowerArgsB M X Γ args ++ [.op (.call f)]
-    | .call (.builtin bi) args => lowerArgsB M X Γ args ++ [.op (builtinInstr bi)]
+    | .call (.builtin bi) args =>
+        lowerArgsB M X Γ args ++ builtinTail M bi (tysOf M X.n Γ args)
     | .tailCall f args => lowerArgsB M X Γ args ++ [.op (.returnCall f)]
     | .binOp op l r =>
         match tyOf M X.n Γ false l with
         | some .bool =>
             lowerB M X Γ false l ++ lowerB M X Γ false r ++ [.op (boolCmpInstr op)]
+        | some .float =>
+            lowerB M X Γ false l ++ lowerB M X Γ false r ++ [.op (floatCmpInstr op)]
+        | some .string =>
+            lowerB M X Γ false l ++ lowerB M X Γ false r ++ strOpTail M op
         | _ =>
             if op.isArith then
               lowerB M X Γ false l ++ lowerB M X Γ false r ++ [.op (.call (M.arithIdx op))]
@@ -220,6 +291,12 @@ mutual
     | .call (.lazy lb) args =>
         match args with
         | [o, d] =>
+          match vecGetOr? lb o d with
+          | some (v, i) =>
+            match Γ v with
+            | some (.vec t) => vecGetOrB M v i t (lowerB M X Γ false d)
+            | _ => []
+          | none =>
             match lb, tyOf M X.n Γ false o with
             | .optWithDefault, some (.option t) =>
                 lowerB M X Γ false o ++ [.op (.localSet X.subj)] ++
@@ -270,7 +347,15 @@ mutual
         | some (.sum tid) =>
             lowerB M X Γ false s ++ [.op (.localSet X.subj)] ++
               lowerVarArms M X Γ tail (tyOf M X.n Γ tail (.match_ s arms)) tid arms
+        | some .string =>
+            lowerB M X Γ false s ++ [.op (.localSet X.subj)] ++
+              lowerStrArms M X Γ tail (tyOf M X.n Γ tail (.match_ s arms)) arms
+        | some (.record tid) =>
+            lowerB M X Γ false s ++ [.op (.localSet X.subj)] ++
+              lowerTupArms M X Γ tail tid arms
         | _ => []
+    | .interp parts => lowerArgsB M X Γ parts ++ concatB M parts.length
+    | .list t _ => [.nullOf (M.listStruct t)]
   def lowerArgsB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) : List Expr → List BI
     | [] => []
     | e :: es => lowerB M X Γ false e ++ lowerArgsB M X Γ es
@@ -356,6 +441,27 @@ mutual
                 (lowerVarArms M X Γ tail bt tid (.cons p' b' r))]
         | .wild => lowerB M X Γ tail b
         | _ => []
+  /-- `emit_mir_string_match`, the subject already in the subject scratch:
+      per literal arm, cast the scratch back to `$string`, compare with the
+      literal through `__wasmgc_string_eq`, `if`; the default innermost. -/
+  def lowerStrArms (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) : Arms → List BI
+    | .nil => []
+    | .cons p b rest =>
+        match p with
+        | .litStr k =>
+            [.op (.localGet X.subj), .castNull M.str] ++ strLitB M k ++
+              [.op (.call M.streq), .ifElse bt (lowerB M X Γ tail b)
+                (lowerStrArms M X Γ tail bt rest)]
+        | _ => lowerB M X Γ tail b
+  /-- `emit_mir_tuple_match`, the subject already in the subject scratch:
+      each bound component read with `ref.cast` + `struct.get`, then the body. -/
+  def lowerTupArms (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool) (tid : Nat) :
+      Arms → List BI
+    | .cons (.tuple bs) b _ =>
+        extractB X.subj (M.structOf tid) 0 bs ++
+          lowerB M X (((M.recFields tid).bind (bindTys X.n Γ bs)).getD Γ) tail b
+    | _ => []
 end
 
 /-- The instructions the interpreter runs. -/
@@ -372,6 +478,10 @@ def fnCode (M : MCtx) (p : FnPlan) : WCode :=
     body := lowerW M p.lctx (paramsΓ p.sig.params) true p.body }
 
 /-! ## The byte image -/
+
+/-- The eight little-endian bytes of an `f64.const` immediate. -/
+def u64le (bits : UInt64) : List Nat :=
+  (List.range 8).map fun i => bits.toNat / 256 ^ i % 256
 
 open AverCert.PlanBytes in
 /-- Opcode bytes of one instruction of the admitted fragment (`none` for any
@@ -404,6 +514,19 @@ def encW : WInstr → Option (List Nat)
   | .i64GeS => some [0x59]
   | .i32And => some [0x71]
   | .i32Or => some [0x72]
+  | .i32LtU => some [0x49]
+  | .f64Const bits => some ([0x44] ++ u64le bits)
+  | .f64Eq => some [0x61]
+  | .f64Lt => some [0x63]
+  | .f64Gt => some [0x64]
+  | .f64Le => some [0x65]
+  | .f64Ge => some [0x66]
+  | .arrayLen => some [0xfb, 0x0f]
+  | .arrayGet t => (uleb32 t).map ([0xfb, 0x0b] ++ ·)
+  | .arrayNewFixed t n =>
+      match uleb32 t, uleb32 n with
+      | some a, some b => some ([0xfb, 0x08] ++ a ++ b)
+      | _, _ => none
   | .refTest t => (s33HeapIdx t).map ([0xfb, 0x14] ++ ·)
   | .refCast t => (s33HeapIdx t).map ([0xfb, 0x16] ++ ·)
   | _ => none
@@ -420,6 +543,11 @@ def valTy (M : MCtx) : Ty → Option (List Nat)
   | .option t => (s33HeapIdx (M.optStruct t)).map ([0x63] ++ ·)
   | .result t e => (s33HeapIdx (M.resStruct t e)).map ([0x63] ++ ·)
   | .eqref => some [0x6d]
+  | .float => some [0x7c]
+  | .string => (s33HeapIdx M.str).map ([0x63] ++ ·)
+  | .vec t => (s33HeapIdx (M.vecStruct t)).map ([0x63] ++ ·)
+  | .list t => (s33HeapIdx (M.listStruct t)).map ([0x63] ++ ·)
+  | .opaque tid => (s33HeapIdx (M.opaqueStruct tid)).map ([0x63] ++ ·)
 
 open AverCert.PlanBytes in
 mutual
@@ -430,6 +558,11 @@ mutual
         | some btB, some tB, some eB => some ([0x04] ++ btB ++ tB ++ [0x05] ++ eB ++ [0x0b])
         | _, _, _ => none
     | .nullOf ht => (s33HeapIdx ht).map ([0xd0] ++ ·)
+    | .newData ty seg _ =>
+        match uleb32 ty, uleb32 seg with
+        | some a, some b => some ([0xfb, 0x09] ++ a ++ b)
+        | _, _ => none
+    | .castNull ht => (s33HeapIdx ht).map ([0xfb, 0x17] ++ ·)
   def encBL (M : MCtx) : List BI → Option (List Nat)
     | [] => some []
     | x :: xs =>
