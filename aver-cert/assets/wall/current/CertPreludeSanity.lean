@@ -288,4 +288,40 @@ example : s33Bytes 128 = [0x80, 0x01] := by decide
 example : s33Bytes 8192 = [0x80, 0xc0, 0x00] := by decide
 example : s33Bytes 4294967295 = [0xff, 0xff, 0xff, 0xff, 0x0f] := by decide
 
+/-! ## One-grammar opcodes: `i64.ne`, `i32.eqz`, `i32.ne`, `i32.or`
+
+Edge values for each new instruction, proved on the interpreter directly. The
+stack is written top first. `i32.or` is exact on 0/1 and STUCK on any other
+operand, so it never yields a value the bitwise wasm instruction would not. -/
+
+section OneGrammarOps
+variable (h : HostTbl) (a : Nat → Option Nat) (c : Callee) (l : List WVal)
+
+example : wRunF h a c [.i64Ne] l [.i64v 7, .i64v 7] = some (.ok l [.i32v 0]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i64Ne] l [.i64v 7, .i64v (-7)] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i64Ne] l [.i32v 7, .i32v 7] = none := by simp [wRunF]
+example : wRunF h a c [.i32Eqz] l [.i32v 0] = some (.ok l [.i32v 1]) := by simp [wRunF, b32]
+example : wRunF h a c [.i32Eqz] l [.i32v 5] = some (.ok l [.i32v 0]) := by simp [wRunF, b32]
+example : wRunF h a c [.i32Eqz] l [.i32v (-1)] = some (.ok l [.i32v 0]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Eqz] l [.i64v 0] = none := by simp [wRunF]
+example : wRunF h a c [.i32Ne] l [.i32v 1, .i32v 0] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Ne] l [.i32v 1, .i32v 1] = some (.ok l [.i32v 0]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 0, .i32v 0] = some (.ok l [.i32v 0]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 1, .i32v 0] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 0, .i32v 1] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 1, .i32v 1] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 2, .i32v 0] = none := by simp [wRunF]
+example : wRunF h a c [.i32Or] l [.i32v 0, .i32v (-1)] = none := by simp [wRunF]
+
+end OneGrammarOps
+
 end CertPrelude

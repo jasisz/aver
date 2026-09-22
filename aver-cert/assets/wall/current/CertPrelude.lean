@@ -109,6 +109,10 @@ inductive WInstr where
   | arrayGet (tyIdx : Nat)
   | i64Eqz | i64Eq | i64LeS | i64LtS | i64GeS | i64GtS
   | i32Eq | i32And | i32LtS | i32LeS | i32GtS | i32GeS | i32LtU
+  -- Added for the one-grammar plan (`Grammar*.lean`): `i64.ne` (the `!=`
+  -- literal compare's Small arm), `i32.eqz` (`Bool.not`, and `!=` over
+  -- `__aint_eq`), `i32.ne` (Bool `!=`) and `i32.or` (`Bool.or`).
+  | i64Ne | i32Eqz | i32Ne | i32Or
   | f64Add | f64Sub | f64Mul | f64Div
   | f64Eq | f64Lt | f64Le | f64Ge | f64Gt
   | ifElse (thenB elseB : List WInstr)
@@ -263,6 +267,31 @@ def wRunF (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
       match st with
       | .i32v b :: .i32v a :: st' =>
           wRunF host ar callee rest locals (b32 (a ≠ 0 ∧ b ≠ 0) :: st')
+      | _ => none
+  | .i64Ne :: rest, locals, st =>
+      -- Same value convention as `.i64Eq`: operands are the signed i64
+      -- values the emitter produced, compared exactly.
+      match st with
+      | .i64v b :: .i64v a :: st' => wRunF host ar callee rest locals (b32 (a ≠ b) :: st')
+      | _ => none
+  | .i32Eqz :: rest, locals, st =>
+      -- Same value convention as `.i32Eq`: `1` exactly when the operand is `0`.
+      match st with
+      | .i32v a :: st' => wRunF host ar callee rest locals (b32 (a = 0) :: st')
+      | _ => none
+  | .i32Ne :: rest, locals, st =>
+      match st with
+      | .i32v b :: .i32v a :: st' => wRunF host ar callee rest locals (b32 (a ≠ b) :: st')
+      | _ => none
+  | .i32Or :: rest, locals, st =>
+      -- Exact on the 0/1 Boolean domain the emitter feeds it, and STUCK
+      -- (`none`) on any other operand, so it can never produce a value the
+      -- bitwise wasm `i32.or` would not (unlike `.i32And`'s logical reading).
+      match st with
+      | .i32v b :: .i32v a :: st' =>
+          if (a = 0 ∨ a = 1) ∧ (b = 0 ∨ b = 1) then
+            wRunF host ar callee rest locals (b32 (a = 1 ∨ b = 1) :: st')
+          else none
       | _ => none
   | .i32LtS :: rest, locals, st =>
       match st with
