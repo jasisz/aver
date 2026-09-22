@@ -87,7 +87,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: jasisz/btc-listener
-          ref: ba4303a5a4c247f39b5257f0ca43d694340386d6
+          ref: 5698c8e11d9f1c09955079add0fae5b8a94eea03
           path: btc-listener
 
       - uses: dtolnay/rust-toolchain@stable
