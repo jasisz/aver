@@ -620,4 +620,49 @@ def S3Pin (M : MCtx) (tid ncs : Nat) (entries : List (List Nat)) : Bool :=
     | some e, some h => h.isPrefixOf e
     | _, _ => false
 
+/-! ## S-11: the byte fact behind a string literal
+
+The interpreter's `arrayNewData` carries the literal's bytes, while the code
+entry names only a passive data segment (`array.new_data $string seg`, with
+offset `0` and the literal's length as operands). The certificate is sound
+only if that segment holds exactly those bytes. `exprLits` lists every
+string literal a plan lowers to `array.new_data` (literal nodes and literal
+match arms), and `DataPin` checks each against the module's data segments
+(`segs[i]` is the contents of segment `i`). The acceptance (P4) must check it
+against the decoded data section, as it checks `S3Pin` against the type
+section. -/
+
+mutual
+  def exprLits : Expr → List (List Nat)
+    | .literal (.str b) => [b]
+    | .literal _ => []
+    | .local _ => []
+    | .let_ _ v body => exprLits v ++ exprLits body
+    | .call _ args => argsLits args
+    | .tailCall _ args => argsLits args
+    | .binOp _ l r => exprLits l ++ exprLits r
+    | .neg e => exprLits e
+    | .ifThenElse c t e => exprLits c ++ exprLits t ++ exprLits e
+    | .recordCreate _ fs => argsLits fs
+    | .project _ _ b => exprLits b
+    | .match_ s arms => exprLits s ++ armsLits arms
+    | .construct _ _ args => argsLits args
+    | .interp parts => argsLits parts
+    | .list _ items => argsLits items
+  def argsLits : List Expr → List (List Nat)
+    | [] => []
+    | e :: es => exprLits e ++ argsLits es
+  def armsLits : Arms → List (List Nat)
+    | .nil => []
+    | .cons p b rest =>
+        (match p with
+         | .litStr k => [k]
+         | _ => []) ++ exprLits b ++ armsLits rest
+end
+
+/-- The S-11 pin: every string literal of the plan names a data segment that
+    holds exactly its bytes. -/
+def DataPin (M : MCtx) (segs : List (List Nat)) (p : FnPlan) : Bool :=
+  (exprLits p.body).all fun b => segs[M.strSeg b]? == some b
+
 end AverCert.Grammar
