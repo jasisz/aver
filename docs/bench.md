@@ -1,6 +1,6 @@
 # Benchmarking
 
-Aver ships two complementary benchmark workflows: **`cargo bench`** for Criterion-driven cross-backend comparison, and **`aver bench`** for scenario-based regression checks. Both read from the same `bench/scenarios/*.av` files — change one source, both workflows pick it up.
+Aver has two benchmark workflows. **`cargo bench`** uses Criterion to compare backends against each other, and **`aver bench`** runs scenario-based regression checks. Both read the same `bench/scenarios/*.av` files, so a change to one source reaches both.
 
 ## Layout
 
@@ -13,11 +13,11 @@ benches/
 └── nan_value_bench.rs
 ```
 
-The eleven historic cargo-bench programs (`fib`, `countdown`, `record`, `map_build`, `map_lookup`, `match_dispatch`, `string_interp`, `vector_ops`, `newtype_{bare,record,variant}`) live in `bench/scenarios/`. `comparison_bench.rs` reads them via `include_str!`; `aver bench` reads them through the manifest's `entry` field. Add a new scenario by dropping `bench/scenarios/foo.av` + `bench/scenarios/foo.toml`; it shows up in both harnesses.
+The eleven historic cargo-bench programs (`fib`, `countdown`, `record`, `map_build`, `map_lookup`, `match_dispatch`, `string_interp`, `vector_ops`, `newtype_{bare,record,variant}`) live in `bench/scenarios/`. `comparison_bench.rs` reads them with `include_str!`, and `aver bench` finds them through the manifest's `entry` field. To add a scenario, put `bench/scenarios/foo.av` and `bench/scenarios/foo.toml` in place and it appears in both harnesses.
 
 ## `aver bench` — scenario harness
 
-Three input shapes:
+It takes three kinds of input: a single `.av` file, a `.toml` manifest, or a directory.
 
 ```bash
 aver bench foo.av                                    # ad-hoc — defaults (30 iter, 3 warmup)
@@ -27,9 +27,9 @@ aver bench bench/scenarios/                          # directory mode, all *.tom
 aver bench bench/scenarios/ --json                   # NDJSON, one line per scenario
 ```
 
-`.av` is the quick path for "did I regress this fn?" — synthesized manifest with default tolerance, no `[expected]`. `.toml` is the named-and-pinned path for repeatable measurement (committed to repo, named scenario, per-scenario tolerance, future expected-byte checks). Directory mode globs every `*.toml` (skips `.av` — those need explicit invocation since they have no per-scenario knobs).
+An `.av` file is the quick way to ask "did I regress this fn?". The harness synthesizes a manifest with the default tolerance and no `[expected]`. A `.toml` manifest is for repeatable measurement: it is committed to the repo, names the scenario, sets a per-scenario tolerance, and will later carry expected-byte checks. Directory mode globs every `*.toml` and skips `.av` files, which have no per-scenario settings and must be run explicitly.
 
-Use `.av` for one-off measurement, `.toml` for inventoried scenarios that gate `--compare baseline.json`.
+Use `.av` for a one-off measurement. Use `.toml` for scenarios kept in the inventory that gate `--compare baseline.json`.
 
 ### Targets
 
@@ -47,9 +47,9 @@ aver bench bench/scenarios/fib.toml --target=rust         # native binary, subpr
 | `wasm-gc-v8`  | `aver compile --target wasm-gc` → subprocess `node` running it via V8       | ~5-15 ms   |
 | `rust`        | `aver compile --target rust` + `cargo build --release` → spawn             | ~1-2 ms    |
 
-The wasm-gc bench target stubs `aver/*` host imports in-process for programs that don't touch real host effects (no print, no fs, no rand). Programs that need real I/O aren't bench candidates today; the stubs return `errno 0` for every call.
+For programs that use no real host effects (no print, no fs, no rand), the wasm-gc bench target stubs the `aver/*` host imports in-process. The stubs return `errno 0` for every call, so programs that need real I/O cannot be benchmarked on this target today.
 
-The Rust target spawns a fresh process every iteration — that's ~1-2 ms on macOS, dominating wall-clock for programs that finish in pure compute under that. Same shape as cargo bench's `run_external` measurements.
+The Rust target spawns a new process on every iteration. That costs about 1-2 ms on macOS and dominates the wall-clock time of programs whose pure compute finishes faster than that. cargo bench's `run_external` measurements work the same way.
 
 ### Manifest format
 
@@ -87,7 +87,7 @@ wall_time_p95_pct = 35.0    # default 30.0
 
 `backend.aver_version` is the package version of the binary that ran the bench (`CARGO_PKG_VERSION` at compile time). `backend.build` is `release` or `debug`. `backend.wasmtime_version` is set only for `--target=wasm-gc`. `host.os`/`host.arch` come from `std::env::consts`; `host.cpus` from `std::thread::available_parallelism`.
 
-`compiler_visible_allocs` is populated as of 0.15.2 (IR-level alloc-site count via `NeutralAllocPolicy`). `response_bytes` stays `null` until stdout capture lands later in the cycle.
+`compiler_visible_allocs` is filled in since 0.15.2 (the IR-level count of alloc sites, via `NeutralAllocPolicy`). `response_bytes` stays `null` until stdout capture lands later in the cycle.
 
 ### Baseline + regression gate (single scenario)
 
@@ -104,7 +104,7 @@ aver bench bench/scenarios/fib.toml \
     --fail-on-regression
 ```
 
-Tolerances are configurable per-scenario via `[tolerance]` in the TOML (`wall_time_p50_pct = 25.0`, etc.). `--fail-on-regression` exits 1 when any gated metric exceeds budget. `compiler_visible_allocs` is also gated — exact-match, growth past baseline is a regression.
+Each scenario sets its own tolerances in the `[tolerance]` table of its TOML (`wall_time_p50_pct = 25.0`, etc.). `--fail-on-regression` exits 1 when any gated metric goes over budget. `compiler_visible_allocs` is gated too, by exact match: any growth past the baseline counts as a regression.
 
 ### Baseline + regression gate (directory mode, the CI shape)
 
@@ -121,9 +121,9 @@ aver bench bench/scenarios/ \
     --fail-on-regression
 ```
 
-`--baseline-dir DIR` auto-picks `<host.os>-<host.arch>-<backend.name>.json` from `DIR` based on the current machine. When no matching file exists, the gate is silently skipped — one CI workflow gates wherever a baseline is pinned, runs cleanly on hosts without one. Repo currently ships `bench/baselines/macos-aarch64-vm.json`; Linux baseline gets captured automatically on first CI run, commit `bench/baselines/linux-x86_64-vm.json` from that artifact to enable gating there.
+`--baseline-dir DIR` picks `<host.os>-<host.arch>-<backend.name>.json` from `DIR` to match the current machine. If there is no matching file, the gate is skipped without a message. One CI workflow therefore gates wherever a baseline is pinned and runs cleanly on hosts that have none. The repo currently ships `bench/baselines/macos-aarch64-vm.json`. The Linux baseline is captured automatically on the first CI run; commit `bench/baselines/linux-x86_64-vm.json` from that artifact to turn on gating there.
 
-The CI `Bench Gate` job in `.github/workflows/ci.yml` runs `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression --json` on pushes to main and exact release-candidate branches; results upload as a 30-day-retention artifact.
+The CI `Bench Gate` job in `.github/workflows/ci.yml` runs `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression --json` on pushes to main and to exact release-candidate branches. The results are uploaded as an artifact kept for 30 days.
 
 ### NDJSON output for streaming
 
@@ -131,7 +131,7 @@ The CI `Bench Gate` job in `.github/workflows/ci.yml` runs `aver bench bench/sce
 aver bench bench/scenarios/ --json | jq -c '.scenario.name + ": " + (.iterations.p50_ms|tostring)'
 ```
 
-Directory mode emits one report per line when `--json` is set. Trivially streamable to `jq`, dashboards, or downstream regression tools — the report is identical in shape across targets so consumers don't branch on `backend.name`.
+With `--json`, directory mode prints one report per line, which streams easily into `jq`, dashboards or downstream regression tools. The report has the same shape for every target, so consumers do not need to branch on `backend.name`.
 
 ### Release script integration
 
@@ -142,7 +142,7 @@ run([str(REPO_ROOT / "target" / "release" / "aver"), "bench",
      str(REPO_ROOT / "bench" / "scenarios"), "--json"])
 ```
 
-Numbers aren't gated yet (CI gate is 0.15.2 with checked-in baselines + cross-machine calibration); the run must succeed. Catches pipeline / VM regressions that unit tests miss — a real program that compiles fine but crashes in bytecode dispatch will surface here.
+The numbers are not gated here yet (the CI gate is 0.15.2, with checked-in baselines and cross-machine calibration); the run only has to succeed. It catches pipeline and VM regressions that unit tests miss. A real program that compiles fine but crashes in bytecode dispatch shows up here.
 
 ## `cargo bench` — Criterion comparison
 
@@ -150,14 +150,14 @@ Numbers aren't gated yet (CI gate is 0.15.2 with checked-in baselines + cross-ma
 cargo bench --bench comparison_bench --features wasm
 ```
 
-Runs every scenario across VM / WASM / codegen / self-hosted. Criterion handles baselines locally:
+This runs every scenario on the VM, WASM, codegen and self-hosted backends. Criterion keeps baselines locally:
 
 ```bash
 cargo bench --bench comparison_bench --features wasm -- --save-baseline 0.15.0
 cargo bench --bench comparison_bench --features wasm -- --baseline 0.15.0
 ```
 
-The HTML report drops in `target/criterion/`. Use this for cross-backend comparison ("is WASM faster than VM on map_build?"); use `aver bench` for per-backend regression on a stable target.
+The HTML report is written to `target/criterion/`. Use `cargo bench` to compare backends ("is WASM faster than VM on map_build?") and `aver bench` to catch regressions of one backend on a stable target.
 
 ## When to use which
 
@@ -171,9 +171,9 @@ The HTML report drops in `target/criterion/`. Use this for cross-backend compari
 
 ## Adding a scenario
 
-1. `bench/scenarios/myprog.av` — the Aver source. Must define `fn main` (any return type).
-2. `bench/scenarios/myprog.toml` — manifest pointing at `myprog.av`.
+1. `bench/scenarios/myprog.av`: the Aver source. It must define `fn main` (any return type).
+2. `bench/scenarios/myprog.toml`: the manifest, pointing at `myprog.av`.
 3. Run it: `aver bench bench/scenarios/myprog.toml`.
-4. Pick up by cargo bench: add `const MYPROG_SRC: &str = include_str!("../bench/scenarios/myprog.av");` and a `tests` entry in `benches/comparison_bench.rs`.
+4. To include it in cargo bench, add `const MYPROG_SRC: &str = include_str!("../bench/scenarios/myprog.av");` and a `tests` entry in `benches/comparison_bench.rs`.
 
-That's the full setup. No code generation, no manifest registry, no CI changes — directory mode globs everything alphabetically.
+Nothing else is needed. There is no code generation, no manifest registry and no CI change, because directory mode globs every scenario in alphabetical order.
