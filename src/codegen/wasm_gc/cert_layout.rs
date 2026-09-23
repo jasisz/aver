@@ -90,11 +90,14 @@ impl PlanLayout for CertLayout<'_> {
     fn record(&self, name: &str) -> Option<RecordLayout> {
         let registry = self.registry;
         let canonical = registry.canonical_type_name(name);
-        let fields = registry.record_fields.get(canonical).or_else(|| {
-            canonical
-                .rsplit_once('.')
-                .and_then(|(_, bare)| registry.record_fields.get(bare))
-        })?;
+        let (key, fields) = registry
+            .record_fields
+            .get_key_value(canonical)
+            .or_else(|| {
+                canonical
+                    .rsplit_once('.')
+                    .and_then(|(_, bare)| registry.record_fields.get_key_value(bare))
+            })?;
         if fields
             .iter()
             .any(|(field, _)| registry.is_eligible_carrier_field(canonical, field))
@@ -107,6 +110,7 @@ impl PlanLayout for CertLayout<'_> {
             Some(registry.record_type_idx(canonical)?)
         };
         Some(RecordLayout {
+            key: key.clone(),
             struct_idx,
             fields: fields.clone(),
         })
@@ -124,7 +128,11 @@ impl PlanLayout for CertLayout<'_> {
             let info = registry.variant_in(parent, ctor_name)?;
             ctors.push((info.type_idx, info.fields.clone()));
         }
-        Some(SumLayout { root, ctors })
+        Some(SumLayout {
+            key: parent.to_string(),
+            root,
+            ctors,
+        })
     }
 
     fn user_ctor(&self, ctor: CtorId) -> Option<(String, u32)> {

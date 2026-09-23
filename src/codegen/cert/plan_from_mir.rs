@@ -31,6 +31,9 @@ use crate::ir::{BuiltinId, CtorId, FnId};
 /// constructor in declaration order, the constructor's struct and field
 /// types.
 pub struct SumLayout {
+    /// The name the emitter's registry keys the sum by: every spelling of
+    /// the type (bare, module-qualified) resolves to this one.
+    pub key: String,
     pub root: u32,
     pub ctors: Vec<(u32, Vec<String>)>,
 }
@@ -39,6 +42,10 @@ pub struct SumLayout {
 /// one-field newtype, which the emitter erases to its field) and its declared
 /// fields in order.
 pub struct RecordLayout {
+    /// The name the emitter's registry keys the record by: every spelling of
+    /// the type (bare, module-qualified) resolves to this one, so both get
+    /// one type id.
+    pub key: String,
     pub struct_idx: Option<u32>,
     pub fields: Vec<(String, String)>,
 }
@@ -350,7 +357,7 @@ impl TypeTableBuilder {
             return Err(format!("type `{name}` has a special representation"));
         }
         if let Some(rec) = layout.record(name) {
-            let key = format!("rec:{name}");
+            let key = format!("rec:{}", rec.key);
             if let Some(reason) = self.failed.get(&key) {
                 return Err(reason.clone());
             }
@@ -390,7 +397,7 @@ impl TypeTableBuilder {
             return Ok(PlanTy::Record(tid));
         }
         if let Some(sum) = layout.sum(name) {
-            let key = format!("sum:{name}");
+            let key = format!("sum:{}", sum.key);
             if let Some(reason) = self.failed.get(&key) {
                 return Err(reason.clone());
             }
