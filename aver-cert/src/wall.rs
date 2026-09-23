@@ -37,6 +37,7 @@ pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
 pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
     include_str!("../assets/wall/current/AcceptanceSoundness.lean");
 pub const CERT_GRAMMAR_BRIDGE: &str = include_str!("../assets/wall/current/GrammarBridge.lean");
+
 /// The checker-owned pieces of the certificate source model (`AverBits` with
 /// its `@[simp]` equations, the `aver_int_order` tactic): the constructs the
 /// token gate refuses in package text, owned and pinned here instead.
@@ -282,7 +283,7 @@ fn render_byte_module(
             .join(" |||\n  ")
     };
     format!(
-        "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.{module}\n\n/-- {description} -/\ndef {bytes_name} : Nat := {numeral}\ndef {len_name} : Nat := {}\n\nend AverCert.{module}\n",
+        "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.{module}\n\n/-- {description} -/\nnoncomputable def {bytes_name} : Nat :=\n  {numeral}\ndef {len_name} : Nat := {}\n\nend AverCert.{module}\n",
         bytes.len()
     )
 }

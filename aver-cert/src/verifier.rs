@@ -3797,14 +3797,14 @@ mod tests {
     #[test]
     fn artifact_bytes_are_little_endian_nat() {
         let rendered = wall::render_artifact_bytes(&[0x00, 0x61, 0x73, 0x6d]);
-        assert!(rendered.contains("def modBytes : Nat := 0x6d736100"));
+        assert!(rendered.contains("noncomputable def modBytes : Nat :=\n  0x6d736100\n"));
         assert!(rendered.contains("def modLen : Nat := 4"));
         // Past one numeral chunk, each chunk sits at its byte offset.
         let mut long = vec![0u8; 1025];
         long[0] = 0x01;
         long[1024] = 0xab;
         let rendered = wall::render_artifact_bytes(&long);
-        assert!(rendered.contains("def modBytes : Nat := 0x"));
+        assert!(rendered.contains("noncomputable def modBytes : Nat :=\n  0x"));
         assert!(rendered.contains("01 |||\n  (0xab <<< 8192)\n"));
         assert!(rendered.contains("def modLen : Nat := 1025"));
     }

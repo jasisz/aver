@@ -345,12 +345,15 @@ fn render_artifact_host_roles(analysis: &Analysis, params: &str) -> String {
 }
 
 /// Plans checked per kernel declaration in `ArtifactPlans.lean`.
-const PLAN_CHUNK: usize = 8;
+const PLAN_CHUNK: usize = 32;
 
 /// The per-entry plan checks (`entryAccepted`), `PLAN_CHUNK` entries per
 /// `decide +kernel` declaration, in their own compilation unit: one check
-/// over every plan of a large module exhausts the kernel's memory. The
-/// chunks are chained from the last one back to the whole list.
+/// over every plan of a large module exhausts the kernel's memory, and every
+/// declaration decodes the module's sections again, so the chunk trades the
+/// two (on btc-listener's 173 plans: 8 per chunk took 227 seconds, 32 took
+/// 124 seconds at a 7.4 GiB peak). The chunks are chained from the last one
+/// back to the whole list.
 fn render_artifact_plans(analysis: &Analysis) -> String {
     let n = analysis.entries.len();
     let mut s = String::from(
@@ -364,7 +367,7 @@ fn render_artifact_plans(analysis: &Analysis) -> String {
          namespace AverCert.Artifact\n\
          open AverCert AverCert.Schema AverCert.AcceptedArtifact AverCert.TypeTable\n\n\
          /-- One plan's acceptance check against the staged artifact bytes. -/\n\
-         abbrev planOk : FnEntry → Bool :=\n  \
+         noncomputable abbrev planOk : FnEntry → Bool :=\n  \
            entryAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n    \
            (mctxOf AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans)\n    \
            AverCert.manifest.fnPlans\n\n",
@@ -456,7 +459,7 @@ fn render_artifact(
          set_option maxHeartbeats 1600000\n\n\
          namespace AverCert.Artifact\n\
          open AverCert AverCert.Schema AverCert.AcceptedArtifact\n\n\
-         def data : ArtifactData :=\n  \
+         noncomputable def data : ArtifactData :=\n  \
            {{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen,\n    \
              manifest := AverCert.manifest, wasip2ComponentEnvelope := {envelope},\n    \
              closureFuel := {fuel},\n    \
