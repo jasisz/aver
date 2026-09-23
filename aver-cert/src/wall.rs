@@ -36,6 +36,7 @@ pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
     include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
 pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
     include_str!("../assets/wall/current/AcceptanceSoundness.lean");
+pub const CERT_GRAMMAR_BRIDGE: &str = include_str!("../assets/wall/current/GrammarBridge.lean");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Source {
@@ -45,7 +46,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 19] = [
+pub const SOURCES: [Source; 20] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -81,6 +82,10 @@ pub const SOURCES: [Source; 19] = [
     Source {
         name: "Grammar.lean",
         contents: CERT_GRAMMAR,
+    },
+    Source {
+        name: "GrammarBridge.lean",
+        contents: CERT_GRAMMAR_BRIDGE,
     },
     Source {
         name: "GrammarLower.lean",
@@ -126,7 +131,7 @@ pub const SOURCES: [Source; 19] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 17] = [
+pub const PRISTINE_ROOTS: [&str; 18] = [
     "CertPrelude",
     "CertDecode",
     "ArithTemplateDerisk",
@@ -144,6 +149,7 @@ pub const PRISTINE_ROOTS: [&str; 17] = [
     "ClaimAxes",
     "AcceptanceSoundnessCore",
     "AcceptanceSoundness",
+    "GrammarBridge",
 ];
 
 #[derive(Debug)]
