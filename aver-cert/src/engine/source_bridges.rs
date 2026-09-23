@@ -865,30 +865,6 @@ struct BridgePlan {
     with_default: bool,
 }
 
-/// The largest plan a bridge is attempted for. A step proof unfolds the
-/// whole body and its callees' images at once, and its heartbeat cap does not
-/// bound every tactic it runs: on k5's 247-node `divideBang` family one step
-/// ran for minutes and the package's bridge build past any phase limit.
-const MAX_BRIDGE_PLAN_NODES: usize = 100;
-
-/// The number of nodes of a plan body (patterns not counted).
-fn plan_nodes(e: &PlanExpr) -> usize {
-    1 + match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) => 0,
-        PlanExpr::Let(_, v, b) => plan_nodes(v) + plan_nodes(b),
-        PlanExpr::Call(_, args)
-        | PlanExpr::TailCall(_, args)
-        | PlanExpr::RecordCreate(_, args)
-        | PlanExpr::Construct(_, _, args)
-        | PlanExpr::Interp(args)
-        | PlanExpr::List(_, args) => args.iter().map(plan_nodes).sum(),
-        PlanExpr::BinOp(_, l, r) => plan_nodes(l) + plan_nodes(r),
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => plan_nodes(x),
-        PlanExpr::If(c, t, el) => plan_nodes(c) + plan_nodes(t) + plan_nodes(el),
-        PlanExpr::Match(s, arms) => plan_nodes(s) + arms.iter().map(|(_, b)| plan_nodes(b)).sum::<usize>(),
-    }
-}
-
 /// Every String literal a plan mentions (literal nodes and literal
 /// patterns), as bytes.
 fn string_literals(e: &PlanExpr, out: &mut BTreeSet<Vec<u8>>) {
@@ -999,12 +975,6 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
             .cloned()
             .unwrap_or_else(|| e.name.clone());
         let derived = (|| -> Result<BridgedFn, String> {
-            if plan_nodes(&e.plan.body) > MAX_BRIDGE_PLAN_NODES {
-                return Err(format!(
-                    "the plan has more than {MAX_BRIDGE_PLAN_NODES} nodes, beyond what the \
-                     one-step bridge proof unfolds in bounded time"
-                ));
-            }
             let def = info.def_for(&flat)?;
             if def.params.len() != e.plan.params.len() {
                 return Err(format!(
