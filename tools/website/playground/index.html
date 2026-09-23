@@ -181,19 +181,19 @@
         <div class="about-features">
             <div class="about-feature">
                 <strong>Intent is explicit</strong>
-                <span>Every function can carry a prose description (<code>?</code>) explaining <em>what</em> and <em>why</em>.</span>
+                <span>Any function can carry a short prose description (<code>?</code>) that says <em>what</em> it does and <em>why</em>.</span>
             </div>
             <div class="about-feature">
                 <strong>Effects are tracked</strong>
-                <span>I/O, network, disk — declared in the type system with <code>! [Console.print]</code>. No hidden side effects.</span>
+                <span>I/O, network and disk access are declared in the type system, for example <code>! [Console.print]</code>. There are no hidden side effects.</span>
             </div>
             <div class="about-feature">
                 <strong>Verify blocks are specs</strong>
-                <span><code>verify add</code> cases run as tests, act as documentation, guard against regressions.</span>
+                <span><code>verify add</code> cases run as tests. They also document the function and catch regressions.</span>
             </div>
             <div class="about-feature">
                 <strong>Multiple backends</strong>
-                <span>Bytecode VM for dev, Rust codegen for deploy, WASM for browsers. Same source, same semantics.</span>
+                <span>A bytecode VM for development, Rust codegen for deployment, WASM for browsers. All of them run the same source with the same semantics.</span>
             </div>
         </div>
 
@@ -218,20 +218,20 @@
     <div class="about-card">
         <button class="about-close" data-close-wasm>&times;</button>
         <h2>Native WASM</h2>
-        <p class="about-tagline">No emscripten. Shared runtime. Just your code.</p>
+        <p class="about-tagline">No emscripten. Shared runtime. Only your code.</p>
 
         <div class="about-features">
             <div class="about-feature">
                 <strong>Direct compilation</strong>
-                <span>Aver has its own WASM codegen — it emits WebAssembly GC bytecode directly, not through Rust or C. No emscripten, no wasm-bindgen, no glue code. Engine handles GC and tail calls; the binary you ship is just your program logic plus per-instantiation helpers DCE'd to what each program actually calls.</span>
+                <span>Aver has its own WASM codegen. It emits WebAssembly GC bytecode directly, without going through Rust or C, so there is no emscripten, no wasm-bindgen and no glue code. The engine handles GC and tail calls. The binary you ship holds your program logic plus per-instantiation helpers, with dead code eliminated down to what each program calls.</span>
             </div>
             <div class="about-feature">
                 <strong>Tiny binaries</strong>
-                <span>Snake ships at 9.3 KiB. Tetris is 14.6 KiB. A full roguelike with procedural generation is 34.7 KiB. Built with <code>--target wasm-gc --optimize size</code> — engine GC + native tail-calls; per-program binary, no shared runtime to fetch.</span>
+                <span>Snake ships at 9.3 KiB and Tetris at 14.6 KiB. A full roguelike with procedural generation is 34.7 KiB. They are built with <code>--target wasm-gc --optimize size</code>, using the engine's GC and native tail calls. Each program is its own binary, with no shared runtime to fetch.</span>
             </div>
             <div class="about-feature">
                 <strong>Capability-based imports</strong>
-                <span>WASM modules import only the effects they declare: <code>Terminal.print</code>, <code>Console.readLine</code>, <code>Time.sleep</code>. The host provides implementations. No filesystem access, no network — unless you grant it.</span>
+                <span>A WASM module imports only the effects it declares, such as <code>Terminal.print</code>, <code>Console.readLine</code> or <code>Time.sleep</code>. The host provides the implementations. There is no filesystem or network access unless you grant it.</span>
             </div>
             <div class="about-feature">
                 <strong>Make your own</strong>
