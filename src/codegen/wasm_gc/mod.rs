@@ -63,6 +63,7 @@ mod bytes_bridge;
 mod capability_abi;
 mod capability_imports;
 mod capability_plan;
+mod cert_layout;
 pub(crate) mod effects;
 mod flatten;
 mod jobs;
@@ -74,9 +75,6 @@ mod packed_sequences;
 #[cfg(test)]
 mod tests;
 mod types;
-pub mod work_abi;
-mod work_manifest;
-pub(crate) use types::{OPTION_SOME_TAG, RESULT_OK_TAG};
 mod types_discovery;
 mod view;
 mod wasip2_capability_imports;
@@ -88,6 +86,8 @@ mod wasip2_http_handler;
 mod wasip2_imports;
 mod wasip2_tcp;
 mod wat_helper;
+pub mod work_abi;
+mod work_manifest;
 
 pub use body::{CoverageReport, coverage_report};
 pub use capability_plan::{
@@ -144,7 +144,7 @@ impl std::error::Error for WasmGcError {}
 pub struct WasmGcCompileOutput {
     pub bytes: Vec<u8>,
     pub mir_count: usize,
-    pub fragment_plans: Vec<crate::codegen::cert::FragmentPlanArtifact>,
+    pub cert_plans: crate::codegen::cert::ModulePlans,
 }
 
 /// Compile post-pipeline IR (`items`) to a WebAssembly GC module
@@ -231,10 +231,10 @@ pub fn compile_to_wasm_gc_flattened_with_options(
         None,
         packed_sequences_enabled,
     )
-    .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+    .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
         mir_count,
-        fragment_plans,
+        cert_plans,
     })
 }
 
@@ -256,10 +256,10 @@ pub fn compile_to_wasm_gc_flattened_with_capabilities(
         None,
         true,
     )
-    .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+    .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
         mir_count,
-        fragment_plans,
+        cert_plans,
     })
 }
 
@@ -279,10 +279,10 @@ pub fn compile_to_wasm_gc_with_handler_and_cert_plans(
         None,
         true,
     )
-    .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+    .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
         mir_count,
-        fragment_plans,
+        cert_plans,
     })
 }
 
@@ -333,10 +333,10 @@ pub fn compile_to_wasm_gc_flattened_with_custom_capabilities(
         Some(capabilities),
         packed_sequences_enabled,
     )
-    .map(|(bytes, mir_count, fragment_plans)| WasmGcCompileOutput {
+    .map(|(bytes, mir_count, cert_plans)| WasmGcCompileOutput {
         bytes,
         mir_count,
-        fragment_plans,
+        cert_plans,
     })
 }
 

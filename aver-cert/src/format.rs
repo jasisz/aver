@@ -149,7 +149,18 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// A law-claim listing bridges carries a second corollary conjoining them,
 /// pinned apart from its own so an unfinished bridge cannot cost the law its
 /// credit.
-pub const CERT_SCHEMA_VERSION: u32 = 8;
+///
+/// Schema 9 states every obligation over the one plan grammar: the manifest
+/// carries one `fnPlans` list (each planned function's optimized MIR body,
+/// printed 1:1), the declared type layout, and obligations the wall derives
+/// from the plans. Every certified export reports the one class
+/// [`PLAN_CLASS`] with facets derived in the wall. Schema 9 declares no
+/// law-claims and no source bridges yet; a package declaring either is
+/// refused.
+pub const CERT_SCHEMA_VERSION: u32 = 9;
+
+/// The one report class of a certified export (schema 9).
+pub const PLAN_CLASS: &str = "source-plan-v1";
 
 /// Longest a transported display string may be. Every declared-only candidate
 /// the manifest carries — export names, class and domain labels, runtime
@@ -163,21 +174,9 @@ pub const MAX_CANDIDATE_LEN: usize = 200;
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
-/// Discharge theorem the producer names for the record projection-compute
-/// face. Like every `theorem` field it is manifest-declared and informational
-/// (section 4.2) — acceptance consumes the single artifact root, not per-export
-/// theorem names — but it is the one signal on the render side that tells which
-/// certified exports carry that face's NARROWER certified domain, so producer
-/// and verifier share the literal here rather than spelling it twice.
-pub const RECORD_COMPUTE_DISCHARGE_THEOREM: &str =
-    "AcceptanceSoundness.recordCompute_claim_discharges";
-
-/// The domain disclosure `aver-cert explain` prints under a record
-/// projection-compute export. Its content is section 4.3(ii): that face's
-/// `StandardFace.recordComputeDomRepr` requires every Int carrier it is handed
-/// — arguments and record fields alike — to be in the runtime's normal form.
-pub const RECORD_COMPUTE_DOMAIN_LINE: &str =
-    "domain: Int leaves assumed in the runtime's normal form (canonical carriers)";
+/// The discharge theorem every certified export names (informational; the
+/// acceptance consumes the single artifact root).
+pub const FN_CLAIM_DISCHARGE_THEOREM: &str = "AcceptanceSoundness.fn_claim_discharges";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
@@ -513,7 +512,7 @@ mod tests {
         );
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD, "suffix_len");
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_KIND, "prefix-core-suffix/v1");
-        assert_eq!(CERT_SCHEMA_VERSION, 8);
+        assert_eq!(CERT_SCHEMA_VERSION, 9);
     }
 
     #[test]

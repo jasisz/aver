@@ -7028,15 +7028,12 @@ fn cmd_compile_wasm_gc(
             .and_then(|name| name.to_str())
             .expect("generated wasm file name is UTF-8");
         if let Err(error) = emit_artifact_certificate(
-            file,
-            project_name,
-            module_root_override,
             out_path,
             aver::codegen::cert::CertificateArtifact::WasmGc {
                 file_name: artifact_file_name,
                 module_bytes: &bytes,
             },
-            &wasm_gc_output.fragment_plans,
+            &wasm_gc_output.cert_plans,
         ) {
             eprintln!("{}", format!("certificate: {error}").red());
             process::exit(1);
@@ -7282,64 +7279,26 @@ fn render_wasmtime_runtime_policy(
         .map_err(|error| format!("serialize Wasmtime runtime policy: {error}"))
 }
 
-/// Emit the Stage-B artifact certificate: classify the emitted module,
-/// reuse the `aver proof` Lean model emission, and write `cert/`.
+/// Emit the artifact certificate: check the compiler's printed plans against
+/// the emitted module and write `cert/`.
 ///
 /// Gated on `certify` (the aver-cert producer engine + `codegen::cert`). Both
 /// wasm-gc and wasip2 call this with an explicit description of the delivered
-/// artifact and the core-module bytes consumed by the existing Wasm wall.
+/// artifact and the core-module bytes consumed by the Wasm wall. The plans are
+/// the optimized MIR the emitter consumed in the same compile.
 #[cfg(feature = "certify")]
 fn emit_artifact_certificate(
-    file: &str,
-    project_name: Option<&str>,
-    module_root_override: Option<&str>,
     out_path: &Path,
     artifact: aver::codegen::cert::CertificateArtifact<'_>,
-    fragment_plans: &[aver::codegen::cert::FragmentPlanArtifact],
+    cert_plans: &aver::codegen::cert::ModulePlans,
 ) -> Result<(), String> {
     use aver::codegen::cert;
+    // Schema 9 states every obligation over the plan and carries no
+    // law-claims or source bridges yet, so no Lean model is emitted.
 
-    // Reuse the `aver proof` Lean model emission for the model definitions.
-    // Built before `analyze` so the recursion classifier can read the combinator
-    // operator (`+`/`*`) from the model.
-    let (mut mctx, _mroot) = build_codegen_context(
-        file,
-        project_name,
-        module_root_override,
-        false,
-        &super::cli::CompilePolicyMode::Embed,
-        None,
-        false,
-        false, // apply_traversal_lowering — model wants source-level IR
-        true,  // run_refinement_lower
-        true,  // run_contract_lower
-        true,  // run_law_lower
-    );
-    let model_out = lean_codegen::transpile_for_cert_model(&mut mctx);
-
-    let analysis = cert::analyze_for_target_with_fragment_plans(
-        artifact.core_module_bytes(),
-        &model_out.files,
-        fragment_plans,
-        artifact.target(),
-    )?;
+    let analysis = cert::analyze(artifact.core_module_bytes(), cert_plans, artifact.target())?;
     let artifact_file_name = artifact.file_name().to_string();
-
-    // Law-claims travel as STRUCTURE from the emitter that built each law
-    // theorem's statement to the package renderer — the producer never scans
-    // the emitted Lean text back for them.
-    let law_claims: Vec<cert::LawClaim> = model_out
-        .law_claims
-        .iter()
-        .map(|claim| cert::LawClaim {
-            label: claim.label.clone(),
-            prefix: claim.namespace.clone(),
-            theorem: claim.theorem.clone(),
-            statement: claim.statement.clone(),
-        })
-        .collect();
-    let declines =
-        cert::write_project(out_path, artifact, &analysis, &model_out.files, law_claims)?;
+    let declines = cert::write_project(out_path, artifact, &analysis, Vec::new())?;
 
     let cert_dir = out_path.join("cert");
     let certified = analysis.certified_names();
@@ -7353,17 +7312,9 @@ fn emit_artifact_certificate(
     if !certified.is_empty() {
         println!("    certified: {}", certified.join(", "));
     }
-    // A law-claim the package renderer refused is said out loud rather than
-    // dropped in silence: the law is still proved in the model modules, it
-    // just does not enter the certificate's claimed surface.
     for (label, reason) in &declines.law_claims {
         println!("    law-claim declined: {label} — {reason}");
     }
-    // Same treatment for a record projection-compute export whose plan the
-    // producer could not identify with a source function: the export stays
-    // certified, its certified model just stays the plan. The same list also
-    // goes into the package as `sourceBridgesDeclined`, so the reason survives
-    // this terminal and `aver cert explain` can print it back.
     for (export, reason) in &declines.source_bridges {
         println!("    source-bridge declined: {export} — {reason}");
     }
@@ -7709,9 +7660,6 @@ fn cmd_compile_wasip2(
                 .expect("generated component file name is UTF-8");
             let envelope = component_artifact.envelope.declaration();
             if let Err(error) = emit_artifact_certificate(
-                file,
-                project_name,
-                module_root_override,
                 out_path,
                 aver::codegen::cert::CertificateArtifact::Wasip2 {
                     file_name: artifact_file_name,
@@ -7719,7 +7667,7 @@ fn cmd_compile_wasip2(
                     embedded_core_module: &component_artifact.envelope.embedded_core_module,
                     envelope,
                 },
-                &wasm_gc_output.fragment_plans,
+                &wasm_gc_output.cert_plans,
             ) {
                 eprintln!("{}", format!("certificate: {error}").red());
                 process::exit(1);

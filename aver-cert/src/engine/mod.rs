@@ -8,28 +8,21 @@
 //! Everything else is FAIL-CLOSED: listed in `cert-manifest.json` as
 //! `source-level-only` with a reason. No weaker theorem is ever emitted.
 //!
-//! Certified-function bodies are read back from the module bytes the compiler
-//! just emitted, checked against the admitted profiles, and re-rendered as
-//! `CertPrelude.WInstr` data. Any body that cannot be bound to an admitted
-//! obligation is declined rather than assigned a weaker theorem.
-//!
-//! `aver cert verify` performs standard Wasm validation, then the accepted-
-//! artifact witness uses `CertDecode` to compute code/carrier/struct facts from
-//! `ArtifactBytes` in-kernel. Rust classification and rederivation remain
-//! producer diagnostics only. Expression plans are emitted once,
-//! as Lean data in `Plans.lean`; the checker-owned wall validates and lowers
-//! that data against the exact artifact bytes. Redundant text sidecars are not
-//! part of the public certificate package.
+//! The compiler prints every emitted function's optimized MIR body 1:1 into
+//! the one plan grammar (`plan.rs`); the producer here checks each plan
+//! against the exact module bytes (`plan_check.rs` twins of the wall's
+//! lowering) and declines per function whatever does not match. The offered
+//! plans are rendered as Lean data in `Plans.lean`; the checker-owned wall
+//! lowers them again and pins the result to the artifact bytes.
 
-// This module compiles in two layers. With only the `plans` feature the
-// plan-surface files below are compiled: the fragment/sym plan IR types and
-// the canonical byte lowering the wasm-gc emitter needs in every build. The
-// full certificate engine — byte classifier, rederiver, Lean renderer, and
-// the embedded soundness wall re-export — is additionally compiled under the
-// `engine` feature (which implies `plans`). External paths are unchanged:
-// everything stays a flat `aver_cert::*` item.
+// Two layers: with only the `plans` feature, the plan data types the compiler
+// prints into; under `engine` (which implies `plans`), the byte facts, the
+// producer, the Lean renderer and the embedded wall re-export. Everything
+// stays a flat `aver_cert::*` item.
 #[cfg(feature = "engine")]
 use sha2::{Digest, Sha256};
+#[cfg(feature = "engine")]
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 #[cfg(feature = "engine")]
 use std::path::Path;
 
@@ -47,6 +40,10 @@ pub const PROFILE_ID: &str = crate::format::PROFILE_ID;
 pub const RUNTIME_ABI: &str = crate::format::RUNTIME_ABI_WASM_GC;
 /// Conditional simulation under the runtime contracts named by the claim.
 pub const CERT_LEVEL: &str = "L1";
+/// The one report class of a certified export.
+pub const PLAN_CLASS: &str = crate::format::PLAN_CLASS;
+/// The discharge theorem every certified export names.
+pub const FN_CLAIM_DISCHARGE_THEOREM: &str = crate::format::FN_CLAIM_DISCHARGE_THEOREM;
 pub const CERT_SCHEMA_VERSION: u32 = crate::format::CERT_SCHEMA_VERSION;
 pub const BOX_CONTRACT: &str = "__rt_aint_from_i64 (box i64 -> carrier)";
 pub const INT_ADD_CONTRACT: &str =
@@ -89,59 +86,23 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex(&h.finalize())
 }
 
-// Plan surface (`plans` feature): plan IR types, the SymPlan -> ExprFragmentPlan
-// encoder, and the canonical byte lowering the wasm-gc emitter calls at emit
-// time.
-include!("expr_fragment_defs.rs");
-include!("expr_fragment_faces.rs");
-include!("sym_plan_defs.rs");
-include!("sym_plan_encode.rs");
-include!("classify_expr_fragment_lower.rs");
+#[cfg(feature = "engine")]
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
 
-// Full certificate engine (`engine` feature): byte-derived classification,
-// rederivation, Lean rendering, and everything that references the wall.
+// Plan surface (`plans` feature): the one-grammar plan data.
+include!("plan.rs");
+
+// The producer (`engine` feature).
 #[cfg(feature = "engine")]
-include!("core_wasm.rs");
+include!("module_facts.rs");
 #[cfg(feature = "engine")]
-include!("core_shapes.rs");
+include!("plan_check.rs");
 #[cfg(feature = "engine")]
-include!("sym_plan_render.rs");
-#[cfg(feature = "engine")]
-include!("cert_defs.rs");
-#[cfg(feature = "engine")]
-include!("recursion_plan_defs.rs");
-#[cfg(feature = "engine")]
-include!("mutual_plan_defs.rs");
-#[cfg(feature = "engine")]
-include!("composition_plan_defs.rs");
-#[cfg(feature = "engine")]
-include!("verbatim_plan_defs.rs");
-#[cfg(feature = "engine")]
-include!("int_dispatch_plan_defs.rs");
-#[cfg(feature = "engine")]
-include!("string_plan_defs.rs");
-#[cfg(feature = "engine")]
-include!("construct_plan_defs.rs");
-#[cfg(feature = "engine")]
-include!("field_projection_plan_defs.rs");
-#[cfg(feature = "engine")]
-include!("cert_methods.rs");
-#[cfg(feature = "engine")]
-include!("analysis.rs");
+include!("produce.rs");
 #[cfg(feature = "engine")]
 include!("module_envelope.rs");
 #[cfg(feature = "engine")]
-include!("declared_envelope.rs");
+include!("render_package.rs");
 include!("law_claims.rs");
-#[cfg(feature = "engine")]
-include!("rederive.rs");
-#[cfg(feature = "engine")]
-include!("disasm.rs");
-#[cfg(feature = "engine")]
-include!("classification.rs");
-#[cfg(feature = "engine")]
-include!("model_eval.rs");
-#[cfg(feature = "engine")]
-include!("source_bridges.rs");
-#[cfg(feature = "engine")]
-include!("render.rs");

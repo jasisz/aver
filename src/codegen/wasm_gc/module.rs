@@ -148,14 +148,7 @@ pub(super) fn emit_module_with(
     capability_wit_plan: Option<&crate::codegen::wasip2::CapabilityWitPlan>,
     capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
     packed_sequences_enabled: bool,
-) -> Result<
-    (
-        Vec<u8>,
-        usize,
-        Vec<crate::codegen::cert::FragmentPlanArtifact>,
-    ),
-    WasmGcError,
-> {
+) -> Result<(Vec<u8>, usize, crate::codegen::cert::ModulePlans), WasmGcError> {
     let fn_defs: Vec<&FnDef> = items
         .iter()
         .filter_map(|it| match it {
@@ -3141,9 +3134,6 @@ pub(super) fn emit_module_with(
     //
     // `mir_fn_for[i]` is `Some(&MirFn)` when the i-th fn lowered to
     // MIR (always true on valid input — every resolved fn lowers).
-    // `fragment_plan_for[i]` is the certificate producer's plan for the
-    // i-th fn, handed to `--certify` as input only: it never steers the
-    // bytes, and the producer declines a plan that does not match them.
     // `mir_dispatch[i]` is the final per-fn non-stub decision: `true`
     // when the MIR body emitter rendered the fn, `false` when the fn got
     // a trap-stub body. It is computed once in
@@ -3154,19 +3144,6 @@ pub(super) fn emit_module_with(
         .iter()
         .map(|rfd| mir_program.fn_by_id(rfd.fn_id))
         .collect();
-    // Record layout resolver for the certificate plan producer: field name ->
-    // (declared field index, field source type). Newtypes/carriers return
-    // `None` (their field reads are identity, not `struct.get`), so they never
-    // plan a projection the emitter does not emit.
-    let record_field_lookup = |record: &str, field: &str| -> Option<(u32, String)> {
-        if registry.newtype_underlying(record).is_some() {
-            return None;
-        }
-        registry.record_type_idx(record)?;
-        let idx = registry.record_field_index(record, field)?;
-        let ty = registry.record_field_type(record, field)?.to_string();
-        Some((idx, ty))
-    };
     // A trap stub is the right answer for a shape the MIR body emitter does
     // not cover — the fn lowered, and the module still ships. It is the
     // wrong answer for a fn that never lowered because a name inside it did
@@ -3190,23 +3167,6 @@ pub(super) fn emit_module_with(
         }
     }
 
-    let fragment_plan_for: Vec<Option<crate::codegen::cert::FragmentPlan>> =
-        if registry.aint_struct_idx.is_some() {
-            mir_fn_for
-                .iter()
-                .map(|mir_fn| {
-                    mir_fn.and_then(|mir_fn| {
-                        crate::codegen::cert::fragment_plan_from_mir_fn(
-                            mir_fn,
-                            &record_field_lookup,
-                            &mir_program.builtins,
-                        )
-                    })
-                })
-                .collect()
-        } else {
-            vec![None; fn_defs.len()]
-        };
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
 
     // Pre-pass over user fn bodies — populates `caller_fn_collector`
@@ -3695,6 +3655,9 @@ pub(super) fn emit_module_with(
         codes.function(&start);
     }
 
+    // The declared locals of every MIR-emitted fn, for the certificate plan
+    // printer (which transcribes them; the code entry pins them).
+    let mut extra_locals_for: Vec<Option<Vec<ValType>>> = vec![None; fn_defs.len()];
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         // Dry run: discover extra locals by emitting into a throwaway
@@ -3733,6 +3696,7 @@ pub(super) fn emit_module_with(
         };
 
         let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
+        extra_locals_for[i] = mir_dispatch[i].then(|| extra_locals_dry.clone());
         let mut func = Function::new(local_groups);
         if mir_dispatch[i] {
             emit_fn_body_via_mir(
@@ -6094,18 +6058,37 @@ pub(super) fn emit_module_with(
     if std::env::var_os("AVER_WASMGC_MIR_COUNT").is_some() {
         eprintln!("AVER_WASMGC_MIR_EMITTED={mir_emitted}");
     }
-    let fragment_plans = fragment_plan_for
+    // The certificate plans: every emitted user fn's MIR printed 1:1 against
+    // the registry and function indices of THIS compile. Read-only: printing
+    // never changes a byte.
+    let cert_layout = super::cert_layout::CertLayout {
+        registry: &registry,
+        symbol_table: &symbol_table,
+        fn_idx: resolved_fn_defs
+            .iter()
+            .enumerate()
+            .map(|(i, rfd)| (rfd.fn_id, import_count + 1 + i as u32))
+            .collect(),
+        builtins: &mir_program.builtins,
+    };
+    let planned: Vec<_> = resolved_fn_defs
         .iter()
         .enumerate()
-        .filter_map(|(i, plan)| {
-            plan.clone()
-                .map(|plan| crate::codegen::cert::FragmentPlanArtifact {
-                    export_name: resolved_fn_defs[i].name.clone(),
-                    plan,
-                })
+        .map(|(i, rfd)| {
+            (
+                import_count + 1 + i as u32,
+                mir_fn_for[i],
+                rfd,
+                extra_locals_for[i].as_deref(),
+            )
         })
         .collect();
-    Ok((bytes, mir_emitted, fragment_plans))
+    let cert_plans = crate::codegen::cert::print_module(
+        &planned,
+        &cert_layout,
+        registry.aint_eq_fn_idx.filter(|_| registry.bignum),
+    );
+    Ok((bytes, mir_emitted, cert_plans))
 }
 
 fn emit_user_types(

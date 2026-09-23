@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::VecDeque;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleExportFact {

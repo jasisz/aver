@@ -134,15 +134,10 @@ struct CertifiedExport {
     name: String,
     policy: String,
     face: String,
-    /// Domain disclosure, present only for the faces whose certified domain is
-    /// narrower than "any represented value" (today: record projection-compute).
-    domain: Option<String>,
-    manifest_face: String,
-    /// What the certified model IS, for the one face whose obligation model is
-    /// the PLAN rather than a source function: `plan`, or `plan ≡ <fn>` once a
-    /// credited source-bridge identifies the two. `None` for every other face,
-    /// whose obligation already names the source model.
-    certified_model: Option<String>,
+    /// What the certified model IS: under schema 9 always the export's plan
+    /// (its optimized MIR body), until a credited source bridge identifies
+    /// the plan with the transpiled source function.
+    certified_model: String,
 }
 
 /// The outcome of one declared law-claim. A claim whose pin elaborated but
@@ -195,16 +190,12 @@ struct TrustedReport {
 struct CertifiedCandidate {
     name: String,
     class: String,
+    /// Facets derived in the wall from the plan (`ClaimAxes.reportFacets`),
+    /// pinned by the witness.
+    facets: Vec<String>,
     policy: String,
     policy_lean: &'static str,
     termination_lean: String,
-    dom: String,
-    cod: String,
-    /// The manifest's declared discharge theorem, read for ONE purpose: to
-    /// tell which exports carry the record projection-compute face, whose
-    /// certified domain is narrower than the other faces'. Declared-only, like
-    /// `dom`/`cod`, so it never reaches the CERTIFIED/CHECKED verdict line.
-    theorem: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -670,8 +661,6 @@ fn trusted_check(
             name: candidate.name.clone(),
             policy: candidate.policy.clone(),
             face: report_face(candidate),
-            domain: record_compute_domain(candidate).map(str::to_string),
-            manifest_face: manifest_face(candidate),
             certified_model: certified_model_line(candidate, &source_bridges),
         })
         .collect();
@@ -689,88 +678,35 @@ fn trusted_check(
 }
 
 /// The per-export line printed under a CERTIFIED/CHECKED verdict. Everything
-/// on it must be kernel-pinned: the class is rfl-bound to
-/// `StandardFace.reportEntries` by the checker witness (like the name, policy,
-/// and termination). The manifest's `dom`/`cod` strings are NOT pinned by any
-/// witness line, so they must never appear here — `explain` shows them,
-/// explicitly labeled as manifest-declared.
+/// on it is kernel-pinned: the class and the facets are bound to
+/// `ClaimAxes.reportEntries` / `ClaimAxes.reportFacets` by the checker
+/// witness (like the name, policy and termination).
 fn report_face(candidate: &CertifiedCandidate) -> String {
-    let label = match candidate.class.as_str() {
-        "expr-fragment-v1" => "expression fragment",
-        "verbatim-string-eq" => "String.eq leaf",
-        "verbatim-string-concat" => "String.concat leaf",
-        "adt-constructor" => "ADT constructor",
-        "self-recursive" => "integer recursion",
-        "multi-argument self-recursive" => "integer accumulator recursion",
-        "mutual-recursive" => "mutual integer recursion",
-        "verbatim-dispatch" => "verbatim dispatch",
-        "int-dispatch" => "integer ADT dispatch",
-        "field-projection" => "field projection",
-        "cross-function-composition" => "cross-function composition",
-        other => other,
-    };
-    format!("class: {label}")
+    if candidate.facets.is_empty() {
+        format!("class: {}", candidate.class)
+    } else {
+        format!(
+            "class: {} ({})",
+            candidate.class,
+            candidate.facets.join(", ")
+        )
+    }
 }
 
-/// What the export's certified model IS, for the one face whose obligation
-/// model is the plan rather than a source function.
-///
-/// `plan` on its own is the disclosure this face has always owed a reader: the
-/// theorem is about the evaluation of the declared plan. `plan ≡ <fn>` is what
-/// a CREDITED source-bridge adds — a kernel-checked theorem that the plan's
-/// model is the transpiled source function at the face's own encoders. An
-/// uncredited bridge says `plan` exactly like no bridge at all; credit is never
-/// granted on a declaration.
-///
-/// The line points at SOURCE-BRIDGES rather than calling itself kernel-checked
-/// on its own. What the credit means is that the rendered statement printed
-/// there is proven without foreign axioms, and that statement — its encoders
-/// included — is what a reader has to read. A name plus a tick is not the
-/// claim.
-fn certified_model_line(
-    candidate: &CertifiedCandidate,
-    bridges: &[BridgeOutcome],
-) -> Option<String> {
-    record_compute_domain(candidate)?;
+/// What the export's certified model IS. Schema 9 states every obligation
+/// over the plan, so the line says `plan`; a credited source bridge (not
+/// carried by schema 9 yet) would say `plan ≡ <fn>`. Credit is never granted
+/// on a declaration.
+fn certified_model_line(candidate: &CertifiedCandidate, bridges: &[BridgeOutcome]) -> String {
     let credited = bridges
         .iter()
         .find(|bridge| bridge.export == candidate.name && bridge.offending.is_empty());
-    Some(match credited {
+    match credited {
         Some(bridge) => format!(
             "model: plan ≡ {} (credited source-bridge; see SOURCE-BRIDGES)",
             display_safe(&bridge.model)
         ),
-        None => "model: plan".to_string(),
-    })
-}
-
-fn manifest_face(candidate: &CertifiedCandidate) -> String {
-    format!(
-        "manifest face (declared, not kernel-pinned): Dom {}, Cod {}",
-        display_safe(&candidate.dom),
-        display_safe(&candidate.cod)
-    )
-}
-
-/// The domain disclosure for the record projection-compute face, or `None` for
-/// every other face.
-///
-/// That face is the one place where canonicity — the runtime's normal form —
-/// is a premise about the INPUTS and not only about the helpers: its
-/// `StandardFace.recordComputeDomRepr` is built from `SReprAll`, and `SRepr` on
-/// an Int carrier is "represented AND canonical", record fields included. A
-/// reader of a verdict has to be told, so `explain` says it on the export's own
-/// line (section 4.3 of the format spec carries the long form).
-///
-/// The face is selected by the manifest's declared discharge theorem. That
-/// field is informational, so a producer could in principle mislabel it; the
-/// failure mode is a missing or a spurious disclosure line in `explain`, never
-/// a weaker accepted claim — acceptance reads the single artifact root, and the
-/// face itself is pinned in-kernel by `StandardFace.checkedFaces`.
-fn record_compute_domain(candidate: &CertifiedCandidate) -> Option<&'static str> {
-    match candidate.theorem.as_deref() {
-        Some(format::RECORD_COMPUTE_DISCHARGE_THEOREM) => Some(format::RECORD_COMPUTE_DOMAIN_LINE),
-        _ => None,
+        None => "model: plan (the export's optimized MIR body)".to_string(),
     }
 }
 
@@ -802,6 +738,19 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             .iter()
             .map(|candidate| (candidate.name.clone(), candidate.class.clone()))
             .collect::<Vec<_>>(),
+    );
+    let report_facets = format!(
+        "[{}]",
+        candidates
+            .certified
+            .iter()
+            .map(|candidate| format!(
+                "(\"{}\", {})",
+                candidate.name,
+                lean_str_list(&candidate.facets)
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     let policies = format!(
         "[{}]",
@@ -998,7 +947,8 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          example : AverCert.manifest.subject.artifactRoot = \"{}\" := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
          example : AverCert.manifest.subject.exports = {names} := rfl\n\
-         example : AverCert.StandardFace.reportEntries AverCert.Artifact.data = some {report_entries} := rfl\n\
+         example : AverCert.ClaimAxes.reportEntries AverCert.Artifact.data = {report_entries} := by decide\n\
+         example : AverCert.ClaimAxes.reportFacets AverCert.Artifact.data = {report_facets} := by decide\n\
          example : AverCert.manifest.obligations.map (fun o => o.policy) = {policies} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.termination?) = {terminations} := rfl\n\
          example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
@@ -1312,18 +1262,38 @@ fn read_candidates(
             }
             _ => unreachable!(),
         }
+        if class != format::PLAN_CLASS {
+            return Err(format!(
+                "certified export `{}` reports class `{}`; schema {} has the one class `{}`",
+                display_safe(&name),
+                display_safe(&class),
+                format::CERT_SCHEMA_VERSION,
+                format::PLAN_CLASS
+            ));
+        }
+        let facets = entry
+            .get("facets")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!(
+                    "certified export `{}` is missing `facets`",
+                    display_safe(&name)
+                )
+            })?
+            .iter()
+            .map(|facet| {
+                facet.as_str().map(str::to_string).ok_or_else(|| {
+                    "cert-manifest.json `certified[].facets[]` is not a string".to_string()
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         certified.push(CertifiedCandidate {
             name,
             class,
+            facets,
             policy,
             policy_lean,
             termination_lean,
-            dom: required_string(entry, "dom", "certified[]")?,
-            cod: required_string(entry, "cod", "certified[]")?,
-            theorem: entry
-                .get("theorem")
-                .and_then(Value::as_str)
-                .map(str::to_string),
         });
     }
 
@@ -1334,6 +1304,15 @@ fn read_candidates(
         .get("sourceBridges")
         .and_then(Value::as_array)
         .ok_or_else(|| "cert-manifest.json is missing array field `sourceBridges`".to_string())?;
+    // Schema 9 carries no source-bridge statement kind and no law-claims yet:
+    // the certified model is the plan itself. A package declaring either is
+    // refused rather than credited.
+    if !bridges_json.is_empty() {
+        return Err(format!(
+            "cert-manifest.json declares source bridges; schema {} carries none yet",
+            format::CERT_SCHEMA_VERSION
+        ));
+    }
     let certified_names: Vec<&str> = certified
         .iter()
         .map(|candidate| candidate.name.as_str())
@@ -1394,6 +1373,12 @@ fn read_candidates(
         .get("laws")
         .and_then(Value::as_array)
         .ok_or_else(|| "cert-manifest.json is missing array field `laws`".to_string())?;
+    if !laws_json.is_empty() {
+        return Err(format!(
+            "cert-manifest.json declares law-claims; schema {} carries none yet",
+            format::CERT_SCHEMA_VERSION
+        ));
+    }
     let mut laws = Vec::with_capacity(laws_json.len());
     for (index, entry) in laws_json.iter().enumerate() {
         let context = format!("laws[{index}]");
@@ -2029,8 +2014,9 @@ fn gate_candidates(candidates: &Candidates) -> Result<(), String> {
     for candidate in &candidates.certified {
         gate_candidate("certified export name", &candidate.name)?;
         gate_candidate("certified class", &candidate.class)?;
-        gate_candidate("source domain", &candidate.dom)?;
-        gate_candidate("source codomain", &candidate.cod)?;
+        for facet in &candidate.facets {
+            gate_candidate("certified facet", facet)?;
+        }
     }
     for contract in &candidates.contracts {
         gate_candidate("runtime contract", contract)?;
@@ -2817,13 +2803,7 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
         println!("  {}", export.name.bold());
         println!("    policy: {}", export.policy);
         println!("    {}", export.face);
-        if let Some(domain) = export.domain.as_deref() {
-            println!("    {domain}");
-        }
-        if let Some(model) = export.certified_model.as_deref() {
-            println!("    {model}");
-        }
-        println!("    {}", export.manifest_face);
+        println!("    {}", export.certified_model);
     }
     if !report.contracts.is_empty() {
         println!("\n{}", "Runtime contracts".yellow().bold());
@@ -3478,46 +3458,26 @@ mod tests {
     #[test]
     fn report_face_prints_only_kernel_pinned_facts() {
         let candidate = CertifiedCandidate {
-            name: "addOne".to_string(),
-            class: "expr-fragment-v1".to_string(),
-            policy: "simulatesModel".to_string(),
-            policy_lean: ".simulatesModel",
+            name: "sumTo".to_string(),
+            class: format::PLAN_CLASS.to_string(),
+            facets: vec!["recursive".to_string(), "calls".to_string()],
+            policy: "simulatesModelTotally".to_string(),
+            policy_lean: ".simulatesModelTotally",
             termination_lean: "none".to_string(),
-            dom: "List Int".to_string(),
-            cod: "Int".to_string(),
-            theorem: Some("AcceptanceSoundness.exprFragment_claim_discharges".to_string()),
-        };
-        assert_eq!(report_face(&candidate), "class: expression fragment");
-        assert_eq!(
-            manifest_face(&candidate),
-            "manifest face (declared, not kernel-pinned): Dom List Int, Cod Int"
-        );
-        // The generic face is unconditional over represented carriers, so it
-        // carries no domain restriction line.
-        assert_eq!(record_compute_domain(&candidate), None);
-    }
-
-    /// The record projection-compute face is the one whose certified domain is
-    /// narrower — its inputs AND its record fields are assumed canonical — so
-    /// `explain` must say so on that export's line and only on that one.
-    #[test]
-    fn only_the_record_compute_face_discloses_a_narrower_domain() {
-        let mut candidate = CertifiedCandidate {
-            name: "Domain_Rational_plus".to_string(),
-            class: "expr-fragment-v1".to_string(),
-            policy: "simulatesModel".to_string(),
-            policy_lean: ".simulatesModel",
-            termination_lean: "none".to_string(),
-            dom: "Rational x Rational".to_string(),
-            cod: "Rational".to_string(),
-            theorem: Some(format::RECORD_COMPUTE_DISCHARGE_THEOREM.to_string()),
         };
         assert_eq!(
-            record_compute_domain(&candidate),
-            Some(format::RECORD_COMPUTE_DOMAIN_LINE)
+            report_face(&candidate),
+            "class: source-plan-v1 (recursive, calls)"
         );
-        candidate.theorem = None;
-        assert_eq!(record_compute_domain(&candidate), None);
+        assert_eq!(
+            certified_model_line(&candidate, &[]),
+            "model: plan (the export's optimized MIR body)"
+        );
+        let bare = CertifiedCandidate {
+            facets: Vec::new(),
+            ..candidate
+        };
+        assert_eq!(report_face(&bare), "class: source-plan-v1");
     }
 
     #[test]
