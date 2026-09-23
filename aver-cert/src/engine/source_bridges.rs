@@ -1252,6 +1252,7 @@ fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s:
               all_goals (try (repeat' split))\n       \
               all_goals (try simp_all [{EVAL_SIMPS}{literals}, {BOOL_SIMPS}])\n       \
               all_goals (try omega)\n       \
+              all_goals (try (repeat' (split at *)) <;> (try simp_all) <;> (try omega))\n       \
               all_goals (try (apply _root_.Bool.eq_iff_iff.mpr; simp only [_root_.Bool.or_eq_true, \
                 _root_.Bool.and_eq_true, _root_.decide_eq_true_eq, _root_.Bool.not_eq_true']; omega))\n       \
               all_goals (try (congr 1 <;> omega))\n       \
@@ -1743,6 +1744,36 @@ mod source_bridge_tests {
         assert_eq!(strs[0].binds, vec![("v1".to_string(), "t1".to_string())]);
         assert!(alts(&SourceEncoder::Float, &mut fresh).is_err());
         assert!(alts(&SourceEncoder::List(Box::new(SourceEncoder::Int)), &mut fresh).is_err());
+    }
+
+    #[test]
+    fn string_literals_render_as_lean_literals_and_sums_split_structurally() {
+        assert_eq!(lean_string_literal(b"a\"b\\c\n"), Some("\"a\\\"b\\\\c\\n\"".to_string()));
+        assert_eq!(lean_string_literal(b"\x01"), Some("\"\\x01\"".to_string()));
+        assert_eq!(lean_string_literal(&[0xff]), None);
+        let op = SourceEncoder::Sum {
+            tid: 1,
+            lean_type: "_root_.M.Op".to_string(),
+            ctors: vec![
+                ("_root_.M.Op.add".to_string(), vec![SourceEncoder::Int]),
+                ("_root_.M.Op.zero".to_string(), Vec::new()),
+            ],
+        };
+        let record = SourceEncoder::Record {
+            tid: 0,
+            lean_type: "_root_.M.R".to_string(),
+            fields: vec![
+                ("_root_.M.R.a".to_string(), SourceEncoder::Int),
+                ("_root_.M.R.op".to_string(), op.clone()),
+            ],
+        };
+        assert_eq!(rcases_pattern(&SourceEncoder::Int), None);
+        assert_eq!(rcases_pattern(&op).as_deref(), Some("(⟨_⟩ | ⟨⟩)"));
+        assert_eq!(rcases_pattern(&record).as_deref(), Some("⟨_, (⟨_⟩ | ⟨⟩)⟩"));
+        assert_eq!(
+            rcases_pattern(&SourceEncoder::Option(Box::new(SourceEncoder::Int))).as_deref(),
+            Some("(⟨⟩ | _)")
+        );
     }
 
     /// The decoder of a function with an Int and a String parameter binds the
