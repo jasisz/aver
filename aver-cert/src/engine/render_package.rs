@@ -367,7 +367,10 @@ fn render_artifact(
          import ArtifactBytes\n\
          import Manifest\n\
          {roles_import}\n\
-         set_option maxRecDepth 200000\n\n\
+         set_option maxRecDepth 200000\n\
+         -- Elaboration cost grows with the artifact; this moves a resource\n\
+         -- limit only (no axiom, no hypothesis, nothing the kernel accepts).\n\
+         set_option maxHeartbeats 1600000\n\n\
          namespace AverCert.Artifact\n\
          open AverCert AverCert.Schema AverCert.AcceptedArtifact\n\n\
          def data : ArtifactData :=\n  \
@@ -380,8 +383,14 @@ fn render_artifact(
          theorem strings_ok : decodedStringHostRoles data := by\n  \
            unfold decodedStringHostRoles; decide +kernel\n\n\
          theorem axes_ok : AverCert.ClaimAxes.checked data = true := by decide +kernel\n\n\
-         theorem whole_ok : acceptedWholeModule data := by\n  \
-           unfold acceptedWholeModule; refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide +kernel\n\n\
+         theorem framing_ok : CertDecode.moduleFramingValid data.modBytes data.modLen = true := by\n  \
+           decide +kernel\n\n\
+         theorem exports_ok : exportsAccounted data = true := by decide +kernel\n\n\
+         theorem imports_ok : importsWithinCapabilities data = true := by decide +kernel\n\n\
+         theorem start_ok : startAccounted data = true := by decide +kernel\n\n\
+         theorem closure_ok : closureIsolation data = true := by decide +kernel\n\n\
+         theorem whole_ok : acceptedWholeModule data :=\n  \
+           ⟨framing_ok, exports_ok, imports_ok, start_ok, closure_ok⟩\n\n\
          theorem envelope_ok : artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes\n    \
            AverCert.ArtifactComponentBytes.componentLen data = true := by decide +kernel\n\n\
          end AverCert.Artifact\n",
