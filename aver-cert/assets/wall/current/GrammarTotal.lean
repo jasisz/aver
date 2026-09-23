@@ -22,7 +22,7 @@
    * the body is `if n <= 0 then base else step` over parameter 0 (the MIR
      `IfThenElse` the emitter lowers with the inline sign test);
    * `base` and `step` are built from Int / Bool literals, parameters, and
-     `+`, `-`, `*` on Int (a `*` operand is never a literal); `step` may also
+     `+`, `-`, `*` on Int; `step` may also
      call a member of the group, by `call` or `tailCall`, and every such call
      passes `n - 1` as its first argument; `step` makes at least one such
      call (a plan without recursion stays at L1, as on main).
@@ -30,11 +30,10 @@
    Against main this admits more (all of it proved below): other straight-line
    Int arithmetic in either arm, several member calls per arm, non-tail calls
    to other members of a mutual group, further Int parameters, and a Bool
-   result. It admits less in one place: main's wall accepted a boxed literal
-   as the operand of the `mul` combine (`k * f(n-1)`); the grammar keeps
-   literal multipliers out of L3, so `k * f(n-1)` stays at L1 (on main such a
-   plan was reached only when the producer's sampled i128 guard passed;
-   `recdecline`'s `wild` is the pinned instance that must not reach L3).
+   result. A literal multiplier (`k * f(n-1)`, recdecline's `wild`) is L3 at
+   role `.mul` for every `k` the typing admits; main reached such a plan only
+   when the producer's sampled i128 guard passed. A literal outside the i64
+   band is declined by the typing (`tyOf`), so it never reaches this check.
 
    Runtime contracts: the partial ones `fn_certified_group` already takes,
    plus totality of box (the Int literal and the `n - 1` operand box an
@@ -71,8 +70,7 @@ mutual
     | .literal (.bool _) => true
     | .local _ => true
     | .binOp op l r =>
-        (op == .add || op == .sub ||
-          (op == .mul && mulOk && (litInt? l).isNone && (litInt? r).isNone)) &&
+        (op == .add || op == .sub || (op == .mul && mulOk)) &&
         totE mem mulOk calls l && totE mem mulOk calls r
     | .call (.fn g) args =>
         calls && mem g && descentHead args && totArgs mem mulOk calls args
@@ -256,7 +254,7 @@ theorem totE_binOp {mem : Nat → Bool} {mulOk calls : Bool} {op : BinOp} {l r :
   rcases hop with (h1 | h1) | h1
   · exact Or.inl h1
   · exact Or.inr (Or.inl h1)
-  · exact Or.inr (Or.inr ⟨h1.1.1.1, h1.1.1.2⟩)
+  · exact Or.inr (Or.inr ⟨h1.1, h1.2⟩)
 
 /-- A total-fragment node never has type `String` (so `+` is Int addition):
     parameters are Int and member results are Int or Bool. -/
