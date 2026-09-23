@@ -13,70 +13,29 @@ pub const LEAN_TOOLCHAIN: &str = include_str!("../assets/wall/current/lean-toolc
 
 pub const CERT_PRELUDE: &str = include_str!("../assets/wall/current/CertPrelude.lean");
 pub const CERT_DECODE: &str = include_str!("../assets/wall/current/CertDecode.lean");
+pub const CERT_SCHEMA_BASE: &str = include_str!("../assets/wall/current/SchemaBase.lean");
 pub const CERT_SCHEMA: &str = include_str!("../assets/wall/current/Schema.lean");
 pub const CERT_SCHEMA_CORE: &str = include_str!("../assets/wall/current/SchemaCore.lean");
-pub const CERT_PLAN_CHECK: &str = include_str!("../assets/wall/current/PlanCheck.lean");
-pub const CERT_PLAN_LOWER: &str = include_str!("../assets/wall/current/PlanLower.lean");
-pub const CERT_PLAN_BYTES: &str = include_str!("../assets/wall/current/PlanBytes.lean");
 pub const CERT_WASM_SLICE: &str = include_str!("../assets/wall/current/WasmSlice.lean");
 pub const CERT_WASIP2_ENVELOPE: &str = include_str!("../assets/wall/current/Wasip2Envelope.lean");
-pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str =
-    include_str!("../assets/wall/current/ExprFragmentAccepted.lean");
-pub const CERT_ACCEPTED_ARTIFACT: &str =
-    include_str!("../assets/wall/current/AcceptedArtifact.lean");
-pub const CERT_ACCEPTED_ARTIFACT_CORE: &str =
-    include_str!("../assets/wall/current/AcceptedArtifactCore.lean");
-pub const CERT_CLAIM_AXES: &str = include_str!("../assets/wall/current/ClaimAxes.lean");
-pub const CERT_EXPR_FRAGMENT_SEMANTICS: &str =
-    include_str!("../assets/wall/current/ExprFragmentSemantics.lean");
-pub const CERT_INTERPRETER_SEQUENCING: &str =
-    include_str!("../assets/wall/current/InterpreterSequencing.lean");
-pub const CERT_EXPR_FRAGMENT_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/ExprFragmentSoundness.lean");
-pub const CERT_RECORD_COMPUTE_BRIDGE: &str =
-    include_str!("../assets/wall/current/RecordComputeBridge.lean");
-pub const CERT_FIELD_PROJECTION_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/FieldProjectionSoundness.lean");
-pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/ConstructVerbatimSoundness.lean");
-pub const CERT_INT_DISPATCH_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/IntDispatchSoundness.lean");
-pub const CERT_ENVELOPE_LOWERING: &str =
-    include_str!("../assets/wall/current/EnvelopeLowering.lean");
-pub const CERT_WIDENED_ENVELOPE: &str = include_str!("../assets/wall/current/WidenedEnvelope.lean");
-pub const CERT_DECLARED_INDEX_ENVELOPE: &str =
-    include_str!("../assets/wall/current/DeclaredIndexEnvelope.lean");
-pub const CERT_DECLARED_ENVELOPE_ACCEPT_TRANSPORT: &str =
-    include_str!("../assets/wall/current/DeclaredEnvelopeAcceptTransport.lean");
-pub const CERT_STRING_SOUNDNESS: &str = include_str!("../assets/wall/current/StringSoundness.lean");
-pub const CERT_STANDARD_FACE: &str = include_str!("../assets/wall/current/StandardFace.lean");
-pub const CERT_RECURSION_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/RecursionSoundness.lean");
-pub const CERT_MUTUAL_RECURSION_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/MutualRecursionSoundness.lean");
-pub const CERT_COMPOSITION_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/CompositionSoundness.lean");
-pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
-    include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
-pub const CERT_DISCHARGE_EXPR_FRAGMENT: &str =
-    include_str!("../assets/wall/current/DischargeExprFragment.lean");
-pub const CERT_DISCHARGE_FIELD_PROJECTION: &str =
-    include_str!("../assets/wall/current/DischargeFieldProjection.lean");
-pub const CERT_DISCHARGE_CONSTRUCT: &str =
-    include_str!("../assets/wall/current/DischargeConstruct.lean");
-pub const CERT_DISCHARGE_VERBATIM: &str =
-    include_str!("../assets/wall/current/DischargeVerbatim.lean");
-pub const CERT_DISCHARGE_STRING: &str = include_str!("../assets/wall/current/DischargeString.lean");
-pub const CERT_DISCHARGE_INT_DISPATCH: &str =
-    include_str!("../assets/wall/current/DischargeIntDispatch.lean");
-pub const CERT_DISCHARGE_RECURSION: &str =
-    include_str!("../assets/wall/current/DischargeRecursion.lean");
-pub const CERT_DISCHARGE_COMPOSITION: &str =
-    include_str!("../assets/wall/current/DischargeComposition.lean");
-pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/AcceptanceSoundness.lean");
 pub const CERT_ARITH_TEMPLATE_DERISK: &str =
     include_str!("../assets/wall/current/ArithTemplateDerisk.lean");
+pub const CERT_INTERPRETER_SEQUENCING: &str =
+    include_str!("../assets/wall/current/InterpreterSequencing.lean");
+pub const CERT_GRAMMAR: &str = include_str!("../assets/wall/current/Grammar.lean");
+pub const CERT_GRAMMAR_LOWER: &str = include_str!("../assets/wall/current/GrammarLower.lean");
+pub const CERT_GRAMMAR_SOUND: &str = include_str!("../assets/wall/current/GrammarSound.lean");
+pub const CERT_GRAMMAR_TOTAL: &str = include_str!("../assets/wall/current/GrammarTotal.lean");
+pub const CERT_TYPE_TABLE: &str = include_str!("../assets/wall/current/TypeTable.lean");
+pub const CERT_ACCEPTED_ARTIFACT_CORE: &str =
+    include_str!("../assets/wall/current/AcceptedArtifactCore.lean");
+pub const CERT_ACCEPTED_ARTIFACT: &str =
+    include_str!("../assets/wall/current/AcceptedArtifact.lean");
+pub const CERT_CLAIM_AXES: &str = include_str!("../assets/wall/current/ClaimAxes.lean");
+pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
+    include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
+pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
+    include_str!("../assets/wall/current/AcceptanceSoundness.lean");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Source {
@@ -86,19 +45,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 40] = [
-    Source {
-        name: "AcceptedArtifact.lean",
-        contents: CERT_ACCEPTED_ARTIFACT,
-    },
-    Source {
-        name: "ArithTemplateDerisk.lean",
-        contents: CERT_ARITH_TEMPLATE_DERISK,
-    },
-    Source {
-        name: "AcceptedArtifactCore.lean",
-        contents: CERT_ACCEPTED_ARTIFACT_CORE,
-    },
+pub const SOURCES: [Source; 19] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -106,6 +53,18 @@ pub const SOURCES: [Source; 40] = [
     Source {
         name: "AcceptanceSoundnessCore.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS_CORE,
+    },
+    Source {
+        name: "AcceptedArtifact.lean",
+        contents: CERT_ACCEPTED_ARTIFACT,
+    },
+    Source {
+        name: "AcceptedArtifactCore.lean",
+        contents: CERT_ACCEPTED_ARTIFACT_CORE,
+    },
+    Source {
+        name: "ArithTemplateDerisk.lean",
+        contents: CERT_ARITH_TEMPLATE_DERISK,
     },
     Source {
         name: "CertDecode.lean",
@@ -120,175 +79,70 @@ pub const SOURCES: [Source; 40] = [
         contents: CERT_CLAIM_AXES,
     },
     Source {
-        name: "CompositionSoundness.lean",
-        contents: CERT_COMPOSITION_SOUNDNESS,
+        name: "Grammar.lean",
+        contents: CERT_GRAMMAR,
     },
     Source {
-        name: "ConstructVerbatimSoundness.lean",
-        contents: CERT_CONSTRUCT_VERBATIM_SOUNDNESS,
+        name: "GrammarLower.lean",
+        contents: CERT_GRAMMAR_LOWER,
     },
     Source {
-        name: "DeclaredEnvelopeAcceptTransport.lean",
-        contents: CERT_DECLARED_ENVELOPE_ACCEPT_TRANSPORT,
+        name: "GrammarSound.lean",
+        contents: CERT_GRAMMAR_SOUND,
     },
     Source {
-        name: "DeclaredIndexEnvelope.lean",
-        contents: CERT_DECLARED_INDEX_ENVELOPE,
-    },
-    Source {
-        name: "DischargeComposition.lean",
-        contents: CERT_DISCHARGE_COMPOSITION,
-    },
-    Source {
-        name: "DischargeConstruct.lean",
-        contents: CERT_DISCHARGE_CONSTRUCT,
-    },
-    Source {
-        name: "DischargeExprFragment.lean",
-        contents: CERT_DISCHARGE_EXPR_FRAGMENT,
-    },
-    Source {
-        name: "DischargeFieldProjection.lean",
-        contents: CERT_DISCHARGE_FIELD_PROJECTION,
-    },
-    Source {
-        name: "DischargeIntDispatch.lean",
-        contents: CERT_DISCHARGE_INT_DISPATCH,
-    },
-    Source {
-        name: "DischargeRecursion.lean",
-        contents: CERT_DISCHARGE_RECURSION,
-    },
-    Source {
-        name: "DischargeString.lean",
-        contents: CERT_DISCHARGE_STRING,
-    },
-    Source {
-        name: "DischargeVerbatim.lean",
-        contents: CERT_DISCHARGE_VERBATIM,
-    },
-    Source {
-        name: "EnvelopeLowering.lean",
-        contents: CERT_ENVELOPE_LOWERING,
-    },
-    Source {
-        name: "ExprFragmentAccepted.lean",
-        contents: CERT_EXPR_FRAGMENT_ACCEPTED,
-    },
-    Source {
-        name: "ExprFragmentSemantics.lean",
-        contents: CERT_EXPR_FRAGMENT_SEMANTICS,
-    },
-    Source {
-        name: "ExprFragmentSoundness.lean",
-        contents: CERT_EXPR_FRAGMENT_SOUNDNESS,
-    },
-    Source {
-        name: "RecordComputeBridge.lean",
-        contents: CERT_RECORD_COMPUTE_BRIDGE,
-    },
-    Source {
-        name: "FieldProjectionSoundness.lean",
-        contents: CERT_FIELD_PROJECTION_SOUNDNESS,
-    },
-    Source {
-        name: "IntDispatchSoundness.lean",
-        contents: CERT_INT_DISPATCH_SOUNDNESS,
+        name: "GrammarTotal.lean",
+        contents: CERT_GRAMMAR_TOTAL,
     },
     Source {
         name: "InterpreterSequencing.lean",
         contents: CERT_INTERPRETER_SEQUENCING,
     },
     Source {
-        name: "MutualRecursionSoundness.lean",
-        contents: CERT_MUTUAL_RECURSION_SOUNDNESS,
-    },
-    Source {
-        name: "PlanBytes.lean",
-        contents: CERT_PLAN_BYTES,
-    },
-    Source {
-        name: "PlanCheck.lean",
-        contents: CERT_PLAN_CHECK,
-    },
-    Source {
-        name: "PlanLower.lean",
-        contents: CERT_PLAN_LOWER,
-    },
-    Source {
-        name: "RecursionSoundness.lean",
-        contents: CERT_RECURSION_SOUNDNESS,
-    },
-    Source {
         name: "Schema.lean",
         contents: CERT_SCHEMA,
+    },
+    Source {
+        name: "SchemaBase.lean",
+        contents: CERT_SCHEMA_BASE,
     },
     Source {
         name: "SchemaCore.lean",
         contents: CERT_SCHEMA_CORE,
     },
     Source {
-        name: "StandardFace.lean",
-        contents: CERT_STANDARD_FACE,
-    },
-    Source {
-        name: "StringSoundness.lean",
-        contents: CERT_STRING_SOUNDNESS,
-    },
-    Source {
-        name: "WasmSlice.lean",
-        contents: CERT_WASM_SLICE,
+        name: "TypeTable.lean",
+        contents: CERT_TYPE_TABLE,
     },
     Source {
         name: "Wasip2Envelope.lean",
         contents: CERT_WASIP2_ENVELOPE,
     },
     Source {
-        name: "WidenedEnvelope.lean",
-        contents: CERT_WIDENED_ENVELOPE,
+        name: "WasmSlice.lean",
+        contents: CERT_WASM_SLICE,
     },
 ];
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 38] = [
+pub const PRISTINE_ROOTS: [&str; 17] = [
     "CertPrelude",
     "CertDecode",
     "ArithTemplateDerisk",
     "WasmSlice",
     "Wasip2Envelope",
+    "SchemaBase",
     "SchemaCore",
-    "PlanCheck",
-    "PlanLower",
-    "PlanBytes",
-    "ExprFragmentAccepted",
+    "InterpreterSequencing",
+    "Grammar",
+    "GrammarLower",
+    "GrammarSound",
+    "GrammarTotal",
+    "TypeTable",
     "AcceptedArtifactCore",
     "ClaimAxes",
-    "ExprFragmentSemantics",
-    "InterpreterSequencing",
-    "ExprFragmentSoundness",
-    "RecordComputeBridge",
-    "FieldProjectionSoundness",
-    "ConstructVerbatimSoundness",
-    "IntDispatchSoundness",
-    "StringSoundness",
-    "EnvelopeLowering",
-    "WidenedEnvelope",
-    "DeclaredIndexEnvelope",
-    "DeclaredEnvelopeAcceptTransport",
-    "StandardFace",
-    "RecursionSoundness",
-    "MutualRecursionSoundness",
-    "CompositionSoundness",
     "AcceptanceSoundnessCore",
-    "DischargeExprFragment",
-    "DischargeFieldProjection",
-    "DischargeConstruct",
-    "DischargeVerbatim",
-    "DischargeString",
-    "DischargeIntDispatch",
-    "DischargeRecursion",
-    "DischargeComposition",
     "AcceptanceSoundness",
 ];
 

@@ -205,12 +205,12 @@ mod module_envelope_tests {
             ("WASIP2_CAPABILITY_REGISTRY", crate::format::WASIP2_CAPABILITIES),
         ] {
             let marker = format!("def {name} : List (String × String) := [");
-            let body = super::CERT_SCHEMA_CORE
+            let body = super::CERT_SCHEMA_BASE
                 .split_once(&marker)
-                .unwrap_or_else(|| panic!("SchemaCore is missing {name}"))
+                .unwrap_or_else(|| panic!("SchemaBase is missing {name}"))
                 .1
                 .split_once("\n]")
-                .unwrap_or_else(|| panic!("SchemaCore.{name} is not a closed list"))
+                .unwrap_or_else(|| panic!("SchemaBase.{name} is not a closed list"))
                 .0;
             let lean_pairs = body
                 .lines()
@@ -221,10 +221,10 @@ mod module_envelope_tests {
                     let pair = row
                         .strip_prefix("(\"")
                         .and_then(|line| line.strip_suffix("\")"))
-                        .unwrap_or_else(|| panic!("invalid SchemaCore.{name} row `{line}`"));
+                        .unwrap_or_else(|| panic!("invalid SchemaBase.{name} row `{line}`"));
                     let (module, field) = pair
                         .split_once("\", \"")
-                        .unwrap_or_else(|| panic!("invalid SchemaCore.{name} pair `{pair}`"));
+                        .unwrap_or_else(|| panic!("invalid SchemaBase.{name} pair `{pair}`"));
                     (
                         module.to_string(),
                         field.to_string(),
@@ -237,7 +237,7 @@ mod module_envelope_tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 lean_pairs, rust_pairs,
-                "SchemaCore.{name} must exactly match the Rust registry"
+                "SchemaBase.{name} must exactly match the Rust registry"
             );
         }
     }

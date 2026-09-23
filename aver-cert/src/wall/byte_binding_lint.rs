@@ -46,6 +46,8 @@
 //! * **A1 — one-hop argument.** A producer value passed whole into a reachable
 //!   definition from an anchored conjunct, where the callee projects the field.
 //!   Depth one only; deeper propagation reinstates the historical false negative.
+//!   Under `xs.all (f a …)` every element of the producer list `xs` counts as
+//!   passed whole as `f`'s next parameter.
 //! * **B — pinned to a wall term.** The conjunct equates the field to a term
 //!   mentioning no producer-supplied value at all (a wall literal, a wall
 //!   constant, a byte decode). The producer then has no freedom in that field.
@@ -53,6 +55,13 @@
 //!   producer-free AND byte-derived, the other mentions a producer value whole;
 //!   every leaf field of that value is then determined. This is how the lowered
 //!   plan payloads are constrained (`lowerX plan = <real code bytes>`).
+//!
+//! * **D — derived by a wall function.** One side of the conjunct is a producer
+//!   value whole, the other a wall definition applied to other producer values
+//!   (not to the value itself). The value then has no freedom of its own; its
+//!   inputs carry the freedom and need their own binding. This is how the
+//!   schema-9 obligations are pinned (`obligationsDerived`: the manifest's
+//!   obligations ARE `obligationsOf` of its plans).
 //!
 //! Rules A1 and C are deliberately narrow. Blanket versions of both were tried
 //! and both silently re-bound `roles.toIndex` in the pre-fix tree, i.e. they
@@ -930,6 +939,11 @@ fn local_env(w: &Wall, d: &Decl) -> Env {
 /// Type of an expression, when it is exactly an identifier or projection chain.
 fn expr_struct(w: &Wall, env: &Env, expr: &str) -> Option<String> {
     let e = expr.trim();
+    // A binder whose name carries Lean's `?` / `!` suffix (`roles?`) is keyed
+    // verbatim, so look it up before the identifier-shape test rejects it.
+    if let Some(t) = env.get(e) {
+        return Some(t.clone());
+    }
     if e.chars().all(is_ident_char) && !e.is_empty() {
         return env.get(e).cloned();
     }
@@ -1137,6 +1151,52 @@ fn leaves_of(
             leaves_of(w, &sub, slots, seen, out);
         }
     }
+}
+
+/// `xs.all (f a1 a2 ...)` sites: the list chain, the callee and its explicit
+/// arguments.
+fn all_sites(c: &str) -> Vec<(String, String, Vec<String>)> {
+    let mut out = Vec::new();
+    for marker in [".all (", ".any ("] {
+        let mut rest = c;
+        while let Some(p) = rest.find(marker) {
+            let before = &rest[..p];
+            let xs: String = before
+                .chars()
+                .rev()
+                .take_while(|ch| is_token_char(*ch))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            let after = &rest[p + marker.len()..];
+            let mut depth = 1i32;
+            let mut end = None;
+            for (i, ch) in after.char_indices() {
+                if ch == '(' {
+                    depth += 1;
+                } else if ch == ')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(i);
+                        break;
+                    }
+                }
+            }
+            if let Some(e) = end {
+                let inner = after[..e].trim();
+                if !inner.starts_with("fun") && !xs.is_empty() {
+                    let mut parts = inner.split_whitespace();
+                    if let Some(f) = parts.next() {
+                        let args: Vec<String> = parts.map(|x| x.to_string()).collect();
+                        out.push((xs, f.to_string(), args));
+                    }
+                }
+            }
+            rest = &rest[p + marker.len()..];
+        }
+    }
+    out
 }
 
 /// Parameter names of a definition, in order.
@@ -1405,8 +1465,20 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
                         mark(&mut bound, r, "A/byte-cooccurrence", d, c);
                     }
                 }
-                // Rule A1: one hop into a callee that projects the field.
-                for (name, args) in call_sites(&cx) {
+                // Rule A1: one hop into a callee that projects the field. A
+                // partial application under `xs.all (f a …)` passes every element
+                // of the producer list `xs` as `f`'s next parameter, so that
+                // parameter is typed by the list's element structure.
+                let mut sites = call_sites(&cx);
+                for (xs, name, args) in all_sites(c) {
+                    let Some(el) = expr_struct(&w, &env, &xs) else {
+                        continue;
+                    };
+                    let mut args = args;
+                    args.push(format!("\u{0}{el}"));
+                    sites.push((name, args));
+                }
+                for (name, args) in sites {
                     let Some(full) = w.resolve(&name, &d.ns, &d.opens) else {
                         continue;
                     };
@@ -1421,8 +1493,12 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
                     let params = sig_params(g);
                     for (i, a) in args.iter().enumerate() {
                         let Some(pname) = params.get(i) else { break };
-                        let Some(st) = expr_struct(&w, &env, a) else {
-                            continue;
+                        let st = match a.strip_prefix('\u{0}') {
+                            Some(el) => el.to_string(),
+                            None => match expr_struct(&w, &env, a) {
+                                Some(st) => st,
+                                None => continue,
+                            },
                         };
                         let mut genv2 = genv.clone();
                         genv2.insert(pname.clone(), st);
@@ -1443,6 +1519,33 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
             // Rules B and C: equality with a producer-free counterpart.
             if let Some((l, r)) = eq_sides(c) {
                 for (a, b) in [(l.clone(), r.clone()), (r, l)] {
+                    // D: a producer value WHOLE on one side, and on the other a
+                    // wall definition applied to other producer values. The
+                    // value then has no freedom of its own: it is whatever the
+                    // wall computes from its inputs, and those inputs carry the
+                    // freedom (and their own bindings). This is how the
+                    // obligations are pinned to `obligationsOf` of the plans.
+                    let stripped_a = strip_wrappers(&a);
+                    let ca = chains(&stripped_a);
+                    let a_whole = ca.len() == 1
+                        && ca[0].start == 0
+                        && ca[0].end == stripped_a.chars().count();
+                    let b_head = strip_wrappers(&b);
+                    let head: String = b_head.chars().take_while(|c| is_token_char(*c)).collect();
+                    let head_is_wall_def = !head.is_empty()
+                        && w.resolve(&head, &d.ns, &d.opens)
+                            .and_then(|r| w.get(&r))
+                            .is_some_and(|g| g.kind == Kind::Def);
+                    if a_whole && head_is_wall_def && !b.contains(stripped_a.trim()) {
+                        for st in whole_producer_values(&w, &env, &stripped_a) {
+                            let mut seen = BTreeSet::new();
+                            let mut leaves = Vec::new();
+                            leaves_of(&w, &st, &slots, &mut seen, &mut leaves);
+                            for leaf in leaves {
+                                mark(&mut bound, leaf, "D/derived-by-wall-function", d, c);
+                            }
+                        }
+                    }
                     if !producer_free(&w, &env, &b) {
                         continue;
                     }
@@ -1511,12 +1614,9 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
 /// closed on purpose: a free-text category would become a synonym for "ignore".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
-    /// Transported for display, deliberately outside the verified claim. No
-    /// current member: the documented example (`certified[].dom` / `cod`) lives
-    /// in the JSON manifest, not in a Lean producer structure, so it is not a
-    /// slot this lint ranges over. The category stays because the policy has
-    /// four kinds and a reviewer needs the vocabulary to classify the next one.
-    #[allow(dead_code)]
+    /// A source-meaning declaration the binary cannot determine (a name the
+    /// plans use for a byte-confirmed layout), deliberately outside what the
+    /// bytes can pin.
     DeclaredOnlyByDesign,
     /// The value SHOULD be constrained and is not. Must be documented as such.
     KnownGap,
@@ -1562,11 +1662,25 @@ pub struct Allowance {
 /// certificate does NOT prove about values it transports.
 pub const ALLOWED: &[Allowance] = &[
     Allowance {
+        structure: "RecordDecl",
+        field: "tid",
+        category: Category::DeclaredOnlyByDesign,
+        reason: "The source type id is the plans' own name for a record or tuple type: a read \
+                 declaration the binary cannot determine, like every source-meaning \
+                 declaration. What the name stands for IS byte-confirmed: \
+                 `TypeTable.recordConfirmed` pins the struct index and the storage of every \
+                 declared field against the rec group that opens the type section, and \
+                 `keysUnique` makes the id resolve to exactly that declaration. A wrong id \
+                 only renames a byte-confirmed layout; the plans typed against it are then \
+                 typed against that layout.",
+        doc_anchor: "",
+    },
+    Allowance {
         structure: "Subject",
         field: "exports",
         category: Category::PinnedOutsideTheWall,
         reason: "The wall never reads this field — its only occurrence in the whole wall is \
-                 its own declaration in SchemaCore.lean, and `exportsAccounted` does the \
+                 its own declaration in SchemaBase.lean, and `exportsAccounted` does the \
                  byte-level export accounting from `manifest.obligations` and \
                  `subject.declaredUncertified` instead. It is constrained by the \
                  checker-authored witness rather than by `accepted`: verifier.rs emits \
@@ -1577,18 +1691,6 @@ pub const ALLOWED: &[Allowance] = &[
                  independent value. Note this is the one category the lint cannot audit: it \
                  sees only the wall, so `PinnedOutsideTheWall` is trusted by assertion and \
                  defended only by review of verifier.rs.",
-        doc_anchor: "",
-    },
-    Allowance {
-        structure: "SymBlock",
-        field: "result",
-        category: Category::WallOwnedConstraint,
-        reason: "Pinned by a wall-computed equality rather than by bytes directly: \
-                 `PlanCheck.checkSymBlockFuel` requires `block.result + 1 = block.nodes.length` \
-                 (PlanCheck.lean:323) and that the node at that index exists with a matching \
-                 id, so once `nodes` is byte-bound through the plan lowering the result index \
-                 carries no independent producer freedom. Reached from acceptance via \
-                 `PlanCheck.checkSymRawPlan`.",
         doc_anchor: "",
     },
 ];
