@@ -1750,7 +1750,10 @@ fn emit_verify_law_forall_auto_proof_inner(
                 let mut simp_names = unfolds.clone();
                 for bridge in [
                     "decide_eq_true_eq",
+                    "decide_eq_false_iff_not",
                     "Bool.and_eq_true",
+                    "Bool.or_eq_true",
+                    "Bool.not_eq_true'",
                     "beq_iff_eq",
                     "ge_iff_le",
                     "gt_iff_lt",
@@ -2038,9 +2041,15 @@ fn cone_body_is_transparent_arithmetic(
 /// - record construction whose every field is admitted;
 /// - a call to a user definition that is ITSELF a member of this cone, with
 ///   admitted arguments. A callee that resolves to no user definition — every
-///   builtin (`Int.abs`, `Bool.and`, …) and every capability operation — is
+///   builtin (`Int.abs`, `String.len`, …) and every capability operation — is
 ///   refused here, which is the whole point of walking bodies rather than
-///   inspecting the collected name set.
+///   inspecting the collected name set;
+/// - the three Boolean connectives `Bool.and`, `Bool.or`, `Bool.not` over
+///   admitted arguments. They are the one exception to the builtin rule
+///   because they are not calls in the model at all: the Lean emission writes
+///   them as the operators `&&`, `||`, `!` inline, so there is nothing to
+///   unfold, and the proof arm's simp set carries the lemmas that turn them
+///   into `∧`, `∨`, `¬` for `omega`.
 ///
 /// Everything else (`match`, lists, tuples, maps, strings, `Float`, `?`,
 /// record update, tail calls, independent products, constructors) declines.
@@ -2081,7 +2090,10 @@ fn transparent_arithmetic_expr(
                 return false;
             };
             let Some(fd) = shared::find_fn_def_by_call_name(ctx, &name) else {
-                return false;
+                return matches!(name.as_str(), "Bool.and" | "Bool.or" | "Bool.not")
+                    && args
+                        .iter()
+                        .all(|arg| transparent_arithmetic_expr(arg, bound, cone, ctx));
             };
             cone.contains(&fd.name)
                 && args

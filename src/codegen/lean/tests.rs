@@ -5037,6 +5037,45 @@ verify nonNeg law nonNegOfPositive
     );
 }
 
+/// The k5 Table 3 rows: a `when`-guarded `holds` law whose subject is a
+/// `Bool.and` of two comparisons. The Boolean connectives are operators in the
+/// Lean model (`&&`, `||`, `!`), not calls, so the cone stays transparent and
+/// the law exports as the true universal — instead of the bounded
+/// sampled-domain statement the certificate model leaves out.
+#[test]
+fn cert_model_admits_boolean_connectives_in_a_when_linear_cone() {
+    let mut ctx = ctx_from_source(
+        r#"
+module TableRow
+    intent = "a table row as an order window"
+
+fn window(e: Int, f: Int) -> Bool
+    ? "f equals e, stated as a two-sided window."
+    Bool.and(e <= f, Bool.not(f < e))
+
+verify window law row
+    given e: Int = [0]
+    given f: Int = [0]
+    when Bool.or(f == e, false)
+    window(e, f) holds
+"#,
+        "table_row",
+    );
+    let lean = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    assert!(
+        lean.contains("-- aver:law-class window_law_row universal window.row"),
+        "{lean}"
+    );
+    assert!(
+        lean.contains("theorem window_law_row : ∀ (e : Int) (f : Int), "),
+        "{lean}"
+    );
+    assert!(
+        lean.contains("Bool.or_eq_true, Bool.not_eq_true'"),
+        "{lean}"
+    );
+}
+
 /// CORE when-linear consequence, NEGATIVE gate: the SAME law shape, but one
 /// cone body calls the builtin `Int.abs`. The cone-name collector resolves
 /// user definitions only, so that call leaves no name behind — the older
