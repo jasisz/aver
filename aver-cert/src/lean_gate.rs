@@ -225,10 +225,10 @@ fn is_plain_unprimed_name(value: &str) -> bool {
 /// The identifier gate of one law-claim, shared by the producer and the
 /// checker: `Err(field)` names the first field the checker refuses.
 ///
-/// The model theorem may carry the transpiler's trailing-prime escape in any
-/// segment (a law of a function named after a reserved word lives in
-/// `…none'` scope); the label and the corollary never do, since the corollary
-/// is the label's flattening and the label is a source identity.
+/// The model theorem may carry the transpiler's prime escape of a Lean
+/// keyword (a law of a function `at` is the theorem `at'_law_…`); the label
+/// and the corollary never do, since the corollary is the label's flattening
+/// and the label is a source identity.
 pub fn law_claim_identifiers(
     label: &str,
     theorem: &str,
@@ -532,6 +532,14 @@ mod tests {
         assert_eq!(
             law_claim_identifiers("D.f.l", "D.none'.f_law_l", "D_f_l"),
             Ok(())
+        );
+        assert_eq!(
+            law_claim_identifiers("D.at.l", "D.at'_law_l", "D_at_l"),
+            Ok(())
+        );
+        assert_eq!(
+            law_claim_identifiers("D.f.l", "D.'f_law_l", "D_f_l"),
+            Err("theorem")
         );
         assert_eq!(
             law_claim_identifiers("D.f'.l", "D.f_law_l", "D_f'_l"),

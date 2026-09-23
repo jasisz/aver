@@ -497,18 +497,18 @@ pub fn is_root_qualified_name(value: &str) -> bool {
 
 /// Whether `value` is a plain dotted Lean identifier: every `.`-separated
 /// segment nonempty, starting with an ASCII letter or `_`, and continuing with
-/// ASCII alphanumerics, `_` or a trailing-prime `'` (the transpiler's
-/// reserved-word escape).
+/// ASCII alphanumerics, `_` or `'`. The prime is the transpiler's escape of a
+/// Lean keyword (`none'`), and a name derived from an escaped one carries it
+/// mid-segment (the law theorem `at'_law_rulesOnlyTurnOn` of a function
+/// `at`). After a letter, Lean lexes `'` as part of the identifier, so a
+/// segment of this shape can never open a character literal.
 pub fn is_plain_dotted_name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_BRIDGE_NAME_LEN
         && value.split('.').all(|segment| {
             let mut chars = segment.chars();
-            let head_ok =
-                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_');
-            let body: String = chars.collect();
-            let body = body.trim_end_matches('\'');
-            head_ok && body.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '\'')
         })
 }
 
@@ -971,6 +971,9 @@ mod tests {
     fn reserved_word_primes_are_plain_names() {
         assert!(is_plain_dotted_name("_root_.Models.Type'.field"));
         assert!(!is_plain_dotted_name("_root_.Models.'x"));
-        assert!(!is_plain_dotted_name("_root_.Models.x'y"));
+        // A name derived from an escaped one carries the prime mid-segment.
+        assert!(is_plain_dotted_name("_root_.Models.at'_law_x"));
+        assert!(!is_plain_dotted_name("_root_.Models..x"));
+        assert!(!is_plain_dotted_name("_root_.Models.x\"y"));
     }
 }

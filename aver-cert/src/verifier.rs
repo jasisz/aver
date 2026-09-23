@@ -3038,7 +3038,7 @@ mod tests {
         );
         for refused in [
             "Domain.Policy.'none",
-            "Domain.Policy.no'ne",
+            "Domain.Policy..none",
             "Domain.Policy.none\u{ab}",
         ] {
             let mut entry = raw_bridge("Domain_Policy_none");
