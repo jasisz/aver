@@ -5403,3 +5403,43 @@ mod citation_probe;
 
 mod decidable_normalization;
 mod waterfall;
+
+/// `Wait.poll<K>` has an oracle generic over its key type. Lifting an
+/// effectful function that uses it has no single oracle parameter type to
+/// prepend: the lift declines with `GenericOracle`, and proof export drops
+/// that function instead of panicking on the unresolved type variable (the
+/// whole export of a program with such a function used to abort on it).
+#[test]
+fn generic_oracle_effect_declines_the_lift() {
+    let source = r#"
+module WaitProbe
+    depends [Wait]
+    intent = "An effectful helper over the generic Wait.poll oracle."
+    exposes [pollOnce]
+    effects [Wait.poll]
+
+fn pollOnce(items: Map<Int, Wait.Item>) -> Result<List<Int>, String>
+    ? "Polls the wait set once."
+    ! [Wait.poll]
+    Wait.poll(items, 0)
+"#;
+    let ctx = ctx_from_source(source, "WaitProbe");
+    let fd = ctx
+        .fn_defs
+        .iter()
+        .find(|fd| fd.name == "pollOnce")
+        .expect("pollOnce is parsed");
+    let lifted = crate::types::checker::effect_lifting::lift_fn_def_with_helpers_and_registry(
+        fd,
+        &HashMap::new(),
+        &ctx.capabilities,
+    );
+    assert!(
+        matches!(
+            lifted,
+            Err(crate::types::checker::effect_lifting::LiftError::GenericOracle { ref method })
+                if method == "Wait.poll"
+        ),
+        "{lifted:?}"
+    );
+}
