@@ -59,58 +59,22 @@ impl LawClaim {
 /// derive it from the claim's label.
 pub const LAW_BRIDGED_COROLLARY_SUFFIX: &str = "_bridged";
 
-/// Mirror of the checker's `validate_law_candidate` gates, kept as a
-/// DEFENSIVE check on the rendered statement even though the claim now arrives
-/// as structure: the producer must never write a manifest entry its own
-/// checker hard-rejects — one refused entry fails candidate parsing for the
-/// WHOLE package before Lean even runs. Legitimate compiler output can trip
-/// the gates (a record literal `{ field := value }` in a statement carries
-/// `:=`; a reserved-word module escapes to `Type'`), so such a law is simply
-/// not claimed — the surface is additive and omitting a claim is fail-closed.
+/// The checker's `validate_law_candidate` gates, applied through the SAME
+/// functions the checker calls (`lean_gate::law_claim_identifiers` and
+/// `bridge_statement::statement_is_single_plain_line` at the checker's own
+/// length cap): the producer must never write a manifest entry its checker
+/// hard-rejects — one refused entry fails candidate parsing for the WHOLE
+/// package before Lean even runs. Legitimate compiler output can trip the
+/// gates (a record literal `{ field := value }` in a statement carries `:=`),
+/// so such a law is simply not claimed — the surface is additive and omitting
+/// a claim is fail-closed.
 fn claim_survives_checker_gates(claim: &LawClaim) -> bool {
-    let plain_dotted = |value: &str| {
-        !value.is_empty()
-            && value.len() <= 200
-            && value.split('.').all(|segment| {
-                let mut chars = segment.chars();
-                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
-                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-    };
-    if !plain_dotted(&claim.label)
-        || !plain_dotted(&claim.qualified())
-        || !plain_dotted(&claim.corollary())
-    {
-        return false;
-    }
-    let statement = &claim.statement;
-    if statement.is_empty()
-        || statement.len() > 2000
-        || statement.contains('\n')
-        || statement.contains(":=")
-        || statement.contains("--")
-        || statement.contains("/-")
-    {
-        return false;
-    }
-    let mut depth: Vec<char> = Vec::new();
-    for character in statement.chars() {
-        let matched = match character {
-            '(' | '[' | '{' | '⟨' => {
-                depth.push(character);
-                true
-            }
-            ')' => depth.pop() == Some('('),
-            ']' => depth.pop() == Some('['),
-            '}' => depth.pop() == Some('{'),
-            '⟩' => depth.pop() == Some('⟨'),
-            _ => true,
-        };
-        if !matched {
-            return false;
-        }
-    }
-    depth.is_empty()
+    crate::lean_gate::law_claim_identifiers(&claim.label, &claim.qualified(), &claim.corollary())
+        .is_ok()
+        && crate::bridge_statement::statement_is_single_plain_line(
+            &claim.statement,
+            crate::bridge_statement::MAX_BRIDGE_STATEMENT_LEN,
+        )
 }
 
 /// Admit the law-claims the producer handed over.

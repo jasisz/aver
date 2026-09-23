@@ -512,6 +512,13 @@ pub fn is_plain_dotted_name(value: &str) -> bool {
         })
 }
 
+/// Whether `value` is a certified export name as a bridge entry may carry it:
+/// one plain identifier segment, no dot and no prime (export names are the
+/// Aver path flattened with `_`).
+pub fn is_plain_export_name(value: &str) -> bool {
+    is_plain_dotted_name(value) && !value.contains('.') && !value.contains('\'')
+}
+
 /// The binder names a bridge of this arity quantifies over.
 pub fn binder_names(arity: usize) -> Vec<String> {
     (0..arity).map(|index| format!("x{index}")).collect()

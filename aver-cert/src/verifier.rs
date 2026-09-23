@@ -13,7 +13,7 @@ use crate::bridge_statement::{
 use crate::cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
 use crate::lean_process::LeanRunner;
 use crate::prelude_cache::PristineWallCache;
-use crate::{format, wall};
+use crate::{format, lean_gate, wall};
 use colored::Colorize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -56,29 +56,6 @@ const PROOF_BUILD_PHASE: &str = "certificate proof build";
 /// reconstruction.
 pub const ARTIFACT_DECODE_LINE: &str =
     "artifact-check: exact bytes and manifest accepted by the checker-owned Lean predicate";
-
-const CODE_EXEC_TOKENS: [&str; 20] = [
-    "#eval",
-    "run_cmd",
-    "run_elab",
-    "run_tac",
-    "initialize",
-    "builtin_initialize",
-    "macro",
-    "macro_rules",
-    "elab",
-    "elab_rules",
-    "syntax",
-    "notation",
-    "unsafe",
-    "implemented_by",
-    "extern",
-    "deriving",
-    "attribute",
-    "@[",
-    "«",
-    "open Lean",
-];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Verdict {
@@ -1550,25 +1527,12 @@ fn read_candidates(
 /// newline, no `:=`, no comment openers, so a crafted statement cannot
 /// terminate the pin early or smuggle in a further declaration.
 fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String> {
-    let plain_dotted = |value: &str, field: &str| -> Result<(), String> {
-        let ok =
-            !value.is_empty() && value.len() <= 200 && value.split('.').all(|segment| {
-                let mut chars = segment.chars();
-                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
-                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-            });
-        if ok {
-            Ok(())
-        } else {
-            Err(format!(
-                "law-claim `{}` field `{field}` is not a plain dotted Lean identifier",
-                law.label
-            ))
-        }
-    };
-    plain_dotted(&law.label, "label")?;
-    plain_dotted(&law.theorem, "theorem")?;
-    plain_dotted(&law.corollary, "corollary")?;
+    if let Err(field) = lean_gate::law_claim_identifiers(&law.label, &law.theorem, &law.corollary) {
+        return Err(format!(
+            "law-claim `{}` field `{field}` is not a plain dotted Lean identifier",
+            law.label
+        ));
+    }
     if law.corollary != law.label.replace('.', "_") {
         return Err(format!(
             "law-claim `{}` corollary `{}` is not the label's flattening",
@@ -1631,22 +1595,17 @@ struct RawSourceBridge {
 fn validate_source_bridge_candidate(
     bridge: RawSourceBridge,
 ) -> Result<SourceBridgeCandidate, String> {
-    let plain = |value: &str| {
-        !value.is_empty()
-            && value.len() <= crate::format::MAX_CANDIDATE_LEN
-            && value.split('.').all(|segment| {
-                let mut chars = segment.chars();
-                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
-                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-    };
-    if !plain(&bridge.export) || bridge.export.contains('.') {
+    // The same two identifier rules the producer applies before it declares a
+    // bridge (`bridge_statement`), so a model name the producer writes — the
+    // transpiler's trailing-prime escape of a reserved word included — is
+    // never one this gate refuses for the whole package.
+    if !bridge_statement::is_plain_export_name(&bridge.export) {
         return Err(format!(
             "source-bridge export `{}` is not a plain Lean identifier",
             display_safe(&bridge.export)
         ));
     }
-    if !plain(&bridge.model) {
+    if !bridge_statement::is_plain_dotted_name(&bridge.model) {
         return Err(format!(
             "source-bridge `{}` model `{}` is not a plain dotted Lean identifier",
             display_safe(&bridge.export),
@@ -2311,22 +2270,7 @@ fn assemble_build(
 /// the returned root is interpolated unescaped into the checker-authored
 /// lakefile, so only validated segments may become roots.
 fn lean_module_root(name: &str) -> Result<String, String> {
-    let stem = name
-        .strip_suffix(".lean")
-        .ok_or_else(|| format!("cert file `{name}` is not a Lean file"))?;
-    let segments: Vec<&str> = stem.split('/').collect();
-    let valid = segments.iter().all(|segment| {
-        let mut chars = segment.chars();
-        matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
-            && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
-    });
-    if valid {
-        Ok(segments.join("."))
-    } else {
-        Err(format!(
-            "cert file name `{name}` must match ^[A-Za-z][A-Za-z0-9_]*\\.lean$ in every path segment"
-        ))
-    }
+    lean_gate::lean_module_root(name)
 }
 
 /// Reject a package module root that would shadow a checker-owned or
@@ -2449,217 +2393,18 @@ fn collect_nested_lean_files(
 }
 
 /// Reject a cert data file that carries an elaboration-executing token in
-/// *code* position. This is a fail-closed trust-boundary defense: the scanner's
-/// notion of "this span is an inert string or comment" is a deliberate SOUND
-/// OVER-APPROXIMATION of code — on any lexical ambiguity it defaults to code and
-/// scans, so a token Lean would elaborate is never skipped as inert. It may
-/// over-reject (treat inert bytes as code) but must never under-reject.
-///
-/// Inert spans recognized (and only these): normal string literals `"..."` with
-/// `\` escapes, line comments `-- ... \n`, and nested block comments
-/// `/- ... -/` (which also covers the `/--`/`/-!` doc-comment openers). Char
-/// literals are consumed as code just far enough that a `"` inside `'"'` / `'\"'`
-/// cannot open a phantom string. Raw / interpolated string prefixes (`r"`,
-/// `r#"`, `s!"`) and unterminated strings/comments fall back to scanning the
-/// remainder as pure code.
+/// *code* position. The lexer and the token list live in
+/// [`crate::lean_gate`], which the producer runs over its own model files
+/// with the very same code, so a package the producer ships never fails this
+/// gate on a file it could have left out.
 fn scan_for_code_exec(name: &str, contents: &[u8]) -> Result<(), String> {
     let text = String::from_utf8_lossy(contents);
-    let chars: Vec<char> = text.chars().collect();
-    if let Some(token) = find_code_exec_token(&chars) {
+    if let Some(token) = lean_gate::code_exec_token(&text) {
         return Err(format!(
             "cert data file `{name}` contains elaboration-executing token `{token}`"
         ));
     }
     Ok(())
-}
-
-/// A Lean identifier-continuation character, narrowed to ASCII alphanumerics and
-/// `_`. This is intentionally an UNDER-approximation of Lean's identifier
-/// alphabet: it is used only for the word-boundary check, and treating fewer
-/// characters as identifier-continuation makes the scanner *more* likely to
-/// reject (fail-closed), never less.
-fn is_ident_continuation(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// A forbidden token is treated as a whole *word* (boundary-checked so `elab`
-/// does not fire inside `relabel`) exactly when every one of its bytes is an
-/// ASCII identifier-continuation character. Tokens carrying punctuation, spaces,
-/// or non-ASCII bytes (`#eval`, `@[`, `«`, `open Lean`) are matched as raw
-/// substrings in code position, where a word boundary has no meaning.
-fn token_is_word(token: &str) -> bool {
-    token
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-}
-
-/// Returns the offending token if one starts, in code position, at `chars[i]`.
-fn token_at(
-    tokens: &[(&'static str, Vec<char>, bool)],
-    chars: &[char],
-    i: usize,
-) -> Option<&'static str> {
-    for (token, needle, is_word) in tokens {
-        let len = needle.len();
-        if i + len > chars.len() || &chars[i..i + len] != needle.as_slice() {
-            continue;
-        }
-        if *is_word {
-            let left_boundary = i == 0 || !is_ident_continuation(chars[i - 1]);
-            let right_boundary = i + len == chars.len() || !is_ident_continuation(chars[i + len]);
-            if left_boundary && right_boundary {
-                return Some(token);
-            }
-        } else {
-            return Some(token);
-        }
-    }
-    None
-}
-
-/// Index just past the closing `"` of the normal string literal opening at
-/// `chars[open]`, or `None` if the string never closes before EOF (an
-/// unterminated string is a lexer error in Lean; the caller then defaults to
-/// scanning the region as code).
-fn string_literal_end(chars: &[char], open: usize) -> Option<usize> {
-    let mut j = open + 1;
-    while j < chars.len() {
-        match chars[j] {
-            '\\' => j += 2, // the escaped character cannot close the string
-            '"' => return Some(j + 1),
-            _ => j += 1,
-        }
-    }
-    None
-}
-
-/// Index just past the matching `-/` of the (nesting) block comment opening at
-/// `chars[open]` (`/-`), or `None` if it never closes before EOF.
-fn block_comment_end(chars: &[char], open: usize) -> Option<usize> {
-    let mut depth = 1usize;
-    let mut j = open + 2;
-    while j < chars.len() {
-        if chars[j] == '/' && j + 1 < chars.len() && chars[j + 1] == '-' {
-            depth += 1;
-            j += 2;
-        } else if chars[j] == '-' && j + 1 < chars.len() && chars[j + 1] == '/' {
-            depth -= 1;
-            j += 2;
-            if depth == 0 {
-                return Some(j);
-            }
-        } else {
-            j += 1;
-        }
-    }
-    None
-}
-
-/// Index just past a char literal opening at `chars[open]` (`'`), or `None` if
-/// `chars[open]` is not the start of a char literal we recognize. Recognition is
-/// deliberately minimal: its only soundness duty is to consume the `"` inside
-/// `'"'` and `'\"'` so it cannot open a phantom string. Every char literal that
-/// can contain a raw `"` byte matches one of those two shapes; other char
-/// literals (`'\n'`, `'\u{22}'`, identifier primes) may go unrecognized, which
-/// is harmless because they carry no `"`.
-fn char_literal_end(chars: &[char], open: usize) -> Option<usize> {
-    if chars.get(open + 1) == Some(&'\\') {
-        // '\X'  (escaped single char, e.g. '\"', '\n', '\\', '\'')
-        if chars.get(open + 2).is_some() && chars.get(open + 3) == Some(&'\'') {
-            return Some(open + 4);
-        }
-        return None;
-    }
-    match chars.get(open + 1) {
-        Some('\'') | None => None, // "''" is not a char literal; nor is a trailing '
-        Some(_) => {
-            // 'X'  (single unescaped char, including 'X' == '"')
-            if chars.get(open + 2) == Some(&'\'') {
-                Some(open + 3)
-            } else {
-                None
-            }
-        }
-    }
-}
-
-/// Scan `chars[start..]` as pure code (no string/comment skipping) and return
-/// the first forbidden token. Used as the default-to-code fallback for
-/// unterminated strings/comments and raw/interpolated string prefixes.
-fn scan_remainder_as_code(
-    tokens: &[(&'static str, Vec<char>, bool)],
-    chars: &[char],
-    start: usize,
-) -> Option<&'static str> {
-    for i in start..chars.len() {
-        if let Some(token) = token_at(tokens, chars, i) {
-            return Some(token);
-        }
-    }
-    None
-}
-
-/// The context-aware core of [`scan_for_code_exec`]: a mini Lean lexer that
-/// walks the file, skips inert string/comment spans, and reports the first
-/// forbidden token that appears in code position.
-fn find_code_exec_token(chars: &[char]) -> Option<&'static str> {
-    let tokens: Vec<(&'static str, Vec<char>, bool)> = CODE_EXEC_TOKENS
-        .iter()
-        .map(|token| (*token, token.chars().collect(), token_is_word(token)))
-        .collect();
-    let n = chars.len();
-    let mut i = 0;
-    while i < n {
-        let c = chars[i];
-        // Inert-span openers take priority. None of them is a token start, so
-        // handling them here never skips over a forbidden token.
-        if c == '"' {
-            // A `"` preceded by a raw/interpolated string prefix (`r"`, `r#"`,
-            // `s!"`) is lexically ambiguous for a normal-string scan; default to
-            // code and scan the remainder rather than risk a desynced skip.
-            if i > 0 && matches!(chars[i - 1], 'r' | '#' | '!') {
-                return scan_remainder_as_code(&tokens, chars, i);
-            }
-            match string_literal_end(chars, i) {
-                Some(end) => {
-                    i = end;
-                    continue;
-                }
-                None => return scan_remainder_as_code(&tokens, chars, i),
-            }
-        }
-        if c == '-' && chars.get(i + 1) == Some(&'-') {
-            // Line comment through end of line (or EOF).
-            let mut j = i + 2;
-            while j < n && chars[j] != '\n' {
-                j += 1;
-            }
-            i = j;
-            continue;
-        }
-        if c == '/' && chars.get(i + 1) == Some(&'-') {
-            match block_comment_end(chars, i) {
-                Some(end) => {
-                    i = end;
-                    continue;
-                }
-                None => return scan_remainder_as_code(&tokens, chars, i),
-            }
-        }
-        // A `'` that opens a char literal is consumed; otherwise it is an
-        // identifier prime and falls through as ordinary code.
-        if c == '\''
-            && let Some(end) = char_literal_end(chars, i)
-        {
-            i = end;
-            continue;
-        }
-        if let Some(token) = token_at(&tokens, chars, i) {
-            return Some(token);
-        }
-        i += 1;
-    }
-    None
 }
 
 /// The generated lakefile carries the checker's Lean heap ceiling into every
@@ -3271,6 +3016,41 @@ mod tests {
             ctors: vec![("_root_.Domain.Tag.a".to_string(), Vec::new())],
         }];
         assert!(validate_source_bridge_candidate(foreign_ctor).is_err());
+    }
+
+    /// The transpiler escapes a source function named after a Lean keyword
+    /// with a trailing prime (`none` becomes `none'`), and the producer names
+    /// that model in its bridge entry. The checker used to refuse the primed
+    /// name as "not a plain dotted identifier" — for the whole package, since a
+    /// refused entry fails candidate parsing. Producer and checker now apply
+    /// the one rule of `bridge_statement`, which admits the escape in every
+    /// segment and nothing else.
+    #[test]
+    fn a_keyword_escaped_model_name_passes_the_bridge_gate() {
+        let mut escaped = raw_bridge("Domain_Policy_none");
+        escaped.model = "Domain.Policy.none'".to_string();
+        let candidate =
+            validate_source_bridge_candidate(escaped).expect("the escaped model name is admitted");
+        assert!(
+            candidate.statement.contains("_root_.Domain.Policy.none'"),
+            "{}",
+            candidate.statement
+        );
+        for refused in [
+            "Domain.Policy.'none",
+            "Domain.Policy.no'ne",
+            "Domain.Policy.none\u{ab}",
+        ] {
+            let mut entry = raw_bridge("Domain_Policy_none");
+            entry.model = refused.to_string();
+            assert!(
+                validate_source_bridge_candidate(entry).is_err(),
+                "{refused}"
+            );
+        }
+        let mut primed_export = raw_bridge("Domain_Policy_none'");
+        primed_export.model = "Domain.Policy.none'".to_string();
+        assert!(validate_source_bridge_candidate(primed_export).is_err());
     }
 
     /// The defect this surface was reshaped to close: a package used to declare
