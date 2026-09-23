@@ -498,6 +498,29 @@ def plansAccepted (artifact : ArtifactData) : Bool :=
   roleTypesPinned artifact.modBytes artifact.modLen M &&
   declsWellFormed m.subject m.types m.fnPlans
 
+/-- The conjuncts of `plansAccepted` other than the per-entry checks. A
+    package proves the per-entry checks in chunks, one declaration each, so
+    that no single kernel check walks every plan of a large module. -/
+def plansAcceptedRest (artifact : ArtifactData) : Bool :=
+  let m := artifact.manifest
+  let M := mctxOf m.subject m.types m.fnPlans
+  indicesDistinct M m.fnPlans &&
+  typeTableConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
+  dataConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
+  roleTypesPinned artifact.modBytes artifact.modLen M &&
+  declsWellFormed m.subject m.types m.fnPlans
+
+theorem plansAccepted_of_parts (artifact : ArtifactData)
+    (hall : artifact.manifest.fnPlans.all
+      (entryAccepted artifact.modBytes artifact.modLen
+        (mctxOf artifact.manifest.subject artifact.manifest.types artifact.manifest.fnPlans)
+        artifact.manifest.fnPlans) = true)
+    (hrest : plansAcceptedRest artifact = true) : plansAccepted artifact = true := by
+  simp only [plansAcceptedRest, Bool.and_eq_true] at hrest
+  obtain ⟨⟨⟨⟨ha, hc⟩, hd⟩, he⟩, hf⟩ := hrest
+  simp only [plansAccepted, Bool.and_eq_true]
+  exact ⟨⟨⟨⟨⟨ha, hall⟩, hc⟩, hd⟩, he⟩, hf⟩
+
 /-- The manifest's obligations are exactly the ones the wall derives from its
     plans: no obligation field is producer data. -/
 def obligationsDerived (artifact : ArtifactData) : Prop :=

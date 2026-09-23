@@ -312,6 +312,58 @@ fn render_artifact_host_roles(analysis: &Analysis, params: &str) -> String {
     )
 }
 
+/// Plans checked per kernel declaration in `ArtifactPlans.lean`.
+const PLAN_CHUNK: usize = 8;
+
+/// The per-entry plan checks (`entryAccepted`), `PLAN_CHUNK` entries per
+/// `decide +kernel` declaration, in their own compilation unit: one check
+/// over every plan of a large module exhausts the kernel's memory. The
+/// chunks are chained from the last one back to the whole list.
+fn render_artifact_plans(analysis: &Analysis) -> String {
+    let n = analysis.entries.len();
+    let mut s = String::from(
+        "-- The per-plan acceptance checks, a few plans per `decide +kernel`\n\
+         -- declaration, chained into the check over every plan.\n\
+         import AcceptedArtifact\n\
+         import ArtifactBytes\n\
+         import Manifest\n\n\
+         set_option maxRecDepth 200000\n\
+         set_option maxHeartbeats 1600000\n\n\
+         namespace AverCert.Artifact\n\
+         open AverCert AverCert.Schema AverCert.AcceptedArtifact AverCert.TypeTable\n\n\
+         /-- One plan's acceptance check against the staged artifact bytes. -/\n\
+         abbrev planOk : FnEntry → Bool :=\n  \
+           entryAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n    \
+           (mctxOf AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans)\n    \
+           AverCert.manifest.fnPlans\n\n",
+    );
+    let starts: Vec<usize> = (0..n.max(1)).step_by(PLAN_CHUNK).collect();
+    for (i, k) in starts.iter().enumerate().rev() {
+        if i + 1 == starts.len() {
+            s.push_str(&format!(
+                "theorem plans_from_{k} : (AverCert.manifest.fnPlans.drop {k}).all planOk = true := by\n  \
+                 decide +kernel\n\n"
+            ));
+        } else {
+            let next = starts[i + 1];
+            s.push_str(&format!(
+                "theorem plans_chunk_{k} :\n    \
+                 ((AverCert.manifest.fnPlans.drop {k}).take {PLAN_CHUNK}).all planOk = true := by\n  \
+                 decide +kernel\n\n\
+                 theorem plans_from_{k} : (AverCert.manifest.fnPlans.drop {k}).all planOk = true := by\n  \
+                 rw [← List.take_append_drop {PLAN_CHUNK} (AverCert.manifest.fnPlans.drop {k}),\n    \
+                 List.all_append, plans_chunk_{k}, List.drop_drop]\n  \
+                 simpa only [Nat.reduceAdd, Bool.true_and] using plans_from_{next}\n\n"
+            ));
+        }
+    }
+    s.push_str(
+        "theorem plans_all : AverCert.manifest.fnPlans.all planOk = true := plans_from_0\n\n\
+         end AverCert.Artifact\n",
+    );
+    s
+}
+
 fn render_artifact(
     analysis: &Analysis,
     envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
@@ -364,6 +416,7 @@ fn render_artifact(
          import AcceptedArtifact\n\
          import ArtifactBytes\n\
          import Manifest\n\
+         import ArtifactPlans\n\
          {roles_import}\n\
          set_option maxRecDepth 200000\n\
          -- Elaboration cost grows with the artifact; this moves a resource\n\
@@ -376,7 +429,8 @@ fn render_artifact(
              manifest := AverCert.manifest, wasip2ComponentEnvelope := {envelope},\n    \
              closureFuel := {fuel},\n    \
              closureClaim := ⟨{roots}, {helpers}, {admitted}⟩ }}\n\n\
-         theorem plans_ok : plansAccepted data = true := by decide +kernel\n\n\
+         theorem plans_ok : plansAccepted data = true :=\n  \
+           plansAccepted_of_parts data plans_all (by decide +kernel)\n\n\
          {roles_proof}\n\n\
          theorem strings_ok : decodedStringHostRoles data := by\n  \
            unfold decodedStringHostRoles; decide +kernel\n\n\
@@ -670,6 +724,11 @@ pub fn write_project(
             &render_artifact_host_roles(analysis, &params),
         )?;
     }
+    write(
+        &cert_dir,
+        "ArtifactPlans.lean",
+        &render_artifact_plans(analysis),
+    )?;
     write(
         &cert_dir,
         "Artifact.lean",
