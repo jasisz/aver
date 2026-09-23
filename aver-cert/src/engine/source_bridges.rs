@@ -1421,10 +1421,17 @@ fn render_export(
 
 /// The package module that carries the bridge proofs themselves.
 pub const BRIDGE_PROOF_MODULE: &str = "BridgeProof";
+/// The decoders, images and rewrite lemmas every step slice imports.
+pub const BRIDGE_DEFS_MODULE: &str = "BridgeDefs";
+/// The step lemma slices, `BridgeSteps0`, `BridgeSteps1`, ….
+pub const BRIDGE_STEPS_MODULE: &str = "BridgeSteps";
+/// Step lemmas per slice module.
+const BRIDGE_STEPS_PER_MODULE: usize = 24;
 
-/// Render the package's bridge surface as two files: `BridgeProof.lean`
-/// (decoders, images, step lemmas and one bridge theorem per export) and
-/// `Bridge.lean` (the `_certified` corollaries the manifest names).
+/// Render the package's bridge surface: `BridgeDefs.lean` (decoders, images
+/// and rewrite lemmas), the step lemmas in slices `BridgeSteps<i>.lean`,
+/// `BridgeProof.lean` (one bridge theorem per export) and `Bridge.lean` (the
+/// `_certified` corollaries the manifest names).
 ///
 /// Only the corollaries cite `AverCert.Final.cert`, and `Final` sits behind
 /// `Artifact.lean`, the byte-level proof whose build time grows with the
@@ -1434,7 +1441,10 @@ pub const BRIDGE_PROOF_MODULE: &str = "BridgeProof";
 /// other).
 /// `Bridge.lean` still imports every model root, since the checker admits a
 /// nested model file only on an import line of `Bridge.lean` or `Laws.lean`.
-fn render_bridge_lean(plan: &BridgePlan, model_roots: &[String]) -> (String, String) {
+fn render_bridge_lean(
+    plan: &BridgePlan,
+    model_roots: &[String],
+) -> (String, String, Vec<(String, String)>) {
     let mut s = String::from(
         "-- Plan-equals-source bridges of this certificate. Each bridge identifies\n\
          -- the plan an export's obligation evaluates with the transpiled source\n\
@@ -1494,9 +1504,43 @@ fn render_bridge_lean(plan: &BridgePlan, model_roots: &[String]) -> (String, Str
         );
         literal_names.push_str(", withDefault_ite");
     }
-    for b in plan.fns.values() {
-        render_step(b, &plan.fns, &literal_names, &mut s);
+    s.push_str("end AverCert.Bridge\n");
+    // The step lemmas, a slice per module: independent proofs, so Lake builds
+    // the slices in parallel; one module of every step took over an hour on
+    // k5's 260 bridges.
+    let mut parts = vec![(format!("{BRIDGE_DEFS_MODULE}.lean"), s)];
+    let steps: Vec<&BridgedFn> = plan.fns.values().collect();
+    let mut s = String::from(
+        "-- Plan-equals-source bridges of this certificate: the export theorems,\n\
+         -- over the step lemmas of the slices imported below.\n",
+    );
+    for (i, slice) in steps.chunks(BRIDGE_STEPS_PER_MODULE).enumerate() {
+        let name = format!("{BRIDGE_STEPS_MODULE}{i}");
+        let mut part = format!(
+            "-- One slice of the bridge step lemmas.\n\
+             import {BRIDGE_DEFS_MODULE}\n\n\
+             set_option autoImplicit false\n\
+             set_option maxRecDepth 200000\n\
+             set_option linter.unusedSimpArgs false\n\
+             set_option linter.unusedVariables false\n\
+             set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
+             namespace AverCert.Bridge\n\n"
+        );
+        for b in slice {
+            render_step(b, &plan.fns, &literal_names, &mut part);
+        }
+        part.push_str("end AverCert.Bridge\n");
+        parts.push((format!("{name}.lean"), part));
+        s.push_str(&format!("import {name}\n"));
     }
+    s.push_str(&format!(
+        "\nset_option autoImplicit false\n\
+         set_option maxRecDepth 200000\n\
+         set_option linter.unusedSimpArgs false\n\
+         set_option linter.unusedVariables false\n\
+         set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
+         namespace AverCert.Bridge\n\n"
+    ));
     let mut corollaries = String::new();
     for (bridge, func_idx) in &plan.bridges {
         render_export(bridge, *func_idx, plan, &mut s, &mut corollaries);
@@ -1513,7 +1557,7 @@ fn render_bridge_lean(plan: &BridgePlan, model_roots: &[String]) -> (String, Str
     }
     bridge.push_str("\nset_option autoImplicit false\n\n");
     bridge.push_str(&corollaries);
-    (s, bridge)
+    (s, bridge, parts)
 }
 
 // ---- law coverage -------------------------------------------------------------
@@ -1790,7 +1834,7 @@ fn command_preamble_start(lines: &[&str], keyword_line: usize) -> usize {
 /// What `write_project` needs to render the bridge and law surfaces.
 struct Surfaces {
     model: PackagedModel,
-    bridge_lean: Option<(String, String)>,
+    bridge_lean: Option<(String, String, Vec<(String, String)>)>,
     laws_lean: Option<String>,
     bridges: Vec<SourceBridge>,
     law_claims: Vec<LawClaim>,
@@ -1830,8 +1874,12 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
     let bridges: Vec<SourceBridge> = plan.bridges.iter().map(|(b, _)| b.clone()).collect();
     let bridge_lean = (!plan.fns.is_empty() && !bridges.is_empty())
         .then(|| {
-            let (proofs, corollaries) = render_bridge_lean(&plan, &roots);
-            (isolate_theorems(&proofs), isolate_theorems(&corollaries))
+            let (proofs, corollaries, parts) = render_bridge_lean(&plan, &roots);
+            let parts = parts
+                .into_iter()
+                .map(|(name, text)| (name, isolate_theorems(&text)))
+                .collect();
+            (isolate_theorems(&proofs), isolate_theorems(&corollaries), parts)
         });
     let info = ModelInfo::from_model(model);
     let (law_claims, declined_laws) = admit_law_claims(model.law_claims.clone());
