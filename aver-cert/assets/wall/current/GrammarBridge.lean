@@ -217,6 +217,13 @@ theorem eval_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
         rw [evalArgs_mono hle env args vs hvs]
         exact h
       · cases h
+  | env, .call (.intrinsic i) args, v, h => by
+      simp only [eval] at h ⊢
+      split at h
+      · rename_i vs hvs
+        rw [evalArgs_mono hle env args vs hvs]
+        exact h
+      · cases h
   | env, .call (.lazy b) [o, d], v, h => by
       simp only [eval] at h ⊢
       split at h <;> rename_i heq <;>

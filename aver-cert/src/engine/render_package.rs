@@ -297,6 +297,7 @@ fn render_artifact_host_roles(analysis: &Analysis, params: &str) -> String {
         leaf("mul", roles.mul_idx),
         leaf("cmp", roles.cmp_idx),
         leaf("eq", roles.eq_idx),
+        leaf("divmod", roles.divmod_idx),
     ]
     .join("\n\n");
     format!(
@@ -345,7 +346,7 @@ fn render_artifact(
                  show AverCert.manifest.subject.arithParams = some {params} from rfl]\n  \
                  simp only [arithTableCheck, decodedHostRole_box, decodedHostRole_toIndex, \
                  decodedHostRole_add, decodedHostRole_sub, decodedHostRole_mul, decodedHostRole_cmp, \
-                 decodedHostRole_eq, Bool.and_true, Bool.true_and]\n  \
+                 decodedHostRole_eq, decodedHostRole_divmod, Bool.and_true, Bool.true_and]\n  \
                  decide +kernel",
                 r.roles_lean_value()
             ),
@@ -566,7 +567,7 @@ fn render_manifest_json(
     let role = |i: Option<u32>| i.map_or_else(|| "null".to_string(), |i| i.to_string());
     match &analysis.roles {
         Some(r) => s.push_str(&format!(
-            "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}, \"toIndex\": {}, \"cmp\": {}, \"eq\": {}}},\n",
+            "  \"hostRoleTable\": {{\"box\": {}, \"add\": {}, \"mul\": {}, \"sub\": {}, \"toIndex\": {}, \"cmp\": {}, \"eq\": {}, \"divmod\": {}}},\n",
             role(r.box_idx),
             role(r.add_idx),
             role(r.mul_idx),
@@ -574,6 +575,7 @@ fn render_manifest_json(
             role(r.to_index_idx),
             role(r.cmp_idx),
             role(r.eq_idx),
+            role(r.divmod_idx),
         )),
         None => s.push_str("  \"hostRoleTable\": null,\n"),
     }

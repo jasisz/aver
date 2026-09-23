@@ -68,6 +68,9 @@ pub const CMP_CONTRACT: &str =
     "__aint_cmp (canonical carrier pair -> i32 sign; -1 less, 0 equal, 1 greater)";
 pub const EQ_CONTRACT: &str =
     "__aint_eq (canonical carrier pair -> i32 boolean; 1 when equal, else 0)";
+/// The Euclidean division helper contract; byte-identical twin of
+/// `ClaimAxes.divmodContract`.
+pub const DIVMOD_CONTRACT: &str = "__aint_divmod (canonical carrier pair, nonzero divisor, want_mod 0 or 1 -> canonical Euclidean quotient (0) or remainder in [0, |b|) (1))";
 /// The one approved final-theorem statement line. `aver cert verify` confirms
 /// this exact line is present in `Final.lean` (name + `Holds manifest`), which
 /// is what pins the statement without matching arbitrary Lean syntax.

@@ -112,6 +112,7 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
     hostOf M h M.concat = some (1, h.stringConcat M.str) ∧
     hostOf M h M.streq = some (2, h.stringEq) ∧
     hostOf M h M.toIndex = some (1, h.toIndex) ∧
+    hostOf M h M.divmod = some (3, h.divmod) ∧
     ∀ e ∈ fns, hostOf M h e.funcIdx = none := by
   have hkeys : ((hostAssoc M h).map (·.1)).Nodup := by
     rw [hostAssoc_keys]
@@ -121,7 +122,7 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
   refine ⟨L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
-    L (by simp [hostAssoc]), ?_⟩
+    L (by simp [hostAssoc]), L (by simp [hostAssoc]), ?_⟩
   intro e he
   apply lookup_none
   rw [hostAssoc_keys]

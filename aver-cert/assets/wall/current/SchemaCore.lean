@@ -96,6 +96,7 @@ structure HostFns where
   stringEq : List WVal → Option WVal
   stringConcat : Nat → List WVal → Option WVal
   toIndex : List WVal → Option WVal
+  divmod : List WVal → Option WVal
 
 /-- The named runtime contracts, exactly the premises schema 8 assumed:
     integer add/sub/mul are exact with a canonical result; the three-way
@@ -106,8 +107,12 @@ structure HostFns where
     running helpers); String equality is byte equality; String concatenation
     concatenates the byte arrays of its container argument into an array of
     its declared result type; `__aint_to_index` maps a represented Int to its
-    `i32` index or the `-1` sentinel. A helper that returns `none` makes its
-    premise vacuous: none of these demands trap-freedom. -/
+    `i32` index or the `-1` sentinel; `__aint_divmod(a, b, want_mod)` on a
+    CANONICAL CARRIER PAIR with a nonzero divisor returns the canonical
+    Euclidean quotient (`want_mod = 0`, Lean's `Int` `/`, which is
+    `Int.ediv`) or remainder (`want_mod = 1`, `%`, `Int.emod`, in
+    `[0, |b|)`). A helper that returns `none` makes its premise vacuous: none
+    of these demands trap-freedom. -/
 structure HostContracts {C : Nat} (S : CarrierSpec C) (h : HostFns) : Prop where
   add : ∀ a b va vb w, S.Repr a va → S.Repr b vb → h.add [va, vb] = some w →
     S.Repr (a + b) w ∧ S.Canon w
@@ -123,6 +128,9 @@ structure HostContracts {C : Nat} (S : CarrierSpec C) (h : HostFns) : Prop where
   stringConcat : ∀ resultTy parts c, h.stringConcat resultTy [parts] = some c →
     stringConcatW resultTy parts = some c
   toIndex : ∀ n v r, S.Repr n v → h.toIndex [v] = some r → r = .i32v (toIndexW n)
+  divmod : ∀ a b va vb m r, S.Repr a va → S.Repr b vb → S.Canon va → S.Canon vb →
+    b ≠ 0 → (m = 0 ∨ m = 1) → h.divmod [va, vb, .i32v m] = some r →
+    S.Repr (if m = 1 then a % b else a / b) r ∧ S.Canon r
 
 /-- The totality premises of an L3 obligation, selected by its totality role:
     add and sub return on represented operands, and mul does too when the

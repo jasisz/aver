@@ -37,9 +37,16 @@
    * `project tid field base` — `Project`, the field by declared index.
    * `call (.lazy b) [opt, dflt]` — `Call { callee: Builtin(..) }` for
      `Option.withDefault` / `Result.withDefault` (the boxed path: the default
-     is evaluated only on the `None` / `Err` side, as the emitter does), and
-     the fused `Option.withDefault(Vector.get(v, i), <literal>)` over two
-     bare locals (the emitter's bounds-checked `array.get`).
+     is evaluated only on the `None` / `Err` side, as the emitter does), the
+     fused `Option.withDefault(Vector.get(v, i), <literal>)` over two bare
+     locals (the emitter's bounds-checked `array.get`), and the fused
+     `Result.withDefault(Int.div(a, b), <Int literal>)` /
+     `Result.withDefault(Int.mod(a, b), <Int literal>)` (the emitter's guarded
+     `__aint_divmod` call; `Int.div` / `Int.mod` are admitted only there).
+   * `call (.intrinsic i) [a, <nonzero Int literal>]` — `Call { callee:
+     Intrinsic(IntDivEuclid | IntModEuclid) }`, the resolver's discharge of
+     `Int.div` / `Int.mod` by a syntactic nonzero literal divisor: a bare
+     Euclidean `__aint_divmod` call.
    * `interp parts` — `InterpolatedStr` whose parts are all `String` (a
      literal part printed as a string literal).
    * `list t []` — the empty `List(..)` literal, with its element type.
@@ -125,6 +132,16 @@ inductive Builtin where
   /-- `Vector.get(v, i)`: admitted only fused under `Option.withDefault` with
       a literal default (the emitter's bounds-checked `array.get`). -/
   | vecGet
+  /-- `Int.div(a, b)` / `Int.mod(a, b)`: `Result<Int, String>`, admitted only
+      fused under `Result.withDefault` with an Int literal default (the
+      emitter's guarded `__aint_divmod` call). -/
+  | intDiv | intMod
+deriving DecidableEq, Repr
+
+/-- `BuiltinIntrinsic::IntDivEuclid` / `IntModEuclid`: Euclidean division and
+    remainder by a syntactic nonzero literal (no `Result`). -/
+inductive Intrinsic where
+  | intDivEuclid | intModEuclid
 deriving DecidableEq, Repr
 
 /-- Builtins whose second argument the emitter evaluates only on one side
@@ -138,6 +155,7 @@ inductive MirCallee where
   | fn (idx : Nat)
   | builtin (b : Builtin)
   | lazy (b : LazyBuiltin)
+  | intrinsic (i : Intrinsic)
 deriving DecidableEq, Repr
 
 /-- `MirCtor`: a user constructor (type id, constructor index in declaration
@@ -224,6 +242,8 @@ structure MCtx where
   mul : Nat
   neg : Nat
   cmp : Nat
+  /-- `__aint_divmod(a, b, want_mod)`, the Euclidean division helper. -/
+  divmod : Nat := 0
   eq : Nat
   structOf : Nat → Nat
   recFields : Nat → Option (List Ty)
@@ -356,6 +376,24 @@ def vecGetOr? : LazyBuiltin → Expr → Expr → Option (Nat × Nat)
   | .optWithDefault, .call (.builtin .vecGet) [.local v, .local i], .literal _ => some (v, i)
   | _, _, _ => none
 
+/-- The fused `Result.withDefault(Int.div(a, b), <Int literal>)` /
+    `Result.withDefault(Int.mod(a, b), <Int literal>)` shape
+    (`emit_mir_result_with_default`, bignum path): `(isMod, a, b)`. The
+    emitter evaluates `a`, `b` and the default once each, in that order,
+    before the zero test; with a literal default the source meaning (the
+    default only on the `Err` side) is the same. Any other default shape is
+    declined. -/
+def divOr? : LazyBuiltin → Expr → Expr → Option (Bool × Expr × Expr)
+  | .resWithDefault, .call (.builtin .intDiv) [a, b], .literal (.int _) => some (false, a, b)
+  | .resWithDefault, .call (.builtin .intMod) [a, b], .literal (.int _) => some (true, a, b)
+  | _, _, _ => none
+
+/-- An intrinsic's divisor: a nonzero Int literal in the i64 band (the
+    resolver discharges only a syntactic nonzero literal). -/
+def divisorLit? : Expr → Option Int
+  | .literal (.int k) => if k ≠ 0 ∧ inI64Band k then some k else none
+  | _ => none
+
 /-- Every part of an interpolation is a `String`, and there is one. -/
 def allStr : List Ty → Bool
   | [] => false
@@ -472,9 +510,22 @@ mutual
                 | some (.vec t), some .int, some td => if td = t then some t else none
                 | _, _, _ => none
             | none =>
-                match tyOf M n Γ false o, tyOf M n Γ false d with
-                | some to, some td => lazyTy lb to td
-                | _, _ => none
+                match divOr? lb o d with
+                | some _ =>
+                    if tyDivOperands M n Γ o = true ∧ tyOf M n Γ false d = some .int then
+                      some .int
+                    else none
+                | none =>
+                    match tyOf M n Γ false o, tyOf M n Γ false d with
+                    | some to, some td => lazyTy lb to td
+                    | _, _ => none
+        | _ => none
+    | .call (.intrinsic _) args =>
+        match args with
+        | [a, dv] =>
+            match divisorLit? dv, tyOf M n Γ false a with
+            | some _, some .int => some .int
+            | _, _ => none
         | _ => none
     | .construct c ty args =>
         match tysOf M n Γ args with
@@ -507,6 +558,15 @@ mutual
         match tyOf M n Γ false e, tysOf M n Γ es with
         | some t, some ts => some (t :: ts)
         | _, _ => none
+  /-- The operands of the fused `Int.div(a, b)` / `Int.mod(a, b)` are two
+      Ints (the node itself has no type of its own: it is admitted only
+      under `Result.withDefault`). -/
+  def tyDivOperands (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : Expr → Bool
+    | .call _ oargs =>
+        match tysOf M n Γ oargs with
+        | some [.int, .int] => true
+        | _ => false
+    | _ => false
   /-- Int literal cascade: literal arms, then one catch-all (`_` or a binder)
       as the last arm. -/
   def tyIntArms (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tail : Bool) : Arms → Option Ty
@@ -725,6 +785,11 @@ def strCat : List SVal → Option (List Nat)
   | .s x :: rest => (strCat rest).map (x ++ ·)
   | _ => none
 
+/-- The UTF-8 bytes of `"division by zero"`, the `Err` payload of `Int.div` /
+    `Int.mod` at a zero divisor (`src/types/int.rs`). -/
+def divByZeroBytes : List Nat :=
+  [100, 105, 118, 105, 115, 105, 111, 110, 32, 98, 121, 32, 122, 101, 114, 111]
+
 def builtinEval : Builtin → List SVal → Option SVal
   | .boolAnd, [.b x, .b y] => some (.b (x && y))
   | .boolOr, [.b x, .b y] => some (.b (x || y))
@@ -733,6 +798,18 @@ def builtinEval : Builtin → List SVal → Option SVal
   | .listPrepend, [h, .cons t x r] => some (.cons t h (.cons t x r))
   | .vecGet, [.vec t vs, .i n] =>
       if 0 ≤ n ∧ n < vs.length then (vs[n.toNat]?).map (.some t) else some (.none t)
+  | .intDiv, [.i x, .i y] =>
+      if y = 0 then some (.err .int .string (.s divByZeroBytes)) else some (.ok .int .string (.i (x / y)))
+  | .intMod, [.i x, .i y] =>
+      if y = 0 then some (.err .int .string (.s divByZeroBytes)) else some (.ok .int .string (.i (x % y)))
+  | _, _ => none
+
+/-- A Euclidean intrinsic (Lean's `Int` `/` and `%` are `Int.ediv` and
+    `Int.emod`: the remainder lies in `[0, |y|)`); `none` at a zero divisor,
+    which the typing rules out. -/
+def intrinsicEval : Intrinsic → List SVal → Option SVal
+  | .intDivEuclid, [.i x, .i y] => if y = 0 then none else some (.i (x / y))
+  | .intModEuclid, [.i x, .i y] => if y = 0 then none else some (.i (x % y))
   | _, _ => none
 
 /-- The value a constructor node builds. -/
@@ -787,6 +864,10 @@ mutual
     | .call (.builtin bi) args =>
         match evalArgs F env args with
         | some vs => builtinEval bi vs
+        | none => none
+    | .call (.intrinsic ie) args =>
+        match evalArgs F env args with
+        | some vs => intrinsicEval ie vs
         | none => none
     | .tailCall f args =>
         match evalArgs F env args with

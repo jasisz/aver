@@ -34,6 +34,7 @@ struct MCtx<'a> {
     concat: u64,
     streq: u64,
     to_index: u64,
+    divmod: u64,
     tt: &'a PlanTypeTable,
     sigs: HashMap<u32, (Vec<PlanTy>, PlanTy)>,
 }
@@ -67,6 +68,7 @@ impl<'a> MCtx<'a> {
             concat: idx_or(17, string_role(StringHostRole::Concat)),
             streq: idx_or(18, string_role(StringHostRole::Eq)),
             to_index: idx_or(19, role(|r| r.to_index_idx)),
+            divmod: idx_or(23, role(|r| r.divmod_idx)),
             tt,
             sigs,
         }
@@ -263,6 +265,26 @@ fn vec_get_or(lb: PlanLazy, o: &PlanExpr, d: &PlanExpr) -> Option<(u32, u32)> {
     }
 }
 
+/// `Grammar.divOr?`: the fused `Result.withDefault(Int.div/mod(a, b), <Int
+/// literal>)`, as `(is_mod, a, b)`.
+fn div_or<'e>(
+    lb: PlanLazy,
+    o: &'e PlanExpr,
+    d: &PlanExpr,
+) -> Option<(bool, &'e PlanExpr, &'e PlanExpr)> {
+    match (lb, o, d) {
+        (
+            PlanLazy::ResWithDefault,
+            PlanExpr::Call(PlanCallee::Builtin(b @ (PlanBuiltin::IntDiv | PlanBuiltin::IntMod)), args),
+            PlanExpr::Literal(PlanLit::Int(_)),
+        ) => match args.as_slice() {
+            [a, bb] => Some((*b == PlanBuiltin::IntMod, a, bb)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn all_str(ts: &[PlanTy]) -> bool {
     !ts.is_empty() && ts.iter().all(|t| *t == PlanTy::Str)
 }
@@ -369,12 +391,24 @@ impl MCtx<'_> {
                         }
                         _ => None,
                     },
-                    None => lazy_ty(
-                        *lb,
-                        &self.ty_of(n, g, false, o)?,
-                        &self.ty_of(n, g, false, d)?,
-                    ),
+                    None => match div_or(*lb, o, d) {
+                        Some((_, a, b)) => (self.ty_of(n, g, false, a)? == PlanTy::Int
+                            && self.ty_of(n, g, false, b)? == PlanTy::Int
+                            && self.ty_of(n, g, false, d)? == PlanTy::Int)
+                            .then_some(PlanTy::Int),
+                        None => lazy_ty(
+                            *lb,
+                            &self.ty_of(n, g, false, o)?,
+                            &self.ty_of(n, g, false, d)?,
+                        ),
+                    },
                 },
+                _ => None,
+            },
+            PlanExpr::Call(PlanCallee::Intrinsic(_), args) => match args.as_slice() {
+                [a, PlanExpr::Literal(PlanLit::Int(k))] if *k != 0 => {
+                    (self.ty_of(n, g, false, a)? == PlanTy::Int).then_some(PlanTy::Int)
+                }
                 _ => None,
             },
             PlanExpr::BinOp(op, l, r) => {
@@ -757,6 +791,7 @@ enum WI {
     StructNew(u64),
     StructGet(u64, u32),
     RefIsNull,
+    I64Eqz,
     I32Eqz,
     I32Eq,
     I32Ne,
@@ -944,6 +979,14 @@ impl MCtx<'_> {
                 }
                 out
             }
+            PlanExpr::Call(PlanCallee::Intrinsic(i), args) => {
+                let mut out = self.lower_args(x, g, args);
+                out.extend(ops(vec![
+                    WI::I32Const(i64::from(*i == PlanIntrinsic::IntModEuclid)),
+                    WI::Call(self.divmod),
+                ]));
+                out
+            }
             PlanExpr::TailCall(f, args) => {
                 let mut out = self.lower_args(x, g, args);
                 out.push(BI::Op(WI::ReturnCall(u64::from(*f))));
@@ -1082,6 +1125,35 @@ impl MCtx<'_> {
                             WI::ArrayGet(self.vec_struct(t)),
                         ]),
                         self.lower(x, g, false, d),
+                    ));
+                    return out;
+                }
+                if let Some((is_mod, _, _)) = div_or(*lb, o, d) {
+                    // `o`'s own lowering is its two operands.
+                    let c = x.cmp;
+                    let mut out = self.lower(x, g, false, o);
+                    out.extend(self.lower(x, g, false, d));
+                    out.extend(ops(vec![
+                        WI::LocalSet(c + 3),
+                        WI::LocalSet(c + 2),
+                        WI::LocalSet(c + 1),
+                        WI::LocalGet(c + 2),
+                        WI::StructGet(self.carrier, 1),
+                        WI::RefIsNull,
+                        WI::LocalGet(c + 2),
+                        WI::StructGet(self.carrier, 0),
+                        WI::I64Eqz,
+                        WI::I32And,
+                    ]));
+                    out.push(BI::If(
+                        Some(PlanTy::Int),
+                        ops(vec![WI::LocalGet(c + 3)]),
+                        ops(vec![
+                            WI::LocalGet(c + 1),
+                            WI::LocalGet(c + 2),
+                            WI::I32Const(i64::from(is_mod)),
+                            WI::Call(self.divmod),
+                        ]),
                     ));
                     return out;
                 }
@@ -1485,6 +1557,7 @@ impl MCtx<'_> {
                 uleb(u64::from(*fld), out)?
             }
             WI::RefIsNull => out.push(0xd1),
+            WI::I64Eqz => out.push(0x50),
             WI::I32Eqz => out.push(0x45),
             WI::I32Eq => out.push(0x46),
             WI::I32Ne => out.push(0x47),

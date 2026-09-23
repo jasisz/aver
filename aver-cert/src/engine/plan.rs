@@ -53,6 +53,18 @@ pub enum PlanBuiltin {
     BoolNot,
     ListPrepend,
     VecGet,
+    /// `Int.div` / `Int.mod`, admitted only fused under `Result.withDefault`
+    /// with an Int literal default.
+    IntDiv,
+    IntMod,
+}
+
+/// `Grammar.Intrinsic`: the resolver's Euclidean discharge of `Int.div` /
+/// `Int.mod` by a nonzero literal divisor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanIntrinsic {
+    IntDivEuclid,
+    IntModEuclid,
 }
 
 /// `Grammar.LazyBuiltin`.
@@ -68,6 +80,7 @@ pub enum PlanCallee {
     Fn(u32),
     Builtin(PlanBuiltin),
     Lazy(PlanLazy),
+    Intrinsic(PlanIntrinsic),
 }
 
 /// `Grammar.CtorTag`.
@@ -269,6 +282,15 @@ impl PlanCallee {
                     PlanBuiltin::BoolNot => ".boolNot",
                     PlanBuiltin::ListPrepend => ".listPrepend",
                     PlanBuiltin::VecGet => ".vecGet",
+                    PlanBuiltin::IntDiv => ".intDiv",
+                    PlanBuiltin::IntMod => ".intMod",
+                }
+            ),
+            PlanCallee::Intrinsic(i) => format!(
+                "(.intrinsic {})",
+                match i {
+                    PlanIntrinsic::IntDivEuclid => ".intDivEuclid",
+                    PlanIntrinsic::IntModEuclid => ".intModEuclid",
                 }
             ),
             PlanCallee::Lazy(l) => format!(

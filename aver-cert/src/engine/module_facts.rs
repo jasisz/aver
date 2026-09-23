@@ -93,6 +93,9 @@ pub struct HostRoles {
     pub to_index_idx: Option<u32>,
     pub cmp_idx: Option<u32>,
     pub eq_idx: Option<u32>,
+    /// `__aint_divmod`: not exported; declared only at the one function
+    /// whose body is the wall's template (`divmod_template_body`).
+    pub divmod_idx: Option<u32>,
     pub limb_idx: Option<u32>,
     pub decompose_idx: Option<u32>,
     pub normalize_idx: Option<u32>,
@@ -122,7 +125,7 @@ impl HostRoles {
     /// The `CertDecode.AddSub.Roles` literal.
     pub fn roles_lean_value(&self) -> String {
         format!(
-            "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, cmp := {}, eq := {} }} : CertDecode.AddSub.Roles)",
+            "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, cmp := {}, eq := {}, divmod := {} }} : CertDecode.AddSub.Roles)",
             Self::lean_option(self.box_idx),
             Self::lean_option(self.add_idx),
             Self::lean_option(self.mul_idx),
@@ -130,6 +133,7 @@ impl HostRoles {
             Self::lean_option(self.to_index_idx),
             Self::lean_option(self.cmp_idx),
             Self::lean_option(self.eq_idx),
+            Self::lean_option(self.divmod_idx),
         )
     }
 
@@ -140,6 +144,92 @@ impl HostRoles {
             )
         })
     }
+}
+
+/// `ArithTemplateDerisk.divmodTemplateBody`: hex literal bytes, and each
+/// declared index as `<u:name>` (unsigned LEB) or `<s:name>` (signed heap
+/// type).
+const DIVMOD_TEMPLATE: &str = concat!(
+    "0b047e0163<s:limb>017f0163<s:limb>037f0263<s:limb>017f0263<s:limb>097f077e0163",
+    "<s:limb>2000fb02<u:carrier>01d12001fb02<u:carrier>01d1712000fb02<u:carrier>00428080",
+    "808080808080807f512001fb02<u:carrier>00427f517145710463<s:carrier>2000fb02",
+    "<u:carrier>0021032001fb02<u:carrier>002104200320048121062006420053044020062004420053",
+    "047e420020047d0520040b7c21060b20020463<s:carrier>2006d0<s:limb>4100fb00<u:carrier>05",
+    "200320047f210520032004812106200642005304402004420055047e200542017d05200542017c0b2105",
+    "0b2005d0<s:limb>4100fb00<u:carrier>0b05200010<u:decompose>21082107200110",
+    "<u:decompose>210a2109200710<u:strip>210b200910<u:strip>210c200b45047f410105200b0bfb",
+    "07<u:limb>210d200c41016afb07<u:limb>210e4100210f200c410146044020094100fb0b<u:limb>21",
+    "0442002106200b41016b21170240034020174100480d01200642208620072017fb0b<u:limb>84211c20",
+    "0d2017201c200480fb0e<u:limb>201c2004822106201741016b21170c000b0b200e41002006fb0e",
+    "<u:limb>0502402007200b2009200c10<u:umagCmp>211920194100480440200e410020074100200bfb",
+    "11<u:limb><u:limb>0c010b200c41016b210f200b200f6b2115200e410020072015200ffb11<u:limb>",
+    "<u:limb>201541206c41016b21140240034020144100480d01200f200c49047f200f05200c0b41016a21",
+    "0f4200211b41002117024003402017200f4f0d01200e2017fb0b<u:limb>42018642ffffffff0f83201b",
+    "84211c200e2017fb0b<u:limb>421f88211b200e2017201cfb0e<u:limb>201741016a21170c000b0b20",
+    "1441206e21152014412070211620072015fb0b<u:limb>2016ad884201834200520440200e4100200e41",
+    "00fb0b<u:limb>420184fb0e<u:limb>0b02400340200f450d01200e200f41016bfb0b<u:limb>420052",
+    "0d01200f41016b210f0c000b0b200e200f2009200c10<u:umagCmp>2119201941004e04404200211d41",
+    "002117024003402017200c41016a4f0d01200e2017fb0b<u:limb>2017200c49047e20092017fb0b",
+    "<u:limb>0542000b7d201d7d211e201e4200530440201e4280808080107c211e4201211d054200211d0b",
+    "200e2017201e42ffffffff0f83fb0e<u:limb>201741016a21170c000b0b200d2015200d2015fb0b",
+    "<u:limb>42012016ad8684fb0e<u:limb>0b201441016b21140c000b0b0b0b200c41016a210f02400340",
+    "200f450d01200e200f41016bfb0b<u:limb>4200520d01200f41016b210f0c000b0b2008410048200f41",
+    "004771211a20020463<s:carrier>201a0440200cfb07<u:limb>21104200211d410021170240034020",
+    "17200c4f0d0120092017fb0b<u:limb>2017200f49047e200e2017fb0b<u:limb>0542000b7d201d7d21",
+    "1e201e4200530440201e4280808080107c211e4201211d054200211d0b20102017201e42ffffffff0f83",
+    "fb0e<u:limb>201741016a21170c000b0b2010211105200e21110b410121122011201210",
+    "<u:normalize>052008200a6c2112201a0440200b41016afb07<u:limb>211041002117024003402017",
+    "200b4f0d0120102017200d2017fb0b<u:limb>fb0e<u:limb>201741016a21170c000b0b4201211b4100",
+    "211702400340201b500d0120102017fb0b<u:limb>201b7c211c20102017201c42ffffffff0f83fb0e",
+    "<u:limb>201c422088211b201741016a21170c000b0b2010211105200d21110b2011201210",
+    "<u:normalize>0b0b0b",
+);
+
+/// The canonical `__aint_divmod` body (locals and code, no size prefix) over
+/// the declared indices, exactly as the wall synthesizes it.
+fn divmod_template_body(p: (u32, u32, u32, u32, u32, u32)) -> Option<Vec<u8>> {
+    let (carrier, limb, decompose, normalize, strip, umag_cmp) = p;
+    let mut out = Vec::new();
+    let mut rest = DIVMOD_TEMPLATE;
+    while !rest.is_empty() {
+        if let Some(tail) = rest.strip_prefix('<') {
+            let (tok, after) = tail.split_once('>')?;
+            let (enc, name) = tok.split_once(':')?;
+            let v = u64::from(match name {
+                "carrier" => carrier,
+                "limb" => limb,
+                "decompose" => decompose,
+                "normalize" => normalize,
+                "strip" => strip,
+                "umagCmp" => umag_cmp,
+                _ => return None,
+            });
+            match enc {
+                "u" => uleb(v, &mut out)?,
+                "s" => s33(v, &mut out)?,
+                _ => return None,
+            }
+            rest = after;
+        } else {
+            out.push(u8::from_str_radix(rest.get(..2)?, 16).ok()?);
+            rest = &rest[2..];
+        }
+    }
+    Some(out)
+}
+
+/// The body of a code entry: the bytes after its size prefix.
+fn entry_body(entry: &[u8]) -> Option<&[u8]> {
+    let mut size = 0usize;
+    let mut shift = 0;
+    for (i, b) in entry.iter().enumerate() {
+        size |= usize::from(b & 0x7f) << shift;
+        shift += 7;
+        if b & 0x80 == 0 {
+            return entry.get(i + 1..i + 1 + size);
+        }
+    }
+    None
 }
 
 /// A byte-exact String helper role.
@@ -784,6 +874,20 @@ impl ModuleFacts {
                         _ => {}
                     }
                 }
+            }
+        }
+        // `__aint_divmod` is not exported: declare it only at the one function
+        // whose body is the template the wall pins it by.
+        if let Some(tmpl) = roles.arith_params(carrier).and_then(divmod_template_body) {
+            let hits: Vec<u32> = self
+                .code
+                .iter()
+                .enumerate()
+                .filter(|(_, code)| entry_body(&code.entry) == Some(tmpl.as_slice()))
+                .map(|(def, _)| self.nimports + def as u32)
+                .collect();
+            if let [only] = hits.as_slice() {
+                roles.divmod_idx = Some(*only);
             }
         }
         self.roles = roles;

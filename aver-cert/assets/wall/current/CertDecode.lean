@@ -977,6 +977,8 @@ structure Roles where
   toIndex : Option Nat
   cmp : Option Nat
   eq : Option Nat
+  /-- `__aint_divmod`, pinned by its template only (it is not exported). -/
+  divmod : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- Byte-derived proof that the module carries no Int-carrier box helper: the

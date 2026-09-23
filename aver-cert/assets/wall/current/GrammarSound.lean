@@ -79,7 +79,9 @@ end Rel
     `__wasmgc_concat_n` concatenates the byte arrays of its `Vector<String>`
     argument into a `$string` array, `__wasmgc_string_eq` is byte equality,
     and `__aint_to_index` maps a represented Int to its `i32` index or the
-    `-1` sentinel. -/
+    `-1` sentinel; `__aint_divmod(a, b, want_mod)` is Euclidean division
+    (`want_mod = 0`) or remainder (`want_mod = 1`) on a canonical pair with a
+    nonzero divisor, with a canonical result. -/
 structure XHost {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop where
   concat : ∃ g, host M.concat = some (1, g) ∧
     ∀ parts c, g [parts] = some c → stringConcatW M.str parts = some c
@@ -87,6 +89,9 @@ structure XHost {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop
     ∀ a b r, g [a, b] = some r → r = b32 (stringEqW a b)
   toIndex : ∃ g, host M.toIndex = some (1, g) ∧
     ∀ n v r, S.Repr n v → g [v] = some r → r = .i32v (toIndexW n)
+  divmod : ∃ g, host M.divmod = some (3, g) ∧
+    ∀ a b wa wb m r, CanonRepr S a wa → CanonRepr S b wb → b ≠ 0 → (m = 0 ∨ m = 1) →
+      g [wa, wb, .i32v m] = some r → CanonRepr S (if m = 1 then a % b else a / b) r
 
 /-- Assume–guarantee contract of a code function `f` at signature `sig` for
     one opaque `callee`: the ONLY thing a caller knows about `f`. -/
@@ -885,6 +890,21 @@ theorem vecGetOr?_some {lb : LazyBuiltin} {o d : Expr} {v i : Nat}
     exact ⟨rfl, rfl, _, rfl⟩
   · cases h
 
+/-- `divOr?` names exactly the fused `Result.withDefault(Int.div/mod(a, b), k)`. -/
+theorem divOr?_some {lb : LazyBuiltin} {o d : Expr} {m : Bool} {a b : Expr}
+    (h : divOr? lb o d = some (m, a, b)) :
+    lb = .resWithDefault ∧ o = .call (.builtin (if m then .intMod else .intDiv)) [a, b] ∧
+      ∃ k, d = .literal (.int k) := by
+  unfold divOr? at h
+  split at h
+  · simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    exact ⟨rfl, rfl, _, rfl⟩
+  · simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    exact ⟨rfl, rfl, _, rfl⟩
+  · cases h
+
 theorem lowerStrArms_head (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool)
     (bt : Option Ty) (k : List Nat) (b : Expr) (r : Arms) :
     ∃ ys, eraseL (lowerStrArms M X Γ tail bt (.cons (.litStr k) b r)) =
@@ -1250,14 +1270,17 @@ theorem tysOf_length : ∀ {es : List Expr} {ts : List Ty}, tysOf M n Γ es = so
 
 theorem tyOf_lazy_inv {lb : LazyBuiltin} {o d : Expr} {T : Ty}
     (h : tyOf M n Γ tail (.call (.lazy lb) [o, d]) = some T) :
-    (vecGetOr? lb o d = none ∧ ∃ to td, tyOf M n Γ false o = some to ∧
+    (vecGetOr? lb o d = none ∧ divOr? lb o d = none ∧ ∃ to td, tyOf M n Γ false o = some to ∧
       tyOf M n Γ false d = some td ∧ lazyTy lb to td = some T) ∨
     (∃ v i t, vecGetOr? lb o d = some (v, i) ∧ Γ v = some (.vec t) ∧ Γ i = some .int ∧
-      tyOf M n Γ false d = some t ∧ T = t) := by
+      tyOf M n Γ false d = some t ∧ T = t) ∨
+    (vecGetOr? lb o d = none ∧ ∃ m a b, divOr? lb o d = some (m, a, b) ∧
+      tyOf M n Γ false a = some .int ∧ tyOf M n Γ false b = some .int ∧
+      tyOf M n Γ false d = some .int ∧ T = .int) := by
   simp only [tyOf] at h
   split at h
   · rename_i v i hvg
-    right
+    right; left
     split at h
     · rename_i t td hv hi hd
       split at h
@@ -1268,12 +1291,62 @@ theorem tyOf_lazy_inv {lb : LazyBuiltin} {o d : Expr} {T : Ty}
       · simp at h
     · simp at h
   · rename_i hvg
-    left
-    refine ⟨hvg, ?_⟩
     split at h
-    · rename_i to td ho hd
-      exact ⟨to, td, ho, hd, h⟩
-    · simp at h
+    · rename_i p hdg
+      right; right
+      obtain ⟨m, a, b⟩ := p
+      obtain ⟨_, ho, _⟩ := divOr?_some hdg
+      split at h
+      · rename_i hc
+        obtain ⟨hops, hd⟩ := hc
+        simp only [Option.some.injEq] at h
+        rw [ho] at hops
+        simp only [tyDivOperands, tysOf] at hops
+        refine ⟨hvg, m, a, b, hdg, ?_, ?_, hd, h.symm⟩
+        · cases ha : tyOf M n Γ false a <;> cases hb : tyOf M n Γ false b <;>
+            simp only [ha, hb] at hops <;> (try cases hops)
+          rename_i ta tb
+          cases ta <;> cases tb <;> simp_all
+        · cases ha : tyOf M n Γ false a <;> cases hb : tyOf M n Γ false b <;>
+            simp only [ha, hb] at hops <;> (try cases hops)
+          rename_i ta tb
+          cases ta <;> cases tb <;> simp_all
+      · cases h
+    · rename_i hdg
+      left
+      refine ⟨hvg, hdg, ?_⟩
+      split at h
+      · rename_i to td ho hd
+        exact ⟨to, td, ho, hd, h⟩
+      · simp at h
+
+theorem tyOf_intrinsic_inv {ie : Intrinsic} {args : List Expr} {T : Ty}
+    (h : tyOf M n Γ tail (.call (.intrinsic ie) args) = some T) :
+    ∃ a k, args = [a, .literal (.int k)] ∧ k ≠ 0 ∧ inI64Band k = true ∧
+      tyOf M n Γ false a = some .int ∧ T = .int := by
+  rcases args with _ | ⟨a, _ | ⟨dv, _ | ⟨e3, rest⟩⟩⟩
+  · simp [tyOf] at h
+  · simp [tyOf] at h
+  · simp only [tyOf] at h
+    cases hdv : divisorLit? dv with
+    | none => simp [hdv] at h
+    | some k =>
+        cases ha : tyOf M n Γ false a with
+        | none => simp [hdv, ha] at h
+        | some ta =>
+            cases ta <;> simp [hdv, ha] at h
+            subst h
+            unfold divisorLit? at hdv
+            split at hdv
+            · rename_i k'
+              split at hdv
+              · rename_i hc
+                simp only [Option.some.injEq] at hdv
+                subst hdv
+                exact ⟨a, k', rfl, hc.1, hc.2, ha, rfl⟩
+              · cases hdv
+            · cases hdv
+  · simp [tyOf] at h
 
 theorem tyOf_litFloat_inv {bits : UInt64} {T : Ty}
     (h : tyOf M n Γ tail (.literal (.float bits)) = some T) : T = .float := by
@@ -1606,6 +1679,98 @@ theorem ctor_refTest_exact {M : MCtx} {tid ncs : Nat} {entries : List (List Nat)
   obtain ⟨hfb, hgb⟩ := s3Pin_facts hpin hb
   exact ⟨fun h => h ▸ hspec.refl _, hspec.final_sub _ _ hga hgb hfb⟩
 
+
+/-! ## Euclidean division: the intrinsic and the fused guarded form -/
+
+/-- The zero test of the divisor on its carrier word (`$magf` null and
+    `$small == 0`) is exactly `y = 0` on any represented word: a Small word
+    carries its value, and a limb-carrying word is never zero. -/
+theorem divZeroTest_run {C : Nat} {S : CarrierSpec C} (host : HostTbl)
+    (ar : Nat → Option Nat) (callee : Callee) (j : Nat) (y : Int) (wb : WVal)
+    (hb : S.Repr y wb) (ys : List WInstr) (wl st : List WVal) (hj : wl[j]? = some wb) :
+    wRunF host ar callee (.localGet j :: .structGet C 1 :: .refIsNull :: .localGet j ::
+        .structGet C 0 :: .i64Eqz :: .i32And :: ys) wl st =
+      wRunF host ar callee ys wl (b32 (decide (y = 0)) :: st) := by
+  rcases S.car y wb hb with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
+  · have := S.smallElim y s sg hb
+    subst this
+    by_cases h0 : s = 0 <;> simp [wRunF, hj, b32, h0]
+  · have hne := (S.bigElim y s lty les sg hb).2
+    by_cases h0 : s = 0 <;> simp [wRunF, hj, b32, hne, h0]
+
+/-- The fused guarded division after its three operands: the default when
+    the divisor is zero, else the helper's Euclidean quotient / remainder. -/
+theorem divOr_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
+    (hCarrier : M.carrier = C) (R : XHost S M host)
+    (ar : Nat → Option Nat) (callee : Callee) (X : LCtx) (isMod : Bool)
+    (x y k : Int) (wa wb wd : WVal) (ha : CanonRepr S x wa) (hb : CanonRepr S y wb)
+    (hd : CanonRepr S k wd) (wl st : List WVal) (out : Out)
+    (hrun : wRunF host ar callee (eraseL (divOrB M X isMod)) wl (wd :: wb :: wa :: st) =
+      some out) :
+    ∃ w, out = .ok (((wl.set (X.cmp + 3) wd).set (X.cmp + 2) wb).set (X.cmp + 1) wa)
+        (w :: st) ∧
+      CanonRepr S (if y = 0 then k else if isMod then x % y else x / y) w := by
+  obtain ⟨g, hg, hgc⟩ := R.divmod
+  subst hCarrier
+  simp only [divOrB, eraseL, eraseI] at hrun
+  rw [run_localSet, run_localSet, run_localSet] at hrun
+  generalize hwl' : ((wl.set (X.cmp + 3) wd).set (X.cmp + 2) wb).set (X.cmp + 1) wa = wl' at hrun
+  by_cases h2 : X.cmp + 2 < wl.length
+  · have g2 : wl'[X.cmp + 2]? = some wb := by
+      subst hwl'; simp [List.getElem?_set, h2]
+    have g1 : wl'[X.cmp + 1]? = some wa := by
+      subst hwl'; simp [List.getElem?_set]; omega
+    rw [divZeroTest_run host ar callee (X.cmp + 2) y wb hb.1 _ wl' st g2] at hrun
+    simp only [b32] at hrun
+    by_cases hy : y = 0
+    · simp only [hy, decide_true, ↓reduceIte] at hrun
+      rw [wRunF_ifElse_single] at hrun
+      simp only [Int.one_ne_zero, ↓reduceIte] at hrun
+      by_cases h3 : X.cmp + 3 < wl.length
+      · have g3 : wl'[X.cmp + 3]? = some wd := by
+          subst hwl'; simp [List.getElem?_set, h3]
+        simp [wRunF, g3] at hrun
+        subst hrun
+        exact ⟨wd, rfl, by simpa [hy] using hd⟩
+      · have g3 : wl'[X.cmp + 3]? = none := by
+          subst hwl'; simp [List.getElem?_set]; omega
+        simp [wRunF, g3] at hrun
+    · simp only [hy, decide_false, Bool.false_eq_true, ↓reduceIte] at hrun
+      rw [wRunF_ifElse_single, if_pos rfl] at hrun
+      cases hr : g [wa, wb, .i32v (if isMod then 1 else 0)] with
+      | none => simp [wRunF, g1, g2, hg, popArgs_three, hr] at hrun
+      | some r =>
+          simp [wRunF, g1, g2, hg, popArgs_three, hr] at hrun
+          subst hrun
+          have hc := hgc x y wa wb _ r ha hb hy (by cases isMod <;> simp) hr
+          refine ⟨r, rfl, ?_⟩
+          cases isMod <;> simpa [hy] using hc
+  · have g2 : wl'[X.cmp + 2]? = none := by
+      subst hwl'; simp [List.getElem?_set]; omega
+    simp [wRunF, g2] at hrun
+
+/-- A Euclidean intrinsic after its two operands. -/
+theorem intrinsic_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
+    (R : XHost S M host) (ar : Nat → Option Nat) (callee : Callee) (ie : Intrinsic)
+    (x y : Int) (hy : y ≠ 0) (wa wb : WVal) (ha : CanonRepr S x wa) (hb : CanonRepr S y wb)
+    (wl st : List WVal) (out : Out)
+    (hrun : wRunF host ar callee [.i32Const ie.flag, .call M.divmod] wl (wb :: wa :: st) =
+      some out) :
+    ∃ w sv, intrinsicEval ie [.i x, .i y] = some sv ∧ out = .ok wl (w :: st) ∧
+      SRepr S M sv w := by
+  obtain ⟨g, hg, hgc⟩ := R.divmod
+  cases hr : g [wa, wb, .i32v ie.flag] with
+  | none => simp [wRunF, hg, popArgs_three, hr] at hrun
+  | some r =>
+      simp [wRunF, hg, popArgs_three, hr] at hrun
+      subst hrun
+      have hc := hgc x y wa wb _ r ha hb hy (by cases ie <;> simp [Intrinsic.flag]) hr
+      cases ie
+      · exact ⟨r, .i (x / y), by simp [intrinsicEval, hy], rfl, by
+          simpa [SRepr, Intrinsic.flag] using hc⟩
+      · exact ⟨r, .i (x % y), by simp [intrinsicEval, hy], rfl, by
+          simpa [SRepr, Intrinsic.flag] using hc⟩
+
 /-! ## The agreement theorem
 
 ONE statement, by structural induction on the grammar (mutual over the nested
@@ -1721,6 +1886,26 @@ theorem agreement :
       obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
         builtin_step host ar callee bi ts T hbt svs ws hTs hrep wl1 st out hseq
       exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
+  | .call (.intrinsic ie) args, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+      obtain ⟨a, k, rfl, hk0, hband, hta, rfl⟩ := tyOf_intrinsic_inv hty
+      simp only [lowerW, lowerB, lowerArgsB, eraseL_append, List.append_nil,
+        List.append_assoc] at hrun
+      obtain ⟨o1, h1, hseq⟩ := run_split hrun
+      obtain ⟨sva, heva, hTa, hresa⟩ := agreement a Γ env false .int wl st o1 hta henv hl h1
+      obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
+      simp only [seqOut] at hseq
+      obtain ⟨o2, h2, hseq2⟩ := run_split hseq
+      obtain ⟨svd, hevd, hTd, hresd⟩ := agreement (.literal (.int k)) Γ env false .int wl1
+        (wa :: st) o2 (by simp [tyOf, hband]) henv hl1 h2
+      obtain ⟨wl2, wd, rfl, hwd, hl2⟩ := res_false hresd
+      simp only [seqOut, eraseL, eraseI] at hseq2
+      obtain ⟨x, rfl⟩ := hasTy_int hTa
+      simp only [eval, Option.some.injEq] at hevd
+      subst hevd
+      obtain ⟨w, sv, hsv, rfl, hw⟩ := intrinsic_run R ar callee ie x k hk0 wa wd
+        (by simpa [SRepr] using hwa) (by simpa [SRepr] using hwd) wl2 st out hseq2
+      refine ⟨sv, by simp [eval, evalArgs, heva, hsv], ?_, res_ok hw hl2⟩
+      cases ie <;> simp [intrinsicEval, hk0] at hsv <;> subst hsv <;> simp [HasTy]
   | .tailCall f args, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨rfl, sig, hsig, hts, rfl⟩ := tyOf_tailCall_inv hty
       obtain ⟨hhost, har, hspec⟩ := hCallees f sig hsig
@@ -2001,8 +2186,8 @@ theorem agreement :
   | .call (.lazy _) (_ :: _ :: _ :: _), _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyOf] at hty
   | .call (.lazy lb) [o, d], Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
-      rcases tyOf_lazy_inv hty with ⟨hvg, to, td, hto, htd, hlz⟩ |
-        ⟨v, i, t, hvg, hΓv, hΓi, htd, rfl⟩
+      rcases tyOf_lazy_inv hty with ⟨hvg, hdg, to, td, hto, htd, hlz⟩ |
+        ⟨v, i, t, hvg, hΓv, hΓi, htd, rfl⟩ | ⟨hvg, m, a, b, hdg, hta, htb, htd, rfl⟩
       · -- the boxed `withDefault`: the default runs only on the `None` / `Err` side
         cases lb with
         | optWithDefault =>
@@ -2016,7 +2201,7 @@ theorem agreement :
               subst td
               simp only [Option.some.injEq] at hlz
               subst T
-              simp only [lowerW, lowerB, hvg, hto, eraseL_append, List.append_assoc] at hrun
+              simp only [lowerW, lowerB, hvg, hdg, hto, eraseL_append, List.append_assoc] at hrun
               obtain ⟨o1, h1, hseq⟩ := run_split hrun
               obtain ⟨sv1, hev1, hT1, hres1⟩ :=
                 agreement o Γ env false (.option t) wl st o1 hto henv hl h1
@@ -2054,7 +2239,7 @@ theorem agreement :
               subst td
               simp only [Option.some.injEq] at hlz
               subst T
-              simp only [lowerW, lowerB, hvg, hto, eraseL_append, List.append_assoc] at hrun
+              simp only [lowerW, lowerB, hvg, hdg, hto, eraseL_append, List.append_assoc] at hrun
               obtain ⟨o1, h1, hseq⟩ := run_split hrun
               obtain ⟨sv1, hev1, hT1, hres1⟩ :=
                 agreement o Γ env false (.result t e) wl st o1 hto henv hl h1
@@ -2097,6 +2282,49 @@ theorem agreement :
         · obtain ⟨sv, hev, hT, hres⟩ := agreement d Γ env false T wl st out htd henv hl hd
           refine ⟨sv, ?_, hT, res_any_tail hres⟩
           simp [eval, evalArgs, hvv, hiv, builtinEval, hout, hev]
+      · -- `Result.withDefault(Int.div/mod(a, b), k)`, fused: the three
+        -- operands once each, then the zero test and `__aint_divmod`
+        obtain ⟨rfl, rfl, k, rfl⟩ := divOr?_some hdg
+        have hband : inI64Band k = true := by
+          simp only [tyOf] at htd
+          split at htd
+          · assumption
+          · cases htd
+        have htail : ∀ ts, builtinTail M (if m then .intMod else .intDiv) ts = [] := by
+          intro ts; cases m <;> rfl
+        simp only [lowerW, lowerB, hvg, hdg, lowerArgsB, htail, eraseL_append, List.append_nil,
+          List.append_assoc] at hrun
+        obtain ⟨o1, h1, hseq⟩ := run_split hrun
+        obtain ⟨sva, heva, hTa, hresa⟩ := agreement a Γ env false .int wl st o1 hta henv hl h1
+        obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
+        simp only [seqOut] at hseq
+        obtain ⟨o2, h2, hseq2⟩ := run_split hseq
+        obtain ⟨svb, hevb, hTb, hresb⟩ :=
+          agreement b Γ env false .int wl1 (wa :: st) o2 htb henv hl1 h2
+        obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
+        simp only [seqOut] at hseq2
+        obtain ⟨o3, h3, hseq3⟩ := run_split hseq2
+        obtain ⟨svd, hevd, hTd, hresd⟩ := agreement (.literal (.int k)) Γ env false .int wl2
+          (wb :: wa :: st) o3 htd henv hl2 h3
+        obtain ⟨wl3, wd, rfl, hwd, hl3⟩ := res_false hresd
+        simp only [seqOut] at hseq3
+        obtain ⟨x, rfl⟩ := hasTy_int hTa
+        obtain ⟨y, rfl⟩ := hasTy_int hTb
+        simp only [eval, Option.some.injEq] at hevd
+        subst hevd
+        obtain ⟨w, rfl, hw⟩ := divOr_run hCarrier R ar callee X m x y k wa wb wd
+          (by simpa [SRepr] using hwa) (by simpa [SRepr] using hwb)
+          (by simpa [SRepr] using hwd) wl3 st out hseq3
+        have hc := hl3.1.1
+        have hl4 := lrel_set_free wa (lrel_set_free wb (lrel_set_free wd hl3
+          (show X.n ≤ X.cmp + 3 by omega)) (show X.n ≤ X.cmp + 2 by omega))
+          (show X.n ≤ X.cmp + 1 by omega)
+        refine ⟨if y = 0 then .i k else if m then .i (x % y) else .i (x / y), ?_, ?_,
+          res_ok ?_ hl4⟩
+        · by_cases hy : y = 0 <;> cases m <;>
+            simp [eval, evalArgs, heva, hevb, builtinEval, hy]
+        · by_cases hy : y = 0 <;> cases m <;> simp [HasTy, hy]
+        · by_cases hy : y = 0 <;> cases m <;> simpa [SRepr, hy] using hw
 
   | .construct c ty args, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨ts, hts, hct⟩ := tyOf_construct_inv hty

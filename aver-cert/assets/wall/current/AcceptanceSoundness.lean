@@ -52,12 +52,15 @@ theorem fns_certified (hf : PlanFacts s tt fns)
     ∀ f p, planOf fns f = some p →
       FnCertified S (mctxOf s tt fns) (codeOf (mctxOf s tt fns) fns)
         (hostOf (mctxOf s tt fns) h) f p.sig (fun fuel => modelOf fns fuel f) := by
-  obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hClaims⟩ :=
+  obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hDivmod,
+    hClaims⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
   have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) :=
     ⟨⟨_, hConcat, fun parts c hr => hc.stringConcat _ parts c hr⟩,
      ⟨_, hStreq, fun a b r hr => hc.stringEq a b r hr⟩,
-     ⟨_, hToIndex, hc.toIndex⟩⟩
+     ⟨_, hToIndex, hc.toIndex⟩,
+     ⟨_, hDivmod, fun a b wa wb m r ha hb hne hm hr =>
+        hc.divmod a b wa wb m r ha.1 hb.1 ha.2 hb.2 hne hm hr⟩⟩
   refine fn_certified_group S (boxRef _) h.add h.sub h.mul h.cmp h.eq (fun _ => none)
     (contracts_of S h hc) (fun _ _ _ _ hr => by cases hr) _ _ (mctxOf s tt fns) rfl
     hBox hAdd hSub hMul hNeg hCmp hEq R (planOf fns) (fun _ _ _ => none) ?_ ?_
@@ -120,12 +123,15 @@ theorem obligation_total (hf : PlanFacts s tt fns) {e : FnEntry} (he : e ∈ fns
     intro f p hg
     obtain ⟨e', he', rfl, rfl⟩ := groupMembers_mem (groupOf_mem hg)
     exact planOf_mem hnd he'
-  obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hClaims⟩ :=
+  obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hDivmod,
+    hClaims⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
   have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) :=
     ⟨⟨_, hConcat, fun parts c hr => hc.stringConcat _ parts c hr⟩,
      ⟨_, hStreq, fun a b r hr => hc.stringEq a b r hr⟩,
-     ⟨_, hToIndex, hc.toIndex⟩⟩
+     ⟨_, hToIndex, hc.toIndex⟩,
+     ⟨_, hDivmod, fun a b wa wb m r ha hb hne hm hr =>
+        hc.divmod a b wa wb m r ha.1 hb.1 ha.2 hb.2 hne hm hr⟩⟩
   have hAll := fns_certified hf S h hc
   have key := fn_certified_total_of_check S (boxRef _) h.add h.sub h.mul h.cmp h.eq
     (fun _ => none) (contracts_of S h hc) (fun _ _ _ _ hr => by cases hr)

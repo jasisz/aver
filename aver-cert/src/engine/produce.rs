@@ -745,6 +745,7 @@ pub fn analyze(
         (has(m.to_index), TO_INDEX_CONTRACT),
         (has(m.cmp), CMP_CONTRACT),
         (has(m.eq), EQ_CONTRACT),
+        (has(m.divmod), DIVMOD_CONTRACT),
         (any_total, INT_ADD_TOTAL_CONTRACT),
         (any_total, INT_SUB_TOTAL_CONTRACT),
         (any_total_mul, INT_MUL_TOTAL_CONTRACT),

@@ -100,6 +100,7 @@ def mctxOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) : MCtx :=
     concat := idxOr 17 (stringRole s.stringHostRoles .concat)
     streq := idxOr 18 (stringRole s.stringHostRoles .eq)
     toIndex := idxOr 19 (roleOf s.hostRoleTable (·.toIndex))
+    divmod := idxOr 23 (roleOf s.hostRoleTable (·.divmod))
     vecStruct := lookupTy 20 tt.vecs
     listStruct := lookupTy 21 tt.lists
     opaqueStruct := lookupNat 22 tt.opaques }

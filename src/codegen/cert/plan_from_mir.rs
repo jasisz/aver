@@ -18,11 +18,12 @@ use std::collections::HashMap;
 
 use aver_cert::{
     FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBuiltin, PlanCallee, PlanCtor, PlanExpr,
-    PlanLazy, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl, PlanTy, PlanTypeTable, PlannedFn,
+    PlanIntrinsic, PlanLazy, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl, PlanTy, PlanTypeTable,
+    PlannedFn,
 };
 
 use crate::ast::{BinOp, Literal, Spanned};
-use crate::ir::hir::{BuiltinCtor, ResolvedFnDef};
+use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic, ResolvedFnDef};
 use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirFn, MirPattern, MirStrPart};
 use crate::ir::{BuiltinId, CtorId, FnId};
 
@@ -582,6 +583,24 @@ impl Printer<'_> {
         })
     }
 
+    /// `Int.div(a, b)` / `Int.mod(a, b)` as a builtin call of two arguments.
+    fn int_div_builtin(&self, e: &Spanned<MirExpr>) -> Option<PlanBuiltin> {
+        let MirExpr::Call(c) = &e.node else {
+            return None;
+        };
+        let MirCallee::Builtin(b) = &c.node.callee else {
+            return None;
+        };
+        if c.node.args.len() != 2 {
+            return None;
+        }
+        match self.layout.builtin_name(*b)?.as_str() {
+            "Int.div" => Some(PlanBuiltin::IntDiv),
+            "Int.mod" => Some(PlanBuiltin::IntMod),
+            _ => None,
+        }
+    }
+
     fn expr(&mut self, expr: &Spanned<MirExpr>) -> Result<PlanExpr, String> {
         Ok(match &expr.node {
             MirExpr::Literal(lit) => PlanExpr::Literal(match &lit.node {
@@ -626,12 +645,55 @@ impl Printer<'_> {
                             "List.prepend" => PlanCallee::Builtin(PlanBuiltin::ListPrepend),
                             "Vector.get" => PlanCallee::Builtin(PlanBuiltin::VecGet),
                             "Option.withDefault" => PlanCallee::Lazy(PlanLazy::OptWithDefault),
-                            "Result.withDefault" => PlanCallee::Lazy(PlanLazy::ResWithDefault),
+                            "Result.withDefault" => {
+                                // `Int.div` / `Int.mod` print only fused here.
+                                if let [o, d] = call.args.as_slice()
+                                    && let Some(op) = self.int_div_builtin(o)
+                                {
+                                    let MirExpr::Call(inner) = &o.node else {
+                                        unreachable!("int_div_builtin matched a call")
+                                    };
+                                    if !matches!(&d.node, MirExpr::Literal(l)
+                                        if matches!(l.node, Literal::Int(_)))
+                                    {
+                                        return Err(format!(
+                                            "Call Builtin(Result.withDefault) over {} \
+                                             with a default that is not an Int literal",
+                                            if op == PlanBuiltin::IntDiv {
+                                                "Int.div"
+                                            } else {
+                                                "Int.mod"
+                                            }
+                                        ));
+                                    }
+                                    let inner_args = self.exprs(&inner.node.args)?;
+                                    return Ok(PlanExpr::Call(
+                                        PlanCallee::Lazy(PlanLazy::ResWithDefault),
+                                        vec![
+                                            PlanExpr::Call(PlanCallee::Builtin(op), inner_args),
+                                            self.expr(d)?,
+                                        ],
+                                    ));
+                                }
+                                PlanCallee::Lazy(PlanLazy::ResWithDefault)
+                            }
+                            other @ ("Int.div" | "Int.mod") => {
+                                return Err(format!(
+                                    "Call Builtin({other}) outside Result.withDefault (a Result<Int, String>)"
+                                ));
+                            }
                             other => return Err(format!("Call Builtin({other})")),
                         };
                         PlanExpr::Call(callee, self.exprs(&call.args)?)
                     }
-                    MirCallee::Intrinsic(i) => return Err(format!("Call Intrinsic({i:?})")),
+                    MirCallee::Intrinsic(i) => {
+                        let intrinsic = match i {
+                            BuiltinIntrinsic::IntDivEuclid => PlanIntrinsic::IntDivEuclid,
+                            BuiltinIntrinsic::IntModEuclid => PlanIntrinsic::IntModEuclid,
+                            other => return Err(format!("Call Intrinsic({other:?})")),
+                        };
+                        PlanExpr::Call(PlanCallee::Intrinsic(intrinsic), self.exprs(&call.args)?)
+                    }
                     MirCallee::LocalSlot { .. } => return Err("Call LocalSlot".into()),
                 }
             }
@@ -1102,6 +1164,65 @@ fn lst(xs: List<Int>) -> Int
         );
         assert!(types.sums.iter().any(|s| s.ctors.len() == 2));
         assert!(types.str_segs.iter().any(|(b, _)| b == b"Hello, "));
+    }
+
+    const DIV_SRC: &str = r#"
+module D
+    intent = "division printer probes"
+    exposes [halve, low, guarded, guardedMod, unfused, notLiteral]
+
+fn halve(p: Int) -> Int
+    Int.div(p, 2)
+
+fn low(v: Int) -> Int
+    Int.mod(v, 256)
+
+fn guarded(a: Int, d: Int) -> Int
+    Result.withDefault(Int.div(a, d), 0)
+
+fn guardedMod(a: Int, d: Int) -> Int
+    Result.withDefault(Int.mod(a, d), 7)
+
+fn unfused(a: Int, d: Int) -> Result<Int, String>
+    Int.div(a, d)
+
+fn notLiteral(a: Int, d: Int) -> Int
+    Result.withDefault(Int.div(a, d), a)
+"#;
+
+    /// `Int.div` / `Int.mod` print as the resolver left them: the literal
+    /// divisor as the Euclidean intrinsic, a variable divisor only fused
+    /// under `Result.withDefault` with an Int literal default.
+    #[test]
+    fn division_prints_as_intrinsic_or_fused_default() {
+        let (map, _) = plans(DIV_SRC);
+        use PlanExpr as E;
+        let l = E::Local;
+        let int = |k: i64| E::Literal(PlanLit::Int(k));
+        assert_eq!(
+            plan(&map, "halve").body,
+            E::Call(
+                PlanCallee::Intrinsic(PlanIntrinsic::IntDivEuclid),
+                vec![l(0), int(2)]
+            )
+        );
+        assert_eq!(
+            plan(&map, "low").body,
+            E::Call(
+                PlanCallee::Intrinsic(PlanIntrinsic::IntModEuclid),
+                vec![l(0), int(256)]
+            )
+        );
+        let fused = |op, d| {
+            E::Call(
+                PlanCallee::Lazy(PlanLazy::ResWithDefault),
+                vec![E::Call(PlanCallee::Builtin(op), vec![l(0), l(1)]), int(d)],
+            )
+        };
+        assert_eq!(plan(&map, "guarded").body, fused(PlanBuiltin::IntDiv, 0));
+        assert_eq!(plan(&map, "guardedMod").body, fused(PlanBuiltin::IntMod, 7));
+        assert!(reason(&map, "unfused").contains("outside Result.withDefault"));
+        assert!(reason(&map, "notLiteral").contains("not an Int literal"));
     }
 
     #[test]

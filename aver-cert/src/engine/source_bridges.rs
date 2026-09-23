@@ -860,6 +860,9 @@ struct BridgePlan {
     /// The String literals of the bridged plans, whose bytes the step proofs
     /// rewrite `strBytes "…"` to.
     literals: BTreeSet<Vec<u8>>,
+    /// Some bridged plan calls `Result.withDefault`, so the models spell it
+    /// `Except.withDefault` (and the model prelude defines it).
+    with_default: bool,
 }
 
 /// Every String literal a plan mentions (literal nodes and literal
@@ -952,6 +955,7 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
         declined: Vec::new(),
         depth: BTreeMap::new(),
         literals: BTreeSet::new(),
+        with_default: false,
     };
     if let Some(reason) = &model.failure {
         for c in &analysis.certified {
@@ -1007,6 +1011,7 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
         match derived {
             Ok(b) => {
                 string_literals(&e.plan.body, &mut plan.literals);
+                plan.with_default |= e.plan.body.lean().contains("(.lazy .resWithDefault)");
                 plan.fns.insert(e.func_idx, b);
             }
             Err(reason) => {
@@ -1118,6 +1123,7 @@ const EVAL_SIMPS: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, \
      AverCert.Grammar.evalArms, AverCert.Grammar.argsEnv, AverCert.Grammar.upd, \
      AverCert.Grammar.intBin, AverCert.Grammar.boolBin, AverCert.Grammar.floatBin, \
      AverCert.Grammar.strBin, AverCert.Grammar.strCat, AverCert.Grammar.builtinEval, \
+     AverCert.Grammar.intrinsicEval, \
      AverCert.Grammar.ctorVal, AverCert.Grammar.patMatch, AverCert.Grammar.bindVals, \
      AverCert.Grammar.noSlot, AverCert.GrammarBridge.over, \
      AverCert.GrammarBridge.decodeStr_strBytes, AverCert.GrammarBridge.strBytes_append, AverCert.GrammarBridge.strBytes_hadd, AverCert.GrammarBridge.strBytes_toString, \
@@ -1446,6 +1452,17 @@ fn render_bridge_lean(plan: &BridgePlan, model_roots: &[String]) -> (String, Str
              first | decide | rfl | sorry\n\n"
         ));
         literal_names.push_str(&format!(", strLit_{index}"));
+    }
+    // `Result.withDefault` over an `if`: the models' `Except.withDefault`
+    // does not reduce under `simp` until the `if` is pulled out.
+    if plan.with_default {
+        s.push_str(
+            "theorem withDefault_ite {α ε : Type} (c : Prop) [Decidable c] (e : ε) (v d : α) :\n    \
+             _root_.Except.withDefault (if c then _root_.Except.error e else _root_.Except.ok v) d =\n      \
+             if c then d else v := by\n  \
+             split <;> rfl\n\n",
+        );
+        literal_names.push_str(", withDefault_ite");
     }
     for b in plan.fns.values() {
         render_step(b, &plan.fns, &literal_names, &mut s);

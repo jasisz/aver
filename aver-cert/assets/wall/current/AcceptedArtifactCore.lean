@@ -55,13 +55,13 @@ def hostAssoc (M : MCtx) (h : HostFns) : List (Nat × (Nat × (List WVal → Opt
   [(M.box, (1, boxRef M.carrier)), (M.add, (2, h.add)), (M.sub, (2, h.sub)),
    (M.mul, (2, h.mul)), (M.neg, (1, fun _ => none)), (M.cmp, (2, h.cmp)), (M.eq, (2, h.eq)),
    (M.concat, (1, h.stringConcat M.str)), (M.streq, (2, h.stringEq)),
-   (M.toIndex, (1, h.toIndex))]
+   (M.toIndex, (1, h.toIndex)), (M.divmod, (3, h.divmod))]
 
 def hostOf (M : MCtx) (h : HostFns) : HostTbl := fun f => (hostAssoc M h).lookup f
 
 /-- The role indices of a lowering context, in `hostAssoc` order. -/
 def roleIndices (M : MCtx) : List Nat :=
-  [M.box, M.add, M.sub, M.mul, M.neg, M.cmp, M.eq, M.concat, M.streq, M.toIndex]
+  [M.box, M.add, M.sub, M.mul, M.neg, M.cmp, M.eq, M.concat, M.streq, M.toIndex, M.divmod]
 
 /-- The emitted code of every planned function: its plan's lowering. -/
 def codeOf (M : MCtx) (fns : List FnEntry) : CodeTbl := fun f => (planOf fns f).map (fnCode M)
@@ -322,7 +322,8 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
       arithRoleCheck n len .sub roles.sub p &&
       arithRoleCheck n len .mul roles.mul p &&
       arithRoleCheck n len .cmp roles.cmp p &&
-      arithRoleCheck n len .eq roles.eq p
+      arithRoleCheck n len .eq roles.eq p &&
+      arithRoleCheck n len .divmod roles.divmod p
   | _, _ => false
 
 /-- Bind the declared host-role table and arith indices to the module bytes by

@@ -49,7 +49,14 @@
      `struct.new` of it;
    * the fused `Vector.get`-or-default re-reads the vector and the index
      locals, converts the index through `__aint_to_index`, and bounds-checks
-     it signed `>= 0` and unsigned `< array.len` before `array.get`.
+     it signed `>= 0` and unsigned `< array.len` before `array.get`;
+   * the fused `Result.withDefault(Int.div/mod(a, b), d)` evaluates `a`, `b`
+     and `d` once each, parks them in the three operand scratch locals that
+     follow the const-compare scratch (`aint_operand_scratch`), tests the
+     divisor for zero on the carrier (`$magf` null and `$small == 0`), and
+     returns the default or calls `__aint_divmod(a, b, want_mod)`;
+   * a Euclidean intrinsic (`IntDivEuclid` / `IntModEuclid`) is its two
+     operands, the `want_mod` flag and a call of `__aint_divmod`.
 
    ONE lowering carries both images: `lowerB` yields instructions whose `if`
    carries its block type. `eraseL` forgets the block types (the audited
@@ -279,6 +286,24 @@ def extractB (ss idx : Nat) : Nat → List Nat → List BI
 def tagTestB (ss idx : Nat) : List BI :=
   [.op (.localGet ss), .op (.refCast idx), .op (.structGet idx 0), .op (.i32Const 1), .op .i32Eq]
 
+/-- The fused `Result.withDefault(Int.div/mod(a, b), d)` after its three
+    operands (`emit_mir_result_with_default`, bignum path): the operands are
+    parked in the operand scratch locals `cmp + 1 .. cmp + 3` (the default
+    last in, first out), the divisor is tested for zero on the carrier, and
+    the default or `__aint_divmod(a, b, want_mod)` is the result. -/
+def divOrB (M : MCtx) (X : LCtx) (isMod : Bool) : List BI :=
+  [ .op (.localSet (X.cmp + 3)), .op (.localSet (X.cmp + 2)), .op (.localSet (X.cmp + 1)),
+    .op (.localGet (X.cmp + 2)), .op (.structGet M.carrier 1), .op .refIsNull,
+    .op (.localGet (X.cmp + 2)), .op (.structGet M.carrier 0), .op .i64Eqz, .op .i32And,
+    .ifElse (some .int) [.op (.localGet (X.cmp + 3))]
+      [.op (.localGet (X.cmp + 1)), .op (.localGet (X.cmp + 2)),
+        .op (.i32Const (if isMod then 1 else 0)), .op (.call M.divmod)] ]
+
+/-- The `want_mod` flag of a Euclidean intrinsic. -/
+def Intrinsic.flag : Intrinsic → Int
+  | .intDivEuclid => 0
+  | .intModEuclid => 1
+
 /-! ## The lowering -/
 
 mutual
@@ -340,6 +365,12 @@ mutual
             | some (.vec t) => vecGetOrB M v i t (lowerB M X Γ false d)
             | _ => []
           | none =>
+            match divOr? lb o d with
+            | some (isMod, _, _) =>
+                -- `o` is `Int.div(a, b)` / `Int.mod(a, b)`, whose own lowering
+                -- is just its two operands (`builtinTail` adds nothing)
+                lowerB M X Γ false o ++ lowerB M X Γ false d ++ divOrB M X isMod
+            | none =>
             match lb, tyOf M X.n Γ false o with
             | .optWithDefault, some (.option t) =>
                 lowerB M X Γ false o ++ [.op (.localSet X.subj)] ++
@@ -357,6 +388,8 @@ mutual
                     (lowerB M X Γ false d)]
             | _, _ => []
         | _ => []
+    | .call (.intrinsic ie) args =>
+        lowerArgsB M X Γ args ++ [.op (.i32Const ie.flag), .op (.call M.divmod)]
     | .construct c ty args =>
         match c, ty with
         | .user tid k, _ =>
@@ -541,6 +574,7 @@ def encW : WInstr → Option (List Nat)
       | some a, some b => some ([0xfb, 0x02] ++ a ++ b)
       | _, _ => none
   | .refIsNull => some [0xd1]
+  | .i64Eqz => some [0x50]
   | .i32Eqz => some [0x45]
   | .i32Eq => some [0x46]
   | .i32Ne => some [0x47]
