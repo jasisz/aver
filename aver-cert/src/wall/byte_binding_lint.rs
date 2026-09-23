@@ -44,10 +44,15 @@
 //!   `CertDecode.AddSub.toIndexIdx` is an anchor and `decodedRoleIdx` is not —
 //!   exactly the distinction the bug turned on.
 //! * **A1 — one-hop argument.** A producer value passed whole into a reachable
-//!   definition from an anchored conjunct, where the callee projects the field.
-//!   Depth one only; deeper propagation reinstates the historical false negative.
-//!   Under `xs.all (f a …)` every element of the producer list `xs` counts as
-//!   passed whole as `f`'s next parameter.
+//!   definition from an anchored conjunct, where the callee projects the field,
+//!   AND either the callee is itself a byte anchor or the conjunct meets the
+//!   bytes on its own (it names the byte stream, an anchor, or a name a `match`
+//!   on a byte-reading scrutinee binds). Sitting in a definition whose `match`
+//!   reads the bytes is not enough: that is how `planTyped M e.plan` and
+//!   `callsOrdered fns e` once counted as binding the whole plan with the
+//!   code-entry equality deleted. Depth one only; deeper propagation reinstates
+//!   the historical false negative. Under `xs.all (f a …)` every element of the
+//!   producer list `xs` counts as passed whole as `f`'s next parameter.
 //! * **B — pinned to a wall term.** The conjunct equates the field to a term
 //!   mentioning no producer-supplied value at all (a wall literal, a wall
 //!   constant, a byte decode). The producer then has no freedom in that field.
@@ -56,12 +61,25 @@
 //!   every leaf field of that value is then determined. This is how the lowered
 //!   plan payloads are constrained (`lowerX plan = <real code bytes>`).
 //!
+//! * **C2 — lowered, then equal to bytes.** `match f v … with | some x => …`
+//!   where `x` is then compared for equality with the module bytes: passed to
+//!   a byte anchor at a parameter the anchor compares (`exactFuncBindingForExport
+//!   n len name bytes`, whose `expectedCode` is compared with the code entry),
+//!   or compared in the arm next to a byte read. Every leaf of the producer
+//!   values `v` is then determined, as in C. This is the code-entry equality
+//!   that binds a plan to its function, and the only rule that binds the plan
+//!   payload.
 //! * **D — derived by a wall function.** One side of the conjunct is a producer
-//!   value whole, the other a wall definition applied to other producer values
-//!   (not to the value itself). The value then has no freedom of its own; its
-//!   inputs carry the freedom and need their own binding. This is how the
-//!   schema-9 obligations are pinned (`obligationsDerived`: the manifest's
-//!   obligations ARE `obligationsOf` of its plans).
+//!   value whole, the other is, as a parsed term, a wall definition applied to
+//!   arguments each of which is producer-free or a whole producer value that is
+//!   not the value, an ancestor or a part of it, cannot contain the value's
+//!   type, and has every leaf bound by the rules above (or a standing
+//!   allowance). The value then has no freedom beyond its inputs'. D runs after
+//!   every other rule. This is how the schema-9 obligations are pinned
+//!   (`obligationsDerived`: the manifest's obligations ARE `obligationsOf` of
+//!   its plans); a text-level version accepted `m.subject = subjectOfManifest
+//!   m` and bound all of `Subject`, which
+//!   `lint_rejects_a_tautological_derivation` now holds against.
 //!
 //! Rules A1 and C are deliberately narrow. Blanket versions of both were tried
 //! and both silently re-bound `roles.toIndex` in the pre-fix tree, i.e. they
@@ -1220,6 +1238,7 @@ fn call_sites(c: &str) -> Vec<(String, Vec<String>)> {
                 i += 1;
             }
             let name: String = chars[start..i].iter().collect();
+            let name_end = i;
             let mut args = Vec::new();
             loop {
                 let mut j = i;
@@ -1266,11 +1285,221 @@ fn call_sites(c: &str) -> Vec<(String, Vec<String>)> {
             if !args.is_empty() {
                 out.push((name, args));
             }
+            // Resume right after the name, so a call nested in this one's
+            // arguments (`match f a with | some b => g b …`) is a site too.
+            i = name_end;
         } else {
             i += 1;
         }
     }
     out
+}
+
+/// A `value = f args` conjunct, kept for the structural rule D.
+struct DCandidate {
+    decl: String,
+    conjunct: String,
+    value: String,
+    rhs: String,
+    env: Env,
+}
+
+/// `base.f1.f2` as its path of names; empty when the text is not exactly one
+/// identifier or projection chain.
+fn chain_path(text: &str) -> Vec<String> {
+    let t = text.trim();
+    let t = t
+        .strip_prefix('(')
+        .and_then(|r| r.strip_suffix(')'))
+        .unwrap_or(t)
+        .trim();
+    if !t.is_empty() && t.chars().all(is_ident_char) && t.chars().next().is_some_and(is_ident_start)
+    {
+        return vec![t.to_string()];
+    }
+    let cs = chains(t);
+    if cs.len() == 1 && cs[0].start == 0 && cs[0].end == t.chars().count() {
+        let mut out = vec![cs[0].base.clone()];
+        out.extend(cs[0].fields.iter().cloned());
+        return out;
+    }
+    Vec::new()
+}
+
+/// Whether a value of producer structure `from` can hold a value of structure
+/// `to` (itself included), through plain-data fields.
+fn struct_reaches(w: &Wall, from: &str, to: &str) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![from.to_string()];
+    while let Some(s) = stack.pop() {
+        if s == to {
+            return true;
+        }
+        if !seen.insert(s.clone()) {
+            continue;
+        }
+        let Some(sd) = w.structure(&s) else { continue };
+        for (_f, ty) in &sd.fields {
+            if is_arrow(ty) {
+                continue;
+            }
+            if let Some(t) = w.resolve_struct(ty, &sd.ns, &sd.opens) {
+                stack.push(t);
+            }
+        }
+    }
+    false
+}
+
+/// Parse `f a1 … aN` where the WHOLE text is the application: `f` a name,
+/// each argument an atom or one parenthesised group. `None` otherwise.
+fn parse_app(text: &str) -> Option<(String, Vec<String>)> {
+    let chars: Vec<char> = text.trim().chars().collect();
+    let mut i = 0usize;
+    if chars.is_empty() || !is_ident_start(chars[0]) {
+        return None;
+    }
+    while i < chars.len() && is_token_char(chars[i]) {
+        i += 1;
+    }
+    let head: String = chars[..i].iter().collect();
+    let mut args = Vec::new();
+    loop {
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= chars.len() {
+            break;
+        }
+        if chars[i] == '(' {
+            let mut depth = 0i32;
+            let mut k = i;
+            while k < chars.len() {
+                if chars[k] == '(' {
+                    depth += 1;
+                } else if chars[k] == ')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                k += 1;
+            }
+            if k >= chars.len() {
+                return None;
+            }
+            args.push(chars[i + 1..k].iter().collect::<String>());
+            i = k + 1;
+        } else if is_token_char(chars[i]) {
+            let start = i;
+            while i < chars.len() && is_token_char(chars[i]) {
+                i += 1;
+            }
+            args.push(chars[start..i].iter().collect::<String>());
+        } else {
+            return None;
+        }
+    }
+    Some((head, args))
+}
+
+/// Every `match S with` of a definition, with its arms as `(pattern, body)`.
+/// An arm's body runs to the next `|` (a lint-grade cut, like the rest).
+fn match_arms(body: &str) -> Vec<(String, Vec<(String, String)>)> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while let Some(p) = rest.find("match ") {
+        let after = &rest[p + 6..];
+        if let Some(wpos) = after.find(" with") {
+            let scrut = after[..wpos].trim().to_string();
+            let tail = &after[wpos + 5..];
+            let window = &tail[..tail.len().min(6000)];
+            let mut arms = Vec::new();
+            for arm in window.split('|').skip(1) {
+                let Some(ar) = arm.find("=>") else { continue };
+                arms.push((arm[..ar].trim().to_string(), arm[ar + 2..].to_string()));
+            }
+            out.push((scrut, arms));
+        }
+        rest = &rest[p + 6..];
+    }
+    out
+}
+
+/// Whether a piece of a definition names the byte stream or a byte anchor.
+fn text_reads_bytes(
+    w: &Wall,
+    d: &Decl,
+    text: &str,
+    raw_bytes: bool,
+    anchors: &BTreeSet<String>,
+) -> bool {
+    let toks: Vec<String> = tokens(text);
+    toks.iter().any(|t| {
+        let last = t.rsplit('.').next().unwrap_or(t);
+        ["modBytes", "modLen", "componentBytes", "componentLen"].contains(&last)
+            || w.resolve(t, &d.ns, &d.opens)
+                .is_some_and(|r| anchors.contains(&r))
+    }) || (raw_bytes && toks.iter().any(|t| t == "n") && toks.iter().any(|t| t == "len"))
+}
+
+/// Whether `x` sits on one side of an equality: `x == …`, `… = x`, ….
+fn in_equality(text: &str, x: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let xc: Vec<char> = x.chars().collect();
+    let mut i = 0usize;
+    while i + xc.len() <= chars.len() {
+        let hit = chars[i..i + xc.len()] == xc[..]
+            && (i == 0 || !is_token_char(chars[i - 1]))
+            && (i + xc.len() == chars.len() || !is_token_char(chars[i + xc.len()]));
+        if hit {
+            let before: String = chars[..i].iter().collect();
+            let after: String = chars[i + xc.len()..].iter().collect();
+            let b = before.trim_end();
+            let a = after.trim_start();
+            if (b.ends_with('=') && !b.ends_with(":=") && !b.ends_with("!="))
+                || (a.starts_with('=') && !a.starts_with("=>"))
+            {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Whether the arm body compares the matched value `x` with the module bytes:
+/// either `x` is passed to a byte anchor at a parameter the anchor compares
+/// for equality, or the arm compares `x` itself and reads the bytes.
+fn compared_with_bytes(
+    w: &Wall,
+    d: &Decl,
+    body: &str,
+    x: &str,
+    raw_bytes: bool,
+    anchors: &BTreeSet<String>,
+) -> bool {
+    for (name, args) in call_sites(body) {
+        let Some(full) = w.resolve(&name, &d.ns, &d.opens) else {
+            continue;
+        };
+        if !anchors.contains(&full) {
+            continue;
+        }
+        let Some(g) = w.get(&full) else { continue };
+        let params = sig_params(g);
+        for (i, a) in args.iter().enumerate() {
+            if a.trim() != x {
+                continue;
+            }
+            if let Some(pn) = params.get(i)
+                && in_equality(&g.body[g.sig.len().min(g.body.len())..], pn)
+            {
+                return true;
+            }
+        }
+    }
+    in_equality(body, x) && text_reads_bytes(w, d, body, raw_bytes, anchors)
 }
 
 // ---------------------------------------------------------------------------
@@ -1375,6 +1604,8 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
         })
     };
 
+    let mut d_cands: Vec<DCandidate> = Vec::new();
+
     // per-declaration caches for the one-hop rule
     let mut env_cache: BTreeMap<String, Env> = BTreeMap::new();
     let mut bound: BTreeMap<FieldRef, Evidence> = BTreeMap::new();
@@ -1436,8 +1667,74 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
             }
         }
 
+        // Names a `match` on a byte-reading scrutinee binds (`| some grp =>`
+        // under `match firstRecGroup n len with`): their values come from the
+        // module, so a conjunct that mentions one meets the bytes itself.
+        let mut match_byte_locals: BTreeSet<String> = BTreeSet::new();
+        for (scrut, arms) in match_arms(&d.body) {
+            let parts = split_top(&scrut, &[","]);
+            let reads: Vec<bool> = parts
+                .iter()
+                .map(|p| text_reads_bytes(&w, d, &expand_lets(p, &lets), raw_bytes, &anchors))
+                .collect();
+            for (pat, _body) in &arms {
+                let pats = split_top(pat, &[","]);
+                if pats.len() != reads.len() {
+                    continue;
+                }
+                for (pt, r) in pats.iter().zip(reads.iter()) {
+                    if *r {
+                        match_byte_locals.extend(pattern_binds(pt));
+                    }
+                }
+            }
+        }
+
+        // Rule C2: a producer value lowered by a wall function, and the
+        // lowering then compared for equality with the module bytes:
+        // `match codeEntryBytes M e.plan with | some bytes =>
+        // exactFuncBindingForExport n len name bytes`, where the anchor
+        // compares its `expectedCode` parameter with the code entry it reads.
+        // This, and only this, is what binds the plan payload to its code.
+        for (scrut, arms) in match_arms(&d.body) {
+            let Some((head, args)) = parse_app(&scrut) else {
+                continue;
+            };
+            let Some(hfull) = w.resolve(&head, &d.ns, &d.opens) else {
+                continue;
+            };
+            if !w.get(&hfull).is_some_and(|g| g.kind == Kind::Def) {
+                continue;
+            }
+            let compared = arms.iter().any(|(pat, body)| {
+                pattern_binds(pat)
+                    .iter()
+                    .any(|x| compared_with_bytes(&w, d, body, x, raw_bytes, &anchors))
+            });
+            if !compared {
+                continue;
+            }
+            for a in &args {
+                if let Some(st) = expr_struct(&w, &env, a) {
+                    let mut seen = BTreeSet::new();
+                    let mut leaves = Vec::new();
+                    leaves_of(&w, &st, &slots, &mut seen, &mut leaves);
+                    for leaf in leaves {
+                        mark(&mut bound, leaf, "C2/lowered-equal-to-bytes", d, &scrut);
+                    }
+                }
+            }
+        }
+
         for c in &cjs {
             let cx = expand_lets(c, &lets);
+            // Does the conjunct ITSELF meet the bytes (not merely sit in a
+            // definition whose `match` scrutinee does)?
+            let own_bytes = text_reads_bytes(&w, d, &cx, raw_bytes, &anchors)
+                || tokens(&cx).iter().any(|t| {
+                    let base = t.split('.').next().unwrap_or(t);
+                    match_byte_locals.contains(base) || byte_locals.contains(base)
+                });
             let mut toks: BTreeSet<String> = scrut_toks.clone();
             for t in tokens(&cx) {
                 if let Some(r) = w.resolve(&t, &d.ns, &d.opens) {
@@ -1483,7 +1780,14 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
                         continue;
                     };
                     let Some(g) = w.get(&full) else { continue };
-                    if g.kind != Kind::Def {
+                    // The callee must itself read the bytes, or the conjunct
+                    // must meet them on its own. A conjunct that only sits in
+                    // a definition whose `match` scrutinee reads the bytes
+                    // hands the value to a check that never meets the module:
+                    // that is how `planTyped M e.plan` and `callsOrdered fns e`
+                    // once counted as binding every plan field while the
+                    // code-entry equality was gone.
+                    if g.kind != Kind::Def || !(anchors.contains(&full) || own_bytes) {
                         continue;
                     }
                     let genv = env_cache
@@ -1519,32 +1823,22 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
             // Rules B and C: equality with a producer-free counterpart.
             if let Some((l, r)) = eq_sides(c) {
                 for (a, b) in [(l.clone(), r.clone()), (r, l)] {
-                    // D: a producer value WHOLE on one side, and on the other a
-                    // wall definition applied to other producer values. The
-                    // value then has no freedom of its own: it is whatever the
-                    // wall computes from its inputs, and those inputs carry the
-                    // freedom (and their own bindings). This is how the
-                    // obligations are pinned to `obligationsOf` of the plans.
+                    // D candidates are resolved after every other rule has
+                    // run, because D is only as good as the bindings of the
+                    // derived value's inputs.
                     let stripped_a = strip_wrappers(&a);
                     let ca = chains(&stripped_a);
                     let a_whole = ca.len() == 1
                         && ca[0].start == 0
                         && ca[0].end == stripped_a.chars().count();
-                    let b_head = strip_wrappers(&b);
-                    let head: String = b_head.chars().take_while(|c| is_token_char(*c)).collect();
-                    let head_is_wall_def = !head.is_empty()
-                        && w.resolve(&head, &d.ns, &d.opens)
-                            .and_then(|r| w.get(&r))
-                            .is_some_and(|g| g.kind == Kind::Def);
-                    if a_whole && head_is_wall_def && !b.contains(stripped_a.trim()) {
-                        for st in whole_producer_values(&w, &env, &stripped_a) {
-                            let mut seen = BTreeSet::new();
-                            let mut leaves = Vec::new();
-                            leaves_of(&w, &st, &slots, &mut seen, &mut leaves);
-                            for leaf in leaves {
-                                mark(&mut bound, leaf, "D/derived-by-wall-function", d, c);
-                            }
-                        }
+                    if a_whole {
+                        d_cands.push(DCandidate {
+                            decl: d.full.clone(),
+                            conjunct: c.clone(),
+                            value: stripped_a.trim().to_string(),
+                            rhs: strip_wrappers(&b),
+                            env: env.clone(),
+                        });
                     }
                     if !producer_free(&w, &env, &b) {
                         continue;
@@ -1588,6 +1882,82 @@ pub fn analyse(sources: &[(&str, &str)]) -> Report {
                     }
                 }
             }
+        }
+    }
+
+    // Rule D, structurally: `value = f arg1 … argN`, where `f` is a wall
+    // definition and every argument is either producer-free or a whole
+    // producer value that (1) is not the value itself, an ancestor of it, or a
+    // part of it, (2) cannot contain the value's type, and (3) has every leaf
+    // bound by the other rules above or covered by a standing allowance. The
+    // value then carries no freedom beyond its inputs'. The checks are on the
+    // parsed application, never on text containment: `m.subject =
+    // subjectOfManifest m` passes a text test and is a tautology.
+    let before_d: BTreeSet<FieldRef> = bound.keys().cloned().collect();
+    let allowed = |k: &FieldRef| {
+        ALLOWED
+            .iter()
+            .any(|a| a.structure == short_of(&k.0) && a.field == k.1)
+    };
+    for cand in &d_cands {
+        let Some(d) = w.get(&cand.decl) else { continue };
+        let Some(vt) = expr_struct(&w, &cand.env, &cand.value) else {
+            continue;
+        };
+        let Some((head, args)) = parse_app(&cand.rhs) else {
+            continue;
+        };
+        let head_is_wall_def = w
+            .resolve(&head, &d.ns, &d.opens)
+            .and_then(|r| w.get(&r))
+            .is_some_and(|g| g.kind == Kind::Def);
+        if !head_is_wall_def || args.is_empty() {
+            continue;
+        }
+        let value_path = chain_path(&cand.value);
+        let mut ok = true;
+        let mut producer_args = 0usize;
+        for a in &args {
+            let a = a.trim();
+            if producer_free(&w, &cand.env, a) {
+                continue;
+            }
+            let Some(at) = expr_struct(&w, &cand.env, a) else {
+                ok = false;
+                break;
+            };
+            let ap = chain_path(a);
+            let related = ap.is_empty()
+                || value_path.is_empty()
+                || ap.starts_with(&value_path)
+                || value_path.starts_with(&ap);
+            if related || struct_reaches(&w, &at, &vt) {
+                ok = false;
+                break;
+            }
+            let mut seen = BTreeSet::new();
+            let mut leaves = Vec::new();
+            leaves_of(&w, &at, &slots, &mut seen, &mut leaves);
+            if leaves.iter().any(|l| !before_d.contains(l) && !allowed(l)) {
+                ok = false;
+                break;
+            }
+            producer_args += 1;
+        }
+        if !ok || producer_args == 0 {
+            continue;
+        }
+        let mut seen = BTreeSet::new();
+        let mut leaves = Vec::new();
+        leaves_of(&w, &vt, &slots, &mut seen, &mut leaves);
+        for leaf in leaves {
+            mark(
+                &mut bound,
+                leaf,
+                "D/derived-by-wall-function",
+                d,
+                &cand.conjunct,
+            );
         }
     }
 
@@ -1673,6 +2043,23 @@ pub const ALLOWED: &[Allowance] = &[
                  `keysUnique` makes the id resolve to exactly that declaration. A wrong id \
                  only renames a byte-confirmed layout; the plans typed against it are then \
                  typed against that layout.",
+        doc_anchor: "",
+    },
+    Allowance {
+        structure: "FnEntry",
+        field: "group",
+        category: Category::DeclaredOnlyByDesign,
+        reason: "The call grouping is not trusted, and no byte fact could pin it: it is a \
+                 statement about the source call graph. Soundness holds for any grouping. \
+                 The partial obligation of every planned function is one fuel induction over \
+                 ALL plans at once (`fns_certified` applies `fn_certified_group` to \
+                 `planOf fns`, never to a group), so the grouping plays no part in it. The \
+                 L3 totality check (`checkTermGroup`) runs in the wall over the plans of the \
+                 declared group and admits a recursive call only to a member of that group, \
+                 each member passing the same check (`totE`: `mem g`); a wrong grouping can \
+                 therefore only lose L3, never grant it. The only other reader is \
+                 `callsOrdered` (calls go to the same or an earlier group), a producer-side \
+                 discipline that no theorem depends on.",
         doc_anchor: "",
     },
     Allowance {

@@ -379,6 +379,114 @@ mod tests {
         );
     }
 
+    /// The wall with one text replacement in `AcceptedArtifactCore.lean`.
+    fn wall_with_core_edit(old: &str, new: &str) -> String {
+        assert!(
+            CERT_ACCEPTED_ARTIFACT_CORE.contains(old),
+            "the edited text has moved ({old:?}); re-aim this regression test rather than \
+             deleting it"
+        );
+        CERT_ACCEPTED_ARTIFACT_CORE.replace(old, new)
+    }
+
+    fn sources_with_core(core: &str) -> Vec<(&'static str, &str)> {
+        wall_sources()
+            .into_iter()
+            .map(|(name, text)| {
+                if name == "AcceptedArtifactCore.lean" {
+                    (name, core)
+                } else {
+                    (name, text)
+                }
+            })
+            .collect()
+    }
+
+    /// Removing the code-entry equality must leave the plan payload unbound.
+    ///
+    /// The equality `exactFuncBindingForExport n len name bytes` (and the
+    /// `codeEntry == bytes` filter for internal callees) is the one fact that
+    /// makes a plan's lowering the delivered code. An earlier lint counted
+    /// `planTyped M e.plan` and `callsOrdered fns e` as binding the plan,
+    /// because they sit in a definition whose `match` reads the bytes, and so
+    /// stayed green with the equality deleted. The function type pin
+    /// (`sigPinned`) is the control: it still binds the signature.
+    #[test]
+    fn lint_flags_the_removed_code_entry_pin() {
+        let core = wall_with_core_edit(
+            "        AverCert.WasmSlice.exactFuncBindingForExport n len (stringBytes e.name) bytes\n      else\n        (AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter\n          (fun b => b.codeEntry == bytes)\n",
+            "        AverCert.WasmSlice.funcBindingForExport n len (stringBytes e.name)\n      else\n        AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx\n",
+        );
+        let sources = sources_with_core(&core);
+        let report = byte_binding_lint::analyse(&sources);
+        for field in ["body", "locals", "nslots"] {
+            assert!(
+                report.is_flagged("FnPlan", field),
+                "`FnPlan.{field}` is still considered bound with the code-entry equality \
+                 removed"
+            );
+        }
+        assert!(
+            report.is_bound("Sig", "params") && report.is_bound("Sig", "ret"),
+            "control failed: the function type pin `sigPinned` must still bind the signature"
+        );
+        assert!(
+            byte_binding_lint::check(&sources, FORMAT_DOC).is_err(),
+            "the lint gate passes a wall whose plans are not bound to their code"
+        );
+    }
+
+    /// Rule D must not accept a derivation that is a tautology.
+    ///
+    /// `startPin m := m.subject = subjectOfManifest m` with
+    /// `subjectOfManifest m := m.subject` has a producer value whole on one side
+    /// and a wall definition applied on the other, and its right-hand side does
+    /// not contain the text `m.subject`; a text-level rule D accepted it and so
+    /// bound every leaf of `Subject`, with the start-section pin deleted. The
+    /// argument `m` is an ancestor of the value, so D must not fire.
+    #[test]
+    fn lint_rejects_a_tautological_derivation() {
+        let core = wall_with_core_edit(
+            "def startAccounted (artifact : ArtifactData) : Bool :=\n  AverCert.WasmSlice.startFuncIndex artifact.modBytes artifact.modLen ==\n    some artifact.manifest.subject.start\n",
+            "def subjectOfManifest (m : AverCert.Schema.Manifest) : AverCert.Schema.Subject := m.subject\n\ndef startPin (m : AverCert.Schema.Manifest) : Prop :=\n  m.subject = subjectOfManifest m\n\ndef startAccounted (artifact : ArtifactData) : Prop :=\n  startPin artifact.manifest\n",
+        );
+        let core = core.replace(
+            "  startAccounted artifact = true ∧\n",
+            "  startAccounted artifact ∧\n",
+        );
+        let sources = sources_with_core(&core);
+        let report = byte_binding_lint::analyse(&sources);
+        assert!(
+            report.is_flagged("Subject", "start"),
+            "`Subject.start` is considered bound by a tautological derivation"
+        );
+        assert!(
+            report
+                .bound
+                .values()
+                .all(|e| !(e.rule.starts_with('D') && e.decl.ends_with("startPin"))),
+            "rule D fired on `m.subject = subjectOfManifest m`"
+        );
+        assert!(
+            byte_binding_lint::check(&sources, FORMAT_DOC).is_err(),
+            "the lint gate passes a wall whose start pin was replaced by a tautology"
+        );
+
+        // On the real wall, rule D fires exactly at `obligationsDerived`.
+        let clean = byte_binding_lint::analyse(&wall_sources());
+        let d_sites: std::collections::BTreeSet<&str> = clean
+            .bound
+            .values()
+            .filter(|e| e.rule.starts_with('D'))
+            .map(|e| e.decl.as_str())
+            .collect();
+        assert_eq!(
+            d_sites.into_iter().collect::<Vec<_>>(),
+            vec!["AverCert.AcceptedArtifact.obligationsDerived"],
+            "rule D fires somewhere other than the derived obligations"
+        );
+    }
+
     /// Point the lint at an external directory of `.lean` sources, for auditing a
     /// historical or candidate wall. Ignored by default because it needs a tree
     /// that is not in the repository:
