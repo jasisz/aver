@@ -22,4 +22,4 @@ lean_lib «CertPrelude» where
     `DischargeFieldProjection, `DischargeConstruct, `DischargeVerbatim,
     `DischargeString, `DischargeIntDispatch, `DischargeRecursion,
     `DischargeComposition, `AcceptanceSoundness, `ArithTemplateDerisk,
-    `Grammar, `GrammarLower, `GrammarSound]
+    `Grammar, `GrammarLower, `GrammarSound, `GrammarTotal]
