@@ -1,19 +1,17 @@
 # Oracle: verifying effectful functions
 
-Oracle is Aver's bridge between effects and `verify` / `proof`.
+Oracle connects effects to `verify` / `proof`.
 
-Instead of hiding effects behind mocks or relying on a replay file, a verify block names the effect explicitly and provides ordinary Aver functions as stubs. The verified function runs under those stubs. If the block uses `trace`, assertions can also inspect the classified effects the function emitted.
+A verify block names each effect explicitly and supplies ordinary Aver functions as stubs for it. There are no mocks and no replay file. The verified function runs under those stubs. If the block uses `trace`, assertions can also inspect the classified effects the function emitted.
 
 Use Oracle when:
 
 - the function has a small, explicit effect surface
 - the effects are in the classified built-in set below
 - a deterministic stub describes the world you want to prove against
-- the assertion should live next to the function, not in an external recording
+- the assertion should sit next to the function instead of in an external recording
 
-Use record/replay when the flow depends on ambient mutable state, modal terminal
-state, long-running protocols, or lifecycle invariants rather than one
-observable call/result.
+Use record/replay when the flow depends on ambient mutable state, modal terminal state, long-running protocols, or lifecycle invariants, and one observable call/result does not capture it.
 
 Runnable example: `examples/formal/oracle_trace.av`.
 
@@ -36,16 +34,16 @@ verify pickOne law usesOracle
 
 Breakdown:
 
-- `verify pickOne law usesOracle` is the proof-oriented Oracle form.
-- `given rnd: Random.int = [fairDie]` redirects `Random.int` to `fairDie` for this verify block.
-- `rnd` is a local alias for the oracle; the law can call it directly.
+- `verify pickOne law usesOracle` is the Oracle form meant for proofs.
+- `given rnd: Random.int = [fairDie]` sends `Random.int` to `fairDie` inside this verify block.
+- `rnd` is a local alias for the oracle, and the law can call it directly.
 - `aver proof` can lift `pickOne` to a pure proof function and quantify over that oracle.
 
-The comparison keeps the provider outcome as a `Result`: `Result.Ok(pickOne()) => rnd(...)`. Do not turn the oracle response into a sample with `Result.withDefault`; an `Err` is a provider-contract violation after literal discharge, not permission to pretend that a chosen default was randomly produced.
+The comparison keeps the provider outcome as a `Result`: `Result.Ok(pickOne()) => rnd(...)`. Do not turn the oracle response into a sample with `Result.withDefault`. After literal discharge an `Err` means the provider broke its contract. It does not license pretending that a chosen default came out of the random source.
 
-The stub is not special syntax. It is just an Aver function whose type matches the oracle signature for the effect.
+The stub has no special syntax. It is an ordinary Aver function whose type matches the oracle signature for the effect.
 
-Schematically, the generated Lean shape keeps that `Except` boundary visible:
+Schematically, the generated Lean keeps that `Except` boundary visible:
 
 ```lean
 theorem pickOne_law_usesOracle :
@@ -55,11 +53,11 @@ theorem pickOne_law_usesOracle :
     simp [pickOne]
 ```
 
-Named spec functions are still useful for larger laws. For the simple one-call case, keeping the oracle call inline is clearer.
+Named spec functions still help with larger laws. For a single call, the inline oracle call is clearer.
 
 ## Plain cases and capability stubs
 
-Cases-form `verify` can bind a provider operation without turning the case into a law or enabling trace projections:
+Cases-form `verify` can bind a provider operation without making the case a law and without enabling trace projections:
 
 ```aver
 fn publishedEmptyHash(input: List<Int>) -> String
@@ -75,40 +73,21 @@ verify reported
     reported([]) => "b472a266d0bd89c13706a4132ccfb16f7c3b9fcb"
 ```
 
-The `hash` alias does not have to appear in the assertion. For each expanded case, the selected function is installed in the VM's operation-stub map before the left side runs. A pure capability stub has exactly the declared operation signature; an effectful generative capability keeps the Oracle signature `(BranchPath, Int, args...) -> result`. Multiple functions in the domain produce separate cases.
+The `hash` alias does not have to appear in the assertion. For each expanded case, the selected function goes into the VM's operation-stub map before the left side runs. A pure capability stub has exactly the declared operation signature. An effectful generative capability keeps the Oracle signature `(BranchPath, Int, args...) -> result`. Several functions in the domain give separate cases.
 
-The operation after `given name:` is always its full canonical path. If the capability is loaded as `Domain.Crypto.Hash160`, write `Domain.Crypto.Hash160.digest`, exactly as at the call site and in diagnostics. A shorter `Hash160.digest` does not fall through to runtime: checking rejects it and, when the suffix identifies one loaded operation, suggests the canonical path.
+The operation after `given name:` is always written as its full canonical path. If the capability is loaded as `Domain.Crypto.Hash160`, write `Domain.Crypto.Hash160.digest`, exactly as at the call site and in diagnostics. A shorter `Hash160.digest` is not passed through to runtime. Checking rejects it and, when the suffix identifies one loaded operation, suggests the canonical path.
 
-This binding is verify-local. It does not install a package, exercise the Rust provider implementation, or satisfy provider preflight for `aver run` and compiled artifacts. Provider cryptography still belongs in the provider's own tests; the Aver case checks the contract shape and the caller's behavior under an explicit result.
+The binding only applies inside the verify block. It does not install a package, run the Rust provider implementation, or satisfy provider preflight for `aver run` and compiled artifacts. Provider cryptography is still tested in the provider's own tests. The Aver case checks the contract shape and how the caller behaves given an explicit result.
 
-A plain cases block may call a function whose signature declares effects when
-that concrete case never reaches an effectful operation. Aver decides this at
-execution time, not from the function-wide `! [...]` list. If the case does
-reach an effect without an exact `given`, verification stops before host
-dispatch. Add `trace` (and a `given` for an effect that returns a generated
-value), or move a stateful/interactive flow to record/replay. Plain verify is
-never a one-shot real-world smoke test.
+A plain cases block may call a function whose signature declares effects, as long as that concrete case never reaches an effectful operation. Aver decides this at execution time, from what the case actually runs, and ignores the function-wide `! [...]` list for this. If the case does reach an effect without an exact `given`, verification stops before host dispatch. Add `trace` (and a `given` for an effect that returns a generated value), or move a stateful/interactive flow to record/replay. Plain verify is never a one-shot smoke test against the real world.
 
-Proof export preserves that distinction. A passing case with no `given` is
-stated against the Oracle-lifted function and quantified over the missing
-oracle, proving that the selected branch has the expected result for every
-provider implementation. A case with a `given` is stated against its selected
-stub instead. Capability paths keep their full module qualification throughout
-lifting, so an operation such as `Infra.Kv.get` becomes the corresponding
-oracle argument rather than a host call in the Lean artifact.
+Proof export keeps the same distinction. A passing case with no `given` is stated against the Oracle-lifted function and quantified over the missing oracle, which proves that the selected branch gives the expected result for every provider implementation. A case with a `given` is stated against its selected stub instead. Capability paths keep their full module qualification throughout lifting, so an operation such as `Infra.Kv.get` becomes the matching oracle argument in the Lean artifact, never a host call.
 
-A local yielding process also supports plain cases with an exact stub for every
-request operation. These cases drive its generated protocol on the VM; they do
-not call its live answer module. A request kind is numbered like any other
-operation: each request operation counts its own calls, in-place effects do not
-move it, and a self yield charges no index at all. Direct process cases currently
-have no proof-export or WASM-stub model. See
-[testing a process](language.md#testing-a-process-with-request-stubs).
+A local yielding process also supports plain cases, given an exact stub for every request operation. These cases drive its generated protocol on the VM and do not call its live answer module. A request kind is numbered like any other operation: each request operation counts its own calls, in-place effects do not move the count, and a self yield uses no index at all. Direct process cases have no proof-export or WASM-stub model yet. See [testing a process](language.md#testing-a-process-with-request-stubs).
 
 ## Trace-aware cases
 
-Use cases-form `verify <fn> trace` when a case intentionally reaches classified
-effects or when you want runtime assertions over the collected trace:
+Use cases-form `verify <fn> trace` when a case is meant to reach classified effects, or when you want runtime assertions over the collected trace:
 
 ```aver
 verify pickOne trace
@@ -119,13 +98,11 @@ verify pickOne trace
     picked.trace.contains(Random.int(1, 6)) => true
 ```
 
-Here `.result` is the function's return value under the stub, and `.trace` is the collected trace of classified emissions. These trace projections are runtime checks; they are not the same thing as a universal theorem over all oracles.
+Here `.result` is the function's return value under the stub, and `.trace` is the collected trace of classified emissions. Trace projections are runtime checks. They are weaker than a universal theorem over all oracles.
 
 ## Effect classification
 
-A classification is not a table in the compiler: it is the `oracle = ...`
-attribute on the operation in its capability source, so a capability the program
-declares is classified the same way the shipped ones are. The shipped set is:
+The compiler has no classification table. A classification is the `oracle = ...` attribute on the operation in its capability source, so a capability the program declares is classified the same way as the shipped ones. The shipped set is:
 
 | Namespace | Method | Dimension |
 |---|---|---|
@@ -152,52 +129,42 @@ declares is classified the same way the shipped ones are. The shipped set is:
 | `Terminal` | `clear`, `moveTo`, `print`, `hideCursor`, `showCursor`, `flush` | generative + output |
 | `Terminal` | `enableRawMode`, `disableRawMode`, `setColor`, `resetColor` | generative + output |
 
-Every non-`output` operation above is stubbable through `given`. An operation
-with no `oracle` attribute is not modeled by Oracle and belongs in record/replay.
+Every non-`output` operation above can be stubbed through `given`. An operation with no `oracle` attribute is not modeled by Oracle and belongs in record/replay.
 
 ## Effect stubs are stateless
 
 > Prove the model, not the world.
 
-Oracle stubs do not imply state. A `Disk.writeText("a.txt", "hi")` in the trace does **not** make a later `Disk.readText("a.txt")` return `"hi"`. An `Env.set("KEY", "v")` does **not** make a later `Env.get("KEY")` return `"v"`. A first `Time.now()` call does **not** constrain the value of a second one to be greater. A `Tcp.writeLine(c, "x")` does **not** affect what `Tcp.readLine(c)` returns next.
+Oracle stubs carry no state. A `Disk.writeText("a.txt", "hi")` in the trace does **not** make a later `Disk.readText("a.txt")` return `"hi"`. An `Env.set("KEY", "v")` does **not** make a later `Env.get("KEY")` return `"v"`. A first `Time.now()` call does **not** force a second one to return a larger value. A `Tcp.writeLine(c, "x")` does **not** affect what `Tcp.readLine(c)` returns next.
 
-This is by design. Wall clocks are not monotonic in the real world (NTP, leap seconds, suspend/resume, VM clock skew). Filesystems are not transactional. TCP connections drop, return partial reads, lie about delivery. **Aver does not pretend external services have nicer laws than the platform actually promises.** A Ledger-style "stateful capability model" would let you prove read-after-write consistency on `Disk.*` — and then your proof claims a guarantee the OS never gave.
+This is deliberate. Real wall clocks are not monotonic (NTP, leap seconds, suspend/resume, VM clock skew). Filesystems are not transactional. TCP connections drop, return partial reads, and misreport delivery. **Aver does not give external services nicer laws than the platform actually promises.** A Ledger-style "stateful capability model" would let you prove read-after-write consistency on `Disk.*`, and the proof would then claim a guarantee the OS never gave.
 
-The cure is functional core / imperative shell:
+The fix is a functional core with an imperative shell:
 
 - **State you own** (a `FileStore`, a `PaymentLedger`, a `WorkflowState`) lives in pure user code as ordinary data. Read-after-write consistency is a property of that data model, proven by `verify` over the pure functions.
-- **The world you don't own** (`Disk.*`, `Time.*`, `Tcp.*`, `Http.*`) stays at the boundary. Oracle stubs return what the test says they return, independent of preceding effect calls.
+- **The world you don't own** (`Disk.*`, `Time.*`, `Tcp.*`, `Http.*`) stays at the boundary. Oracle stubs return what the test says they return, whatever effect calls came before.
 
-Two runnable examples ship the pattern:
+Two runnable examples show the pattern:
 
-- `examples/formal/file_store_pure_core.av` + `examples/formal/file_store_shell.av` — `FileStore` pure data model with read-after-write laws proven over pure code; `Disk.writeText` only at the boundary as a stateless oracle.
-- `examples/formal/clock_as_data.av` — time-dependent logic with `nowMs` passed as a parameter; `Time.unixMs` only at the boundary.
+- `examples/formal/file_store_pure_core.av` + `examples/formal/file_store_shell.av`: a pure `FileStore` data model with read-after-write laws proven over pure code, and `Disk.writeText` only at the boundary as a stateless oracle.
+- `examples/formal/clock_as_data.av`: time-dependent logic that takes `nowMs` as a parameter, with `Time.unixMs` only at the boundary.
 
-If a `verify` law assumes ordering, accumulation, or memory across effect calls, it does not belong in Oracle — it belongs in the pure core.
+A `verify` law that assumes ordering, accumulation, or memory across effect calls belongs in the pure core, outside Oracle.
 
 Boundary notes:
 
-- `Console.readLine` and `Terminal.readKey` are modeled as generative input:
-  the proof receives a deterministic oracle value for each call.
-- Mutating `Disk.*` calls are modeled as operation/result effects: the requested
-  operation is emitted to the trace, and success/failure comes from the oracle.
-  Oracle does not assert persistent filesystem state after the operation.
-- Tcp sessions use distinct opaque `Tcp.Connection`, `Tcp.Dial`, and
-  `Tcp.Listener` tokens, wrapped by the represented `Tcp.Socket` sum only when
-  one readiness map needs to carry every state. Stubs are stateless: a
-  `writeLine` does not affect what a later `readLine` returns, and hidden kernel
-  readiness is not invented as Oracle state. If the test wants
-  request/response symmetry, encode it explicitly in the stub.
-- Terminal drawing and modal calls are output trace events. Mode (raw / cooked) and
-  color state are not modeled — assert the sequence of trace events instead.
+- `Console.readLine` and `Terminal.readKey` are modeled as generative input. The proof gets a deterministic oracle value for each call.
+- Mutating `Disk.*` calls are modeled as operation/result effects. The requested operation goes into the trace, and success or failure comes from the oracle. Oracle asserts nothing about persistent filesystem state after the operation.
+- Tcp sessions use separate opaque `Tcp.Connection`, `Tcp.Dial`, and `Tcp.Listener` tokens. They are wrapped in the represented `Tcp.Socket` sum only when one readiness map has to carry every state. Stubs are stateless: a `writeLine` does not affect what a later `readLine` returns, and Oracle does not invent state for hidden kernel readiness. If the test wants request/response symmetry, write it into the stub explicitly.
+- Terminal drawing and modal calls are output trace events. Mode (raw / cooked) and color state are not modeled, so assert the sequence of trace events instead.
 
 ## Stub signatures
 
-Stub signatures are derived from the effect dimension:
+The effect dimension determines the stub signature:
 
 ### Snapshot
 
-Snapshot stubs keep the runtime signature unchanged.
+Snapshot stubs keep the runtime signature as is.
 
 ```aver
 fn stubArgs() -> List<String>
@@ -206,8 +173,7 @@ fn stubEnv(key: String) -> Option<String>
 
 ### Generative and generative + output
 
-Generative stubs receive a leading `BranchPath` and the call index of their own
-operation.
+Generative stubs take a leading `BranchPath` and the call index of their own operation.
 
 ```aver
 fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Result<Int, String>
@@ -216,55 +182,44 @@ fn fakeFetch(path: BranchPath, n: Int, url: String)
     -> Result<Http.Response, String>
 ```
 
-The original effect arguments are appended after `(path, n)`.
+The original effect arguments follow `(path, n)`.
 
-`n` counts the calls of that one operation on that one branch path, from 0. It
-does not count what the function under test does between two of them, so
-`fairDie` sees 0 then 1 whether or not the code reads the clock, logs a line, or
-writes to a socket in between. That is what lets a stub be scripted by call
-number: `match n` is a reply script for that operation and nothing else moves it.
-Two different operations therefore share no numbering at all, and each `!` / `?!`
-branch restarts every operation at 0 under its own path. "Where a law is
-declined instead of exported" below names the shapes an exported proof cannot
-number the way a run does, and which it declines rather than approximate.
+`n` counts the calls of that one operation on that one branch path, starting at 0. It ignores whatever the function under test does between two of them, so `fairDie` sees 0 then 1 whether or not the code reads the clock, logs a line, or writes to a socket in between. This is why a stub can be scripted by call number: `match n` is a reply script for that operation, and nothing else changes it. Two different operations share no numbering at all, and each `!` / `?!` branch restarts every operation at 0 under its own path. "Where a law is declined instead of exported" below lists the shapes where an exported proof cannot number calls the way a run does, and which it declines instead of approximating.
 
 ### Output
 
-Output effects do not take stubs. Assert them through `.trace`:
+Output effects take no stubs. Assert them through `.trace`:
 
 ```aver
 verify hello trace
     hello().trace.contains(Console.print("rolled")) => true
 ```
 
-`given out: Console.print = [...]` is rejected because output effects have no return value to replace.
+`given out: Console.print = [...]` is rejected, because an output effect has no return value to replace.
 
 ### Where a law is declined instead of exported
 
-An exported proof never numbers a stub call differently from the way a run numbers it. Where it cannot follow the run it declines the law, names the call, the operation and the reason in the report and in the emitted file, and counts the decline, so nothing is proved about that function. `aver verify` is untouched: the run keeps its own numbering and the law still runs under its stubs.
+An exported proof never numbers a stub call differently from a run. Where it cannot follow the run, it declines the law. It names the call, the operation and the reason in the report and in the emitted file, and counts the decline, so nothing is proved about that function. `aver verify` is unaffected: the run keeps its own numbering and the law still runs under its stubs.
 
-Declining is what a law needs rather than a warning about it. `aver verify` checks a law on samples while the exported theorem covers every input, so a law whose samples happen to agree with a differently numbered model would certify a statement about a function the run does not compute, with every step passing and the conclusion false. Five shapes are declined:
+A warning would not be enough here, so the law is declined. `aver verify` checks a law on samples, while the exported theorem covers every input. A law whose samples happen to agree with a differently numbered model would certify a statement about a function the run does not compute. Every step would pass and the conclusion would be false. Five shapes are declined:
 
-- A call into an effectful function. The callee's lifted body starts every operation at index 0 while the run keeps counting across the call. A function that reads the peer once and then calls a helper that reads it again hands the helper's read index 1 at run time and index 0 in the export.
-- A recursive call, which is that same shape seen from inside. A loop reading the peer once per turn hands its read index 0, then 1, then 2 at run time, and index 0 in every turn of the export.
-- A second operation inside a polled loop. A function declaring `Process.stopRequested` carries one index through its recursion and that index counts polls, so every other operation in the function would be numbered at the polling rate. Two clock reads per poll part company on the second turn. A poll loop that reaches no other operation is exact and still exports, because the base carried into the recursive call is that one operation's own count.
-- A call that follows a `match` whose arms call the operation a different number of times. The run charges the arm it took, and no single literal is right for every arm. Arms that call an operation equally often, which is the ordinary shape, are exact and still export.
-- A claim that reaches one operation through more than one effectful call. The claim is not a function body, so every call in it is exported at index 0, while a run numbers the operation across the guard and both sides of one case. `readOne() => readOneToo()` hands the peer index 0 on the left and index 1 on the right. Two calls that reach no operation in common are numbered from zero on both sides and still export, and the `because` lines are not counted, because a run never evaluates them.
+- A call into an effectful function. The callee's lifted body starts every operation at index 0, while the run keeps counting across the call. If a function reads the peer once and then calls a helper that reads it again, the helper's read gets index 1 at run time and index 0 in the export.
+- A recursive call. This is the same shape seen from inside. A loop that reads the peer once per turn gives its read index 0, then 1, then 2 at run time, and index 0 in every turn of the export.
+- A second operation inside a polled loop. A function declaring `Process.stopRequested` carries one index through its recursion, and that index counts polls, so every other operation in the function would be numbered at the polling rate. Two clock reads per poll diverge on the second turn. A poll loop that reaches no other operation is exact and still exports, because the base passed into the recursive call is that one operation's own count.
+- A call after a `match` whose arms call the operation a different number of times. The run charges the arm it took, and no single literal fits every arm. Arms that call an operation equally often (the usual case) are exact and still export.
+- A claim that reaches one operation through more than one effectful call. The claim is not a function body, so every call in it is exported at index 0, while a run numbers the operation across the guard and both sides of one case. `readOne() => readOneToo()` gives the peer index 0 on the left and index 1 on the right. Two calls that share no operation are numbered from zero on both sides and still export. The `because` lines are not counted, because a run never evaluates them.
 
-Calls inside a `!` or `?!` branch are exact wherever the rest of the body is. A branch is its own numbering scope on both sides: the run gives it a fresh slot for every operation each time it is entered, and the export numbers it from zero to match, whatever the surrounding body has already charged.
+Calls inside a `!` or `?!` branch are exact wherever the rest of the body is. A branch is its own numbering scope on both sides. The run gives it a fresh slot for every operation each time it is entered, and the export numbers it from zero to match, whatever the surrounding body has already charged.
 
-The stubs a law supplies do not lift the decline, and that is deliberate: a law over a `given` bound to a function parameter is asserted for every function of that shape, index-reading ones included, so the theorem is no safer for having been demonstrated under an index-blind stub.
+The stubs a law supplies do not lift the decline, on purpose. A law over a `given` bound to a function parameter is asserted for every function of that shape, including ones that read the index, so demonstrating it under a stub that ignores the index makes the theorem no safer.
 
-Sampled `verify` cases are not declined. A case is one concrete evaluation `aver verify` has already run, so either the exported model computes the same value and the theorem holds of the run as well, or it computes a different one and the proof fails where a reader sees it. Neither outcome states something false about the run.
+Sampled `verify` cases are not declined. A case is one concrete evaluation that `aver verify` has already run. Either the exported model computes the same value, and the theorem holds of the run too, or it computes a different one, and the proof fails where a reader sees it. Neither outcome states something false about the run.
 
 To certify a law over an effectful function, keep helper boundaries and recursion out of the function the law is about, and let the claim reach each operation through one call. Script the stub by call number within that one body.
 
 ## Driving a socket state machine with a scripted peer
 
-A resource such as `Tcp.Connection` can only be minted by a provider, so a case
-cannot build one and pass it in. Mint it inside the function under test, then
-drive the exchange over it. A minting operation's stub receives the witness in an
-extra slot after `(path, n)`, and returning it is the whole of a successful dial:
+Only a provider can mint a resource such as `Tcp.Connection`, so a case cannot build one and pass it in. Mint it inside the function under test and drive the exchange over it. A minting operation's stub gets the witness in an extra slot after `(path, n)`, and a successful dial only has to return it:
 
 ```aver
 fn greet(host: String, port: Int) -> Result<String, String>
@@ -304,18 +259,11 @@ verify greet
     greet("example.test", 79) => Result.Ok("V2/OK")
 ```
 
-`peerSpeaks` is a reply script over `Tcp.readLine` alone: read 0 is the version,
-read 1 is the banner. The dial, the two writes and the close do not appear in its
-numbering, so adding a log line or a clock read to `greet` does not rewrite the
-script. Three rules bound what this pattern can express:
+`peerSpeaks` is a reply script for `Tcp.readLine` only: read 0 is the version, read 1 is the banner. The dial, the two writes and the close are not part of its numbering, so adding a log line or a clock read to `greet` does not change the script. Three rules limit what this pattern can express:
 
-- Every operation `greet` reaches needs its own `given`, or the case aborts
-  before host dispatch.
-- Resource identity is unobservable, so a stub cannot tell which connection it is
-  being asked about. Script by call order, not by peer.
-- Stubs are stateless. A `writeLine` does not change what the next `readLine`
-  returns; if the exchange is a request/response pair, write that pairing into
-  the script by hand, as `peerSpeaks` does.
+- Every operation `greet` reaches needs its own `given`, or the case aborts before host dispatch.
+- Resource identity is unobservable, so a stub cannot tell which connection it is asked about. Script by call order, not by peer.
+- Stubs are stateless. A `writeLine` does not change what the next `readLine` returns. If the exchange is a request/response pair, write the pairing into the script by hand, as `peerSpeaks` does.
 
 ## Multiple stubs
 
@@ -327,11 +275,11 @@ verify pickOne trace
     Result.Ok(pickOne().result) => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
-This expands to two cases. Multiple `given` lists expand as a cartesian product, capped at `10_000` cases (`[verify] max-cases` in `aver.toml` moves the cap for the project, and `max-cases` in a `[[verify.costly]]` entry moves it for one function). Stub names may be local (`lowDie`) or qualified imports (`Helpers.lowDie`).
+This expands to two cases. Several `given` lists expand as a cartesian product, capped at `10_000` cases (`[verify] max-cases` in `aver.toml` moves the cap for the project, and `max-cases` in a `[[verify.costly]]` entry moves it for one function). Stub names may be local (`lowDie`) or qualified imports (`Helpers.lowDie`).
 
 ## Trace API
 
-Trace projections are only available inside `verify <fn> trace`.
+Trace projections exist only inside `verify <fn> trace`.
 
 ```aver
 fn().trace                    -- Trace
@@ -341,7 +289,7 @@ fn().trace.contains(eventLit) -- Bool
 fn().trace.count(method)      -- Int  -- 0.13 Limit
 ```
 
-`.trace.count(M)` returns the number of trace events whose method matches `M` (an effect-method reference like `Random.int` or a call literal like `Console.print("rolled")`). It complements `.contains` (boolean any-match) with a quantitative form so laws can pin "this fn calls the API exactly once" or "no extra Disk reads under hostile profiles".
+`.trace.count(M)` returns the number of trace events whose method matches `M` (an effect-method reference like `Random.int` or a call literal like `Console.print("rolled")`). `.contains` answers yes or no. `.count` gives the number, so a law can pin "this fn calls the API exactly once" or "no extra Disk reads under hostile profiles".
 
 Tree navigation for `!` / `?!` groups:
 
@@ -366,18 +314,18 @@ EffectEvent(method: String, args: List<EffectArg>, path: String)
 - `"0"` means branch 0 of a group
 - `"0.1"` means branch 1 of a group nested inside branch 0
 
-`BranchPath.parse(ev.path)` validates the string and returns `Result<BranchPath, String>`; use `?` in a Result-returning function or match the error. A valid string literal such as `BranchPath.parse("0.1")` is checked at compile time and types directly as the opaque `BranchPath` used by generative stubs and specs. Likewise, `BranchPath.child(parent, index)` is catchable for a dynamic index, while a syntactic non-negative integer literal discharges directly to `BranchPath`.
+`BranchPath.parse(ev.path)` validates the string and returns `Result<BranchPath, String>`. Use `?` in a Result-returning function, or match the error. A valid string literal such as `BranchPath.parse("0.1")` is checked at compile time and is typed directly as the opaque `BranchPath` that generative stubs and specs use. In the same way, `BranchPath.child(parent, index)` can fail for a dynamic index, while a syntactic non-negative integer literal discharges directly to `BranchPath`.
 
-There are two comparison styles:
+There are two ways to compare:
 
 - `.trace.contains(Console.print("x"))` checks whether that event happened anywhere and ignores `path`.
 - `.trace.event(0) => Option.Some(EffectEvent(...))` is strict structural equality and includes `path`.
 
-This keeps common assertions readable while preserving exact event checks when you need them.
+Common assertions stay short, and exact event checks are there when you need them.
 
 ## Helper boundary
 
-`verify <fn> trace` records direct emissions from the verified function. Emissions from helper functions it calls are suppressed and do not leak to stdout during `aver verify`.
+`verify <fn> trace` records only what the verified function emits directly. Emissions from helpers it calls are suppressed and do not reach stdout during `aver verify`.
 
 ```aver
 fn helper(msg: String) -> Unit
@@ -397,22 +345,22 @@ verify top trace
     traced.trace.contains(Console.print("via-helper")) => false
 ```
 
-Verify a helper's trace separately when the helper's own emissions matter.
+When a helper's own emissions matter, verify its trace separately.
 
 ## Proof export
 
-`aver proof` lifts classified effectful functions to pure proof functions by adding explicit oracle/capability parameters. Generated Lean and Dafny files include a trust-assumption header for the runtime/compiler trace invariant.
+`aver proof` lifts classified effectful functions to pure proof functions by adding explicit oracle/capability parameters. Generated Lean and Dafny files start with a trust-assumption header for the runtime/compiler trace invariant.
 
-Supported law shapes can become universal theorems. Concrete `given` domains still produce executable/sample checks. Unsupported proof shapes should fail clearly or remain as checked-domain/sample obligations, depending on backend and verify mode.
+Supported law shapes can become universal theorems. Concrete `given` domains still produce executable/sample checks. Unsupported proof shapes should either fail clearly or stay as checked-domain/sample obligations, depending on backend and verify mode.
 
 ### `aver verify` vs `aver proof` — the same `verify` block, two different questions
 
-A `verify <fn> law` block does double duty:
+A `verify <fn> law` block serves two commands:
 
-- `aver verify` runs it as a **finite sample check**: the cartesian product of the `given` domains is enumerated (capped at 10,000 cases, or whatever `max-cases` the project set for this function) and evaluated against the law's RHS using whatever stubs you supplied.
-- `aver proof` exports the same block as a **universally quantified theorem** in Lean / Dafny, where every classified effect becomes a function parameter and the law is asserted *for every possible such function* — not just for the stubs in `given`.
+- `aver verify` runs it as a **finite sample check**. It enumerates the cartesian product of the `given` domains (capped at 10,000 cases, or whatever `max-cases` the project set for this function) and evaluates each case against the law's RHS with the stubs you supplied.
+- `aver proof` exports the same block as a **universally quantified theorem** in Lean / Dafny. Every classified effect becomes a function parameter, and the law is asserted *for every possible such function*, including ones outside the stubs in `given`.
 
-These two questions can have different answers on the same block. The canonical example is `examples/formal/randomness_paradox.av`:
+The two can give different answers on the same block. The standard example is `examples/formal/randomness_paradox.av`:
 
 ```aver
 fn distinctStub(path: BranchPath, n: Int) -> Float
@@ -429,16 +377,16 @@ verify twoFloatsDistinct law alwaysDistinct
     twoFloatsDistinct() => true
 ```
 
-`aver verify` passes — under `distinctStub` the two calls return `1.0` and `2.0`, the law's RHS holds.
+`aver verify` passes. Under `distinctStub` the two calls return `1.0` and `2.0`, and the law's RHS holds.
 
-`aver proof` exports a theorem of shape `∀ rnd, twoFloatsDistinct rnd = true`, and both backends reject it for the same reason: there exist oracles (e.g. `fun _ _ => 0.5`) for which both calls return the same value, making the law false.
+`aver proof` exports a theorem of the form `∀ rnd, twoFloatsDistinct rnd = true`, and both backends reject it for the same reason. Some oracles (e.g. `fun _ _ => 0.5`) return the same value for both calls, and for them the law is false.
 
 - `--backend lean` + `lake build` → `unsolved goals: (rnd BranchPath.Root 0 != rnd BranchPath.Root 1) = true`
 - `--backend dafny` + `dafny verify` → `a postcondition could not be proved on this return path: ensures twoFloatsDistinct(BranchPath_Root, rnd) == true`
 
-This is not a bug — it's the design. `verify` answers "does this hold for the stubs I wrote down?". `proof` answers "does this hold for every classified-effect implementation that has the right signature?". The second is strictly stronger and catches what the first cannot.
+This is intended. `verify` asks "does this hold for the stubs I wrote down?". `proof` asks "does this hold for every classified-effect implementation with the right signature?". The second is strictly stronger and catches what the first cannot.
 
-When a `verify` passes but `aver proof` rejects, the law is **stub-specific** — true under the chosen stubs, not universal. Either rewrite the law so it doesn't depend on hidden stub structure (e.g. assert against `rnd(...)` directly instead of a constant), or keep it as a sample-only check and don't export. `verify <fn> trace` is the cases form when the goal is "given this concrete stub, here's what I expect"; it doesn't export and doesn't pretend to.
+When `verify` passes but `aver proof` rejects, the law is **stub-specific**: true under the chosen stubs and false in general. Either rewrite the law so it does not depend on hidden stub structure (e.g. assert against `rnd(...)` directly instead of a constant), or keep it as a sample-only check and don't export it. For "given this concrete stub, here's what I expect", use the cases form `verify <fn> trace`. It does not export and does not claim to.
 
 ## Hostile mode (`aver verify --hostile`)
 
@@ -446,45 +394,19 @@ When a `verify` passes but `aver proof` rejects, the law is **stub-specific** �
 
 ### Three roles, one frame
 
-Read these together — every other detail in this section follows from them:
+Read these three together. The rest of this section follows from them.
 
-- **`given` is your chosen world.** The stub or value list you wrote is
-  the world the law was demonstrated in. `aver verify` runs the law
-  there.
-- **Hostile is "what if your world was wrong?"** Under `--hostile`,
-  Aver substitutes adversarial profiles in for your `given` — frozen
-  clocks, empty disks, network down, rolls stuck at the bound — and
-  asks the same law to hold there too.
-- **`when` is the filter that says which worlds this law assumes.**
-  `when clock(root, 1) > clock(root, 0)` declares "this law assumes a
-  monotonic clock". Hostile profiles that violate the assumption are
-  skipped; the law is exercised only against worlds it actually
-  promised to hold for.
+- **`given` is your chosen world.** The stub or value list you wrote is the world the law was demonstrated in, and `aver verify` runs the law there.
+- **Hostile asks "what if your world was wrong?"** Under `--hostile`, Aver swaps adversarial profiles in for your `given` (frozen clocks, empty disks, network down, rolls stuck at the bound) and requires the same law to hold there too.
+- **`when` filters the worlds a law assumes.** `when clock(root, 1) > clock(root, 0)` declares "this law assumes a monotonic clock". Hostile profiles that break the assumption are skipped, so the law only meets worlds it promised to hold for.
 
-A `verify ... law` block is a universal claim: "this holds for every
-value of the `given` clauses' types". The declared set
-(`given n: Int = [1, 5, 100]`) is the *exploration domain* — values you
-think will exercise the law — but the claim itself ranges over the
-whole type. `--hostile` checks that.
+A `verify ... law` block makes a universal claim: "this holds for every value of the `given` clauses' types". The declared set (`given n: Int = [1, 5, 100]`) is the *exploration domain*, the values you expect to exercise the law. The claim itself covers the whole type, and `--hostile` checks that.
 
 `--hostile` works on **three axes**, all tied to law form:
 
-1. **Value-side** — on `verify <fn> law <name>` (with or without
-   `trace`). Typed `given` clauses get augmented with the per-type
-   boundary set. Law form is a universal claim; hostile checks the
-   boundary the user did not exercise.
-2. **Effect-side** — also on `verify <fn> law <name>` (with or without
-   `trace`). Classified non-`Output` effects the fn declares get
-   multiplied by an adversarial profile cartesian. The user's `given
-   <Effect>` stub is one chosen world; hostile asks "what if you chose
-   wrong?" by overriding the stub with each profile in turn.
-3. **Order-side** — for laws whose fn contains an `(a, b)!`
-   independent-product. Each case gets a twin in which the branches
-   execute right-to-left while results land in their source positions;
-   a pure law's tuple is order-invariant, so a divergence proves
-   "independent" doesn't actually hold for the active stub map.
-   Failures show `+reverse-eval` in the case's origin. Skipped for fns
-   without `!` because the twin would be a pure copy with no signal.
+1. **Value-side**, on `verify <fn> law <name>` (with or without `trace`). Typed `given` clauses get the boundary set for their type added. Law form is a universal claim, and hostile checks the boundary the user did not exercise.
+2. **Effect-side**, also on `verify <fn> law <name>` (with or without `trace`). Classified non-`Output` effects the fn declares are multiplied by a cartesian product of adversarial profiles. The user's `given <Effect>` stub is one chosen world. Hostile asks "what if you chose wrong?" by replacing the stub with each profile in turn.
+3. **Order-side**, for laws whose fn contains an `(a, b)!` independent-product. Each case gets a twin in which the branches run right-to-left while results still land in their source positions. A pure law's tuple does not depend on order, so a difference shows that "independent" does not hold for the active stub map. Failures show `+reverse-eval` in the case's origin. Fns without `!` are skipped, because their twin would be a pure copy and tell you nothing.
 
 | Form | Value-side | Effect-side | Order-side |
 |---|---|---|---|
@@ -493,10 +415,7 @@ whole type. `--hostile` checks that.
 | `verify <fn> law <name>` | ✓ | ✓ | ✓ if `!` |
 | `verify <fn> trace law <name>` | ✓ | ✓ | ✓ if `!` |
 
-Cases-form opts out — both plain `verify <fn>` and `verify <fn> trace`
-(no `law`) are fixtures: explicit scenarios with chosen stubs.
-Multiplying a fixture by the adversarial cartesian would turn "this
-scenario" into "every scenario", which is not what the user wrote.
+Cases form opts out. Both plain `verify <fn>` and `verify <fn> trace` (no `law`) are fixtures: explicit scenarios with chosen stubs. Multiplying a fixture by the adversarial product would turn "this scenario" into "every scenario", which the user did not write.
 
 **Value-side boundary sets:**
 
@@ -506,8 +425,7 @@ scenario" into "every scenario", which is not what the user wrote.
 - `String` → `""`, `"a"`, 1024×`x`, `"\0"` (NUL embedded), multi-byte UTF-8
 - `Unit`   → `Unit`
 
-These augment the declared list — duplicates are dropped, so a value the
-user already wrote is not re-run.
+These are added to the declared list. Duplicates are dropped, so a value the user already wrote does not run twice.
 
 **Effect-side adversarial profiles** (per classified non-`Output` effect):
 
@@ -538,31 +456,18 @@ user already wrote is not re-run.
 | `Tcp.accept` | `nothing_pending`, `once_then_nothing`, `always_err` |
 | `Tcp.poll` | `none_ready`, `everything_ready`, `always_err` |
 
-User-given pins are **not** a pre-empt: hostile profiles always layer
-on top, since the user's stub is itself an assumption. The runtime stub
-installer overwrites user-given for the duration of a hostile-profile
-case so the same law gets evaluated under both worlds.
+User-given pins do **not** exempt an effect. Hostile profiles are always layered on top, since the user's stub is itself an assumption. For the length of a hostile-profile case, the runtime stub installer replaces the user's stub, so the same law is evaluated in both worlds.
 
-The full cartesian (value-boundary cases × adversarial worlds) is
-capped at `10_000` cases per block — the same `max-cases` ceiling as
-parser-side declared expansion, resolved per block through the same
-`[[verify.costly]]` entries. Over-budget blocks fail with
-a clear error pointing at the law and listing the projected size;
-tighten the `given` domain, add a `when` precondition, raise the
-ceiling in `aver.toml`, or run that block without `--hostile`.
+The full product (value-boundary cases × adversarial worlds) is capped at `10_000` cases per block. This is the same `max-cases` ceiling as parser-side declared expansion, resolved per block through the same `[[verify.costly]]` entries. A block over budget fails with a clear error that points at the law and gives the projected size. Narrow the `given` domain, add a `when` precondition, raise the ceiling in `aver.toml`, or run that block without `--hostile`.
 
-`when` clauses stay binding: a hostile case is dropped if the `when`
-guard returns `false`. That is the line `--hostile` honours — `given`
-ranges are exploration hints, `when` is the law boundary.
+`when` clauses still bind: a hostile case is dropped if the `when` guard returns `false`. That is the line `--hostile` respects. `given` ranges are hints for exploration, and `when` is the boundary of the law.
 
 ### Output
 
-When a hostile-injected case fails, the diagnostic uses a distinct slug
-so CI gates can route declared vs adversarial failures separately:
+When a case injected by hostile mode fails, the diagnostic uses its own slug, so CI gates can route declared and adversarial failures separately:
 
-- `verify-mismatch` — declared world failure, real bug
-- `verify-hostile-mismatch` — adversarial world failure, missing
-  precondition or unpinned effect
+- `verify-mismatch`: failure in the declared world, a real bug
+- `verify-hostile-mismatch`: failure in an adversarial world, a missing precondition or unpinned effect
 
 ```
 fail[verify-hostile-mismatch]: law violated under --hostile expansion
@@ -580,42 +485,13 @@ fail[verify-hostile-mismatch]: law violated under --hostile expansion
           semantics) with the values you actually meant.
 ```
 
-For effect-side hostile (`verify <fn> trace` block, adversarial profile
-overriding the user's oracle stub for that case), `origin` carries the
-profile label. Trace form does not currently support `when` (that
-keyword lives on `law` form's value domain), so the repair speaks to
-the two real options today.
+For effect-side hostile (a `verify <fn> trace` block where an adversarial profile replaces the user's oracle stub for that case), `origin` carries the profile label. Trace form does not support `when` yet (that keyword belongs to the value domain of `law` form), so the repair text covers the two options that exist today.
 
-> **`when` as oracle assumption (0.13).** `verify <fn> trace law <name>`
-> supports `when` predicates that reference the effect-given oracle —
-> `when clock(root, 1) > clock(root, 0)` for monotonicity, `when
-> read(root, 1, "f") == Result.Ok("hello")` for read-your-writes. Under
-> `--hostile`, profiles that violate the assumption are *skipped*; the
-> law is checked only under oracle behaviors that satisfy the declared
-> assumption. The guard observes the same oracle the case body sees:
-> for the declared case the user's stub fires, for each hostile-profile
-> case the corresponding profile fn fires. No state model, no session
-> types — just a predicate over oracle outputs at that operation's own call
-> indices, so `clock(root, 0)` and `clock(root, 1)` are the first two clock
-> reads whatever else runs between them.
+> **`when` as oracle assumption (0.13).** `verify <fn> trace law <name>` supports `when` predicates that refer to the effect-given oracle: `when clock(root, 1) > clock(root, 0)` for monotonicity, `when read(root, 1, "f") == Result.Ok("hello")` for read-your-writes. Under `--hostile`, profiles that break the assumption are *skipped*, and the law is checked only under oracle behaviors that satisfy it. The guard sees the same oracle as the case body: in the declared case the user's stub runs, and in each hostile-profile case the matching profile fn runs. There is no state model and there are no session types. The guard is a predicate over oracle outputs at that operation's own call indices, so `clock(root, 0)` and `clock(root, 1)` are the first two clock reads, whatever else runs between them.
 >
-> **`when` itself must be pure.** Calls like `clock(root, 1)` inside a
-> guard are *queries on the oracle* installed for this case, not runtime
-> effect calls. Don't read this as Aver inspecting the wall clock — the
-> guard is asking the same fn that supplies values to the law body.
+> **`when` itself must be pure.** A call like `clock(root, 1)` inside a guard is a *query on the oracle* installed for this case. It is not a runtime effect call, and Aver does not look at the wall clock. The guard asks the same fn that supplies values to the law body.
 >
-> **Two different concepts share the word "invariant" — keep them
-> apart.** A user-written `when` is an *oracle assumption* (per-law,
-> local, the user states it explicitly). The axiom block emitted into
-> Lean / Dafny by `aver proof` carries *runtime invariants* (global,
-> guaranteed by Aver: `Random.int` respects bounds, `Random.float ∈
-> [0,1]`, `Time.unixMs ≥ 0`, and `Process.stopRequested` is monotonic
-> across calls: `i ≤ j ∧ stop(path, i) = true` implies
-> `stop(path, j) = true`). The Process law is the first invariant that
-> relates two oracle observations rather than constraining one result.
-> Both kinds feed the proof side, but they sit
-> at different scopes — `when` scopes one law, axioms hold across the
-> whole project.
+> **The word "invariant" covers two different things. Keep them apart.** A user-written `when` is an *oracle assumption*: it belongs to one law, it is local, and the user states it explicitly. The axiom block that `aver proof` emits into Lean / Dafny carries *runtime invariants*: they are global and Aver guarantees them. `Random.int` respects its bounds, `Random.float ∈ [0,1]`, `Time.unixMs ≥ 0`, and `Process.stopRequested` is monotonic across calls (`i ≤ j ∧ stop(path, i) = true` implies `stop(path, j) = true`). The Process law is the first invariant that relates two oracle observations instead of constraining one result. Both kinds feed the proof side at different scopes: `when` covers one law, and axioms hold across the whole project.
 
 ```
   origin: effect profile: Time.unixMs/saturated
@@ -631,25 +507,18 @@ the two real options today.
           (example semantics) with that stub.
 ```
 
-The block summary line breaks the count down by origin:
+The block summary line splits the count by origin:
 
 ```
 ✗ isPositive spec alwaysPositive      4/7 passed (3/3 declared, 1/4 hostile)
 ```
 
-— `3/3 declared` = all values the user wrote pass, `1/4 hostile` = boundary
-expansion found 3 fails. The classic "law is not universal" signal.
+`3/3 declared` means every value the user wrote passes. `1/4 hostile` means boundary expansion found 3 failures. This is the usual sign that a law is not universal.
 
-JSON (`--json`) carries the same data structurally:
+JSON (`--json`) carries the same data in structured form:
 
-- per-diagnostic `slug` is `verify-hostile-mismatch` (or `verify-mismatch`
-  for declared failures), `from_hostile: true` flag, and
-  `fields[origin] = "hostile boundary expansion"` or
-  `"hostile effect profile: Time.unixMs/saturated"`
-- `verify_summary.blocks[].declared_passed / declared_failed /
-  hostile_passed / hostile_failed` — tooling can split "law regression"
-  (`declared_failed > 0`) from "hostile coverage gap" (`hostile_failed >
-  0 && declared_failed == 0`).
+- each diagnostic has `slug` `verify-hostile-mismatch` (or `verify-mismatch` for declared failures), a `from_hostile: true` flag, and `fields[origin] = "hostile boundary expansion"` or `"hostile effect profile: Time.unixMs/saturated"`
+- `verify_summary.blocks[].declared_passed / declared_failed / hostile_passed / hostile_failed` let tooling tell a "law regression" (`declared_failed > 0`) from a "hostile coverage gap" (`hostile_failed > 0 && declared_failed == 0`).
 
 #### jq one-liners
 
@@ -667,14 +536,9 @@ aver audit --hostile --json prog.av | head -1 \
 
 ### Two responses to a hostile failure
 
-1. **It IS a precondition you forgot.** Encode it: `when n > 0` makes the
-   law explicit about what `n` it applies to. The hostile case `n = 0`
-   gets filtered, the law passes again, and the precondition is now
-   visible to anyone reading the spec — and to proof export, which can
-   pick it up too.
+1. **It IS a precondition you forgot.** Write it down: `when n > 0` states which `n` the law applies to. The hostile case `n = 0` is filtered out, the law passes again, and the precondition is visible to anyone reading the spec. Proof export can pick it up too.
 
-2. **The values you wrote were *examples*, not a universal claim.** Drop
-   the `law <name>` form and use plain `verify <fn>` (cases form):
+2. **The values you wrote were *examples*, and you never meant a universal claim.** Drop the `law <name>` form and use plain `verify <fn>` (cases form):
 
    ```aver
    verify isPositive
@@ -683,23 +547,14 @@ aver audit --hostile --json prog.av | head -1 \
        isPositive(100) => true
    ```
 
-   Same checks, but now the spec says "these specific cases", not
-   "for all `n`". `--hostile` does not augment `verify <fn>` cases — they
-   are intentionally narrow.
+   The checks are the same, but the spec now says "these specific cases" instead of "for all `n`". `--hostile` does not add to `verify <fn>` cases. They are narrow on purpose.
 
-The wrong response is to silently widen the declared list to suppress the
-hostile failure: that just covers up a real assumption with more
-examples. `when` makes the assumption explicit; `verify` cases-form makes
-the spec narrower. Pick one.
+Do not quietly widen the declared list to make the hostile failure go away. That hides a real assumption behind more examples. `when` makes the assumption explicit, and cases-form `verify` makes the spec narrower. Pick one.
 
 ### What `--hostile` does not do
 
-- It does not invent values for user-defined types (`Type::Named`). If a
-  given is over `MyShape`, `--hostile` leaves the declared list alone —
-  there is no boundary set that respects user constructors.
-- It does not synthesise `List<T>` / `Option<T>` / `Result<T, E>` values.
-  The boundary set for those is empty; declared values pass through
-  unchanged.
+- It does not invent values for user-defined types (`Type::Named`). If a given ranges over `MyShape`, `--hostile` leaves the declared list alone, since no boundary set could respect user constructors.
+- It does not synthesise `List<T>` / `Option<T>` / `Result<T, E>` values. Their boundary set is empty, and declared values pass through unchanged.
 
 ## Current limits
 
@@ -707,12 +562,9 @@ Oracle does not try to model every side effect.
 
 Not supported:
 
-- Whole server loops. `HttpServer` is ordinary Aver over persistent `Tcp`
-  resources; verify its pure `HttpWire` and handler pieces separately.
-- Stateful capability models / hidden filesystem-or-clock state. Effect stubs are
-  stateless by design (see the section above) — if a property depends on memory
-  across effect calls, model the state in pure user code.
-- Proof export for `?!` cancel mode. Oracle proof export expects complete independence mode so every branch has a stable trace position.
+- Whole server loops. `HttpServer` is ordinary Aver over persistent `Tcp` resources. Verify its pure `HttpWire` and handler pieces separately.
+- Stateful capability models, or hidden filesystem or clock state. Effect stubs are stateless by design (see the section above). If a property depends on memory across effect calls, model the state in pure user code.
+- Proof export for `?!` cancel mode. Oracle proof export expects complete independence mode, so that every branch has a stable trace position.
 - Higher-order effectful callbacks. Oracle works best when the effect surface is visible in the verified function's signature.
-- Trace-aware laws on recursive effectful functions. Use `verify <fn> law ...` without `trace`, or move the effect-emitting step into a non-recursive function and verify that trace.
+- Trace-aware laws on recursive effectful functions. Use `verify <fn> law ...` without `trace`, or move the step that emits effects into a non-recursive function and verify its trace.
 - Machine-checked proof of the compiler/runtime trace invariant. Generated proof files state the assumptions explicitly.
