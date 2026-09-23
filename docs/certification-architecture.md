@@ -183,6 +183,9 @@ A successful verdict depends on:
 - the canonical local Elan home used to resolve that pinned toolchain;
 - SHA-256 collision resistance;
 - the semantic truth and totality, where required, of named runtime contracts;
+  these include code the certificate does not pin (the bignum sub-routines the add, sub, mul and cmp helpers call), and they model every helper as a pure function of its argument values that mutates nothing the caller can reach (see the trust inventory in certificate-format.md, section 10);
+- two facts of the wasm GC specification behind the exact `ref.test` of a variant match (subtyping is reflexive; a final type has no other subtype in its own rec group), carried as the explicit hypothesis `GrammarSound.GcTestSpec`, not as axioms;
+- for L3, the wall's interpreter as the meaning of "returns": fuel counts nested calls only, so stack exhaustion or allocation failure in a real engine at large inputs is not covered;
 - the explicit source declarations that a binary cannot determine;
 - any explicitly configured local build-cache directory.
 
