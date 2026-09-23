@@ -1,5 +1,4 @@
-/- GrammarTotal — totality (level L3) for the one-grammar plan (P3, not yet
-   wired).
+/- GrammarTotal — totality (level L3) for the one-grammar plan.
 
    Main's L3 (`Schema.Obligation.holdsTotal`, policy `simulatesModelTotally`)
    promises, under the partial contracts plus totality of the Int helpers the
@@ -305,7 +304,7 @@ theorem guard_run {C : Nat} (S : CarrierSpec C)
     (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     (slot : Nat) (locals stack : List WVal) (n : Int) (w : WVal)
     (hget : locals[slot]? = some w)
-    (hR : RecordComputeBridge.CanonRepr S n w) :
+    (hR : CanonRepr S n w) :
     wRunF host ar callee (eraseL (cmpArmB C slot .lte 0)) locals stack =
       some (.ok locals (b32 (decide (n ≤ 0)) :: stack)) := by
   rcases S.car n w hR.1 with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
@@ -322,9 +321,9 @@ theorem guard_run {C : Nat} (S : CarrierSpec C)
 section Progress
 variable {C : Nat} (S : CarrierSpec C)
   (box add sub mul cmp eq neg : List WVal → Option WVal)
-  (Ctr : RecordComputeBridge.Contracts S box add sub mul cmp eq)
-  (hNegC : ∀ x w r, RecordComputeBridge.CanonRepr S x w → neg [w] = some r →
-    RecordComputeBridge.CanonRepr S (-x) r)
+  (Ctr : Contracts S box add sub mul cmp eq)
+  (hNegC : ∀ x w r, CanonRepr S x w → neg [w] = some r →
+    CanonRepr S (-x) r)
   (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (M : MCtx)
   (hCarrier : M.carrier = C)
   (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))
@@ -363,7 +362,7 @@ theorem progress :
   | .literal (.int k), Γ, env, tail, T, wl, st, _, _, hty, _, _, _ => by
       obtain ⟨hband, _⟩ := tyOf_litInt_inv hty
       have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
-        simpa [AverCert.PlanCheck.inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hband
+        simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hband
       obtain ⟨w, hw⟩ := hBoxT k hk.1 hk.2
       simp [lowerW, lowerB, eraseL, eraseI, wRunF, hBox, popArgs, hw]
   | .literal (.bool v), Γ, env, tail, T, wl, st, _, _, _, _, _, _ => by
@@ -392,7 +391,7 @@ theorem progress :
           wl1 (w1 :: st) o2 htr henv hl1 h2
         obtain ⟨wl2, w2, rfl, hw2, _⟩ := res_false hres2
         obtain ⟨b, rfl⟩ := hasTy_int hT2
-        simp only [SRepr, RecordComputeBridge.CanonRepr] at hw1 hw2
+        simp only [SRepr, CanonRepr] at hw1 hw2
         rw [wRunF_append, wRunF_append]
         simp only [lowerW] at h1 h2
         rw [h1]
@@ -559,9 +558,9 @@ theorem paramsΓ_int {ts : List Ty} (h : ∀ t ∈ ts, t = .int) :
     add and sub, and of mul when `mulOk` (the group's role is `.mul`). -/
 theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
     (box add sub mul cmp eq neg : List WVal → Option WVal)
-    (Ctr : RecordComputeBridge.Contracts S box add sub mul cmp eq)
-    (hNegC : ∀ x w r, RecordComputeBridge.CanonRepr S x w → neg [w] = some r →
-      RecordComputeBridge.CanonRepr S (-x) r)
+    (Ctr : Contracts S box add sub mul cmp eq)
+    (hNegC : ∀ x w r, CanonRepr S x w → neg [w] = some r →
+      CanonRepr S (-x) r)
     (code : CodeTbl) (host : HostTbl) (M : MCtx)
     (hCarrier : M.carrier = C)
     (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))
@@ -716,9 +715,9 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
     role the check returns selects the mul totality premise. -/
 theorem fn_certified_total_of_check {C : Nat} (S : CarrierSpec C)
     (box add sub mul cmp eq neg : List WVal → Option WVal)
-    (Ctr : RecordComputeBridge.Contracts S box add sub mul cmp eq)
-    (hNegC : ∀ x w r, RecordComputeBridge.CanonRepr S x w → neg [w] = some r →
-      RecordComputeBridge.CanonRepr S (-x) r)
+    (Ctr : Contracts S box add sub mul cmp eq)
+    (hNegC : ∀ x w r, CanonRepr S x w → neg [w] = some r →
+      CanonRepr S (-x) r)
     (code : CodeTbl) (host : HostTbl) (M : MCtx)
     (hCarrier : M.carrier = C)
     (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))

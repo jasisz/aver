@@ -1,4 +1,4 @@
-/- Grammar — the one-grammar certificate plan (P2a-P2c, not yet wired).
+/- Grammar — the one-grammar certificate plan.
 
    The plan IS the optimized MIR function body (`src/ir/mir/expr.rs`
    `MirExpr`), restricted to an admitted subset and printed 1:1 into this
@@ -64,12 +64,16 @@
    Floats (bits), Strings (bytes), Vectors, Lists (`nil` / `cons`) and opaque
    pass-through values (a `Map` field). A tuple instantiation is a record
    type id of the type table. -/
-import RecordComputeBridge
+import SchemaBase
 
 namespace AverCert.Grammar
 open CertPrelude AverCert.Schema
 
 /-! ## Grammar -/
+
+/-- The i64 band: the Int literals the emitter boxes from one `i64.const`. -/
+def inI64Band (value : Int) : Bool :=
+  decide (-(2 ^ 63 : Int) ≤ value) && decide (value < (2 ^ 63 : Int))
 
 /-- Source types. `record tid` is a user record and `sum tid` a user sum type
     by type id; `option` / `result` carry their instantiation. `eqref` is the
@@ -409,7 +413,7 @@ def ctorTy (M : MCtx) : CtorTag → Ty → List Ty → Option Ty
 mutual
   def tyOf (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tail : Bool) :
       Expr → Option Ty
-    | .literal (.int k) => if AverCert.PlanCheck.inI64Band k then some .int else none
+    | .literal (.int k) => if inI64Band k then some .int else none
     | .literal (.bool _) => some .bool
     | .literal (.float _) => some .float
     | .literal (.str _) => some .string
@@ -510,7 +514,7 @@ mutual
     | .cons p b rest =>
         match p, rest with
         | .litInt k, _ =>
-            if AverCert.PlanCheck.inI64Band k then
+            if inI64Band k then
               match tyOf M n Γ tail b, tyIntArms M n Γ tail rest with
               | some t, some t' => if t = t' then some t else none
               | _, _ => none
@@ -903,5 +907,50 @@ def groupModel (outer : Nat → Nat → List SVal → Option SVal)
       match G f with
       | some p => eval (groupModel outer G k) (argsEnv args) p.body
       | none => outer (k + 1) f args
+
+/-! ## Representation
+
+The representation relation the statement is written over (`SchemaCore`
+`Obligation.holds`): a source value against the wasm value that represents it,
+read off the module layout `M`. -/
+
+/-- The wasm image of a String: the `$string` array of its bytes. -/
+def strW (M : MCtx) (bytes : List Nat) : WVal :=
+  .arr M.str (bytes.map fun (b : Nat) => .i32v (b : Int))
+
+mutual
+  /-- Representation, read off the module context's layout: a record is the
+      struct of its type (a one-field newtype record is its field's value), a
+      variant the struct of its constructor, an Option / Result the struct
+      of its instantiation with the tag in field 0 (the unused payload field
+      holds an arbitrary filler); a Float is its `f64` bits, a String the
+      `$string` array of its bytes, a Vector the array of its elements (below
+      `2^31` of them, the index space `__aint_to_index` maps onto), a List
+      `null` or a cons struct `{head, tail}`, and an opaque value itself. -/
+  def SRepr {C : Nat} (S : CarrierSpec C) (M : MCtx) : SVal → WVal → Prop
+    | .i n, w => CanonRepr S n w
+    | .b v, w => w = b32 v
+    | .record tid fs, w =>
+        if M.newtype tid then SReprL S M fs [w]
+        else ∃ ws, w = .structv (M.structOf tid) ws ∧ SReprL S M fs ws
+    | .variant tid c fs, w => ∃ ws, w = .structv (M.ctorStruct tid c) ws ∧ SReprL S M fs ws
+    | .none t, w => ∃ d, w = .structv (M.optStruct t) [.i32v 0, d]
+    | .some t v, w => ∃ x, w = .structv (M.optStruct t) [.i32v 1, x] ∧ SRepr S M v x
+    | .ok t e v, w => ∃ x d, w = .structv (M.resStruct t e) [.i32v 1, x, d] ∧ SRepr S M v x
+    | .err t e v, w => ∃ d x, w = .structv (M.resStruct t e) [.i32v 0, d, x] ∧ SRepr S M v x
+    | .f bits, w => w = .f64v bits
+    | .s bytes, w => w = strW M bytes
+    | .vec t vs, w =>
+        vs.length < 2147483648 ∧ ∃ ws, w = .arr (M.vecStruct t) ws ∧ SReprL S M vs ws
+    | .nil _, w => w = .null
+    | .cons t h tl, w =>
+        ∃ x y, w = .structv (M.listStruct t) [x, y] ∧ SRepr S M h x ∧ SRepr S M tl y
+    | .w v, x => x = v
+  def SReprL {C : Nat} (S : CarrierSpec C) (M : MCtx) :
+      List SVal → List WVal → Prop
+    | [], [] => True
+    | v :: vs, w :: ws => SRepr S M v w ∧ SReprL S M vs ws
+    | _, _ => False
+end
 
 end AverCert.Grammar

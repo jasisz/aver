@@ -1,9 +1,9 @@
 /-
 # De-risk: declared arith host-role helpers pinned by TEMPLATE equality
 
-Fourth column of the declared-envelope family (`dCtorBody` / `concatPinnedAt`
-lower the TYPE section from declaration; this module lowers the arith helper
-CODE bodies). The certificate DECLARES which function index carries each of
+This module lowers the arith helper CODE bodies from declaration, as
+`GrammarLower` lowers the certified functions and `TypeTable` confirms the type
+section. The certificate DECLARES which function index carries each of
 the host-role contracts — `Int.add` / `Int.sub` / `Int.mul`, the Int-carrier
 `box` constructor, the `toIndex` index-extraction helper and the two
 value-comparison helpers `cmp` / `eq` (the manifest

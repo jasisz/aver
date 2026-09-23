@@ -1,85 +1,42 @@
 /-
-Canonical claim axes derived inside Lean.
+Canonical claim axes and report data derived inside Lean.
 
-Policy, termination evidence, totality role, and disclosed runtime contracts
-are outputs of the checked family plans. They are not producer-selected inputs.
+Policy, termination evidence and totality role are fields of the derived
+obligations (`AcceptedArtifact.obligationsOf`, from the wall's termination
+check). What is left here is disclosure: the runtime contracts the certificate
+is conditional on, computed from the helper calls the plans' lowerings make,
+and the report entries (one class for every plan, D2, plus facets derived from
+the plans). None of these is a producer choice; the checker witness pins them
+against the JSON manifest.
 -/
 import AcceptedArtifactCore
 
 namespace AverCert.ClaimAxes
 
 open AverCert.Schema
+open AverCert.Grammar
+open AverCert.TypeTable
 open AverCert.AcceptedArtifact
+open CertPrelude
 
-def canonicalTermination : TerminationWitness :=
-  { measure := .intNatAbs 0, descent := -1 }
+/-- The one report class of a certified export. -/
+def planClass : String := "source-plan-v1"
 
-structure AxisSpec where
-  policy : Policy
-  termination? : Option TerminationWitness
-  totalityRole : TotalityRole
+mutual
+  /-- Every function index a lowered body calls (`call` and `return_call`). -/
+  def wCalls : WInstr → List Nat
+    | .call f => [f]
+    | .returnCall f => [f]
+    | .ifElse t e => wCallsL t ++ wCallsL e
+    | _ => []
+  def wCallsL : List WInstr → List Nat
+    | [] => []
+    | i :: is => wCalls i ++ wCallsL is
+end
 
-def partialAxis : AxisSpec :=
-  { policy := .simulatesModel, termination? := none, totalityRole := .addSub }
-
-def total (role : TotalityRole) : AxisSpec :=
-  { policy := .simulatesModelTotally
-    termination? := some canonicalTermination
-    totalityRole := role }
-
-def AxisSpec.matches (spec : AxisSpec) (obligation : Obligation) : Bool :=
-  obligation.policy == spec.policy &&
-  obligation.termination? == spec.termination? &&
-  obligation.totalityRole == spec.totalityRole
-
-/-- Classify the byte-bound recursion grammar first; compare the obligation's
-    claimed role only after classification. The additive unary and accumulator
-    shapes are disjoint from the unary multiplication shape. -/
-def classifyRecursionPlanShape
-    (self : Nat)
-    (hostTable : List (HostRole × Nat))
-    (plan : RecursionRawPlan) : Option TotalityRole :=
-  AverCert.PlanCheck.classifyRecursionPlanShape self hostTable plan
-
-def recursionAxis (manifest : Manifest) (claim : RecursionClaim) : Option AxisSpec := do
-  let plan ← recursionPlanForExport claim.exportName manifest.recursionPlans
-  let role ← classifyRecursionPlanShape claim.obligation.self claim.hostTable plan
-  pure (total role)
-
-def mutualAxis (manifest : Manifest) (claim : MutualRecursionClaim) : Option AxisSpec := do
-  let _ ← mutualPlanForExport claim.exportName manifest.mutualPlans
-  pure (total .addSub)
-
-def allMatch (axis : Claim → Option AxisSpec)
-    (obligation : Claim → Obligation) : List Claim → Bool
-  | [] => true
-  | claim :: rest =>
-      match axis claim with
-      | some spec =>
-          spec.matches (obligation claim) && allMatch axis obligation rest
-      | none => false
-
-def checkedAxes (artifact : ArtifactData) : Bool :=
-  allMatch (fun _ : SymFragmentClaim => some partialAxis) (fun c => c.obligation)
-      artifact.symFragmentClaims &&
-  allMatch (fun _ : StringEqClaim => some partialAxis) (fun c => c.obligation)
-      artifact.stringEqClaims &&
-  allMatch (fun _ : StringConcatClaim => some partialAxis) (fun c => c.obligation)
-      artifact.stringConcatClaims &&
-  allMatch (fun _ : ConstructClaim => some partialAxis) (fun c => c.obligation)
-      artifact.constructClaims &&
-  allMatch (recursionAxis artifact.manifest) (fun c => c.obligation)
-      artifact.recursionClaims &&
-  allMatch (mutualAxis artifact.manifest) (fun c => c.obligation)
-      artifact.mutualRecursionClaims &&
-  allMatch (fun _ : VerbatimClaim => some partialAxis) (fun c => c.obligation)
-      artifact.verbatimClaims &&
-  allMatch (fun _ : IntDispatchClaim => some partialAxis) (fun c => c.obligation)
-      artifact.intDispatchClaims &&
-  allMatch (fun _ : FieldProjectionClaim => some partialAxis) (fun c => c.obligation)
-      artifact.fieldProjectionClaims &&
-  allMatch (fun _ : CompositionClaim => some partialAxis) (fun c => c.obligation)
-      artifact.compositionClaims
+/-- The helper calls of every planned function's lowering. -/
+def usedCalls (M : MCtx) (fns : List FnEntry) : List Nat :=
+  (fns.map fun e => wCallsL (fnCode M e.plan).body).flatten
 
 structure ContractUse where
   box : Bool := false
@@ -96,114 +53,28 @@ structure ContractUse where
   mulTotal : Bool := false
 deriving Repr, DecidableEq
 
-def ContractUse.merge (left right : ContractUse) : ContractUse :=
-  { box := left.box || right.box
-    add := left.add || right.add
-    sub := left.sub || right.sub
-    mul := left.mul || right.mul
-    stringEq := left.stringEq || right.stringEq
-    stringConcat := left.stringConcat || right.stringConcat
-    toIndex := left.toIndex || right.toIndex
-    cmp := left.cmp || right.cmp
-    eq := left.eq || right.eq
-    addTotal := left.addTotal || right.addTotal
-    subTotal := left.subTotal || right.subTotal
-    mulTotal := left.mulTotal || right.mulTotal }
-
-def useHostRole : HostRole → ContractUse
-  | .box => { box := true }
-  | .add => { add := true }
-  | .sub => { sub := true }
-  | .mul => { mul := true }
-  | .toIndex => { toIndex := true }
-  | .cmp => { cmp := true }
-  | .eq => { eq := true }
-
-def useFragBlockFuel : Nat → FragBlock → ContractUse
-  | 0, _ => {}
-  | fuel + 1, block =>
-      block.nodes.foldl (fun used node =>
-        let here := match node.kind with
-          | .hostCall role _ _ => useHostRole role
-          | .ifElse _ thenBlock elseBlock =>
-              (useFragBlockFuel fuel thenBlock).merge
-                (useFragBlockFuel fuel elseBlock)
-          -- The fused vector read calls both the to-index and box helpers.
-          | .vectorGetOrDefault _ _ _ _ => { box := true, toIndex := true }
-          | _ => {}
-        used.merge here) {}
-
-def useFragBlock (block : FragBlock) : ContractUse :=
-  useFragBlockFuel AverCert.PlanLower.maxFuel block
-
-def useSymFragment (claim : SymFragmentClaim) : Option ContractUse := do
-  let plan ← AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-    claim.hostTable claim.structTable claim.plan
-  pure (useFragBlock plan.body)
-
-def useRecursion (manifest : Manifest) (claim : RecursionClaim) : Option ContractUse := do
-  let plan ← recursionPlanForExport claim.exportName manifest.recursionPlans
-  let role ← classifyRecursionPlanShape claim.obligation.self claim.hostTable plan
-  match role with
-  | .addSub =>
-      pure { box := true, add := true, sub := true
-             addTotal := true, subTotal := true }
-  | .mul =>
-      pure { box := true, sub := true, mul := true
-             addTotal := true, subTotal := true, mulTotal := true }
-
-def useMutual (manifest : Manifest) (claim : MutualRecursionClaim) : Option ContractUse := do
-  let _ ← mutualPlanForExport claim.exportName manifest.mutualPlans
-  pure { box := true, sub := true, addTotal := true, subTotal := true }
-
-def useIntDispatchLeaf : IntDispatchLeaf → ContractUse
-  | .proj => {}
-  | .hostOp .add _ _ => { box := true, add := true }
-  | .hostOp .sub _ _ => { box := true, sub := true }
-  | .const _ => { box := true }
-
-def useIntDispatchCascade : IntDispatchCascade → ContractUse
-  | .default _ => { box := true }
-  | .test _ hit rest =>
-      (useIntDispatchLeaf hit).merge (useIntDispatchCascade rest)
-
-def useIntDispatch (manifest : Manifest) (claim : IntDispatchClaim) : Option ContractUse := do
-  let plan ← intDispatchPlanForExport claim.exportName manifest.intDispatchPlans
-  pure (useIntDispatchCascade plan.body)
-
-def usesOf (use : Claim → Option ContractUse) : List Claim → Option ContractUse
-  | [] => some {}
-  | claim :: rest => do
-      let head ← use claim
-      let tail ← usesOf use rest
-      pure (head.merge tail)
-
-def requiredContractUse (artifact : ArtifactData) : Option ContractUse := do
-  let sym ← usesOf useSymFragment artifact.symFragmentClaims
-  let stringEq ← usesOf (fun _ : StringEqClaim =>
-    some { stringEq := true }) artifact.stringEqClaims
-  let stringConcat ← usesOf (fun _ : StringConcatClaim =>
-    some { stringConcat := true }) artifact.stringConcatClaims
-  let construct ← usesOf (fun _ : ConstructClaim => some {}) artifact.constructClaims
-  let recursion ← usesOf (useRecursion artifact.manifest) artifact.recursionClaims
-  let mutualUse ← usesOf (useMutual artifact.manifest) artifact.mutualRecursionClaims
-  let verbatim ← usesOf (fun _ : VerbatimClaim => some {}) artifact.verbatimClaims
-  let intDispatch ← usesOf (useIntDispatch artifact.manifest) artifact.intDispatchClaims
-  let projection ← usesOf (fun _ : FieldProjectionClaim => some {})
-    artifact.fieldProjectionClaims
-  -- Every accepted composition closure contains a `selfSum` leaf and its
-  -- canonical host table contains exactly the add role.
-  let composition ← usesOf (fun _ : CompositionClaim =>
-    some { add := true }) artifact.compositionClaims
-  let used := sym.merge stringEq
-  let used := used.merge stringConcat
-  let used := used.merge construct
-  let used := used.merge recursion
-  let used := used.merge mutualUse
-  let used := used.merge verbatim
-  let used := used.merge intDispatch
-  let used := used.merge projection
-  pure (used.merge composition)
+/-- The contracts one artifact depends on: a helper contract when some
+    lowering calls that helper, and the totality contracts of every L3
+    obligation's role. -/
+def contractUse (artifact : ArtifactData) : ContractUse :=
+  let m := artifact.manifest
+  let M := mctxOf m.subject m.types m.fnPlans
+  let calls := usedCalls M m.fnPlans
+  let total := m.obligations.any fun o => o.policy == .simulatesModelTotally
+  let totalMul := m.obligations.any fun o =>
+    o.policy == .simulatesModelTotally && o.totalityRole == .mul
+  { box := calls.contains M.box
+    add := calls.contains M.add
+    sub := calls.contains M.sub
+    mul := calls.contains M.mul
+    stringEq := calls.contains M.streq
+    stringConcat := calls.contains M.concat
+    toIndex := calls.contains M.toIndex
+    cmp := calls.contains M.cmp
+    eq := calls.contains M.eq
+    addTotal := total
+    subTotal := total
+    mulTotal := totalMul }
 
 def boxContract : String :=
   "__rt_aint_from_i64 (box i64 -> carrier)"
@@ -244,16 +115,71 @@ def ContractUse.contracts (use : ContractUse) : List String :=
   (if use.subTotal then [subTotalContract] else []) ++
   (if use.mulTotal then [mulTotalContract] else [])
 
-def requiredContracts (artifact : ArtifactData) : Option (List String) := do
-  let use ← requiredContractUse artifact
-  pure use.contracts
+def requiredContracts (artifact : ArtifactData) : List String :=
+  (contractUse artifact).contracts
 
 def contractsMatch (artifact : ArtifactData) : Bool :=
-  requiredContracts artifact == some artifact.manifest.subject.contracts
+  requiredContracts artifact == artifact.manifest.subject.contracts
 
-/-- All producer-selectable claim metadata that is instead canonicalized by
-    the checked family and plan. -/
+/-! ### Report data -/
+
+mutual
+  /-- Facet flags of one plan body: `(calls, records, variants, strings,
+      floats)`. -/
+  def facetsE : Expr → List String
+    | .literal (.str _) => ["strings"]
+    | .literal (.float _) => ["floats"]
+    | .literal _ => []
+    | .local _ => []
+    | .let_ _ v body => facetsE v ++ facetsE body
+    | .call (.fn _) args => "calls" :: facetsL args
+    | .call _ args => facetsL args
+    | .tailCall _ args => "calls" :: facetsL args
+    | .binOp _ l r => facetsE l ++ facetsE r
+    | .neg e => facetsE e
+    | .ifThenElse c t e => facetsE c ++ facetsE t ++ facetsE e
+    | .recordCreate _ fs => "records" :: facetsL fs
+    | .project _ _ b => "records" :: facetsE b
+    | .match_ s arms => facetsE s ++ facetsA arms
+    | .construct _ _ args => "variants" :: facetsL args
+    | .interp parts => "strings" :: facetsL parts
+    | .list _ items => facetsL items
+  def facetsL : List Expr → List String
+    | [] => []
+    | e :: es => facetsE e ++ facetsL es
+  def facetsA : Arms → List String
+    | .nil => []
+    | .cons p b rest =>
+        (match p with
+         | .ctor _ _ => ["variants"]
+         | .litStr _ => ["strings"]
+         | .tuple _ => ["records"]
+         | _ => []) ++ facetsE b ++ facetsA rest
+end
+
+/-- The facets of one planned function, in a fixed order, derived from its
+    plan and its group: `recursive` (its group calls itself), `mutual` (a group
+    of two or more), then the constructs its body uses. -/
+def facetsOf (fns : List FnEntry) (e : FnEntry) : List String :=
+  let grp := groupMembers fns e.group
+  let body := facetsE e.plan.body
+  let recursive := grp.any fun m => (callTargets m.2.body).any fun t => grp.any (·.1 == t)
+  ["recursive", "mutual", "calls", "records", "variants", "strings", "floats"].filter fun f =>
+    if f == "recursive" then recursive
+    else if f == "mutual" then recursive && decide (2 ≤ grp.length)
+    else body.contains f
+
+/-- `(export, class)` for every certified export, in obligation order. -/
+def reportEntries (artifact : ArtifactData) : List (String × String) :=
+  artifact.manifest.obligations.map fun o => (o.export_, planClass)
+
+/-- `(export, facets)` for every exported planned function. -/
+def reportFacets (artifact : ArtifactData) : List (String × List String) :=
+  (artifact.manifest.fnPlans.filter (·.exported)).map fun e =>
+    (e.name, facetsOf artifact.manifest.fnPlans e)
+
+/-- All producer-selectable claim metadata the wall canonicalizes. -/
 def checked (artifact : ArtifactData) : Bool :=
-  checkedAxes artifact && contractsMatch artifact
+  contractsMatch artifact
 
 end AverCert.ClaimAxes

@@ -1,6 +1,6 @@
 /- GrammarLower — the lowering of a `Grammar` plan to wasm-gc, as a port of
    the MIR emitter (`src/codegen/wasm_gc/body/from_mir/**`) for exactly the
-   admitted nodes (P2a-P2c, not yet wired).
+   admitted nodes.
 
    `lowerB` makes the emitter's choices from the same tree, by the same
    predicates, and never from a plan flag:
@@ -57,10 +57,53 @@
    instructions the simulation theorem runs and the bytes a certificate pins
    come from the same tree by construction. -/
 import Grammar
-import PlanBytes
 
 namespace AverCert.Grammar
 open CertPrelude AverCert.Schema
+
+/-! ## Byte encoders
+
+Canonical LEB128 of the immediates the lowering writes, fail-closed at the
+u32 index space and the i32 / i64 constant ranges the binary format admits. -/
+
+/-- Canonical unsigned LEB128 of a u32 index, or `none` outside the range. The
+    bytes come from the shared total encoder (`CertPrelude.uleb32Bytes`, exact
+    below `2 ^ 35`). -/
+def uleb32 (value : Nat) : Option (List Nat) :=
+  if value < 4294967296 then some (CertPrelude.uleb32Bytes value) else none
+
+def slebFuel : Nat → Int → Option (List Nat)
+  | 0, _ => none
+  | fuel + 1, value =>
+      let byte := Int.toNat (value % 128)
+      let rest := value / 128
+      let signSet := 64 ≤ byte
+      let done := (rest = 0 ∧ !signSet) ∨ (rest = -1 ∧ signSet)
+      let outByte := if done then byte else byte + 128
+      if done then
+        some [outByte]
+      else
+        match slebFuel fuel rest with
+        | some bytes => some (outByte :: bytes)
+        | none => none
+
+def inI32Range (value : Int) : Bool :=
+  decide ((-2147483648 : Int) ≤ value) && decide (value ≤ 2147483647)
+
+def inI64Range (value : Int) : Bool :=
+  decide ((-9223372036854775808 : Int) ≤ value) && decide (value ≤ 9223372036854775807)
+
+def sleb32 (value : Int) : Option (List Nat) :=
+  if inI32Range value then slebFuel 5 value else none
+
+def sleb64 (value : Int) : Option (List Nat) :=
+  if inI64Range value then slebFuel 10 value else none
+
+/-- Concrete heap-type indices (inside a reftype `0x63 <ht>`, a block type, or a
+    `ref.cast` / `ref.test` / `ref.null` immediate) are SIGNED s33 LEB128: index
+    64 is `c0 00`, never `40`. Instruction type indices stay unsigned u32. -/
+def s33HeapIdx (idx : Nat) : Option (List Nat) :=
+  if idx < 4294967296 then some (CertPrelude.s33Bytes idx) else none
 
 /-! ## Instructions with block types -/
 
@@ -483,7 +526,6 @@ def fnCode (M : MCtx) (p : FnPlan) : WCode :=
 def u64le (bits : UInt64) : List Nat :=
   (List.range 8).map fun i => bits.toNat / 256 ^ i % 256
 
-open AverCert.PlanBytes in
 /-- Opcode bytes of one instruction of the admitted fragment (`none` for any
     other instruction, so an unexpected instruction fails closed). -/
 def encW : WInstr → Option (List Nat)
@@ -531,7 +573,6 @@ def encW : WInstr → Option (List Nat)
   | .refCast t => (s33HeapIdx t).map ([0xfb, 0x16] ++ ·)
   | _ => none
 
-open AverCert.PlanBytes in
 /-- Value-type bytes of a source type: the Int carrier, records, sums (their
     root struct), Option and Result are nullable concrete references, Bool is
     `i32`, and the subject scratch is `eqref`. -/
@@ -549,7 +590,6 @@ def valTy (M : MCtx) : Ty → Option (List Nat)
   | .list t => (s33HeapIdx (M.listStruct t)).map ([0x63] ++ ·)
   | .opaque tid => (s33HeapIdx (M.opaqueStruct tid)).map ([0x63] ++ ·)
 
-open AverCert.PlanBytes in
 mutual
   def encBI (M : MCtx) : BI → Option (List Nat)
     | .op i => encW i
@@ -580,7 +620,6 @@ def localGroups (M : MCtx) : List Ty → Option (List Nat)
       | some a, some b => some ([0x01] ++ a ++ b)
       | _, _ => none
 
-open AverCert.PlanBytes in
 /-- The exact code entry (size prefix included) of one function. -/
 def codeEntryBytes (M : MCtx) (p : FnPlan) : Option (List Nat) :=
   match uleb32 p.locals.length, localGroups M p.locals,
@@ -601,10 +640,10 @@ section, a sum's root as a non-final empty struct and each constructor as
 `sub final root (struct …)` (`module.rs`, `mk_sub_struct(fields, true,
 Some(root))`). The pin below is the byte image of that declaration header;
 `GrammarSound.ctor_refTest_exact` shows it makes the exact test the wasm
-test. The acceptance (P4) must check `S3Pin` against the rec group's entries
-by slice equality, together with `sumOk`. -/
+test. The acceptance checks `S3Pin` against the raw entries of the rec group
+that opens the type section, together with `sumOk`
+(`TypeTable.sumConfirmed`). -/
 
-open AverCert.PlanBytes in
 /-- The type-section header of a constructor struct: `0x4f` (`sub final`),
     one supertype, the sum's root. -/
 def ctorEntryHeader (root : Nat) : Option (List Nat) :=
@@ -628,9 +667,8 @@ offset `0` and the literal's length as operands). The certificate is sound
 only if that segment holds exactly those bytes. `exprLits` lists every
 string literal a plan lowers to `array.new_data` (literal nodes and literal
 match arms), and `DataPin` checks each against the module's data segments
-(`segs[i]` is the contents of segment `i`). The acceptance (P4) must check it
-against the decoded data section, as it checks `S3Pin` against the type
-section. -/
+(`segs[i]` is the contents of segment `i`). The acceptance checks it against
+the decoded data section (`TypeTable.dataConfirmed`). -/
 
 mutual
   def exprLits : Expr → List (List Nat)

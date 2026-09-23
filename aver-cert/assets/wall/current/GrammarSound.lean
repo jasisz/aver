@@ -1,5 +1,4 @@
-/- GrammarSound — the simulation theorem for the one-grammar plan (P2a-P2c,
-   not yet wired).
+/- GrammarSound — the simulation theorem for the one-grammar plan.
 
    ONE statement, `agreement`, by structural induction over `Grammar.Expr`
    (mutually with the argument lists and with one statement per admitted
@@ -45,46 +44,7 @@ set_option linter.unusedSimpArgs false
 namespace AverCert.Grammar
 open CertPrelude AverCert.Schema InterpreterSequencing
 
-/-! ## Representation and relations -/
-
-/-- The wasm image of a String: the `$string` array of its bytes. -/
-def strW (M : MCtx) (bytes : List Nat) : WVal :=
-  .arr M.str (bytes.map fun (b : Nat) => .i32v (b : Int))
-
-mutual
-  /-- Representation, read off the module context's layout: a record is the
-      struct of its type (a one-field newtype record is its field's value), a
-      variant the struct of its constructor, an Option / Result the struct
-      of its instantiation with the tag in field 0 (the unused payload field
-      holds an arbitrary filler); a Float is its `f64` bits, a String the
-      `$string` array of its bytes, a Vector the array of its elements (below
-      `2^31` of them, the index space `__aint_to_index` maps onto), a List
-      `null` or a cons struct `{head, tail}`, and an opaque value itself. -/
-  def SRepr {C : Nat} (S : CarrierSpec C) (M : MCtx) : SVal → WVal → Prop
-    | .i n, w => RecordComputeBridge.CanonRepr S n w
-    | .b v, w => w = b32 v
-    | .record tid fs, w =>
-        if M.newtype tid then SReprL S M fs [w]
-        else ∃ ws, w = .structv (M.structOf tid) ws ∧ SReprL S M fs ws
-    | .variant tid c fs, w => ∃ ws, w = .structv (M.ctorStruct tid c) ws ∧ SReprL S M fs ws
-    | .none t, w => ∃ d, w = .structv (M.optStruct t) [.i32v 0, d]
-    | .some t v, w => ∃ x, w = .structv (M.optStruct t) [.i32v 1, x] ∧ SRepr S M v x
-    | .ok t e v, w => ∃ x d, w = .structv (M.resStruct t e) [.i32v 1, x, d] ∧ SRepr S M v x
-    | .err t e v, w => ∃ d x, w = .structv (M.resStruct t e) [.i32v 0, d, x] ∧ SRepr S M v x
-    | .f bits, w => w = .f64v bits
-    | .s bytes, w => w = strW M bytes
-    | .vec t vs, w =>
-        vs.length < 2147483648 ∧ ∃ ws, w = .arr (M.vecStruct t) ws ∧ SReprL S M vs ws
-    | .nil _, w => w = .null
-    | .cons t h tl, w =>
-        ∃ x y, w = .structv (M.listStruct t) [x, y] ∧ SRepr S M h x ∧ SRepr S M tl y
-    | .w v, x => x = v
-  def SReprL {C : Nat} (S : CarrierSpec C) (M : MCtx) :
-      List SVal → List WVal → Prop
-    | [], [] => True
-    | v :: vs, w :: ws => SRepr S M v w ∧ SReprL S M vs ws
-    | _, _ => False
-end
+/-! ## Relations -/
 
 /-- The source environment agrees with the typing environment. -/
 def EnvTy (M : MCtx) (env : Nat → Option SVal) (Γ : Nat → Option Ty) :
@@ -449,13 +409,13 @@ theorem cmpArm_step {C : Nat} (S : CarrierSpec C)
     (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     (op : BinOp) (hop : op.isArith = false) (k : Int) (slot : Nat)
     (locals stack : List WVal) (n : Int) (w : WVal) (out : Out)
-    (hband : AverCert.PlanCheck.inI64Band k = true)
+    (hband : inI64Band k = true)
     (hget : locals[slot]? = some w)
-    (hR : RecordComputeBridge.CanonRepr S n w)
+    (hR : CanonRepr S n w)
     (hrun : wRunF host ar callee (eraseL (cmpArmB C slot op k)) locals stack = some out) :
     out = .ok locals (b32 (cmpDen op n k) :: stack) := by
   have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
-    simpa [AverCert.PlanCheck.inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hband
+    simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hband
   rcases S.car n w hR.1 with ⟨s, sg, rfl⟩ | ⟨s, lty, les, sg, rfl⟩
   · have hs : s = n := S.smallElim n s sg hR.1
     subst hs
@@ -497,7 +457,7 @@ theorem cmpArm_step {C : Nat} (S : CarrierSpec C)
 section Templates
 variable {C : Nat} (S : CarrierSpec C)
   (box add sub mul cmp eq : List WVal → Option WVal)
-  (Ctr : RecordComputeBridge.Contracts S box add sub mul cmp eq)
+  (Ctr : Contracts S box add sub mul cmp eq)
   (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (M : MCtx)
 include Ctr
 
@@ -506,7 +466,7 @@ include Ctr
 theorem intCmpTail_step
     (hCmp : host M.cmp = some (2, cmp)) (hEq : host M.eq = some (2, eq))
     (op : BinOp) (hop : op.isArith = false) (a b : Int) (wa wb : WVal)
-    (ha : RecordComputeBridge.CanonRepr S a wa) (hb : RecordComputeBridge.CanonRepr S b wb)
+    (ha : CanonRepr S a wa) (hb : CanonRepr S b wb)
     (wl st : List WVal) (out : Out)
     (hrun : wRunF host ar callee (intCmpTail M op) wl (wb :: wa :: st) = some out) :
     out = .ok wl (b32 (cmpDen op a b) :: st) := by
@@ -549,7 +509,7 @@ theorem arith_step
     (hAdd : host M.add = some (2, add)) (hSub : host M.sub = some (2, sub))
     (hMul : host M.mul = some (2, mul))
     (op : BinOp) (hop : op.isArith = true) (a b : Int) (wa wb : WVal)
-    (ha : RecordComputeBridge.CanonRepr S a wa) (hb : RecordComputeBridge.CanonRepr S b wb)
+    (ha : CanonRepr S a wa) (hb : CanonRepr S b wb)
     (wl st : List WVal) (out : Out)
     (hrun : wRunF host ar callee [.call (M.arithIdx op)] wl (wb :: wa :: st) = some out) :
     ∃ w, out = .ok wl (w :: st) ∧ SRepr S M (intBin op a b) w ∧
@@ -1137,7 +1097,7 @@ variable {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} {tail : Bool}
 
 theorem tyOf_litInt_inv {k : Int} {T : Ty}
     (h : tyOf M n Γ tail (.literal (.int k)) = some T) :
-    AverCert.PlanCheck.inI64Band k = true ∧ T = .int := by
+    inI64Band k = true ∧ T = .int := by
   simp only [tyOf] at h
   split at h <;> simp_all
 
@@ -1621,7 +1581,7 @@ theorem s3Pin_facts {M : MCtx} {tid ncs : Nat} {entries : List (List Nat)}
   · rename_i e hd he hh
     refine ⟨⟨e, he, ?_⟩, ?_⟩
     · unfold ctorEntryHeader at hh
-      cases hu : AverCert.PlanBytes.uleb32 (M.sumRoot tid) with
+      cases hu : uleb32 (M.sumRoot tid) with
       | none => simp [hu] at hh
       | some u =>
           simp only [hu, Option.map_some, Option.some.injEq] at hh
@@ -1656,9 +1616,9 @@ host contracts at their indices, an arbitrary opaque `callee`, and a
 section Agreement
 variable {C : Nat} (S : CarrierSpec C)
   (box add sub mul cmp eq neg : List WVal → Option WVal)
-  (Ctr : RecordComputeBridge.Contracts S box add sub mul cmp eq)
-  (hNegC : ∀ x w r, RecordComputeBridge.CanonRepr S x w → neg [w] = some r →
-    RecordComputeBridge.CanonRepr S (-x) r)
+  (Ctr : Contracts S box add sub mul cmp eq)
+  (hNegC : ∀ x w r, CanonRepr S x w → neg [w] = some r →
+    CanonRepr S (-x) r)
   (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) (M : MCtx)
   (hCarrier : M.carrier = C)
   (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))
@@ -1685,7 +1645,7 @@ theorem agreement :
   | .literal (.int k), Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨hband, rfl⟩ := tyOf_litInt_inv hty
       have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
-        simpa [AverCert.PlanCheck.inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hband
+        simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hband
       cases hb : box [.i64v k] with
       | none => simp [lowerW, lowerB, eraseL, eraseI, wRunF, hBox, popArgs, hb] at hrun
       | some r =>
@@ -1977,7 +1937,7 @@ theorem agreement :
       | some r =>
           simp [wRunF, hNeg, popArgs_one, hr] at hseq
           subst hseq
-          have hw1' : RecordComputeBridge.CanonRepr S x w1 := by simpa [SRepr] using hw1
+          have hw1' : CanonRepr S x w1 := by simpa [SRepr] using hw1
           refine ⟨.i (-x), by simp [eval, hev1], by simp [HasTy], res_ok ?_ hl1⟩
           simp only [SRepr]
           exact hNegC x w1 r hw1' hr
@@ -2343,7 +2303,7 @@ theorem agreement :
         obtain ⟨x, rfl⟩ := hasTy_int hT1
         have hsc : ∀ wl0 st0 out0, LRel S M X env wl0 →
             wRunF host ar callee (eraseL (lowerB M X Γ false s)) wl0 st0 = some out0 →
-            ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ RecordComputeBridge.CanonRepr S x w ∧
+            ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
               LRel S M X env wl1 := by
           intro wl0 st0 out0 hl0 hr0
           obtain ⟨sv0, hev0, _, hres0⟩ := agreement s Γ env false .int wl0 st0 out0 hts henv hl0 hr0
@@ -2513,7 +2473,7 @@ theorem agreementIntArms :
       (wl st : List WVal) (out : Out) (sc : List BI) (bt : Option Ty) (x : Int),
       (∀ wl0 st0 out0, LRel S M X env wl0 →
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
-        ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ RecordComputeBridge.CanonRepr S x w ∧
+        ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
           LRel S M X env wl1) →
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
@@ -2525,7 +2485,7 @@ theorem agreementIntArms :
       cases p with
       | litInt k =>
           simp only [tyIntArms] at hty
-          by_cases hband : AverCert.PlanCheck.inI64Band k = true
+          by_cases hband : inI64Band k = true
           · simp only [hband, ↓reduceIte] at hty
             cases hb : tyOf M X.n Γ tail b with
             | none => simp [hb] at hty
@@ -2543,7 +2503,7 @@ theorem agreementIntArms :
                   obtain ⟨wl1, w, rfl, hw, hl1⟩ := hsc wl st o1 hl h1
                   simp only [seqOut, eraseL, eraseI] at hseq
                   have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
-                    simpa [AverCert.PlanCheck.inI64Band, Bool.and_eq_true, decide_eq_true_eq]
+                    simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq]
                       using hband
                   cases hbx : box [.i64v k] with
                   | none => simp [wRunF, hBox, popArgs_one, hbx] at hseq
@@ -3215,9 +3175,9 @@ theorem FnPlan.lctx_spec (p : FnPlan) :
     members' contracts at fuel `k` are the induction hypothesis. -/
 theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
     (box add sub mul cmp eq neg : List WVal → Option WVal)
-    (Ctr : RecordComputeBridge.Contracts S box add sub mul cmp eq)
-    (hNegC : ∀ x w r, RecordComputeBridge.CanonRepr S x w → neg [w] = some r →
-      RecordComputeBridge.CanonRepr S (-x) r)
+    (Ctr : Contracts S box add sub mul cmp eq)
+    (hNegC : ∀ x w r, CanonRepr S x w → neg [w] = some r →
+      CanonRepr S (-x) r)
     (code : CodeTbl) (host : HostTbl) (M : MCtx)
     (hCarrier : M.carrier = C)
     (hBox : host M.box = some (1, box)) (hAdd : host M.add = some (2, add))

@@ -19,7 +19,7 @@
   it depends only on `host`/`ar`/`callee`, matching the probe's clean shape.
 
   f64 values are stored as their IEEE-754 bit pattern (`UInt64`) so `WVal`
-  has `DecidableEq` (needed for the `native_decide` anti-vacuity guards) while
+  has `DecidableEq` (needed for the `decide` anti-vacuity guards) while
   staying bit-exact under the arithmetic opcodes.
 -/
 
@@ -28,7 +28,7 @@ namespace CertPrelude
 /-! ## LEB128 index encodings (total, fuel-bounded)
 
 The one audited pair of index encoders shared by every wall module that
-SYNTHESIZES bytes (`PlanBytes` lowers plans, `ArithTemplateDerisk` synthesizes
+SYNTHESIZES bytes (`GrammarLower` lowers plans, `ArithTemplateDerisk` synthesizes
 the arith helper bodies). Both are TOTAL — they return `List Nat`, never an
 `Option` — because a synthesized template that could be `none` would let an
 undecodable module body agree with an unencodable declaration (`none == none`)
@@ -38,7 +38,7 @@ recursion, so `decide +kernel` reduces these definitions.
 The fuel-exhausted branch emits the final quotient raw. It is NOT a correct
 LEB128 encoding of out-of-range values, and it does not need to be: fuel `f`
 encodes every value below `2 ^ (7 * f)` exactly (the branch is unreachable
-there), and every caller either range-guards its input (`PlanBytes` wraps
+there), and every caller either range-guards its input (`GrammarLower` wraps
 these in `Option` behind a `< 2 ^ 32` test) or conjoins an explicit bound on
 the accepted path (`ArithTemplateDerisk.checkArithHostParams` bounds every
 spliced index below `2 ^ 32`). `2 ^ 32 ≤ 2 ^ 35`, so five unsigned groups and
