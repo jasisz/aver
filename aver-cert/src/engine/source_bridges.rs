@@ -1289,6 +1289,7 @@ fn render_export(
     func_idx: u32,
     plan: &BridgePlan,
     s: &mut String,
+    corollaries: &mut String,
 ) {
     let b = &plan.fns[&func_idx];
     let closure = closure_of(func_idx, &plan.fns);
@@ -1368,21 +1369,36 @@ fn render_export(
     s.push_str("\n       next => ");
     s.push_str(&kind_proof);
     s.push_str("\n       done))\n  | sorry\n\n");
-    s.push_str("/-- The claim the manifest names: the bridge conjoined with the\n    \
+    let c = corollaries;
+    c.push_str("/-- The claim the manifest names: the bridge conjoined with the\n    \
                 artifact-level `Holds` fact, so one kernel-checked name ties the\n    \
                 plan-equals-source identity to exactly the certified bytes. -/\n\
                 theorem _root_.");
-    s.push_str(&bridge.corollary);
-    s.push_str(" :\n    (");
-    s.push_str(&statement);
-    s.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨_root_.");
-    s.push_str(&bridge.theorem);
-    s.push_str(", _root_.AverCert.Final.cert⟩\n\n");
+    c.push_str(&bridge.corollary);
+    c.push_str(" :\n    (");
+    c.push_str(&statement);
+    c.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨_root_.");
+    c.push_str(&bridge.theorem);
+    c.push_str(", _root_.AverCert.Final.cert⟩\n\n");
     let _ = param_binders;
 }
 
-/// Render the package's `Bridge.lean`.
-fn render_bridge_lean(plan: &BridgePlan, model_roots: &[String]) -> String {
+/// The package module that carries the bridge proofs themselves.
+pub const BRIDGE_PROOF_MODULE: &str = "BridgeProof";
+
+/// Render the package's bridge surface as two files: `BridgeProof.lean`
+/// (decoders, images, step lemmas and one bridge theorem per export) and
+/// `Bridge.lean` (the `_certified` corollaries the manifest names).
+///
+/// Only the corollaries cite `AverCert.Final.cert`, and `Final` sits behind
+/// `Artifact.lean`, the byte-level proof whose build time grows with the
+/// module. Kept apart from it, the bridge proofs — the other long build of a
+/// large package — no longer wait for `Artifact.lean` (on btc-listener's
+/// 117 KB module the two took about eleven and five minutes, one after the
+/// other).
+/// `Bridge.lean` still imports every model root, since the checker admits a
+/// nested model file only on an import line of `Bridge.lean` or `Laws.lean`.
+fn render_bridge_lean(plan: &BridgePlan, model_roots: &[String]) -> (String, String) {
     let mut s = String::from(
         "-- Plan-equals-source bridges of this certificate. Each bridge identifies\n\
          -- the plan an export's obligation evaluates with the transpiled source\n\
@@ -1390,7 +1406,6 @@ fn render_bridge_lean(plan: &BridgePlan, model_roots: &[String]) -> String {
          -- the source-value encoders the checker renders. Producer data: the\n\
          -- checker re-states every bridge from structure and audits its axioms.\n\
          import Manifest\n\
-         import Final\n\
          import GrammarBridge\n",
     );
     for root in model_roots {
@@ -1435,11 +1450,23 @@ fn render_bridge_lean(plan: &BridgePlan, model_roots: &[String]) -> String {
     for b in plan.fns.values() {
         render_step(b, &plan.fns, &literal_names, &mut s);
     }
+    let mut corollaries = String::new();
     for (bridge, func_idx) in &plan.bridges {
-        render_export(bridge, *func_idx, plan, &mut s);
+        render_export(bridge, *func_idx, plan, &mut s, &mut corollaries);
     }
     s.push_str("end AverCert.Bridge\n");
-    s
+    let mut bridge = format!(
+        "-- The plan-equals-source claims of this certificate: each bridge theorem\n\
+         -- of `{BRIDGE_PROOF_MODULE}` conjoined with the artifact-level `Holds` fact.\n\
+         import {BRIDGE_PROOF_MODULE}\n\
+         import Final\n"
+    );
+    for root in model_roots {
+        bridge.push_str(&format!("import {root}\n"));
+    }
+    bridge.push_str("\nset_option autoImplicit false\n\n");
+    bridge.push_str(&corollaries);
+    (s, bridge)
 }
 
 // ---- law coverage -------------------------------------------------------------
@@ -1716,7 +1743,7 @@ fn command_preamble_start(lines: &[&str], keyword_line: usize) -> usize {
 /// What `write_project` needs to render the bridge and law surfaces.
 struct Surfaces {
     model: PackagedModel,
-    bridge_lean: Option<String>,
+    bridge_lean: Option<(String, String)>,
     laws_lean: Option<String>,
     bridges: Vec<SourceBridge>,
     law_claims: Vec<LawClaim>,
@@ -1755,7 +1782,10 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
     let plan = plan_bridges(analysis, model);
     let bridges: Vec<SourceBridge> = plan.bridges.iter().map(|(b, _)| b.clone()).collect();
     let bridge_lean = (!plan.fns.is_empty() && !bridges.is_empty())
-        .then(|| isolate_theorems(&render_bridge_lean(&plan, &roots)));
+        .then(|| {
+            let (proofs, corollaries) = render_bridge_lean(&plan, &roots);
+            (isolate_theorems(&proofs), isolate_theorems(&corollaries))
+        });
     let info = ModelInfo::from_model(model);
     let (law_claims, declined_laws) = admit_law_claims(model.law_claims.clone());
     let law_bridges: Vec<Vec<usize>> = law_claims

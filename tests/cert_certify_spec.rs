@@ -462,11 +462,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
                 }
             }
         }
-        // The statement the package's own `Bridge.lean` carries is the one the
+        // The statement the package's own bridge proofs carry is the one the
         // checker renders from the entry above — the producer writes it through
         // the same function the verifier pins with.
-        let bridge_lean = std::fs::read_to_string(out_dir.join("cert").join("Bridge.lean"))
-            .expect("a bridged package emits Bridge.lean");
+        let bridge_lean = std::fs::read_to_string(out_dir.join("cert").join("BridgeProof.lean"))
+            .expect("a bridged package emits BridgeProof.lean");
         assert!(
             bridge_lean.contains(&format!("_root_.AverCert.Plans.{export}Plan.body")),
             "the emitted bridge names the export's own plan"

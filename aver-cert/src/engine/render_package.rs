@@ -694,8 +694,9 @@ pub fn write_project(
     } else {
         &[]
     };
-    if let Some(bridge_lean) = &surfaces.bridge_lean {
-        write(&cert_dir, "Bridge.lean", bridge_lean)?;
+    if let Some((proofs, corollaries)) = &surfaces.bridge_lean {
+        write(&cert_dir, &format!("{BRIDGE_PROOF_MODULE}.lean"), proofs)?;
+        write(&cert_dir, "Bridge.lean", corollaries)?;
     }
     if let Some(laws_lean) = &surfaces.laws_lean {
         write(&cert_dir, "Laws.lean", laws_lean)?;

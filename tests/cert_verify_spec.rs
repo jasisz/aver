@@ -628,7 +628,7 @@ fn cert_verify_accepts_nested_module_certificate() {
 /// A module carrying records verifies end to end.
 ///
 /// The model has to state each record's default value itself, because the
-/// checker wall strips `deriving` from the staged model. Stating that value as
+/// certificate model does not derive `Inhabited`. Stating that value as
 /// the record's own default made the instance its own premise, so a model
 /// carrying a one-field record never built and its certificate was DECLINED.
 /// The fixture pairs a one-field record with a record whose field is that
@@ -672,8 +672,8 @@ fn cert_verify_accepts_record_carrying_model() {
 /// A model carrying a recursive sum type with no nullary constructor builds
 /// and its certificate verifies end to end.
 ///
-/// The model states each sum type's `Inhabited` witness itself (the checker
-/// wall strips `deriving`). The witness used to default the FIRST
+/// The model states each sum type's `Inhabited` witness itself (the
+/// certificate model does not derive it). The witness used to default the FIRST
 /// constructor's arguments whenever no nullary constructor existed — for
 /// `Chain = More(Chain) | Stop(Int)` that stated `⟨Chain.more default⟩`,
 /// whose `default` asks for the very instance being stated, so the model
@@ -8711,7 +8711,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     );
 
     let cert = out_dir.join("cert");
-    let bridge_lean = std::fs::read_to_string(cert.join("Bridge.lean")).unwrap();
+    let bridge_lean = std::fs::read_to_string(cert.join("BridgeProof.lean")).unwrap();
     let manifest = std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap();
     assert_eq!(
         bridge_lean
@@ -8822,7 +8822,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     );
     let dir = temp_dir("cert-k5-bridge-sorry-tamper");
     copy_dir(&out_dir, &dir);
-    std::fs::write(dir.join("cert").join("Bridge.lean"), sorried).unwrap();
+    std::fs::write(dir.join("cert").join("BridgeProof.lean"), sorried).unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
     assert!(
         ok,
@@ -8907,7 +8907,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     let sorried = sorry_out_theorem(&bridge_lean, step_name);
     let dir = temp_dir("cert-k5-bridge-step-tamper");
     copy_dir(&out_dir, &dir);
-    std::fs::write(dir.join("cert").join("Bridge.lean"), sorried).unwrap();
+    std::fs::write(dir.join("cert").join("BridgeProof.lean"), sorried).unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
     assert!(
         ok,
@@ -8940,9 +8940,13 @@ fn sorry_out_theorem(lean: &str, name: &str) -> String {
         .unwrap_or_else(|| panic!("expected the theorem {name}"));
     let rest = &lean[at..];
     let assign = rest.find(" := by\n").expect("expected a tactic proof");
-    let end = rest[assign..]
-        .find("\n\n/--")
-        .expect("expected the theorem to end before the next doc comment")
+    // The next declaration opens with its `#guard_msgs` isolation line, its
+    // doc comment, or the namespace's `end`.
+    let end = ["\n\n#guard_msgs", "\n\n/--", "\nend AverCert"]
+        .iter()
+        .filter_map(|next| rest[assign..].find(next))
+        .min()
+        .expect("expected the theorem to end before the next declaration")
         + assign;
     format!(
         "{}{} := by\n  sorry{}",
