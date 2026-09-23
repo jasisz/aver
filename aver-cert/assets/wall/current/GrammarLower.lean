@@ -269,6 +269,10 @@ def dfltB (M : MCtx) : Ty → List BI
   | .sum tid => [.nullOf (M.sumRoot tid)]
   | .option t => [.nullOf (M.optStruct t)]
   | .result t e => [.nullOf (M.resStruct t e)]
+  | .string => [.nullOf M.str]
+  | .float => [.op (.f64Const 0)]
+  | .list t => [.nullOf (M.listStruct t)]
+  | .vec t => [.nullOf (M.vecStruct t)]
   | _ => []
 
 /-- Read field `i` of the struct `idx` held (as `eqref`) in the subject

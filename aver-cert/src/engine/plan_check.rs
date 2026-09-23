@@ -175,6 +175,10 @@ fn has_default(t: &PlanTy) -> bool {
             | PlanTy::Sum(_)
             | PlanTy::Option(_)
             | PlanTy::Result(_, _)
+            | PlanTy::Str
+            | PlanTy::Float
+            | PlanTy::List(_)
+            | PlanTy::Vec(_)
     )
 }
 
@@ -934,6 +938,10 @@ impl MCtx<'_> {
             PlanTy::Sum(tid) => vec![BI::NullOf(self.sum_root(*tid))],
             PlanTy::Option(x) => vec![BI::NullOf(self.opt_struct(x))],
             PlanTy::Result(x, e) => vec![BI::NullOf(self.res_struct(x, e))],
+            PlanTy::Str => vec![BI::NullOf(self.str_)],
+            PlanTy::Float => vec![BI::Op(WI::F64Const(0))],
+            PlanTy::List(x) => vec![BI::NullOf(self.list_struct(x))],
+            PlanTy::Vec(x) => vec![BI::NullOf(self.vec_struct(x))],
             _ => vec![],
         }
     }

@@ -317,9 +317,12 @@ def MCtx.newtype (M : MCtx) (tid : Nat) : Bool :=
   | some [_] => true
   | _ => false
 
-/-- A type with a default filler value (the emitter's `emit_default_value`). -/
+/-- A type with a default filler value (the emitter's `emit_default_value`):
+    the Small zero carrier, `i32 0`, `f64 0`, or `ref.null` of the type's
+    heap type (a record, sum, Option, Result, String, List or Vector). -/
 def Ty.hasDefault : Ty → Bool
   | .int | .bool | .record _ | .sum _ | .option _ | .result _ _ => true
+  | .string | .float | .list _ | .vec _ => true
   | _ => false
 
 def Pat.isWild : Pat → Bool
