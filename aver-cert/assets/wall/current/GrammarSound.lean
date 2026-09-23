@@ -1,6 +1,6 @@
 /- GrammarSound — the simulation theorem for the one-grammar plan.
 
-   ONE statement, `agreement`, by structural induction over `Grammar.Expr`
+   ONE statement, `agreement`, by induction on the size of a `Grammar.Expr`
    (mutually with the argument lists and with one statement per admitted
    `Match` arm shape, each by induction over the arms):
    a successful run of the lowered instructions in the audited interpreter
@@ -1773,8 +1773,8 @@ theorem intrinsic_run {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
 
 /-! ## The agreement theorem
 
-ONE statement, by structural induction on the grammar (mutual over the nested
-argument lists). The context fixes: the carrier specification and the named
+ONE statement, by induction on the size of the grammar term (jointly with
+the nested argument lists and the arm shapes). The context fixes: the carrier specification and the named
 host contracts at their indices, an arbitrary opaque `callee`, and a
 `Contract` for every callee the typing admits. -/
 
@@ -1797,9 +1797,129 @@ variable {C : Nat} (S : CarrierSpec C)
   (X : LCtx)
 include Ctr hNegC hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R hCallees
 
-mutual
-theorem agreement :
+set_option hygiene false in
+/-- The size side condition of a recursive call in the agreement proofs: the
+    argument is a strict part of the one the enclosing case matched, whose
+    bound the case's `hsz` states. -/
+macro "agreement_size" : tactic =>
+  `(tactic| first
+    | omega
+    | (simp at hsz ⊢; omega))
+
+/-! The recursion of the agreement theorems is a strong induction on a size
+bound: each theorem's cases form a non-recursive step over hypotheses that
+answer every strictly smaller argument, and one induction on the bound joins
+the steps. The theorems keep their statements. A step need not use every
+hypothesis it is given. -/
+set_option linter.unusedVariables false
+
+section Steps
+variable (n : Nat)
+  (agreement :
     ∀ (e : Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out),
+      tyOf M X.n Γ tail e = some T →
+      EnvTy M env Γ →
+      LRel S M X env wl →
+      wRunF host ar callee (lowerW M X Γ tail e) wl st = some out →
+      (_ : sizeOf e < n := by agreement_size) →
+      ∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out)
+  (agreementArgs :
+    ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
+      (wl st : List WVal) (out : Out),
+      tysOf M X.n Γ es = some Ts →
+      EnvTy M env Γ →
+      LRel S M X env wl →
+      wRunF host ar callee (lowerArgsW M X Γ es) wl st = some out →
+      (_ : sizeOf es < n := by agreement_size) →
+      ∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
+        evalArgs F env es = some svs ∧ HasTyL M svs Ts ∧
+        SReprL S M svs ws ∧ LRel S M X env wl')
+  (agreementIntArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (sc : List BI) (bt : Option Ty) (x : Int),
+      (∀ wl0 st0 out0, LRel S M X env wl0 →
+        wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
+        ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
+          LRel S M X env wl1) →
+      tyIntArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
+      (_ : sizeOf arms < n := by agreement_size) →
+      ∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out)
+  (agreementBoolArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (x : Bool),
+      tyBoolArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerBoolArms M X Γ tail bt arms)) wl (b32 x :: st) =
+        some out →
+      (_ : sizeOf arms < n := by agreement_size) →
+      ∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out)
+  (agreementOptArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (t : Ty) (sv : SVal) (w : WVal),
+      wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.option t) →
+      tyOptArms M X.n Γ tail t arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerOptArms M X Γ tail bt t arms)) wl st = some out →
+      (_ : sizeOf arms < n := by agreement_size) →
+      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out)
+  (agreementResArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (t e : Ty) (sv : SVal) (w : WVal),
+      wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.result t e) →
+      tyResArms M X.n Γ tail t e arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerResArms M X Γ tail bt t e arms)) wl st = some out →
+      (_ : sizeOf arms < n := by agreement_size) →
+      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out)
+  (agreementVarArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (tid cv : Nat) (fs : List SVal)
+      (ws : List WVal) (fts : List Ty),
+      wl[X.subj]? = some (.structv (M.ctorStruct tid cv) ws) →
+      SReprL S M fs ws → ctorFields M tid cv = some fts → HasTyL M fs fts →
+      coversB cv arms = true →
+      (∀ c fc, ctorFields M tid c = some fc → M.ctorStruct tid c = M.ctorStruct tid cv →
+        c = cv) →
+      tyVarArms M X.n Γ tail tid arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerVarArms M X Γ tail bt tid arms)) wl st = some out →
+      (_ : sizeOf arms < n := by agreement_size) →
+      ∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out)
+  (agreementStrArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (x : List Nat),
+      ((∃ k b r, arms = .cons (.litStr k) b r) → wl[X.subj]? = some (strW M x)) →
+      tyStrArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerStrArms M X Γ tail bt arms)) wl st = some out →
+      (_ : sizeOf arms < n := by agreement_size) →
+      ∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out)
+  (agreementTupArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (tid : Nat) (fs : List SVal) (ws : List WVal)
+      (fts : List Ty),
+      wl[X.subj]? = some (.structv (M.structOf tid) ws) →
+      SReprL S M fs ws → M.recFields tid = some fts → HasTyL M fs fts →
+      tyTupArms M X.n Γ tail tid arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerTupArms M X Γ tail tid arms)) wl st = some out →
+      (_ : sizeOf arms < n := by agreement_size) →
+      ∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out)
+include agreement agreementArgs agreementIntArms agreementBoolArms agreementOptArms agreementResArms agreementVarArms agreementStrArms agreementTupArms
+
+theorem agreement_step :
+    ∀ (e : Expr) (hsz : sizeOf e < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out),
       tyOf M X.n Γ tail e = some T →
       EnvTy M env Γ →
@@ -1807,7 +1927,7 @@ theorem agreement :
       wRunF host ar callee (lowerW M X Γ tail e) wl st = some out →
       ∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
         Res S M X tail env st sv out
-  | .literal (.int k), Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .literal (.int k), hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨hband, rfl⟩ := tyOf_litInt_inv hty
       have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
         simpa [inI64Band, Bool.and_eq_true, decide_eq_true_eq] using hband
@@ -1819,33 +1939,33 @@ theorem agreement :
           refine ⟨.i k, by simp [eval], by simp [HasTy], res_ok ?_ hl⟩
           simp only [SRepr]
           exact Ctr.hBox k r hk.1 hk.2 hb
-  | .literal (.bool v), Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .literal (.bool v), hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       have hT := tyOf_litBool_inv hty
       subst hT
       simp [lowerW, lowerB, eraseL, eraseI, wRunF] at hrun
       subst hrun
       exact ⟨.b v, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr, b32]) hl⟩
-  | .literal (.float bits), Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .literal (.float bits), hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       have hT := tyOf_litFloat_inv hty
       subst hT
       simp [lowerW, lowerB, eraseL, eraseI, wRunF] at hrun
       subst hrun
       exact ⟨.f bits, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr]) hl⟩
-  | .literal (.str bytes), Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .literal (.str bytes), hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       have hT := tyOf_litStr_inv hty
       subst hT
       simp [lowerW, lowerB, strLitB, eraseL, eraseI, wRunF] at hrun
       subst hrun
       refine ⟨.s bytes, by simp [eval], by simp [HasTy], res_ok ?_ hl⟩
       simp [SRepr, strW, Function.comp_def]
-  | .local i, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .local i, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       simp only [tyOf] at hty
       obtain ⟨sv, hsv, hT⟩ := envTy_get henv hty
       obtain ⟨_, w, hw, hrep⟩ := hl.2 i sv hsv
       simp [lowerW, lowerB, eraseL, eraseI, wRunF, hw] at hrun
       subst hrun
       exact ⟨sv, by simp [eval, hsv], hT, res_ok hrep hl⟩
-  | .let_ b v body, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .let_ b v body, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨hbn, hΓb, Tv, htv, htb⟩ := tyOf_let_inv hty
       simp only [lowerW, lowerB, htv, eraseL_append, List.append_assoc] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
@@ -1859,7 +1979,7 @@ theorem agreement :
           hseq
       have hfree := envTy_free henv hΓb
       exact ⟨sv, by simp [eval, hev1, hev], hT, res_of_upd hfree hres⟩
-  | .call (.fn f) args, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .call (.fn f) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨sig, hsig, hts, rfl⟩ := tyOf_callFn_inv hty
       obtain ⟨hhost, har, hspec⟩ := hCallees f sig hsig
       simp only [lowerW, lowerB, eraseL_append] at hrun
@@ -1876,7 +1996,7 @@ theorem agreement :
           subst hseq
           obtain ⟨sv, hm, hsv, hT⟩ := hspec svs ws r hTs hrep hr
           exact ⟨sv, by simp [eval, hevs, hm], hT, res_ok hsv hl1⟩
-  | .call (.builtin bi) args, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .call (.builtin bi) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨ts, hts, hbt⟩ := tyOf_callBuiltin_inv hty
       simp only [lowerW, lowerB, eraseL_append, hts] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
@@ -1886,7 +2006,7 @@ theorem agreement :
       obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
         builtin_step host ar callee bi ts T hbt svs ws hTs hrep wl1 st out hseq
       exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
-  | .call (.intrinsic ie) args, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .call (.intrinsic ie) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨a, k, rfl, hk0, hband, hta, rfl⟩ := tyOf_intrinsic_inv hty
       simp only [lowerW, lowerB, lowerArgsB, eraseL_append, List.append_nil,
         List.append_assoc] at hrun
@@ -1906,7 +2026,7 @@ theorem agreement :
         (by simpa [SRepr] using hwa) (by simpa [SRepr] using hwd) wl2 st out hseq2
       refine ⟨sv, by simp [eval, evalArgs, heva, hsv], ?_, res_ok hw hl2⟩
       cases ie <;> simp [intrinsicEval, hk0] at hsv <;> subst hsv <;> simp [HasTy]
-  | .tailCall f args, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .tailCall f args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨rfl, sig, hsig, hts, rfl⟩ := tyOf_tailCall_inv hty
       obtain ⟨hhost, har, hspec⟩ := hCallees f sig hsig
       simp only [lowerW, lowerB, eraseL_append] at hrun
@@ -1923,7 +2043,7 @@ theorem agreement :
           subst hseq
           obtain ⟨sv, hm, hsv, hT⟩ := hspec svs ws r hTs hrep hr
           exact ⟨sv, by simp [eval, hevs, hm], hT, ⟨rfl, hsv⟩⟩
-  | .binOp op l r, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .binOp op l r, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       rcases tyOf_binOp_inv hty with ⟨htl, htr, hT⟩ | ⟨htl, htr, hop, rfl⟩ |
         ⟨htl, htr, hop, rfl⟩ | ⟨htl, htr, hsop⟩
       · -- Int operands
@@ -2109,7 +2229,7 @@ theorem agreement :
         · obtain ⟨v, hsb, rfl⟩ := streq_step R op hs hne x y wl2 st out hseq2
           exact ⟨.b v, by simp [eval, heva, hevb, hsb], by simp [HasTy],
             res_ok (by simp [SRepr]) hl2⟩
-  | .neg e, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .neg e, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨hte, rfl⟩ := tyOf_neg_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
@@ -2126,7 +2246,7 @@ theorem agreement :
           refine ⟨.i (-x), by simp [eval, hev1], by simp [HasTy], res_ok ?_ hl1⟩
           simp only [SRepr]
           exact hNegC x w1 r hw1' hr
-  | .ifThenElse c t e, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .ifThenElse c t e, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨htc, htt, hte⟩ := tyOf_ite_inv hty
       simp only [lowerW, lowerB, eraseL_append, eraseL, eraseI] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
@@ -2148,7 +2268,7 @@ theorem agreement :
           simp only [Int.reduceEq, ↓reduceIte] at hseq
           obtain ⟨sv, hev, hT, hres⟩ := agreement t Γ env tail T wl1 st out htt henv hl1 hseq
           exact ⟨sv, by simp [eval, hevc, hev], hT, hres⟩
-  | .recordCreate tid fs, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .recordCreate tid fs, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨fts, hR, hts, h2, rfl⟩ := tyOf_rec_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
@@ -2163,7 +2283,7 @@ theorem agreement :
       · simp only [HasTy, true_and]
         exact ⟨fts, hR, hTs⟩
       · exact (srepr_record hR h2 _ _).mpr ⟨ws, rfl, hrep⟩
-  | .project tid i base, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .project tid i base, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨htb, fts, hR, h2, hi⟩ := tyOf_proj_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
@@ -2181,11 +2301,11 @@ theorem agreement :
       subst hseq
       exact ⟨sv, by simp [eval, hev1, hsv], hTsv, res_ok hwr hl1⟩
 
-  | .call (.lazy _) [], _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOf] at hty
-  | .call (.lazy _) [_], _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOf] at hty
-  | .call (.lazy _) (_ :: _ :: _ :: _), _, _, _, _, _, _, _, hty, _, _, _ => by
+  | .call (.lazy _) [], hsz, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOf] at hty
+  | .call (.lazy _) [_], hsz, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOf] at hty
+  | .call (.lazy _) (_ :: _ :: _ :: _), hsz, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyOf] at hty
-  | .call (.lazy lb) [o, d], Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .call (.lazy lb) [o, d], hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       rcases tyOf_lazy_inv hty with ⟨hvg, hdg, to, td, hto, htd, hlz⟩ |
         ⟨v, i, t, hvg, hΓv, hΓi, htd, rfl⟩ | ⟨hvg, m, a, b, hdg, hta, htb, htd, rfl⟩
       · -- the boxed `withDefault`: the default runs only on the `None` / `Err` side
@@ -2326,7 +2446,7 @@ theorem agreement :
         · by_cases hy : y = 0 <;> cases m <;> simp [HasTy, hy]
         · by_cases hy : y = 0 <;> cases m <;> simpa [SRepr, hy] using hw
 
-  | .construct c ty args, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .construct c ty args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨ts, hts, hct⟩ := tyOf_construct_inv hty
       cases c with
       | user tid k =>
@@ -2516,7 +2636,7 @@ theorem agreement :
             simp only [SRepr]
             exact ⟨dd, w, rfl, hw⟩
           · cases hct
-  | .match_ s arms, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .match_ s arms, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨Ts, hts, hcases⟩ := tyOf_match_inv hty
       rcases hcases with ⟨rfl, hfl, hta⟩ | ⟨rfl, hta⟩ | ⟨t, rfl, hta⟩ | ⟨t, e, rfl, hta⟩ |
         ⟨tid, rfl, hok, hex, hlen2, hta⟩ | ⟨rfl, hta⟩ | ⟨tid, rfl, hta⟩
@@ -2647,7 +2767,7 @@ theorem agreement :
           agreementTupArms arms Γ env tail T _ st out tid fs ws fts hss hws hR hfs hta henv
             (lrel_set_free _ hl1 hl1.1.2.1) hseq
         exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
-  | .interp parts, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .interp parts, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨ts, hts, hall, rfl⟩ := tyOf_interp_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
@@ -2660,14 +2780,14 @@ theorem agreement :
       have hout := concat_run R hrep hbs wl1 st out hseq
       subst hout
       exact ⟨.s bs, by simp [eval, hevs, hbs], by simp [HasTy], res_ok (by simp [SRepr]) hl1⟩
-  | .list t items, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+  | .list t items, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨rfl, rfl⟩ := tyOf_list_inv hty
       simp [lowerW, lowerB, eraseL, eraseI, wRunF] at hrun
       subst hrun
       exact ⟨.nil t, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr]) hl⟩
 
-theorem agreementArgs :
-    ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
+theorem agreementArgs_step :
+    ∀ (es : List Expr) (hsz : sizeOf es < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
       (wl st : List WVal) (out : Out),
       tysOf M X.n Γ es = some Ts →
       EnvTy M env Γ →
@@ -2676,13 +2796,13 @@ theorem agreementArgs :
       ∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
         evalArgs F env es = some svs ∧ HasTyL M svs Ts ∧
         SReprL S M svs ws ∧ LRel S M X env wl'
-  | [], Γ, env, Ts, wl, st, out, hty, henv, hl, hrun => by
+  | [], hsz, Γ, env, Ts, wl, st, out, hty, henv, hl, hrun => by
       simp only [tysOf, Option.some.injEq] at hty
       subst hty
       simp only [lowerArgsW, lowerArgsB, eraseL, wRunF, Option.some.injEq] at hrun
       subst hrun
       exact ⟨[], [], wl, by simp, by simp [evalArgs], by simp [HasTyL], by simp [SReprL], hl⟩
-  | e :: es, Γ, env, Ts, wl, st, out, hty, henv, hl, hrun => by
+  | e :: es, hsz, Γ, env, Ts, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨t, ts, hte, htes, rfl⟩ := tysOf_cons_inv hty
       simp only [lowerArgsW, lowerArgsB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
@@ -2694,10 +2814,8 @@ theorem agreementArgs :
       exact ⟨sv :: svs, w :: ws, wl2, by simp, by simp [evalArgs, hev, hevs], ⟨hT, hTs⟩,
         ⟨hw, hrep⟩, hl2⟩
 
-/-- The Int literal cascade: `sc` is the subject's code, re-run per literal
-    arm; every run yields the same Int `x` (evaluation is pure). -/
-theorem agreementIntArms :
-    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+theorem agreementIntArms_step :
+    ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (sc : List BI) (bt : Option Ty) (x : Int),
       (∀ wl0 st0 out0, LRel S M X env wl0 →
         wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
@@ -2708,8 +2826,8 @@ theorem agreementIntArms :
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
       ∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
         Res S M X tail env st sv out
-  | .nil, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyIntArms] at hty
-  | .cons p b rest, Γ, env, tail, T, wl, st, out, sc, bt, x, hsc, hty, henv, hl, hrun => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyIntArms] at hty
+  | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, sc, bt, x, hsc, hty, henv, hl, hrun => by
       cases p with
       | litInt k =>
           simp only [tyIntArms] at hty
@@ -2797,9 +2915,8 @@ theorem agreementIntArms :
       | litStr _ => simp [tyIntArms] at hty
       | tuple _ => simp [tyIntArms] at hty
 
-/-- The two-arm Bool match: one `if` on the subject's `i32`. -/
-theorem agreementBoolArms :
-    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+theorem agreementBoolArms_step :
+    ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (x : Bool),
       tyBoolArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
@@ -2807,12 +2924,12 @@ theorem agreementBoolArms :
         some out →
       ∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
         Res S M X tail env st sv out
-  | .nil, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyBoolArms] at hty
-  | .cons p _ .nil, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyBoolArms] at hty
+  | .cons p _ .nil, hsz, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       cases p <;> simp [tyBoolArms] at hty
-  | .cons p _ (.cons _ _ (.cons _ _ _)), _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
+  | .cons p _ (.cons _ _ (.cons _ _ _)), hsz, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       cases p <;> simp [tyBoolArms] at hty
-  | .cons p t (.cons p2 e .nil), Γ, env, tail, T, wl, st, out, bt, x, hty, henv, hl, hrun => by
+  | .cons p t (.cons p2 e .nil), hsz, Γ, env, tail, T, wl, st, out, bt, x, hty, henv, hl, hrun => by
       cases p with
       | litBool v =>
           simp only [tyBoolArms] at hty
@@ -2860,9 +2977,8 @@ theorem agreementBoolArms :
       | litStr _ => simp [tyBoolArms] at hty
       | tuple _ => simp [tyBoolArms] at hty
 
-/-- The two-arm Option match over the subject held in the scratch. -/
-theorem agreementOptArms :
-    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+theorem agreementOptArms_step :
+    ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (t : Ty) (sv : SVal) (w : WVal),
       wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.option t) →
       tyOptArms M X.n Γ tail t arms = some T →
@@ -2870,12 +2986,12 @@ theorem agreementOptArms :
       wRunF host ar callee (eraseL (lowerOptArms M X Γ tail bt t arms)) wl st = some out →
       ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
         Res S M X tail env st sv' out
-  | .nil, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOptArms] at hty
-  | .cons _ _ .nil, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOptArms] at hty
+  | .cons _ _ .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyOptArms] at hty
-  | .cons _ _ (.cons _ _ (.cons _ _ _)), _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _,
+  | .cons _ _ (.cons _ _ (.cons _ _ _)), hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _,
       _ => by simp [tyOptArms] at hty
-  | .cons p1 b1 (.cons p2 b2 .nil), Γ, env, tail, T, wl, st, out, bt, t, sv, w, hss, hsw, hsT,
+  | .cons p1 b1 (.cons p2 b2 .nil), hsz, Γ, env, tail, T, wl, st, out, bt, t, sv, w, hss, hsw, hsT,
       hty, henv, hl, hrun => by
       simp only [tyOptArms] at hty
       cases hpk : optPick p1 p2 with
@@ -2968,10 +3084,8 @@ theorem agreementOptArms :
                           (fun _ => by simp) (by simp) hrun
                       · simp [hac] at hty
 
-/-- The two-arm Result match: `Ok` in the `then` (payload field 1), `Err` in
-    the `else` (payload field 2). -/
-theorem agreementResArms :
-    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+theorem agreementResArms_step :
+    ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (t e : Ty) (sv : SVal) (w : WVal),
       wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.result t e) →
       tyResArms M X.n Γ tail t e arms = some T →
@@ -2979,13 +3093,13 @@ theorem agreementResArms :
       wRunF host ar callee (eraseL (lowerResArms M X Γ tail bt t e arms)) wl st = some out →
       ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
         Res S M X tail env st sv' out
-  | .nil, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyResArms] at hty
-  | .cons _ _ .nil, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
+  | .cons _ _ .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyResArms] at hty
-  | .cons _ _ (.cons _ _ (.cons _ _ _)), _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _,
+  | .cons _ _ (.cons _ _ (.cons _ _ _)), hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _,
       _, _ => by simp [tyResArms] at hty
-  | .cons p1 b1 (.cons p2 b2 .nil), Γ, env, tail, T, wl, st, out, bt, t, e, sv, w, hss, hsw,
+  | .cons p1 b1 (.cons p2 b2 .nil), hsz, Γ, env, tail, T, wl, st, out, bt, t, e, sv, w, hss, hsw,
       hsT, hty, henv, hl, hrun => by
       simp only [tyResArms] at hty
       cases hpk : resPick p1 p2 with
@@ -3088,11 +3202,8 @@ theorem agreementResArms :
                           (fun _ => by simp) (fun _ => by simp) hrun
                       · simp [hac] at hty
 
-/-- The user-variant `ref.test` cascade over the subject held in the
-    scratch. `coversB` says some remaining arm reaches the subject's
-    constructor, so the untested last arm is exactly that constructor. -/
-theorem agreementVarArms :
-    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+theorem agreementVarArms_step :
+    ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (tid cv : Nat) (fs : List SVal)
       (ws : List WVal) (fts : List Ty),
       wl[X.subj]? = some (.structv (M.ctorStruct tid cv) ws) →
@@ -3105,9 +3216,9 @@ theorem agreementVarArms :
       wRunF host ar callee (eraseL (lowerVarArms M X Γ tail bt tid arms)) wl st = some out →
       ∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
         Res S M X tail env st sv out
-  | .nil, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyVarArms] at hty
-  | .cons p b .nil, Γ, env, tail, T, wl, st, out, bt, tid, cv, fs, ws, fts, hss, hws, hcf, hfs,
+  | .cons p b .nil, hsz, Γ, env, tail, T, wl, st, out, bt, tid, cv, fs, ws, fts, hss, hws, hcf, hfs,
       hcov, _, hty, henv, hl, hrun => by
       simp only [tyVarArms] at hty
       cases hva : varArmΓ M X.n Γ tid p with
@@ -3157,7 +3268,7 @@ theorem agreementVarArms :
           | bind _ => simp [varArmΓ] at hva
           | litStr _ => simp [varArmΓ] at hva
           | tuple _ => simp [varArmΓ] at hva
-  | .cons p b (.cons p' b' r), Γ, env, tail, T, wl, st, out, bt, tid, cv, fs, ws, fts, hss,
+  | .cons p b (.cons p' b' r), hsz, Γ, env, tail, T, wl, st, out, bt, tid, cv, fs, ws, fts, hss,
       hws, hcf, hfs, hcov, hinj, hty, henv, hl, hrun => by
       simp only [tyVarArms] at hty
       cases p with
@@ -3237,10 +3348,8 @@ theorem agreementVarArms :
       | litStr _ => simp [varArmΓ] at hty
       | tuple _ => simp [varArmΓ] at hty
 
-/-- The String literal cascade over the subject held in the scratch: each
-    literal arm compares through `__wasmgc_string_eq`; `_` ends it. -/
-theorem agreementStrArms :
-    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+theorem agreementStrArms_step :
+    ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (x : List Nat),
       ((∃ k b r, arms = .cons (.litStr k) b r) → wl[X.subj]? = some (strW M x)) →
       tyStrArms M X.n Γ tail arms = some T →
@@ -3248,8 +3357,8 @@ theorem agreementStrArms :
       wRunF host ar callee (eraseL (lowerStrArms M X Γ tail bt arms)) wl st = some out →
       ∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
         Res S M X tail env st sv out
-  | .nil, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyStrArms] at hty
-  | .cons p b rest, Γ, env, tail, T, wl, st, out, bt, x, hss, hty, henv, hl, hrun => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyStrArms] at hty
+  | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, bt, x, hss, hty, henv, hl, hrun => by
       cases p
       case litStr k =>
           have hss' := hss ⟨k, b, rest, rfl⟩
@@ -3317,9 +3426,8 @@ theorem agreementStrArms :
               exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
       all_goals simp [tyStrArms] at hty
 
-/-- The flat tuple destructure over the subject held in the scratch. -/
-theorem agreementTupArms :
-    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+theorem agreementTupArms_step :
+    ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (tid : Nat) (fs : List SVal) (ws : List WVal)
       (fts : List Ty),
       wl[X.subj]? = some (.structv (M.structOf tid) ws) →
@@ -3329,9 +3437,9 @@ theorem agreementTupArms :
       wRunF host ar callee (eraseL (lowerTupArms M X Γ tail tid arms)) wl st = some out →
       ∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
         Res S M X tail env st sv out
-  | .nil, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
+  | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyTupArms] at hty
-  | .cons p b rest, Γ, env, tail, T, wl, st, out, tid, fs, ws, fts, hss, hws, hR, hfs, hty,
+  | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, tid, fs, ws, fts, hss, hws, hR, hfs, hty,
       henv, hl, hrun => by
       cases p
       case tuple bs =>
@@ -3355,7 +3463,277 @@ theorem agreementTupArms :
                     exact ⟨sv, by simp [evalArms, patMatch, hbv, hev], hT, hres' _ _ _ _ hres⟩
               · cases hty
       all_goals simp [tyTupArms] at hty
-end
+
+end Steps
+
+theorem agreement_upto : ∀ n : Nat,
+    (    ∀ (e : Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out),
+      tyOf M X.n Γ tail e = some T →
+      EnvTy M env Γ →
+      LRel S M X env wl →
+      wRunF host ar callee (lowerW M X Γ tail e) wl st = some out →
+      (_ : sizeOf e < n) →
+      ∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∧
+    (    ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
+      (wl st : List WVal) (out : Out),
+      tysOf M X.n Γ es = some Ts →
+      EnvTy M env Γ →
+      LRel S M X env wl →
+      wRunF host ar callee (lowerArgsW M X Γ es) wl st = some out →
+      (_ : sizeOf es < n) →
+      ∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
+        evalArgs F env es = some svs ∧ HasTyL M svs Ts ∧
+        SReprL S M svs ws ∧ LRel S M X env wl') ∧
+    (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (sc : List BI) (bt : Option Ty) (x : Int),
+      (∀ wl0 st0 out0, LRel S M X env wl0 →
+        wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
+        ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
+          LRel S M X env wl1) →
+      tyIntArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
+      (_ : sizeOf arms < n) →
+      ∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∧
+    (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (x : Bool),
+      tyBoolArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerBoolArms M X Γ tail bt arms)) wl (b32 x :: st) =
+        some out →
+      (_ : sizeOf arms < n) →
+      ∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∧
+    (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (t : Ty) (sv : SVal) (w : WVal),
+      wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.option t) →
+      tyOptArms M X.n Γ tail t arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerOptArms M X Γ tail bt t arms)) wl st = some out →
+      (_ : sizeOf arms < n) →
+      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∧
+    (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (t e : Ty) (sv : SVal) (w : WVal),
+      wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.result t e) →
+      tyResArms M X.n Γ tail t e arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerResArms M X Γ tail bt t e arms)) wl st = some out →
+      (_ : sizeOf arms < n) →
+      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∧
+    (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (tid cv : Nat) (fs : List SVal)
+      (ws : List WVal) (fts : List Ty),
+      wl[X.subj]? = some (.structv (M.ctorStruct tid cv) ws) →
+      SReprL S M fs ws → ctorFields M tid cv = some fts → HasTyL M fs fts →
+      coversB cv arms = true →
+      (∀ c fc, ctorFields M tid c = some fc → M.ctorStruct tid c = M.ctorStruct tid cv →
+        c = cv) →
+      tyVarArms M X.n Γ tail tid arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerVarArms M X Γ tail bt tid arms)) wl st = some out →
+      (_ : sizeOf arms < n) →
+      ∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∧
+    (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (x : List Nat),
+      ((∃ k b r, arms = .cons (.litStr k) b r) → wl[X.subj]? = some (strW M x)) →
+      tyStrArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerStrArms M X Γ tail bt arms)) wl st = some out →
+      (_ : sizeOf arms < n) →
+      ∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∧
+    (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (tid : Nat) (fs : List SVal) (ws : List WVal)
+      (fts : List Ty),
+      wl[X.subj]? = some (.structv (M.structOf tid) ws) →
+      SReprL S M fs ws → M.recFields tid = some fts → HasTyL M fs fts →
+      tyTupArms M X.n Γ tail tid arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerTupArms M X Γ tail tid arms)) wl st = some out →
+      (_ : sizeOf arms < n) →
+      ∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) := by
+  intro n
+  induction n with
+  | zero =>
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> (intros; omega)
+  | succ n ih =>
+    obtain ⟨ih0, ih1, ih2, ih3, ih4, ih5, ih6, ih7, ih8⟩ := ih
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · intros
+      apply agreement_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+    · intros
+      apply agreementArgs_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+    · intros
+      apply agreementIntArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+    · intros
+      apply agreementBoolArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+    · intros
+      apply agreementOptArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+    · intros
+      apply agreementResArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+    · intros
+      apply agreementVarArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+    · intros
+      apply agreementStrArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+    · intros
+      apply agreementTupArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+
+theorem agreement :
+    ∀ (e : Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out),
+      tyOf M X.n Γ tail e = some T →
+      EnvTy M env Γ →
+      LRel S M X env wl →
+      wRunF host ar callee (lowerW M X Γ tail e) wl st = some out →
+      ∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out
+  := by
+  intro e
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf e + 1)).1 e <;> first | assumption | exact Nat.lt_succ_self _
+
+theorem agreementArgs :
+    ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
+      (wl st : List WVal) (out : Out),
+      tysOf M X.n Γ es = some Ts →
+      EnvTy M env Γ →
+      LRel S M X env wl →
+      wRunF host ar callee (lowerArgsW M X Γ es) wl st = some out →
+      ∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
+        evalArgs F env es = some svs ∧ HasTyL M svs Ts ∧
+        SReprL S M svs ws ∧ LRel S M X env wl'
+  := by
+  intro es
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf es + 1)).2.1 es <;> first | assumption | exact Nat.lt_succ_self _
+
+/-- The Int literal cascade: `sc` is the subject's code, re-run per literal
+    arm; every run yields the same Int `x` (evaluation is pure). -/
+theorem agreementIntArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (sc : List BI) (bt : Option Ty) (x : Int),
+      (∀ wl0 st0 out0, LRel S M X env wl0 →
+        wRunF host ar callee (eraseL sc) wl0 st0 = some out0 →
+        ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
+          LRel S M X env wl1) →
+      tyIntArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
+      ∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out
+  := by
+  intro arms
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+
+/-- The two-arm Bool match: one `if` on the subject's `i32`. -/
+theorem agreementBoolArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (x : Bool),
+      tyBoolArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerBoolArms M X Γ tail bt arms)) wl (b32 x :: st) =
+        some out →
+      ∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out
+  := by
+  intro arms
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+
+/-- The two-arm Option match over the subject held in the scratch. -/
+theorem agreementOptArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (t : Ty) (sv : SVal) (w : WVal),
+      wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.option t) →
+      tyOptArms M X.n Γ tail t arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerOptArms M X Γ tail bt t arms)) wl st = some out →
+      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out
+  := by
+  intro arms
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+
+/-- The two-arm Result match: `Ok` in the `then` (payload field 1), `Err` in
+    the `else` (payload field 2). -/
+theorem agreementResArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (t e : Ty) (sv : SVal) (w : WVal),
+      wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.result t e) →
+      tyResArms M X.n Γ tail t e arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerResArms M X Γ tail bt t e arms)) wl st = some out →
+      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out
+  := by
+  intro arms
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+
+/-- The user-variant `ref.test` cascade over the subject held in the
+    scratch. `coversB` says some remaining arm reaches the subject's
+    constructor, so the untested last arm is exactly that constructor. -/
+theorem agreementVarArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (tid cv : Nat) (fs : List SVal)
+      (ws : List WVal) (fts : List Ty),
+      wl[X.subj]? = some (.structv (M.ctorStruct tid cv) ws) →
+      SReprL S M fs ws → ctorFields M tid cv = some fts → HasTyL M fs fts →
+      coversB cv arms = true →
+      (∀ c fc, ctorFields M tid c = some fc → M.ctorStruct tid c = M.ctorStruct tid cv →
+        c = cv) →
+      tyVarArms M X.n Γ tail tid arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerVarArms M X Γ tail bt tid arms)) wl st = some out →
+      ∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out
+  := by
+  intro arms
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+
+/-- The String literal cascade over the subject held in the scratch: each
+    literal arm compares through `__wasmgc_string_eq`; `_` ends it. -/
+theorem agreementStrArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (bt : Option Ty) (x : List Nat),
+      ((∃ k b r, arms = .cons (.litStr k) b r) → wl[X.subj]? = some (strW M x)) →
+      tyStrArms M X.n Γ tail arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerStrArms M X Γ tail bt arms)) wl st = some out →
+      ∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out
+  := by
+  intro arms
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+
+/-- The flat tuple destructure over the subject held in the scratch. -/
+theorem agreementTupArms :
+    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
+      (wl st : List WVal) (out : Out) (tid : Nat) (fs : List SVal) (ws : List WVal)
+      (fts : List Ty),
+      wl[X.subj]? = some (.structv (M.structOf tid) ws) →
+      SReprL S M fs ws → M.recFields tid = some fts → HasTyL M fs fts →
+      tyTupArms M X.n Γ tail tid arms = some T →
+      EnvTy M env Γ → LRel S M X env wl →
+      wRunF host ar callee (eraseL (lowerTupArms M X Γ tail tid arms)) wl st = some out →
+      ∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out
+  := by
+  intro arms
+  intros
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.2.2.2.2 arms <;> first | assumption | exact Nat.lt_succ_self _
+
 
 end Agreement
 
