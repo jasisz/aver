@@ -245,6 +245,9 @@ pub fn render_artifact_component_bytes(bytes: &[u8]) -> String {
     )
 }
 
+/// Bytes per hex numeral in a checker-rendered byte module.
+const BYTE_NUMERAL_CHUNK: usize = 1024;
+
 fn render_byte_module(
     module: &str,
     bytes_name: &str,
@@ -255,12 +258,28 @@ fn render_byte_module(
     let numeral = if bytes.is_empty() {
         "0".to_string()
     } else {
-        let mut numeral = String::with_capacity(2 + bytes.len() * 2);
-        numeral.push_str("0x");
-        for byte in bytes.iter().rev() {
-            numeral.push_str(&format!("{byte:02x}"));
-        }
-        numeral
+        // Lean reads a numeral in time quadratic in its length (a 116 KiB
+        // module's single hex numeral took 20 s to elaborate, once per byte
+        // module). Chunks of `BYTE_NUMERAL_CHUNK` bytes, each shifted to its
+        // byte offset and joined by `|||`, denote the same number: the ranges
+        // are disjoint, and the kernel evaluates the join with its built-in
+        // `Nat` shift and `lor`.
+        bytes
+            .chunks(BYTE_NUMERAL_CHUNK)
+            .enumerate()
+            .map(|(index, chunk)| {
+                let mut hex = String::with_capacity(2 + chunk.len() * 2);
+                hex.push_str("0x");
+                for byte in chunk.iter().rev() {
+                    hex.push_str(&format!("{byte:02x}"));
+                }
+                match index {
+                    0 => hex,
+                    _ => format!("({hex} <<< {})", 8 * BYTE_NUMERAL_CHUNK * index),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" |||\n  ")
     };
     format!(
         "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.{module}\n\n/-- {description} -/\ndef {bytes_name} : Nat := {numeral}\ndef {len_name} : Nat := {}\n\nend AverCert.{module}\n",
