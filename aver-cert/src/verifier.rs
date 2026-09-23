@@ -7,7 +7,7 @@
 //! termination witness, host table, and runtime contracts.
 
 use crate::bridge_statement::{
-    self, MAX_BRIDGE_STATEMENT_LEN, SourceEncoder, render_bridge_statement,
+    self, BridgeKind, MAX_BRIDGE_STATEMENT_LEN, SourceEncoder, render_bridge_statement,
     statement_is_root_qualified,
 };
 use crate::cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
@@ -164,6 +164,8 @@ struct BridgeOutcome {
     export: String,
     /// Source function the bridge identifies the plan with.
     model: String,
+    /// Which of the two statement kinds the bridge claims.
+    kind: BridgeKind,
     /// The statement the CHECKER rendered from the declared structure and
     /// pinned the package's corollary at. `explain` prints this, never text the
     /// package supplied.
@@ -280,6 +282,8 @@ struct SourceBridgeCandidate {
     corollary: String,
     /// Fully qualified source function the bridge identifies the plan with.
     model: String,
+    /// Which of the two statement kinds the bridge claims.
+    kind: BridgeKind,
     /// The statement the checker RENDERED from the declared `(export, model,
     /// params, result)`. Nothing in the manifest contributes to it beyond
     /// those; the declared `theorem` name is checked and then discarded,
@@ -702,10 +706,17 @@ fn certified_model_line(candidate: &CertifiedCandidate, bridges: &[BridgeOutcome
         .iter()
         .find(|bridge| bridge.export == candidate.name && bridge.offending.is_empty());
     match credited {
-        Some(bridge) => format!(
-            "model: plan ≡ {} (credited source-bridge; see SOURCE-BRIDGES)",
-            display_safe(&bridge.model)
-        ),
+        Some(bridge) => match bridge.kind {
+            BridgeKind::Exact => format!(
+                "model: plan ≡ {} (credited source-bridge; see SOURCE-BRIDGES)",
+                display_safe(&bridge.model)
+            ),
+            BridgeKind::Adequate => format!(
+                "model: plan ≡ {} wherever the plan returns (credited adequate \
+                 source-bridge, not a totality claim; see SOURCE-BRIDGES)",
+                display_safe(&bridge.model)
+            ),
+        },
         None => "model: plan (the export's optimized MIR body)".to_string(),
     }
 }
@@ -1304,15 +1315,6 @@ fn read_candidates(
         .get("sourceBridges")
         .and_then(Value::as_array)
         .ok_or_else(|| "cert-manifest.json is missing array field `sourceBridges`".to_string())?;
-    // Schema 9 carries no source-bridge statement kind and no law-claims yet:
-    // the certified model is the plan itself. A package declaring either is
-    // refused rather than credited.
-    if !bridges_json.is_empty() {
-        return Err(format!(
-            "cert-manifest.json declares source bridges; schema {} carries none yet",
-            format::CERT_SCHEMA_VERSION
-        ));
-    }
     let certified_names: Vec<&str> = certified
         .iter()
         .map(|candidate| candidate.name.as_str())
@@ -1328,10 +1330,18 @@ fn read_candidates(
                 "theorem",
                 "corollary",
                 "model",
+                "kind",
                 "params",
                 "result",
             ],
         )?;
+        let kind_tag = required_string(entry, "kind", &context)?;
+        let kind = BridgeKind::from_tag(&kind_tag).ok_or_else(|| {
+            format!(
+                "cert-manifest.json `{context}.kind` is not a bridge statement kind: `{}`",
+                display_safe(&kind_tag)
+            )
+        })?;
         let declared_params = entry["params"]
             .as_array()
             .ok_or_else(|| format!("cert-manifest.json `{context}.params` is not an array"))?;
@@ -1347,6 +1357,7 @@ fn read_candidates(
             theorem: required_string(entry, "theorem", &context)?,
             corollary: required_string(entry, "corollary", &context)?,
             model: required_string(entry, "model", &context)?,
+            kind,
             params,
             result: read_source_encoder(&entry["result"], &format!("{context}.result"))?,
         };
@@ -1373,12 +1384,6 @@ fn read_candidates(
         .get("laws")
         .and_then(Value::as_array)
         .ok_or_else(|| "cert-manifest.json is missing array field `laws`".to_string())?;
-    if !laws_json.is_empty() {
-        return Err(format!(
-            "cert-manifest.json declares law-claims; schema {} carries none yet",
-            format::CERT_SCHEMA_VERSION
-        ));
-    }
     let mut laws = Vec::with_capacity(laws_json.len());
     for (index, entry) in laws_json.iter().enumerate() {
         let context = format!("laws[{index}]");
@@ -1606,6 +1611,7 @@ struct RawSourceBridge {
     theorem: String,
     corollary: String,
     model: String,
+    kind: BridgeKind,
     params: Vec<SourceEncoder>,
     result: SourceEncoder,
 }
@@ -1673,7 +1679,7 @@ fn validate_source_bridge_candidate(
             };
             return Err(format!(
                 "source-bridge `{}` {what} encoder does not name a `_root_`-qualified type \
-                 and its own accessors",
+                 and its own accessors and constructors, or exceeds the encoder caps",
                 display_safe(&bridge.export)
             ));
         }
@@ -1681,6 +1687,7 @@ fn validate_source_bridge_candidate(
     let statement = render_bridge_statement(
         &bridge.export,
         &bridge.model,
+        bridge.kind,
         &bridge.params,
         &bridge.result,
     );
@@ -1702,51 +1709,144 @@ fn validate_source_bridge_candidate(
         export: bridge.export,
         corollary: bridge.corollary,
         model: bridge.model,
+        kind: bridge.kind,
         statement,
     })
 }
 
 /// Read one declared encoder. The kind set is CLOSED and matched exactly, so an
-/// unknown kind — or a record entry missing its type or accessors — declines the
-/// package instead of being rendered into some default shape.
+/// unknown kind — or an entry missing a key, or carrying an extra one —
+/// declines the package instead of being rendered into some default shape.
+/// Nesting is bounded before recursion, so a hostile manifest cannot exhaust
+/// the stack.
 fn read_source_encoder(value: &Value, context: &str) -> Result<SourceEncoder, String> {
+    read_source_encoder_at(value, context, 0)
+}
+
+fn read_source_encoder_at(
+    value: &Value,
+    context: &str,
+    depth: usize,
+) -> Result<SourceEncoder, String> {
+    if depth >= bridge_statement::MAX_ENCODER_DEPTH {
+        return Err(format!(
+            "cert-manifest.json `{context}` nests encoders deeper than {}",
+            bridge_statement::MAX_ENCODER_DEPTH
+        ));
+    }
     let kind = value
         .get(bridge_statement::ENCODER_KIND_KEY)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("cert-manifest.json `{context}.kind` is not a string"))?;
+    let tid = |value: &Value| -> Result<u32, String> {
+        value
+            .get("tid")
+            .and_then(Value::as_u64)
+            .and_then(|t| u32::try_from(t).ok())
+            .ok_or_else(|| format!("cert-manifest.json `{context}.tid` is not a type id"))
+    };
+    let child = |key: &str| -> Result<Box<SourceEncoder>, String> {
+        Ok(Box::new(read_source_encoder_at(
+            &value[key],
+            &format!("{context}.{key}"),
+            depth + 1,
+        )?))
+    };
+    let array = |key: &str| -> Result<&Vec<Value>, String> {
+        value[key]
+            .as_array()
+            .ok_or_else(|| format!("cert-manifest.json `{context}.{key}` is not an array"))
+    };
     match kind {
-        bridge_statement::ENCODER_KIND_INT => {
+        bridge_statement::ENCODER_KIND_INT
+        | bridge_statement::ENCODER_KIND_BOOL
+        | bridge_statement::ENCODER_KIND_FLOAT
+        | bridge_statement::ENCODER_KIND_STRING => {
             exact_object_fields(value, context, &[bridge_statement::ENCODER_KIND_KEY])?;
-            Ok(SourceEncoder::Int)
-        }
-        bridge_statement::ENCODER_KIND_BOOL => {
-            exact_object_fields(value, context, &[bridge_statement::ENCODER_KIND_KEY])?;
-            Ok(SourceEncoder::Bool)
+            Ok(match kind {
+                bridge_statement::ENCODER_KIND_INT => SourceEncoder::Int,
+                bridge_statement::ENCODER_KIND_BOOL => SourceEncoder::Bool,
+                bridge_statement::ENCODER_KIND_FLOAT => SourceEncoder::Float,
+                _ => SourceEncoder::Str,
+            })
         }
         bridge_statement::ENCODER_KIND_RECORD => {
-            exact_object_fields(
-                value,
-                context,
-                &[
-                    bridge_statement::ENCODER_KIND_KEY,
-                    bridge_statement::ENCODER_TYPE_KEY,
-                    bridge_statement::ENCODER_FIELDS_KEY,
-                ],
-            )?;
-            let lean_type = required_string(value, bridge_statement::ENCODER_TYPE_KEY, context)?;
-            let declared = value[bridge_statement::ENCODER_FIELDS_KEY]
-                .as_array()
-                .ok_or_else(|| format!("cert-manifest.json `{context}.fields` is not an array"))?;
-            let mut accessors = Vec::with_capacity(declared.len());
-            for field in declared {
-                accessors.push(field.as_str().map(str::to_string).ok_or_else(|| {
-                    format!("cert-manifest.json `{context}.fields[]` is not a string")
-                })?);
+            exact_object_fields(value, context, &["kind", "tid", "type", "fields"])?;
+            let mut fields = Vec::new();
+            for (index, field) in array("fields")?.iter().enumerate() {
+                let at = format!("{context}.fields[{index}]");
+                exact_object_fields(field, &at, &["accessor", "encoder"])?;
+                fields.push((
+                    required_string(field, "accessor", &at)?,
+                    read_source_encoder_at(&field["encoder"], &format!("{at}.encoder"), depth + 1)?,
+                ));
             }
             Ok(SourceEncoder::Record {
-                lean_type,
-                accessors,
+                tid: tid(value)?,
+                lean_type: required_string(value, "type", context)?,
+                fields,
             })
+        }
+        bridge_statement::ENCODER_KIND_SUM => {
+            exact_object_fields(value, context, &["kind", "tid", "type", "ctors"])?;
+            let mut ctors = Vec::new();
+            for (index, ctor) in array("ctors")?.iter().enumerate() {
+                let at = format!("{context}.ctors[{index}]");
+                exact_object_fields(ctor, &at, &["ctor", "fields"])?;
+                let mut fields = Vec::new();
+                for (position, field) in ctor["fields"]
+                    .as_array()
+                    .ok_or_else(|| format!("cert-manifest.json `{at}.fields` is not an array"))?
+                    .iter()
+                    .enumerate()
+                {
+                    fields.push(read_source_encoder_at(
+                        field,
+                        &format!("{at}.fields[{position}]"),
+                        depth + 1,
+                    )?);
+                }
+                ctors.push((required_string(ctor, "ctor", &at)?, fields));
+            }
+            Ok(SourceEncoder::Sum {
+                tid: tid(value)?,
+                lean_type: required_string(value, "type", context)?,
+                ctors,
+            })
+        }
+        bridge_statement::ENCODER_KIND_OPTION => {
+            exact_object_fields(value, context, &["kind", "elem"])?;
+            Ok(SourceEncoder::Option(child("elem")?))
+        }
+        bridge_statement::ENCODER_KIND_RESULT => {
+            exact_object_fields(value, context, &["kind", "ok", "err"])?;
+            Ok(SourceEncoder::Result {
+                ok: child("ok")?,
+                err: child("err")?,
+            })
+        }
+        bridge_statement::ENCODER_KIND_TUPLE => {
+            exact_object_fields(value, context, &["kind", "tid", "elems"])?;
+            let mut elems = Vec::new();
+            for (index, elem) in array("elems")?.iter().enumerate() {
+                elems.push(read_source_encoder_at(
+                    elem,
+                    &format!("{context}.elems[{index}]"),
+                    depth + 1,
+                )?);
+            }
+            Ok(SourceEncoder::Tuple {
+                tid: tid(value)?,
+                elems,
+            })
+        }
+        bridge_statement::ENCODER_KIND_LIST => {
+            exact_object_fields(value, context, &["kind", "elem"])?;
+            Ok(SourceEncoder::List(child("elem")?))
+        }
+        bridge_statement::ENCODER_KIND_VECTOR => {
+            exact_object_fields(value, context, &["kind", "elem"])?;
+            Ok(SourceEncoder::Vector(child("elem")?))
         }
         other => Err(format!(
             "cert-manifest.json `{context}` declares unknown source-bridge encoder kind `{}`",
@@ -1859,6 +1959,7 @@ fn parse_bridge_audits(
         outcomes.push(BridgeOutcome {
             export: bridge.export.clone(),
             model: bridge.model.clone(),
+            kind: bridge.kind,
             statement: bridge.statement.clone(),
             offending,
         });
@@ -2114,7 +2215,10 @@ fn assemble_build(
         let contents = std::fs::read(path)
             .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
         scan_for_code_exec(name, &contents)?;
-        if name == "Manifest.lean" || name == "Certificate.lean" {
+        if matches!(
+            name.as_str(),
+            "Manifest.lean" | "Certificate.lean" | "Bridge.lean" | "Laws.lean"
+        ) {
             collect_import_lines(&String::from_utf8_lossy(&contents), &mut admitted);
         }
         std::fs::write(build.path.join(name), contents)
@@ -2851,9 +2955,10 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                 )
             };
             println!(
-                "  {}  ≡ {}  [{credit}]",
+                "  {}  ≡ {}  ({})  [{credit}]",
                 display_safe(&bridge.export).bold(),
-                display_safe(&bridge.model)
+                display_safe(&bridge.model),
+                bridge.kind.tag()
             );
             println!("    {}", display_safe(&bridge.statement));
         }
@@ -3023,19 +3128,28 @@ mod tests {
             theorem: format!("{BRIDGE_NAMESPACE}.{export}"),
             corollary: format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}"),
             model: format!("Domain.{export}"),
+            kind: BridgeKind::Exact,
             params: vec![SourceEncoder::Int],
             result: SourceEncoder::Int,
         }
     }
 
-    fn fraction_encoder() -> SourceEncoder {
+    fn record_encoder(accessors: &[&str]) -> SourceEncoder {
         SourceEncoder::Record {
+            tid: 0,
             lean_type: "_root_.Domain.Fraction".to_string(),
-            accessors: vec![
-                "_root_.Domain.Fraction.top".to_string(),
-                "_root_.Domain.Fraction.bottom".to_string(),
-            ],
+            fields: accessors
+                .iter()
+                .map(|accessor| (accessor.to_string(), SourceEncoder::Int))
+                .collect(),
         }
+    }
+
+    fn fraction_encoder() -> SourceEncoder {
+        record_encoder(&[
+            "_root_.Domain.Fraction.top",
+            "_root_.Domain.Fraction.bottom",
+        ])
     }
 
     fn bridge_candidates(exports: &[&str]) -> Vec<SourceBridgeCandidate> {
@@ -3138,18 +3252,25 @@ mod tests {
         // against whatever namespaces the package declares.
         let mut bare_names = raw_bridge("one");
         bare_names.result = SourceEncoder::Record {
+            tid: 0,
             lean_type: "Domain.Fraction".to_string(),
-            accessors: vec!["Domain.Fraction.top".to_string()],
+            fields: vec![("Domain.Fraction.top".to_string(), SourceEncoder::Int)],
         };
         assert!(validate_source_bridge_candidate(bare_names).is_err());
 
         // An accessor of some other type is not a field of the declared one.
         let mut foreign_accessor = raw_bridge("one");
-        foreign_accessor.result = SourceEncoder::Record {
-            lean_type: "_root_.Domain.Fraction".to_string(),
-            accessors: vec!["_root_.Other.Record.top".to_string()],
-        };
+        foreign_accessor.result = record_encoder(&["_root_.Other.Record.top"]);
         assert!(validate_source_bridge_candidate(foreign_accessor).is_err());
+
+        // So is a constructor of some other sum.
+        let mut foreign_ctor = raw_bridge("one");
+        foreign_ctor.params = vec![SourceEncoder::Sum {
+            tid: 1,
+            lean_type: "_root_.Domain.Op".to_string(),
+            ctors: vec![("_root_.Domain.Tag.a".to_string(), Vec::new())],
+        }];
+        assert!(validate_source_bridge_candidate(foreign_ctor).is_err());
     }
 
     /// The defect this surface was reshaped to close: a package used to declare
@@ -3170,20 +3291,30 @@ mod tests {
             render_bridge_statement(
                 "Domain_Rational_plus",
                 "Domain.Rational.plus",
+                BridgeKind::Exact,
                 &[fraction_encoder(), fraction_encoder()],
                 &fraction_encoder(),
             ),
             "the pinned statement is the renderer's output and nothing else"
         );
         assert!(
-            candidate.statement.starts_with('∀')
-                && candidate.statement.contains(
-                    "_root_.AverCert.StandardFace.recordComputeModel \
-                     _root_.AverCert.Plans.Domain_Rational_plusPlan.body"
-                ),
-            "the claim's left-hand side is the export's own plan: {}",
+            candidate.statement.starts_with(
+                "∃ o, _root_.AverCert.GrammarBridge.exportObligation _root_.AverCert.manifest \
+                 \"Domain_Rational_plus\" = _root_.Option.some o"
+            ) && candidate
+                .statement
+                .contains("_root_.AverCert.Schema.Obligation.model o fuel"),
+            "the claim's left-hand side is the export's own obligation model: {}",
             candidate.statement
         );
+        // The weaker kind renders a different claim too.
+        let mut adequate = raw_bridge("Domain_Rational_plus");
+        adequate.model = "Domain.Rational.plus".to_string();
+        adequate.kind = BridgeKind::Adequate;
+        adequate.params = vec![fraction_encoder(), fraction_encoder()];
+        adequate.result = fraction_encoder();
+        let adequate = validate_source_bridge_candidate(adequate).expect("it still validates");
+        assert_ne!(adequate.statement, candidate.statement);
         // Naming a different export renders a different claim, so the pin no
         // longer has the package corollary's type — a decline, not a credit.
         let mut renamed = raw_bridge("Domain_Rational_minus");
@@ -3193,13 +3324,10 @@ mod tests {
         let renamed = validate_source_bridge_candidate(renamed).expect("it still validates");
         assert_ne!(renamed.statement, candidate.statement);
         // So does permuting a record's accessors.
-        let permuted = SourceEncoder::Record {
-            lean_type: "_root_.Domain.Fraction".to_string(),
-            accessors: vec![
-                "_root_.Domain.Fraction.bottom".to_string(),
-                "_root_.Domain.Fraction.top".to_string(),
-            ],
-        };
+        let permuted = record_encoder(&[
+            "_root_.Domain.Fraction.bottom",
+            "_root_.Domain.Fraction.top",
+        ]);
         let mut swapped = raw_bridge("Domain_Rational_plus");
         swapped.model = "Domain.Rational.plus".to_string();
         swapped.params = vec![permuted, fraction_encoder()];
@@ -3224,25 +3352,59 @@ mod tests {
             read_source_encoder(
                 &serde_json::json!({
                     "kind": "record",
+                    "tid": 0,
                     "type": "_root_.Domain.Fraction",
-                    "fields": ["_root_.Domain.Fraction.top"],
+                    "fields": [{"accessor": "_root_.Domain.Fraction.top", "encoder": {"kind": "int"}}],
                 }),
                 "e"
             )
             .unwrap(),
-            SourceEncoder::Record {
-                lean_type: "_root_.Domain.Fraction".to_string(),
-                accessors: vec!["_root_.Domain.Fraction.top".to_string()],
-            }
+            record_encoder(&["_root_.Domain.Fraction.top"])
         );
+        // Every encoder the producer writes reads back to itself.
+        let op = SourceEncoder::Sum {
+            tid: 1,
+            lean_type: "_root_.Domain.Op".to_string(),
+            ctors: vec![
+                ("_root_.Domain.Op.add".to_string(), vec![SourceEncoder::Int]),
+                ("_root_.Domain.Op.zero".to_string(), Vec::new()),
+            ],
+        };
+        for encoder in [
+            SourceEncoder::Float,
+            SourceEncoder::Str,
+            fraction_encoder(),
+            op.clone(),
+            SourceEncoder::Option(Box::new(op.clone())),
+            SourceEncoder::Result {
+                ok: Box::new(SourceEncoder::Int),
+                err: Box::new(SourceEncoder::Str),
+            },
+            SourceEncoder::Tuple {
+                tid: 2,
+                elems: vec![SourceEncoder::Int, fraction_encoder()],
+            },
+            SourceEncoder::List(Box::new(SourceEncoder::Bool)),
+            SourceEncoder::Vector(Box::new(SourceEncoder::Int)),
+        ] {
+            let json: Value = serde_json::from_str(&encoder.to_json()).expect("valid JSON");
+            assert_eq!(read_source_encoder(&json, "e").unwrap(), encoder);
+        }
+        let mut deep = serde_json::json!({"kind": "int"});
+        for _ in 0..bridge_statement::MAX_ENCODER_DEPTH {
+            deep = serde_json::json!({"kind": "option", "elem": deep});
+        }
         for bad in [
-            serde_json::json!({"kind": "float"}),
-            serde_json::json!({"kind": "string"}),
+            serde_json::json!({"kind": "decimal"}),
             serde_json::json!({}),
             serde_json::json!({"kind": "int", "type": "_root_.Domain.Fraction"}),
-            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction"}),
-            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction", "fields": "top"}),
-            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction", "fields": [7]}),
+            serde_json::json!({"kind": "record", "tid": 0, "type": "_root_.Domain.Fraction"}),
+            serde_json::json!({"kind": "record", "tid": 0, "type": "_root_.Domain.Fraction", "fields": "top"}),
+            serde_json::json!({"kind": "record", "tid": 0, "type": "_root_.Domain.Fraction", "fields": [7]}),
+            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction", "fields": []}),
+            serde_json::json!({"kind": "option"}),
+            serde_json::json!({"kind": "sum", "tid": 1, "type": "_root_.Domain.Op", "ctors": [{"ctor": "_root_.Domain.Op.a"}]}),
+            deep,
         ] {
             assert!(
                 read_source_encoder(&bad, "e").is_err(),
@@ -3260,6 +3422,7 @@ mod tests {
             "theorem",
             "corollary",
             "model",
+            "kind",
             "params",
             "result",
         ];
@@ -3268,6 +3431,7 @@ mod tests {
             "theorem": "AverCert.Bridge.one",
             "corollary": "AverCert.Bridge.one_certified",
             "model": "Domain.one",
+            "kind": "exact",
             "params": [],
             "result": {"kind": "int"},
         });
@@ -3289,12 +3453,14 @@ mod tests {
                     BridgeOutcome {
                         export: "one".to_string(),
                         model: "Domain.one".to_string(),
+                        kind: BridgeKind::Exact,
                         statement: "_root_.One".to_string(),
                         offending: Vec::new(),
                     },
                     BridgeOutcome {
                         export: "two".to_string(),
                         model: "Domain.two".to_string(),
+                        kind: BridgeKind::Adequate,
                         statement: "_root_.Two".to_string(),
                         offending: vec!["sorryAx".to_string()],
                     },

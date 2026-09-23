@@ -172,7 +172,11 @@ pub fn admit_law_claims(claims: Vec<LawClaim>) -> (Vec<LawClaim>, Vec<(String, S
 /// function — a claim about the SOURCE model, which the bridge has no part in
 /// proving. Split, a `sorry` in a bridge costs the bridge and the bridged
 /// corollary, and the plain law keeps its credit.
-pub fn render_laws_lean(claims: &[LawClaim], bridge_statements: &[Vec<(String, String)>]) -> String {
+pub fn render_laws_lean(
+    claims: &[LawClaim],
+    bridge_statements: &[Vec<(String, String)>],
+    model_roots: &[String],
+) -> String {
     let any_bridged = bridge_statements.iter().any(|entry| !entry.is_empty());
     let mut s = String::new();
     s.push_str(
@@ -188,6 +192,11 @@ pub fn render_laws_lean(claims: &[LawClaim], bridge_statements: &[Vec<(String, S
          import Manifest\n\
          import Final\n",
     );
+    for root in model_roots {
+        s.push_str("import ");
+        s.push_str(root);
+        s.push('\n');
+    }
     if any_bridged {
         s.push_str("import Bridge\n");
     }

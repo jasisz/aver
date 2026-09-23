@@ -7028,6 +7028,9 @@ fn cmd_compile_wasm_gc(
             .and_then(|name| name.to_str())
             .expect("generated wasm file name is UTF-8");
         if let Err(error) = emit_artifact_certificate(
+            file,
+            project_name,
+            module_root_override,
             out_path,
             aver::codegen::cert::CertificateArtifact::WasmGc {
                 file_name: artifact_file_name,
@@ -7285,20 +7288,24 @@ fn render_wasmtime_runtime_policy(
 /// Gated on `certify` (the aver-cert producer engine + `codegen::cert`). Both
 /// wasm-gc and wasip2 call this with an explicit description of the delivered
 /// artifact and the core-module bytes consumed by the Wasm wall. The plans are
-/// the optimized MIR the emitter consumed in the same compile.
+/// the optimized MIR the emitter consumed in the same compile; the Lean source
+/// model (the `aver proof` emission of the module's pure functions and laws)
+/// is what the package's plan-equals-source bridges and law-claims speak about.
 #[cfg(feature = "certify")]
 fn emit_artifact_certificate(
+    file: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
     out_path: &Path,
     artifact: aver::codegen::cert::CertificateArtifact<'_>,
     cert_plans: &aver::codegen::cert::ModulePlans,
 ) -> Result<(), String> {
     use aver::codegen::cert;
-    // Schema 9 states every obligation over the plan and carries no
-    // law-claims or source bridges yet, so no Lean model is emitted.
 
     let analysis = cert::analyze(artifact.core_module_bytes(), cert_plans, artifact.target())?;
+    let source_model = certificate_source_model(file, project_name, module_root_override);
     let artifact_file_name = artifact.file_name().to_string();
-    let declines = cert::write_project(out_path, artifact, &analysis, Vec::new())?;
+    let declines = cert::write_project(out_path, artifact, &analysis, &source_model)?;
 
     let cert_dir = out_path.join("cert");
     let certified = analysis.certified_names();
@@ -7324,6 +7331,79 @@ fn emit_artifact_certificate(
         cert_dir.display()
     );
     Ok(())
+}
+
+/// The Lean source model of a certified module: the reused `aver proof`
+/// emission (source-level IR, laws included) and the law-claims its emitter
+/// recorded as structure. Lean emission is best effort for a certificate: a
+/// panic in it costs the package its bridges and law-claims (every one is
+/// declined with the reason), never the byte certificate itself.
+#[cfg(feature = "certify")]
+fn certificate_source_model(
+    file: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+) -> aver::codegen::cert::SourceModel {
+    use aver::codegen::cert;
+    let (mut mctx, _mroot) = build_codegen_context(
+        file,
+        project_name,
+        module_root_override,
+        false,
+        &super::cli::CompilePolicyMode::Embed,
+        None,
+        false,
+        false, // apply_traversal_lowering — the model wants source-level IR
+        true,  // run_refinement_lower
+        true,  // run_contract_lower
+        true,  // run_law_lower
+    );
+    let emitted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let out = lean_codegen::transpile_for_cert_model(&mut mctx);
+        (out, lean_codegen::cert_model_entry_namespace(&mctx))
+    }));
+    match emitted {
+        Ok((model_out, entry_namespace)) => cert::SourceModel {
+            files: model_out
+                .files
+                .into_iter()
+                .filter(|(path, _)| path != "lakefile.lean" && path != "lean-toolchain")
+                .collect(),
+            entry_namespace,
+            dependency_namespaces: mctx
+                .modules
+                .iter()
+                .map(|module| {
+                    (
+                        module.prefix.clone(),
+                        lean_codegen::cert_model_module_namespace(&module.prefix),
+                    )
+                })
+                .collect(),
+            // Law-claims travel as STRUCTURE from the emitter that built each
+            // law theorem's statement — the producer never scans the emitted
+            // Lean text back for them.
+            law_claims: model_out
+                .law_claims
+                .iter()
+                .map(|claim| cert::LawClaim {
+                    label: claim.label.clone(),
+                    prefix: claim.namespace.clone(),
+                    theorem: claim.theorem.clone(),
+                    statement: claim.statement.clone(),
+                })
+                .collect(),
+            failure: None,
+        },
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "unknown panic".to_string());
+            cert::SourceModel::failed(format!("the Lean source model failed to emit: {message}"))
+        }
+    }
 }
 
 /// `--target wasip2` compile entry — 0.18 "Span".
@@ -7660,6 +7740,9 @@ fn cmd_compile_wasip2(
                 .expect("generated component file name is UTF-8");
             let envelope = component_artifact.envelope.declaration();
             if let Err(error) = emit_artifact_certificate(
+                file,
+                project_name,
+                module_root_override,
                 out_path,
                 aver::codegen::cert::CertificateArtifact::Wasip2 {
                     file_name: artifact_file_name,

@@ -104,5 +104,7 @@ include!("produce.rs");
 #[cfg(feature = "engine")]
 include!("module_envelope.rs");
 #[cfg(feature = "engine")]
+include!("source_bridges.rs");
+#[cfg(feature = "engine")]
 include!("render_package.rs");
 include!("law_claims.rs");

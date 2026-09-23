@@ -30,6 +30,9 @@ pub struct CertifiedExport {
 
 pub struct Analysis {
     carrier: Option<u32>,
+    /// The compiler's name of every printed function (the flattened wasm
+    /// name), by function index: the key of its Lean source definition.
+    fn_names: BTreeMap<u32, String>,
     roles: Option<HostRoles>,
     string_roles: StringHostRoles,
     entries: Vec<PackageEntry>,
@@ -777,6 +780,11 @@ pub fn analyze(
 
     Ok(Analysis {
         carrier,
+        fn_names: plans
+            .fns
+            .iter()
+            .map(|f| (f.func_idx, f.name.clone()))
+            .collect(),
         roles: role_table,
         string_roles: facts.string_roles.clone(),
         entries,

@@ -106,9 +106,6 @@ pub struct ProjectDeclines {
     pub source_bridges: Vec<(String, String)>,
 }
 
-/// Why a law-claim or a source bridge is not declared by a schema-9 package.
-pub const SCHEMA9_BRIDGE_PENDING: &str = "schema 9 does not carry law-claims or source bridges yet: the certified model is the plan itself";
-
 fn lean_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -457,6 +454,9 @@ fn render_manifest_json(
     target: &str,
     abi: &str,
     envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
+    laws: &[LawClaim],
+    law_bridges: &[Vec<String>],
+    bridges: &[SourceBridge],
     declined_bridges: &[(String, String)],
 ) -> String {
     let any_total = analysis.certified.iter().any(|c| c.total);
@@ -505,8 +505,34 @@ fn render_manifest_json(
         "  \"runtime_contracts\": {},\n",
         json_list(&analysis.contracts, |c| json_str(c))
     ));
-    s.push_str("  \"laws\": [],\n");
-    s.push_str("  \"sourceBridges\": [],\n");
+    // A law cites the bridges only when its bridged corollary is declared,
+    // which needs every cited bridge in the package.
+    let bridge_exports: Vec<&str> = bridges.iter().map(|b| b.export.as_str()).collect();
+    s.push_str(&format!(
+        "  \"laws\": {},\n",
+        json_list(
+            &laws.iter().zip(law_bridges).collect::<Vec<_>>(),
+            |(claim, cited)| {
+                let cited: Vec<&String> = if cited.iter().all(|e| bridge_exports.contains(&e.as_str())) {
+                    cited.iter().collect()
+                } else {
+                    Vec::new()
+                };
+                format!(
+                    "{{\"label\": {}, \"theorem\": {}, \"statement\": {}, \"corollary\": {}, \"bridges\": [{}]}}",
+                    json_str(&claim.label),
+                    json_str(&claim.qualified()),
+                    json_str(&claim.statement),
+                    json_str(&claim.corollary()),
+                    cited.iter().map(|e| json_str(e)).collect::<Vec<_>>().join(", ")
+                )
+            }
+        )
+    ));
+    s.push_str(&format!(
+        "  \"sourceBridges\": {},\n",
+        json_list(bridges, SourceBridge::to_json)
+    ));
     s.push_str(&format!(
         "  \"sourceBridgesDeclined\": {},\n",
         json_list(declined_bridges, |(e, r)| format!(
@@ -598,13 +624,14 @@ fn render_manifest_json(
 /// artifact data with its byte-fact proofs, the final theorem, and the JSON
 /// manifest the checker reads. Any existing `cert/` directory is replaced.
 ///
-/// Schema 9 declares no law-claims and no source bridges yet: each law the
-/// model emission recorded comes back in [`ProjectDeclines`] with the reason.
+/// Every law-claim or source bridge the producer refused to declare comes back
+/// in [`ProjectDeclines`] with its reason (the bridge list is also written to
+/// the manifest as `sourceBridgesDeclined`).
 pub fn write_project(
     out_dir: &Path,
     artifact: CertificateArtifact<'_>,
     analysis: &Analysis,
-    law_claims: Vec<LawClaim>,
+    model: &SourceModel,
 ) -> Result<ProjectDeclines, String> {
     artifact.validate()?;
     let cert_dir = out_dir.join("cert");
@@ -653,7 +680,27 @@ pub fn write_project(
         &render_artifact_certificate(),
     )?;
 
-    let declined_bridges: Vec<(String, String)> = Vec::new();
+    // The source model, the plan-equals-source bridges and the law-claims.
+    // The model files ship only when a bridge or a law-claim speaks about
+    // them: a package without either builds no model at all.
+    let surfaces = plan_surfaces(analysis, model);
+    if surfaces.bridge_lean.is_some() || surfaces.laws_lean.is_some() {
+        for (path, content) in &model.files {
+            write_nested(&cert_dir, path, &sanitize_model_for_cert(content))?;
+        }
+    }
+    let bridges: &[SourceBridge] = if surfaces.bridge_lean.is_some() {
+        &surfaces.bridges
+    } else {
+        &[]
+    };
+    if let Some(bridge_lean) = &surfaces.bridge_lean {
+        write(&cert_dir, "Bridge.lean", bridge_lean)?;
+    }
+    if let Some(laws_lean) = &surfaces.laws_lean {
+        write(&cert_dir, "Laws.lean", laws_lean)?;
+    }
+    let _ = &surfaces.model_roots;
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
         render_manifest_json(
@@ -663,15 +710,26 @@ pub fn write_project(
             target,
             abi,
             envelope,
-            &declined_bridges,
+            &surfaces.law_claims,
+            &surfaces.law_bridge_exports,
+            bridges,
+            &surfaces.declined_bridges,
         ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;
     Ok(ProjectDeclines {
-        law_claims: law_claims
-            .into_iter()
-            .map(|claim| (claim.label, SCHEMA9_BRIDGE_PENDING.to_string()))
-            .collect(),
-        source_bridges: declined_bridges,
+        law_claims: surfaces.declined_laws,
+        source_bridges: surfaces.declined_bridges,
     })
+}
+
+/// Write a model file, which may sit in a module subdirectory
+/// (`Domain/Rational.lean`).
+fn write_nested(dir: &Path, name: &str, content: &str) -> Result<(), String> {
+    let path = dir.join(name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create directory for {name}: {e}"))?;
+    }
+    std::fs::write(&path, content).map_err(|e| format!("write {}: {e}", path.display()))
 }
