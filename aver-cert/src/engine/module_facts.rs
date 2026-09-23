@@ -876,6 +876,36 @@ impl ModuleFacts {
                 }
             }
         }
+        // A range-refined user function whose raw `i64` body happens to open
+        // with the same operator shares the carrier-binop signature, and then
+        // the scan above finds no unique helper. The helper is the candidate
+        // that calls the bignum sub-routines (the template pins the choice).
+        if let Some(decompose) = roles.decompose_idx {
+            let calling = |arith: FirstI64Arith| -> Option<u32> {
+                let hits: Vec<u32> = self
+                    .code
+                    .iter()
+                    .enumerate()
+                    .map(|(def, code)| (self.nimports + def as u32, code))
+                    .filter(|(idx, code)| {
+                        code.first_arith == Some(arith)
+                            && is_carrier_binop(self, *idx)
+                            && code.calls.contains(&decompose)
+                    })
+                    .map(|(idx, _)| idx)
+                    .collect();
+                match hits.as_slice() {
+                    [only] => Some(*only),
+                    _ => None,
+                }
+            };
+            if roles.sub_idx.is_none() {
+                roles.sub_idx = calling(FirstI64Arith::Sub);
+            }
+            if roles.mul_idx.is_none() {
+                roles.mul_idx = calling(FirstI64Arith::Mul);
+            }
+        }
         // `__aint_divmod` is not exported: declare it only at the one function
         // whose body is the template the wall pins it by.
         if let Some(tmpl) = roles.arith_params(carrier).and_then(divmod_template_body) {
