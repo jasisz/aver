@@ -5367,7 +5367,7 @@ verify digits law emptyMeansSmall
 }
 
 #[test]
-fn certificate_countdown_model_keeps_the_wall_contract_and_restores_proof_context() {
+fn certificate_countdown_model_uses_the_native_equations() {
     let mut ctx = ctx_from_source(
         r#"module CountdownModel
     exposes [count]
@@ -5384,9 +5384,11 @@ fn count(n: Int, acc: Int) -> Int
         VerifyEmitMode::NativeDecide,
     ));
     assert!(before.contains("termination_by n.toNat"), "{before}");
+    // A certificate bridge unfolds `count` one step through its equation
+    // lemma, so the model keeps the native recursion, not a fuel wrapper.
     let model = generated_lean_file(&transpile_for_cert_model(&mut ctx));
-    assert!(model.contains("def count__fuel"), "{model}");
-    assert!(!model.contains("termination_by n.toNat"), "{model}");
+    assert!(model.contains("termination_by n.toNat"), "{model}");
+    assert!(!model.contains("def count__fuel"), "{model}");
     let after = generated_lean_file(&transpile_for_proof_mode(
         &mut ctx,
         VerifyEmitMode::NativeDecide,

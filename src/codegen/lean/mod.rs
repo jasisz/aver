@@ -318,45 +318,32 @@ pub fn transpile_for_proof_mode(
 /// Proof-mode transpilation for an artifact CERTIFICATE's reused model
 /// modules.
 ///
-/// The same source semantics as [`transpile_for_proof_mode`], with subtractive
-/// countdowns retaining the explicit fuel model consumed by the certificate
-/// recursion wall. Emitted
-/// without the proof-only executable machinery that the `aver proof`
-/// sample checks rely on: the `@[implemented_by]`/`unsafe` `DecidableEq`
-/// shims (user recursive types and `Float`), the `verify` sample-check
-/// `example … := by native_decide` blocks, and the `@[simp]` string-prelude
-/// spec lemmas. A certificate never elaborates those — it carries its own
-/// decode-to-`Int`/bytes anti-vacuity guards — and the checker's
-/// elaboration-executes-code wall rejects the `unsafe`/`implemented_by`/
-/// `@[` tokens they contain. The mode drops them at the source so the
-/// certificate's model data files stay kernel-clean, instead of stripping
-/// them out of already-emitted text. The `aver proof` emission is
-/// untouched (this is a distinct entry point).
+/// The same source semantics and the same recursion shapes as
+/// [`transpile_for_proof_mode`] (native `termination_by` equations, so a
+/// certificate bridge can unfold a recursive function one step through its
+/// equation lemma), emitted without the proof-only executable machinery that
+/// the `aver proof` sample checks rely on: the `@[implemented_by]`/`unsafe`
+/// `DecidableEq` shims (user recursive types and `Float`), the `verify`
+/// sample-check `example … := by native_decide` blocks, and the `@[simp]`
+/// string-prelude spec lemmas. A certificate never elaborates those, and the
+/// checker's elaboration-executes-code wall rejects the
+/// `unsafe`/`implemented_by`/`@[` tokens they contain. The mode drops them at
+/// the source so the certificate's model data files stay kernel-clean,
+/// instead of stripping them out of already-emitted text. The `aver proof`
+/// emission is untouched (this is a distinct entry point).
 pub fn transpile_for_cert_model(ctx: &mut CodegenContext) -> ProjectOutput {
-    // The certificate recursion wall relates its evaluator to the explicit
-    // fuel model. Keep that representation at this consumer boundary; proof
-    // export uses native equations. Adapt the contracts too, so law emission
-    // sees the same definitions as the certificate model actually contains.
-    let mut native = Vec::new();
-    for (id, contract) in &mut ctx.proof_ir.fn_contracts {
-        if let Some(crate::ir::RecursionContract::WellFoundedToNat {
-            param,
-            floor_div: None,
-        }) = &contract.recursion
-        {
-            let fuel = crate::ir::RecursionContract::Fuel {
-                fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne {
-                    param: param.clone(),
-                },
-            };
-            native.push((*id, contract.recursion.replace(fuel)));
-        }
-    }
-    let output = transpile_unified(ctx, VerifyEmitMode::NativeDecide, LeanEmitMode::Proof, true);
-    for (id, recursion) in native {
-        ctx.proof_ir.fn_contracts.get_mut(&id).unwrap().recursion = recursion;
-    }
-    output
+    transpile_unified(ctx, VerifyEmitMode::NativeDecide, LeanEmitMode::Proof, true)
+}
+
+/// The Lean namespace the entry module's definitions are emitted in.
+pub fn cert_model_entry_namespace(ctx: &CodegenContext) -> String {
+    lean_project_name(ctx)
+}
+
+/// The Lean namespace a dependency module's definitions are emitted in: its
+/// module path with every reserved segment escaped.
+pub fn cert_model_module_namespace(module_path: &str) -> String {
+    syntax::aver_path_to_lean(module_path)
 }
 
 /// Transpile an Aver program to a Lean 4 project with configurable verify proof mode.
