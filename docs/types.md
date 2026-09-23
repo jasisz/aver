@@ -6,7 +6,7 @@
 |---|---|---|
 | `TokenKind` | `src/lexer.rs` | Every possible token: literals, keywords, operators, structural (`INDENT`/`DEDENT`/`NEWLINE`/`EOF`) |
 | `Token` | `src/lexer.rs` | `TokenKind` + source position (`line`, `col`) |
-| `LexerError` | `src/lexer.rs` | Carry `msg`, `line`, `col`; formatted as `"Lexer error [L:C]: msg"` |
+| `LexerError` | `src/lexer.rs` | Carries `msg`, `line`, `col`; formatted as `"Lexer error [L:C]: msg"` |
 | `ParseError` | `src/parser/core.rs` | `msg`, `line`, `col`; formatted as `"Parse error [L:C]: msg"` |
 
 ## AST types
@@ -33,5 +33,5 @@
 | Type | Location | Description |
 |---|---|---|
 | `Value` | `src/value.rs` | Runtime value: `Int`, `Float`, `Str`, `Bool`, `Unit`, `Ok(Box<Value>)`, `Err(Box<Value>)`, `Some(Box<Value>)`, `None`, `List(AverList<Value>)`, `Fn{..}`, `Builtin(String)`, `Variant { type_name, variant, fields }`, `Record { type_name, fields }`, `Namespace { name, members }` |
-| `Env` | `src/value.rs` | `Vec<EnvFrame>` — scope stack (`Owned(HashMap)` or `Slots(Vec<Rc<Value>>)`), innermost last |
+| `Env` | `src/value.rs` | `Vec<EnvFrame>`: scope stack (`Owned(HashMap)` or `Slots(Vec<Rc<Value>>)`), innermost last |
 | `RuntimeError` | `src/value.rs` | Error enum: `Error(String)`, `ErrProp(Box<Value>)`, `TailCall(Box<(String, Vec<Value>)>)`, `ReplayMismatch(String)`, `ReplayExhausted` |
