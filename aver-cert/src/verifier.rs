@@ -555,6 +555,7 @@ fn trusted_check(
 
     let candidates = read_candidates(&manifest, identity, target_envelope.map(|env| env.inner))?;
     let lean = LeanRunner::new(selected_wall.toolchain)?;
+    let stage_started = std::time::Instant::now();
     let build = assemble_build(
         cert_dir,
         core_module_bytes,
@@ -572,11 +573,14 @@ fn trusted_check(
         },
     );
     let data_cache_hit = cache.was_hit();
+    report_step_timing("staging and data cache", stage_started.elapsed(), &[]);
+    let wall_cache_started = std::time::Instant::now();
     let mut wall_cache = if data_cache_hit {
         PristineWallCache::disabled()
     } else {
         PristineWallCache::prepare(&build.path, selected_wall, &lean)
     };
+    report_step_timing("wall cache restore", wall_cache_started.elapsed(), &[]);
 
     let mut data_build = run_lake(&lean, &build.path, PROOF_BUILD_PHASE, &["build"])?;
     if !data_build.status.success() && (data_cache_hit || wall_cache.was_seeded()) {
@@ -2558,9 +2562,11 @@ fn run_lake(
 ) -> Result<LakeOut, String> {
     // Any step failure — including a timeout — fails the whole verify/check
     // closed; only the opt-in prelude cache may downgrade a step error.
+    let started = std::time::Instant::now();
     let output = lean
         .run_lake(build_dir, phase, arguments)
         .map_err(|error| error.to_string())?;
+    report_step_timing(phase, started.elapsed(), &output.stdout);
     Ok(LakeOut {
         status: output.status,
         combined: format!(
@@ -2569,6 +2575,21 @@ fn run_lake(
             String::from_utf8_lossy(&output.stderr)
         ),
     })
+}
+
+/// Opt-in developer timing trace (`AVER_CERT_TIMINGS=1`): one stderr line per
+/// Lean step, plus Lake's own per-module build lines. Diagnostic only; it
+/// reads nothing the verdict depends on.
+fn report_step_timing(phase: &str, elapsed: std::time::Duration, stdout: &[u8]) {
+    if std::env::var_os("AVER_CERT_TIMINGS").is_none_or(|value| value.is_empty() || value == "0") {
+        return;
+    }
+    for line in String::from_utf8_lossy(stdout).lines() {
+        if line.contains("Built ") || line.contains("Replayed ") {
+            eprintln!("aver-cert timing:   {}", line.trim());
+        }
+    }
+    eprintln!("aver-cert timing: {phase}: {:.1}s", elapsed.as_secs_f64());
 }
 
 fn tail(text: &str, lines: usize) -> String {

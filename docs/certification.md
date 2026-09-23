@@ -109,6 +109,8 @@ output. Those directories become trusted local state and must not be writable
 by an attacker. Strict `verify` still authors a fresh checker witness and runs
 the final whole-closure replay.
 
+`AVER_CERT_TIMINGS=1` prints how long each Lean step took, with Lake's per-module build times, to standard error. It is a diagnostic only and does not change the verdict.
+
 Every Lean toolchain step (the certificate proof build, the artifact witness
 check, and the final kernel replay) runs under a wall-clock limit of 15
 minutes, so a degenerate or hostile certificate cannot hang `verify` or
