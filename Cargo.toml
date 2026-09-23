@@ -154,3 +154,9 @@ required-features = ["wasm"]
 [profile.release]
 lto = true
 codegen-units = 1
+
+# The certificate checker hashes its build caches (hundreds of MiB of `.olean`
+# files) with SHA-256; unoptimised, that hashing alone costs seconds per check
+# in the debug builds the developer loop and the test suites use.
+[profile.dev.package.sha2]
+opt-level = 3
