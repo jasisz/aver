@@ -1,59 +1,62 @@
 # Measuring Lean proof performance
 
 `tools/proof_bench.py` runs the full Lean proof CLI serially against three source
-fixtures: a single-list conditional, K5 rounding, and the K5 kernel. Every run
-uses a fresh output directory with no generated Lake cache. The installed Lean
-toolchain is shared; this is not a toolchain download benchmark. The tool requires
-Python 3.11+ and a POSIX host.
+fixtures: a single-list conditional, K5 rounding, and the K5 kernel. Each run
+gets a fresh output directory with no generated Lake cache. The installed Lean
+toolchain is shared, so the benchmark does not measure toolchain downloads. The
+tool needs Python 3.11+ and a POSIX host.
 
-Freeze the two Aver binaries before rebuilding, then run from the same checkout:
+Freeze the two Aver binaries before rebuilding, then run both from the same
+checkout:
 
 ```bash
 python3 tools/proof_bench.py --aver /tmp/aver-before --out /tmp/proof-before
 python3 tools/proof_bench.py --aver /tmp/aver-after --out /tmp/proof-after
 ```
 
-The default is three repetitions per fixture. `--case k5-round --repeat 1` selects
-a quick comparison. Output directories must be new. `--timeout` limits the whole
-invocation and terminates its process group, retaining incomplete results.
+By default each fixture runs three times. For a quick comparison, use
+`--case k5-round --repeat 1`. Output directories must be new. `--timeout` caps
+the whole invocation; when it fires, the tool kills the process group and keeps
+the results collected so far.
 
-Each run retains the generated project, Aver output, every Lake invocation's
-arguments, elapsed seconds, stdout and stderr, the check summary, and the full
-proof manifest. `report.json` includes compiler and tracked Aver source hashes
-and rejects a run whose inputs changed while measuring. Inspect the generated
-`lean-toolchain` and recorded `lake --version` output for the actual checker.
-Compare medians **and the complete manifests**: a faster run with fewer universal
-laws, missing obligations, or different axiom dependencies is not equivalent.
-A zero benchmark exit status only means the requested checks completed; it does
-not assert that every law is universal. K5 Kernel intentionally retains four
-bounded laws.
+Each run keeps the generated project, the Aver output, and for every Lake
+invocation its arguments, elapsed seconds, stdout and stderr. It also keeps the
+check summary and the full proof manifest. `report.json` records the compiler
+hash and the hashes of the tracked Aver sources, and rejects a run whose inputs
+changed during measurement. To see which checker actually ran, look at the
+generated `lean-toolchain` and the recorded `lake --version` output.
+Compare medians **and the complete manifests**. A faster run that has fewer
+universal laws, missing obligations or different axiom dependencies is a
+different result. A zero exit status from the benchmark
+means the requested checks finished. It says nothing about whether every law is
+universal. K5 Kernel keeps four bounded laws on purpose.
 
 ## Reusing successful speculative proofs
 
-The Lean exporter first tries eligible laws universally, then re-emits the
-project with unsuccessful candidates restored to bounded statements. Previously,
-even successful candidates changed text: their unreachable diagnostic fallback
-`(trace "AVERSPEC_SORRY:…"; sorry)` became `sorry`. Lake consequently rebuilt
-those modules and their dependents.
+The Lean exporter first tries eligible laws universally. It then re-emits the
+project with the failed candidates put back as bounded statements. Until this
+change, the successful candidates changed text too: their unreachable diagnostic
+fallback `(trace "AVERSPEC_SORRY:…"; sorry)` was rewritten to `sorry`. Lake saw
+new source and rebuilt those modules and everything depending on them.
 
-Successful candidates now retain the same fallback text. Lake can reuse a
-module only when its source and dependencies remain unchanged. A demoted law
-still rebuilds its module and dependents. The committed build, final build and
-axiom audit all remain in place. The diagnostic runs only if proof search reaches
-`sorry`; it does not establish a theorem or grant universal credit. The audit
-continues to reject `sorryAx` and non-whitelisted axioms.
+Successful candidates now keep the same fallback text. Lake reuses a module only
+when its source and dependencies are unchanged, so a demoted law still rebuilds
+its module and dependents. The committed build, the final build and the axiom
+audit all still run. The diagnostic fires only if proof search reaches `sorry`.
+It proves nothing and gives no universal credit. The audit still rejects
+`sorryAx` and any axiom outside the whitelist.
 
-This saves repeated elaboration where candidates close. It does not accelerate
-the initial search or eliminate rebuilds downstream of a demoted dependency.
+The saving is repeated elaboration for candidates that close. The initial search
+is no faster, and modules downstream of a demoted dependency still rebuild.
 
 ## Compose explanations before splitting cases
 
-The final implication of a law with `because` receives all earlier explanations
-as hypotheses. The Lean backend first attempts to compose these facts with its
-existing solver. If that attempt cannot close the goal, it runs the original
+For a law with `because`, the final implication gets every earlier explanation
+as a hypothesis. The Lean backend first tries to combine these facts with its
+existing solver. If that fails to close the goal, it falls back to the original
 `fun_cases` strategy and solves the resulting branches.
 
-This ordering avoids expanding a product of cases when the implication already
-follows from the explanations. The earlier attempt contains no `sorry` fallback;
-only the final reporting branch may record an open obligation. Statements,
-individual explanation checks, citations and checker budgets are unchanged.
+When the implication already follows from the explanations, this order avoids
+expanding a product of cases. The first attempt has no `sorry` fallback. Only
+the final reporting branch can record an open obligation. Statements, the checks
+of individual explanations, citations and checker budgets stay the same.

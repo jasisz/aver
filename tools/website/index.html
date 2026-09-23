@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <title>Aver — programming language for code written with AI</title>
-    <meta name="description" content="Aver is a programming language for code written with AI. Intent, effects, verification, and behavioral certificate obligations stay with the source.">
+    <title>Aver: a programming language for code written with AI</title>
+    <meta name="description" content="Aver is a programming language for code written with AI. Intent, effects, verification and behavioral certificate obligations live in the source.">
     <link rel="canonical" href="https://averlang.dev/">
     <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM context">
     <link rel="stylesheet" href="style.css">
@@ -54,9 +54,9 @@
                 <p class="hero-purpose">A programming language for code written with AI.</p>
                 <p class="hero-deck">Source language · Bytecode VM · Rust · WebAssembly GC · Lean 4.34</p>
                 <p class="hero-lede">
-                    Function descriptions, effect sets, verify blocks, architecture decisions,
-                    and certificate obligations are language constructs. The wasm-gc backend can
-                    emit behavioral certificates checked by the standalone verifier.
+                    Function descriptions, effect sets, verify blocks, architecture decisions
+                    and certificate obligations are part of the language. The wasm-gc backend can
+                    emit behavioral certificates, which a standalone verifier checks.
                 </p>
                 <p class="agent-reference"><span>Agent reference</span><a href="/llms.txt">llms.txt ↗</a></p>
                 <div class="hero-links" aria-label="Primary actions">
@@ -117,8 +117,8 @@
                     </div>
                 </dl>
                 <p class="record-note">
-                    Independent experimental project. The compiler, runtime, proof backends,
-                    language tooling, and certificate verifier are developed in the public repository.
+                    An independent, experimental project. The compiler, runtime, proof backends,
+                    language tooling and certificate verifier are all developed in the public repository.
                 </p>
             </aside>
         </div>
@@ -139,8 +139,8 @@
                 <p class="section-index">01 / SOURCE</p>
                 <h2>Cart totals.</h2>
                 <p>
-                    A complete pure module: public API, function descriptions,
-                    concrete cases, and a law checked over nine input pairs.
+                    A complete pure module with a public API, function descriptions,
+                    concrete cases and one law checked over nine input pairs.
                 </p>
             </header>
 
@@ -184,22 +184,22 @@
                     <li>
                         <span class="note-lines">01—05</span>
                         <h3>Module contract</h3>
-                        <p><code>intent</code> states the purpose, <code>exposes</code> names the public API, and <code>effects []</code> keeps it pure.</p>
+                        <p><code>intent</code> says what the module is for. <code>exposes</code> lists the public API. <code>effects []</code> means the module is pure.</p>
                     </li>
                     <li>
                         <span class="note-lines">07—17</span>
                         <h3>Descriptions + patterns</h3>
-                        <p>Both typed functions carry a <code>?</code> description and exhaust lists with explicit patterns.</p>
+                        <p>Both functions have a <code>?</code> description and cover every list shape with explicit patterns.</p>
                     </li>
                     <li>
                         <span class="note-lines">19—21</span>
                         <h3>Concrete cases</h3>
-                        <p>The ordinary <code>verify</code> block fixes empty and non-empty behavior for <code>combine</code>.</p>
+                        <p>A plain <code>verify</code> block pins what <code>combine</code> does with an empty and a non-empty list.</p>
                     </li>
                     <li>
                         <span class="note-lines">23—26</span>
                         <h3>Named law</h3>
-                        <p>Three values for each input produce nine checked pairs for <code>combinePreservesTotal</code>.</p>
+                        <p>Three values per input give nine pairs, and <code>combinePreservesTotal</code> is checked on each.</p>
                     </li>
                 </ol>
             </div>
@@ -216,7 +216,7 @@
             <header class="section-heading compact">
                 <p class="section-index">02 / DESIGN POSITION</p>
                 <h2>Deliberate omissions.</h2>
-                <p>The language does not include the following constructs; each has an explicit replacement.</p>
+                <p>Aver leaves these constructs out. Each one has an explicit replacement.</p>
             </header>
 
             <div class="constraint-list" role="table" aria-label="Deliberate language omissions">
@@ -233,37 +233,37 @@
                 <div class="constraint-row" role="row">
                     <span class="constraint-ref" role="cell">D.02</span>
                     <strong role="cell">No exceptions</strong>
-                    <p role="cell"><code>Result&lt;T, E&gt;</code>; errors stay in signatures and values.</p>
+                    <p role="cell"><code>Result&lt;T, E&gt;</code>. Errors show up in signatures and values.</p>
                 </div>
                 <div class="constraint-row" role="row">
                     <span class="constraint-ref" role="cell">D.03</span>
                     <strong role="cell">No <code>if</code> / <code>else</code></strong>
-                    <p role="cell">Exhaustive <code>match</code>; a missing case is a compiler concern.</p>
+                    <p role="cell">Exhaustive <code>match</code>. The compiler reports a missing case.</p>
                 </div>
                 <div class="constraint-row" role="row">
                     <span class="constraint-ref" role="cell">D.04</span>
                     <strong role="cell">No mutable bindings</strong>
-                    <p role="cell">Values do not change behind the reader’s back.</p>
+                    <p role="cell">A value never changes behind the reader’s back.</p>
                 </div>
                 <div class="constraint-row" role="row">
                     <span class="constraint-ref" role="cell">D.05</span>
                     <strong role="cell">No closures</strong>
-                    <p role="cell">Top-level functions; inputs are visible rather than captured.</p>
+                    <p role="cell">Top-level functions. Every input is passed in where you can see it.</p>
                 </div>
                 <div class="constraint-row" role="row">
                     <span class="constraint-ref" role="cell">D.06</span>
                     <strong role="cell">No async runtime</strong>
-                    <p role="cell">Independent products express parallel work without hidden scheduling syntax.</p>
+                    <p role="cell">Parallel work is written as independent products. There is no hidden scheduling syntax.</p>
                 </div>
                 <div class="constraint-row" role="row">
                     <span class="constraint-ref" role="cell">D.07</span>
                     <strong role="cell">No loops</strong>
-                    <p role="cell">Recursion, pattern matching, and tail-call optimization.</p>
+                    <p role="cell">Recursion and pattern matching, with tail-call optimization.</p>
                 </div>
                 <div class="constraint-row" role="row">
                     <span class="constraint-ref" role="cell">D.08</span>
                     <strong role="cell">No runtime magic</strong>
-                    <p role="cell">No decorators, reflection, or implicit behavior.</p>
+                    <p role="cell">No decorators, no reflection, no implicit behavior.</p>
                 </div>
             </div>
         </div>
@@ -274,7 +274,7 @@
             <header class="section-heading">
                 <p class="section-index">03 / TOOLCHAIN</p>
                 <h2>Check, verify, prove, compile.</h2>
-                <p>The main source-analysis and build commands, in order.</p>
+                <p>The main commands for analysing and building source, in the order you run them.</p>
             </header>
 
             <div class="pipeline">
@@ -282,25 +282,25 @@
                     <span class="pipeline-index">01</span>
                     <p class="pipeline-command">aver check</p>
                     <h3>Static checks</h3>
-                    <p>Types, descriptions, module intent, effect propagation, and diagnostics.</p>
+                    <p>Types, descriptions, module intent, effect propagation and diagnostics.</p>
                 </article>
                 <article>
                     <span class="pipeline-index">02</span>
                     <p class="pipeline-command">aver verify</p>
                     <h3>Source verification</h3>
-                    <p>Colocated examples and laws become executable regression evidence.</p>
+                    <p>Examples and laws written next to the code run as regression checks.</p>
                 </article>
                 <article>
                     <span class="pipeline-index">03</span>
                     <p class="pipeline-command">aver proof</p>
                     <h3>Proof export</h3>
-                    <p>Lean and Dafny backends carry selected laws beyond example checking.</p>
+                    <p>The Lean and Dafny backends take selected laws past example checking.</p>
                 </article>
                 <article>
                     <span class="pipeline-index">04</span>
                     <p class="pipeline-command">aver compile</p>
                     <h3>Artifact compilation</h3>
-                    <p>Deploy through Rust or WebAssembly; certify supported wasm-gc artifacts.</p>
+                    <p>Deploy through Rust or WebAssembly. Supported wasm-gc artifacts can also be certified.</p>
                 </article>
             </div>
 
@@ -328,8 +328,8 @@
                 <h2>Artifact Behavioral Certificates.</h2>
                 <p>
                     A certificate states what selected exports of one WebAssembly module
-                    compute. Verification binds accepted claims to the supplied bytes and
-                    to a checker-owned statement schema.
+                    compute. Verification ties each accepted claim to the supplied bytes and
+                    to a statement schema that the checker owns.
                 </p>
             </header>
 
@@ -340,15 +340,15 @@
                     <ul class="certificate-facts">
                         <li>
                             <span>Identity</span>
-                            <p>The <code>.wasm</code> file passed to <code>aver-cert</code> is validated, hashed, and encoded for Lean.</p>
+                            <p><code>aver-cert</code> validates the <code>.wasm</code> file it is given, hashes it and encodes it for Lean.</p>
                         </li>
                         <li>
                             <span>Authority</span>
-                            <p>The checker owns the statement schema, soundness wall, toolchain, and fresh witness.</p>
+                            <p>The statement schema, soundness wall, toolchain and fresh witness all belong to the checker.</p>
                         </li>
                         <li>
                             <span>Scope</span>
-                            <p>Unsupported exports are declined explicitly; no claim is made about them.</p>
+                            <p>Unsupported exports are declined explicitly. The certificate makes no claim about them.</p>
                         </li>
                     </ul>
                 </div>
@@ -417,7 +417,7 @@
                     <div><span>02</span><code>aver-cert verify out/app.wasm out/cert</code></div>
                 </div>
                 <div class="certificate-limit">
-                    <p><strong>Precise limit:</strong> this is behavioral proof, not a signature or reproducible-build attestation.</p>
+                    <p><strong>Precise limit:</strong> this is a behavioral proof. It is not a signature and not a reproducible-build attestation.</p>
                     <p>
                         <a href="/certificate.html">Read the ABC record ↗</a>
                         <a href="https://github.com/jasisz/aver/blob/main/docs/certification.md" target="_blank" rel="noopener">Source guide ↗</a>
@@ -433,7 +433,7 @@
             <header class="section-heading compact">
                 <p class="section-index">05 / BUILD LEDGER</p>
                 <h2>WebAssembly GC examples.</h2>
-                <p>Eight browser programs emitted directly from Aver source.</p>
+                <p>Eight browser programs, compiled straight from Aver source.</p>
             </header>
 
             <div class="program-ledger">
@@ -467,7 +467,7 @@
                     <span>Roguelike</span><span class="size"><i></i><b>34.7 KiB</b></span><span>Run ↗</span>
                 </a>
             </div>
-            <p class="ledger-note">Size bars are relative to the largest artifact in this set. Modern WebAssembly GC browser required.</p>
+            <p class="ledger-note">Size bars are relative to the largest artifact in this set. You need a recent browser with WebAssembly GC.</p>
         </div>
     </section>
 
@@ -476,9 +476,8 @@
             <div>
                 <p class="section-index">06 / PROJECT NOTE</p>
                 <blockquote>
-                    “This is not a language optimized for humans to type by hand all day.
-                    It is optimized for AI to generate code that humans can inspect,
-                    constrain, test, and ship.”
+                    “Aver is optimized for AI to generate code that humans can inspect,
+                    constrain, test and ship. Typing it by hand all day is not the goal.”
                 </blockquote>
                 <p class="quote-source">— Aver README</p>
             </div>
@@ -514,8 +513,8 @@
             <div>
                 <p class="section-index">07 / INSTALL</p>
                 <h2>Install Aver.</h2>
-                <p>Install the released compiler from crates.io, then run and verify the bundled example.</p>
-                <p class="install-requirement"><code>--features wasm</code> enables WebAssembly GC and ABC production. Independent ABC verification uses <code>aver-cert</code> and requires Elan for its pinned Lean 4.34 toolchain.</p>
+                <p>Install the released compiler from crates.io, then run and verify the example that ships with it.</p>
+                <p class="install-requirement"><code>--features wasm</code> turns on WebAssembly GC output and ABC production. To check an ABC independently you need <code>aver-cert</code>, plus Elan for its pinned Lean 4.34 toolchain.</p>
             </div>
             <div class="install-terminal">
                 <div><span>01</span><code>cargo install aver-lang --features wasm</code></div>

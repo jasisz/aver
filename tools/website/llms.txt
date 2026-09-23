@@ -1,6 +1,6 @@
 # Aver
 
-> Aver is a statically typed language optimized for a world where code is cheap to generate and expensive to trust. The optimization target is the reviewer, not the generator.
+> Aver is a statically typed language for a world where code is cheap to generate and expensive to trust. It is optimized for the person who reviews the code.
 
 - Website: [averlang.dev](https://averlang.dev)
 - Playground: [averlang.dev/playground](https://averlang.dev/playground/)
@@ -12,22 +12,22 @@
 
 ## Before you write Aver
 
-If you only remember one section, make it this one:
+If you read only one section, read this one.
 
 - Files end with `.av`, not `.aver`
 - Each file starts with exactly one `module <Name>` declaration
 - Module metadata uses `intent =` and `exposes [...]`
-- Bindings are `name = expr` or `name: Type = expr` — no `let`, `val`, or `var`
+- Bindings are `name = expr` or `name: Type = expr`. There is no `let`, `val` or `var`
 - Constructors are always qualified: `Result.Ok`, `Result.Err`, `Option.Some`, `Option.None`
 - There is no `if` / `else`; use `match`
-- **Match arm bodies must start on the same line as `->` — this is the most common error.** For complex logic, extract a helper function
-- Functions do not have type parameters — write `fn sum(xs: List<Int>) -> Int`, not `fn sum<T>(xs: List<T>) -> T`
+- **Match arm bodies must start on the same line as `->`. This is the most common error.** Move longer logic into a helper function
+- Functions do not have type parameters. Write `fn sum(xs: List<Int>) -> Int`, never `fn sum<T>(xs: List<T>) -> T`
 - Effects are explicit: `! [Console.print]`, `! [Http.get]`
-- Pure functions get colocated `verify` blocks
-- Classified effectful fns (Random, Disk, Http, Tcp one-shot, Time, Console.readLine, Terminal non-modal, all output) get `verify fn trace` with `given` stubs; unclassified ambient / session / modal flows go through record/replay
+- Pure functions get `verify` blocks placed right next to them
+- Classified effectful fns (Random, Disk, Http, Tcp one-shot, Time, Console.readLine, Terminal non-modal, all output) get `verify fn trace` with `given` stubs. Unclassified ambient, session and modal flows go through record/replay
 - Parse integers with `Int.fromString`, which returns `Result<Int, String>`
 - Convert unsigned integers to fixed-width protocol bytes with `Int.toBigEndian(value, width)` or `Int.toLittleEndian(value, width)`; both return `Result<Bytes, String>` unless both literal arguments prove the call cannot fail. Decode total `Bytes` values with `Int.fromBigEndian` / `Int.fromLittleEndian`
-- `Console.readLine()` returns `Result<String, String>`, not plain `String`
+- `Console.readLine()` returns `Result<String, String>`, not a plain `String`
 
 ## Minimal correct file
 
@@ -50,7 +50,7 @@ fn main() -> Unit
     Console.print(greet("world"))
 ```
 
-This shows the core pattern:
+The basic pattern:
 
 - a pure function
 - a `verify` block directly below it
@@ -72,20 +72,20 @@ fn name(param: Type) -> ReturnType
 ```
 
 Rules:
-- indentation-only function bodies — no braces, no `end`
-- last expression is the return value, no `return` keyword
+- function bodies use indentation only: no braces, no `end`
+- the last expression is the return value; there is no `return` keyword
 - all functions are top-level; no closures, lambdas, or anonymous fns
 - top-level fns of the right shape can be passed where `Fn(...)` is expected
 - `main` returns `Unit` or `Result<Unit, String>`
 
 `?` descriptions:
-- start with `? "..."` on the line after signature
+- start with `? "..."` on the line after the signature
 - continuation lines are more string literals at deeper indent
 - `aver check` warns when non-`main` functions omit the description
 
 ### Bindings
 
-All bindings are immutable. No `let`, `val`, or `var`.
+All bindings are immutable. There is no `let`, `val`, or `var`.
 
 ```aver
 name = "Alice"
@@ -95,17 +95,17 @@ xs: List<Int> = []
 
 ### Types
 
-Primitives: `Int`, `Float`, `String`, `Bool`, `Unit` — each has exactly one spelling; the string type is `String`, never abbreviated
+Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`. Each has exactly one spelling. The string type is `String`, never abbreviated.
 
 Compound:
-- `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` — `K` must be a type that orders; records, variants, lists and tuples all do, `Float` does not
-- tuples: type is `Tuple<A, B, ...>` (2+ elements). Value literal and pattern are both paren: `(a, b)`. The type spelling and the value spelling are deliberately different.
+- `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`. `K` must be a type that orders: records, variants, lists and tuples all do, `Float` does not
+- tuples: the type is `Tuple<A, B, ...>` (2+ elements). The value literal and the pattern both use parens: `(a, b)`. The type spelling and the value spelling are deliberately different.
 - function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`; `! [_]` on a callback parameter forwards the concrete named callback's effects at the helper call site
 
 Notes:
 - top-level named functions can be passed where `Fn(...)` is expected
 - there are no lambdas and no closures
-- no implicit type promotion; use `Float.fromInt(n)` / `Int.fromFloat(f)`
+- there is no implicit type promotion; use `Float.fromInt(n)` / `Int.fromFloat(f)`
 
 ### User-defined types
 
@@ -131,7 +131,7 @@ Rules:
 - records use named fields: `User(name = "A", age = 1)`
 - field access: `u.name`, `u.age`
 - record update: `User.update(u, age = 31)`
-- record positional pattern destructuring is not supported
+- positional destructuring of records in patterns is not supported
 
 ### Match
 
@@ -143,14 +143,14 @@ match value
 
 Rules:
 - `match` is the only branching construct (no `if` / `else`)
-- **arm bodies must start on the same line as `->`** — multi-line bodies are a parse error; extract a helper function instead
+- **arm bodies must start on the same line as `->`.** A multi-line body is a parse error; extract a helper function instead
 - no colon after the subject
 - no guards
 - list patterns: `[]` and `[head, ..tail]` (the `..` rest must be named)
 - tuple patterns: `(a, b)`
-- constructor patterns always qualified: `Result.Ok`, `Option.None`, `Shape.Circle`
-- literal patterns: `253 -> …` (`Int`), `"verack" -> …` (`String`), `1.5 -> …` (`Float`), `true` / `false` (`Bool`). An `Int` / `String` / `Float` match still needs a trailing `_ ->` or identifier arm; `-1 ->` is a parse error (no negative literal patterns) and so is an integer beyond 64 bits
-- prefer one literal-pattern `match` over a chain of `match x == "lit"` with `true ->` / `false ->` helper functions — same behaviour, far less code
+- constructor patterns are always qualified: `Result.Ok`, `Option.None`, `Shape.Circle`
+- literal patterns: `253 -> …` (`Int`), `"verack" -> …` (`String`), `1.5 -> …` (`Float`), `true` / `false` (`Bool`). An `Int` / `String` / `Float` match still needs a trailing `_ ->` or identifier arm. `-1 ->` is a parse error (there are no negative literal patterns), and so is an integer beyond 64 bits
+- prefer one literal-pattern `match` over a chain of `match x == "lit"` with `true ->` / `false ->` helper functions. It behaves the same with far less code
 - boolean branching: `match x > 0` with `true ->` / `false ->`
 - nested match in match arms is supported
 
@@ -164,9 +164,9 @@ Effects are exact method-level names:
 
 Rules:
 - namespace shorthand `! [Disk]` covers all `Disk.*` effects
-- `aver check` suggests narrowing when shorthand could be more specific
+- `aver check` suggests narrowing when the shorthand could be more specific
 - effects propagate: callers must declare all effects of their callees
-- no `effects X = [...]` aliases
+- there are no `effects X = [...]` aliases
 - pure code stays pure; orchestration declares only the concrete effects it uses
 
 ### Modules
@@ -183,12 +183,12 @@ module Billing
 
 Rules:
 - `module` must be the first top-level item in file-based programs
-- `aver run` will execute a single file with no `module` as a convenience for quick throwaway scripts, but `aver check` requires the declaration (`error[missing-module]`) — declare `module <Name>` for anything you intend to keep, import, or check
-- `intent` may be inline or multiline; formatter prefers multiline for multiline text
+- `aver run` will execute a single file with no `module` as a convenience for quick throwaway scripts, but `aver check` requires the declaration (`error[missing-module]`). Declare `module <Name>` for anything you intend to keep, import, or check
+- `intent` may be inline or multiline; the formatter prefers multiline for multiline text
 - `depends [...]` and `exposes [...]` are explicit
 - module `A.B` lives at `a/b.av` under `--module-root` (the exact-case `A/B.av` is the fallback); the entry file may have any name
-- opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside
-- `effects [...]` declares the module's effect surface. Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Underdeclared = type error; overdeclared = warning. A module with functions but no `effects [...]` triggers a warning to add the boundary (use `effects []` for a pure module).
+- opaque types: with `exposes opaque [Discount]` the type is visible in signatures but cannot be constructed or destructured from outside
+- `effects [...]` declares the module's effect surface. Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, and a namespace entry like `Disk` admits any `Disk.*` method. Underdeclaring is a type error; overdeclaring is a warning. A module with functions but no `effects [...]` gets a warning to add the boundary (use `effects []` for a pure module).
 
 ### Verify blocks
 
@@ -210,18 +210,18 @@ verify add law commutative
 
 Rules:
 - `verify` checks executable examples only
-- law verify expands cartesian product of `given` domains (capped at 10,000 cases)
-- `given x: T = [...]` describes the world / domain to test (values, or stubs for classified effects). `aver proof` quantifies universally over every value/stub — `given <Effect>` does **not** pin the law to one stub
-- `when <pred>` is an explicit precondition on the law; cases where it's false are skipped (in runtime, proof, and `--hostile`). Use it to scope a law to assumed worlds (`when clock(BranchPath.Root, 1) > clock(BranchPath.Root, 0)`)
-- `aver check` requires pure, non-trivial, non-`main` functions to carry a `verify` block — `error[missing-verify]` fails the check; a law block counts
+- law verify expands the cartesian product of the `given` domains (capped at 10,000 cases)
+- `given x: T = [...]` describes the world or domain to test (values, or stubs for classified effects). `aver proof` quantifies universally over every value and stub, so `given <Effect>` does **not** pin the law to one stub
+- `when <pred>` is an explicit precondition on the law. Cases where it is false are skipped (in runtime, proof, and `--hostile`). Use it to scope a law to assumed worlds (`when clock(BranchPath.Root, 1) > clock(BranchPath.Root, 0)`)
+- `aver check` requires pure, non-trivial, non-`main` functions to carry a `verify` block. `error[missing-verify]` fails the check; a law block counts
 - `<expr> holds` is a case whose `Bool` value must be `true`, so a law may state `a != b holds`
-- plain `verify fn` on a fn with a generative effect (Random, Http, Time.now, etc.) warns — the case RHS is compared against a freshly-produced value and flaps. Use `verify fn law …` with `given` stubs or `verify fn trace` instead
+- plain `verify fn` on a fn with a generative effect (Random, Http, Time.now, etc.) warns, because the case RHS is compared against a freshly produced value and flaps. Use `verify fn law …` with `given` stubs or `verify fn trace` instead
 - unclassified ambient state, persistent protocols, terminal modes, and server callbacks should use record/replay
-- `aver audit --hostile` (or `aver verify --hostile`) layers adversarial worlds on top of every `verify <fn> law` block: typed `given`s get type-boundary values; classified effects get hostile profiles. Failures use slug `verify-hostile-mismatch`. Repair: `when <pred>` to scope the law, downgrade `law` → cases-form if it's stub-specific, or fix the impl. See `docs/oracle.md` for profile/boundary tables.
+- `aver audit --hostile` (or `aver verify --hostile`) layers adversarial worlds on top of every `verify <fn> law` block: typed `given`s get type-boundary values, and classified effects get hostile profiles. Failures use slug `verify-hostile-mismatch`. To repair: scope the law with `when <pred>`, downgrade `law` → cases-form if it is stub-specific, or fix the impl. See `docs/oracle.md` for the profile and boundary tables.
 
 #### Oracle verify-trace (effectful functions)
 
-Classified effectful fns get formal proof export via `verify <fn> trace`. Stubs bind oracles at verify time so the fn produces deterministic values and the trace can be asserted about.
+Classified effectful fns get formal proof export through `verify <fn> trace`. Stubs bind oracles at verify time, so the fn produces deterministic values and you can assert about the trace.
 
 ```aver
 fn roll() -> Int
@@ -242,28 +242,28 @@ fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Result<Int, String>
 ```
 
 Rules:
-- `given name: Effect.method = [stubFn, ...]` binds a stub for the classified effect. Multi-value list expands cartesian with cases; one `given` per effect — duplicates are rejected
+- `given name: Effect.method = [stubFn, ...]` binds a stub for the classified effect. A multi-value list expands cartesian with the cases. One `given` per effect; duplicates are rejected
 - Stub signature for generative and generative-output effects (`Random.*`, `Process.stopRequested`, `Http.*`, `Disk.*`, `Tcp.*`, `Console.readLine`, `Time.*`, `Env.set`, and every `Terminal.*` operation except `size`): `(path: BranchPath, k: Int, args...) -> ReturnType`
-- `k` is the call index of that one operation on that branch path, counted from 0. Other operations never move it, so `match k` is a reply script for that operation alone and stays correct when the function under test adds a clock read or a log line between two calls
-- Script a stub by call index within one function body, and let the claim reach the operation through one call. An exported proof numbers one body at a time, so it cannot follow a run across a call into an effectful helper, on each turn of a recursion, past a `match` whose arms call the operation a different number of times, or across two calls in one claim, which a run numbers in sequence while the export numbers each from 0; `aver proof` declines such a law with a named reason instead of numbering it differently, and sampled cases still export. `docs/oracle.md` names the five shapes
-- Stub signature for snapshot effects (`Args.get`, `Env.get`, `Terminal.size`): `(args...) -> ReturnType` — no path or call-index prefix
-- Output-only effects (`Console.print/.error/.warn`) don't need stubs; they append to the trace directly
-- `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths
+- `k` is the call index of that one operation on that branch path, counted from 0. Other operations never move it, so `match k` is a reply script for that operation alone, and it stays correct when the function under test adds a clock read or a log line between two calls
+- Script a stub by call index within one function body, and let the claim reach the operation through one call. An exported proof numbers one body at a time. It cannot follow a run across a call into an effectful helper, on each turn of a recursion, past a `match` whose arms call the operation a different number of times, or across two calls in one claim (a run numbers those in sequence while the export numbers each from 0). `aver proof` declines such a law with a named reason instead of numbering it differently, and sampled cases still export. `docs/oracle.md` names the five shapes
+- Stub signature for snapshot effects (`Args.get`, `Env.get`, `Terminal.size`): `(args...) -> ReturnType`, with no path or call-index prefix
+- Output-only effects (`Console.print/.error/.warn`) need no stubs; they append to the trace directly
+- `BranchPath.Root` is a nullary value constructor: no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths
 - Case LHS projections:
-  - `fn(args).result` — return value
-  - `fn(args).trace` — full trace as a `Trace` record
-  - `fn(args).trace.length()` — Int, event count
-  - `fn(args).trace.event(k)` — `Option<EffectEvent>` at 0-based index
-  - `fn(args).trace.contains(Effect.method)` — Bool, method-only predicate (ignores args)
-  - `fn(args).trace.contains(Effect.method("arg"))` — Bool, exact event-literal match
-  - `fn(args).trace.group(N).branch(idx).*` — tree-nav into `!`/`?!` independent products (0-based N, idx)
-- Local bindings with `name = expr` go between `given` clauses and case assertions; they're substituted into every case (so each case still runs its own fresh `fn()` invocation)
-- Every generative/gen+output effect the fn uses must have a `given` stub under `trace`; missing stubs are rejected with a pointer at the fix
-- Whole server loops are not trace laws: verify pure `HttpWire` and handler functions separately, and use record/replay for the persistent `Tcp` session loop
+  - `fn(args).result`: the return value
+  - `fn(args).trace`: the full trace as a `Trace` record
+  - `fn(args).trace.length()`: Int, the event count
+  - `fn(args).trace.event(k)`: `Option<EffectEvent>` at a 0-based index
+  - `fn(args).trace.contains(Effect.method)`: Bool, a method-only predicate (ignores args)
+  - `fn(args).trace.contains(Effect.method("arg"))`: Bool, an exact event-literal match
+  - `fn(args).trace.group(N).branch(idx).*`: tree navigation into `!`/`?!` independent products (0-based N, idx)
+- Local bindings with `name = expr` go between the `given` clauses and the case assertions. They are substituted into every case, so each case still runs its own fresh `fn()` invocation
+- Every generative or gen+output effect the fn uses must have a `given` stub under `trace`; a missing stub is rejected with a pointer at the fix
+- Whole server loops are not trace laws. Verify pure `HttpWire` and handler functions separately, and use record/replay for the persistent `Tcp` session loop
 
 ### Decision blocks
 
-A `decision` is top-level syntax, a sibling of `fn` and `type` — not a comment, not a markdown file next to the code. It records why the code looks the way it does: what was chosen, what was rejected, and which parts of the program the choice reaches. Write one whenever a reader would otherwise ask "why not the obvious thing?", and put it in the module the choice is about (a project may also gather them in one module, the way this repository uses `decisions/architecture.av`).
+A `decision` is top-level syntax, a sibling of `fn` and `type`, written in the source rather than in a comment or a markdown file next to the code. It records why the code looks the way it does: what was chosen, what was rejected, and which parts of the program the choice reaches. Write one whenever a reader would otherwise ask "why not the obvious thing?". Put it in the module the choice is about (a project may also gather them in one module, the way this repository uses `decisions/architecture.av`).
 
 ```aver
 decision UseResultNotExceptions
@@ -277,18 +277,18 @@ decision UseResultNotExceptions
     author = "team"
 ```
 
-Fields — all optional, any order:
+Fields (all optional, any order):
 
-- `date = "YYYY-MM-DD"` — a quoted string, when the decision was made
-- `reason =` followed by an indented block of quoted strings, one claim per line — the argument itself
-- `chosen = X` — one symbol or one quoted label: what won
-- `rejected = [X, Y]` — symbols or quoted labels: what lost, and is therefore not to be re-proposed
-- `impacts = [X, Y]` — symbols or quoted labels: what the decision reaches
-- `author = "name"` — a quoted string, who to ask
+- `date = "YYYY-MM-DD"`: a quoted string, when the decision was made
+- `reason =` followed by an indented block of quoted strings, one claim per line: the argument itself
+- `chosen = X`: one symbol or one quoted label, what won
+- `rejected = [X, Y]`: symbols or quoted labels for what lost, which is therefore not to be proposed again
+- `impacts = [X, Y]`: symbols or quoted labels for what the decision reaches
+- `author = "name"`: a quoted string, who to ask
 
-A bare identifier in `chosen`, `rejected`, or `impacts` is a real reference: it must name a function, type, or effect the checker can see, and `aver check` reports an error on one that does not resolve. A quoted string is a free-form semantic label for anything the program does not contain (`"Exceptions"`, `"Braces"`, a rejected library). Prefer identifiers when the thing exists, so a rename or a deletion cannot quietly rot the record.
+A bare identifier in `chosen`, `rejected`, or `impacts` is a real reference. It must name a function, type, or effect the checker can see, and `aver check` reports an error on one that does not resolve. A quoted string is a free-form semantic label for anything the program does not contain (`"Exceptions"`, `"Braces"`, a rejected library). Prefer identifiers when the thing exists, so a rename or a deletion cannot quietly rot the record.
 
-A real one, from this repository's own `decisions/architecture.av` — Aver explaining its own design in Aver:
+A real one, from this repository's own `decisions/architecture.av`, where Aver explains its own design in Aver:
 
 ```aver
 decision SignificantIndentation
@@ -310,24 +310,24 @@ aver context decisions/architecture.av --decisions-only
 aver context main.av --module-root . --decisions-only --json
 ```
 
-`--decisions-only` drops functions, types, and module intent from the context export and keeps only the `decision` blocks reachable from the entry through `depends [...]`, selected under the same `--budget` as an ordinary `aver context` run. That is the point of writing rationale as syntax instead of prose: it is checked, it is indexed, and one command hands a reader the whole argument behind a codebase without any of its code.
+`--decisions-only` drops functions, types, and module intent from the context export. It keeps only the `decision` blocks reachable from the entry through `depends [...]`, selected under the same `--budget` as an ordinary `aver context` run. Rationale written as syntax is checked and indexed, and one command hands a reader the whole argument behind a codebase without any of its code.
 
 ### Operators
 
-- Arithmetic: `+`, `-`, `*` (operands must match types). `/` is **Float-only** — integer division is the `Int.div(a, b) : Result<Int, String>` function, not an operator (see gotchas below)
+- Arithmetic: `+`, `-`, `*` (operands must match types). `/` is **Float-only**. Integer division is the function `Int.div(a, b) : Result<Int, String>`; there is no integer division operator (see gotchas below)
 - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- Error propagation: `expr?` (unwraps `Result.Ok`, propagates `Result.Err`). **Result-only** — does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match.
+- Error propagation: `expr?` unwraps `Result.Ok` and propagates `Result.Err`. It is **Result-only** and does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match.
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
-- String interpolation: `"Hello, {name}!"` — **primitives only** (`Int`, `Float`, `Bool`, `String`). Embedding a list, record, tuple, `Map`, `Option`/`Result`, `Vector` or any named type is a type error; write a function returning `String` and interpolate its result.
+- String interpolation: `"Hello, {name}!"` takes **primitives only** (`Int`, `Float`, `Bool`, `String`). Embedding a list, record, tuple, `Map`, `Option`/`Result`, `Vector` or any named type is a type error. Write a function returning `String` and interpolate its result.
 
-**These operators do NOT exist** — do not use them. Writing one is an error that names the function replacing it (slug `rejected-operator`):
+**These operators do NOT exist.** Do not use them. Writing one is an error that names the function that replaces it (slug `rejected-operator`):
 
-- no integer `/` — integer division is partial (it can divide by zero, and overflow on `i64::MIN / -1`), so use `Int.div(a, b)` which returns `Result<Int, String>`. Euclidean (flooring), the exact partner of `Int.mod`: `Int.div(-7, 2) = Result.Ok(-4)` and `Int.div(a,b)*b + Int.mod(a,b) == a` for every sign. `b == 0` returns `Result.Err("division by zero")`. The `/` operator stays total and works on `Float`
-- no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`. Euclidean modulo: result is always in `[0, |b|)`. `Int.mod(-7, 3) = Result.Ok(2)`, not `-1`. `b == 0` returns `Result.Err("division by zero")`
-- no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
-- no `!` (boolean not) as prefix — use `Bool.not(x)`
+- no integer `/`. Integer division is partial (it can divide by zero, and overflow on `i64::MIN / -1`), so use `Int.div(a, b)`, which returns `Result<Int, String>`. It is Euclidean (flooring), the exact partner of `Int.mod`: `Int.div(-7, 2) = Result.Ok(-4)` and `Int.div(a,b)*b + Int.mod(a,b) == a` for every sign. `b == 0` returns `Result.Err("division by zero")`. The `/` operator stays total and works on `Float`
+- no `%` (modulo). Use `Int.mod(a, b)`, which returns `Result<Int, String>`. It is Euclidean modulo: the result is always in `[0, |b|)`, so `Int.mod(-7, 3) = Result.Ok(2)`, not `-1`. `b == 0` returns `Result.Err("division by zero")`
+- no `&&`, `||` (boolean and/or). Use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
+- no prefix `!` (boolean not). Use `Bool.not(x)`
 - no `+=`, `-=`, `++`, `--` (mutation operators)
-- no bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) — use the `Bits` namespace: `Bits.and(a, b)`, `Bits.or(a, b)`, `Bits.xor(a, b)`, `Bits.not(x)` are `Int -> Int`; `Bits.shiftLeft(x, n)`, `Bits.shiftRight(x, n)`, `Bits.low(x, width)` return `Result<Int, String>` (a negative count is `Result.Err`, and a syntactic non-negative literal count discharges to plain `Int` exactly as with `Int.div`). `Bits` is a NAMESPACE, not a type: arguments and results are ordinary mathematical `Int` values, read as an infinite two's-complement bit sequence for the duration of one call — so `Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`, `Bits.shiftRight(-3, 1) == -2` (arithmetic, not logical), and `Bits.shiftLeft(1, 100)` is exact, not truncated. Fixed width is requested explicitly with `Bits.low(x, 25)` rather than implied by a mask
+- no bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`). Use the `Bits` namespace: `Bits.and(a, b)`, `Bits.or(a, b)`, `Bits.xor(a, b)`, `Bits.not(x)` are `Int -> Int`; `Bits.shiftLeft(x, n)`, `Bits.shiftRight(x, n)`, `Bits.low(x, width)` return `Result<Int, String>` (a negative count is `Result.Err`, and a syntactic non-negative literal count discharges to plain `Int` exactly as with `Int.div`). `Bits` is a NAMESPACE, not a type. Arguments and results are ordinary mathematical `Int` values, read as an infinite two's-complement bit sequence for the duration of one call. So `Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`, `Bits.shiftRight(-3, 1) == -2` (arithmetic, not logical), and `Bits.shiftLeft(1, 100)` is exact, not truncated. Request a fixed width explicitly with `Bits.low(x, 25)`; a mask does not imply one
 
 ### Recursion
 
@@ -342,9 +342,9 @@ fn sum(xs: List<Int>) -> Int
 
 ### Processes, answer modules and the coordinator
 
-A function whose effect list names `yield` is a process. It is written in direct style — ask, then the next step — but it never runs as written: every call to an operation of a capability the program answers itself is a request, the self tail call is a `Yield` request, and the compiler cuts the function at each one into state types and pure answer functions under the reserved `__` namespace. A program that serves several processes writes processes, answer modules and job kinds — and puts a `[run]` table in its `aver.toml`; the loop that seats the processes, waits once per turn, answers the requests and starts the jobs is generated. The smallest program of that shape is one ticker, one clock and one job kind; it is `tests/fixtures/run_guide_example/` in the repository. Every block below is cut from it as it stands in the file, the whole of it checks, verifies and runs, and a test pins the blocks to it.
+A function whose effect list names `yield` is a process. You write it in direct style (ask, then the next step), but it never runs as written. Every call to an operation of a capability the program answers itself is a request, and the self tail call is a `Yield` request. The compiler cuts the function at each one into state types and pure answer functions under the reserved `__` namespace. A program that serves several processes writes processes, answer modules and job kinds, and puts a `[run]` table in its `aver.toml`. The loop that seats the processes, waits once per turn, answers the requests and starts the jobs is generated. The smallest program of that shape is one ticker, one clock and one job kind, at `tests/fixtures/run_guide_example/` in the repository. Every block below is cut from it as it stands in the file. The whole program checks, verifies and runs, and a test pins the blocks to it.
 
-**A process** is a yielding function of the entry module with no parameters and a `Unit` result. Its effect list names the operations it asks for and `yield`. An operation of a capability the program answers becomes a request; everything else — `Console.print` here — runs in place, inside the turn:
+**A process** is a yielding function of the entry module with no parameters and a `Unit` result. Its effect list names the operations it asks for and `yield`. An operation of a capability the program answers becomes a request. Everything else (`Console.print` here) runs in place, inside the turn:
 
 ```aver
 fn ticker() -> Unit
@@ -355,7 +355,7 @@ fn ticker() -> Unit
         Clock.Tick.Closed(total) -> Console.print("scored {total}")
 ```
 
-`Clock` is a capability module of the program. It declares the operation and, beside it, the sum the answer is read through: `TickReply`, named after the operation, with `Now(R)`, `Later(Wait.Wake)` and `Then(Wait.Wake, R)`, where `R` is exactly the operation's result. The program writes that sum — a program never writes a `__` name, and the compiler generates none here — and the door holds it to that shape: a missing or differently shaped `<Op>Reply` on a capability the program answers is `error[answer-shape]`, which prints the declaration to paste. Naming `Wait.Wake` needs no `depends [Wait]`, because `Wait` is a reserved module of the standard library:
+`Clock` is a capability module of the program. Beside the operation it declares the sum the answer is read through: `TickReply`, named after the operation, with `Now(R)`, `Later(Wait.Wake)` and `Then(Wait.Wake, R)`, where `R` is exactly the operation's result. The program writes that sum. A program never writes a `__` name, and the compiler generates none here. The door holds the sum to that shape: a missing or differently shaped `<Op>Reply` on a capability the program answers is `error[answer-shape]`, which prints the declaration to paste. Naming `Wait.Wake` needs no `depends [Wait]`, because `Wait` is a reserved module of the standard library:
 
 ```aver
 module Clock
@@ -387,7 +387,7 @@ capability = "Clock"
 answer = "Clocked"
 ```
 
-The module depends on the capability it answers and on `Wait`, whose `Wait.Wake` its replies carry, and may omit `exposes`: the generated loop reaches its functions either way, and exports used by the manifest or loop do not raise `warning[unused-expose]`. One function per operation, all threading one state `S`: `fn op(state: S, args) -> Tuple<S, Cap.<Op>Reply>`, plus a pure `fresh() -> S` the loop starts the module from. `Cap.<Op>Reply` is the sum the capability module declared beside the operation, and the reply is `Now(v)`, an immediate answer, `Later(wake)`, permission to retry later, or `Then(wake, v)`, a saved answer to reveal when the wake fires. All three keep the state the function returned, so a `Later` is where the module records its own progress — an offset, a retry count, a deadline of its own — while the request itself stays where it is. An answer function is pure and non-trivial, so it carries a `verify` block like any other, with the tuple it returns on the right-hand side:
+The module depends on the capability it answers and on `Wait`, whose `Wait.Wake` its replies carry. It may omit `exposes`: the generated loop reaches its functions either way, and exports used by the manifest or the loop do not raise `warning[unused-expose]`. Write one function per operation, all threading one state `S`: `fn op(state: S, args) -> Tuple<S, Cap.<Op>Reply>`, plus a pure `fresh() -> S` the loop starts the module from. `Cap.<Op>Reply` is the sum the capability module declared beside the operation. The reply is `Now(v)`, an immediate answer; `Later(wake)`, permission to retry later; or `Then(wake, v)`, a saved answer to reveal when the wake fires. All three keep the state the function returned, so a `Later` is where the module records its own progress (an offset, a retry count, a deadline of its own) while the request itself stays where it is. An answer function is pure and non-trivial, so it carries a `verify` block like any other, with the tuple it returns on the right-hand side:
 
 ```aver
 module Clocked
@@ -415,15 +415,15 @@ verify tick
     tick(State.update(fresh(), tasks = [], total = 60)) => (State.update(fresh(), tasks = [], total = 60), Clock.TickReply.Now(Clock.Tick.Closed(60)))
 ```
 
-`Later` waits for permission to ask again; `Then` waits for permission to reveal an answer already known. A `Later` repeats the original arguments against the answer module's current state; it never resumes an operation instance. Identity belongs in an argument or a handle. If a peer key is rebound to a new connection before an old socket wakes it, the repeated request is answered against the new state by design; false readiness and another `Later` remain ordinary. The name `<Op>Reply` only locates the sum: the door checks its shape against the operation's signature, and the process and saved answer are typed by that signature, not by the name.
+`Later` waits for permission to ask again. `Then` waits for permission to reveal an answer already known. A `Later` repeats the original arguments against the answer module's current state; it never resumes an operation instance. Identity belongs in an argument or a handle. If a peer key is rebound to a new connection before an old socket wakes it, the repeated request is answered against the new state by design. False readiness and another `Later` remain ordinary. The name `<Op>Reply` only locates the sum. The door checks its shape against the operation's signature, and the process and the saved answer are typed by that signature, not by the name.
 
 The wake in `Later` or `Then` is a `Wait.Wake`. It decides when to retry the request or reveal the saved answer:
-- `Item(Wait.Item)` — in a turn whose wait reported that socket or job (`Wait.Item.Socket(Tcp.Socket)` or `Wait.Item.Job(Work.Job)`); false readiness is allowed, so the module may answer `Later` again
-- `After(ms)` — once the turn's clock reading has reached the deadline the park set, `now + ms`; a reading that has fallen further back than `ms` before the moment of the park also fires it, so a clock that steps backwards cannot strand the request
-- `Either(item, ms)` — on whichever of the two comes first: a read with a deadline
-- `NextTurn` — on the next turn; the wait polls with a zero timeout while such a request exists, so prefer the other three when one of them will do
+- `Item(Wait.Item)`: in a turn whose wait reported that socket or job (`Wait.Item.Socket(Tcp.Socket)` or `Wait.Item.Job(Work.Job)`). False readiness is allowed, so the module may answer `Later` again
+- `After(ms)`: once the turn's clock reading has reached the deadline the park set, `now + ms`. A reading that has fallen more than `ms` behind the moment of the park also fires it, so a clock that steps backwards cannot strand the request
+- `Either(item, ms)`: on whichever of the two comes first, which gives a read with a deadline
+- `NextTurn`: on the next turn. The wait polls with a zero timeout while such a request exists, so prefer the other three when one of them will do
 
-**A job kind** is a capability of Work shape — `depends [Work]` and exactly these two operations, with `T` and `R` ordinary data of the program. Only the generated loop calls `begin` and `take`, and it reaches them without `exposes`; a capability a process asks, like `Clock`, exposes its operations and types because the process names them:
+**A job kind** is a capability of Work shape: `depends [Work]` and exactly these two operations, with `T` and `R` ordinary data of the program. Only the generated loop calls `begin` and `take`, and it reaches them without `exposes`. A capability a process asks, like `Clock`, exposes its operations and types because the process names them:
 
 ```aver
 module Scoring
@@ -444,7 +444,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
     replay = recorded
 ```
 
-`T` and `R` may also be types of the modules the job kind lists in `depends`, written with their owner: `operation begin(task: Ledger.Request) -> Result<Work.Job, String>`. A job kind is the only capability that may name another module's type, because a job is answered by a function of the same program and the two ship together. The module has to be in `depends` and has to expose the type, the same two gates an ordinary fn passes. The layouts it names, and the layouts those reach, go into its `contract_hash` under the name of the module that declares each one, so adding a field to `Ledger.Request` invalidates recordings made before the edit exactly as adding a field to a record declared in the job kind's own module does. A named type that holds a capability resource anywhere inside it, a socket or a job handle, is refused, and the refusal names the field and the type. Every other capability stays closed on its own declarations.
+`T` and `R` may also be types of the modules the job kind lists in `depends`, written with their owner: `operation begin(task: Ledger.Request) -> Result<Work.Job, String>`. A job kind is the only capability that may name another module's type, because a job is answered by a function of the same program and the two ship together. The module has to be in `depends` and has to expose the type, the same two gates an ordinary fn passes. The layouts it names, and the layouts those reach, go into its `contract_hash` under the name of the module that declares each one. Adding a field to `Ledger.Request` therefore invalidates recordings made before the edit, exactly as adding a field to a record declared in the job kind's own module does. A named type that holds a capability resource anywhere inside it (a socket or a job handle) is refused, and the refusal names the field and the type. Every other capability stays closed on its own declarations.
 
 Its binding names the pure function that does the work and the three ends of the seam between the job and an answer module's state:
 
@@ -457,7 +457,7 @@ started = "Clocked.taskStarted"
 landed = "Clocked.scored"
 ```
 
-`work` is `(T) -> R` with no effect list. `task` is `(S) -> Option<T>`, where the turn takes its next task from; `started` is `(S, T) -> S`, called the moment `begin` has answered `Ok` for that task; `landed` is `(S, Result<R, String>) -> S`, where a job that is over goes — `Result.Ok(r)` for one that finished, `Result.Err(reason)` for one that never will. All three are declared or none, and `task` and `started` name functions of one module. The order of one start is ask, `begin`, then `started`: a `begin` that answers `Err` records nothing, and the task is offered again once there is room. The program states one law on its `started` function, named exactly `aStartedTaskIsNotAskedAgain`, and the generated loop cites it. Here the seam lives in `Clocked`, beside the answers, because the tasks and the scores are one state:
+`work` is `(T) -> R` with no effect list. `task` is `(S) -> Option<T>`, where the turn takes its next task from. `started` is `(S, T) -> S`, called the moment `begin` has answered `Ok` for that task. `landed` is `(S, Result<R, String>) -> S`, where a job that is over goes: `Result.Ok(r)` for one that finished, `Result.Err(reason)` for one that never will. Either all three are declared or none is, and `task` and `started` name functions of one module. One start runs in this order: ask, `begin`, then `started`. A `begin` that answers `Err` records nothing, and the task is offered again once there is room. The program states one law on its `started` function, named exactly `aStartedTaskIsNotAskedAgain`, and the generated loop cites it. Here the seam lives in `Clocked`, beside the answers, because the tasks and the scores are one state:
 
 ```aver
 fn score(task: Int) -> Int
@@ -525,7 +525,7 @@ verify scored
     scored(State.update(fresh(), running = 1), Result.Err("work: job cancelled")) => fresh()
 ```
 
-**The generated coordinator** is requested by `[run]`. An empty table uses seated ids in slot order, admits every askable id, and stops on the stop flag or when no process is seated and no job runs. The compiler generates `__View` and `__Pending`. To customize a policy, name all four keys (`order`, `admit`, `stop`, `view`); a subset is `error[run-binding]`. The entry lists only the modules its own source names. The loop loads its answer modules, job kinds, `Wait` and `Work` from the manifest:
+**The generated coordinator** is requested by `[run]`. An empty table uses seated ids in slot order, admits every askable id, and stops on the stop flag or when no process is seated and no job runs. The compiler generates `__View` and `__Pending`. To customize a policy, name all four keys (`order`, `admit`, `stop`, `view`); naming only some of them is `error[run-binding]`. The entry lists only the modules its own source names. The loop loads its answer modules, job kinds, `Wait` and `Work` from the manifest:
 
 ```toml
 [work]
@@ -534,7 +534,7 @@ max-jobs = 2
 [run]
 ```
 
-The entry is now just its process:
+The entry is now only its process:
 
 ```aver
 module Node
@@ -550,32 +550,32 @@ fn ticker() -> Unit
         Clock.Tick.Closed(total) -> Console.print("scored {total}")
 ```
 
-`ready` is what the turn's one wait reported; `askable` is the ids whose wake has fired, in slot order, and the turn asks `admit` only about those; `jobs` and `room` are how many jobs run and how many more may start under `[work] max-jobs`; `stopping` is the stop flag as data. Everything else — the slot table, the one `Wait.poll` per turn, the clock reading, the dispatch, the job seam, the shutdown that cancels every job still held, `main`, and the laws that pin the table's invariants — is generated into the entry module under `__`, and the program names none of it: reply sums keep their declared source names. The program writes no `main`. `aver verify` runs the generated laws beside the program's own; `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the generated Aver.
+In the view, `ready` is what the turn's one wait reported. `askable` is the ids whose wake has fired, in slot order, and the turn asks `admit` only about those. `jobs` and `room` are how many jobs run and how many more may start under `[work] max-jobs`. `stopping` is the stop flag as data. Everything else is generated into the entry module under `__`: the slot table, the one `Wait.poll` per turn, the clock reading, the dispatch, the job seam, the shutdown that cancels every job still held, `main`, and the laws that pin the table's invariants. The program names none of it, and reply sums keep their declared source names. The program writes no `main`. `aver verify` runs the generated laws beside the program's own, and `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the generated Aver.
 
 Rules:
-- a loop that must not starve the others declares `yield`; the declaration fixes where control is handed back and does not bound how long one step takes
+- a loop that must not starve the others declares `yield`. The declaration fixes where control is handed back; it does not bound how long one step takes
 - long pure work goes to `Work`: a job kind, a pure function, a result that lands as data
-- "atomic between two yields" means no other step of the program runs in between; it is not atomicity of external effects and not a time bound
-- an answer module runs inside the turn, so a slow answer stalls every process; an answer with effects is allowed and `warning[answer-shape]` says so
+- "atomic between two yields" means no other step of the program runs in between. It does not mean atomicity of external effects, and it is not a time bound
+- an answer module runs inside the turn, so a slow answer stalls every process. An answer with effects is allowed, and `warning[answer-shape]` says so
 - `Disk` operations stay synchronous inside the turn, and the turn budget does not see that time
 - `Wait.poll` is one wait over sockets and jobs; `Tcp.poll` is the same wait over sockets only
-- a wait set is keyed by any type a map accepts, so a program waiting on several kinds of thing at once names each kind with a constructor instead of agreeing on an arithmetic convention: with `type Watch` declaring `Peer(Int)`, `Listener` and `Job`, `Wait.poll` takes `Map<Watch, Wait.Item>` and answers `List<Watch>` in that map's own key order, which is by constructor name and then payload. `Int` is one such key and needs no change; one program uses one wait key type, and a wait set written empty at the call names no key of its own, so under a key of the program's own write its type down: `idle: Map<Watch, Wait.Item> = {}`
-- a job is pure, its result is data, and a recording replays it: `begin`, `take` and the wait are served back in the recorded turns; the VM and wasm-gc run the job's function again beside them, a `--target rust` binary serves the recorded results without running it, and a wasip2 component records nothing
-- `yield` is an effect: declare it in `! [...]` and cover it in the module's `effects [...]`; the entry module's `effects [...]` is widened by what the loop generates into it
-- a process takes no parameters and answers `Unit`; a yielding helper of the same module may take parameters, and a tail call enters its protocol while a non-tail call nests its state under `In<G>At<N>`
-- never call a yielding function from a function that does not yield — `'loop' yields; call '__loopStart(...)' and answer its requests` is the error — and never call an answered operation from a function that does not yield (`error[intercept-outside-yield]`)
-- a yielding function calling itself outside tail position is an error: pass what comes next as data, or make it a tail call
-- stops may sit in bindings, as match subjects, inside arguments and inside match arms; `?` after a request works; mutual nesting, a request or a helper call inside `(a, b)!`, a helper in another module, and a function value live across a request are rejected by name
+- a wait set is keyed by any type a map accepts. A program waiting on several kinds of thing at once names each kind with a constructor instead of agreeing on an arithmetic convention: with `type Watch` declaring `Peer(Int)`, `Listener` and `Job`, `Wait.poll` takes `Map<Watch, Wait.Item>` and answers `List<Watch>` in that map's own key order, which is by constructor name and then payload. `Int` is one such key and needs no change. One program uses one wait key type. A wait set written empty at the call names no key of its own, so under a key of the program's own, write its type down: `idle: Map<Watch, Wait.Item> = {}`
+- a job is pure, its result is data, and a recording replays it. `begin`, `take` and the wait are served back in the recorded turns. The VM and wasm-gc run the job's function again beside them, a `--target rust` binary serves the recorded results without running it, and a wasip2 component records nothing
+- `yield` is an effect: declare it in `! [...]` and cover it in the module's `effects [...]`. The entry module's `effects [...]` is widened by what the loop generates into it
+- a process takes no parameters and answers `Unit`. A yielding helper of the same module may take parameters; a tail call enters its protocol, while a non-tail call nests its state under `In<G>At<N>`
+- never call a yielding function from a function that does not yield (the error is `'loop' yields; call '__loopStart(...)' and answer its requests`), and never call an answered operation from a function that does not yield (`error[intercept-outside-yield]`)
+- a yielding function calling itself outside tail position is an error. Pass what comes next as data, or make it a tail call
+- stops may sit in bindings, as match subjects, inside arguments and inside match arms, and `?` after a request works. Mutual nesting, a request or a helper call inside `(a, b)!`, a helper in another module, and a function value live across a request are rejected by name
 
 Where it runs:
-- the VM: `aver run main.av --module-root .`; a job runs on its own thread, `[work] max-jobs` bounds how many at once, and `begin` answers `Err("work: job limit N reached")` at the limit rather than blocking the turn
-- `--target rust`: the same loop as a native binary; a job runs on a thread of `aver-rt`, and `Work.cancel` detaches the job rather than stopping it, so a cancelled job holds its slot until its body ends
+- the VM: `aver run main.av --module-root .`. A job runs on its own thread, `[work] max-jobs` bounds how many run at once, and at the limit `begin` answers `Err("work: job limit N reached")` instead of blocking the turn
+- `--target rust`: the same loop as a native binary. A job runs on a thread of `aver-rt`, and `Work.cancel` detaches the job without stopping it, so a cancelled job holds its slot until its body ends
 - wasm-gc: the runner and Wasmtime packs execute jobs on host threads, enforce `max-jobs`, and support cancellation. Raw modules expose `aver:work/v1`; the JavaScript adapter uses workers and drives a generated coordinator between waits. See `docs/wasm-work.md`.
-- wasip2: jobs currently run inline at `begin`; `max-jobs` is ignored with `warning[work-max-jobs-ignored]`. Generated loops keep `View.stopping = false` and end through their policy or normal exhaustion; explicit `Process.stopRequested` calls are rejected.
+- wasip2: jobs currently run inline at `begin`, and `max-jobs` is ignored with `warning[work-max-jobs-ignored]`. Generated loops keep `View.stopping = false` and end through their policy or normal exhaustion; explicit `Process.stopRequested` calls are rejected.
 
-**Give `max-jobs` headroom.** The end of a job's body frees its slot; `Work.cancel` sets the flag and drops the answer, and the running count falls once the body settles. The VM stops the body at its next cancellation check, wasm-gc traps it at the next epoch check, and generated Rust checks no flag, so there it runs to completion. Because `begin` refuses at the limit rather than waiting, a program that cancels a job and begins its replacement in the same turn, which is what a retry after an owner-side error looks like, asks for a slot the cancelled job still holds, and a limit set to exactly the steady-state need refuses the retry. Leave one spare slot per job that may be retried at once on the VM and on wasm-gc, and twice the steady-state need on `--target rust` if every job may be replaced. `wasip2` has nothing to size.
+**Give `max-jobs` headroom.** The end of a job's body frees its slot. `Work.cancel` sets the flag and drops the answer, and the running count falls once the body settles. The VM stops the body at its next cancellation check, wasm-gc traps it at the next epoch check, and generated Rust checks no flag, so there the body runs to completion. `begin` refuses at the limit instead of waiting. A program that cancels a job and begins its replacement in the same turn (which is what a retry after an owner-side error looks like) asks for a slot the cancelled job still holds, so a limit set to exactly the steady-state need refuses the retry. Leave one spare slot per job that may be retried at once on the VM and on wasm-gc, and twice the steady-state need on `--target rust` if every job may be replaced. `wasip2` has nothing to size.
 
-**Driving the protocol by hand.** The generated names are compiler-defined and callable, so a program without a `[run]` table drives a process itself. For `loop` the compiler generates, in the same module: `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind (state only when the operation returns `Unit`) and `__loopAnswerYield(__state)`. The original function is removed:
+**Driving the protocol by hand.** The generated names are compiler-defined and callable, so a program without a `[run]` table can drive a process itself. For `loop` the compiler generates, in the same module: `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind (state only when the operation returns `Unit`) and `__loopAnswerYield(__state)`. The original function is removed:
 
 ```aver
 fn loop(id: Int, done: Int) -> Int
@@ -597,7 +597,7 @@ fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
                 [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
 ```
 
-`verify` the generated names, match on them, and export them to Lean and Dafny like any other item. A local cases-form `verify process` can also call its source name with exact `given` stubs for every request operation. That test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet; keep proof laws on the generated protocol. A module that exposes a yielding function exposes its protocol in its place, so an importer writes `Looper.__loopStart(...)`.
+You can `verify` the generated names, match on them, and export them to Lean and Dafny like any other item. A local cases-form `verify process` can also call its source name with exact `given` stubs for every request operation. That test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet, so keep proof laws on the generated protocol. A module that exposes a yielding function exposes its protocol in its place, so an importer writes `Looper.__loopStart(...)`.
 
 ### Builtins and namespaces
 
@@ -606,10 +606,7 @@ Use namespaced builtins only.
 Common pure namespaces:
 - `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Bits`, `Crypto`, `Result`, `Option`
 
-`Bytes` and `Crypto.Digest32` are embedded Aver modules. With
-`depends [Bytes, Crypto.Digest32]`, `Crypto.sha256 : Bytes -> Digest32` is total
-and pure: the input already guarantees octets and the result guarantees exactly
-32 bytes.
+`Bytes` and `Crypto.Digest32` are embedded Aver modules. With `depends [Bytes, Crypto.Digest32]`, `Crypto.sha256 : Bytes -> Digest32` is total and pure: the input already guarantees octets, and the result guarantees exactly 32 bytes.
 
 - `Bytes.fromList : List<Int> -> Result<Bytes, String>` (a list literal whose every element is an integer literal in `0..=255` discharges to plain `Bytes`), `Bytes.octets : Bytes -> List<Int>`
 - `Bytes.fromHex : String -> Result<Bytes, String>` (even length, case-insensitive, no `0x` prefix), `Bytes.toHex : Bytes -> String`
@@ -618,65 +615,65 @@ and pure: the input already guarantees octets and the result guarantees exactly
 
 Key `String` API:
 - `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`
-- `String.byteLength : String -> Int` — UTF-8 byte count; `String.len` counts characters (Unicode scalar values), on every backend
-- `String.charAt : (String, Int) -> Option<String>`, `String.slice : (String, Int, Int) -> String` — character indices; a slice with an out-of-range end clamps
+- `String.byteLength : String -> Int` is the UTF-8 byte count; `String.len` counts characters (Unicode scalar values), on every backend
+- `String.charAt : (String, Int) -> Option<String>`, `String.slice : (String, Int, Int) -> String` take character indices; a slice with an out-of-range end clamps
 - `String.toUpper`, `String.toLower`, `String.trim`, `String.replace : (String, String, String) -> String`
-- `String.join`, `String.split`, `String.chars` — concat is the `+` operator
-- `String.toUtf8 : String -> Bytes`, `String.fromUtf8 : Bytes -> Result<String, String>` — explicit, lossless encoding and validated decoding
+- `String.join`, `String.split`, `String.chars`; concatenation is the `+` operator
+- `String.toUtf8 : String -> Bytes`, `String.fromUtf8 : Bytes -> Result<String, String>`: explicit, lossless encoding and validated decoding
 - `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
 - `Int.toBigEndian`, `Int.toLittleEndian : (Int, Int) -> Result<Bytes, String>`; `Int.fromBigEndian`, `Int.fromLittleEndian : Bytes -> Int`
-- `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
-- string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering — write your own `fn show(x: T) -> String`.
+- `Float.fromString`, `String.fromFloat`, `String.fromBool`. The naming convention is `<targetTyp>.from<source>`
+- string interpolation: `"Hello, {name}!"` is the idiomatic way to render PRIMITIVES into text. Reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`). Compound values have no built-in rendering, so write your own `fn show(x: T) -> String`.
 
 Key code-point API:
-- `String.firstCodePoint : String -> Option<Int>` — first Unicode scalar value, `Option.None` for empty text
-- `String.fromCodePoint : Int -> Option<String>` — code point to a 1-character string, `Option.None` for surrogates and out-of-range values
+- `String.firstCodePoint : String -> Option<Int>`: the first Unicode scalar value, `Option.None` for empty text
+- `String.fromCodePoint : Int -> Option<String>`: a code point to a 1-character string, `Option.None` for surrogates and out-of-range values
 
 Key `Int` API:
-- `Int.abs : Int -> Int`, `Int.min`, `Int.max` — `(Int, Int) -> Int`
-- `Int.div`, `Int.mod` — `(Int, Int) -> Result<Int, String>`, Euclidean, see the operators section above
+- `Int.abs : Int -> Int`; `Int.min`, `Int.max` are `(Int, Int) -> Int`
+- `Int.div`, `Int.mod`: `(Int, Int) -> Result<Int, String>`, Euclidean, see the operators section above
 - `Int.fromString : String -> Result<Int, String>`, `Int.fromFloat : Float -> Int`
 - `Int.toBigEndian`, `Int.toLittleEndian : (Int, Int) -> Result<Bytes, String>`; `Int.fromBigEndian`, `Int.fromLittleEndian : Bytes -> Int`
 
 Key `Float` API:
-- `Float.abs`, `Float.sqrt`, `Float.sin`, `Float.cos` — `Float -> Float`; the trig functions take radians
-- `Float.pow`, `Float.atan2`, `Float.min`, `Float.max` — `(Float, Float) -> Float`
-- `Float.floor`, `Float.ceil`, `Float.round` — `Float -> Int`, so they convert as well as round
-- `Float.pi : () -> Float` — a nullary function, written `Float.pi()`
+- `Float.abs`, `Float.sqrt`, `Float.sin`, `Float.cos`: `Float -> Float`; the trig functions take radians
+- `Float.pow`, `Float.atan2`, `Float.min`, `Float.max`: `(Float, Float) -> Float`
+- `Float.floor`, `Float.ceil`, `Float.round`: `Float -> Int`, so they convert as well as round
+- `Float.pi : () -> Float` is a nullary function, written `Float.pi()`
 - `Float.fromInt : Int -> Float`, `Float.fromString : String -> Result<Float, String>`
 
 Key `Result` / `Option` API:
 - `Result.withDefault : (Result<T, E>, T) -> T`, `Option.withDefault : (Option<T>, T) -> T`
-- `Result.fromOption : (Option<T>, E) -> Result<T, E>` — the bridge that lets an `Option` join a `?` chain
+- `Result.fromOption : (Option<T>, E) -> Result<T, E>` is the bridge that lets an `Option` join a `?` chain
 
 Key `List` API (small, recursion-first):
 - `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`, `List.fromVector`
-- No `List.map`, `List.filter`, `List.fold` — write with recursion
+- there is no `List.map`, `List.filter`, `List.fold`. Write these with recursion
 - empty list literal: `[]`
 
 Key `Vector` API (O(1) indexed access):
 - `Vector.new(n, default) -> Result<Vector<T>, String>` for a dynamic size; a syntactic literal in the portable `0..=1_048_576` element budget discharges directly to `Vector<T>`
 - `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
 - `Vector.len(v) -> Int`
-- `Vector.fromList(l)` — conversion in the other direction lives on `List`
+- `Vector.fromList(l)`; conversion in the other direction lives on `List`
 
 Key `Map` API:
-- a map iterates sorted by key on every backend, so the key type must order. Records (by field name), variants (by constructor name), lists, tuples and `Bytes` all key a map fine. `Float` cannot — a NaN has no place in the finite range — and neither can `Map` or `Vector`. Float stays legal as a *value*.
+- a map iterates sorted by key on every backend, so the key type must order. Records (by field name), variants (by constructor name), lists, tuples and `Bytes` all key a map fine. `Float` cannot, because a NaN has no place in the finite range, and neither can `Map` or `Vector`. Float stays legal as a *value*.
 - empty map literal: `{}` (type from context); non-empty: `{a => 1, b => 2}`. There is no `Map.empty()` builtin.
 - `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.values(m)`, `Map.entries(m)`, `Map.len(m)`
 
 Effectful namespaces:
-- `Console`: print, error, warn, readLine — **`print`/`error`/`warn` take `String`**, not arbitrary values. Stringify at the call site: interpolation `"{x}"` for primitives, a per-type render fn (`fn show(r: Result<T, E>) -> String`) for compound shapes.
+- `Console`: print, error, warn, readLine. **`print`/`error`/`warn` take `String`**, not arbitrary values. Stringify at the call site: interpolation `"{x}"` for primitives, a per-type render fn (`fn show(r: Result<T, E>) -> String`) for compound shapes.
 - `Http`: get, post, put, patch, delete, head
-- `Disk`: readText, writeText, appendText, readBytes, readBytesAt, writeBytes, appendBytes, size, exists, delete, deleteDir, listDir, makeDir, sync — the byte methods move exact octets as nominal `Bytes`, and `Disk.sync(path)` is `fsync`: it returns once the named file *or directory* is on stable storage, so a freshly created file needs its parent directory synced too
-- `Tcp`: connect, writeLine, writeBytes, writeNow, readLine, readBytes, readSome, readNow, poll, close, send, sendBytes, ping — `send`/`readLine` are text-only (UTF-8); binary payloads use nominal `Bytes` through `sendBytes`, `writeBytes`, and `readBytes`; `readNow`/`writeNow` never block (`None` or a `0` count means the socket would block) and `poll` takes `Tcp.Socket.Connected` for read readiness or `Tcp.Socket.Sending` for write readiness
+- `Disk`: readText, writeText, appendText, readBytes, readBytesAt, writeBytes, appendBytes, size, exists, delete, deleteDir, listDir, makeDir, sync. The byte methods move exact octets as nominal `Bytes`. `Disk.sync(path)` is `fsync`: it returns once the named file *or directory* is on stable storage, so a freshly created file needs its parent directory synced too
+- `Tcp`: connect, writeLine, writeBytes, writeNow, readLine, readBytes, readSome, readNow, poll, close, send, sendBytes, ping. `send`/`readLine` are text-only (UTF-8); binary payloads use nominal `Bytes` through `sendBytes`, `writeBytes`, and `readBytes`. `readNow`/`writeNow` never block (`None` or a `0` count means the socket would block), and `poll` takes `Tcp.Socket.Connected` for read readiness or `Tcp.Socket.Sending` for write readiness
 - `Terminal`: every operation is fallible. Control/output calls return `Result<Unit, String>`, `readKey` returns `Result<Option<String>, String>`, and `size` returns `Result<Terminal.Size, String>`. The cursor move is `Terminal.moveTo(x, y)`; `Terminal.print` / `Terminal.setColor` take `String`.
-- `Time`: now, unixMs, sleep — `Time.sleep(ms) -> Result<Unit, String>` for a dynamic duration; a valid non-negative i64 literal discharges directly to `Unit`
-- `Random`: int, float — `Random.int(lo, hi) -> Result<Int, String>` is inclusive on both ends; safe literal bounds discharge directly to `Int`. `Random.float()` is in `[0.0, 1.0)`
+- `Time`: now, unixMs, sleep. `Time.sleep(ms) -> Result<Unit, String>` for a dynamic duration; a valid non-negative i64 literal discharges directly to `Unit`
+- `Random`: int, float. `Random.int(lo, hi) -> Result<Int, String>` is inclusive on both ends; safe literal bounds discharge directly to `Int`. `Random.float()` is in `[0.0, 1.0)`
 - `Env`: get, set
 - `Args`: get
 
-Incoming HTTP is not an effect namespace: use pure `HttpWire`, native `HttpServe` over `Tcp` + `Process.stopRequested`, or an explicit `--handler <fn>` on fetch/proxy hosts.
+Incoming HTTP is not an effect namespace. Use pure `HttpWire`, native `HttpServe` over `Tcp` + `Process.stopRequested`, or an explicit `--handler <fn>` on fetch/proxy hosts.
 
 ### Common patterns
 
@@ -705,7 +702,7 @@ match Map.get(ages, "alice")
     Option.None -> "Unknown"
 ```
 
-Bounded outbox for `Tcp.writeNow`. A non-blocking write takes a prefix, so the program carries the queue: the payload at the head, how many of its bytes have gone, the rest behind it. Register the `Sending` key only while bytes remain, and when the outbox is full let the slow peer pay for it. A bulk producer, one request answered by many large payloads, must not enqueue them all at once: it keeps the list of what was asked for and renders the next payload once the queue is under its watermark, so a healthy peer is not dropped for reading slower than the program produces.
+Bounded outbox for `Tcp.writeNow`. A non-blocking write takes a prefix, so the program carries the queue: the payload at the head, how many of its bytes have gone, and the rest behind it. Register the `Sending` key only while bytes remain, and when the outbox is full, make the slow peer pay for it. A bulk producer (one request answered by many large payloads) must not enqueue them all at once. It keeps the list of what was asked for and renders the next payload once the queue is under its watermark, so a healthy peer is not dropped for reading slower than the program produces.
 
 ```aver
 type Watch
@@ -747,28 +744,28 @@ fn topUp(outbox: Outbox) -> Outbox
 ### Common mistakes to avoid
 
 1. Writing `.aver` files instead of `.av`
-2. `if`/`else` — use `match`
-3. `val`/`var`/`let` — just `name = expr`
-4. Bare `Ok(x)` — must be `Result.Ok(x)`
-5. `String.toInt(s)` — not a thing; use `Int.fromString(s)` which returns `Result<Int, String>`
-6. Assuming `Console.readLine()` returns `String` — it returns `Result<String, String>`
-7. Writing `=` instead of `=>` in verify cases — separator is always `=>`
-8. Using `..` without a name in list patterns — write `[h, ..t]`, not `[h, ..]`
-9. Missing `!` effect declaration — compiler errors
-10. Closures/lambdas — not supported; use named top-level functions
-11. Mutable variables — not supported, all bindings are immutable
-12. `List.map`/`List.filter`/`List.fold` — not built-in; write with recursion
-13. Pipe `|>` — not supported
-14. Positional record destructuring in match — bind record, use field access
-15. Multi-line match arms — body must follow `->` on the same line; extract complex logic into a named function
-16. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
-17. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
-18. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
-19. `()` as a Unit value literal — there is no `()` literal. Write `Unit`. Diagnostics render the value as `()`, but in source the only spelling is `Unit` (matches `Map<T, Unit>` set semantics, `Unit` field annotations, etc.). `Console.print(...)` returning Unit is implicit — you almost never write the literal directly
-20. `expr?` on an `Option<T>` — `?` is Result-only. For `Option`, use `Option.withDefault(opt, fallback)`, or `match opt { Option.Some(v) -> … ; Option.None -> … }`. `Vector.get` and `Map.get` return `Option`, so neither composes with `?` directly — wrap the value first
-21. `(A, B)` as a tuple type — type position uses `Tuple<A, B>` exclusively. Tuple **value** literals stay paren: `(1, 2)`, `[(1, 2), (3, 4)]`, `Result.Ok((a, b))`. Tuple **patterns** stay paren: `match p { (a, b) -> … }`. The type and the value spelling are deliberately different so grep-for-type and grep-for-value don't collide
-22. Dispatching on a `String` or an `Int` through a chain of `match x == "lit"` with `true ->` / `false ->` helper functions — literal patterns exist: `match cmd { "verack" -> 1 ; "tx" -> 4 ; _ -> 0 }`. Only the trailing `_` arm is mandatory
-23. Keying a map on a `Float` — the key type has to order and a NaN has no place in the finite range. Key on the value that orders (`Map<String, Reading>` rather than `Map<Float, Reading>`). A `Map` or a `Vector` in key position is refused for the same reason: neither has an order of its own
+2. `if`/`else`: use `match`
+3. `val`/`var`/`let`: write `name = expr`
+4. Bare `Ok(x)`: it must be `Result.Ok(x)`
+5. `String.toInt(s)` does not exist. Use `Int.fromString(s)`, which returns `Result<Int, String>`
+6. Assuming `Console.readLine()` returns `String`: it returns `Result<String, String>`
+7. Writing `=` instead of `=>` in verify cases. The separator is always `=>`
+8. Using `..` without a name in list patterns: write `[h, ..t]`, not `[h, ..]`
+9. Missing `!` effect declaration: the compiler errors
+10. Closures/lambdas: not supported. Use named top-level functions
+11. Mutable variables: not supported; all bindings are immutable
+12. `List.map`/`List.filter`/`List.fold`: not built-in. Write them with recursion
+13. Pipe `|>`: not supported
+14. Positional record destructuring in match: bind the record and use field access
+15. Multi-line match arms: the body must follow `->` on the same line. Extract complex logic into a named function
+16. `BranchPath.Root()` / `BranchPath.root()`: it is a nullary value constructor with no parens. Write `BranchPath.Root`
+17. Two `given` for the same effect: rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
+18. Plain `verify fn` on a fn with generative effects: you get a lint warning. Use `verify fn law …` with `given` stubs or `verify fn trace` instead
+19. `()` as a Unit value literal: there is no `()` literal. Write `Unit`. Diagnostics render the value as `()`, but in source the only spelling is `Unit` (matching `Map<T, Unit>` set semantics, `Unit` field annotations, etc.). `Console.print(...)` returns Unit implicitly, so you almost never write the literal directly
+20. `expr?` on an `Option<T>`: `?` is Result-only. For `Option`, use `Option.withDefault(opt, fallback)`, or `match opt { Option.Some(v) -> … ; Option.None -> … }`. `Vector.get` and `Map.get` return `Option`, so neither composes with `?` directly; wrap the value first
+21. `(A, B)` as a tuple type: type position uses `Tuple<A, B>` exclusively. Tuple **value** literals stay paren: `(1, 2)`, `[(1, 2), (3, 4)]`, `Result.Ok((a, b))`. Tuple **patterns** stay paren: `match p { (a, b) -> … }`. The type and the value spelling are deliberately different, so grep-for-type and grep-for-value don't collide
+22. Dispatching on a `String` or an `Int` through a chain of `match x == "lit"` with `true ->` / `false ->` helper functions. Literal patterns exist: `match cmd { "verack" -> 1 ; "tx" -> 4 ; _ -> 0 }`. Only the trailing `_` arm is mandatory
+23. Keying a map on a `Float`: the key type has to order, and a NaN has no place in the finite range. Key on the value that orders (`Map<String, Reading>` rather than `Map<Float, Reading>`). A `Map` or a `Vector` in key position is refused for the same reason: neither has an order of its own
 
 ### Style
 
@@ -784,18 +781,18 @@ Prefer:
 Avoid:
 - broad effect declarations when specific ones suffice
 - hiding domain flow behind unnecessary abstraction
-- functions longer than ~30 lines; split into named helpers
+- functions longer than ~30 lines; split them into named helpers
 
 ## Further reading
 
-- [Language Guide](https://github.com/jasisz/aver/blob/main/docs/language.md) — full surface-language reference
-- [Services (stdlib)](https://github.com/jasisz/aver/blob/main/docs/services.md) — every namespace and its API
-- [Constructors](https://github.com/jasisz/aver/blob/main/docs/constructors.md) — constructor routing rules
-- [Common Pushback](https://github.com/jasisz/aver/blob/main/docs/pushback.md) — questions, objections, honest answers
-- [Independence (`?!`)](https://github.com/jasisz/aver/blob/main/docs/independence.md) — parallel products
-- [Oracle](https://github.com/jasisz/aver/blob/main/docs/oracle.md) — `verify <fn> trace`, `given` stubs, `--hostile`
-- [Lean proofs](https://github.com/jasisz/aver/blob/main/docs/lean.md) — verify blocks to Lean 4
-- [Dafny verification](https://github.com/jasisz/aver/blob/main/docs/dafny.md) — verify laws to Dafny / Z3
-- [Effect and wasm-gc support](https://github.com/jasisz/aver/blob/main/docs/effects.md) — browser and host surface
-- [WASI 0.2 target](https://github.com/jasisz/aver/blob/main/docs/wasip2.md) — Component Model deployment
-- [Toolchain reference (`llms-full.txt`)](https://averlang.dev/llms-full.txt) — `aver run`, `verify`, `audit`, `format`, `context`, `compile`, `proof`, `replay`
+- [Language Guide](https://github.com/jasisz/aver/blob/main/docs/language.md): full surface-language reference
+- [Services (stdlib)](https://github.com/jasisz/aver/blob/main/docs/services.md): every namespace and its API
+- [Constructors](https://github.com/jasisz/aver/blob/main/docs/constructors.md): constructor routing rules
+- [Common Pushback](https://github.com/jasisz/aver/blob/main/docs/pushback.md): questions, objections and answers
+- [Independence (`?!`)](https://github.com/jasisz/aver/blob/main/docs/independence.md): parallel products
+- [Oracle](https://github.com/jasisz/aver/blob/main/docs/oracle.md): `verify <fn> trace`, `given` stubs, `--hostile`
+- [Lean proofs](https://github.com/jasisz/aver/blob/main/docs/lean.md): verify blocks to Lean 4
+- [Dafny verification](https://github.com/jasisz/aver/blob/main/docs/dafny.md): verify laws to Dafny / Z3
+- [Effect and wasm-gc support](https://github.com/jasisz/aver/blob/main/docs/effects.md): browser and host surface
+- [WASI 0.2 target](https://github.com/jasisz/aver/blob/main/docs/wasip2.md): Component Model deployment
+- [Toolchain reference (`llms-full.txt`)](https://averlang.dev/llms-full.txt): `aver run`, `verify`, `audit`, `format`, `context`, `compile`, `proof`, `replay`

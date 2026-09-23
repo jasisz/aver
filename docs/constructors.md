@@ -1,12 +1,12 @@
 # Aver — Constructor Contract
 
-Agreed 2026-02-26. This is the iron-clad contract governing how constructors work in Aver.
+Agreed 2026-02-26. These are the fixed rules for how constructors work in Aver.
 
 ## The rules
 
 ### 1. `:` is exclusively for type annotations
 
-Colon appears only in declarations: function parameters (`x: Int`), record fields (`name: String`), return types (`-> Result<Int, String>`). Never in expressions.
+A colon appears only in declarations: function parameters (`x: Int`), record fields (`name: String`) and return types (`-> Result<Int, String>`). It never appears in an expression.
 
 ### 2. Naming convention is load-bearing
 
@@ -15,19 +15,19 @@ Colon appears only in declarations: function parameters (`x: Int`), record field
 | `lowerCamel` or `lower_snake` | Function name | `parse`, `fromString`, `readAge` |
 | `UpperCamel` | Type / constructor / namespace | `User`, `Shape.Circle`, `Result.Ok` |
 
-The parser uses the first character of the callee to distinguish function calls from constructor invocations. This is not a style guide — it is grammar.
+The parser looks at the first character of the callee to tell a function call from a constructor. The convention is part of the grammar, so breaking it changes what the code means.
 
 ### 3. Constructor = UpperCamel callee
 
-Any call-site where the callee starts with an uppercase letter is a constructor. This includes:
+A call whose callee starts with an uppercase letter is a constructor. That covers:
 - Bare names: `User(...)`
 - Qualified names: `Shape.Circle(...)`, `Result.Ok(...)`
 
-The final segment determines the kind: `Map.fromList(...)` is a function call (`fromList` is lower), `Shape.Circle(...)` is a constructor (`Circle` is upper).
+The last segment decides. `Map.fromList(...)` is a function call because `fromList` is lowercase. `Shape.Circle(...)` is a constructor because `Circle` is uppercase.
 
 ### 4. Records use named arguments with `=`
 
-Product types (records) are constructed with explicit field names:
+Records (product types) are built with explicit field names:
 
 ```aver
 record User
@@ -37,11 +37,11 @@ record User
 u = User(name = "Alice", age = 30)
 ```
 
-All fields are required exactly once. No defaults, no partial construction.
+Every field must be given exactly once. There are no defaults and no partial construction.
 
 ### 5. Sum type variants use positional arguments
 
-Variant constructors take positional arguments matching the type definition order:
+Variant constructors take positional arguments in the order the type definition lists them:
 
 ```aver
 type Shape
@@ -55,16 +55,16 @@ r = Shape.Rect(2.0, 5.0)
 
 ### 6. Zero-argument constructors are singletons (bare values)
 
-A constructor with no parameters is a value, not a function call. No parentheses:
+A constructor with no parameters is a value, so it takes no parentheses:
 
 ```aver
 p = Shape.Point
 n = Option.None
 ```
 
-Rationale: `Shape.Point` is always the same value. Writing `Shape.Point()` would imply construction where there is none — like writing `42()` to "construct" an integer.
+Rationale: `Shape.Point` is always the same value. `Shape.Point()` would suggest that something gets constructed, when nothing does. It would be like writing `42()` to "construct" an integer.
 
-Pattern matching is symmetric:
+Pattern matching uses the same shapes:
 
 ```aver
 match shape
@@ -73,30 +73,27 @@ match shape
     Shape.Point -> 0.0
 ```
 
-That symmetry is for constructors. Records are still data-only values: bind the whole record in a pattern and use field access by name. There is no positional record pattern like `User(name, age)`.
+This applies to constructors only. Records are plain data values: you bind the whole record in a pattern and read fields by name. There is no positional record pattern like `User(name, age)`.
 
 ### 7. Named and positional arguments never mix
 
-This is not an independent rule — it follows automatically from rules 4 and 5:
+This follows from rules 4 and 5 and adds nothing new:
 - Records → always named (rule 4)
 - Variants → always positional (rule 5)
 
-There is no third kind of constructor. The parser sees `=` after the first argument name → record. No `=` → variant. One token of lookahead, zero ambiguity.
+There are only these two kinds of constructor. If the parser sees `=` after the first argument name, it is a record. Without `=`, it is a variant. One token of lookahead is enough and nothing is ambiguous.
 
 ### 8. Dotted record constructors
 
-Dotted record constructors like `MyNs.Point(x = 1, y = 2)` are supported. Any `Namespace.Type(...)` form where the final segment is UpperCamel follows the same constructor rules as bare record types (rule 4: named arguments with `=`).
+Dotted record constructors such as `MyNs.Point(x = 1, y = 2)` are supported. Any `Namespace.Type(...)` form whose last segment is UpperCamel follows the same rules as a bare record type (rule 4: named arguments with `=`).
 
 ```aver
 p = Geom.Point(x = 0, y = 0)
 ```
 
-User-defined types can be made opaque via `exposes opaque [TypeName]` in the module declaration. From outside the defining module, opaque types cannot be constructed, have fields accessed, or be pattern-matched. See [language.md](language.md#opaque-types).
+A module can make its own types opaque with `exposes opaque [TypeName]` in the module declaration. Outside the defining module, an opaque type cannot be constructed, its fields cannot be read, and it cannot be pattern-matched. See [language.md](language.md#opaque-types).
 
-Some standard-library types are opaque from the surface as well —
-`Tcp.Connection`, for example, is a provider-owned stateful resource minted by
-`Tcp.connect`. Field reads, construction, and pattern matches are rejected at
-the type-checker layer.
+Some standard-library types are opaque too. `Tcp.Connection`, for example, is a stateful resource owned by the provider and created by `Tcp.connect`. The type checker rejects field reads, construction and pattern matches on it.
 
 ## Parser decision tree
 
@@ -114,5 +111,5 @@ callee starts with UpperCamel?
 
 ## What this replaces
 
-- `Expr::TypeAscription` — removed (2026-02-26). `:` no longer appears in expressions. Typed bindings (`name: Type = expr`) reuse `:` in declaration position instead.
-- Ad-hoc lookahead heuristics for distinguishing records from function calls.
+- `Expr::TypeAscription`, removed on 2026-02-26. `:` no longer appears in expressions. Typed bindings (`name: Type = expr`) use `:` in declaration position instead.
+- Ad-hoc lookahead heuristics that tried to tell records from function calls.

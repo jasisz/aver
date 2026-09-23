@@ -6,16 +6,11 @@ From a clean checkout with Docker available, run:
 docker build -t aver-one-command . && docker run --rm aver-one-command
 ```
 
-That one command builds a local image and then runs the image's default smoke test. The Dockerfile also runs the same smoke test while building the image, so the build fails before producing a usable image if either step regresses.
+It builds a local image and then runs the image's default smoke test. The Dockerfile also runs that smoke test during the build, so if either step regresses the build fails before it produces a usable image.
 
-The first build downloads roughly 1-2 GB of Docker layers, Rust crates, Lean,
-and Dafny, and can take tens of minutes. Later builds are much smaller when
-Docker and Cargo caches are warm.
+The first build downloads roughly 1-2 GB of Docker layers, Rust crates, Lean and Dafny, and can take tens of minutes. Later builds download much less once the Docker and Cargo caches are warm.
 
-Apple Silicon warning: this image is currently `linux/amd64` only because Dafny
-`4.11.0` publishes the Ubuntu x64 asset used here, but not a Linux ARM64 asset.
-Docker Desktop runs the image under qemu, so both the first build and the smoke
-test are substantially slower than on native `linux/amd64`.
+Apple Silicon warning: the image is currently `linux/amd64` only. Dafny `4.11.0` publishes the Ubuntu x64 asset used here but no Linux ARM64 asset. Docker Desktop runs the image under qemu, so the first build and the smoke test are both much slower than on native `linux/amd64`.
 
 The image pins:
 
@@ -23,7 +18,7 @@ The image pins:
 - Lean toolchain `leanprover/lean4:v4.34.0`
 - Dafny `4.11.0` (`dafny-4.11.0-x64-ubuntu-22.04.zip`)
 
-The Rust build is a debug build. That keeps the local quickstart bounded; release LTO is intentionally left out of this Docker path.
+The Rust build is a debug build, which keeps the local quickstart's time in check. Release LTO is deliberately left out of this Docker path.
 
 ## What It Runs
 
@@ -36,18 +31,11 @@ aver compile examples/certification/add_one.av --target wasm-gc --certify -o /tm
 aver-cert check /tmp/aver-cert-smoke-run/add_one.wasm /tmp/aver-cert-smoke-run/cert
 ```
 
-The first command executes the hello example on the Aver VM.
+The first command runs the hello example on the Aver VM.
 
-The second command exports `examples/formal/validated_wrapper_law.av` to Lean
-and asks `lake build` to re-check the generated theorem on the Lean kernel. The
-checked law is `checkedDiv.returnsCore`: when the divisor is nonzero, the
-error-checking wrapper returns `Result.Ok(coreDiv(a, b))`. The check is strict:
-the default budgets allow no Lean build errors and no residual `sorry`.
+The second command exports `examples/formal/validated_wrapper_law.av` to Lean and has `lake build` re-check the generated theorem on the Lean kernel. The law being checked is `checkedDiv.returnsCore`: when the divisor is nonzero, the error-checking wrapper returns `Result.Ok(coreDiv(a, b))`. The check is strict. The default budgets allow no Lean build errors and no residual `sorry`.
 
-The last two commands compile a tiny wasm-gc function with an Artifact
-Behavioral Certificate and run the faster developer preflight. Its success
-word is `CHECKED`, not `CERTIFIED`; the Docker smoke deliberately does not
-pretend to be a release gate.
+The last two commands compile a tiny wasm-gc function with an Artifact Behavioral Certificate and run the faster developer preflight. On success it prints `CHECKED`. It does not print `CERTIFIED`, because the Docker smoke test is not a release gate.
 
 ## Full Certificate Follow-Up
 
@@ -61,11 +49,8 @@ docker run --rm aver-one-command sh -c '
 '
 ```
 
-Only this command may print `CERTIFIED`. It is intentionally slower because it
-adds `leanchecker --fresh` over the complete imported closure. See the
-[certificate guide](certification.md) for the exact guarantee and trust
-boundary.
+Only this command may print `CERTIFIED`. It is slower on purpose, because it adds `leanchecker --fresh` over the complete imported closure. See the [certificate guide](certification.md) for the exact guarantee and trust boundary.
 
 ## CI
 
-No Docker CI job is wired for this quickstart. The image downloads and materializes three toolchains, including Lean and Dafny, and is kept as a manual verification path unless a later CI environment can show it adds less than 10 minutes with no flake risk.
+No Docker CI job runs this quickstart. The image downloads and installs three toolchains, including Lean and Dafny. It stays a manual verification path until a CI environment can show that it adds less than 10 minutes and carries no flake risk.

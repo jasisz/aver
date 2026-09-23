@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <title>Finding Aver’s grandfather — Aver</title>
+    <title>Finding Aver’s grandfather | Aver</title>
     <meta name="description" content="Aver meets its grandfather ACL2: implementing the 1996 AMD K5 division paper as executable laws surfaced a 30-year-old bug in the paper's presentation.">
     <meta property="og:type" content="article">
     <meta property="og:title" content="Finding Aver’s grandfather">
@@ -160,7 +160,7 @@ Verify: sticky_typo.av
 
 <span class="t-sum">Summary: 1 file | 20 blocks | 2728/6164 cases passed | 300 failed | 3136 skipped by `when`</span>
 aver verify sticky_typo.av  1,40s user 0,08s system 96% cpu 1,541 total</code></pre>
-                <figcaption><em>aver verify</em> on the transcribed definitions &mdash; text, not a screenshot: select away</figcaption>
+                <figcaption><em>aver verify</em> on the transcribed definitions. It's text, not a screenshot, so select away</figcaption>
             </figure>
 
             <p>I'm like "that is impossible". But it is there, numbers staring at me, the counterexamples, not one or two, 300 counterexamples (out of a 3,072-case grid) for the paper published 30 years ago. I go searching, I find the later implementations in Lisp, the Russinoff in main ACL2 repo (<a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/lib1/round.lisp">round.lisp from the 1996-98 AMD library</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/support/sticky.lisp">the same definition standalone</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel11/lib/round.lisp">and its modern descendant</a>) and the definition is different! There is a bug in the paper's presentation, I am sure they proved the right thing, but when they translated that to the paper's math notation they had a bug in there.</p>

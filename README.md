@@ -8,11 +8,11 @@
 
 # Aver
 
-Aver is a statically typed language designed for AI to write in and humans to review, with a bytecode VM for runtime execution, a Rust backend for deployment, a WASM backend for browser and embedded targets, Lean proof export for pure logic and classified effectful laws, and Dafny verification for automated law checking via Z3.
+Aver is a statically typed language designed for AI to write and humans to review. It has a bytecode VM for running code, a Rust backend for deployment, a WASM backend for browser and embedded targets, Lean proof export for pure logic and classified effectful laws, and Dafny verification that checks laws automatically through Z3.
 
-It is built around one idea: an AI reviewer's opinion of generated code gets cheaper every year; a kernel-checked certificate does not. Aver source carries proof obligations, and a compiled wasm-gc artifact can ship with a sidecar certificate bound to its exact bytes — guarantees a Lean kernel signs off on, not a judgment someone eyeballed once. As the volume of generated code outpaces anyone's capacity to read it, the thing worth keeping is the certificate, not the spot-check.
+An AI reviewer's opinion of generated code gets cheaper every year. A certificate checked by the Lean kernel keeps its price. Aver source carries proof obligations, and a compiled wasm-gc artifact can ship with a sidecar certificate bound to its exact bytes. The Lean kernel signs off on those guarantees, so they do not rest on someone having looked at the code once. Generated code already arrives faster than anyone can read it, and the certificate is what stays useful when spot-checks can no longer keep up.
 
-Readability comes second, and it still counts: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
+Readability comes second, and it still matters. The risky part of AI-written code is usually missing intent, much more often than bad syntax. Aver makes that intent explicit and machine-readable:
 
 - effects are part of the function signature
 - decisions live next to the code they explain
@@ -20,16 +20,16 @@ Readability comes second, and it still counts: the risky part of AI-written code
 - selected effectful behavior can be verified with explicit stubs and trace assertions
 - effectful runs can be recorded and replayed deterministically
 
-The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) lives in [docs/cli.md](docs/cli.md). Backend-specific deep dives: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/dafny.md](docs/dafny.md), [docs/effects.md](docs/effects.md), [docs/wasip2.md](docs/wasip2.md), and [docs/rust.md](docs/rust.md). Compiled wasm-gc modules and wasip2 components can carry a machine-checkable certificate of what their exports compute: [docs/certification.md](docs/certification.md).
+The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) is documented in [docs/cli.md](docs/cli.md). The backends have their own pages: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/dafny.md](docs/dafny.md), [docs/effects.md](docs/effects.md), [docs/wasip2.md](docs/wasip2.md) and [docs/rust.md](docs/rust.md). Compiled wasm-gc modules and wasip2 components can carry a machine-checkable certificate of what their exports compute; see [docs/certification.md](docs/certification.md).
 
-This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
+Aver is optimized for AI to generate code that humans can inspect, constrain, test and ship. Typing it by hand all day is not the goal.
 
-**Prompting an LLM to write Aver?** Run `aver agent-connect` in your project. The language guide and the toolchain guide ship inside the binary, so an install already carries them: the command writes them out as `.claude/skills/aver/SKILL.md` and `.claude/skills/aver-tooling/SKILL.md` and points a marked section of your `AGENTS.md` at them, touching nothing else. `aver agent-connect --global` puts the same two skills in `~/.claude/skills/` instead, and `aver agent-connect --print` writes the language guide to stdout for an agent that wants one file. There is no blessed workflow — keep whatever prompt or harness you already use. Prefer to link rather than install? The same curated guide is the repo-root [`llms.txt`](llms.txt) and [averlang.dev/llms.txt](https://averlang.dev/llms.txt) — `.av` extension, single-line match arms, qualified constructors, classified effects, `verify` block shapes, and every other rule that catches model-generated code on first try. Longer reference cut: [`llms-full.txt`](https://averlang.dev/llms-full.txt).
+**Prompting an LLM to write Aver?** Run `aver agent-connect` in your project. The language guide and the toolchain guide ship inside the binary, so every install already has them. The command writes them out as `.claude/skills/aver/SKILL.md` and `.claude/skills/aver-tooling/SKILL.md` and points a marked section of your `AGENTS.md` at them. It touches nothing else. `aver agent-connect --global` puts the same two skills in `~/.claude/skills/` instead, and `aver agent-connect --print` writes the language guide to stdout for an agent that wants a single file. There is no blessed workflow; keep whatever prompt or harness you already use. If you would rather link than install, the same curated guide is the repo-root [`llms.txt`](llms.txt) and [averlang.dev/llms.txt](https://averlang.dev/llms.txt). It covers the `.av` extension, single-line match arms, qualified constructors, classified effects, `verify` block shapes, and the other rules models tend to get wrong on the first try. A longer reference cut is [`llms-full.txt`](https://averlang.dev/llms-full.txt).
 
 Website: [averlang.dev](https://averlang.dev)  
 Browser playground: [averlang.dev/playground](https://averlang.dev/playground/)
 
-Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longer argument, [Common Pushback](docs/pushback.md) for questions and objections, or [intent-trace](https://github.com/jasisz/intent-trace) for an empirical benchmark comparing Aver's legibility against Python variants across 108 AI-reviewed code changes.
+The [Aver Manifesto](https://jasisz.github.io/aver-language/) makes the longer argument, and [Common Pushback](docs/pushback.md) collects questions and objections. [intent-trace](https://github.com/jasisz/intent-trace) is an empirical benchmark that compares Aver's legibility against Python variants across 108 AI-reviewed code changes.
 
 ---
 
@@ -41,9 +41,7 @@ Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longe
 docker build -t aver-one-command . && docker run --rm aver-one-command
 ```
 
-This builds `aver` and `aver-cert`, runs `examples/core/hello.av`, checks one
-Lean law, and smoke-checks a small artifact certificate. See
-[docs/quickstart.md](docs/quickstart.md).
+This builds `aver` and `aver-cert`, runs `examples/core/hello.av`, checks one Lean law, and smoke-checks a small artifact certificate. See [docs/quickstart.md](docs/quickstart.md).
 
 ### Install from crates.io
 
@@ -52,17 +50,9 @@ cargo install aver-lang --features wasm
 cargo install aver-cert
 ```
 
-The `wasm` feature enables wasm-gc compilation and `--certify`; omit it only if
-you need the VM and Rust backend. Install with `--features wasm,wasip2` if you
-also want the WASI 0.2 target shown below. `aver-lang` installs the compiler as
-`aver`.
-`aver-cert` installs the independent certificate verifier used by `aver cert`;
-keep both executables in the same directory or on `PATH`. The verifier starts
-its own public version line at `0.1.0` rather than sharing the `aver-lang`
-version, and checks certificates with the pinned Lean 4.34 toolchain.
-Verification requires a standard Elan installation. The verifier resolves the
-canonical Elan executable directly and does not find its trusted Lake, Lean, or
-leanchecker processes through `PATH`.
+The `wasm` feature enables wasm-gc compilation and `--certify`. Leave it out only if you need nothing beyond the VM and the Rust backend. Install with `--features wasm,wasip2` if you also want the WASI 0.2 target shown below. `aver-lang` installs the compiler as `aver`.
+
+`aver-cert` installs the independent certificate verifier that `aver cert` uses. Keep both executables in the same directory or on `PATH`. The verifier has its own public version line, starting at `0.1.0` and separate from the `aver-lang` version, and it checks certificates with the pinned Lean 4.34 toolchain. Verification needs a standard Elan installation. The verifier resolves the canonical Elan executable directly and does not look up its trusted Lake, Lean or leanchecker processes through `PATH`.
 
 Then try it with a tiny file:
 
@@ -108,10 +98,9 @@ aver compile  hello.av -o out/
 (cd out && cargo run)
 ```
 
-`aver run`, `verify`, `check`, and `replay` use the bytecode VM by default. The old
-`--vm` flag is gone.
+`aver run`, `verify`, `check` and `replay` use the bytecode VM by default. The old `--vm` flag has been removed.
 
-`Unit` is Aver's "no meaningful value" type, roughly like `void` and rendered as `()` in diagnostics. `main` often returns `Unit`, but it can also return `Result<Unit, String>`; `aver run` treats `Result.Err(...)` from `main` as a process failure.
+`Unit` is Aver's "no meaningful value" type. It is roughly `void` and shows up as `()` in diagnostics. `main` often returns `Unit`, but it can also return `Result<Unit, String>`, and `aver run` treats `Result.Err(...)` from `main` as a process failure.
 
 ### Build from source
 
@@ -141,7 +130,7 @@ aver replay   recordings/ --test --json
 aver replay   recordings/rec-…json --wasm-gc
 ```
 
-Recordings are byte-compatible across the VM, self-host, and wasm-gc backends — a trace written by any one of them replays cleanly under any of the three.
+Recordings are byte-compatible across the VM, self-host and wasm-gc backends. A trace written by any one of them replays cleanly under any of the three.
 
 Requires: Rust stable toolchain.
 
@@ -153,7 +142,7 @@ For editor integration:
 cargo install aver-lsp
 ```
 
-Then install the VS Code extension `Aver.aver-lang`, or configure your editor to start the `aver-lsp` binary directly. See [editors/README.md](editors/README.md) for VS Code, Sublime Text, and manual LSP setup notes.
+Then install the VS Code extension `Aver.aver-lang`, or have your editor start the `aver-lsp` binary directly. [editors/README.md](editors/README.md) has setup notes for VS Code, Sublime Text and manual LSP configuration.
 
 ---
 
@@ -191,17 +180,17 @@ No `if`/`else`. No loops. No exceptions. No nulls. No implicit side effects.
 
 ## Deliberate constraints
 
-Aver is intentionally opinionated. These omissions are part of the design, not missing features:
+Aver is opinionated on purpose. Each of these omissions is a design choice:
 
-- no `if`/`else` — branching goes through `match`, which dispatches directly on literals (`"verack" ->`, `253 ->`), constructors, lists and tuples, not only on booleans
-- no `for`/`while` — iteration is recursion or explicit list operations
-- no exceptions — failure is `Result`
-- no `null` — absence is `Option`
-- no closures — functions are top-level and explicit
-- no async/await, streams, or channels — `(a, b)?!` declares independent computations; the runtime handles the rest. See [docs/independence.md](docs/independence.md)
-- no hidden state behind effects — `Disk.write` does not affect a later `Disk.read`; if state matters, it lives in pure user data (see below)
+- no `if`/`else`: branching goes through `match`, which dispatches directly on literals (`"verack" ->`, `253 ->`), constructors, lists and tuples as well as booleans
+- no `for`/`while`: iteration is recursion or explicit list operations
+- no exceptions: failure is `Result`
+- no `null`: absence is `Option`
+- no closures: functions are top-level and explicit
+- no async/await, streams or channels: `(a, b)?!` declares independent computations and the runtime handles the rest. See [docs/independence.md](docs/independence.md)
+- no hidden state behind effects: `Disk.write` does not affect a later `Disk.read`. If state matters, it lives in pure user data (see below)
 
-The point is to remove classes of implicit behavior that are easy for AI to generate and annoying for humans to audit.
+Each omission removes a kind of implicit behavior that AI generates easily and humans find tedious to audit.
 
 For the fuller language rationale, see [docs/language.md](docs/language.md).
 
@@ -213,10 +202,10 @@ For the fuller language rationale, see [docs/language.md](docs/language.md).
 
 Aver splits programs into two layers:
 
-- **Pure core** — explicit data, explicit state transitions, laws. Read-after-write consistency, ordering, accumulation — all of that is a property of *your* data structures (a `FileStore`, a `PaymentLedger`, a `WorkflowState`), proven by `verify` over pure functions.
-- **Effect shell** — `Disk.*`, `Time.*`, `Process.*`, `Tcp.*`, `Http.*`, `Env.*`. One-shot calls to the world. Oracle stubs are explicit functions of branch and call index: an `Env.set` does not change a later `Env.get`, a first `Time.now` does not constrain the next, and a `Disk.write` does not seed a later `Disk.read`; capability-owned laws may still relate observations, as `Process.stopRequested` does with its false-to-true-only transition.
+- **Pure core**: explicit data, explicit state transitions, laws. Read-after-write consistency, ordering and accumulation are properties of *your* data structures (a `FileStore`, a `PaymentLedger`, a `WorkflowState`), proven by `verify` over pure functions.
+- **Effect shell**: `Disk.*`, `Time.*`, `Process.*`, `Tcp.*`, `Http.*`, `Env.*`. These are one-shot calls to the world. Oracle stubs are explicit functions of branch and call index. An `Env.set` does not change a later `Env.get`, a first `Time.now` does not constrain the next, and a `Disk.write` does not seed a later `Disk.read`. Capability-owned laws may still relate observations. `Process.stopRequested` does this: it can only go from false to true.
 
-This is by design. Wall clocks are not monotonic in the real world (NTP, leap, suspend, VM clock skew). Filesystems are not transactional. Aver does not pretend external services have nicer laws than the platform actually promises — that would prove guarantees the OS never gave.
+This is deliberate. Real wall clocks are not monotonic (NTP, leap, suspend, VM clock skew). Filesystems are not transactional. Aver does not give external services nicer laws than the platform actually promises, because that would prove guarantees the OS never gave.
 
 If a property depends on memory across effect calls, model the state in pure user code. The shell stays thin.
 
@@ -235,13 +224,13 @@ LLMs can produce function bodies quickly. They are much worse at preserving the 
 
 Traditional languages usually push that into comments, external docs, stale tests, or team memory. Aver makes those concerns part of the language and tooling.
 
-The intended workflow is explicit: AI writes Aver, humans review contracts and intent, and execution happens through the bytecode VM during development, with deployment through Rust code generation or WASM compilation.
+The intended workflow: AI writes Aver, humans review contracts and intent, the bytecode VM runs the code during development, and deployment goes through Rust code generation or WASM compilation.
 
 ---
 
 ## Talks
 
-I discussed Aver on Happy Path Programming #120 with Bruce Eckel and James Ward: why the optimization target is the reviewer and not the generator; why effects, intent, verify blocks, and decisions belong in the language itself; and what "AI-native" should actually mean when generated code still has to be trusted by a human.
+I discussed Aver on Happy Path Programming #120 with Bruce Eckel and James Ward. We talked about why Aver optimizes for the reviewer and not the generator, why effects, intent, verify blocks and decisions belong in the language itself, and what "AI-native" should mean when a human still has to trust the generated code.
 
 Watch / listen: https://www.youtube.com/watch?v=D_mPxGtSzbQ
 
@@ -281,30 +270,11 @@ aver compile hello.av --target wasip2
 aver run hello.av --wasip2 -- some-arg
 ```
 
-`--target wasm-gc` is the default modern target (Chrome 119+ /
-Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ / Workers).
-`--target wasip2` is its peer for the Component Model side. The
-pre-2024 NaN-boxed wasm32 backend (`--target wasm` + `--bridge`)
-was dropped in 0.18 — see [`docs/effects.md`](docs/effects.md) and
-[`docs/wasip2.md`](docs/wasip2.md) for the supported deployment surfaces.
-The Wasmtime pack is a native directory bundle containing the canonical
-wasm-gc module, an optional distinct Binaryen result, its matching precompiled
-Wasmtime image, a manifest, and a stripped `aver-wasmtime-host` executable with
-the engine and the project's configured providers linked in. Only the build
-machine needs Aver, Cargo, and provider sources; the destination loads the AOT
-image without running Cranelift. `--certify --optimize` intentionally keeps
-three stages: the certificate binds `<name>.wasm`, deployment uses
-`<name>.optimized.wasm`, and Wasmtime executes `<name>.cwasm`. See
-[`docs/wasmtime-pack.md`](docs/wasmtime-pack.md).
-The bundled host defaults to `.cwasm` but can explicitly JIT either portable
-stage with `--artifact canonical|optimized` for differential diagnosis. It
-never falls back automatically.
-Custom capabilities whose complete contract uses only `Unit`, `Bool`, `Float`,
-and `String` compile to typed wasip2 component imports. They are host-bound: an
-external Component Model host may provide the generated interface directly, or
-`aver run app.av --wasip2` can adapt the same Rust `ProviderBinding` the
-project's `aver.toml` binds for the VM. Without such a binding,
-`aver run --wasip2` reports the missing import before component linking.
+`--target wasm-gc` is the default modern target (Chrome 119+ / Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ / Workers). `--target wasip2` is its counterpart for the Component Model. The pre-2024 NaN-boxed wasm32 backend (`--target wasm` + `--bridge`) was dropped in 0.18. See [`docs/effects.md`](docs/effects.md) and [`docs/wasip2.md`](docs/wasip2.md) for the supported deployment surfaces.
+
+The Wasmtime pack is a native directory bundle. It contains the canonical wasm-gc module, an optional distinct Binaryen result, its matching precompiled Wasmtime image, a manifest, and a stripped `aver-wasmtime-host` executable with the engine and the project's configured providers linked in. Only the build machine needs Aver, Cargo and provider sources. The destination loads the AOT image without running Cranelift. `--certify --optimize` keeps three stages on purpose: the certificate binds `<name>.wasm`, deployment uses `<name>.optimized.wasm`, and Wasmtime executes `<name>.cwasm`. See [`docs/wasmtime-pack.md`](docs/wasmtime-pack.md). The bundled host defaults to `.cwasm`. For differential diagnosis it can explicitly JIT either portable stage with `--artifact canonical|optimized`. It never falls back automatically.
+
+Custom capabilities whose whole contract uses only `Unit`, `Bool`, `Float` and `String` compile to typed wasip2 component imports. They are host-bound. An external Component Model host may provide the generated interface directly, or `aver run app.av --wasip2` can adapt the same Rust `ProviderBinding` that the project's `aver.toml` binds for the VM. Without such a binding, `aver run --wasip2` reports the missing import before component linking.
 
 ### Native Rust
 
@@ -315,26 +285,10 @@ aver compile hello.av --policy runtime # load aver.toml at runtime
 ```
 
 See [docs/rust.md](docs/rust.md) for the generated code model.
-Generated Rust can also be linked with native custom capability providers. The
-generated library accepts the same `aver_rt::provider::ProviderBinding` used by
-an embedded VM. A versioned `[providers]` section in `aver.toml` can name an
-explicit Cargo package/path and zero-argument binding factory; `aver compile`
-then emits the dependency and stock-binary bootstrap, while Cargo performs
-package resolution during the generated build. The same manifest is part of
-what a program means on every backend: when a program reaches a bound
-capability, `aver run`, `aver verify`, and `aver audit` build a thin cached
-Rust host once (the first build names the packages it links) and run the
-ordinary bytecode VM inside it with those bindings in-process. Project-wide
-verify/audit installs only the bindings relevant to each module, so
-independent modules are still executed rather than mislabeled as type
-errors. For a WIT-lowerable contract, `aver run app.av --wasip2` uses that
-same host package and binding behind the generated Component Model import;
-`aver run app.av --wasm-gc` uses the same binding behind the contract-derived
-raw wasm-gc ABI, including compound values, packed `Bytes`, and opaque
-provider resources. `--self-host` still has no provider host and refuses such
-a program. A project without `[providers]` never invokes Cargo: its
-generated artifacts remain host-bound and embedders can install bindings
-through the library API.
+
+Generated Rust can also be linked with native custom capability providers. The generated library accepts the same `aver_rt::provider::ProviderBinding` that an embedded VM uses. A versioned `[providers]` section in `aver.toml` can name an explicit Cargo package/path and a zero-argument binding factory. `aver compile` then emits the dependency and the stock-binary bootstrap, and Cargo resolves the package during the generated build.
+
+The same manifest is part of what a program means on every backend. When a program reaches a bound capability, `aver run`, `aver verify` and `aver audit` build a thin cached Rust host once (the first build names the packages it links) and run the ordinary bytecode VM inside it with those bindings in-process. Project-wide verify/audit installs only the bindings each module needs, so independent modules still run and are not mislabeled as type errors. For a WIT-lowerable contract, `aver run app.av --wasip2` uses the same host package and binding behind the generated Component Model import. `aver run app.av --wasm-gc` uses the same binding behind the contract-derived raw wasm-gc ABI, including compound values, packed `Bytes` and opaque provider resources. `--self-host` still has no provider host and refuses such a program. A project without `[providers]` never invokes Cargo. Its generated artifacts stay host-bound, and embedders can install bindings through the library API.
 
 ### Self-hosted
 
@@ -342,7 +296,7 @@ through the library API.
 aver run hello.av --self-host
 ```
 
-Runs through the Aver interpreter written in Aver itself, compiled to Rust and cached on demand. See [self_hosted/README.md](self_hosted/README.md).
+This runs the program through the Aver interpreter written in Aver, which is compiled to Rust and cached on demand. See [self_hosted/README.md](self_hosted/README.md).
 
 ---
 
@@ -365,7 +319,7 @@ fn fetchExchangeRate(currency: String) -> Result<Http.Response, String>
     Http.get("https://api.ecb.europa.eu/rates/{currency}")
 ```
 
-Effects such as `Http.get`, `Disk.readText`, and `Console.print` are part of the signature. Missing declarations are type errors. The runtime enforces the same boundary as a backstop.
+Effects such as `Http.get`, `Disk.readText`, and `Console.print` are part of the signature. A missing declaration is a type error. The runtime also enforces the same boundary as a backstop.
 
 Effects can be granular or namespace-wide:
 
@@ -374,7 +328,7 @@ Effects can be granular or namespace-wide:
 
 `aver check` suggests narrowing a broad namespace effect when a function only needs a smaller subset.
 
-Runtime policy can narrow the allowed destinations further via `aver.toml`:
+Runtime policy in `aver.toml` can narrow the allowed destinations further:
 
 ```toml
 [effects.Http]
@@ -392,18 +346,14 @@ request_idle_timeout_secs = 30
 max_connections = 256
 ```
 
-Disk paths accept concrete subtrees, `./**` for the project-relative subtree, and `/**` for the filesystem root. Bare `**`, empty entries, unsupported glob spellings, and `..`-rooted entries are rejected when `aver.toml` loads; see [the CLI reference](docs/cli.md#avertoml) for the full grammar and string-only matching limitation.
+Disk paths accept concrete subtrees, `./**` for the project-relative subtree, and `/**` for the filesystem root. Loading `aver.toml` rejects bare `**`, empty entries, unsupported glob spellings and `..`-rooted entries. [The CLI reference](docs/cli.md#avertoml) has the full grammar and explains the limitation that matching is string-only.
 
-Think of this as two separate controls:
+These are two separate controls:
 
 - code answers: what kind of I/O is allowed?
 - policy answers: which concrete destinations are allowed?
 
-Tcp's three values configure the standard capability provider rather than
-grant additional effects. The two deadlines apply to connection establishment
-and one-shot request calls; persistent session reads and writes intentionally
-have no deadline. `max_connections` is one shared bound for established and
-accepted connections plus in-flight dials.
+The three Tcp values configure the standard capability provider. They do not grant additional effects. The two deadlines apply to connection establishment and to one-shot request calls. Reads and writes on persistent sessions have no deadline, by design. `max_connections` is a single shared bound covering established connections, accepted connections and in-flight dials.
 
 Generated Rust can use the same scoped runtime machinery when you compile with `--with-replay`; see [docs/rust.md](docs/rust.md).
 
@@ -421,7 +371,7 @@ decision UseResultNotExceptions
     author = "team"
 ```
 
-`decision` blocks are first-class syntax, colocated with the code they explain.
+`decision` blocks are part of the language syntax and sit next to the code they explain.
 
 Query only the decision history for a module graph:
 
@@ -437,17 +387,17 @@ aver context decisions/architecture.av --decisions-only
 aver context examples/core/calculator.av
 ```
 
-Aver walks the dependency graph and emits a compact context summary: module intent, public signatures, effect declarations, verify samples, and decisions. The goal is not to dump the whole source tree; it is to export the contract-level view that another human or LLM needs first.
+Aver walks the dependency graph and emits a compact context summary: module intent, public signatures, effect declarations, verify samples and decisions. It exports the contract-level view that another human or LLM needs first, instead of dumping the whole source tree.
 
-By default, `aver context` uses `--depth auto --budget 10kb` with priority scoring: elements with more verify coverage, spec references, and decisions are included first. `--depth N` and `--depth unlimited` bypass that budget. Long verify examples are skipped rather than bloating the artifact.
+By default, `aver context` uses `--depth auto --budget 10kb` with priority scoring: elements with more verify coverage, spec references and decisions are included first. `--depth N` and `--depth unlimited` bypass that budget. Long verify examples are skipped so they do not bloat the artifact.
 
-Use `--focus <symbol>` to build context around a specific function — its callees, types, verify blocks, and decisions are prioritized within the budget:
+Use `--focus <symbol>` to build context around one function. Its callees, types, verify blocks and decisions get priority within the budget:
 
 ```bash
 aver context examples/data/json.av --focus fromString
 ```
 
-This makes token budget a navigation primitive. Another human or model can start with a small architecture map, zoom into the modules that matter, or focus on a single function's dependency cone.
+The token budget becomes a way to navigate. Another human or model can start with a small architecture map, zoom into the modules that matter, or focus on one function's dependency cone.
 
 If you want a larger export for a medium project, raise the budget explicitly:
 
@@ -465,7 +415,7 @@ When `--output` is used, Aver also prints a short selection summary to stdout, f
 mode auto, included depth 2, used 22622b, budget 24kb, truncated, next depth 3 would use 40739b
 ```
 
-The same selection metadata is embedded in JSON output so you can see whether the export stopped because of the budget.
+JSON output embeds the same selection metadata, so you can see whether the export stopped because of the budget.
 
 Example shape:
 
@@ -510,7 +460,7 @@ verify add law commutative
     add(a, b) => add(b, a)
 ```
 
-`verify ... law ...` is deterministic, not random sampling. Cases are generated as the cartesian product of explicit domains, capped at `10_000`.
+`verify ... law ...` is deterministic and does no random sampling. Its cases are the cartesian product of explicit domains, capped at `10_000`.
 
 For the proof-oriented style where a law relates an implementation to a pure spec function, see [docs/language.md](docs/language.md) and [docs/lean.md](docs/lean.md).
 
@@ -531,7 +481,7 @@ verify pickOne law usesOracle
     Result.Ok(pickOne()) => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
-`verify <fn> law <name>` is the proof-oriented Oracle form: `aver proof` lifts the effectful function to a pure function with explicit oracle parameters and can emit a universal theorem over that oracle. Use cases-form `verify <fn> trace` when you want runtime assertions over `.result` and `.trace.*`, such as `trace.contains(Random.int(1, 6))`. See [docs/oracle.md](docs/oracle.md) for the full model.
+`verify <fn> law <name>` is the proof-oriented Oracle form. `aver proof` lifts the effectful function to a pure function with explicit oracle parameters and can emit a universal theorem over that oracle. For runtime assertions over `.result` and `.trace.*`, such as `trace.contains(Random.int(1, 6))`, use the cases form `verify <fn> trace`. See [docs/oracle.md](docs/oracle.md) for the full model.
 
 ### Replay
 
@@ -572,7 +522,7 @@ aver cert verify out/file.component.wasm out/cert
 aver cert explain out/file.wasm out/cert
 ```
 
-Full per-command reference, including flags, replay, formatting, REPL, and the audit / why / proof / bench surface: [docs/cli.md](docs/cli.md). `check`, `verify`, and `audit` walk the whole program — the entry plus every module it reaches through `depends [...]` — and report per module; `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
+The full per-command reference, including flags, replay, formatting, the REPL and the audit / why / proof / bench commands, is in [docs/cli.md](docs/cli.md). `check`, `verify` and `audit` walk the whole program (the entry plus every module it reaches through `depends [...]`) and report per module. `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
 
 | Command | What it checks | Use as a gate? |
 |---|---|---|
@@ -581,16 +531,13 @@ Full per-command reference, including flags, replay, formatting, REPL, and the a
 | `aver cert check` | Fast certificate preflight using the built or trusted-cache `.olean` closure | Development only (`CHECKED`) |
 | `aver cert verify` | Exact artifact certificate with final fresh replay | Release/admission gate (`CERTIFIED`) |
 
-`aver-cert` is an independent process. `aver cert ...` forwards to that binary
-without linking a verifier into the compiler. Certificate package format and
-schema version `1` are described in
-[docs/certification.md](docs/certification.md).
+`aver-cert` runs as an independent process. `aver cert ...` forwards to that binary, so no verifier is linked into the compiler. [docs/certification.md](docs/certification.md) describes the certificate package format and schema version `1`.
 
 ---
 
 ## Language and runtime
 
-Aver is intentionally small. The core model is:
+Aver is small on purpose. The core model:
 
 - immutable bindings only
 - `match` instead of `if`/`else`
@@ -612,12 +559,10 @@ Aver has four backend paths:
 
 - VM-based workflow for `run`, `check`, `verify`, `replay`, and `context`
 - Rust compilation for generating a native Cargo project with `aver compile`
-- Lean proof export for pure core logic, Oracle-lifted classified effectful laws, and `verify` / `verify law` obligations with `aver proof`
-  Supported law shapes become real universal theorems; the rest stay as
-  executable samples or checked-domain theorems instead of fake proofs.
+- Lean proof export for pure core logic, Oracle-lifted classified effectful laws, and `verify` / `verify law` obligations with `aver proof`. Supported law shapes become real universal theorems. The rest stay as executable samples or checked-domain theorems and are never presented as proofs.
 - Dafny verification for automated `verify law` checking via Z3 with `aver proof --backend dafny`
 
-The VM and generated Rust share practical behavior through `aver-rt`: list teardown, deep `append -> match` paths, and string helpers such as `String.slice` are intentionally centralized there so one runtime fix can improve both execution paths.
+The VM and generated Rust share runtime behavior through `aver-rt`. List teardown, deep `append -> match` paths and string helpers such as `String.slice` live there on purpose, so one runtime fix improves both execution paths.
 
 Typical Rust flow:
 
@@ -645,8 +590,8 @@ dafny verify fibonacci.dfy
 
 Rust is the deployment backend. Lean and Dafny are complementary proof backends:
 
-- **Lean** handles `verify` cases via `native_decide` (100% success on concrete examples) and supported `verify law` shapes via hand-crafted tactic strategies
-- **Dafny** emits `verify law` blocks as lemmas and lets Z3 attempt automated proofs — no tactic authoring needed, but limited on concrete computation
+- **Lean** handles `verify` cases via `native_decide` (100% success on concrete examples) and supported `verify law` shapes via hand-written tactic strategies
+- **Dafny** emits `verify law` blocks as lemmas and lets Z3 attempt automated proofs. It needs no tactic authoring but is limited on concrete computation
 
 For backend-specific details, see:
 - [docs/rust.md](docs/rust.md) for Cargo generation and deployment flow
@@ -658,8 +603,7 @@ For backend-specific details, see:
 
 ## Examples
 
-Shared examples under `examples/` resolve from `--module-root examples`.
-They are grouped by role:
+Shared examples under `examples/` resolve from `--module-root examples`. They are grouped by role:
 - `core/` for language and syntax tours
 - `data/` for pure data structures and parsers
 - `formal/` for Lean-oriented proof examples
@@ -667,6 +611,7 @@ They are grouped by role:
 - `services/` for effectful adapter demos
 - `apps/` for small multi-file applications under the shared examples root
 - `games/` for interactive terminal games (Snake, Tetris, Braille Doom)
+
 Standalone multi-file showcase projects live under `projects/` and use their own local module roots.
 
 Repository layout rule:
@@ -711,10 +656,9 @@ Standalone projects:
 |------|-------------|
 | `projects/workflow_engine/main.av` | Explicit app/domain/infra flow, event replay, derived events, verify-driven orchestration |
 | `projects/payment_ops/main.av` | Dirty payment backoffice flow: provider normalization, replay, settlement reconcile, manual-review cases, audit trail |
-| `self_hosted/main.av` | Full self-hosted interpreter: lexer, parser, resolver, evaluator — all 55 examples pass. Compiles to native via `aver compile` and powers `aver run --self-host`. |
+| `self_hosted/main.av` | Full self-hosted interpreter: lexer, parser, resolver, evaluator. All 55 examples pass. Compiles to native via `aver compile` and powers `aver run --self-host`. |
 
-See `examples/` and `projects/` for the full set.
-For repository self-documentation via decision exports, see `decisions/architecture.av`.
+See `examples/` and `projects/` for the full set. For repository self-documentation via decision exports, see `decisions/architecture.av`.
 
 ---
 
@@ -742,5 +686,5 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/certificate-format.md](docs/certificate-format.md) | Normative certificate format reference for independent verifier reimplementors, with the trust inventory and the versioning and freeze policy |
 | [docs/independence.md](docs/independence.md) | Independent products: the semantic model behind `?!` and `!` |
 | [docs/research.md](docs/research.md) | Narrow related work for effects, Oracle, independent products, and proof targets |
-| [docs/pushback.md](docs/pushback.md) | Common pushback: questions, objections, and honest answers |
+| [docs/pushback.md](docs/pushback.md) | Common pushback: questions, objections and answers |
 | [docs/decisions.md](docs/decisions.md) | Decision export generated via `aver context --decisions-only` |
