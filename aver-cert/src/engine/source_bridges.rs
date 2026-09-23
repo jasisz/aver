@@ -1241,6 +1241,16 @@ fn render_image_table(fns: &BTreeMap<u32, BridgedFn>, s: &mut String) {
         ));
     }
     s.push_str("  | _ => _root_.Option.none\n\n");
+    // One unfolding lemma per entry: the step proofs of another module
+    // rewrite with these, since `simp` unfolding the whole table there
+    // rebuilds its equations and runs out of recursion depth on a large one.
+    for f in fns.keys() {
+        s.push_str(&format!(
+            "theorem I_{f} (a : _root_.List _root_.AverCert.Grammar.SVal) :\n    \
+             I {f} a = (dec_{f} a).map img_{f} := rfl\n"
+        ));
+    }
+    s.push('\n');
 }
 
 fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s: &mut String) {
@@ -1254,7 +1264,7 @@ fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s:
     let mut callee_simps = String::new();
     for c in &b.callees {
         if let Some(callee) = fns.get(c) {
-            callee_simps.push_str(&format!(", dec_{c}, img_{c}"));
+            callee_simps.push_str(&format!(", I_{c}, dec_{c}, img_{c}"));
             if callee.fuel {
                 callee_simps.push_str(&format!(", _root_.{}", callee.model));
             }
@@ -1273,7 +1283,7 @@ fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s:
          | (set_option maxHeartbeats {cap} in\n      \
              (refine ⟨AverCert.Plans.fn{f}, rfl, ?_⟩\n       \
               intro F a w h\n       \
-              simp only [I, _root_.Option.map_eq_some_iff] at h\n       \
+              simp only [I_{f}, _root_.Option.map_eq_some_iff] at h\n       \
               obtain ⟨y, hy, rfl⟩ := h\n       \
               unfold dec_{f} at hy\n       \
               split at hy <;> simp only [_root_.Option.bind_eq_some_iff, _root_.Option.some.injEq, \
@@ -1283,7 +1293,7 @@ fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s:
               all_goals\n         \
                 simp only [img_{f}]\n         \
                 {unfold}\n         \
-                simp [AverCert.Plans.fn{f}, {EVAL_SIMPS}{literals}, I{callee_simps}]\n       \
+                simp [AverCert.Plans.fn{f}, {EVAL_SIMPS}{literals}, I_{f}{callee_simps}]\n       \
               all_goals (try (repeat' split))\n       \
               all_goals (try simp_all [{EVAL_SIMPS}{literals}, {BOOL_SIMPS}])\n       \
               all_goals (try omega)\n       \
@@ -1349,7 +1359,7 @@ fn render_export(
         .filter_map(|(i, p)| rcases_pattern(p).map(|pat| format!("rcases x{i} with {pat}; ")))
         .collect();
     let image = format!(
-        "(by {split_cases}all_goals first | rfl | simp [I, dec_{func_idx}, img_{func_idx}, \
+        "(by {split_cases}all_goals first | rfl | simp [I_{func_idx}, dec_{func_idx}, img_{func_idx}, \
          AverCert.GrammarBridge.decodeStr_strBytes])"
     );
     let steps = render_steps_proof(&closure);
