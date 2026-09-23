@@ -354,55 +354,111 @@ const PLAN_CHUNK: usize = 32;
 /// two (on btc-listener's 173 plans: 8 per chunk took 227 seconds, 32 took
 /// 124 seconds at a 7.4 GiB peak). The chunks are chained from the last one
 /// back to the whole list.
-fn render_artifact_plans(analysis: &Analysis) -> String {
+fn render_artifact_plans(analysis: &Analysis) -> Vec<(String, String)> {
     let n = analysis.entries.len();
-    let mut s = String::from(
-        "-- The per-plan acceptance checks, a few plans per `decide +kernel`\n\
-         -- declaration, chained into the check over every plan.\n\
-         import AcceptedArtifact\n\
-         import ArtifactBytes\n\
-         import Manifest\n\n\
-         set_option maxRecDepth 200000\n\
+    let header = "set_option maxRecDepth 200000\n\
          set_option maxHeartbeats 1600000\n\n\
          namespace AverCert.Artifact\n\
-         open AverCert AverCert.Schema AverCert.AcceptedArtifact AverCert.TypeTable\n\n\
-         /-- One plan's acceptance check against the staged artifact bytes. -/\n\
+         open AverCert AverCert.Schema AverCert.AcceptedArtifact AverCert.TypeTable\n\n";
+    let plan_ok = "/-- One plan's acceptance check against the staged artifact bytes. -/\n\
          noncomputable abbrev planOk : FnEntry → Bool :=\n  \
            entryAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n    \
            (mctxOf AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans)\n    \
-           AverCert.manifest.fnPlans\n\n",
-    );
+           AverCert.manifest.fnPlans\n\n";
     let starts: Vec<usize> = (0..n.max(1)).step_by(PLAN_CHUNK).collect();
-    for (i, k) in starts.iter().enumerate().rev() {
-        if i + 1 == starts.len() {
-            s.push_str(&format!(
-                "theorem plans_from_{k} : (AverCert.manifest.fnPlans.drop {k}).all planOk = true := by\n  \
-                 decide +kernel\n\n"
-            ));
-        } else {
-            let next = starts[i + 1];
-            s.push_str(&format!(
-                "theorem plans_chunk_{k} :\n    \
-                 ((AverCert.manifest.fnPlans.drop {k}).take {PLAN_CHUNK}).all planOk = true := by\n  \
-                 decide +kernel\n\n\
-                 theorem plans_from_{k} : (AverCert.manifest.fnPlans.drop {k}).all planOk = true := by\n  \
-                 rw [← List.take_append_drop {PLAN_CHUNK} (AverCert.manifest.fnPlans.drop {k}),\n    \
-                 List.all_append, plans_chunk_{k}, List.drop_drop]\n  \
-                 simpa only [Nat.reduceAdd, Bool.true_and] using plans_from_{next}\n\n"
-            ));
-        }
-    }
-    s.push_str(
-        "theorem plans_all : AverCert.manifest.fnPlans.all planOk = true := plans_from_0\n\n\
-         end AverCert.Artifact\n",
+    let last = *starts.last().expect("at least one chunk");
+    let from_last = format!(
+        "theorem plans_from_{last} : (AverCert.manifest.fnPlans.drop {last}).all planOk = true := by\n  \
+         decide +kernel\n\n"
     );
-    s
+    let chunk = |k: usize| {
+        format!(
+            "theorem plans_chunk_{k} :\n    \
+             ((AverCert.manifest.fnPlans.drop {k}).take {PLAN_CHUNK}).all planOk = true := by\n  \
+             decide +kernel\n\n"
+        )
+    };
+    let chain = |k: usize, next: usize| {
+        format!(
+            "theorem plans_from_{k} : (AverCert.manifest.fnPlans.drop {k}).all planOk = true := by\n  \
+             rw [← List.take_append_drop {PLAN_CHUNK} (AverCert.manifest.fnPlans.drop {k}),\n    \
+             List.all_append, plans_chunk_{k}, List.drop_drop]\n  \
+             simpa only [Nat.reduceAdd, Bool.true_and] using plans_from_{next}\n\n"
+        )
+    };
+    let imports = "import AcceptedArtifact\nimport ArtifactBytes\nimport Manifest\n\n";
+    let mut body = String::new();
+    let mut chained = String::new();
+    for (i, k) in starts.iter().enumerate().rev().skip(1) {
+        body.push_str(&chunk(*k));
+        chained.push_str(&chain(*k, starts[i + 1]));
+    }
+    let end = "theorem plans_all : AverCert.manifest.fnPlans.all planOk = true := plans_from_0\n\n\
+         end AverCert.Artifact\n";
+    if !splits_artifact_modules(analysis) {
+        return vec![(
+            "ArtifactPlans.lean".to_string(),
+            format!(
+                "-- The per-plan acceptance checks, a few plans per `decide +kernel`\n\
+                 -- declaration, chained into the check over every plan.\n\
+                 {imports}{header}{plan_ok}{from_last}{body}{chained}{end}"
+            ),
+        )];
+    }
+    // One module per chunk, so a parallel Lake checks the chunks at once.
+    let mut files = vec![(
+        "ArtifactPlanCheck.lean".to_string(),
+        format!(
+            "-- The per-plan acceptance check the chunk modules decide.\n\
+             {imports}{header}{plan_ok}end AverCert.Artifact\n"
+        ),
+    )];
+    let mut chunk_imports = String::new();
+    for k in &starts {
+        let theorem = if *k == last { from_last.clone() } else { chunk(*k) };
+        files.push((
+            format!("ArtifactPlans{k}.lean"),
+            format!(
+                "-- One chunk of the per-plan acceptance checks.\n\
+                 import ArtifactPlanCheck\n\n\
+                 {header}{theorem}end AverCert.Artifact\n"
+            ),
+        ));
+        chunk_imports.push_str(&format!("import ArtifactPlans{k}\n"));
+    }
+    files.push((
+        "ArtifactPlans.lean".to_string(),
+        format!(
+            "-- The per-plan acceptance checks of the chunk modules, chained into\n\
+             -- the check over every plan.\n\
+             {chunk_imports}\n{header}{chained}{end}"
+        ),
+    ));
+    files
 }
 
+/// Whether the package spreads its byte facts over several modules: a module
+/// with more plans than one chunk checks the chunks, and the heaviest whole-
+/// module facts, in modules of their own, which Lake builds in parallel when
+/// it is given more than one worker (`AVER_CERT_BUILD_JOBS`). A smaller
+/// package keeps one module per step, since each module pays its imports.
+fn splits_artifact_modules(analysis: &Analysis) -> bool {
+    analysis.entries.len() > PLAN_CHUNK
+}
+
+const ARTIFACT_HEADER: &str = "set_option maxRecDepth 200000\n\
+     -- Elaboration cost grows with the artifact; this moves a resource\n\
+     -- limit only (no axiom, no hypothesis, nothing the kernel accepts).\n\
+     set_option maxHeartbeats 1600000\n\n\
+     namespace AverCert.Artifact\n\
+     open AverCert AverCert.Schema AverCert.AcceptedArtifact\n\n";
+
+/// `Artifact.lean` (and, for a split package, the modules it imports): the
+/// artifact data and the byte facts of its acceptance.
 fn render_artifact(
     analysis: &Analysis,
     envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
-) -> String {
+) -> Vec<(String, String)> {
     let envelope = match envelope {
         None => "none".to_string(),
         Some(env) => format!(
@@ -445,32 +501,23 @@ fn render_artifact(
                 .to_string(),
         ),
     };
-    format!(
-        "-- The artifact data and the byte facts of its acceptance, each by\n\
-         -- `decide +kernel` against the checker-staged `ArtifactBytes`.\n\
-         import AcceptedArtifact\n\
-         import ArtifactBytes\n\
-         import Manifest\n\
-         import ArtifactPlans\n\
-         {roles_import}\n\
-         set_option maxRecDepth 200000\n\
-         -- Elaboration cost grows with the artifact; this moves a resource\n\
-         -- limit only (no axiom, no hypothesis, nothing the kernel accepts).\n\
-         set_option maxHeartbeats 1600000\n\n\
-         namespace AverCert.Artifact\n\
-         open AverCert AverCert.Schema AverCert.AcceptedArtifact\n\n\
-         noncomputable def data : ArtifactData :=\n  \
+    let data = format!(
+        "noncomputable def data : ArtifactData :=\n  \
            {{ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen,\n    \
              manifest := AverCert.manifest, wasip2ComponentEnvelope := {envelope},\n    \
              closureFuel := {fuel},\n    \
-             closureClaim := ⟨{roots}, {helpers}, {admitted}⟩ }}\n\n\
-         theorem plans_ok : plansAccepted data = true :=\n  \
-           plansAccepted_of_parts data plans_all (by decide +kernel)\n\n\
-         {roles_proof}\n\n\
-         theorem strings_ok : decodedStringHostRoles data := by\n  \
-           unfold decodedStringHostRoles; decide +kernel\n\n\
-         theorem axes_ok : AverCert.ClaimAxes.checked data = true := by decide +kernel\n\n\
-         theorem framing_ok : CertDecode.moduleFramingValid data.modBytes data.modLen = true := by\n  \
+             closureClaim := ⟨{roots}, {helpers}, {admitted}⟩ }}\n\n",
+        fuel = analysis.module_envelope.closure_fuel,
+        roots = nats(&closure.roots),
+        helpers = nats(&closure.helpers),
+        admitted = nats(&closure.admitted),
+    );
+    let strings = "theorem strings_ok : decodedStringHostRoles data := by\n  \
+         unfold decodedStringHostRoles; decide +kernel\n\n";
+    let closure_ok =
+        "theorem closure_ok : closureIsolation data = true := by decide +kernel\n\n";
+    let exports = format!(
+        "theorem framing_ok : CertDecode.moduleFramingValid data.modBytes data.modLen = true := by\n  \
            decide +kernel\n\n\
          theorem exports_ok : exportsAccounted data = true :=\n  \
            exportsAccounted_of_chars data\n    \
@@ -478,13 +525,7 @@ fn render_artifact(
            {declared_names}\n    \
            rfl rfl (by decide +kernel)\n\n\
          theorem imports_ok : importsWithinCapabilities data = true := by decide +kernel\n\n\
-         theorem start_ok : startAccounted data = true := by decide +kernel\n\n\
-         theorem closure_ok : closureIsolation data = true := by decide +kernel\n\n\
-         theorem whole_ok : acceptedWholeModule data :=\n  \
-           ⟨framing_ok, exports_ok, imports_ok, start_ok, closure_ok⟩\n\n\
-         theorem envelope_ok : artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes\n    \
-           AverCert.ArtifactComponentBytes.componentLen data = true := by decide +kernel\n\n\
-         end AverCert.Artifact\n",
+         theorem start_ok : startAccounted data = true := by decide +kernel\n\n",
         obligation_names = lean_char_lists(
             &analysis
                 .entries
@@ -501,11 +542,81 @@ fn render_artifact(
                 .collect::<Vec<_>>(),
             "\n     "
         ),
-        fuel = analysis.module_envelope.closure_fuel,
-        roots = nats(&closure.roots),
-        helpers = nats(&closure.helpers),
-        admitted = nats(&closure.admitted),
-    )
+    );
+    let rest = format!(
+        "theorem plans_ok : plansAccepted data = true :=\n  \
+           plansAccepted_of_parts data plans_all (by decide +kernel)\n\n\
+         {roles_proof}\n\n\
+         theorem axes_ok : AverCert.ClaimAxes.checked data = true := by decide +kernel\n\n"
+    );
+    let tail = "theorem whole_ok : acceptedWholeModule data :=\n  \
+           ⟨framing_ok, exports_ok, imports_ok, start_ok, closure_ok⟩\n\n\
+         theorem envelope_ok : artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes\n    \
+           AverCert.ArtifactComponentBytes.componentLen data = true := by decide +kernel\n\n\
+         end AverCert.Artifact\n";
+    let base_imports = "import AcceptedArtifact\nimport ArtifactBytes\nimport Manifest\n";
+    if !splits_artifact_modules(analysis) {
+        return vec![(
+            "Artifact.lean".to_string(),
+            format!(
+                "-- The artifact data and the byte facts of its acceptance, each by\n\
+                 -- `decide +kernel` against the checker-staged `ArtifactBytes`.\n\
+                 {base_imports}\
+                 import ArtifactPlans\n\
+                 {roles_import}\n\
+                 {ARTIFACT_HEADER}\
+                 {data}{rest}{strings}{exports}{closure_ok}{tail}"
+            ),
+        )];
+    }
+    let part = |comment: &str, body: &str| {
+        format!(
+            "-- {comment}\n\
+             import ArtifactData\n\n\
+             {ARTIFACT_HEADER}\
+             {body}\
+             end AverCert.Artifact\n"
+        )
+    };
+    vec![
+        (
+            "ArtifactData.lean".to_string(),
+            format!(
+                "-- The artifact data the byte facts speak about.\n\
+                 {base_imports}\n\
+                 {ARTIFACT_HEADER}\
+                 {data}\
+                 end AverCert.Artifact\n"
+            ),
+        ),
+        (
+            "ArtifactStrings.lean".to_string(),
+            part("The String helper roles, decoded from the module.", strings),
+        ),
+        (
+            "ArtifactClosure.lean".to_string(),
+            part("The certified closure's isolation.", closure_ok),
+        ),
+        (
+            "ArtifactInterface.lean".to_string(),
+            part("The module's framing, exports, imports and start function.", &exports),
+        ),
+        (
+            "Artifact.lean".to_string(),
+            format!(
+                "-- The remaining byte facts of the artifact's acceptance, joined with\n\
+                 -- the ones proved in the modules imported below.\n\
+                 import ArtifactData\n\
+                 import ArtifactStrings\n\
+                 import ArtifactClosure\n\
+                 import ArtifactInterface\n\
+                 import ArtifactPlans\n\
+                 {roles_import}\n\
+                 {ARTIFACT_HEADER}\
+                 {rest}{tail}"
+            ),
+        ),
+    ]
 }
 
 fn render_final() -> String {
@@ -779,16 +890,12 @@ pub fn write_project(
             &render_artifact_host_roles(analysis, &params),
         )?;
     }
-    write(
-        &cert_dir,
-        "ArtifactPlans.lean",
-        &render_artifact_plans(analysis),
-    )?;
-    write(
-        &cert_dir,
-        "Artifact.lean",
-        &render_artifact(analysis, envelope),
-    )?;
+    for (name, text) in render_artifact_plans(analysis) {
+        write(&cert_dir, &name, &text)?;
+    }
+    for (name, text) in render_artifact(analysis, envelope) {
+        write(&cert_dir, &name, &text)?;
+    }
     write(&cert_dir, "Final.lean", &render_final())?;
     write(
         &cert_dir,
