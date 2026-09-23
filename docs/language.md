@@ -1,6 +1,6 @@
 # Aver — Language Guide
 
-This document covers the surface language: syntax, semantics, modules, and the intentional omissions.
+This guide covers the surface language: syntax, semantics, modules, and what the language leaves out on purpose.
 
 For constructor-specific rules, see [constructors.md](constructors.md).
 
@@ -11,15 +11,15 @@ For Oracle laws and trace assertions over classified effects, see [oracle.md](or
 ## Types
 
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
-Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` (`K` must be a type that orders — see [Map literals](#map-literals)), `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
+Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>` (`K` must be a type that orders, see [Map literals](#map-literals)), `(A, B, ...)`, `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
 
-Each primitive has exactly one spelling — the string type is written `String`, never abbreviated.
+Each primitive has exactly one spelling. The string type is written `String` and is never abbreviated.
 
-There is no dedicated `Set` type — use `Map<T, Unit>` (see [Sets](#sets) below).
+There is no dedicated `Set` type; use `Map<T, Unit>` (see [Sets](#sets) below).
 User-defined sum types: `type Shape` → `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
 User-defined product types: `record User` → `User(name = "Alice", age = 30)`, `u.name`
 
-Declare them with the type name on its own line and the members indented beneath — one variant per line for a sum type, one `field: Type` per line for a record:
+Declare a type with its name on its own line and the members indented beneath it: one variant per line for a sum type, one `field: Type` per line for a record.
 
 ```aver
 type Shape           // sum type
@@ -32,21 +32,13 @@ record User          // product type
     age: Int
 ```
 
-`Unit` means "no meaningful value". It is similar to `void`, but still a real type; diagnostics render the value as `()`. Effectful functions such as `Console.print` commonly return `Unit`.
+`Unit` means "no meaningful value". It is close to `void`, but it is a real type, and diagnostics print its value as `()`. Effectful functions such as `Console.print` usually return `Unit`.
 
 ## Bindings
 
-All bindings are immutable. No `val`/`var` keywords — they are parse errors.
+All bindings are immutable. There are no `val`/`var` keywords; writing one is a parse error.
 
-The leading `__` namespace is reserved for the compiler. User-written names
-for modules, types, variants, fields, functions, operations, resources,
-parameters, bindings, match-pattern binders, and decisions cannot begin with
-two underscores. Double underscores elsewhere in a name remain legal
-(`walk__cursor` is a valid name). Names in that namespace that the compiler
-defines — the `__loopStart` / `__LoopOutcome` protocol of a
-[yielding function](#yielding-functions), for example — are ordinary
-functions and types of the module: user code calls them, annotates with
-them, and matches on their constructors like on anything it wrote itself.
+The leading `__` namespace is reserved for the compiler. User-written names for modules, types, variants, fields, functions, operations, resources, parameters, bindings, match-pattern binders and decisions cannot begin with two underscores. Double underscores elsewhere in a name are still legal (`walk__cursor` is a valid name). The compiler defines some names in that namespace, for example the `__loopStart` / `__LoopOutcome` protocol of a [yielding function](#yielding-functions). Those are ordinary functions and types of the module. User code calls them, annotates with them, and matches on their constructors like anything it wrote itself.
 
 ```aver
 name = "Alice"
@@ -54,22 +46,22 @@ age: Int = 30
 xs: List<Int> = []
 ```
 
-Optional type annotation provides a hint to the type checker; the annotation wins over inference when both are compatible. Binding to an empty list literal without a type annotation (`x = []`) is a type error.
+A type annotation is optional and gives the type checker a hint. When the annotation and inference are compatible, the annotation wins. Binding an empty list literal without an annotation (`x = []`) is a type error.
 
-Every name means one thing in its scope. Duplicate binding of the same name in the same scope is a type error, and so is shadowing: a binder — a function parameter, a statement binding, or a match-pattern binding — may not reuse any name already visible at that point, including a top-level function of its own module and the enclosing function's own name. The error names both sides and where the shadowed one is defined; the fix is one rename. Sibling match arms may bind the same name (neither is in the other's scope), and cross-module names are always `Module.fn`-qualified, so nothing outside the file can collide. In `aver repl` the session is the scope: the rule reads everything entered so far together with the entry being read, so a binder may not spell a function defined in an earlier entry — a refused entry is not added to the session, and `:clear` starts a fresh one.
+Every name means one thing in its scope. Binding the same name twice in one scope is a type error, and so is shadowing. A binder (a function parameter, a statement binding, or a match-pattern binding) may not reuse any name already visible at that point, including a top-level function of its own module and the name of the enclosing function. The error names both sides and where the shadowed one is defined, and the fix is one rename. Sibling match arms may bind the same name, since neither is in the other's scope. Names from other modules are always qualified as `Module.fn`, so nothing outside the file can collide. In `aver repl` the session is the scope. The rule reads everything entered so far together with the new entry, so a binder may not reuse the name of a function defined in an earlier entry. A refused entry is not added to the session, and `:clear` starts a fresh one.
 
 ## Operators
 
-Arithmetic: `+`, `-`, `*` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Float.fromInt` / `Int.fromFloat` to convert. The `/` operator is **Float-only**; integer `/` is a type error. For integers use `Int.div(a, b) : Result<Int, String>` (Euclidean; `b == 0` → `Result.Err`) and `Int.mod(a, b) : Result<Int, String>` — there is no integer `%`. `Int` is arbitrary-precision (ℤ): no overflow, no wraparound.
-Bit-level operations live in the `Bits` namespace, not in the operator set: `Bits.and`, `Bits.or`, `Bits.xor`, `Bits.not` are `Int -> Int` under infinite two's complement (`Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`), and `Bits.shiftLeft(x, n)` / `Bits.shiftRight(x, n)` / `Bits.low(x, width)` are `x * 2^n` / `floor(x / 2^n)` / `x mod 2^width`. Their `Result<Int, String>` rejects negative counts; the materialization cap applies only when a result may grow (`shiftLeft`, and `low` for negative inputs), never to shrinking `shiftRight`. A syntactic bounded non-negative literal discharges `shiftLeft`/`low`, while any non-negative literal discharges `shiftRight`. `Bits` is a namespace, not a type: nothing here is a machine word, and `Int` still never overflows or wraps — width is requested explicitly through `Bits.low`, never implied. See [docs/services.md](services.md#bits-namespace).
+Arithmetic: `+`, `-`, `*`. Both operands must have the same type (`Int+Int`, `Float+Float`, `String+String`). There is no implicit promotion; convert with `Float.fromInt` / `Int.fromFloat`. The `/` operator is **Float-only**, and integer `/` is a type error. For integers use `Int.div(a, b) : Result<Int, String>` (Euclidean; `b == 0` gives `Result.Err`) and `Int.mod(a, b) : Result<Int, String>`. There is no integer `%`. `Int` is arbitrary-precision (ℤ), so it never overflows or wraps around.
+Bit-level operations are functions in the `Bits` namespace rather than operators. `Bits.and`, `Bits.or`, `Bits.xor` and `Bits.not` are `Int -> Int` under infinite two's complement (`Bits.not(x) == -x - 1`, `Bits.and(-1, x) == x`). `Bits.shiftLeft(x, n)`, `Bits.shiftRight(x, n)` and `Bits.low(x, width)` compute `x * 2^n`, `floor(x / 2^n)` and `x mod 2^width`. Their `Result<Int, String>` rejects negative counts. The materialization cap applies only when a result may grow (`shiftLeft`, and `low` for negative inputs), never to `shiftRight`, which only shrinks. A syntactic bounded non-negative literal discharges `shiftLeft`/`low`, and any non-negative literal discharges `shiftRight`. `Bits` is a namespace, not a type. Nothing here is a machine word, and `Int` still never overflows or wraps. A width is always asked for explicitly through `Bits.low` and is never implied. See [docs/services.md](services.md#bits-namespace).
 
-Literal-divisor discharge: when the divisor of `Int.div` / `Int.mod` is a syntactic nonzero integer literal — `Int.div(x, 2)`, `Int.mod(x, -3)` — the call cannot fail, so it types as plain `Int` and every backend emits the division directly (no `Result`, no unwrapping). The boundary is exactly "a syntactic integer literal other than `0`, optionally under one unary minus": a `0` literal, an identifier, a named constant, or a constant expression like `8 + 8` all keep the `Result<Int, String>` type unchanged. Parentheses are transparent here, because the parser erases them around a single expression: `(16)`, `(-16)` and `-(16)` are the same syntax tree as `16` and `-16`, so all three discharge — while `(0)` is still zero and `(k)` is still an identifier, and both keep the `Result` type. This is a typing rule for these two functions only, not a general constant-propagation or refinement mechanism.
-Literal smart-constructor discharge: the same idea extends to a validating smart constructor over a `List<Int>` carrier — the shape `stdlib/bytes.av` uses. When the argument is a syntactic list of integer literals and every element is inside the interval the refinement itself proves, the call cannot reach its `Result.Err` branch, so it types as the refined type and constructs the value directly: `Bytes.fromList([0, 10, 255]) : Bytes`, no `?` and no `match`. The empty list `Bytes.fromList([])` discharges too. The boundary is narrow and entirely syntactic on the argument side: there must be exactly one argument, it must be a list literal written out at the call site, and every element must be a plain integer literal with at most one unary minus. What decides is the function the call resolves to, never how it is spelled: `Bytes.fromList(...)` from outside and a bare `fromList(...)` inside the defining module both reach the constructor and both discharge, while a module that declares its own `fromList` shadows the imported one as usual — that call means the local function and is not discharged at all. Everything else keeps `Result<Bytes, String>` unchanged — an identifier (`Bytes.fromList(values)`), a computed list (`Bytes.fromList(List.concat(a, b))`), a computed element (`Bytes.fromList([n * 2])`), an out-of-range literal (`Bytes.fromList([65, 256])`), a negative one (`Bytes.fromList([-1])`), or a literal beyond `i64`. The bound is never hardcoded: it is read off the refinement's own validating predicate, so a user-defined refinement with a different range discharges against that range, and a record with no smart constructor never discharges at all. Programs run under `--self-host` are refused with an explicit error when they contain a discharged call, because the self-hosted resolver does not yet carry the rule.
-Literal effect-contract discharge applies the same user-facing rule to `Random.int` and `Time.sleep`: proven-valid literal arguments remove the `Result` wrapper, but the effect still executes. The backend unwrap is private and fail-closed. If a provider or Oracle stub returns `Err` despite those proven arguments, execution faults as a contract violation; the compiler never calls `Result.withDefault` or invents a random/sleep result.
-Unary minus negates a numeric expression: `-n` (equivalent to `0 - n`), and numeric literals may be written negative (`-3`, `-1.5`).
+Literal-divisor discharge: when the divisor of `Int.div` / `Int.mod` is a syntactic nonzero integer literal (`Int.div(x, 2)`, `Int.mod(x, -3)`), the call cannot fail. It types as plain `Int`, and every backend emits the division directly, with no `Result` and no unwrapping. The boundary is exactly "a syntactic integer literal other than `0`, optionally under one unary minus". A `0` literal, an identifier, a named constant, or a constant expression like `8 + 8` all keep the `Result<Int, String>` type unchanged. Parentheses make no difference here, because the parser erases them around a single expression. `(16)`, `(-16)` and `-(16)` are the same syntax tree as `16` and `-16`, so all three discharge. `(0)` is still zero and `(k)` is still an identifier, and both keep the `Result` type. This typing rule applies to these two functions only. It is not a general constant-propagation or refinement mechanism.
+Literal smart-constructor discharge: the same idea extends to a validating smart constructor over a `List<Int>` carrier, which is the shape `stdlib/bytes.av` uses. When the argument is a syntactic list of integer literals and every element lies inside the interval the refinement itself proves, the call cannot reach its `Result.Err` branch. It then types as the refined type and constructs the value directly: `Bytes.fromList([0, 10, 255]) : Bytes`, with no `?` and no `match`. The empty list `Bytes.fromList([])` discharges too. The boundary is narrow and entirely syntactic on the argument side. There must be exactly one argument, it must be a list literal written out at the call site, and every element must be a plain integer literal with at most one unary minus. What decides is the function the call resolves to, not how the call is spelled. `Bytes.fromList(...)` from outside and a bare `fromList(...)` inside the defining module both reach the constructor and both discharge. A module that declares its own `fromList` shadows the imported one as usual, so that call means the local function and is not discharged at all. Everything else keeps `Result<Bytes, String>` unchanged: an identifier (`Bytes.fromList(values)`), a computed list (`Bytes.fromList(List.concat(a, b))`), a computed element (`Bytes.fromList([n * 2])`), an out-of-range literal (`Bytes.fromList([65, 256])`), a negative one (`Bytes.fromList([-1])`), or a literal beyond `i64`. The bound is never hardcoded. It is read off the refinement's own validating predicate, so a user-defined refinement with a different range discharges against that range, and a record with no smart constructor never discharges. Programs run under `--self-host` are refused with an explicit error when they contain a discharged call, because the self-hosted resolver does not carry the rule yet.
+Literal effect-contract discharge applies the same rule to `Random.int` and `Time.sleep`. Proven-valid literal arguments remove the `Result` wrapper, and the effect still executes. The backend unwrap is private and fail-closed: if a provider or Oracle stub returns `Err` despite those proven arguments, execution faults as a contract violation. The compiler never calls `Result.withDefault` and never invents a random or sleep result.
+Unary minus negates a numeric expression: `-n` (the same as `0 - n`). Numeric literals may be written negative (`-3`, `-1.5`).
 Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`.
-Error propagation: `expr?` — unwraps `Result.Ok`, propagates `Result.Err` as a `RuntimeError`.
-Independent products: `(a, b)!` — product of independent computations. `(a, b)?!` — same, with Result unwrapping (all must succeed or first error propagates). Elements cannot reference each other; independence is structural. Composes recursively for fan-out parallelism. See [independence.md](independence.md).
+Error propagation: `expr?` unwraps `Result.Ok` and propagates `Result.Err` as a `RuntimeError`.
+Independent products: `(a, b)!` is the product of independent computations. `(a, b)?!` is the same with Result unwrapping: all must succeed, or the first error propagates. Elements cannot reference each other, so independence is structural. Products compose recursively for fan-out parallelism. See [independence.md](independence.md).
 
 ## String interpolation
 
@@ -79,15 +71,15 @@ Expressions inside `{}` are evaluated at runtime:
 greeting = "Hello, {name}! You are {age} years old."
 ```
 
-Interpolation renders primitives only: an embedded expression must be an `Int`, a `Float`, a `Bool` or a `String`. Embedding anything else — a list, a record, a tuple, a `Map`, an `Option`/`Result`, a `Vector`, a refinement or other named type — is a type error, because an interpolation site is a display site and Aver requires every conversion to `String` to be named in the source. There is no built-in renderer for compound values and none is planned: write a function that returns `String` and interpolate its result (`"cart: {cartLine(item)}"`), or convert at the call site with an explicit conversion such as `String.fromInt(n)`. The rule is the same one that makes `Console.print(list)` a type error; the interpolated form is only sugar over the same display.
+Interpolation renders primitives only. An embedded expression must be an `Int`, a `Float`, a `Bool` or a `String`. Anything else (a list, a record, a tuple, a `Map`, an `Option`/`Result`, a `Vector`, a refinement or other named type) is a type error. An interpolation site is a display site, and Aver requires every conversion to `String` to be named in the source. There is no built-in renderer for compound values and none is planned. Write a function that returns `String` and interpolate its result (`"cart: {cartLine(item)}"`), or convert at the call site with an explicit conversion such as `String.fromInt(n)`. The same rule makes `Console.print(list)` a type error; the interpolated form is sugar over the same display.
 
-An embed whose type inference never pinned is rejected too, with a diagnostic saying the type could not be determined. This happens when the value flows from a still-open generic — matching on a bare `Option.None` or a bare `[]` binds the arm's variable to a type nothing in the program fixes. Give the subject a concrete type (`match someOption` where `someOption: Option<Int>`) and the embed becomes an ordinary primitive or an ordinary compound, with the ordinary answer in each case.
+An embed whose type inference never pinned down is rejected too, with a diagnostic saying the type could not be determined. This happens when the value comes from a generic that is still open: matching on a bare `Option.None` or a bare `[]` binds the arm's variable to a type nothing in the program fixes. Give the subject a concrete type (`match someOption` where `someOption: Option<Int>`). The embed then becomes an ordinary primitive or an ordinary compound, and the usual answer applies to each.
 
 ## Constructors
 
-UpperCamel callee = constructor, lowerCamel = function call. Records use named args (`User(name = "A", age = 1)`), variants use positional args (`Shape.Circle(3.14)`), zero-arg constructors are bare singletons (`Option.None`, `Shape.Point`).
+An UpperCamel callee is a constructor, and a lowerCamel callee is a function call. Records take named arguments (`User(name = "A", age = 1)`). Variants take positional arguments (`Shape.Circle(3.14)`). Zero-argument constructors are bare singletons (`Option.None`, `Shape.Point`).
 
-All constructors are namespaced — no bare `Ok`/`Err`/`Some`/`None`:
+All constructors are namespaced. There is no bare `Ok`/`Err`/`Some`/`None`:
 
 ```aver
 Result.Ok(42)
@@ -98,7 +90,7 @@ Option.None
 
 ## Match expressions
 
-`match` is the only branching construct (no `if`/`else`). Patterns:
+`match` is the only branching construct; there is no `if`/`else`. The patterns:
 
 ```aver
 match value
@@ -116,13 +108,13 @@ match value
     ((x, y), z) -> "nested: {x}"           // nested tuple
 ```
 
-Constructor patterns are always qualified (`Result.Ok`, `Option.None`, `Shape.Circle`). Records do not support positional destructuring in patterns; bind the whole record and use field access (`user.name`, `user.age`).
+Constructor patterns are always qualified (`Result.Ok`, `Option.None`, `Shape.Circle`). Records cannot be destructured positionally in a pattern. Bind the whole record and use field access (`user.name`, `user.age`).
 
-Nested match in match arms is supported. Arm body must follow `->` on the same line — extract complex expressions into a named function.
+A match may nest inside a match arm. The arm body must follow `->` on the same line, so move a complex expression into a named function.
 
 ### Literal patterns
 
-An arm may be a literal instead of a binding; it fires when the subject equals it. This is how you dispatch on a command name or a tag byte — there is no `else if` to reach for, and no reason to spread the decision over a chain of single-purpose helper functions:
+An arm may be a literal instead of a binding. It fires when the subject equals the literal. This is how you dispatch on a command name or a tag byte. There is no `else if`, and there is no need to spread the decision over a chain of single-purpose helper functions:
 
 ```aver
 fn handle(command: String) -> Int
@@ -143,19 +135,19 @@ fn varIntWidth(head: Int) -> Int
         _ -> 1
 ```
 
-`Int`, `String`, `Float` and `Bool` literals are all valid patterns. `Bool` is the only one a match can exhaust by listing (`true` and `false`), so it is the only one that needs no catch-all; an `Int`, `String` or `Float` match must end in a wildcard `_` or an identifier arm, or the checker rejects it with `Non-exhaustive match: missing catch-all (_) pattern`. Repeating a literal is rejected too — the later arm can never fire, and the error names the line that already covers it.
+`Int`, `String`, `Float` and `Bool` literals are all valid patterns. Only a `Bool` match can be exhausted by listing (`true` and `false`), so it is the only one that needs no catch-all. An `Int`, `String` or `Float` match must end in a wildcard `_` or an identifier arm, or the checker rejects it with `Non-exhaustive match: missing catch-all (_) pattern`. A repeated literal is rejected too. The later arm could never fire, and the error names the line that already covers it.
 
 Three things that look like literal patterns are parse errors:
 
-- a negative number — `-1 -> …` does not parse, because the `-` is a separate token and a pattern is not an expression. Branch on a comparison instead (`match n < 0` with `true ->` / `false ->`), or normalize the subject before the match.
+- a negative number. `-1 -> …` does not parse, because the `-` is a separate token and a pattern is not an expression. Branch on a comparison instead (`match n < 0` with `true ->` / `false ->`), or normalize the subject before the match.
 - an integer beyond 64 bits, even though `Int` itself is arbitrary-precision. The error points at the replacement: `match n == 1267650600228229401496703205376`.
-- an interpolated string — `"{x}" -> …` is rejected, because a pattern is a constant. Compare with `==` when the expected value is computed.
+- an interpolated string. `"{x}" -> …` is rejected, because a pattern is a constant. Compare with `==` when the expected value is computed.
 
-`Float` literal patterns compare exactly, so `0.1 + 0.2` does not match a `0.3` arm. Use them only for sentinels you produced yourself; otherwise branch on a comparison.
+`Float` literal patterns compare exactly, so `0.1 + 0.2` does not match a `0.3` arm. Use them only for sentinels you produced yourself, and otherwise branch on a comparison.
 
 ## Record update
 
-Creates a new record with overridden fields, preserving all other fields:
+`update` creates a new record with the given fields overridden and every other field kept:
 
 ```aver
 updated = User.update(u, age = 31)
@@ -169,9 +161,9 @@ m = {"key" => value, "other" => 42}
 
 `=>` is required inside map literals; `:` stays type-only.
 
-A map iterates its entries sorted by key — when you run a program, in a compiled binary, and in the exported proof model — so its key type must be one all of those can order the same way. Most types are: `Int` numerically, `String` by codepoint, `Bool` false-first, a list or a `Bytes` lexicographically, a tuple componentwise, a record by its FIELD NAMES, a variant by its CONSTRUCTOR NAME and then its payload. Ordering a record by field name rather than by the order the fields were declared in is deliberate: declaration order is not observable anywhere else — a record is built and read by name — so ordering by it would make reordering two fields change how every map on that key iterates.
+A map iterates its entries sorted by key. That holds when you run a program, in a compiled binary, and in the exported proof model, so the key type must be one that all of them order the same way. Most types qualify: `Int` numerically, `String` by codepoint, `Bool` false-first, a list or a `Bytes` lexicographically, a tuple componentwise, a record by its FIELD NAMES, a variant by its CONSTRUCTOR NAME and then its payload. Records are ordered by field name rather than by declaration order on purpose. Declaration order is not observable anywhere else, because a record is built and read by name. Ordering by it would mean that swapping two fields changes how every map on that key iterates.
 
-`Float` is the exception and cannot be a map key: a NaN has no place in the finite range, and neither a compiled binary nor the proof model can state an order the other agrees with. Nor can a `Map` or a `Vector`, which have no order of their own. The rule reaches through your own types, so a record with a `Float` field cannot key a map either, and the error names the field it found. Float stays legal as a map *value*.
+`Float` cannot be a map key. A NaN has no place in the finite range, and neither a compiled binary nor the proof model can state an order the other agrees with. A `Map` or a `Vector` cannot be a key either, because neither has an order of its own. The rule reaches through your own types, so a record with a `Float` field cannot key a map, and the error names the field it found. Float is still legal as a map *value*.
 
 ## Effects
 
@@ -184,13 +176,13 @@ fn main() -> Unit
     _ = Disk.readText("data.txt")
 ```
 
-Both granular and namespace shorthand declarations are supported. `! [Disk.readText]` declares a single effect, while `! [Disk]` covers all `Disk.*` effects (namespace shorthand). `aver check` suggests narrowing when a shorthand could be more specific. `effects X = [...]` aliases are no longer supported.
+Both granular and namespace shorthand declarations are supported. `! [Disk.readText]` declares a single effect, and the namespace shorthand `! [Disk]` covers all `Disk.*` effects. `aver check` suggests narrowing when a shorthand could be more specific. `effects X = [...]` aliases are no longer supported.
 
-Entries are separated by commas, and the comma is required: `! [Console.error Console.print]` is a parse error naming the effect it stopped after, not two effects. The list may be written across several lines, and a trailing comma is allowed.
+Entries are separated by commas, and the comma is required. `! [Console.error Console.print]` is a parse error that names the effect it stopped after; it is not read as two effects. The list may span several lines, and a trailing comma is allowed.
 
 ## Command-line arguments
 
-Programs access CLI arguments via the `Args` service:
+Programs read CLI arguments through the `Args` service:
 
 ```aver
 fn main() -> Unit
@@ -201,9 +193,9 @@ fn main() -> Unit
 
 Run with: `aver run file.av -- arg1 arg2 arg3`
 
-Arguments after `--` are available as `List<String>`. Without `--`, the list is empty. `Args.get()` requires `! [Args.get]` — argument access is visible in the signature like any other effect.
+Arguments after `--` arrive as a `List<String>`. Without `--`, the list is empty. `Args.get()` requires `! [Args.get]`, so argument access shows in the signature like any other effect.
 
-`aver run` starts from `main` by default. To record or run any other top-level function, pass `-e '<call>'` (repeat for a batch) or `--input-file PATH`: `aver run file.av -e 'load("PL")' --record recordings/`. Arguments are limited to literals in 0.10.1; wrap complex inputs in a helper function.
+`aver run` starts from `main` by default. To record or run another top-level function, pass `-e '<call>'` (repeat it for a batch) or `--input-file PATH`: `aver run file.av -e 'load("PL")' --record recordings/`. In 0.10.1 the arguments are limited to literals, so wrap complex inputs in a helper function.
 
 ## Functions
 
@@ -217,17 +209,17 @@ fn fetchUser(id: String) -> Result<Http.Response, String>
     Http.get("https://api.example.com/users/{id}")
 ```
 
-- `? "..."` — optional prose description (part of the signature)
+- `? "..."`: an optional prose description, which is part of the signature
 - deeper-indented string lines continue the same description:
   ```aver
   ? "Starts the CLI."
     "Dispatches one argv command."
   ```
-- `aver check` warns when non-`main` functions omit the description
-- `! [Effect]` — optional effect declaration (statically and runtime enforced)
-- method-level effects are supported: `Http.get`, `Disk.readText`, `Console.print`
-- top-level functions are first-class values and can be passed where `Fn(...)` is expected
-- `main` often returns `Unit`, but `Result<Unit, String>` is also common; `aver run` treats `Result.Err(...)` returned from `main` as a runtime failure
+- `aver check` warns when a function other than `main` has no description
+- `! [Effect]`: an optional effect declaration, enforced statically and at runtime
+- effects can be declared per method: `Http.get`, `Disk.readText`, `Console.print`
+- top-level functions are values and can be passed where `Fn(...)` is expected
+- `main` often returns `Unit`, but `Result<Unit, String>` is also common; `aver run` treats a `Result.Err(...)` returned from `main` as a runtime failure
 - function bodies use indentation
 - the last expression in a function body is the return value
 
@@ -241,7 +233,7 @@ verify add
     add(2, 3) => 5
 ```
 
-Law-style verify blocks express finite universal checks over explicit domains:
+A law-style verify block is a finite universal check over explicit domains:
 
 ```aver
 verify add law commutative
@@ -250,11 +242,11 @@ verify add law commutative
     add(a, b) => add(b, a)
 ```
 
-If the identifier after `law` is the name of an existing pure function and the law body compares `foo(args)` against `fooSpec(args)`, Aver treats that as a spec law. `verify fib law fibSpec` is the preferred way to say "fib should match fibSpec".
+If the identifier after `law` names an existing pure function and the law body compares `foo(args)` with `fooSpec(args)`, Aver treats it as a spec law. `verify fib law fibSpec` is the preferred way to say "fib should match fibSpec".
 
-This is an intentional style choice. In Aver, the author should usually write a simple spec function and a law relating the implementation to that spec, instead of writing proof-oriented invariants directly in surface code.
+This style is deliberate. An Aver author should usually write a simple spec function and a law that relates the implementation to it, rather than writing proof-oriented invariants directly in surface code.
 
-When a law needs an explanation, optional `because` lines express ordered facts in ordinary, pure Aver:
+When a law needs an explanation, optional `because` lines state ordered facts in ordinary, pure Aver:
 
 ```aver
 verify identity law positive
@@ -266,13 +258,13 @@ verify identity law positive
     identity(value) > 0 holds
 ```
 
-Each explanation must return `Bool`. It may call a normal function whose `match` branches describe the argument. `verify` and `verify --hostile` check every explanation under the original `when`, as well as checking the claim. A false explanation fails even if the claim is true; it never restricts the law's domain.
+Each explanation must return `Bool`. It may call a normal function whose `match` branches describe the argument. `verify` and `verify --hostile` check every explanation under the original `when`, in addition to checking the claim. A false explanation fails even when the claim is true. An explanation never restricts the law's domain.
 
-A recursive explanation can guide induction when it has a checked structural descent on a list or a native, checked integer countdown (including floor division by a positive literal). The recursive step must establish the original guard and any earlier reason premises for its own arguments. This uses ordinary function recursion; there is no separate induction syntax.
+A recursive explanation can guide induction when it has a checked structural descent on a list, or a native, checked integer countdown (including floor division by a positive literal). The recursive step must establish the original guard and any earlier reason premises for its own arguments. This is ordinary function recursion; there is no separate induction syntax.
 
-`because` entries are ordered: the proof of a later fact can use earlier facts. The optional `using [function.law, Module.function.law]` list selects an unordered set of lemmas; omitting it keeps automatic selection, and `using []` selects none. Ordinary local bindings may appear between these clauses and remain expression shortcuts, not assertions. The first proof implementation targets Lean; see [law explanations](lean.md#law-explanations-in-aver) for the obligations, diagnostics, and limits.
+`because` entries are ordered, so the proof of a later fact can use the earlier ones. The optional `using [function.law, Module.function.law]` list selects an unordered set of lemmas. Leaving it out keeps automatic selection, and `using []` selects none. Ordinary local bindings may appear between these clauses. They remain expression shortcuts and are not assertions. The first proof implementation targets Lean; see [law explanations](lean.md#law-explanations-in-aver) for the obligations, diagnostics and limits.
 
-`verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of explicit `given` domains, capped at `10_000` cases — a project that means to go further says so in `aver.toml`, with `[verify] max-cases` for the whole project or `max-cases` in a `[[verify.costly]]` entry for the blocks of one function.
+`verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of the explicit `given` domains, capped at `10_000` cases. A project that needs more says so in `aver.toml`: `[verify] max-cases` for the whole project, or `max-cases` in a `[[verify.costly]]` entry for the blocks of one function.
 
 Oracle laws cover classified effectful functions:
 
@@ -291,22 +283,17 @@ verify pickOne law usesOracle
     Result.Ok(pickOne()) => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
-Inside any cases-form `verify <fn>` block, `given` can bind a capability operation or classified effect to one or more Aver stub functions for those explicit runtime cases. A pure capability stub has the operation's contract signature unchanged; an effectful/generative stub uses the Oracle shape with leading `BranchPath` and call index. The call index counts the calls of that one operation, and `docs/oracle.md` lists the shapes where an exported proof numbers a call otherwise than the run does. In `verify <fn> law <name>`, proof export can additionally quantify over the oracle itself. Add `trace` when you want `.result` and `.trace.*` assertions over collected classified effect emissions.
+In any cases-form `verify <fn>` block, `given` can bind a capability operation or classified effect to one or more Aver stub functions for those explicit runtime cases. A pure capability stub keeps the operation's contract signature unchanged. An effectful or generative stub uses the Oracle shape, with a leading `BranchPath` and call index. The call index counts the calls of that one operation, and `docs/oracle.md` lists the shapes where an exported proof numbers a call differently from the run. In `verify <fn> law <name>`, proof export can also quantify over the oracle itself. Add `trace` when you want `.result` and `.trace.*` assertions over the collected classified effect emissions.
 
-A plain case may call a function with a non-empty effect declaration as long as
-that concrete execution never reaches an effectful operation, or every reached
-operation has an exact `given` stub. An unstubbed reached effect aborts before
-host dispatch and points to `verify <fn> trace` or record/replay. Aver does not
-infer path reachability from the function-wide effect list, and plain verify is
-not a real-world smoke-test mode.
+A plain case may call a function with a non-empty effect declaration, as long as that concrete execution never reaches an effectful operation, or every operation it reaches has an exact `given` stub. A reached effect with no stub aborts before host dispatch and points to `verify <fn> trace` or record/replay. Aver does not infer path reachability from the function-wide effect list. Plain verify is not a way to smoke-test against the real world.
 
-Effects outside Oracle's classified set still belong in record/replay, especially ambient state, persistent protocol sessions, terminal modes, and server loops. See [oracle.md](oracle.md) for the supported effect set, stub signatures, and trace API.
+Effects outside Oracle's classified set still belong in record/replay, in particular ambient state, persistent protocol sessions, terminal modes and server loops. See [oracle.md](oracle.md) for the supported effect set, stub signatures and trace API.
 
-`aver check` expects pure, non-trivial, non-`main` functions to carry a colocated `verify` block.
+`aver check` expects every pure, non-trivial function other than `main` to have a `verify` block next to it.
 
 ## Decision blocks
 
-`decision` blocks are first-class top-level syntax for design rationale:
+A `decision` block is top-level syntax for recording design rationale:
 
 ```aver
 decision UseResultNotExceptions
@@ -320,19 +307,15 @@ decision UseResultNotExceptions
     author = "team"
 ```
 
-`chosen`, `rejected`, and `impacts` may reference validated symbols or quoted semantic labels. Decisions are exported through `aver context ... --decisions-only`.
+`chosen`, `rejected` and `impacts` may reference validated symbols or quoted semantic labels. `aver context ... --decisions-only` exports decisions.
 
 ## No closures
 
-All user-defined functions are top-level. At call time, a function sees globals + its own parameters — no closure capture at definition time.
-Top-level functions are still first-class values, so higher-order helpers such as `HttpServer.listen(port, handle)` work without introducing lambda syntax or hidden captures.
-There is no lambda syntax. List processing is typically written with recursion and pattern matching rather than callback-based helpers.
+All user-defined functions are top-level. At call time a function sees globals and its own parameters; nothing is captured when it is defined. Top-level functions can still be passed as values, so higher-order helpers such as `HttpServer.listen(port, handle)` work without lambda syntax or hidden captures. There is no lambda syntax. List processing is usually written with recursion and pattern matching instead of callback helpers.
 
-This means `Fn(...) -> ...` is a real type, but a function value may appear **only as a function parameter** — i.e. a named function (or builtin / constructor) passed directly in call-argument position, exactly as `HttpServer.listen(port, handle)` does. A `Fn(...)` type used as a function's **return type**, a **record or variant field**, a **collection or tuple element**, or nested inside another `Fn`, and binding a function value to a local (`g = double`) — are all rejected at type-check time. Function values therefore never escape callback-argument position, so the concrete callee at every call — and with it the set of effects it can perform — stays statically knowable, which is what the effect system, the Oracle, and `aver verify` rely on. If you need to select between functions dynamically, branch at the call site or model the choice as a sum type and `match` on it.
+So `Fn(...) -> ...` is a real type, but a function value may appear **only as a function parameter**: a named function (or a builtin or constructor) passed directly in argument position, the way `HttpServer.listen(port, handle)` does. The type checker rejects a `Fn(...)` type used as a function's **return type**, as a **record or variant field**, as a **collection or tuple element**, or nested inside another `Fn`. It also rejects binding a function value to a local (`g = double`). Function values therefore never leave callback-argument position. The concrete callee at every call stays statically known, and so does the set of effects it can perform. The effect system, the Oracle and `aver verify` depend on that. To choose between functions at runtime, branch at the call site, or model the choice as a sum type and `match` on it.
 
-A callback effect list of `! [_]` means “forward the concrete named callback's
-effects”. It is resolved statically at the helper call site; it is not an
-ambient wildcard or a hidden capability grant.
+A callback effect list of `! [_]` means "forward the effects of the concrete named callback". It is resolved statically at the helper's call site. It is not an ambient wildcard or a hidden capability grant.
 
 ```aver
 fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int
@@ -342,11 +325,11 @@ fn inc(n: Int) -> Int
     n + 1
 ```
 
-Most application code in Aver stays first-order and explicit. Use function parameters when they make an API cleaner, not as a default abstraction tool.
+Most Aver application code stays first-order and explicit. Use function parameters when they make an API cleaner. They are not meant as the default way to abstract.
 
 ## Sets
 
-Aver has no dedicated `Set` type. The idiomatic way to express a set is `Map<T, Unit>` — a map whose values carry no information. All `Map.*` operations work on sets:
+Aver has no dedicated `Set` type. A set is written as `Map<T, Unit>`, a map whose values carry no information, and every `Map.*` operation works on it:
 
 ```aver
 seen: Map<String, Unit> = {}
@@ -356,7 +339,7 @@ Map.len(seen2)            // 1
 seen3 = Map.remove(seen2, "alice")
 ```
 
-`Map.set(s, k, Unit)` adds an element, `Map.has(s, k)` checks membership, `Map.remove(s, k)` removes an element, and `Map.len(s)` returns cardinality. Map literals with `Unit` values work as set literals: `{"alice" => Unit, "bob" => Unit}`.
+`Map.set(s, k, Unit)` adds an element, `Map.has(s, k)` checks membership, `Map.remove(s, k)` removes an element, and `Map.len(s)` returns the cardinality. Map literals with `Unit` values work as set literals: `{"alice" => Unit, "bob" => Unit}`.
 
 When targeting Dafny, the codegen lowers `Map<T, Unit>` to the native set type. Lean has no set type the generated project can reach, so there it stays an ordinary map:
 
@@ -390,21 +373,17 @@ updated = Vector.set(grid, 42, 1)  // Option<Vector<Int>>
 value = Vector.get(grid, 42)       // Option<Int>
 ```
 
-`Vector.new(size, fill)` is fallible for a dynamic size. A syntactic literal
-in the portable `0..=1_048_576` element budget, as above, discharges directly
-to `Vector<T>`; negative, oversized, or computed sizes keep
-`Result<Vector<T>, String>`. The budget counts elements because Aver has no
-backend-independent byte size for an arbitrary `T`.
+`Vector.new(size, fill)` is fallible when the size is dynamic. A syntactic literal inside the portable `0..=1_048_576` element budget, as above, discharges directly to `Vector<T>`. Negative, oversized or computed sizes keep `Result<Vector<T>, String>`. The budget counts elements because Aver has no backend-independent byte size for an arbitrary `T`.
 
 ## Tail-call optimization
 
-Self and mutual tail recursion is optimized automatically. A transform pass after parsing rewrites tail-position calls into a trampoline — no stack growth for recursive functions in tail position. Tail position = last expression in function body, or each arm body in a `match` at tail position.
+Self and mutual tail recursion are optimized automatically. A transform pass after parsing rewrites calls in tail position into a trampoline, so recursive functions in tail position do not grow the stack. Tail position is the last expression in a function body, or each arm body of a `match` that is itself in tail position.
 
-This is intentionally narrower than “all recursion”. Non-tail recursion can still be expensive on large inputs, so `aver check` warns when a recursive function still has non-tail recursive callsites after TCO. In practice, long linear traversals are best written in accumulator style when scale matters.
+This deliberately covers less than all recursion. Non-tail recursion can still be expensive on large inputs, so `aver check` warns when a recursive function still has non-tail recursive callsites after TCO. When scale matters, write long linear traversals in accumulator style.
 
 ## Yielding functions
 
-A function whose effect list names `yield` hands control back instead of performing the operations this program answers itself. A capability is answered by the program when its `[[providers.bindings]]` entry in `aver.toml` carries `answer = "<Module>"`, naming the module that computes the answer; every operation of such a capability is a request, and everything else the function calls runs where it is written. The function is written in direct style — read, then the next step — but it never runs as written: the compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator you write performs the operations and feeds the answers back. `yield` is an effect like any other: it appears in the function's `! [...]` and it must be covered by the module's `effects [...]`. A bare name in an effect list — a function's `! [...]` or a module's `effects [...]` — is `yield`, the forwarding marker `_`, or a standard capability namespace such as `Console`; a program-defined capability is named by its operations, never bare, so anything else — including a misspelled `yeild` or a bare program-defined capability name — is an error naming the unknown or disallowed effect. A yielding function is called only through its generated entry points: `__<fn>Start` and the answer functions are pure, so a coordinator that calls them declares no `yield`.
+A function whose effect list names `yield` hands control back instead of performing the operations this program answers itself. The program answers a capability when that capability's `[[providers.bindings]]` entry in `aver.toml` carries `answer = "<Module>"`, naming the module that computes the answer. Every operation of such a capability is a request. Everything else the function calls runs where it is written. The function is written in direct style (read, then the next step), but it never runs as written. The compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator you write performs the operations and feeds the answers back. `yield` is an ordinary effect: it appears in the function's `! [...]` and must be covered by the module's `effects [...]`. A bare name in an effect list (a function's `! [...]` or a module's `effects [...]`) must be `yield`, the forwarding marker `_`, or a standard capability namespace such as `Console`. A program-defined capability is named by its operations, never bare. Anything else, including a misspelled `yeild` or a bare program-defined capability name, is an error naming the unknown or disallowed effect. A yielding function is called only through its generated entry points. `__<fn>Start` and the answer functions are pure, so a coordinator that calls them declares no `yield`.
 
 ```aver
 fn loop(id: Int, done: Int) -> Int
@@ -416,17 +395,17 @@ fn loop(id: Int, done: Int) -> Int
         Option.Some(h) -> loop(id, done + h)
 ```
 
-Inside a yielding function a call to an operation of an answered capability is a stop (a request), and the self tail call is a stop of kind `Yield`. Everything else runs inline, including an operation of a capability nobody answers: that one runs inside the turn, where it is written, and the generated function holding it declares it in its own `! [...]`. A function that declares `yield` and never stops — it calls no answered operation and does not tail-call itself — is an error that names both repairs: mark the capability, or drop `yield`. The mirror of that rule is `error[intercept-outside-yield]`: a function without `yield` that performs an operation of an answered capability has made a request nobody will answer, and the message names the answer module's own function to call instead. A program that answers a capability runs on every backend — the bytecode VM, the Rust backend, `aver run --wasm-gc` and `aver run --wasip2` — because what the lowering leaves behind is state types and pure answer functions over the reply sums the program declared, and the job handle `Work.Job` that those sums reach through `Wait.Wake` has a representation on each of them. A job kind runs on the two wasm targets as well — inline at `begin`, because a component and a wasm-gc module are single-threaded — and both targets bind the `Wait` and `Work` contracts, so `Wait.poll` and `Work.cancel` run there too; see "On wasm-gc and wasip2" under "Jobs" in `docs/services.md` for what a program reads differently. For `loop` the compiler generates, in the same module and in the reserved `__` namespace:
+Inside a yielding function, a call to an operation of an answered capability is a stop (a request), and the self tail call is a stop of kind `Yield`. Everything else runs inline. That includes an operation of a capability nobody answers: it runs inside the turn, where it is written, and the generated function holding it declares it in its own `! [...]`. A function that declares `yield` and never stops (it calls no answered operation and does not tail-call itself) is an error that names both repairs: mark the capability, or drop `yield`. The reverse case is `error[intercept-outside-yield]`. A function without `yield` that performs an operation of an answered capability has made a request nobody will answer, and the message names the answer module's own function to call instead. A program that answers a capability runs on every backend: the bytecode VM, the Rust backend, `aver run --wasm-gc` and `aver run --wasip2`. The lowering leaves behind only state types and pure answer functions over the reply sums the program declared, and the job handle `Work.Job` that those sums reach through `Wait.Wake` has a representation on each backend. A job kind also runs on the two wasm targets, inline at `begin`, because a component and a wasm-gc module are single-threaded. Both targets bind the `Wait` and `Work` contracts, so `Wait.poll` and `Work.cancel` run there too. See "On wasm-gc and wasip2" under "Jobs" in `docs/services.md` for what a program reads differently there. For `loop`, the compiler generates the following, in the same module and in the reserved `__` namespace:
 
-- `__LoopClaimState` — one sum type per request kind, with one variant per stop of that kind; a variant holds exactly the variables the rest of that path still reads (`AwaitR(Int, Int)` for `id` and `done`). A stop bound to a name is `Await<Name>`; an unbound stop is `Await<n>` with its ordinal in the function.
-- `__LoopYieldState` — the state of the tail call: its argument tuple (`Await2(Int, Int)`).
-- `__LoopRequest` — one constructor per kind carrying the operation's arguments and the state of that kind: `Claim(Int, __LoopClaimState) | Yield(__LoopYieldState)`.
-- `__LoopOutcome` — `Done(Int) | Waiting(__LoopRequest)`.
-- `__loopStart(id: Int, done: Int) -> __LoopOutcome` — runs to the first stop; it carries the original `? "..."` description.
-- `__loopAnswerClaim(__state: __LoopClaimState, __answer: Option<Int>) -> __LoopOutcome` — matches the state variant and runs to the next stop or to `Done`. The answer type is the operation's result type, so pairing a state with the answer of another kind is a type error. An operation whose result is `Unit` has no answer to pass: its answer function takes the state only (`__loopAnswerPrint(__state)`).
-- `__loopAnswerYield(__state: __LoopYieldState) -> __LoopOutcome` — re-enters `__loopStart` with the carried arguments.
+- `__LoopClaimState`: one sum type per request kind, with one variant per stop of that kind. A variant holds exactly the variables the rest of that path still reads (`AwaitR(Int, Int)` for `id` and `done`). A stop bound to a name is `Await<Name>`; an unbound stop is `Await<n>`, with its ordinal in the function.
+- `__LoopYieldState`: the state of the tail call, which is its argument tuple (`Await2(Int, Int)`).
+- `__LoopRequest`: one constructor per kind, carrying the operation's arguments and the state of that kind: `Claim(Int, __LoopClaimState) | Yield(__LoopYieldState)`.
+- `__LoopOutcome`: `Done(Int) | Waiting(__LoopRequest)`.
+- `__loopStart(id: Int, done: Int) -> __LoopOutcome`: runs to the first stop and carries the original `? "..."` description.
+- `__loopAnswerClaim(__state: __LoopClaimState, __answer: Option<Int>) -> __LoopOutcome`: matches the state variant and runs to the next stop or to `Done`. The answer type is the operation's result type, so pairing a state with the answer of another kind is a type error. An operation whose result is `Unit` has no answer to pass, so its answer function takes only the state (`__loopAnswerPrint(__state)`).
+- `__loopAnswerYield(__state: __LoopYieldState) -> __LoopOutcome`: re-enters `__loopStart` with the carried arguments.
 
-These names are compiler-defined and callable. The original `loop` is removed after lowering; the coordinator answers the requests instead:
+These names are compiler-defined and callable. The original `loop` is removed after lowering, and the coordinator answers the requests instead:
 
 ```aver
 fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
@@ -440,19 +419,18 @@ fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
                 [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
 ```
 
-Stops may sit anywhere the function runs unconditionally — in a binding, as a match subject, inside an argument — and inside `match` arms; a request in tail position, as the last expression of the body or as the leaf of a `match` arm, is a stop like any other, and the answer to it is what the function returns. The same operation may stop several times in one body, and `?` after a request works (`Err` leaves through `Done`). When code follows a stop that sits in a `match` arm of a non-tail statement, the rest of the path becomes a generated continuation function (`__loopJoin1`, `__loopAfterAwaitR`) the arms call. The generated items are ordinary types and pure functions: `aver verify` runs them, every backend compiles them, and `aver proof` exports them to Lean and Dafny like anything else, so the coordinator's laws can reason about the protocol.
+Stops may sit anywhere the function runs unconditionally (in a binding, as a match subject, inside an argument) and inside `match` arms. A request in tail position, as the last expression of the body or as the leaf of a `match` arm, is a stop like any other, and its answer is what the function returns. The same operation may stop several times in one body, and `?` after a request works (`Err` leaves through `Done`). When code follows a stop that sits in a `match` arm of a non-tail statement, the rest of the path becomes a generated continuation function (`__loopJoin1`, `__loopAfterAwaitR`) that the arms call. The generated items are ordinary types and pure functions. `aver verify` runs them, every backend compiles them, and `aver proof` exports them to Lean and Dafny like anything else, so the coordinator's laws can reason about the protocol.
 
-A module that exposes a yielding function exposes its protocol in its place: `exposes [loop]` becomes the generated names, and an importer writes `Looper.__loopStart(...)`, matches `Looper.__LoopOutcome` and answers with `Looper.__loopAnswerClaim(...)`. A yielding importer may also write `Looper.loop(...)`: the compiler retains the exported source signature and nests the library's protocol into the caller. Ordinary functions use the explicit protocol entry points. Default exports follow the same rule; private helpers stay private.
+A module that exposes a yielding function exposes its protocol in its place. `exposes [loop]` becomes the generated names, and an importer writes `Looper.__loopStart(...)`, matches `Looper.__LoopOutcome` and answers with `Looper.__loopAnswerClaim(...)`. A yielding importer may also write `Looper.loop(...)`: the compiler keeps the exported source signature and nests the library's protocol into the caller. Ordinary functions use the explicit protocol entry points. Default exports follow the same rule, and private helpers stay private.
 
 Two diagnostics guard the shape:
 
-- calling a yielding function directly, from a function that does not yield — a plain function, including one in a dependent module — is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
-- a yielding function that calls *itself* outside tail position is a type error with the recipe `pass what comes next as data, or make it a tail call`: a process nests another yielding function, not itself, because its own state would have to hold a copy of itself.
+- calling a yielding function directly from a function that does not yield (a plain function, including one in a dependent module) is a type error: `'loop' yields; call '__loopStart(...)' and answer its requests`;
+- a yielding function that calls *itself* outside tail position is a type error with the recipe `pass what comes next as data, or make it a tail call`. A process can nest another yielding function but not itself, because its own state would have to hold a copy of itself.
 
 ### Testing a process with request stubs
 
-A local cases-form `verify process` may call that process directly when it
-supplies an exact `given` for every request operation in the process protocol:
+A local cases-form `verify process` may call that process directly if it supplies an exact `given` for every request operation in the process protocol:
 
 ```aver
 verify pair
@@ -461,40 +439,21 @@ verify pair
     pair(7) => 25
 ```
 
-The full example is `tests/fixtures/yield_verify_stubs/`. Its `numbered` stub
-has signature `(BranchPath, Int, Int) -> Option<Int>`: the second argument is the
-number of `Pool.claim` requests this branch has already made, and the third is
-the requested peer. The verifier starts the generated protocol and answers each
-request with the selected stub.
-It exercises the lowered continuation, including local and imported nested helpers, self yields
-and `?` propagation. Stubs return operation results, not `Now`/`Later` replies;
-the live answer module is not consulted.
+The full example is `tests/fixtures/yield_verify_stubs/`. Its `numbered` stub has the signature `(BranchPath, Int, Int) -> Option<Int>`. The second argument is the number of `Pool.claim` requests this branch has already made, and the third is the requested peer. The verifier starts the generated protocol and answers each request with the selected stub. This exercises the lowered continuation, including local and imported nested helpers, self yields and `?` propagation. Stubs return operation results, not `Now`/`Later` replies, and the live answer module is not consulted.
 
-Each case starts fresh Oracle coordinates. Every operation counts its own calls,
-so a request kind is numbered among the calls of that same kind: `Pool.claim` and
-`Pool.finish` each start at 0, and an in-place `Time.unixMs()` between two
-`Pool.claim` requests leaves the second request at index 1. A self yield consumes
-no answer and no index. An in-place effect still needs its own stub if reached.
-Existing step limits and `[[verify.costly]]` settings use the source process name.
+Each case starts with fresh Oracle coordinates. Every operation counts its own calls, so a request is numbered among the calls of the same kind. `Pool.claim` and `Pool.finish` each start at 0, and an in-place `Time.unixMs()` between two `Pool.claim` requests leaves the second request at index 1. A self yield consumes no answer and no index. An in-place effect still needs its own stub if it is reached. Existing step limits and `[[verify.costly]]` settings use the source process name.
 
-This first surface runs in `aver verify` on the VM. Direct process laws,
-`trace` blocks, direct calls to an imported process from a verify block, WASM request stubs and proof export of
-these cases are not supported yet. State proof laws over the generated protocol.
-Testing a process's responses does not test coordinator scheduling: the separate
-`tests/fixtures/run_schedule_cases/` scenarios exercise service order, grouping,
-premature job readiness and stale notifications after completion or cancellation.
-They enumerate explicit schedules; `--hostile` does not automatically generate
-all coordinator interleavings.
+This first version runs in `aver verify` on the VM. Not supported yet: direct process laws, `trace` blocks, direct calls to an imported process from a verify block, WASM request stubs, and proof export of these cases. State proof laws over the generated protocol. Testing a process's responses does not test coordinator scheduling. The separate `tests/fixtures/run_schedule_cases/` scenarios cover service order, grouping, premature job readiness, and stale notifications after completion or cancellation. They enumerate explicit schedules; `--hostile` does not generate all coordinator interleavings automatically.
 
 ### Helpers and nested state
 
-A process does not have to be one function. A yielding function may call another yielding function of the same module or an exposed yielding function of an explicit dependency, and the compiler puts the callee's machine inside the caller's rather than asking you to fold the two together by hand. Nothing about the coordinator changes: the caller's protocol is what a coordinator seats and serves, and a request the helper makes reaches it as a request of the caller.
+A process does not have to be one function. A yielding function may call another yielding function of the same module, or an exposed yielding function of an explicit dependency. The compiler puts the callee's machine inside the caller's, so you do not fold the two together by hand. The coordinator stays the same. It seats and serves the caller's protocol, and a request the helper makes reaches it as a request of the caller.
 
-A **tail call** enters the helper's protocol. `f`'s segment that ends in `g(args)` stops with a `Yield` request carrying what `g` is entered with — the caller has nothing left to do, so nothing of it is kept — and answering that request calls `__gStart(args)`.
+A **tail call** enters the helper's protocol. A segment of `f` that ends in `g(args)` stops with a `Yield` request carrying what `g` is entered with. The caller has nothing left to do, so none of it is kept. Answering that request calls `__gStart(args)`.
 
-A **non-tail call** nests the helper's state inside the caller's. For `x = g(args)` with more work after it, the caller's state sum for every kind `g` waits on gains one variant per call site, `In<G>At<N>(<the helper's own state>, <the caller's live variables>)`; the caller's request sum gains the kinds `g` waits on that it does not already have; and the caller's answer function for such a kind hands the answer down to `__gAnswer<Kind>` and routes what comes back — a `Done(v)` binds `x = v` and continues the caller's segment, another request leaves again as a request of the caller with the new nested state. A nested call is not a stop by itself: a helper that waits on nothing runs to its result inside the caller's own segment.
+A **non-tail call** nests the helper's state inside the caller's. Take `x = g(args)` with more work after it. For every kind `g` waits on, the caller's state sum gains one variant per call site, `In<G>At<N>(<the helper's own state>, <the caller's live variables>)`. The caller's request sum gains the kinds `g` waits on that it does not already have. The caller's answer function for such a kind passes the answer down to `__gAnswer<Kind>` and routes what comes back. A `Done(v)` binds `x = v` and continues the caller's segment. Another request leaves again as a request of the caller, with the new nested state. A nested call is not a stop by itself: a helper that waits on nothing runs to its result inside the caller's own segment.
 
-That is the whole generated shape, for `walk` calling `fetch`:
+Here is the whole generated shape, for `walk` calling `fetch`:
 
 ```aver
 type __WalkClaimState
@@ -514,17 +473,17 @@ fn __walkInFetchAt1(__outcome: __FetchOutcome, id: Int, seen: Int) -> __WalkOutc
             __FetchRequest.Claim(__a0, __inner) -> (__WalkOutcome).Waiting((__WalkRequest).Claim(__a0, (__WalkClaimState).InFetchAt1(__inner, id, seen)))
 ```
 
-The helper's own recursion stays inside the helper's machine: `g` looping on itself is `g`'s `Yield` request, which leaves as the caller's `Yield` request carrying the nested state and comes back to `__gAnswerYield`. These names are the caller's own `__` types; nothing new reaches the module's surface, and `aver context`, `AVER_YIELD_DUMP=1` and the pinned generated Aver show them.
+The helper's own recursion stays inside the helper's machine. When `g` loops on itself, that is `g`'s `Yield` request. It leaves as the caller's `Yield` request carrying the nested state and comes back to `__gAnswerYield`. These names are the caller's own `__` types. Nothing new reaches the module's surface, and `aver context`, `AVER_YIELD_DUMP=1` and the pinned generated Aver show them.
 
-The tail-call rule: a self tail call is the `Yield` request, and a tail call to another local or imported yielding function enters that function's protocol. What is still refused, each with the construct named in the message: mutual nesting — two yielding functions that call each other, because each one's state would have to hold the other's, so the message prints the cycle and two ways to break it, and a cycle written with tail calls only, where no state is held but each function's requests would have to carry the ones it hands over to; a request or a call to a yielding helper inside an independent product `(a, b)!`, because its branches run independently and a request leaves a process one at a time; a function value live across a stop; and a yielding function passed as a function value, because protocol composition needs a direct named call. Module dependency cycles are rejected by the loader before composition. A request in a product fires less often than it used to, because only an answered operation inside the product is refused.
+The tail-call rule: a self tail call is the `Yield` request, and a tail call to another local or imported yielding function enters that function's protocol. A few constructs are still refused, and the message names each one. Mutual nesting is refused: two yielding functions that call each other, because each one's state would have to hold the other's. The message prints the cycle and two ways to break it. The same holds for a cycle written with tail calls only, where no state is held but each function's requests would have to carry the ones it hands over to. A request, or a call to a yielding helper, inside an independent product `(a, b)!` is refused, because its branches run independently and a request leaves a process one at a time. A function value live across a stop is refused. So is a yielding function passed as a function value, because protocol composition needs a direct named call. The loader rejects module dependency cycles before composition. The refusal of a request inside a product fires less often than it used to, because only an answered operation inside the product is refused.
 
 ## The coordinator
 
-Writing that coordinator by hand is the part nobody enjoys: a slot table, an instance number per request, a wait set, a poll timeout, one dispatch arm per request kind per process, the seam a job result comes back through, and the turn around all of it. So a program does not write it. A program that puts a `[run]` table in its `aver.toml` writes **processes and answer modules, with optional custom policies** — no coordinator, no `main`, no seating, no slot table. The compiler generates the rest into the entry module, in the reserved `__` namespace, by the same pass that generates the protocol. The generated names stay callable, so a program that wants its own loop over the protocol still has one; that is a door, not the road.
+Writing that coordinator by hand is tedious work: a slot table, an instance number per request, a wait set, a poll timeout, one dispatch arm per request kind per process, the seam a job result comes back through, and the turn around all of it. So a program does not write it. A program that puts a `[run]` table in its `aver.toml` writes **processes and answer modules, with optional custom policies**. It writes no coordinator, no `main`, no seating and no slot table. The compiler generates the rest into the entry module, in the reserved `__` namespace, in the same pass that generates the protocol. The generated names stay callable, so a program that wants its own loop over the protocol can still write one, though that is not the intended route.
 
-The worked example is `tests/fixtures/run_all_slice/` (`examples/concurrency/README.md` points at it and says why it lives there): a peer that fetches block bodies, a walk that connects them, an accepting process, a dialling process and a ticker — five processes, three answer modules, one job kind, three policies, and not one line between them.
+The worked example is `tests/fixtures/run_all_slice/` (`examples/concurrency/README.md` points at it and explains why it lives there). It has a peer that fetches block bodies, a walk that connects them, an accepting process, a dialling process and a ticker. That is five processes, three answer modules, one job kind and three policies, with no coordinator code written anywhere.
 
-An empty `[run]` table selects the default policies: seated ids in slot order, every askable id admitted, and stop on the flag or when no process is seated and no job runs. The compiler owns `__View` and `__Pending`; the program declares neither. To customize any policy, supply all four keys below and declare the view and marker types. A subset of `order`, `admit`, `stop`, `view` is `error[run-binding]`, with the recipe to use none or all four. The entry module's `depends` lists what its own source names. The loop loads its answer modules, job kinds, `Wait` and `Work` from the manifest; listing them explicitly remains valid.
+An empty `[run]` table selects the default policies: seated ids in slot order, every askable id admitted, and stop on the flag or when no process is seated and no job runs. The compiler owns `__View` and `__Pending`, and the program declares neither. To customize any policy, supply all four keys below and declare the view and marker types. Supplying only a subset of `order`, `admit`, `stop`, `view` is `error[run-binding]`, with the recipe to use none or all four. The entry module's `depends` lists what its own source names. The loop loads its answer modules, job kinds, `Wait` and `Work` from the manifest, and listing them explicitly is still valid.
 
 **What the program writes.** The manifest says who answers what and asks for the loop:
 
@@ -547,7 +506,7 @@ stop = "Node.stop"
 view = "Node.View"
 ```
 
-The processes are ordinary yielding functions, in direct style, written in the module the `[run]` table names, each taking no parameters and answering `Unit` — the loop seats one of each at start-up, and a seated process asks the module that answers its first request for whatever it needs. Yielding functions in dependencies are library helpers: they run when an entry process calls them, and the loop never seats them separately. An unused library helper is not started. See `tests/fixtures/yield_module_helpers/` for repeated and tail calls through a dependency chain, and `tests/fixtures/run_process_elsewhere/` for an imported helper under the generated loop.
+The processes are ordinary yielding functions in direct style, written in the module the `[run]` table names. Each takes no parameters and answers `Unit`. The loop seats one of each at start-up, and a seated process asks the module that answers its first request for whatever it needs. Yielding functions in dependencies are library helpers. They run when an entry process calls them, and the loop never seats them on their own. An unused library helper is never started. See `tests/fixtures/yield_module_helpers/` for repeated and tail calls through a dependency chain, and `tests/fixtures/run_process_elsewhere/` for an imported helper under the generated loop.
 
 ```aver
 fn peer() -> Unit
@@ -574,9 +533,9 @@ fn fetchBody(key: Int, height: Int) -> Bool
                 Blocks.Receipt.Refused(_) -> false
 ```
 
-`Console.print` there is not a request: `Console` is nobody's to answer, so it runs in place, inside the turn, and the generated function that holds it declares it. `fetchBody` is a yielding helper, not a process: the loop seats `peer`, and the three requests `fetchBody` waits on reach the turn as requests of `peer` carrying the helper's state — see "Helpers and nested state" above. A process's own effect list still names what its helpers perform, because the program as written calls them.
+`Console.print` there is not a request. Nobody answers `Console`, so it runs in place, inside the turn, and the generated function that holds it declares it. `fetchBody` is a yielding helper rather than a process. The loop seats `peer`, and the three requests `fetchBody` waits on reach the turn as requests of `peer` carrying the helper's state (see "Helpers and nested state" above). A process's own effect list still names what its helpers perform, because the program as written calls them.
 
-The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, threading that state and answering `Now(v)`, `Later(wake)` or `Then(wake, v)`, and every one of them declares `fresh()`, the state before anything has happened, because that is where the loop starts them. The sum an answer is read through is the capability's to declare, beside the operation and named after it — `Pool.claim` answers through `Pool.ClaimReply`, with `Now(R)`, `Later(Wait.Wake)` and `Then(Wait.Wake, R)`, where `R` is exactly the operation's result — and the door holds it to that shape: a capability the program answers whose `<Op>Reply` is missing or of another shape is `error[answer-shape]`, which prints the declaration to paste. A program never writes a `__` name, so no reply sum is generated:
+The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, which threads that state and answers `Now(v)`, `Later(wake)` or `Then(wake, v)`. Every answer module also declares `fresh()`, the state before anything has happened, because the loop starts it there. The capability declares the sum an answer is read through, next to the operation and named after it. `Pool.claim` answers through `Pool.ClaimReply`, with `Now(R)`, `Later(Wait.Wake)` and `Then(Wait.Wake, R)`, where `R` is exactly the operation's result. The door holds it to that shape: if the program answers a capability whose `<Op>Reply` is missing or has another shape, that is `error[answer-shape]`, and the error prints the declaration to paste. A program never writes a `__` name, so no reply sum is generated:
 
 ```aver
 type ClaimReply
@@ -600,13 +559,13 @@ fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
         false -> claimIdle(state, state.idle)
 ```
 
-`Later` waits for permission to ask again; `Then` waits for permission to reveal an answer already known. A `Later` repeats the original arguments against the answer module's current state; it never resumes an operation instance. Identity belongs in an argument or a handle. If a peer key is rebound to a new connection before an old socket wakes it, the repeated request is answered against the new state by design; false readiness and another `Later` remain ordinary. The name `<Op>Reply` only locates the sum: the door checks its shape against the operation's signature, and the process and saved answer are typed by that signature, not by the name.
+`Later` waits for permission to ask again. `Then` waits for permission to reveal an answer that is already known. A `Later` repeats the original arguments against the answer module's current state; it never resumes an operation instance. Identity belongs in an argument or a handle. If a peer key is rebound to a new connection before an old socket wakes it, the repeated request is answered against the new state, by design. False readiness and another `Later` remain ordinary. The name `<Op>Reply` only locates the sum. The door checks its shape against the operation's signature, and the process and the saved answer are typed by that signature rather than by the name.
 
-The model is `Now(x) = complete(request, x)`, `Later(w) = park(request, w, Retry)`, and `Then(w, x) = park(request, w, Complete(x))`. A `Then` preserves the same request, instance and returned module state as a `Later`; its slot additionally carries the saved result in a generated monomorphic sum. On the first turn that the shared wake gate opens and the policies admit the slot, the loop resumes its process with that result without asking the module again. Custom policies can defer service; default policies admit every askable slot. Saving and revealing a reply introduces no recording event.
+The model is `Now(x) = complete(request, x)`, `Later(w) = park(request, w, Retry)`, and `Then(w, x) = park(request, w, Complete(x))`. A `Then` keeps the same request, instance and returned module state that a `Later` keeps, and its slot also carries the saved result in a generated monomorphic sum. On the first turn in which the shared wake gate opens and the policies admit the slot, the loop resumes its process with that result without asking the module again. Custom policies can defer service; default policies admit every askable slot. Saving and revealing a reply adds no recording event.
 
-A `Later` leaves the **request** where it is, with the same instance number and the same request value, and **keeps the state the module returned**, exactly as a `Now` does. A `Later` is where a module records its own progress: a partial write's offset, a retry count, a deadline of its own. So the rule to remember is not "a `Later` changes nothing" — it is "a `Later` leaves the request unchanged and keeps the module's state".
+A `Later` leaves the **request** where it is, with the same instance number and the same request value, and it **keeps the state the module returned**, exactly as a `Now` does. A `Later` is where a module records its own progress: a partial write's offset, a retry count, a deadline of its own. So the rule to remember is that a `Later` leaves the request unchanged and keeps the module's state. It is not that a `Later` changes nothing.
 
-The worked example is a real socket, in the example's own `Sockets` module: `Tcp.writeNow` takes as many of the bytes offered it as the socket has room for right now and answers that count, so a payload it did not take whole leaves an offset behind and parks on that socket becoming writable again. Nothing but the module's own state carries the offset across the park, and the ask after the park goes on from exactly there:
+The worked example is a real socket, in the example's own `Sockets` module. `Tcp.writeNow` takes as many of the offered bytes as the socket has room for right now and answers with that count. A payload it did not take whole leaves an offset behind and parks until that socket is writable again. Only the module's own state carries the offset across the park, and the ask after the park continues from exactly there:
 
 ```aver
 fn write(state: State, key: Int, payload: Bytes) -> Tuple<State, Wire.WriteReply>
@@ -624,18 +583,18 @@ fn offered(state: State, key: Int, connection: Tcp.Connection, payload: Bytes, s
             false -> (parked(state, key, sofar, count), Wire.WriteReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Sending(connection)))))
 ```
 
-An answer module may perform effects — `answer-shape` says so rather than refusing it, because an answer runs inside the turn and a slow one stalls every other process — and this one does: it owns the `Tcp.Listener` its peers arrive on and the `Tcp.Connection` each peer key stands for, answers `Wire.accept` from `Tcp.accept`, `Wire.read` from `Tcp.readNow`, and parks on `Connected` when nothing has arrived. That is what a `Wire` is for: the processes above it say what they want, and one module says how a socket gives it to them.
+An answer module may perform effects. `answer-shape` reports this instead of refusing it, because an answer runs inside the turn and a slow one stalls every other process. This module does perform effects. It owns the `Tcp.Listener` its peers arrive on and the `Tcp.Connection` each peer key stands for. It answers `Wire.accept` from `Tcp.accept` and `Wire.read` from `Tcp.readNow`, and parks on `Connected` when nothing has arrived. That is what a `Wire` is for: the processes above it say what they want, and one module says how a socket gives it to them.
 
-What a `Later` carries is a `Wait.Wake`, and the wake **gates the ask**: a parked request is not asked again until what it is waiting for has happened.
+What a `Later` carries is a `Wait.Wake`, and the wake **gates the ask**: a parked request is not asked again until the thing it waits for has happened.
 
-- `Item(Wait.Item)` parks on a socket or a job. That slot is asked again only in a turn whose `Wait.poll` reported its key, and false readiness is allowed — the module may answer `Later` again. The generated coordinator keys its own wait set by slot id, so those keys are whole numbers; a program that writes its own loop keys the wait by whatever type says best what it is waiting for, because `Wait.poll` takes a `Map<K, Wait.Item>` for any key a map accepts.
-- `After(ms)` parks on a deadline. At park time the turn turns `ms` into the clock reading it falls due at, `due = now + ms`, and keeps the `ms` that was asked for beside it; that slot is asked again in a turn whose clock reading has reached `due`, or in a turn whose reading has fallen further back than `ms` — a wall clock that steps backwards would otherwise leave the request waiting for a reading that never comes, and would hand the wait a timeout longer than anything in the program asked for.
-- `Either(item, ms)` parks on both at once, and the slot is asked again on whichever comes first. The item goes into the turn's wait set exactly as `Item` puts it there, the deadline is turned into a `due` and counts in the poll timeout exactly as `After` counts it, backwards clock and all. That is what a read with a deadline is: waiting for the socket, and not for ever.
-- `NextTurn` asks to be asked again immediately, which makes that turn poll with a zero timeout for as long as such a request exists — so prefer `Item`, `After` or `Either` when any of them will do.
+- `Item(Wait.Item)` parks on a socket or a job. The slot is asked again only in a turn whose `Wait.poll` reported its key. False readiness is allowed, and the module may answer `Later` again. The generated coordinator keys its own wait set by slot id, so those keys are whole numbers. A program that writes its own loop can key the wait by whatever type best describes what it waits for, because `Wait.poll` takes a `Map<K, Wait.Item>` for any key a map accepts.
+- `After(ms)` parks on a deadline. At park time the turn converts `ms` into the clock reading it falls due at, `due = now + ms`, and keeps the requested `ms` beside it. The slot is asked again in a turn whose clock reading has reached `due`, or in a turn whose reading has fallen further back than `ms`. Without the second condition, a wall clock that steps backwards would leave the request waiting for a reading that never comes, and would hand the wait a timeout longer than anything in the program asked for.
+- `Either(item, ms)` parks on both at once, and the slot is asked again on whichever comes first. The item goes into the turn's wait set the same way `Item` puts it there. The deadline becomes a `due` and counts in the poll timeout the same way `After` counts it, backwards clock included. A read with a deadline is exactly this: waiting for the socket, but not forever.
+- `NextTurn` asks to be asked again immediately. That makes the turn poll with a zero timeout for as long as such a request exists, so prefer `Item`, `After` or `Either` when one of them will do.
 
-Nothing tells the answer function *which* half woke it, because the module already knows how to find out and the turn does not: it probes the socket again — `Tcp.readNow` answering `None` is "still nothing" — or reads the clock in place, which an answer module may do. An answer function takes `op(state, args)` and nothing else, in this build as in the last one.
+The answer function is not told *which* half woke it. The module already knows how to find out and the turn does not: it probes the socket again (`Tcp.readNow` answering `None` means still nothing), or reads the clock in place, which an answer module may do. An answer function takes `op(state, args)` and nothing else, in this build as in the last one.
 
-The worked example of `Either` is the same `Sockets` module's read. It records the clock reading a read falls due at on that read's first ask, so the asks after it run out the deadline the caller named rather than starting a new one each time, and parks on the socket and on what is left of that deadline at once. The ask that finds nothing once the deadline has run out answers `TimedOut`, and the process above it hands that peer back:
+The worked example of `Either` is the read in the same `Sockets` module. On a read's first ask it records the clock reading the read falls due at, so later asks run out the deadline the caller named instead of starting a new one each time. It parks on the socket and on what is left of that deadline at once. An ask that finds nothing after the deadline has run out answers `TimedOut`, and the process above it hands that peer back:
 
 ```aver
 fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.ReadReply>
@@ -652,7 +611,7 @@ fn quiet(state: State, key: Int, now: Int, again: Wait.Wake) -> Tuple<State, Wir
 
 A freshly seated process and a process whose request was just answered are askable at once.
 
-The worked example of `After` is a clock that gives out a tick fifty milliseconds after it was asked for one. The first ask arms the deadline and parks; the ask after the deadline has passed is the tick. Four ticks are eight asks — two per tick, whatever else the run is doing and however many turns it takes — plus the closing ask that answers `Closed`, which is why the slice's run ends with a ticker asked nine times:
+The worked example of `After` is a clock that gives out a tick fifty milliseconds after it was asked for one. The first ask arms the deadline and parks. The ask after the deadline has passed is the tick. Four ticks take eight asks, two per tick, whatever else the run is doing and however many turns it takes. The closing ask that answers `Closed` makes nine, which is why the slice's run ends with the ticker asked nine times:
 
 ```aver
 fn tick(state: State) -> Tuple<State, Clock.TickReply>
@@ -666,9 +625,9 @@ fn armed(state: State) -> Tuple<State, Clock.TickReply>
         true -> (State.update(state, armed = false, left = state.left - 1), Clock.TickReply.Now(Clock.Tick.Tock))
 ```
 
-When customizing just one policy, the other functions can be the one-liners `fn order(view: View) -> List<Int> = Map.keys(view.pending)`, `fn admit(view: View, id: Int) -> Bool = List.contains(view.askable, id)` and `fn stop(view: View) -> Bool = Bool.or(view.stopping, Bool.and(Map.len(view.pending) == 0, view.jobs == 0))`.
+When you customize only one policy, the other functions can be one-liners: `fn order(view: View) -> List<Int> = Map.keys(view.pending)`, `fn admit(view: View, id: Int) -> Bool = List.contains(view.askable, id)` and `fn stop(view: View) -> Bool = Bool.or(view.stopping, Bool.and(Map.len(view.pending) == 0, view.jobs == 0))`.
 
-For custom policies, declare the view and the three policy functions. The view is a record the program declares and the loop fills; the checker holds it to exactly that shape and prints the declaration it wants under `error[view-shape]`:
+For custom policies, declare the view and the three policy functions. The view is a record the program declares and the loop fills. The checker holds it to exactly that shape and, under `error[view-shape]`, prints the declaration it wants:
 
 ```aver
 type Pending
@@ -701,54 +660,35 @@ fn stop(view: View) -> Bool
     view.stopping
 ```
 
-One constructor per process, carrying the instance number of the request that process is waiting on and the wake it is parked on. `ready` is what the turn's one wait reported; `askable` is the ids the turn may ask in this turn, in slot order, which is `ready` read through every slot's wake plus everything parked on the next turn and everything whose deadline has passed. `order` and `admit` see the whole view — a policy may look at a slot it cannot ask — but the turn asks `admit` only about askable ids and never serves a slot that is not askable, whatever `order` returned. The view carries no capability resource on purpose: a law's `given` domain is a list of sample values written in Aver, a program cannot construct a `Tcp.Connection` or a `Work.Job`, and a policy that read the whole run could therefore never have a law with a non-trivial sample. This one can, and the example's priority law is exactly that — a ready peer request is admitted whatever the job table looks like, so the turn, which serves before it starts another job, serves the peer first.
+`Pending` has one constructor per process, carrying the instance number of the request that process is waiting on and the wake it is parked on. `ready` is what the turn's one wait reported. `askable` is the ids the turn may ask in this turn, in slot order: `ready` read through every slot's wake, plus everything parked on the next turn and everything whose deadline has passed. `order` and `admit` see the whole view, and a policy may look at a slot it cannot ask. But the turn asks `admit` only about askable ids, and it never serves a slot that is not askable, whatever `order` returned. The view carries no capability resource, on purpose. A law's `given` domain is a list of sample values written in Aver, and a program cannot construct a `Tcp.Connection` or a `Work.Job`. A policy that read the whole run could therefore never have a law with a non-trivial sample. This one can, and the example's priority law is such a law: a ready peer request is admitted whatever the job table looks like, so the turn, which serves before it starts another job, serves the peer first.
 
-**What the compiler generates.** `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the whole of it after the protocol. In outline:
+**What the compiler generates.** `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints all of it after the protocol. In outline:
 
-- `__Process` and `__Slot` and `__Run` — the slot table (`Map<Int, __Slot>`), one field per answer module holding its state, the job table, the count of answers that arrived too late, the stop flag as data, the clock reading this turn made, and the next free id. A slot carries its instance number, its request, the wake it is parked on, `due`, the clock reading an `After` falls due at, and `ms`, the delay that `After` asked for. Its `answer: Option<__ThenAnswer>` holds a saved reply: one monomorphic constructor per process and operation, carrying the continuation state and the exact operation result.
-- `__seat<P>` / `__seated<P>` — one of every process, seated at its first request under its own slot id.
-- `__current`, `__nextInstance`, `__settle<P>`, `__settledSlot<P>`, `__park`, `__parked`, `__dueOf`, `__msOf` — the two invariants of the table. An answer that carries the current instance replaces that process's one slot and raises its number; an answer that carries an older one changes nothing and is counted. A `Later` parks the request where it stands, keeps the state the module returned, and turns the `ms` of an `After` or an `Either` into the clock reading it falls due at, keeping the `ms` that was asked for beside it.
-- `__view`, `__pendingOf`, `__markerOf`, `__askableOf`, `__askable`, `__askableSlot` — the view the policies read, filled from the run, including the gate: which slots this turn may ask, read off each slot's wake against the keys the wait reported and the clock reading the turn made. A slot parked on a deadline is askable once that reading has reached `due`, and also once that reading has fallen back past the moment the request was parked, so a clock that steps backwards cannot strand it; a slot parked on an item and a deadline at once is askable on whichever of the two comes first.
-- `__waitSet`, `__timeout`, `__remaining`, `__eitherWait` — one wait per turn, keyed by slot id, plus one key per running job; the timeout is zero while any request asked for the next turn, the smallest `due - now` still ahead otherwise, and one second when nothing carries either. A request parked on an item and a deadline at once puts its item in the wait set and its deadline in the timeout, so both halves of it are live in the same wait.
-- `__serve`, `__serve<P>`, `__serve<P><Kind>` — the dispatch: one arm per request kind of each process, calling the answer module's own function and settling or parking on what it answered. There is no arm for an unanswered operation, because the lowering only makes a request out of an answered one.
-- `__Job`, `__roomLeft`, `__jobHandle`, `__takeEach<J>`, `__taken<J>`, `__reported<J>`, `__finished<J>`, `__landed<J>`, `__startable<J>`, `__startJobs<J>`, `__began<J>`, `__jobSeated<J>`, `__consumed<J>` — the job seam, once per job kind `<J>` over one shared table. `__Job` is a generated sum with one variant per kind, so `jobs: Map<Int, __Job>` carries every kind under one `[work] max-jobs` limit and `__jobHandle` unwraps it for the wait and the cancel. A job outcome is a coordinator event, not an answer to a request: it goes into the answer state through `landed` and resumes nobody. A `take` that answers `Ok(None)` is a job reported ready that has not finished: it keeps its handle for a later turn. A `take` that answers `Err` — cancelled, a body that stopped, an id the engine has forgotten — will never produce a payload: the handle leaves the table, the error reaches `landed` as `Result.Err(reason)`, and the run goes on rather than stopping on the take. The start side runs ask → `begin` → `started`: `__startable<J>` answers `None` while the table has no room, `__began<J>` records nothing on a `begin` that answered `Err`, and `__jobSeated<J>` puts the handle in the table and calls the manifest's `started` through `__consumed<J>` only once `begin` has answered `Ok`, so the task is consumed exactly when it is really running and the next ask of the same turn is offered a different one. The program states the one law the generator cannot: `verify <started> law aStartedTaskIsNotAskedAgain` on its `started` function — when `task(state)` offers `t`, `task(started(state, t))` does not — and the generated `__consumed<J> law aStartedTaskIsNotAskedAgain` cites it with `using`, per kind. A `[run]` program whose `started` function has no law by that name is refused with `error[run-binding]` before the generated module is checked, and the refusal prints the block.
-- `__turn`, `__serveEach`, `__serveIf`, `__serveAdmitted`, `__runAll`, `main` — observe the stop flag and the clock, wait once, serve the askable slots the policy ordered and admitted, take what is over of every job kind, start what fits of every job kind; turn until the policy says stop or nothing is seated. Taking before starting lets a job that landed this turn free a slot the same turn can use. The clock is read once per turn, after the wait has returned and before the turn serves, so a deadline that fell due while the turn was asleep is askable in that same turn rather than the next one; the wait of the turn after it is measured against the same reading, and a recording replays it.
-- `__over`, `__cancelEach` — the end of a run. A program with a job kind cancels every job it is still holding a handle for rather than abandoning it, so `main` performs `Work.cancel`.
+- `__Process`, `__Slot` and `__Run`: the slot table (`Map<Int, __Slot>`), one field per answer module holding its state, the job table, the count of answers that arrived too late, the stop flag as data, the clock reading this turn made, and the next free id. A slot carries its instance number, its request, the wake it is parked on, `due` (the clock reading an `After` falls due at) and `ms` (the delay that `After` asked for). Its `answer: Option<__ThenAnswer>` holds a saved reply, with one monomorphic constructor per process and operation that carries the continuation state and the exact operation result.
+- `__seat<P>` / `__seated<P>`: one of every process, seated at its first request under its own slot id.
+- `__current`, `__nextInstance`, `__settle<P>`, `__settledSlot<P>`, `__park`, `__parked`, `__dueOf`, `__msOf`: the two invariants of the table. An answer that carries the current instance replaces that process's one slot and raises its number. An answer that carries an older one changes nothing and is counted. A `Later` parks the request where it stands, keeps the state the module returned, and turns the `ms` of an `After` or an `Either` into the clock reading it falls due at, keeping the requested `ms` beside it.
+- `__view`, `__pendingOf`, `__markerOf`, `__askableOf`, `__askable`, `__askableSlot`: the view the policies read, filled from the run. It includes the gate, which works out which slots this turn may ask by reading each slot's wake against the keys the wait reported and the clock reading the turn made. A slot parked on a deadline is askable once that reading has reached `due`, and also once the reading has fallen back past the moment the request was parked, so a clock that steps backwards cannot strand it. A slot parked on an item and a deadline at once is askable on whichever of the two comes first.
+- `__waitSet`, `__timeout`, `__remaining`, `__eitherWait`: one wait per turn, keyed by slot id, plus one key per running job. The timeout is zero while any request has asked for the next turn, otherwise the smallest `due - now` still ahead, and one second when nothing carries either. A request parked on an item and a deadline at once puts its item in the wait set and its deadline in the timeout, so both halves of it are live in the same wait.
+- `__serve`, `__serve<P>`, `__serve<P><Kind>`: the dispatch. There is one arm per request kind of each process, which calls the answer module's own function and settles or parks on what it answered. There is no arm for an unanswered operation, because the lowering makes requests only out of answered ones.
+- `__Job`, `__roomLeft`, `__jobHandle`, `__takeEach<J>`, `__taken<J>`, `__reported<J>`, `__finished<J>`, `__landed<J>`, `__startable<J>`, `__startJobs<J>`, `__began<J>`, `__jobSeated<J>`, `__consumed<J>`: the job seam, once per job kind `<J>` over one shared table. `__Job` is a generated sum with one variant per kind, so `jobs: Map<Int, __Job>` holds every kind under one `[work] max-jobs` limit, and `__jobHandle` unwraps it for the wait and the cancel. A job outcome is a coordinator event rather than an answer to a request. It goes into the answer state through `landed` and resumes nobody. A `take` that answers `Ok(None)` is a job reported ready that has not finished, and it keeps its handle for a later turn. A `take` that answers `Err` (cancelled, a body that stopped, an id the engine has forgotten) will never produce a payload. The handle leaves the table, the error reaches `landed` as `Result.Err(reason)`, and the run goes on instead of stopping on the take. The start side runs ask → `begin` → `started`. `__startable<J>` answers `None` while the table has no room. `__began<J>` records nothing when `begin` answered `Err`. `__jobSeated<J>` puts the handle in the table and calls the manifest's `started` through `__consumed<J>` only once `begin` has answered `Ok`. The task is therefore consumed exactly when it is really running, and the next ask of the same turn is offered a different one. The program states the one law the generator cannot: `verify <started> law aStartedTaskIsNotAskedAgain` on its `started` function, which says that when `task(state)` offers `t`, `task(started(state, t))` does not. The generated `__consumed<J> law aStartedTaskIsNotAskedAgain` cites it with `using`, per kind. A `[run]` program whose `started` function has no law by that name is refused with `error[run-binding]` before the generated module is checked, and the refusal prints the block.
+- `__turn`, `__serveEach`, `__serveIf`, `__serveAdmitted`, `__runAll`, `main`: observe the stop flag and the clock, wait once, serve the askable slots the policy ordered and admitted, take whatever has finished in every job kind, start whatever fits in every job kind, and repeat until the policy says stop or nothing is seated. Taking before starting lets a job that landed this turn free a slot that the same turn can use. The clock is read once per turn, after the wait has returned and before the turn serves. A deadline that fell due while the turn was asleep is therefore askable in that same turn rather than the next one. The wait of the following turn is measured against the same reading, and a recording replays it.
+- `__over`, `__cancelEach`: the end of a run. A program with a job kind cancels every job it still holds a handle for instead of abandoning it, so `main` performs `Work.cancel`.
 
-Each of those carries its own effects, not the program's: `__seat<P>` performs what that process performs on its way to its first request, `__serve<P><Kind>` performs what the answer module performs plus what the segment it resumes performs, and a process that touches nothing has every function the loop generates for it pure — so one generative effect in one process cannot oracle-lift the laws about another. Only `__serve`, `__serveEach`, `__serveIf` and the turn carry the union, because the dispatch reaches every process. The entry module's own `effects [...]` is widened to admit what is generated into it: the wait, the stop observation, the clock reading (`Time.unixMs`), both ends of every job kind and the cancel are added to the list the source declares, because the module boundary has to hold the loop as well as the processes.
+Each of those carries its own effects rather than the program's. `__seat<P>` performs what that process performs on its way to its first request. `__serve<P><Kind>` performs what the answer module performs plus what the resumed segment performs. A process that touches nothing gets only pure functions from the loop, so one generative effect in one process cannot oracle-lift the laws about another. Only `__serve`, `__serveEach`, `__serveIf` and the turn carry the union, because the dispatch reaches every process. The entry module's own `effects [...]` is widened to admit what is generated into it. The wait, the stop observation, the clock reading (`Time.unixMs`), both ends of every job kind and the cancel are added to the list the source declares, because the module boundary has to hold the loop as well as the processes.
 
-**And the laws.** The generator emits ordinary Aver `verify` laws over its own
-transitions. They state that a stale answer leaves slots alone and increments
-`dropped`; `Later` preserves the request and instance; `Then` saves an answer
-behind its wake gate; a current settlement retires that instance; and settling
-an existing process never grows the slot table. Deadline laws cover delayed
-asks, backwards clocks, and the maximum wait requested by `After` and `Either`.
+**And the laws.** The generator emits ordinary Aver `verify` laws over its own transitions. They state that a stale answer leaves slots alone and increments `dropped`, that `Later` preserves the request and instance, that `Then` saves an answer behind its wake gate, that a current settlement retires that instance, and that settling an existing process never grows the slot table. Deadline laws cover delayed asks, backwards clocks, and the maximum wait requested by `After` and `Either`.
 
-It also generates a concrete event type and a fold over arbitrary finite
-histories after initial seating. The `__historyRun` laws compose the transitions:
-process slots never increase, all job kinds together remain within `max-jobs`
-when initially within it, and a retired request instance never becomes current
-again. Admissibility checks the control preconditions at each preceding state
-(room before a start, a nonnegative settlement instance and a seated current
-request); it does not assume these safety conclusions. Arbitrary returned
-provider states and job observations are allowed, so provider-specific semantic
-invariants remain the program's own responsibility.
+It also generates a concrete event type and a fold over arbitrary finite histories after initial seating. The `__historyRun` laws compose the transitions: process slots never increase, all job kinds together stay within `max-jobs` when they start within it, and a retired request instance never becomes current again. Admissibility checks the control preconditions at each preceding state (room before a start, a nonnegative settlement instance, and a seated current request). It does not assume these safety conclusions. Arbitrary returned provider states and job observations are allowed, so provider-specific semantic invariants remain the program's own responsibility.
 
-`aver verify` executes the supplied samples. `aver proof --backend lean --check`
-checks the universal statements by induction over the history, with the usual
-manifest and axiom audit. The generated history helpers call the live driver's
-pure transitions and create no runtime event log. Proving correspondence with
-the effectful driver and the original direct-style request trace remains a
-separate obligation. See [Generated coordinator laws](knowledge.md#generated-coordinator-laws)
-for the precise scope.
+`aver verify` runs the supplied samples. `aver proof --backend lean --check` checks the universal statements by induction over the history, with the usual manifest and axiom audit. The generated history helpers call the live driver's pure transitions and create no runtime event log. Proving correspondence with the effectful driver and with the original direct-style request trace remains a separate obligation. See [Generated coordinator laws](knowledge.md#generated-coordinator-laws) for the precise scope.
 
-**Where it runs.** The loop is ordinary Aver, so it runs wherever the program does: on the bytecode VM under `aver run`, and as a native binary from `aver compile --target rust`, whose generated crate carries the same answer modules, the same policies and the same turn, with the wait, the job engine and the job kinds answered by `aver-rt` instead of by the VM's providers. The one thing not to read into a side-by-side run is the order of two processes' output. The example parks requests on `Wait.Wake.After(2)`, `After(5)` and `After(50)`, which are wall-clock deadlines, so which turn a finished job lands in depends on how long that job took; a compiled function is faster than the smallest deadline in the program and the VM's child interpreter is not, so the two backends do the same work in a different interleaving. What does not change between them is how often a parked request is asked: the wake gates the ask on both. The wasm-gc runner and Wasmtime deployment packs run jobs on host threads in separate instances, enforce `[work] max-jobs`, and wake the coordinator when a job settles. JavaScript hosts use the same job ABI and a generated post-wait step to receive worker messages between turns; see [Parallel Work on wasm-gc](wasm-work.md). The current wasip2 job lowering remains inline and warns that `max-jobs` has no effect. On wasip2 the generated turn keeps `View.stopping = false`, because WASI 0.2 has no signal subscription. A default run ends when no process is seated and no job remains; a custom run ends through its stop policy or normal exhaustion. A policy that waits only for `view.stopping` needs another completion condition while processes remain seated. Explicit `Process.stopRequested` calls remain unsupported on wasip2.
+**Where it runs.** The loop is ordinary Aver, so it runs wherever the program does. That means the bytecode VM under `aver run`, and a native binary from `aver compile --target rust`, whose generated crate carries the same answer modules, the same policies and the same turn, with the wait, the job engine and the job kinds answered by `aver-rt` instead of by the VM's providers. In a side-by-side run, do not read anything into the order of two processes' output. The example parks requests on `Wait.Wake.After(2)`, `After(5)` and `After(50)`, which are wall-clock deadlines, so the turn in which a finished job lands depends on how long that job took. A compiled function is faster than the smallest deadline in the program and the VM's child interpreter is not, so the two backends do the same work in a different interleaving. How often a parked request is asked stays the same on both, because the wake gates the ask on both. The wasm-gc runner and Wasmtime deployment packs run jobs on host threads in separate instances, enforce `[work] max-jobs`, and wake the coordinator when a job settles. JavaScript hosts use the same job ABI and a generated post-wait step to receive worker messages between turns; see [Parallel Work on wasm-gc](wasm-work.md). The current wasip2 job lowering is still inline and warns that `max-jobs` has no effect. On wasip2 the generated turn keeps `View.stopping = false`, because WASI 0.2 has no signal subscription. A default run ends when no process is seated and no job remains. A custom run ends through its stop policy or normal exhaustion. A policy that waits only for `view.stopping` needs another completion condition while processes remain seated. Explicit `Process.stopRequested` calls are still unsupported on wasip2.
 
-Two limits worth knowing before you reach them. A process takes no parameters and answers `Unit`, because the loop seats it and has nothing to hand it and nowhere to put its result — everything a process needs comes from the module that answers its first request. A yielding *helper* is not a process and is not held to that: it takes parameters and answers whatever its caller reads, because the process that calls it is what the loop seats.
+Two limits are worth knowing before you reach them. A process takes no parameters and answers `Unit`, because the loop seats it, has nothing to hand it and has nowhere to put its result. Everything a process needs comes from the module that answers its first request. A yielding *helper* is not a process and is not held to that. It takes parameters and answers whatever its caller reads, because the process that calls it is what the loop seats.
 
 ## Modules
 
-Module imports resolve from a module root (`--module-root`, default: current working directory).
+Module imports resolve from a module root (`--module-root`, default: the current working directory).
 Each module file must start with `module <Name>` and contain exactly one module declaration.
 
 ```aver
@@ -759,11 +699,11 @@ module Payments
     exposes [charge]
 ```
 
-`effects [...]` declares the module's effect boundary — the union of the effects its functions may perform, in the same granular/namespace-shorthand form as function-level `! [...]`. It goes after `intent`. `aver check` warns when a module with functions omits it; a pure module declares `effects []` explicitly.
+`effects [...]` declares the module's effect boundary: the union of the effects its functions may perform, in the same granular or namespace-shorthand form as a function-level `! [...]`. It goes after `intent`. `aver check` warns when a module with functions omits it, and a pure module declares `effects []` explicitly.
 
 ### Capability modules
 
-A capability module declares host-provided atoms without choosing how a host binds them. It is still an ordinary module for `depends`, visibility, and naming, but its `operation` declarations have signatures instead of Aver bodies:
+A capability module declares host-provided atoms without choosing how a host binds them. For `depends`, visibility and naming it is an ordinary module, but its `operation` declarations have signatures instead of Aver bodies:
 
 ```aver
 module Clock
@@ -781,19 +721,19 @@ fn zero(path: BranchPath, call: Int) -> Int
     0
 ```
 
-`semantics` is mandatory and homogeneous for the module:
+`semantics` is mandatory and the same for the whole module:
 
-- `pure` operations are total, deterministic functions for proof purposes and carry no effect. They cannot declare `oracle`, `replay`, `hostile`, or `unmodelled` fields.
-- `effectful` operations are their own effect identities (`Clock.now`). Every operation declares an Oracle dimension (`generative`, `output`, or `generativeOutput`) and replay behavior. Generative results use `recorded`; output requires a `Unit` result and uses `reissued` or `suppressed`; `snapshot` is reserved for standard-library effects whose read-only behavior Aver audits itself.
-- An operation is a first-order provider boundary, not a value: it cannot take or return `Fn`, be assigned, or be passed as a callback. Call it directly, including inside `!` and `?!`. Capability effect declarations must name exact operations; namespace shorthand is rejected at module and function scope.
+- `pure` operations are total, deterministic functions for proof purposes and carry no effect. They cannot declare `oracle`, `replay`, `hostile` or `unmodelled` fields.
+- `effectful` operations are their own effect identities (`Clock.now`). Every operation declares an Oracle dimension (`generative`, `output` or `generativeOutput`) and a replay behavior. Generative results use `recorded`. Output requires a `Unit` result and uses `reissued` or `suppressed`. `snapshot` is reserved for standard-library effects whose read-only behavior Aver audits itself.
+- An operation is a first-order provider boundary and not a value. It cannot take or return `Fn`, be assigned, or be passed as a callback. Call it directly, including inside `!` and `?!`. Capability effect declarations must name exact operations, and namespace shorthand is rejected at module and function scope.
 
-For effectful capabilities, `given` and `aver verify --hostile` use the same Oracle stub signatures as built-in effects. A hostile profile belongs to the capability module, must be pure, and receives `BranchPath`, call index, then the operation arguments. If the operation mints a resource, one unconstrained fresh token appears between the call index and the original arguments; it is not assumed distinct from any other token. A `given` stub for a pure capability instead has the operation's ordinary contract signature, with no Oracle coordinates. Proof trust headers pin two separate SHA-256 identities: `contract_hash` covers the provider ABI and all reachable boundary types, including the layouts of the dependency types a job kind names, while `model_hash` additionally covers Oracle/replay metadata and the transitive source closure of hostile profiles. Both identities hash canonical `u64be` length-framed descriptors, so field concatenation cannot collide. Provider choice and binding stay outside both hashes and outside the theorem.
+For effectful capabilities, `given` and `aver verify --hostile` use the same Oracle stub signatures as built-in effects. A hostile profile belongs to the capability module, must be pure, and receives `BranchPath`, the call index, then the operation arguments. If the operation mints a resource, one unconstrained fresh token appears between the call index and the original arguments, and it is not assumed distinct from any other token. A `given` stub for a pure capability has the operation's ordinary contract signature instead, with no Oracle coordinates. Proof trust headers pin two separate SHA-256 identities. `contract_hash` covers the provider ABI and all reachable boundary types, including the layouts of the dependency types a job kind names. `model_hash` also covers Oracle/replay metadata and the transitive source closure of hostile profiles. Both identities hash canonical `u64be` length-framed descriptors, so field concatenation cannot collide. Provider choice and binding stay outside both hashes and outside the theorem.
 
-`resource Token` inside a capability is representation-less: only its bound provider can mint a value. This is deliberately distinct from `exposes opaque [T]`: the latter hides an ordinary represented Aver type while preserving its value semantics; a capability resource has no Aver representation or language-visible identity. It may occur at most once in an operation's success payload, directly or through transparent `Result`/`Option` wrappers; resource consumers must use recorded replay. Runtime handles are tagged by binding instance and canonical type, survive independent-product child VMs, and never expose the provider payload. Capability resources, including represented wrapper types that transitively contain one, deliberately have no display identity, equality, serialization as a host payload, or map-key semantics.
+`resource Token` inside a capability has no representation, and only its bound provider can mint a value. This is deliberately different from `exposes opaque [T]`, which hides an ordinary represented Aver type while keeping its value semantics. A capability resource has no Aver representation and no identity visible to the language. It may occur at most once in an operation's success payload, directly or through transparent `Result`/`Option` wrappers, and resource consumers must use recorded replay. Runtime handles are tagged by binding instance and canonical type, survive independent-product child VMs, and never expose the provider payload. Capability resources, including represented wrapper types that transitively contain one, deliberately have no display identity, equality, serialization as a host payload, or map-key semantics.
 
-An embedded Rust host installs a VM provider with `aver::provider::ProviderBinding` and `ProviderRegistry`. A generated Rust host installs that same public `aver_rt::provider::ProviderBinding` through the generated library's `install_provider_bindings` entry. Registration pins the exact `contract_hash` and the complete operation set before execution. Providers implement `aver_rt::provider::CapabilityProvider` and exchange only the closed, transport-neutral `ProviderValue` tree—not VM `NanValue` or the general interpreter `Value`. A returned `ProviderValue::ResultErr` is ordinary Aver data; `ProviderFault` or a provider panic is a separate boundary failure. Duplicate, incomplete, extra-operation, hash-mismatched, and wrong-return-shape bindings fail closed with provider-specific diagnostics.
+An embedded Rust host installs a VM provider with `aver::provider::ProviderBinding` and `ProviderRegistry`. A generated Rust host installs the same public `aver_rt::provider::ProviderBinding` through the generated library's `install_provider_bindings` entry. Registration pins the exact `contract_hash` and the complete operation set before execution. Providers implement `aver_rt::provider::CapabilityProvider` and exchange only the closed, transport-neutral `ProviderValue` tree. They never see the VM's `NanValue` or the general interpreter `Value`. A returned `ProviderValue::ResultErr` is ordinary Aver data, while `ProviderFault` or a provider panic is a separate boundary failure. Duplicate, incomplete, extra-operation, hash-mismatched and wrong-return-shape bindings fail closed with provider-specific diagnostics.
 
-`aver verify` does not discover or install host packages. A source-local cases-form binding such as `given hash: Hash160.digest = [fixtureHash]` installs that Aver function only for each expanded verify case. Namespaced capabilities use the same full canonical path as calls and diagnostics—for example `given probe: Domain.Crypto.Hash160.digest = [fixtureHash]`; a shortened or misspelled path is a static error, never an ignored binding. The alias may be unused in the assertion: the binding still redirects reached dispatch. It never satisfies normal `aver run` provider preflight and does not test the provider implementation itself.
+`aver verify` does not discover or install host packages. A source-local cases-form binding such as `given hash: Hash160.digest = [fixtureHash]` installs that Aver function only for each expanded verify case. Namespaced capabilities use the same full canonical path as calls and diagnostics, for example `given probe: Domain.Crypto.Hash160.digest = [fixtureHash]`. A shortened or misspelled path is a static error and is never ignored as a binding. The alias may go unused in the assertion, and the binding still redirects the dispatch it reaches. It never satisfies the normal `aver run` provider preflight, and it does not test the provider implementation itself.
 
 ```rust
 use std::sync::Arc;
@@ -812,53 +752,17 @@ vm.set_provider_registry(Arc::new(providers));
 vm.run()?;
 ```
 
-Target support is explicit rather than inferred from a missing provider row.
-`aver capabilities app.av` emits one deterministic row per loaded capability
-and shipped target (`vm`, `rust`, `wasm-gc`, `wasip2`). A row is `provided`,
-`host-bound` when an embedder, JavaScript host, or Component Model host must
-install a provider, or `unsupported(reason)` with a stable architectural reason
-such as `wit-boundary-type-unsupported`. A custom contract is
-`host-bound[wasm-gc-import-required]` on raw wasm-gc; a WIT-lowerable custom
-contract is `host-bound[component-import-required]` on wasip2. The manifest lists the full
-declared operation set separately from operations used by the program; unused
-contracts remain visible but never block compilation. `--json` emits the
-versioned machine-readable form, including the exact offending operation,
-parameter/result position, and Aver type when WIT lowering is unavailable.
+Target support is stated explicitly and never inferred from a missing provider row. `aver capabilities app.av` emits one deterministic row per loaded capability and shipped target (`vm`, `rust`, `wasm-gc`, `wasip2`). A row is `provided`; `host-bound`, when an embedder, JavaScript host or Component Model host must install a provider; or `unsupported(reason)` with a stable architectural reason such as `wit-boundary-type-unsupported`. A custom contract is `host-bound[wasm-gc-import-required]` on raw wasm-gc, and a WIT-lowerable custom contract is `host-bound[component-import-required]` on wasip2. The manifest lists the full declared operation set separately from the operations the program uses. Unused contracts stay visible but never block compilation. `--json` emits the versioned machine-readable form, including the exact offending operation, the parameter or result position, and the Aver type when WIT lowering is unavailable.
 
-Consequently `error[capability-provider-missing]` is reserved for a target that
-can accept a provider but has no live binding. Artifact targets without an
-adapter report `error[capability-target-unsupported]` instead, including the
-target, capability, required operations, contract/model hashes, and reason.
+So `error[capability-provider-missing]` is reserved for a target that can accept a provider but has no live binding. Artifact targets without an adapter report `error[capability-target-unsupported]` instead, with the target, the capability, the required operations, the contract and model hashes, and the reason.
 
-The registry is shared by the main VM and every `!` / `?!` child, so all branches see the same provider instance and resource store. Recording adds a sorted capability provenance table with `contract_hash`, `model_hash`, provider identity, and implementation fingerprint. `recorded` and `suppressed` replay consume without calling a provider; `reissued` consumes the event and calls live; pure operations call live without emitting an event. Live pure/reissued replay requires the same identity and fingerprint. The compiler-shipped native, wasm-gc, and wasip2 adapters for one standard capability form one explicit replay-compatibility family: their target-specific identities may differ, but the fingerprint must still match, so a standard trace remains portable between backends. Custom providers remain identity-exact. Provider fingerprints are audit metadata supplied by the host, not theorem hashes; the runtime can expose drift, but it cannot stop a dishonest host from reusing an old fingerprint for changed code.
+The main VM and every `!` / `?!` child share the registry, so all branches see the same provider instance and resource store. Recording adds a sorted capability provenance table with `contract_hash`, `model_hash`, provider identity and implementation fingerprint. `recorded` and `suppressed` replay consume the event without calling a provider. `reissued` consumes the event and calls the provider live. Pure operations call live and emit no event. Live pure or reissued replay requires the same identity and fingerprint. The native, wasm-gc and wasip2 adapters the compiler ships for one standard capability form one explicit replay-compatibility family. Their target-specific identities may differ, but the fingerprint must still match, so a standard trace stays portable between backends. Custom providers must match identity exactly. Provider fingerprints are audit metadata supplied by the host, not theorem hashes. The runtime can expose drift, but it cannot stop a dishonest host from reusing an old fingerprint for changed code.
 
-Custom bindings have three host-bound routes. A Rust embedder can install one typed
-in-process provider binding unchanged in the VM or a generated Rust artifact. A
-raw wasm-gc artifact imports the complete contract under a deterministic module
-name containing its `contract_hash`, using native GC values and `externref`
-resources; a JavaScript/Workers/Node host supplies it. See
-[`docs/wasm-gc-custom-capabilities.md`](wasm-gc-custom-capabilities.md) for the
-ABI and generated value factories. A
-wasip2 artifact can import a generated WIT interface when every parameter and
-result in the complete contract is `Unit`, `Bool`, `Float`, or `String`; pure
-and effectful operations use the same transport. The component import pins the
-full `contract_hash` and publishes both hashes in its sibling WIT. An external
-Component Model host may implement that interface directly. For local execution,
-`aver run app.av --wasip2` instead links the Rust package bound in `aver.toml`
-through the cached host and dynamically adapts its existing `ProviderBinding`
-to the same WIT interface. Without a binding, `aver run --wasip2` fails
-preflight with `error[capability-provider-missing]`. The stock generated Rust binary
-likewise has no custom binding and fails preflight; a separate Rust host links
-the provider crate through Cargo and installs the binding explicitly.
-Standard `Time` remains a provided binding: its canonical source is shipped at
-`stdlib/capabilities/time.av`, and VM, generated Rust, wasm-gc, and wasip2 each
-declare an exact shipped binding of that one contract. See
-[`docs/wasip2.md`](wasip2.md#custom-capability-imports-phase-3a) for the boundary
-and host contract.
+Custom bindings have three host-bound routes. A Rust embedder can install one typed in-process provider binding, unchanged, in the VM or in a generated Rust artifact. A raw wasm-gc artifact imports the complete contract under a deterministic module name that contains its `contract_hash`, using native GC values and `externref` resources, and a JavaScript, Workers or Node host supplies it. See [`docs/wasm-gc-custom-capabilities.md`](wasm-gc-custom-capabilities.md) for the ABI and the generated value factories. A wasip2 artifact can import a generated WIT interface when every parameter and result in the complete contract is `Unit`, `Bool`, `Float` or `String`. Pure and effectful operations use the same transport. The component import pins the full `contract_hash` and publishes both hashes in its sibling WIT. An external Component Model host may implement that interface directly. For local execution, `aver run app.av --wasip2` instead links the Rust package bound in `aver.toml` through the cached host and dynamically adapts its existing `ProviderBinding` to the same WIT interface. Without a binding, `aver run --wasip2` fails preflight with `error[capability-provider-missing]`. The stock generated Rust binary has no custom binding either and fails preflight, so a separate Rust host links the provider crate through Cargo and installs the binding explicitly. Standard `Time` is still a provided binding. Its canonical source ships at `stdlib/capabilities/time.av`, and VM, generated Rust, wasm-gc and wasip2 each declare an exact shipped binding of that one contract. See [`docs/wasip2.md`](wasip2.md#custom-capability-imports-phase-3a) for the boundary and host contract.
 
 ### Opaque types
 
-`exposes opaque` makes a type visible in signatures but blocks direct construction, field access, and pattern matching from outside the module. The type can still be passed around, returned, and stored.
+`exposes opaque` makes a type visible in signatures but blocks direct construction, field access and pattern matching from outside the module. The type can still be passed around, returned and stored.
 
 ```aver
 module Pricing
@@ -880,48 +784,35 @@ fn percent(d: Discount) -> Float
 ```
 
 From outside the module:
-- `Pricing.mkDiscount(50.0)` — works (returns `Result<Discount, String>`)
-- `Pricing.percent(d)` — works (returns `Float`)
-- `Discount(percent = 50.0)` — **compile error** (opaque: cannot construct)
-- `d.percent` — **compile error** (opaque: cannot access fields)
+- `Pricing.mkDiscount(50.0)` works (returns `Result<Discount, String>`)
+- `Pricing.percent(d)` works (returns `Float`)
+- `Discount(percent = 50.0)` is a **compile error** (opaque: cannot construct)
+- `d.percent` is a **compile error** (opaque: cannot access fields)
 
 With `--module-root examples`:
 
 - `depends [Data.Fibonacci]` → `examples/data/fibonacci.av`, call as `Data.Fibonacci.fn(...)`
 - `depends [Modules.Models.User]` → `examples/modules/models/user.av`, call as `Modules.Models.User.fn(...)`
 
-A type may be written bare — `Step` rather than `Domain.State.Step` — when
-exactly one module in scope declares that name. In scope means the module
-itself, the modules it names in `depends [...]`, and the types those modules
-re-expose: a dependency that lists another module's type in its own
-`exposes [...]` hands that type on, still under the name of the module that
-declares it. A module elsewhere in the program that nobody imported here has
-no say, so declaring a type in one cannot change what a name means anywhere
-else. When two modules a file does import declare the same type name, the
-bare form is an error naming both candidates, and the reference has to be
-qualified.
+A type may be written bare (`Step` rather than `Domain.State.Step`) when exactly one module in scope declares that name. In scope means the module itself, the modules it names in `depends [...]`, and the types those modules re-expose. A dependency that lists another module's type in its own `exposes [...]` passes that type on, still under the name of the module that declares it. A module elsewhere in the program that was not imported here has no say, so declaring a type in one cannot change what a name means anywhere else. When two modules that a file does import declare the same type name, the bare form is an error naming both candidates, and the reference has to be qualified.
 
-The entry module is not an exception to that rule. A dependency names the
-modules it uses in its own `depends [...]`, and nothing names the entry, so
-the entry's own declarations are in scope for the entry's own code and
-nowhere else. Which file you point `run`, `verify` or `compile` at therefore
-never changes what a name written inside a dependency means.
+The entry module follows the same rule. A dependency names the modules it uses in its own `depends [...]`, and nothing names the entry, so the entry's own declarations are in scope for the entry's own code and nowhere else. The file you point `run`, `verify` or `compile` at therefore never changes what a name written inside a dependency means.
 
 ## Static type checking
 
-Type errors block `run`, `check`, and `verify`. No partial execution. The checker covers function bodies, top-level statements, effect propagation, and duplicate binding detection.
+Type errors block `run`, `check` and `verify`. Nothing runs partially. The checker covers function bodies, top-level statements, effect propagation and duplicate binding detection.
 
 ## What Aver deliberately omits
 
 | Absent | Reason |
 |--------|--------|
-| `if`/`else` | `match` is exhaustive — no silent missing cases |
+| `if`/`else` | `match` is exhaustive, so no case goes missing silently |
 | `for`/`while` | Use recursion, pattern matching, and explicit list operations |
-| Streams / channels / async iterators | Recursive `?!` over lists gives streaming, backpressure, and fan-out parallelism with no new concepts |
-| Async runtime | Aver doesn't try to make streaming a primitive. Its parallelism model is explicit independence (`?!`), not a full async runtime. If you need stream abstractions, you can build them — but the language itself stays small and reviewable |
+| Streams / channels / async iterators | Recursive `?!` over lists gives streaming, backpressure and fan-out parallelism without new concepts |
+| Async runtime | Aver does not make streaming a primitive. Its parallelism model is explicit independence (`?!`) rather than a full async runtime. You can build stream abstractions yourself, and the language stays small and reviewable |
 | `null` | `Option<T>` with `Some`/`None` only |
-| Exceptions | `Result<T, E>` only — errors are values |
-| Global mutable state | No shared mutable state by design |
-| Closures | All functions are top-level — no captured variables, explicit is better than implicit |
+| Exceptions | `Result<T, E>` only; errors are values |
+| Global mutable state | No shared mutable state, by design |
+| Closures | All functions are top-level, with no captured variables. Explicit is better than implicit |
 | Magic | No decorators, no implicit behaviour, no runtime reflection |
-| Bitwise operators (`&`, `\|`, `^`, `~`, `<<`, `>>`) | The operations exist, named, in the `Bits` namespace. Keeping them out of the syntax is the same choice as `/` and `%`: a bit-level reading of an integer is worth spelling out. `Bits` is a namespace, not a type — its arguments and results are ordinary `Int` values, read as an infinite two's-complement bit sequence for one call. Fixed width is requested explicitly via `Bits.low`, never implied by a register size. Writing one of these operators reports which function replaces it |
+| Bitwise operators (`&`, `\|`, `^`, `~`, `<<`, `>>`) | The operations exist as named functions in the `Bits` namespace. They stay out of the syntax for the same reason `/` and `%` do: a bit-level reading of an integer should be spelled out. `Bits` is a namespace, not a type. Its arguments and results are ordinary `Int` values, read as an infinite two's-complement bit sequence for one call. A fixed width is asked for explicitly with `Bits.low` and is never implied by a register size. Writing one of these operators reports which function replaces it |
