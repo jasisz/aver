@@ -969,13 +969,6 @@ def cmpIdx (n len : Nat) : Option Nat :=
   | none => none
   | some es => (es.find? (fun e => e.1 == "__aint_cmp")).map Prod.snd
 
-/-- The `__aint_eq` helper role, bound by its named runtime export; see
-    `cmpIdx`. -/
-def eqIdx (n len : Nat) : Option Nat :=
-  match decodeExports n len with
-  | none => none
-  | some es => (es.find? (fun e => e.1 == "__aint_eq")).map Prod.snd
-
 structure Roles where
   box : Option Nat
   add : Option Nat

@@ -269,7 +269,7 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     same decoder (`TypeTable.carrierConfirmed`), so the helper bodies and the
     plans' representation agree about where the carrier lives.
 
-    `box`, `toIndex`, `cmp` and `eq` carry a SECOND pin, to their runtime export
+    `box`, `toIndex` and `cmp` carry a SECOND pin, to their runtime export
     names (#736 for `box`), and both pins are kept because they constrain
     different things. The name equality says at WHICH INDEX the role may be
     declared; the template equality says WHICH BYTES sit there. Only the name
@@ -287,18 +287,18 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     module that exports no `__aint_to_index`; a claim citing the role then fails
     to match, because `Subject.hostRoles` binds it to `none`.
 
-    The two comparison roles inherit that argument WORD FOR WORD — a comparison
-    also calls an abstract contract at a declared index — and add one of
-    their own. `cmp` and `eq` declare the SAME function type
-    (`[(ref null carrier), (ref null carrier)] -> [i32]`), so
-    `hostTableFuncTypesMatch` cannot separate them: without the name equalities
-    an artifact could declare the equality helper as the `cmp` role and the
-    three-way helper as the `eq` role and still satisfy every declared-type
-    conjunct. The template equalities do separate them, since the two bodies
-    differ — but only where a declaration is `some`. On `none` the templates say
-    nothing at all, which is exactly the hole the name pin closes: a module that
-    really does export `__aint_cmp` may not declare that role absent and thereby
-    escape both pins.
+    The comparison helper `cmp` inherits that argument word for word — a
+    comparison also calls an abstract contract at a declared index.
+
+    The equality helper `eq` is pinned by TEMPLATE only, like `add`, `sub` and
+    `mul`. The emitter exports `__aint_eq` only when some user code path marks
+    it live, while an Int literal `match` calls it all the same, so a name pin
+    would decline every such module. Dropping the name pin keeps everything the
+    pins establish: a `some` declaration must sit on a function whose body IS
+    the equality template (so the three-way helper, whose body differs, can
+    never be declared as `eq`, and `cmp` stays name-bound), and a `none`
+    declaration lowers every call to `eq` to `absent 7`, which no code entry
+    encodes, so a plan citing an undeclared `eq` declines.
 
     What none of this establishes: the template equality identifies the code
     behind a role, never its meaning. The add/sub/mul/box/index-extraction and
@@ -315,7 +315,6 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
       (roles.box == CertDecode.AddSub.boxIdx n len) &&
       (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&
       (roles.cmp == CertDecode.AddSub.cmpIdx n len) &&
-      (roles.eq == CertDecode.AddSub.eqIdx n len) &&
       ArithTemplateDerisk.checkArithHostParams p &&
       arithRoleCheck n len .box roles.box p &&
       arithRoleCheck n len .toIndex roles.toIndex p &&
@@ -331,7 +330,7 @@ def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
     certificate DECLARES which function index carries each helper (plus the
     carrier/limb/sub-routine indices the bodies mention) and the wall
     SYNTHESIZES the canonical helper body from that declaration and pins the real
-    code bytes equal to it. `box`, `toIndex`, `cmp` and `eq` stay name-bound as
+    code bytes equal to it. `box`, `toIndex` and `cmp` stay name-bound as
     well, and the carrierless class stays proved by the absent
     `__rt_aint_from_i64` export (#736 intact). -/
 def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
