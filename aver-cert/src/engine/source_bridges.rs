@@ -117,8 +117,7 @@ impl SourceBridge {
 /// checker would hard-reject fails candidate parsing for the WHOLE package
 /// before Lean runs, so such a bridge is simply not declared.
 fn bridge_survives_checker_gates(bridge: &SourceBridge) -> bool {
-    if !is_plain_dotted_name(&bridge.export)
-        || bridge.export.contains('.')
+    if !crate::bridge_statement::is_plain_export_name(&bridge.export)
         || !is_plain_dotted_name(&bridge.model)
         || bridge.theorem != SourceBridge::theorem_name(&bridge.export)
         || bridge.corollary != SourceBridge::corollary_name(&bridge.export)
@@ -1477,59 +1476,203 @@ fn law_bridge_coverage(statement: &str, info: &ModelInfo, bridges: &[SourceBridg
     Some(covering)
 }
 
-/// The model files the package ships, and the module roots they define.
-/// Every model file is a nested or flat `.lean` file; a root that would
-/// shadow a package or wall file is refused (the whole model is then left
-/// out and every bridge and law declined).
-fn model_roots(model: &SourceModel) -> Result<Vec<String>, String> {
-    const PACKAGE_ROOTS: &[&str] = &[
-        "Module",
-        "Plans",
-        "Manifest",
-        "Artifact",
-        "ArtifactHostRoles",
-        "Final",
-        "ArtifactCertificate",
-        "Bridge",
-        "Laws",
-        "ArtifactBytes",
-        "ArtifactComponentBytes",
-        "CheckerWitness",
-    ];
-    let mut roots = Vec::new();
-    for (path, _) in &model.files {
-        let Some(stem) = path.strip_suffix(".lean") else {
-            continue;
-        };
-        let segments: Vec<&str> = stem.split('/').collect();
-        let valid = segments.iter().all(|segment| {
-            let mut chars = segment.chars();
-            matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
-                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '\'')
-        });
-        if !valid {
-            return Err(format!("model file `{path}` is not a plain Lean module path"));
-        }
-        let root = segments.join(".");
-        if PACKAGE_ROOTS.contains(&root.as_str())
-            || wall::SOURCES
-                .iter()
-                .any(|source| source.name.strip_suffix(".lean") == Some(segments[0]))
-        {
-            return Err(format!("model module `{root}` would shadow a certificate file"));
-        }
-        roots.push(root);
-    }
-    Ok(roots)
+/// The directory every model file ships under, and the first segment of every
+/// model module root.
+///
+/// The model modules are named after the user's Aver modules, and nothing
+/// stops a user from naming one `Laws`, `Bridge`, `Manifest`, `Final`,
+/// `Grammar` or `Schema` — names the package itself or the checker's wall
+/// already own. Shipped flat, one such module used to shadow a certificate
+/// file, and the producer then had to leave out the whole model, declining
+/// every bridge and every law. Nested under this one reserved directory, a
+/// model root can never equal or case-insensitively prefix a package, wall or
+/// toolchain root (none of them starts with it), whatever the user named the
+/// module. Only the FILE location moves: the Lean namespaces inside, and so
+/// every name a bridge or a law-claim cites, stay exactly as emitted.
+pub const MODEL_PACKAGE_DIR: &str = "AverModel";
+
+/// The model as the package ships it: the module roots `Bridge.lean` and
+/// `Laws.lean` import, and the files under [`MODEL_PACKAGE_DIR`].
+#[derive(Debug, Default)]
+struct PackagedModel {
+    roots: Vec<String>,
+    files: Vec<(String, String)>,
 }
 
-/// Drop the lines the checker's code-execution wall refuses (`deriving`);
-/// the certificate model mode emits nothing else it would.
-fn sanitize_model_for_cert(content: &str) -> String {
+/// Prepare the model files for the package, or say why none can ship.
+///
+/// Every check here is one the checker applies to the staged tree, run with
+/// the checker's own code (`lean_gate`), so a model the checker would refuse
+/// — and with it the WHOLE package, byte certificate included — is declined
+/// here instead, costing only the bridges and law-claims that needed it.
+fn package_model(model: &SourceModel) -> Result<PackagedModel, String> {
+    let mut roots = Vec::new();
+    for (path, _) in &model.files {
+        let root = crate::lean_gate::lean_module_root(path)
+            .map_err(|_| format!("model file `{path}` is not a plain Lean module path"))?;
+        roots.push(root);
+    }
+    let wall_roots: Vec<&str> = wall::SOURCES
+        .iter()
+        .filter_map(|source| source.name.strip_suffix(".lean"))
+        .collect();
+    let mut packaged = PackagedModel::default();
+    let mut seen_paths = std::collections::BTreeSet::new();
+    for (path, content) in &model.files {
+        let package_path = format!("{MODEL_PACKAGE_DIR}/{path}");
+        if !seen_paths.insert(package_path.to_ascii_lowercase()) {
+            return Err(format!(
+                "model files collide case-insensitively at `{package_path}`"
+            ));
+        }
+        let text = rewrite_model_imports(content, &roots, &wall_roots)?;
+        let text = isolate_theorems(&keep_admitted_deriving(&text));
+        if let Some(token) = crate::lean_gate::code_exec_token(&text) {
+            return Err(format!(
+                "model file `{path}` carries `{token}`, which the checker's token gate refuses"
+            ));
+        }
+        packaged.files.push((package_path, text));
+    }
+    packaged.roots = roots
+        .iter()
+        .map(|root| format!("{MODEL_PACKAGE_DIR}.{root}"))
+        .collect();
+    Ok(packaged)
+}
+
+/// Point every model-to-model import at the model's package location
+/// (`import Domain.Rational` becomes `import AverModel.Domain.Rational`).
+/// Imports of a checker-owned wall module (the model prelude) and of the
+/// toolchain stay as they are; any other import names a module the package
+/// would not contain, so the model is declined rather than shipped broken.
+fn rewrite_model_imports(
+    content: &str,
+    model_roots: &[String],
+    wall_roots: &[&str],
+) -> Result<String, String> {
+    let mut out = String::with_capacity(content.len() + 64);
+    for line in content.lines() {
+        if let Some(module) = line.strip_prefix("import ") {
+            let module = module.trim();
+            let first = module.split('.').next().unwrap_or_default();
+            if model_roots.iter().any(|root| root == module) {
+                out.push_str(&format!("import {MODEL_PACKAGE_DIR}.{module}\n"));
+                continue;
+            }
+            if !(wall_roots.contains(&module) || matches!(first, "Init" | "Std")) {
+                return Err(format!(
+                    "a model file imports `{module}`, which is neither a model module nor a \
+                     checker-owned one"
+                ));
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Keep, of every `deriving` line, only the classes the checker's gate admits
+/// (`lean_gate::DERIVING_CLASSES`, and `DERIVING_INSTANCE_CLASSES` for the
+/// stand-alone `deriving instance … for T` form); a line left with none is
+/// dropped. The emitter already writes the certificate model's clauses from
+/// the admitted classes; this also covers the fixed prelude records whose
+/// clauses name `Repr`, which the model never needs.
+fn keep_admitted_deriving(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     for line in content.lines() {
-        if line.trim_start().starts_with("deriving ") {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("deriving ") else {
+            out.push_str(line);
+            out.push('\n');
             continue;
+        };
+        let indent = &line[..line.len() - trimmed.len()];
+        let keep = |classes: &str, admitted: &[&str]| -> Vec<String> {
+            classes
+                .split(',')
+                .map(str::trim)
+                .filter(|class| admitted.contains(class))
+                .map(str::to_string)
+                .collect()
+        };
+        let rewritten = if let Some(instance) = rest.strip_prefix("instance ") {
+            instance.split_once(" for ").and_then(|(classes, types)| {
+                let kept = keep(classes, &crate::lean_gate::DERIVING_INSTANCE_CLASSES);
+                (!kept.is_empty())
+                    .then(|| format!("{indent}deriving instance {} for {}", kept.join(", "), types.trim()))
+            })
+        } else {
+            let kept = keep(rest, &crate::lean_gate::DERIVING_CLASSES);
+            (!kept.is_empty()).then(|| format!("{indent}deriving {}", kept.join(", ")))
+        };
+        if let Some(rewritten) = rewritten {
+            out.push_str(&rewritten);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The command prefix that confines a declaration's elaboration errors to
+/// that declaration.
+const ISOLATE_DECLARATION: &str = "#guard_msgs (drop error) in";
+
+/// Put every theorem of a certificate Lean file behind
+/// [`ISOLATE_DECLARATION`].
+///
+/// A proof that fails — including the deterministic `maxHeartbeats` timeout,
+/// which no `first | … | sorry` ladder can catch because Lean re-throws
+/// resource-limit exceptions past every tactic combinator — is an elaboration
+/// ERROR, and one error anywhere used to fail `lake build` and with it the
+/// whole package. Lean's error recovery already closes the failed goal with
+/// `sorryAx` (or leaves the constant undeclared, in which case every
+/// declaration citing it recovers to `sorryAx` in turn); the error MESSAGE is
+/// all that fails the build. `#guard_msgs (drop error) in` drops exactly that
+/// message for exactly that one command, so the build goes on and the
+/// checker's per-claim axiom audit reports every claim resting on the failed
+/// proof as not credited. It changes no declaration and admits nothing the
+/// kernel did not check; warnings (`declaration uses 'sorry'`) still pass
+/// through to the build log.
+///
+/// The prefix goes before the command's whole preamble — `set_option … in`,
+/// `open … in` and a doc comment — since a doc comment right before
+/// `#guard_msgs` would become its expected output. A theorem inside a
+/// `mutual … end` block isolates the block, the one command it belongs to.
+pub fn isolate_theorems(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let is_theorem = |line: &str| {
+        ["theorem ", "private theorem ", "protected theorem "]
+            .iter()
+            .any(|keyword| line.starts_with(keyword))
+    };
+    // Which lines start a command to isolate.
+    let mut starts: Vec<usize> = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        if lines[index] == "mutual" {
+            let end = (index + 1..lines.len())
+                .find(|at| lines[*at] == "end")
+                .unwrap_or(lines.len() - 1);
+            if lines[index..=end].iter().any(|line| is_theorem(line.trim_start())) {
+                starts.push(index);
+            }
+            index = end + 1;
+            continue;
+        }
+        if is_theorem(lines[index]) {
+            starts.push(command_preamble_start(&lines, index));
+        }
+        index += 1;
+    }
+    let mut out = String::with_capacity(content.len() + starts.len() * 32);
+    let mut next = starts.iter().peekable();
+    for (at, line) in lines.iter().enumerate() {
+        if next.peek() == Some(&&at) {
+            next.next();
+            out.push_str(ISOLATE_DECLARATION);
+            out.push('\n');
         }
         out.push_str(line);
         out.push('\n');
@@ -1537,9 +1680,42 @@ fn sanitize_model_for_cert(content: &str) -> String {
     out
 }
 
+/// The first line of the preamble of the declaration at `keyword_line`: the
+/// `set_option … in` / `open … in` lines and the doc comment in front of it,
+/// looking past blank lines and `--` comments between them.
+fn command_preamble_start(lines: &[&str], keyword_line: usize) -> usize {
+    let mut start = keyword_line;
+    let mut at = keyword_line;
+    while at > 0 {
+        let line = lines[at - 1];
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("--") {
+            at -= 1;
+            continue;
+        }
+        if (line.starts_with("set_option ") || line.starts_with("open ")) && trimmed.ends_with(" in") {
+            at -= 1;
+            start = at;
+            continue;
+        }
+        if trimmed.ends_with("-/") {
+            let Some(open) = (0..at).rev().find(|j| lines[*j].trim_start().starts_with("/-")) else {
+                break;
+            };
+            if lines[open].trim_start().starts_with("/--") {
+                at = open;
+                start = at;
+                continue;
+            }
+        }
+        break;
+    }
+    start
+}
+
 /// What `write_project` needs to render the bridge and law surfaces.
 struct Surfaces {
-    model_roots: Vec<String>,
+    model: PackagedModel,
     bridge_lean: Option<String>,
     laws_lean: Option<String>,
     bridges: Vec<SourceBridge>,
@@ -1551,7 +1727,7 @@ struct Surfaces {
 
 fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
     let decline_all = |reason: String| Surfaces {
-        model_roots: Vec::new(),
+        model: PackagedModel::default(),
         bridge_lean: None,
         laws_lean: None,
         bridges: Vec::new(),
@@ -1571,14 +1747,15 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
     if let Some(reason) = &model.failure {
         return decline_all(reason.clone());
     }
-    let roots = match model_roots(model) {
-        Ok(roots) => roots,
+    let packaged = match package_model(model) {
+        Ok(packaged) => packaged,
         Err(reason) => return decline_all(reason),
     };
+    let roots = packaged.roots.clone();
     let plan = plan_bridges(analysis, model);
     let bridges: Vec<SourceBridge> = plan.bridges.iter().map(|(b, _)| b.clone()).collect();
     let bridge_lean = (!plan.fns.is_empty() && !bridges.is_empty())
-        .then(|| render_bridge_lean(&plan, &roots));
+        .then(|| isolate_theorems(&render_bridge_lean(&plan, &roots)));
     let info = ModelInfo::from_model(model);
     let (law_claims, declined_laws) = admit_law_claims(model.law_claims.clone());
     let law_bridges: Vec<Vec<usize>> = law_claims
@@ -1595,13 +1772,13 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
         })
         .collect();
     let laws_lean = (!law_claims.is_empty())
-        .then(|| render_laws_lean(&law_claims, &law_bridge_terms, &roots));
+        .then(|| isolate_theorems(&render_laws_lean(&law_claims, &law_bridge_terms, &roots)));
     let law_bridge_exports = law_bridges
         .iter()
         .map(|indices| indices.iter().map(|i| bridges[*i].export.clone()).collect())
         .collect();
     Surfaces {
-        model_roots: roots,
+        model: packaged,
         bridge_lean,
         laws_lean,
         bridges,
@@ -1774,6 +1951,111 @@ mod source_bridge_tests {
             rcases_pattern(&SourceEncoder::Option(Box::new(SourceEncoder::Int))).as_deref(),
             Some("(⟨⟩ | _)")
         );
+    }
+
+    /// A user module named like a package or wall file (`Laws`, `Grammar`) used
+    /// to shadow it, and the producer then left the whole model out. Nested
+    /// under the reserved model directory, every model root is one no package,
+    /// wall or toolchain root can equal or prefix, and the model's own imports
+    /// follow it there while the wall prelude's import stays put.
+    #[test]
+    fn model_modules_named_like_certificate_files_ship_nested() {
+        let m = model(
+            vec![
+                ("AverCommon.lean", "import ModelPrelude\n\nset_option autoImplicit false\n"),
+                ("Laws.lean", "import AverCommon\n\nnamespace Laws\ndef f (x : Int) : Int := x\nend Laws\n"),
+                ("Grammar.lean", "import AverCommon\nimport Laws\n\nnamespace Grammar\nend Grammar\n"),
+            ],
+            "Laws",
+            vec![],
+        );
+        let packaged = package_model(&m).expect("the model ships");
+        assert_eq!(
+            packaged.roots,
+            vec!["AverModel.AverCommon", "AverModel.Laws", "AverModel.Grammar"]
+        );
+        let files: std::collections::BTreeMap<_, _> = packaged.files.into_iter().collect();
+        assert!(files["AverModel/AverCommon.lean"].starts_with("import ModelPrelude\n"));
+        assert!(files["AverModel/Grammar.lean"].starts_with("import AverModel.AverCommon\nimport AverModel.Laws\n"));
+        for root in &packaged.roots {
+            let first = root.split('.').next().unwrap();
+            assert!(wall::SOURCES.iter().all(|s| !s.name.eq_ignore_ascii_case(&format!("{first}.lean"))));
+            assert!(!["Init", "Lean", "Lake", "Std", "Laws", "Bridge", "Manifest"].contains(&first));
+        }
+        // Namespaces — the names bridges and laws cite — are untouched.
+        assert!(files["AverModel/Laws.lean"].contains("namespace Laws\ndef f"));
+    }
+
+    /// Everything the checker would refuse in a model file declines the model
+    /// (every bridge and law-claim) at the producer instead of shipping a
+    /// package the checker refuses whole.
+    #[test]
+    fn a_model_the_checker_would_refuse_is_declined_by_the_producer() {
+        for (content, why) in [
+            ("@[simp] theorem t : True := trivial\n", "@["),
+            ("syntax \"x\" : tactic\n", "syntax"),
+            ("import Mathlib\n", "Mathlib"),
+        ] {
+            let m = model(vec![("M.lean", content)], "M", vec![]);
+            let reason = package_model(&m).expect_err(why);
+            assert!(reason.contains(why), "{reason}");
+        }
+        let m = model(vec![("M.lean", ""), ("m.lean", "")], "M", vec![]);
+        assert!(package_model(&m).unwrap_err().contains("case-insensitively"));
+        let m = model(vec![("Type'.lean", "")], "M", vec![]);
+        assert!(package_model(&m).is_err());
+    }
+
+    #[test]
+    fn deriving_clauses_keep_only_the_admitted_classes() {
+        let text = "structure P where\n  a : Int\n  deriving Repr, BEq, Inhabited, DecidableEq\n\
+                    structure Q where\n  deriving Repr\n\
+                    deriving instance ReflBEq, LawfulBEq for P\n\
+                    deriving instance Repr for Q\n";
+        let kept = keep_admitted_deriving(text);
+        assert_eq!(
+            kept,
+            "structure P where\n  a : Int\n  deriving BEq, Inhabited, DecidableEq\n\
+             structure Q where\n\
+             deriving instance ReflBEq, LawfulBEq for P\n"
+        );
+        assert_eq!(crate::lean_gate::code_exec_token(&kept), None);
+    }
+
+    /// Every theorem sits behind `#guard_msgs (drop error) in`, placed before
+    /// its whole preamble: a doc comment left in front of `#guard_msgs` would
+    /// become its expected output. A `mutual` block holding a theorem is
+    /// isolated as the one command it is; definitions are left alone.
+    #[test]
+    fn theorems_are_isolated_before_their_preamble() {
+        let text = "def f (x : Int) : Int := x\n\
+                    \n\
+                    set_option maxHeartbeats 800000 in\n\
+                    /-- doc\n    more -/\n\
+                    -- aver:law-class t universal M.f.l\n\
+                    theorem t : True := by\n  trivial\n\
+                    /- plain comment -/\n\
+                    private theorem u : True := trivial\n\
+                    mutual\n  theorem a : True := trivial\n  theorem b : True := trivial\nend\n\
+                    mutual\n  def g : Nat → Nat\n    | _ => 0\nend\n";
+        let isolated = isolate_theorems(text);
+        assert_eq!(
+            isolated,
+            "def f (x : Int) : Int := x\n\
+             \n\
+             #guard_msgs (drop error) in\n\
+             set_option maxHeartbeats 800000 in\n\
+             /-- doc\n    more -/\n\
+             -- aver:law-class t universal M.f.l\n\
+             theorem t : True := by\n  trivial\n\
+             /- plain comment -/\n\
+             #guard_msgs (drop error) in\n\
+             private theorem u : True := trivial\n\
+             #guard_msgs (drop error) in\n\
+             mutual\n  theorem a : True := trivial\n  theorem b : True := trivial\nend\n\
+             mutual\n  def g : Nat → Nat\n    | _ => 0\nend\n"
+        );
+        assert_eq!(crate::lean_gate::code_exec_token(&isolated), None);
     }
 
     /// The decoder of a function with an Int and a String parameter binds the

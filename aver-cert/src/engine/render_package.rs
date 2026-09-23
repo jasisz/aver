@@ -685,8 +685,8 @@ pub fn write_project(
     // them: a package without either builds no model at all.
     let surfaces = plan_surfaces(analysis, model);
     if surfaces.bridge_lean.is_some() || surfaces.laws_lean.is_some() {
-        for (path, content) in &model.files {
-            write_nested(&cert_dir, path, &sanitize_model_for_cert(content))?;
+        for (path, content) in &surfaces.model.files {
+            write_nested(&cert_dir, path, content)?;
         }
     }
     let bridges: &[SourceBridge] = if surfaces.bridge_lean.is_some() {
@@ -700,7 +700,6 @@ pub fn write_project(
     if let Some(laws_lean) = &surfaces.laws_lean {
         write(&cert_dir, "Laws.lean", laws_lean)?;
     }
-    let _ = &surfaces.model_roots;
     std::fs::write(
         cert_dir.join("cert-manifest.json"),
         render_manifest_json(
