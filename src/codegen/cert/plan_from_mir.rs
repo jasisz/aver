@@ -656,6 +656,9 @@ impl Printer<'_> {
             MirExpr::RecordCreate(r) => {
                 let rec = &r.node;
                 let (tid, declared) = self.types.record_tid(self.layout, &rec.type_name)?;
+                if declared.len() < 2 {
+                    return Err("RecordCreate of a one-field record (newtype)".into());
+                }
                 let written: Vec<&str> = rec.fields.iter().map(|f| f.name.as_str()).collect();
                 if written != declared.iter().map(String::as_str).collect::<Vec<_>>() {
                     return Err("RecordCreate (fields not in declared order)".into());
@@ -667,6 +670,9 @@ impl Printer<'_> {
             MirExpr::Project(p) => {
                 let base_ty = stamped(&p.node.base)?;
                 let (tid, declared) = self.types.record_tid(self.layout, &base_ty)?;
+                if declared.len() < 2 {
+                    return Err("Project of a one-field record (newtype)".into());
+                }
                 let field = declared
                     .iter()
                     .position(|f| f == &p.node.field)
@@ -694,7 +700,12 @@ impl Printer<'_> {
                             self.types.str_seg(self.layout, s.as_bytes())?;
                             Ok(PlanExpr::Literal(PlanLit::Str(s.as_bytes().to_vec())))
                         }
-                        MirStrPart::Expr(e) => self.expr(e),
+                        MirStrPart::Expr(e) => {
+                            if stamped(e)? != "String" {
+                                return Err("InterpolatedStr (a part is not a String)".into());
+                            }
+                            self.expr(e)
+                        }
                     })
                     .collect::<Result<_, _>>()?,
             ),
