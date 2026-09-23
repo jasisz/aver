@@ -1471,34 +1471,14 @@ fn render_export(
 /// literal is definitionally `String.ofList` of them). A failure costs every
 /// bridge its credit, never the package.
 fn render_export_names_nodup(names: &[String]) -> String {
-    let chars = names
-        .iter()
-        .map(|name| {
-            let list = name
-                .chars()
-                .map(|c| {
-                    // Printable ASCII other than the quote and escape
-                    // characters stays a plain literal (so the gate's
-                    // lexical scan sees no string opener).
-                    if (' '..='~').contains(&c) && !matches!(c, '\'' | '\\' | '"') {
-                        format!("'{c}'")
-                    } else {
-                        format!("(Char.ofNat {})", c as u32)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("[{list}]")
-        })
-        .collect::<Vec<_>>()
-        .join(",\n       ");
+    let chars = lean_char_lists(names, "\n       ");
     format!(
         "{ISOLATE_DECLARATION}\n\
          theorem export_names_nodup :\n    \
          (AverCert.manifest.obligations.map (·.export_)).Nodup := by\n  \
          first\n  \
          | exact AverCert.GrammarBridge.names_nodup_of_chars\n      \
-         [{chars}]\n      \
+         {chars}\n      \
          rfl (by decide +kernel)\n  \
          | sorry\n\n"
     )

@@ -474,6 +474,55 @@ def natSetEq (xs ys : List Nat) : Bool :=
 
 def natListNodup (xs : List Nat) : Bool := indexedNodup xs
 
+/-- The numeric key of a byte sequence whose elements are all below
+    `2^21 - 1` (every byte and every Unicode scalar value): the base-`2^21`
+    numeral with digits `b + 1`, first element lowest. `none` outside that
+    range, where every set-shaped check reading keys fails.
+
+    Set-shaped checks over names index these keys, never the sequences: the
+    kernel compares two keys as one numeral, while ordering two lists walks
+    them through the generic `Ord` instance (the export accounting of a
+    605-export module took minutes that way). The keys are injective
+    (`seqKey_inj`), so a check over keys decides the same set facts as the
+    same check over the sequences. -/
+def seqKey : ByteSeq → Option Nat
+  | [] => some 0
+  | b :: rest =>
+      if b < 2097151 then (seqKey rest).map (fun k => b + 1 + 2097152 * k) else none
+
+theorem seqKey_inj : ∀ {a b : ByteSeq} {k : Nat}, seqKey a = some k → seqKey b = some k → a = b
+  | [], [], _, _, _ => rfl
+  | [], x :: xs, k, ha, hb => by
+      simp only [seqKey, Option.some.injEq] at ha
+      subst ha
+      simp only [seqKey] at hb
+      split at hb
+      · obtain ⟨k', _, hk⟩ := Option.map_eq_some_iff.mp hb
+        omega
+      · cases hb
+  | x :: xs, [], k, ha, hb => by
+      simp only [seqKey, Option.some.injEq] at hb
+      subst hb
+      simp only [seqKey] at ha
+      split at ha
+      · obtain ⟨k', _, hk⟩ := Option.map_eq_some_iff.mp ha
+        omega
+      · cases ha
+  | x :: xs, y :: ys, k, ha, hb => by
+      simp only [seqKey] at ha hb
+      split at ha
+      · split at hb
+        · obtain ⟨ka, hka, hxa⟩ := Option.map_eq_some_iff.mp ha
+          obtain ⟨kb, hkb, hyb⟩ := Option.map_eq_some_iff.mp hb
+          have hxy : x = y ∧ ka = kb := by omega
+          obtain ⟨rfl, rfl⟩ := hxy
+          rw [seqKey_inj hka hkb]
+        · cases hb
+      · cases ha
+
+/-- The keys of a list of byte sequences, when every sequence has one. -/
+def seqKeys (xs : List ByteSeq) : Option (List Nat) := xs.mapM seqKey
+
 /-- Fuel-bounded transitive direct-call closure, using the spike-proven
     worklist/seen fold over the big-Nat module representation. -/
 def closureFold (modBytes modLen : Nat) :

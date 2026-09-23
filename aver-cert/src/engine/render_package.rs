@@ -141,6 +141,38 @@ fn write(dir: &Path, name: &str, content: &str) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
+/// A String as the Lean list of its characters. A String literal is
+/// definitionally `String.ofList` of exactly this list, which the kernel
+/// checks without building the String's bytes. Printable ASCII other than
+/// the quote and escape characters stays a plain literal (so the checker's
+/// lexical gate sees no string opener); every other character is spelled by
+/// its code point.
+fn lean_char_list(s: &str) -> String {
+    let chars = s
+        .chars()
+        .map(|c| {
+            if (' '..='~').contains(&c) && !matches!(c, '\'' | '\\' | '"') {
+                format!("'{c}'")
+            } else {
+                format!("(Char.ofNat {})", c as u32)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{chars}]")
+}
+
+/// A list of Strings as the Lean list of their character lists, one per
+/// line after `separator`.
+fn lean_char_lists(items: &[String], separator: &str) -> String {
+    let lists = items
+        .iter()
+        .map(|item| lean_char_list(item))
+        .collect::<Vec<_>>()
+        .join(&format!(",{separator}"));
+    format!("[{lists}]")
+}
+
 fn plan_def_name(func_idx: u32) -> String {
     format!("fn{func_idx}")
 }
@@ -437,7 +469,11 @@ fn render_artifact(
          theorem axes_ok : AverCert.ClaimAxes.checked data = true := by decide +kernel\n\n\
          theorem framing_ok : CertDecode.moduleFramingValid data.modBytes data.modLen = true := by\n  \
            decide +kernel\n\n\
-         theorem exports_ok : exportsAccounted data = true := by decide +kernel\n\n\
+         theorem exports_ok : exportsAccounted data = true :=\n  \
+           exportsAccounted_of_chars data\n    \
+           {obligation_names}\n    \
+           {declared_names}\n    \
+           rfl rfl (by decide +kernel)\n\n\
          theorem imports_ok : importsWithinCapabilities data = true := by decide +kernel\n\n\
          theorem start_ok : startAccounted data = true := by decide +kernel\n\n\
          theorem closure_ok : closureIsolation data = true := by decide +kernel\n\n\
@@ -446,6 +482,22 @@ fn render_artifact(
          theorem envelope_ok : artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes\n    \
            AverCert.ArtifactComponentBytes.componentLen data = true := by decide +kernel\n\n\
          end AverCert.Artifact\n",
+        obligation_names = lean_char_lists(
+            &analysis
+                .entries
+                .iter()
+                .filter(|e| e.exported)
+                .map(|e| e.name.clone())
+                .collect::<Vec<_>>(),
+            "\n     "
+        ),
+        declared_names = lean_char_lists(
+            &declared_uncertified(analysis)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+            "\n     "
+        ),
         fuel = analysis.module_envelope.closure_fuel,
         roots = nats(&closure.roots),
         helpers = nats(&closure.helpers),

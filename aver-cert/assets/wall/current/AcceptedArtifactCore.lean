@@ -348,8 +348,17 @@ def decodedStringHostRoles (artifact : ArtifactData) : Prop :=
 
 /-! ### Whole-module interface accounting and certified-closure isolation -/
 
+/-- Distinct byte sequences, decided on their numeric keys (`WasmSlice.seqKey`,
+    injective). -/
+def byteSeqListNodup (xs : List AverCert.WasmSlice.ByteSeq) : Bool :=
+  match AverCert.WasmSlice.seqKeys xs with
+  | some keys => AverCert.WasmSlice.natListNodup keys
+  | none => false
+
+/-- Distinct Strings, decided on their code points (`stringBytes` is
+    injective): ordering two Strings in the kernel re-encodes both. -/
 def stringListNodup (xs : List String) : Bool :=
-  AverCert.WasmSlice.indexedNodup xs
+  byteSeqListNodup (xs.map stringBytes)
 
 def lowerHexByte (byte : Nat) : Bool :=
   (decide (48 ≤ byte) && decide (byte ≤ 57)) ||
@@ -379,9 +388,6 @@ def customCapabilityImport (capability : String × String) : Bool :=
   !operationTail.isEmpty && operationTail.length % 2 == 0 &&
   operationTail.all lowerHexByte
 
-def byteSeqListNodup (xs : List AverCert.WasmSlice.ByteSeq) : Bool :=
-  AverCert.WasmSlice.indexedNodup xs
-
 def certifiedExportEntries
     (manifest : AverCert.Schema.Manifest) : List AverCert.WasmSlice.ExportEntry :=
   manifest.obligations.map (fun obligation =>
@@ -391,40 +397,102 @@ def declaredUncertifiedNames
     (manifest : AverCert.Schema.Manifest) : List AverCert.WasmSlice.ByteSeq :=
   manifest.subject.declaredUncertified.map (fun entry => stringBytes entry.1)
 
+/-- An export entry keyed for the set-shaped accounting: its name's numeric
+    key (`WasmSlice.seqKey`), kind and index. -/
 structure ExportKey where
-  name : AverCert.WasmSlice.ByteSeq
+  name : Nat
   kind : Nat
   idx : Nat
 deriving Ord
 
-def exportEntryKey (entry : AverCert.WasmSlice.ExportEntry) : ExportKey :=
-  ⟨entry.name, entry.kind, entry.idx⟩
+def exportEntryKey (entry : AverCert.WasmSlice.ExportEntry) : Option ExportKey :=
+  (AverCert.WasmSlice.seqKey entry.name).map (fun name => ⟨name, entry.kind, entry.idx⟩)
 
 /-- Every byte-derived module export is classified exactly once: either the
     function/name/index of a claimed obligation or an explicit uncertified
     declaration. Both declaration lists are duplicate-free, disjoint and have
-    no phantom names absent from the export section. -/
-def exportsAccounted (artifact : ArtifactData) : Bool :=
-  match AverCert.WasmSlice.enumExports artifact.modBytes artifact.modLen with
+    no phantom names absent from the export section. Names are compared
+    through their numeric keys, which identify them exactly (`seqKey_inj`);
+    a name without a key fails the check. -/
+def exportsAccountedOf (modBytes modLen : Nat)
+    (certified : List AverCert.WasmSlice.ExportEntry)
+    (declared : List AverCert.WasmSlice.ByteSeq) : Bool :=
+  match AverCert.WasmSlice.enumExports modBytes modLen with
   | none => false
   | some actual =>
-      let certified := certifiedExportEntries artifact.manifest
-      let declared := declaredUncertifiedNames artifact.manifest
-      let actualNames := actual.map (fun entry => entry.name)
-      let certifiedNames := certified.map (fun entry => entry.name)
-      let actualNameIndex := AverCert.WasmSlice.orderedSet actualNames
-      let declaredIndex := AverCert.WasmSlice.orderedSet declared
-      let actualEntryIndex := AverCert.WasmSlice.orderedSet (actual.map exportEntryKey)
-      let certifiedEntryIndex := AverCert.WasmSlice.orderedSet (certified.map exportEntryKey)
-      byteSeqListNodup actualNames &&
-      byteSeqListNodup certifiedNames &&
-      byteSeqListNodup declared &&
-      certifiedNames.all (fun name => !declaredIndex.contains name) &&
-      actual.all (fun entry =>
-        certifiedEntryIndex.contains (exportEntryKey entry) ||
-          declaredIndex.contains entry.name) &&
-      certified.all (fun entry => actualEntryIndex.contains (exportEntryKey entry)) &&
-      declared.all actualNameIndex.contains
+      match actual.mapM exportEntryKey, certified.mapM exportEntryKey,
+          AverCert.WasmSlice.seqKeys declared with
+      | some actual, some certified, some declared =>
+          let actualNames := actual.map (fun entry => entry.name)
+          let certifiedNames := certified.map (fun entry => entry.name)
+          let actualNameIndex := AverCert.WasmSlice.orderedSet actualNames
+          let declaredIndex := AverCert.WasmSlice.orderedSet declared
+          let actualEntryIndex := AverCert.WasmSlice.orderedSet actual
+          let certifiedEntryIndex := AverCert.WasmSlice.orderedSet certified
+          AverCert.WasmSlice.natListNodup actualNames &&
+          AverCert.WasmSlice.natListNodup certifiedNames &&
+          AverCert.WasmSlice.natListNodup declared &&
+          certifiedNames.all (fun name => !declaredIndex.contains name) &&
+          actual.all (fun entry =>
+            certifiedEntryIndex.contains entry || declaredIndex.contains entry.name) &&
+          certified.all (fun entry => actualEntryIndex.contains entry) &&
+          declared.all actualNameIndex.contains
+      | _, _, _ => false
+
+def exportsAccounted (artifact : ArtifactData) : Bool :=
+  exportsAccountedOf artifact.modBytes artifact.modLen
+    (certifiedExportEntries artifact.manifest) (declaredUncertifiedNames artifact.manifest)
+
+/-! #### Names as character lists
+
+The kernel has no fast path for String literals: `stringBytes` of a literal
+rebuilds its UTF-8 bytes, in time quadratic in its length, and a large
+module's accounting converts hundreds of names. A literal is definitionally
+`String.ofList` of its characters, which the kernel checks without building
+bytes, so a package states its names as character lists once (by `rfl`) and
+the lemmas below turn every `stringBytes` of them into the code-point lists
+of those characters. -/
+
+theorem stringBytes_ofList (c : List Char) : stringBytes (String.ofList c) = c.map Char.toNat := by
+  simp [stringBytes, String.toList_ofList]
+
+theorem certifiedExportEntries_of_chars {m : AverCert.Schema.Manifest} (cs : List (List Char))
+    (h : m.obligations.map (·.export_) = cs.map String.ofList) :
+    certifiedExportEntries m =
+      List.zipWith (fun (o : Obligation) (c : List Char) =>
+        ({ name := c.map Char.toNat, kind := 0, idx := o.self } : AverCert.WasmSlice.ExportEntry))
+        m.obligations cs := by
+  unfold certifiedExportEntries
+  generalize m.obligations = os at h ⊢
+  induction os generalizing cs with
+  | nil => cases cs <;> simp_all
+  | cons o os ih =>
+      cases cs with
+      | nil => simp at h
+      | cons c cs =>
+          simp only [List.map_cons, List.cons.injEq] at h
+          rw [List.map_cons, List.zipWith_cons_cons, ih cs h.2, h.1, stringBytes_ofList]
+
+theorem declaredUncertifiedNames_of_chars {m : AverCert.Schema.Manifest} (ds : List (List Char))
+    (h : m.subject.declaredUncertified.map (·.1) = ds.map String.ofList) :
+    declaredUncertifiedNames m = ds.map (List.map Char.toNat) := by
+  have := congrArg (List.map stringBytes) h
+  simp only [List.map_map, Function.comp_def, stringBytes_ofList] at this
+  exact this
+
+/-- `exportsAccounted`, with the export names given as character lists. -/
+theorem exportsAccounted_of_chars (artifact : ArtifactData) (cs ds : List (List Char))
+    (hc : artifact.manifest.obligations.map (·.export_) = cs.map String.ofList)
+    (hd : artifact.manifest.subject.declaredUncertified.map (·.1) = ds.map String.ofList)
+    (h : exportsAccountedOf artifact.modBytes artifact.modLen
+      (List.zipWith (fun (o : Obligation) (c : List Char) =>
+        ({ name := c.map Char.toNat, kind := 0, idx := o.self } : AverCert.WasmSlice.ExportEntry))
+        artifact.manifest.obligations cs)
+      (ds.map (List.map Char.toNat)) = true) :
+    exportsAccounted artifact = true := by
+  unfold exportsAccounted
+  rw [certifiedExportEntries_of_chars cs hc, declaredUncertifiedNames_of_chars ds hd]
+  exact h
 
 def capabilityBytes (capability : String × String) :
     AverCert.WasmSlice.ByteSeq × AverCert.WasmSlice.ByteSeq :=
