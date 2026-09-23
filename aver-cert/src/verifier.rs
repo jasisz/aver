@@ -950,8 +950,10 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          example : AverCert.manifest.subject.artifactRoot = \"{}\" := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
          example : AverCert.manifest.subject.exports = {names} := rfl\n\
-         example : AverCert.ClaimAxes.reportEntries AverCert.Artifact.data = {report_entries} := by decide\n\
-         example : AverCert.ClaimAxes.reportFacets AverCert.Artifact.data = {report_facets} := by decide\n\
+         example : AverCert.ClaimAxes.reportEntries AverCert.Artifact.data = {report_entries} :=\n  \
+           by first | rfl | decide +kernel\n\
+         example : AverCert.ClaimAxes.reportFacets AverCert.Artifact.data = {report_facets} :=\n  \
+           by first | rfl | decide +kernel\n\
          example : AverCert.manifest.obligations.map (fun o => o.policy) = {policies} := rfl\n\
          example : AverCert.manifest.obligations.map (fun o => o.termination?) = {terminations} := rfl\n\
          example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
