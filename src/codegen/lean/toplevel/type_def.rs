@@ -115,40 +115,53 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
     }
 }
 
-/// Cert-model `BEq` witness for an all-nullary sum. The certificate's model
-/// files may not carry `deriving` (the checker's code-exec token wall rejects
-/// the token), so `==` on a user enum needs a hand-emitted instance the same
-/// way `Inhabited` gets one. Only the all-nullary shape is emitted: it needs
-/// no field instances and no recursion, so the instance can never itself fail
-/// to elaborate. A type with payload fields stays uninstanced — `==` on it
-/// still fails typeclass synthesis loudly, the same fail-closed decline as
-/// before.
-pub fn emit_beq_instance(td: &TypeDef) -> String {
-    if crate::codegen::proof_recognize::detect_canonical_peano(td).is_some() {
-        return String::new();
-    }
-    match td {
-        TypeDef::Sum { name, variants, .. } if variants.iter().all(|v| v.fields.is_empty()) => {
-            let lean_name = aver_name_to_lean(name);
-            let arms = variants
-                .iter()
-                .map(|v| {
-                    let ctor = lean_ctor_name(&v.name);
-                    format!("    | .{ctor}, .{ctor} => true")
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let fallback = if variants.len() > 1 {
-                "\n    | _, _ => false"
-            } else {
-                ""
-            };
-            format!(
-                "instance : BEq {lean_name} :=\n  ⟨fun a b => match a, b with\n{arms}{fallback}⟩"
-            )
+/// The certificate-model form of a type declaration's `deriving` clause.
+///
+/// The checker's token gate admits a `deriving` clause only when every class
+/// it names is one of `BEq`, `DecidableEq`, `Inhabited` (and `ReflBEq`,
+/// `LawfulBEq` for the stand-alone `deriving instance … for T` line): the
+/// derive handlers of the pinned toolchain for those classes, which only
+/// produce kernel-checked declarations. This keeps the proof emission's
+/// derived `BEq` — so `==` on a record or a sum has its instance, and the
+/// `LawfulBEq` line the law proofs rewrite `==` to `=` with is about that very
+/// instance — and drops the rest:
+///
+/// * `Repr` — the model never prints;
+/// * `Inhabited` — the certificate model states its own `Inhabited` instance
+///   next to the type ([`emit_inhabited_instance`]), which skips a constructor
+///   it cannot default instead of failing the build;
+/// * `DecidableEq` unless the type reflects equality: proof export gets
+///   `DecidableEq Float` from an `implemented_by` shim the gate refuses, so a
+///   type with a `Float` inside has no derivable instance in a certificate.
+///
+/// A clause left with no class is removed.
+pub fn cert_model_deriving(
+    type_def: &str,
+    td: &TypeDef,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    let reflects = equality::reflects_equality(
+        &crate::types::Type::named(crate::codegen::common::type_def_name(td)),
+        ctx,
+        scope,
+    );
+    let mut lines = Vec::new();
+    for line in type_def.lines() {
+        let Some(classes) = line.strip_prefix("  deriving ") else {
+            lines.push(line.to_string());
+            continue;
+        };
+        let kept: Vec<&str> = classes
+            .split(',')
+            .map(str::trim)
+            .filter(|class| *class == "BEq" || (*class == "DecidableEq" && reflects))
+            .collect();
+        if !kept.is_empty() {
+            lines.push(format!("  deriving {}", kept.join(", ")));
         }
-        _ => String::new(),
     }
+    lines.join("\n")
 }
 
 /// Can `deriving Inhabited` find a witness for a value of this annotation?

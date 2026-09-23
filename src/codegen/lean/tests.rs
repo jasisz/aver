@@ -5399,6 +5399,91 @@ fn count(n: Int, acc: Int) -> Int
     );
 }
 
+/// The two prelude pieces the certificate token gate refuses in package text
+/// — `AverBits` with its `@[simp]` equations and the `syntax`/`macro_rules`
+/// tactic `aver_int_order` — come from the checker-owned wall module in a
+/// certificate model, never from the model's own `AverCommon.lean`. Proof
+/// export keeps them inline.
+#[test]
+fn cert_model_takes_bits_and_the_order_kit_from_the_wall() {
+    let body = "def f (x : Int) : Int := AverBits.not x\ntheorem t : True := by aver_int_order";
+    let cert = super::prelude::build_common_lean(body, true);
+    assert!(
+        cert.starts_with(&format!(
+            "import {}\n",
+            super::prelude::CERT_MODEL_PRELUDE_MODULE
+        )),
+        "{cert}"
+    );
+    for refused in [
+        "syntax",
+        "macro_rules",
+        "@[",
+        "namespace AverBits",
+        "aver_sq_nonneg",
+    ] {
+        assert!(
+            !cert.contains(refused),
+            "`{refused}` in the certificate prelude:\n{cert}"
+        );
+    }
+    let proof = super::prelude::build_common_lean(body, false);
+    assert!(!proof.contains("import "), "{proof}");
+    assert!(
+        proof.contains("macro_rules") && proof.contains("@[simp] theorem not_eq"),
+        "{proof}"
+    );
+    // A model that needs neither imports nothing.
+    let plain = super::prelude::build_common_lean("def g (x : Int) : Int := x", true);
+    assert!(!plain.contains("import "), "{plain}");
+}
+
+/// A certificate model keeps the derived `BEq` (so `==` on a record has its
+/// instance) and derived `DecidableEq` where the type reflects equality, and
+/// nothing the checker's `deriving` gate refuses. A record with a `Float`
+/// inside keeps `BEq` only: its `DecidableEq` would need the proof export's
+/// `implemented_by` shim.
+#[test]
+fn cert_model_keeps_the_admitted_deriving_classes() {
+    let mut ctx = ctx_from_source(
+        r#"module Eqs
+    exposes [same, near]
+    effects []
+record Pair
+    a: Int
+    b: Int
+record Reading
+    value: Float
+fn same(x: Pair, y: Pair) -> Bool
+    x == y
+fn near(x: Reading, y: Reading) -> Bool
+    x == y
+"#,
+        "Eqs",
+    );
+    let model = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    let clauses: Vec<&str> = model
+        .lines()
+        .filter(|line| line.trim_start().starts_with("deriving"))
+        .collect();
+    assert!(clauses.contains(&"  deriving BEq, DecidableEq"), "{model}");
+    assert!(clauses.contains(&"  deriving BEq"), "{model}");
+    for clause in &clauses {
+        assert!(
+            !clause.contains("Repr") && !clause.contains("Inhabited"),
+            "{clause}"
+        );
+    }
+    assert!(
+        model.contains("deriving instance ReflBEq, LawfulBEq for Pair"),
+        "{model}"
+    );
+    // The explicit `Inhabited` stays; no hand-written `BEq` competes with the
+    // derived one the `LawfulBEq` line is about.
+    assert!(model.contains("instance : Inhabited Pair"), "{model}");
+    assert!(!model.contains("instance : BEq"), "{model}");
+}
+
 mod untranslate_context;
 
 mod citation_probe;

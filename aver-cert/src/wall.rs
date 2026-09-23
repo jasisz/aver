@@ -37,6 +37,10 @@ pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
 pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
     include_str!("../assets/wall/current/AcceptanceSoundness.lean");
 pub const CERT_GRAMMAR_BRIDGE: &str = include_str!("../assets/wall/current/GrammarBridge.lean");
+/// The checker-owned pieces of the certificate source model (`AverBits` with
+/// its `@[simp]` equations, the `aver_int_order` tactic): the constructs the
+/// token gate refuses in package text, owned and pinned here instead.
+pub const CERT_MODEL_PRELUDE: &str = include_str!("../assets/wall/current/ModelPrelude.lean");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Source {
@@ -46,7 +50,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 20] = [
+pub const SOURCES: [Source; 21] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -104,6 +108,10 @@ pub const SOURCES: [Source; 20] = [
         contents: CERT_INTERPRETER_SEQUENCING,
     },
     Source {
+        name: "ModelPrelude.lean",
+        contents: CERT_MODEL_PRELUDE,
+    },
+    Source {
         name: "Schema.lean",
         contents: CERT_SCHEMA,
     },
@@ -131,7 +139,7 @@ pub const SOURCES: [Source; 20] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 18] = [
+pub const PRISTINE_ROOTS: [&str; 19] = [
     "CertPrelude",
     "CertDecode",
     "ArithTemplateDerisk",
@@ -150,6 +158,7 @@ pub const PRISTINE_ROOTS: [&str; 18] = [
     "AcceptanceSoundnessCore",
     "AcceptanceSoundness",
     "GrammarBridge",
+    "ModelPrelude",
 ];
 
 #[derive(Debug)]

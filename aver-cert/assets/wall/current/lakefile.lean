@@ -11,4 +11,4 @@ lean_lib «CertPrelude» where
     `SchemaSanity, `WasmSlice, `Wasip2Envelope, `ArithTemplateDerisk,
     `InterpreterSequencing, `Grammar, `GrammarLower, `GrammarSound, `GrammarTotal,
     `TypeTable, `AcceptedArtifactCore, `ClaimAxes, `AcceptanceSoundnessCore,
-    `AcceptanceSoundness, `GrammarBridge]
+    `AcceptanceSoundness, `GrammarBridge, `ModelPrelude]
