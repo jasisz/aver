@@ -863,6 +863,11 @@ struct BridgePlan {
     /// Some bridged plan calls `Result.withDefault`, so the models spell it
     /// `Except.withDefault` (and the model prelude defines it).
     with_default: bool,
+    /// Per planned function: its position in `Plans.fnPlans` and its entry
+    /// exactly as `Plans.lean` spells it.
+    entries: BTreeMap<u32, (usize, String)>,
+    /// The export names of the obligations, in `Plans.fnPlans` order.
+    obligation_names: Vec<String>,
 }
 
 /// The largest plan a bridge is attempted for. A step proof unfolds the
@@ -980,6 +985,28 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
         depth: BTreeMap::new(),
         literals: BTreeSet::new(),
         with_default: false,
+        entries: analysis
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, e)| {
+                let entry = format!(
+                    "⟨{}, {}, {}, {}, AverCert.Plans.{}⟩",
+                    lean_str(&e.name),
+                    e.exported,
+                    e.func_idx,
+                    e.group,
+                    plan_def_name(e.func_idx)
+                );
+                (e.func_idx, (index, entry))
+            })
+            .collect(),
+        obligation_names: analysis
+            .entries
+            .iter()
+            .filter(|e| e.exported)
+            .map(|e| e.name.clone())
+            .collect(),
     };
     if let Some(reason) = &model.failure {
         for c in &analysis.certified {
@@ -1317,17 +1344,17 @@ fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s:
 const STEP_HEARTBEATS: u32 = 1_000_000;
 const FILE_HEARTBEATS: u32 = 4_000_000;
 
-/// The `∀ g ∈ D, ∃ Cs, … ∧ Step …` argument both engines take: split the
-/// membership into one goal per closure member, in order, and cite that
-/// member's step lemma (the callee side condition is decided).
+/// The `∀ g ∈ D, ∃ Cs, … ∧ Step …` argument both engines take: one
+/// conjunct per closure member, in order, citing that member's step lemma
+/// (the callee side condition is decided).
 fn render_steps_proof(closure: &[u32]) -> String {
-    let pats = closure.iter().map(|_| "rfl").collect::<Vec<_>>().join(" | ");
-    let steps = closure
-        .iter()
-        .map(|f| format!("exact ⟨_, by decide, step_{f}⟩"))
-        .collect::<Vec<_>>()
-        .join(" | ");
-    format!("(by intro g hg; simp at hg; rcases hg with {pats} <;> first | {steps})")
+    // One `List.forall_mem_cons` per member, in closure order: each member
+    // cites its own step lemma directly (trying every lemma on every member
+    // costs a failed unification per pair).
+    closure.iter().rev().fold(
+        "(fun _ h => nomatch h)".to_string(),
+        |rest, f| format!("(List.forall_mem_cons.2 ⟨⟨_, by decide, step_{f}⟩, {rest}⟩)"),
+    )
 }
 
 fn render_export(
@@ -1371,7 +1398,7 @@ fn render_export(
                  intro fuel hk{bs}; \
                  exact AverCert.GrammarBridge.exact_of_step AverCert.Plans.fnPlans I [{members}] depth \
                  {steps} \
-                 fuel {func_idx} (by decide) (by simp only [depth]; omega) _ _ {image}",
+                 fuel {func_idx} (by decide) (Nat.lt_of_lt_of_le (by decide +kernel) hk) _ _ {image}",
                 bound = depth + 1,
                 bs = if binders.is_empty() {
                     String::new()
@@ -1408,9 +1435,19 @@ fn render_export(
     // Concatenated, never interpolated into a format string: a statement
     // carrying `{`/`}` must stay inert text.
     s.push_str(&statement);
+    // The obligation is selected by its entry and the package's distinct
+    // export names, never by deciding `exportObligation` (String equality
+    // against every earlier export, which the kernel evaluates slowly).
+    let (entry_index, entry) = &plan.entries[&func_idx];
     s.push_str(" := by\n  first\n  | (set_option maxHeartbeats ");
     s.push_str(&STEP_HEARTBEATS.to_string());
-    s.push_str(" in\n      (refine ⟨_, rfl, ?_, ?_⟩\n       next => ");
+    s.push_str(&format!(
+        " in\n      (refine ⟨_, AverCert.GrammarBridge.exportObligation_of_entry \
+         (s := AverCert.subject) (tt := AverCert.Plans.types) (fns := AverCert.Plans.fnPlans) \
+         rfl export_names_nodup (e := {entry}) \
+         (List.getElem_mem (l := AverCert.Plans.fnPlans) (n := {entry_index}) (by decide)) rfl, \
+         ?_, ?_⟩\n       next => "
+    ));
     s.push_str(&typing);
     s.push_str("\n       next => ");
     s.push_str(&kind_proof);
@@ -1427,6 +1464,44 @@ fn render_export(
     c.push_str(&bridge.theorem);
     c.push_str(", _root_.AverCert.Final.cert⟩\n\n");
     let _ = param_binders;
+}
+
+/// `export_names_nodup`: the obligations' export names are pairwise
+/// distinct, decided once for the package on the names' characters (each
+/// literal is definitionally `String.ofList` of them). A failure costs every
+/// bridge its credit, never the package.
+fn render_export_names_nodup(names: &[String]) -> String {
+    let chars = names
+        .iter()
+        .map(|name| {
+            let list = name
+                .chars()
+                .map(|c| {
+                    // Printable ASCII other than the quote and escape
+                    // characters stays a plain literal (so the gate's
+                    // lexical scan sees no string opener).
+                    if (' '..='~').contains(&c) && !matches!(c, '\'' | '\\' | '"') {
+                        format!("'{c}'")
+                    } else {
+                        format!("(Char.ofNat {})", c as u32)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{list}]")
+        })
+        .collect::<Vec<_>>()
+        .join(",\n       ");
+    format!(
+        "{ISOLATE_DECLARATION}\n\
+         theorem export_names_nodup :\n    \
+         (AverCert.manifest.obligations.map (·.export_)).Nodup := by\n  \
+         first\n  \
+         | exact AverCert.GrammarBridge.names_nodup_of_chars\n      \
+         [{chars}]\n      \
+         rfl (by decide +kernel)\n  \
+         | sorry\n\n"
+    )
 }
 
 /// The package module that carries the bridge proofs themselves.
@@ -1551,6 +1626,7 @@ fn render_bridge_lean(
          set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
          namespace AverCert.Bridge\n\n"
     ));
+    s.push_str(&render_export_names_nodup(&plan.obligation_names));
     let mut corollaries = String::new();
     for (bridge, func_idx) in &plan.bridges {
         render_export(bridge, *func_idx, plan, &mut s, &mut corollaries);
@@ -2229,8 +2305,13 @@ mod source_bridge_tests {
         );
         assert_eq!(
             render_steps_proof(&[3, 9]),
-            "(by intro g hg; simp at hg; rcases hg with rfl | rfl <;> first | \
-             exact ⟨_, by decide, step_3⟩ | exact ⟨_, by decide, step_9⟩)"
+            "(List.forall_mem_cons.2 ⟨⟨_, by decide, step_3⟩, \
+             (List.forall_mem_cons.2 ⟨⟨_, by decide, step_9⟩, (fun _ h => nomatch h)⟩)⟩)"
+        );
+        let nodup = render_export_names_nodup(&["ab".to_string(), "a'\"".to_string()]);
+        assert!(
+            nodup.contains("[['a', 'b'],\n       ['a', (Char.ofNat 39), (Char.ofNat 34)]]"),
+            "{nodup}"
         );
     }
 }

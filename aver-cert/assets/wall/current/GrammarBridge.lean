@@ -49,6 +49,61 @@ theorem exportObligation_mem {m : Manifest} {name : String} {o : Obligation}
     (h : exportObligation m name = some o) : o ∈ m.obligations :=
   List.mem_of_find?_eq_some h
 
+/-! Selecting an export's obligation without evaluating String equality.
+
+The kernel has no fast path for String literals: deciding `a == b` rebuilds
+both UTF-8 byte arrays, in time quadratic in their length. Deciding
+`exportObligation` directly therefore compares the wanted name with every
+earlier export name. The lemmas below select it from pairwise-distinct names
+instead: the names are shown distinct ONCE per package, as character lists
+(a literal is definitionally `String.ofList` of its characters, which the
+kernel checks without building bytes), and each export's obligation then
+follows from membership and one literal-to-literal name equality. -/
+
+theorem find?_export_of_nodup {os : List Obligation} {name : String} {o : Obligation}
+    (hnd : (os.map (·.export_)).Nodup) (hmem : o ∈ os) (hname : o.export_ = name) :
+    os.find? (fun o => o.export_ == name) = some o := by
+  induction os with
+  | nil => cases hmem
+  | cons a rest ih =>
+      rw [List.map_cons, List.nodup_cons] at hnd
+      rcases List.mem_cons.mp hmem with rfl | hrest
+      · simp [hname]
+      · have hne : ¬ a.export_ = name := fun h =>
+          hnd.1 (List.mem_map.mpr ⟨o, hrest, hname.trans h.symm⟩)
+        simp [hne, ih hnd.2 hrest]
+
+/-- One number per code-point list: base `2^21` digits `c + 1`. A decided
+    `Nodup` over these numbers compares one numeral per pair; it needs no
+    injectivity, since distinct images already have distinct preimages. -/
+def natOfCodes : List Nat → Nat
+  | [] => 0
+  | c :: cs => (c + 1) + 2097152 * natOfCodes cs
+
+/-- Pairwise-distinct names, from pairwise-distinct character lists, decided
+    on one number per list. -/
+theorem names_nodup_of_chars {names : List String} (cs : List (List Char))
+    (h : names = cs.map String.ofList)
+    (hnd : (cs.map (fun c => natOfCodes (c.map Char.toNat))).Nodup) : names.Nodup := by
+  subst h
+  have hcs : cs.Nodup :=
+    List.Pairwise.of_map (fun c => natOfCodes (c.map Char.toNat))
+      (fun a b hab heq => hab (heq ▸ rfl)) hnd
+  exact List.Pairwise.map String.ofList (fun a b hab heq =>
+    hab (by simpa [String.toList_ofList] using congrArg String.toList heq)) hcs
+
+/-- The obligation of a planned, exported entry, when the manifest's export
+    names are pairwise distinct. -/
+theorem exportObligation_of_entry {m : Manifest} {s : Subject} {tt : TypeTable}
+    {fns : List FnEntry} (hm : m.obligations = obligationsOf s tt fns)
+    (hnd : (m.obligations.map (·.export_)).Nodup) {e : FnEntry} (he : e ∈ fns)
+    (hex : e.exported = true) :
+    exportObligation m e.name = some (obligationOf s tt fns e) := by
+  unfold exportObligation
+  refine find?_export_of_nodup hnd ?_ rfl
+  rw [hm]
+  exact List.mem_map.mpr ⟨e, List.mem_filter.mpr ⟨he, hex⟩, rfl⟩
+
 /-- An argument list inhabits the obligation's parameter types. -/
 def ArgsTyped (o : Obligation) (args : List SVal) : Prop :=
   HasTyL o.layout args o.sig.params
