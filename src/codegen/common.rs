@@ -2997,6 +2997,15 @@ fn type_def_by_name<'a>(
         .find(|(_, td)| type_def_name(td) == bare)
 }
 
+/// The declared field names of the record `name` (qualified, or bare as read
+/// from the active module), in declaration order; `None` for anything else.
+pub(crate) fn record_field_order(ctx: &CodegenContext, name: &str) -> Option<Vec<String>> {
+    match type_def_by_name(ctx, name, ctx.active_module_scope().as_deref())?.1 {
+        TypeDef::Product { fields, .. } => Some(fields.iter().map(|f| f.0.clone()).collect()),
+        _ => None,
+    }
+}
+
 /// Append the key type of every `Map<K, V>` written anywhere inside a type
 /// annotation — including nested ones, so `List<Map<Int, String>>` yields
 /// `Int` and `Map<String, Map<Bool, Int>>` yields both `String` and `Bool`.
