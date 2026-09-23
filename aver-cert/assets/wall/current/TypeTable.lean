@@ -228,13 +228,14 @@ def sumConfirmed (M : MCtx) (grp : List (List Nat × CertDecode.TypeEntry)) (d :
   rootIs grp d.root && d.ctors.all (ctorIs M grp d.root) && sumOk M d.tid &&
     S3Pin M d.tid d.ctors.length (grp.map (·.1))
 
-/-- Every struct index a declaration owns (a newtype owns none). -/
+/-- Every struct index a declaration owns (a newtype owns none; an opaque
+    type owns its heap type). -/
 def ownedStructs (tt : TypeTable) : List Nat :=
   (tt.records.filter (fun r => decide (2 ≤ r.fields.length))).map (·.struct) ++
   (tt.sums.map fun d => d.root :: d.ctors.map (·.1)).flatten ++
   tt.options.map (·.2) ++ tt.results.map (·.2.2) ++ tt.lists.map (·.2) ++
   tt.vecs.map (·.2) ++ tt.carrier.toList ++ tt.mag.toList ++ tt.str.toList ++
-  tt.strVec.toList
+  tt.strVec.toList ++ tt.opaques.map (·.2)
 
 def natNodup : List Nat → Bool
   | [] => true
@@ -282,5 +283,206 @@ def dataConfirmed (n len : Nat) (s : Subject) (tt : TypeTable) (fns : List FnEnt
       tt.strSegs.all (fun x => segs[x.2]? == some x.1) &&
       fns.all fun e => DataPin (mctxOf s tt fns) segs e.plan
   | none => false
+
+/-! ## Well-formed declarations: no vacuous obligation
+
+An obligation (`Schema.Obligation.holds`) quantifies over source values of
+the plan's parameter types (`Grammar.HasTy`). A declared type no finite value
+inhabits makes that hypothesis unsatisfiable and the obligation true of any
+code: a self-referential newtype `R = [record R]` (whose struct pin
+`recordConfirmed` then reads as a tautology), a record `R = [int, record R]`
+over a self-referential struct, or `eqref` in a signature. The acceptance
+therefore requires, over the declarations alone:
+
+* `eqref` appears only as the type of the subject-scratch local, never in a
+  signature, a record or constructor field, or an Option / Result / List /
+  Vector element;
+* every chain of one-field records ends at a type that is not a one-field
+  record (no newtype cycle);
+* every declared record and sum, and every parameter and result type of every
+  plan, has a finite value: the least fixpoint below, and `inhabTy_sound`
+  turns a passing check into a value (`AcceptanceSoundness.accepted_nonvacuous`
+  states it for every certified export). -/
+
+/-- `eqref` occurs nowhere in `t`. -/
+def noEqref : Ty → Bool
+  | .eqref => false
+  | .option t => noEqref t
+  | .vec t => noEqref t
+  | .list t => noEqref t
+  | .result t e => noEqref t && noEqref e
+  | _ => true
+
+/-- Every local is free of `eqref`, except that the subject-scratch local (at
+    position `scratch` of the declared locals) may be exactly `eqref`. -/
+def localsOk (scratch : Nat) : Nat → List Ty → Bool
+  | _, [] => true
+  | i, t :: ts =>
+      (noEqref t || (i == scratch && decide (t = .eqref))) && localsOk scratch (i + 1) ts
+
+def planEqrefOk (p : FnPlan) : Bool :=
+  p.sig.params.all noEqref && noEqref p.sig.ret &&
+    localsOk (p.nslots - p.sig.params.length) 0 p.locals
+
+def eqrefConfined (tt : TypeTable) (fns : List FnEntry) : Bool :=
+  tt.records.all (fun r => r.fields.all noEqref) &&
+  tt.sums.all (fun d => d.ctors.all fun c => c.2.all noEqref) &&
+  tt.options.all (fun o => noEqref o.1) &&
+  tt.results.all (fun r => noEqref r.1 && noEqref r.2.1) &&
+  tt.vecs.all (fun v => noEqref v.1) &&
+  tt.lists.all (fun l => noEqref l.1) &&
+  fns.all (fun e => planEqrefOk e.plan)
+
+/-- Following one-field records from `t` for at most `k` steps reaches a type
+    that is not a declared one-field record. -/
+def ntGrounded (tt : TypeTable) : Nat → Ty → Bool
+  | 0, .record tid => !((recordOf tt tid).any fun r => r.fields.length == 1)
+  | k + 1, .record tid =>
+      match recordOf tt tid with
+      | some r =>
+          match r.fields with
+          | [f] => ntGrounded tt k f
+          | _ => true
+      | none => true
+  | _, _ => true
+
+/-- No newtype cycle: `recordConfirmed`'s pin of a one-field record reads its
+    field's representation, which must not lead back to the record itself. -/
+def newtypesGrounded (tt : TypeTable) : Bool :=
+  tt.records.all fun r => ntGrounded tt tt.records.length (.record r.tid)
+
+/-- The types with a finite value, given record ids `R` and sum ids `S`
+    already known to have one. -/
+def inhabTy (R S : List Nat) : Ty → Bool
+  | .int => true
+  | .bool => true
+  | .float => true
+  | .string => true
+  | .opaque _ => true
+  | .option _ => true
+  | .list _ => true
+  | .vec _ => true
+  | .result t e => inhabTy R S t || inhabTy R S e
+  | .record tid => R.contains tid
+  | .sum tid => S.contains tid
+  | .eqref => false
+
+/-- One round: a record whose fields all have a value, a sum with a
+    constructor whose fields all have a value. -/
+def inhabStep (M : MCtx) (rids sids R S : List Nat) : List Nat × List Nat :=
+  (rids.filter fun tid =>
+      match M.recFields tid with
+      | some fts => fts.all (inhabTy R S)
+      | none => false,
+   sids.filter fun tid =>
+      match M.sumCtors tid with
+      | some cs => cs.any fun fs => fs.all (inhabTy R S)
+      | none => false)
+
+def inhabIter (M : MCtx) (rids sids : List Nat) : Nat → List Nat × List Nat
+  | 0 => ([], [])
+  | k + 1 => inhabStep M rids sids (inhabIter M rids sids k).1 (inhabIter M rids sids k).2
+
+/-- The inhabited record and sum ids of a table: the step is monotone and
+    the ids are finite, so this many rounds reach the least fixpoint. -/
+def inhabSets (M : MCtx) (tt : TypeTable) : List Nat × List Nat :=
+  inhabIter M (tt.records.map (·.tid)) (tt.sums.map (·.tid))
+    (tt.records.length + tt.sums.length + 1)
+
+def inhabited (M : MCtx) (tt : TypeTable) (t : Ty) : Bool :=
+  inhabTy (inhabSets M tt).1 (inhabSets M tt).2 t
+
+/-- Every declared record and sum, and every parameter and result type of
+    every plan, has a finite value. -/
+def typesInhabited (M : MCtx) (tt : TypeTable) (fns : List FnEntry) : Bool :=
+  tt.records.all (fun r => inhabited M tt (.record r.tid)) &&
+  tt.sums.all (fun d => inhabited M tt (.sum d.tid)) &&
+  fns.all (fun e => e.plan.sig.params.all (inhabited M tt) && inhabited M tt e.plan.sig.ret)
+
+/-- The whole non-vacuity check of the declarations. -/
+def declsWellFormed (s : Subject) (tt : TypeTable) (fns : List FnEntry) : Bool :=
+  eqrefConfined tt fns && newtypesGrounded tt && typesInhabited (mctxOf s tt fns) tt fns
+
+/-! ### Soundness of the inhabitation check -/
+
+section Inhab
+variable {M : MCtx}
+
+theorem inhabTy_sound {R S : List Nat}
+    (hR : ∀ tid ∈ R, ∃ v, HasTy M v (.record tid))
+    (hS : ∀ tid ∈ S, ∃ v, HasTy M v (.sum tid)) :
+    ∀ t, inhabTy R S t = true → ∃ v, HasTy M v t
+  | .int, _ => ⟨.i 0, by simp [HasTy]⟩
+  | .bool, _ => ⟨.b true, by simp [HasTy]⟩
+  | .float, _ => ⟨.f 0, by simp [HasTy]⟩
+  | .string, _ => ⟨.s [], by simp [HasTy]⟩
+  | .opaque _, _ => ⟨.w .null, by simp [HasTy]⟩
+  | .option t, _ => ⟨.none t, by simp [HasTy]⟩
+  | .list t, _ => ⟨.nil t, by simp [HasTy]⟩
+  | .vec t, _ => ⟨.vec t [], by simp [HasTy, HasTyAll]⟩
+  | .result t e, h => by
+      simp only [inhabTy, Bool.or_eq_true] at h
+      rcases h with h | h
+      · obtain ⟨v, hv⟩ := inhabTy_sound hR hS t h
+        exact ⟨.ok t e v, by simp [HasTy, hv]⟩
+      · obtain ⟨v, hv⟩ := inhabTy_sound hR hS e h
+        exact ⟨.err t e v, by simp [HasTy, hv]⟩
+  | .record tid, h => hR tid (by simpa [inhabTy] using h)
+  | .sum tid, h => hS tid (by simpa [inhabTy] using h)
+  | .eqref, h => by simp [inhabTy] at h
+
+theorem inhabTyL_sound {R S : List Nat}
+    (hR : ∀ tid ∈ R, ∃ v, HasTy M v (.record tid))
+    (hS : ∀ tid ∈ S, ∃ v, HasTy M v (.sum tid)) :
+    ∀ ts : List Ty, ts.all (inhabTy R S) = true → ∃ vs, HasTyL M vs ts
+  | [], _ => ⟨[], by simp [HasTyL]⟩
+  | t :: ts, h => by
+      simp only [List.all_cons, Bool.and_eq_true] at h
+      obtain ⟨v, hv⟩ := inhabTy_sound hR hS t h.1
+      obtain ⟨vs, hvs⟩ := inhabTyL_sound hR hS ts h.2
+      exact ⟨v :: vs, by simp [HasTyL, hv, hvs]⟩
+
+theorem inhabIter_sound (rids sids : List Nat) :
+    ∀ k, (∀ tid ∈ (inhabIter M rids sids k).1, ∃ v, HasTy M v (.record tid)) ∧
+      (∀ tid ∈ (inhabIter M rids sids k).2, ∃ v, HasTy M v (.sum tid))
+  | 0 => ⟨by simp [inhabIter], by simp [inhabIter]⟩
+  | k + 1 => by
+      obtain ⟨hR, hS⟩ := inhabIter_sound rids sids k
+      refine ⟨?_, ?_⟩
+      · intro tid htid
+        simp only [inhabIter, inhabStep, List.mem_filter] at htid
+        obtain ⟨-, hf⟩ := htid
+        cases hr : M.recFields tid with
+        | none => rw [hr] at hf; cases hf
+        | some fts =>
+            rw [hr] at hf
+            obtain ⟨vs, hvs⟩ := inhabTyL_sound hR hS fts hf
+            refine ⟨.record tid vs, ?_⟩
+            simp only [HasTy, true_and]
+            exact ⟨fts, hr, hvs⟩
+      · intro tid htid
+        simp only [inhabIter, inhabStep, List.mem_filter] at htid
+        obtain ⟨-, hf⟩ := htid
+        cases hc : M.sumCtors tid with
+        | none => rw [hc] at hf; cases hf
+        | some cs =>
+            rw [hc] at hf
+            obtain ⟨fs, hfs, hall⟩ := List.any_eq_true.mp hf
+            obtain ⟨c, hcget⟩ := List.getElem?_of_mem hfs
+            obtain ⟨vs, hvs⟩ := inhabTyL_sound hR hS fs hall
+            refine ⟨.variant tid c vs, ?_⟩
+            simp only [HasTy, true_and]
+            exact ⟨fs, by simp [ctorFields, hc, hcget], hvs⟩
+
+/-- A type the check passes has a value. -/
+theorem inhabited_sound {tt : TypeTable} {t : Ty} (h : inhabited M tt t = true) :
+    ∃ v, HasTy M v t :=
+  inhabTy_sound (inhabIter_sound _ _ _).1 (inhabIter_sound _ _ _).2 t h
+
+theorem inhabitedL_sound {tt : TypeTable} {ts : List Ty}
+    (h : ts.all (inhabited M tt) = true) : ∃ vs, HasTyL M vs ts :=
+  inhabTyL_sound (inhabIter_sound _ _ _).1 (inhabIter_sound _ _ _).2 ts h
+
+end Inhab
 
 end AverCert.TypeTable

@@ -208,6 +208,35 @@ theorem accept_sound
   rw [hDerived] at ho
   exact fn_claim_discharges (planFacts_of_accepted artifact hPlans) o ho
 
+/-! ### Non-vacuity
+
+`Obligation.holds` quantifies over well-typed source arguments. The
+acceptance's declaration check (`TypeTable.declsWellFormed`) makes that
+quantification non-empty: every certified export has well-typed arguments,
+and its result type has a value, so no accepted obligation is true merely
+because its hypothesis cannot be met. -/
+
+/-- Every certified export of an accepted artifact has well-typed arguments
+    (and its result type is inhabited): its obligation is not vacuous. -/
+theorem accepted_nonvacuous (artifact : ArtifactData)
+    (hDerived : obligationsDerived artifact) (hPlans : plansAccepted artifact = true) :
+    ∀ o ∈ artifact.manifest.obligations,
+      (∃ svs, HasTyL o.layout svs o.sig.params) ∧ ∃ sv, HasTy o.layout sv o.sig.ret := by
+  intro o ho
+  rw [hDerived] at ho
+  obtain ⟨e, he, rfl⟩ := obligationsOf_mem ho
+  have hwf : declsWellFormed artifact.manifest.subject artifact.manifest.types
+      artifact.manifest.fnPlans = true := by
+    simp only [plansAccepted, Bool.and_eq_true] at hPlans
+    exact hPlans.2
+  have hti : typesInhabited (mctxOf artifact.manifest.subject artifact.manifest.types
+      artifact.manifest.fnPlans) artifact.manifest.types artifact.manifest.fnPlans = true := by
+    simp only [declsWellFormed, Bool.and_eq_true] at hwf
+    exact hwf.2
+  simp only [typesInhabited, Bool.and_eq_true, List.all_eq_true] at hti
+  have hsig := hti.2 e he
+  exact ⟨inhabitedL_sound (List.all_eq_true.mpr hsig.1), inhabited_sound hsig.2⟩
+
 /-! ### S-3: the exact `ref.test` of an accepted artifact is the wasm test -/
 
 /-- For every sum an accepted artifact declares, the interpreter's exact
@@ -227,7 +256,7 @@ theorem refTest_exact_of_accepted (artifact : ArtifactData)
   intro M
   have hpin : S3Pin M d.tid d.ctors.length (grp.map (·.1)) = true := by
     simp only [plansAccepted, Bool.and_eq_true] at hPlans
-    have htt := hPlans.1.1.2
+    have htt := hPlans.1.1.1.2
     unfold typeTableConfirmed at htt
     simp only [hg, Bool.and_eq_true, List.all_eq_true] at htt
     have hs := htt.2.1.1.1.1.1.1.1.2 d hd
@@ -238,5 +267,6 @@ theorem refTest_exact_of_accepted (artifact : ArtifactData)
 #print axioms fn_claim_discharges
 #print axioms accept_sound
 #print axioms refTest_exact_of_accepted
+#print axioms accepted_nonvacuous
 
 end AcceptanceSoundness

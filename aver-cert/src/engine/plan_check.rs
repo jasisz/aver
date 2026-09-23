@@ -629,6 +629,98 @@ fn plan_typed(m: &MCtx<'_>, p: &FnPlan) -> bool {
         && m.ty_of(p.nslots, &params_gamma(&p.params), true, &p.body) == Some(p.ret.clone())
 }
 
+// ---- `TypeTable.declsWellFormed`: no vacuous obligation ----
+
+/// `TypeTable.noEqref`.
+fn no_eqref(t: &PlanTy) -> bool {
+    match t {
+        PlanTy::Eqref => false,
+        PlanTy::Option(x) | PlanTy::Vec(x) | PlanTy::List(x) => no_eqref(x),
+        PlanTy::Result(x, e) => no_eqref(x) && no_eqref(e),
+        _ => true,
+    }
+}
+
+/// `TypeTable.planEqrefOk`: `eqref` only as the subject-scratch local.
+fn plan_eqref_ok(p: &FnPlan) -> bool {
+    let scratch = (p.nslots as usize).saturating_sub(p.params.len());
+    p.params.iter().all(no_eqref)
+        && no_eqref(&p.ret)
+        && p.locals
+            .iter()
+            .enumerate()
+            .all(|(i, t)| no_eqref(t) || (i == scratch && *t == PlanTy::Eqref))
+}
+
+/// `TypeTable.inhabTy`.
+fn inhab_ty(r: &BTreeSet<u32>, s: &BTreeSet<u32>, t: &PlanTy) -> bool {
+    match t {
+        PlanTy::Int
+        | PlanTy::Bool
+        | PlanTy::Float
+        | PlanTy::Str
+        | PlanTy::Opaque(_)
+        | PlanTy::Option(_)
+        | PlanTy::List(_)
+        | PlanTy::Vec(_) => true,
+        PlanTy::Result(x, e) => inhab_ty(r, s, x) || inhab_ty(r, s, e),
+        PlanTy::Record(tid) => r.contains(tid),
+        PlanTy::Sum(tid) => s.contains(tid),
+        PlanTy::Eqref => false,
+    }
+}
+
+/// `TypeTable.inhabSets`: the record and sum ids with a finite value (the
+/// least fixpoint of `inhabStep`).
+fn inhab_sets(tt: &PlanTypeTable) -> (BTreeSet<u32>, BTreeSet<u32>) {
+    let mut r: BTreeSet<u32> = BTreeSet::new();
+    let mut s: BTreeSet<u32> = BTreeSet::new();
+    for _ in 0..=(tt.records.len() + tt.sums.len()) {
+        let nr: BTreeSet<u32> = tt
+            .records
+            .iter()
+            .filter(|d| {
+                tt.records
+                    .iter()
+                    .find(|x| x.tid == d.tid)
+                    .is_some_and(|x| x.fields.iter().all(|f| inhab_ty(&r, &s, f)))
+            })
+            .map(|d| d.tid)
+            .collect();
+        let ns: BTreeSet<u32> = tt
+            .sums
+            .iter()
+            .filter(|d| {
+                tt.sums.iter().find(|x| x.tid == d.tid).is_some_and(|x| {
+                    x.ctors
+                        .iter()
+                        .any(|c| c.1.iter().all(|f| inhab_ty(&r, &s, f)))
+                })
+            })
+            .map(|d| d.tid)
+            .collect();
+        r = nr;
+        s = ns;
+    }
+    (r, s)
+}
+
+/// `TypeTable.ntGrounded` from a record id: its chain of one-field records
+/// ends at a type that is not one.
+fn newtype_grounded(tt: &PlanTypeTable, tid: u32) -> bool {
+    let mut cur = PlanTy::Record(tid);
+    for _ in 0..=tt.records.len() {
+        let PlanTy::Record(t) = cur else {
+            return true;
+        };
+        match tt.records.iter().find(|r| r.tid == t) {
+            Some(r) if r.fields.len() == 1 => cur = r.fields[0].clone(),
+            _ => return true,
+        }
+    }
+    false
+}
+
 /// `Grammar.LCtx`.
 struct LCtx {
     n: u32,

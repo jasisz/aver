@@ -165,7 +165,7 @@ theorem PlanFacts.nodup {s : Subject} {tt : TypeTable} {fns : List FnEntry}
 theorem planFacts_of_accepted (artifact : ArtifactData) (h : plansAccepted artifact = true) :
     PlanFacts artifact.manifest.subject artifact.manifest.types artifact.manifest.fnPlans := by
   simp only [plansAccepted, Bool.and_eq_true, List.all_eq_true] at h
-  obtain ⟨⟨⟨⟨hd, he⟩, _⟩, _⟩, _⟩ := h
+  obtain ⟨⟨⟨⟨⟨hd, he⟩, _⟩, _⟩, _⟩, _⟩ := h
   refine ⟨of_decide_eq_true hd, fun e hm => ?_⟩
   have := he e hm
   simp only [entryAccepted, Bool.and_eq_true] at this

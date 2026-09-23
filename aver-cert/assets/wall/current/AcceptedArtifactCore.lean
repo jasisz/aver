@@ -483,7 +483,10 @@ def acceptedWholeModule (artifact : ArtifactData) : Prop :=
     planned function bound to its code entry (and signature, and ordered
     calls), the type table confirmed against the type section, every string
     literal against its data segment, and every present helper's declared
-    type. -/
+    type. Last, the declarations are well formed (`TypeTable.declsWellFormed`):
+    `eqref` only on the subject scratch, no newtype cycle, and every declared
+    type and every signature type inhabited, so no obligation is vacuous
+    (`AcceptanceSoundness.accepted_nonvacuous`). -/
 def plansAccepted (artifact : ArtifactData) : Bool :=
   let m := artifact.manifest
   let M := mctxOf m.subject m.types m.fnPlans
@@ -491,7 +494,8 @@ def plansAccepted (artifact : ArtifactData) : Bool :=
   m.fnPlans.all (entryAccepted artifact.modBytes artifact.modLen M m.fnPlans) &&
   typeTableConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   dataConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
-  roleTypesPinned artifact.modBytes artifact.modLen M
+  roleTypesPinned artifact.modBytes artifact.modLen M &&
+  declsWellFormed m.subject m.types m.fnPlans
 
 /-- The manifest's obligations are exactly the ones the wall derives from its
     plans: no obligation field is producer data. -/

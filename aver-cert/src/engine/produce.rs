@@ -187,6 +187,25 @@ fn confirm_type_table(facts: &ModuleFacts, tt: &mut PlanTypeTable) {
         });
         tt.opaques
             .retain(|(_, idx)| (*idx as usize) < facts.first_group_len);
+        // `TypeTable.declsWellFormed`: `eqref` never in a declaration, no
+        // newtype cycle, every declared record and sum inhabited.
+        tt.records.retain(|r| r.fields.iter().all(no_eqref));
+        tt.sums
+            .retain(|d| d.ctors.iter().all(|c| c.1.iter().all(no_eqref)));
+        tt.options.retain(|o| no_eqref(&o.0));
+        tt.results.retain(|r| no_eqref(&r.0) && no_eqref(&r.1));
+        tt.vecs.retain(|v| no_eqref(&v.0));
+        tt.lists.retain(|l| no_eqref(&l.0));
+        let grounded: Vec<bool> = tt
+            .records
+            .iter()
+            .map(|r| newtype_grounded(tt, r.tid))
+            .collect();
+        let mut g = grounded.into_iter();
+        tt.records.retain(|_| g.next().unwrap_or(false));
+        let (inhab_r, inhab_s) = inhab_sets(tt);
+        tt.records.retain(|r| inhab_r.contains(&r.tid));
+        tt.sums.retain(|d| inhab_s.contains(&d.tid));
         // No struct index serves two declarations: keep the first.
         let mut owned = BTreeSet::new();
         if let Some(c) = tt.carrier {
@@ -214,6 +233,7 @@ fn confirm_type_table(facts: &ModuleFacts, tt: &mut PlanTypeTable) {
         tt.results.retain(|r| owned.insert(r.2));
         tt.lists.retain(|l| owned.insert(l.1));
         tt.vecs.retain(|v| owned.insert(v.1));
+        tt.opaques.retain(|o| owned.insert(o.1));
         tt.str_segs
             .retain(|(b, seg)| facts.data.get(*seg as usize) == Some(&Some(b.clone())));
         let after = (
@@ -489,6 +509,21 @@ fn check_candidate(
     }
     if !plan_typed(m, plan) {
         return Some("plan does not type in the one grammar".into());
+    }
+    if !plan_eqref_ok(plan) {
+        return Some("plan cites `eqref` outside the subject-scratch local".into());
+    }
+    let (inhab_r, inhab_s) = inhab_sets(m.tt);
+    if !plan
+        .params
+        .iter()
+        .chain(std::iter::once(&plan.ret))
+        .all(|t| inhab_ty(&inhab_r, &inhab_s, t))
+    {
+        return Some(
+            "a parameter or result type has no finite value, so the obligation would be vacuous"
+                .into(),
+        );
     }
     let Some(bytes) = m.code_entry_bytes(plan) else {
         return Some("plan lowering cites an undeclared index or type".into());
