@@ -84,11 +84,11 @@ def key_of(module, fn, law):
 
 # ---------------------------------------------------------------- Lean
 
-def lean_side(d):
+def lean_side(d, p="lean", lake_name="lake.log"):
     res = {"ran": False, "laws": {}, "declined": {}, "notes": []}
-    st = read(os.path.join(d, "lean.status"))
+    st = read(os.path.join(d, f"{p}.status"))
     res["status"] = st.strip().replace("\n", " ")
-    js = read(os.path.join(d, "lean.json")).strip()
+    js = read(os.path.join(d, f"{p}.json")).strip()
     j = None
     if js:
         try:
@@ -97,7 +97,7 @@ def lean_side(d):
             res["notes"].append(f"lean.json unparsable: {e}")
     res["summary"] = {k: j.get(k) for k in ("passed", "sorries", "build_errors", "universal_laws",
                                            "bounded_laws", "declined", "model_panicked")} if j else None
-    man = read(os.path.join(d, "lean.manifest.json"))
+    man = read(os.path.join(d, f"{p}.manifest.json"))
     if man:
         m = json.loads(man)
         res["ran"] = True
@@ -113,9 +113,9 @@ def lean_side(d):
         for dc in j.get("declined_claims", []) or []:
             res["declined"].setdefault(dc["claim"], dc.get("reason", ""))
     # Per-theorem fallback from the replayed lake log.
-    lake = read(os.path.join(d, "lake.log"))
+    lake = read(os.path.join(d, lake_name))
     res["lake_tail"] = lake[-3000:]
-    lean_files = tar_texts(os.path.join(d, "lean.export.tgz"), ".lean")
+    lean_files = tar_texts(os.path.join(d, f"{p}.export.tgz"), ".lean")
     thm_ranges = defaultdict(list)  # file -> [(start, name)]
     for path, text in lean_files.items():
         for i, line in enumerate(text.splitlines(), 1):
@@ -123,6 +123,11 @@ def lean_side(d):
             if mm:
                 thm_ranges[path].append((i, mm.group(1)))
     res["theorems"] = {name for v in thm_ranges.values() for _, name in v}
+    res["classes"] = {}
+    for text in lean_files.values():
+        for mm in re.finditer(r"-- aver:law-class (\S+) (\S+) (\S+)", text):
+            res["classes"][mm.group(1)] = mm.group(2)
+    res["build_failed"] = "lake_exit=0" not in st
     issues = defaultdict(list)
     for mm in re.finditer(r"(?m)^(error|warning): (?:\S*/)?([^\s:]+\.lean):(\d+):\d+: (.*)$", lake):
         kind, f, line, msg = mm.group(1), mm.group(2), int(mm.group(3)), mm.group(4)
@@ -136,6 +141,20 @@ def lean_side(d):
                 issues[owner].append((kind, msg[:200]))
     res["theorem_issues"] = dict(issues)
     return res
+
+
+def lean_merged(law, lean):
+    """First pass, unless an isolation pass ran; stripped laws keep pass one."""
+    iso = lean.get("isolated")
+    label_tail = f'{law["fn"]}.{law["law"]}'
+    if iso is None or any(s.endswith(label_tail) and s.split(".")[-3:-2] in ([], [law["module"].split(".")[-1]])
+                          for s in lean["stripped"]):
+        st, det = lean_status(law, lean)
+        if iso is not None and st in ("universal", "bounded", "bounded-domain"):
+            st, det = "failed", "broke the whole Lean build (hard error); " + det
+        return st, det
+    st, det = lean_status(law, iso)
+    return st, ("isolation pass: " + det) if det else "isolation pass"
 
 
 def lean_status(law, lean):
@@ -156,9 +175,14 @@ def lean_status(law, lean):
         return ("timeout" if any("heartbeat" in e or "timeout" in e for e in errs) else "failed"), detail
     if any("sorry" in m for _, m in iss):
         return "sorry", detail
+    present = any(n.split(".")[-1] == thm for n in lean["theorems"])
+    if present and lean["build_failed"] and not lean["laws"]:
+        cls = lean["classes"].get(thm, "?")
+        # The build failed elsewhere, so no axiom audit ran; this theorem itself
+        # elaborated without error or sorry.
+        return {"universal": "universal", "bounded": "bounded"}.get(cls, cls), "unaudited: build failed elsewhere"
     if not lean["ran"]:
         return "no_run", lean.get("status", "")
-    present = any(n.split(".")[-1] == thm for n in lean["theorems"])
     return ("not_exported", "") if not present else ("failed", "theorem present, not in manifest")
 
 
@@ -193,6 +217,10 @@ def guided_label(name):
         return None
 
 
+DECL_RE = re.compile(r"^\s*(?:ghost\s+)?(lemma|method|function|predicate|datatype|type|const)\b(?:\s*\{[^}]*\})*\s*([A-Za-z_][\w']*)")
+REF_RE = re.compile(r"(?:\b(Aver_\w+|AverCommon)\.)?\b([A-Za-z_][\w']*)")
+
+
 def dafny_side(d):
     res = {"ran": False, "notes": []}
     res["status"] = read(os.path.join(d, "dafny.status")).strip().replace("\n", " ")
@@ -202,55 +230,98 @@ def dafny_side(d):
     res["finished"] = fin.group(0) if fin else None
     res["ran"] = bool(fin)
     files = tar_texts(os.path.join(d, "dafny.export.tgz"), ".dfy")
-    lemmas = []            # dicts: file, name, start, end, body
-    comments = []          # (file, label, text)
+    decls = []
+    comments = []
+    opened = defaultdict(set)
     for path, text in files.items():
         lines = text.splitlines()
-        decl = []
+        module = None
+        found = []
         for i, line in enumerate(lines, 1):
-            mm = re.match(r"\s*(lemma|method|function|predicate|datatype|type|module|const)\b(?:\s*\{[^}]*\})*\s*([A-Za-z_][\w']*)", line)
-            if mm and not line.strip().startswith("//"):
-                decl.append((i, mm.group(1), mm.group(2)))
-            cm = re.match(r"\s*// Law (\S+?)(?::| is not exported)\s*(.*)$", line)
-            if cm:
-                comments.append((path, cm.group(1), line.strip()))
-        for n, (start, kind, name) in enumerate(decl):
-            end = decl[n + 1][0] - 1 if n + 1 < len(decl) else len(lines)
-            if kind in ("lemma", "method"):
-                body = "\n".join(lines[start - 1:end])
-                lemmas.append({"file": path, "name": name, "kind": kind, "start": start, "end": end,
-                               "axiom": "assume {:axiom}" in body,
-                               "bounded": bool(re.search(r"_sample_\d+\(\)", body)) and kind == "lemma"})
-    res["lemmas"] = lemmas
+            s = line.strip()
+            if s.startswith("//"):
+                cm = re.match(r"// Law (\S+?)(?::| is not exported)\s*(.*)$", s)
+                if cm:
+                    comments.append((path, cm.group(1), s))
+                continue
+            mm = re.match(r"module\s+(\S+)\s*\{", s)
+            if mm and module is None:
+                module = mm.group(1)
+                continue
+            om = re.match(r"import opened (\S+)", s)
+            if om and module:
+                opened[module].add(om.group(1))
+            mm = DECL_RE.match(line)
+            if mm:
+                found.append((i, mm.group(1), mm.group(2)))
+        module = module or "_default"
+        for n, (start, kind, name) in enumerate(found):
+            end = found[n + 1][0] - 1 if n + 1 < len(found) else len(lines)
+            body = "\n".join(lines[start - 1:end])
+            decls.append({"file": path, "module": module, "name": name, "kind": kind, "start": start,
+                          "end": end, "body": body, "axiom": "assume {:axiom}" in body,
+                          "opaque": kind == "function" and "{:axiom}" in lines[start - 1],
+                          "bounded": kind == "lemma" and bool(re.search(r"_sample_\d+\(", body))})
+    res["decls"] = decls
     res["comments"] = comments
-    # Errors from stdout, mapped to the enclosing lemma by file and line.
+    index = {(x["module"], x["name"]): x for x in decls}
+    by_file = defaultdict(list)
+    for x in decls:
+        by_file[x["file"]].append(x)
     errs = defaultdict(list)
+    unmapped = []
     for mm in re.finditer(r"(?m)^(\S+\.dfy)\((\d+),(\d+)\): Error: (.*)$", log):
         f, line, msg = os.path.normpath(mm.group(1)), int(mm.group(2)), mm.group(4)
         owner = None
-        for lm in lemmas:
-            if (lm["file"] == f or lm["file"].endswith(f) or f.endswith(lm["file"])) and lm["start"] <= line <= lm["end"]:
-                owner = lm
-        k = (owner["file"], owner["name"]) if owner else ("?", f"{f}:{line}")
-        errs[k].append(msg[:240])
-    for mm in re.finditer(r"Verification of '([^']+)' timed out", log):
-        nm = mm.group(1).split(".")[-1]
-        for lm in lemmas:
-            if lm["name"] == nm:
-                errs[(lm["file"], lm["name"])].append("timed out")
-    res["errors"] = {f"{a}::{b}": v for (a, b), v in errs.items()}
-    res["_errs"] = errs
-    # Per-implementation outcomes from the CSV log, where present.
+        for p, lst in by_file.items():
+            if p == f or p.endswith("/" + f) or f.endswith("/" + p) or os.path.basename(p) == os.path.basename(f) and p.endswith(f):
+                for x in lst:
+                    if x["start"] <= line <= x["end"]:
+                        owner = x
+        if owner:
+            errs[(owner["module"], owner["name"])].append(msg[:240])
+        else:
+            unmapped.append(f"{f}:{line}: {msg[:200]}")
+    res["unmapped_errors"] = unmapped
     outcomes = {}
-    csvt = read(os.path.join(d, "dafny.verification.csv"))
-    if csvt:
-        for row in csv.DictReader(io.StringIO(csvt)):
-            nm = (row.get("TestResult.DisplayName") or "").split(" (")[0].split(".")[-1]
-            oc = row.get("TestResult.Outcome") or ""
-            if nm:
-                prev = outcomes.get(nm)
-                outcomes[nm] = oc if prev in (None, "Passed") else prev
+    txt = read(os.path.join(d, "dafny.verification.txt"))
+    for mm in re.finditer(r"Results for (\S+) \((correctness|well-formedness)\)\s*\n\s*Overall outcome: (\w+)", txt):
+        nm, oc = mm.group(1).split(".")[-1], mm.group(3)
+        if outcomes.get(nm, "Correct") == "Correct":
+            outcomes[nm] = oc
     res["outcomes"] = outcomes
+
+    def refs(x):
+        out = set()
+        code = re.sub(r"//[^\n]*", "", x["body"])
+        for q, nm in REF_RE.findall(code):
+            if nm == x["name"] and not q:
+                continue
+            cands = [(q, nm)] if q else [(x["module"], nm)] + [(o, nm) for o in opened.get(x["module"], ())]
+            for c in cands:
+                if c in index:
+                    out.add(c)
+                    break
+        return out
+
+    ref_cache = {}
+
+    def cone(key):
+        seen, todo = set(), [key]
+        while todo:
+            k = todo.pop()
+            if k in seen:
+                continue
+            seen.add(k)
+            if k not in ref_cache:
+                ref_cache[k] = refs(index[k])
+            todo += [r for r in ref_cache[k] if index[r]["kind"] in ("lemma", "function", "predicate", "const")]
+        return seen
+
+    res["cone"] = cone
+    res["index"] = index
+    res["_errs"] = errs
+    res["errors"] = {f"{a}.{b}": v for (a, b), v in errs.items()}
     if not fin:
         res["notes"].append("no 'finished with' line: dafny rejected the program before verification")
     return res
@@ -261,44 +332,55 @@ def dafny_status(law, dafny):
     label = f"{fn}.{name}"
     mod_last = law["module"].split(".")[-1].lower()
 
-    def in_module(path):
-        base = os.path.basename(path)[:-4].lower()
-        return law["module"] == "<entry>" or base == mod_last or base.endswith(mod_last)
+    def in_module(x):
+        m = x["module"].lower()
+        return law["module"] == "<entry>" or m.endswith("_" + mod_last) or m == mod_last or \
+            os.path.basename(x["file"])[:-4].lower() == mod_last
 
     for path, lab, text in dafny["comments"]:
-        if lab.rstrip(":") == label and in_module(path):
+        base = os.path.basename(path)[:-4].lower()
+        if lab.rstrip(":") == label and (base == mod_last or law["module"] == "<entry>"):
             reason = text.split(":", 1)[1].strip() if ":" in text else text
             if "is not exported" in text:
                 return "declined", reason[:300]
             return "not_exported", reason[:300]
-    lemma_names = {f"{fn}_{name}", f"{fn}__{name}", f"{fn}_{name}_"}
-    main = [lm for lm in dafny["lemmas"] if lm["kind"] == "lemma" and in_module(lm["file"]) and
-            (lm["name"] in lemma_names or guided_label(lm["name"]) in (label,) or
-             (guided_label(lm["name"]) or "").endswith("." + label))]
-    helpers = [lm for lm in dafny["lemmas"] if lm["kind"] == "lemma" and in_module(lm["file"]) and lm not in main and
-               (lm["name"].startswith(f"{fn}_{name}__") or
-                (guided_label(lm["name"]) or "").startswith(label + ".") or
-                (guided_label(lm["name"]) or "").startswith(label + "#"))]
+    names = {f"{fn}_{name}"}
+    lemmas = [x for x in dafny["decls"] if x["kind"] == "lemma" and in_module(x)]
+    main = [x for x in lemmas if x["name"] in names or guided_label(x["name"]) == label]
+    helpers = [x for x in lemmas if x not in main and any(x["name"].startswith(m["name"] + "_") for m in main)]
     if not main:
-        return ("no_run", dafny["status"]) if not dafny["files_present"] else ("not_exported", "no lemma found")
-    group = main + helpers
+        if not dafny["decls"]:
+            return "no_run", "no export"
+        return "not_exported", "no lemma found"
     if not dafny["ran"]:
-        return "no_run", "; ".join(dafny["notes"])[:300]
-    msgs = []
-    for lm in group:
-        msgs += [(lm["name"], m) for m in dafny["_errs"].get((lm["file"], lm["name"]), [])]
-        oc = dafny["outcomes"].get(lm["name"])
-        if oc and oc != "Passed" and not dafny["_errs"].get((lm["file"], lm["name"])):
-            msgs.append((lm["name"], f"outcome {oc}"))
-    if msgs:
-        classes = sorted({classify_dafny_error(m) for _, m in msgs})
-        st = "timeout" if classes == ["timeout"] or "out_of_resource" in classes and len(classes) == 1 else "failed"
-        return st, (",".join(classes) + " | " + "; ".join(f"{a}: {b}" for a, b in msgs[:3]))[:400]
-    if any(lm["axiom"] for lm in group):
-        return "sorry", "assume {:axiom} in " + ",".join(lm["name"] for lm in group if lm["axiom"])
-    if any(lm["bounded"] for lm in main):
+        return "no_run", "whole file rejected before verification (export gap): " + \
+            "; ".join(dafny["notes"])[:200]
+    group = main + helpers
+    own = []
+    for x in group:
+        k = (x["module"], x["name"])
+        own += [(x["name"], m) for m in dafny["_errs"].get(k, [])]
+        oc = dafny["outcomes"].get(x["name"])
+        if oc and oc != "Correct" and not dafny["_errs"].get(k):
+            own.append((x["name"], f"outcome {oc}"))
+    if own:
+        classes = sorted({classify_dafny_error(m) for _, m in own})
+        st = "timeout" if set(classes) <= {"timeout", "out_of_resource"} else "failed"
+        return st, (",".join(classes) + " | " + "; ".join(f"{a}: {b}" for a, b in own[:3]))[:400]
+    full = set()
+    for x in group:
+        full |= dafny["cone"]((x["module"], x["name"]))
+    bad = [k for k in full if dafny["_errs"].get(k) and dafny["index"][k]["kind"] != "method"]
+    if bad:
+        why = "; ".join(f"{k[0]}.{k[1]}: {classify_dafny_error(dafny['_errs'][k][0])}" for k in sorted(bad)[:4])
+        return "failed_supplier", why[:400]
+    ax = [k for k in full if dafny["index"][k]["axiom"]]
+    if ax:
+        return "sorry", "assume {:axiom} in " + ",".join(k[1] for k in ax)[:200]
+    if any(x["bounded"] for x in main):
         return "bounded", "per-sample dispatch"
-    return "universal", ""
+    opq = [k[1] for k in full if dafny["index"][k]["opaque"]]
+    return "universal", ("opaque fns in cone: " + ",".join(opq[:5])) if opq else ""
 
 
 # ---------------------------------------------------------------- report
@@ -323,12 +405,15 @@ def main():
         entry_rel = os.path.relpath(entry, mroot) if entry else ""
         laws = inventory(sources, entry_rel)
         lean = lean_side(dirs["lean"]) if "lean" in dirs else None
+        if lean is not None and os.path.exists(os.path.join(dirs["lean"], "lean2.status")):
+            lean["isolated"] = lean_side(dirs["lean"], "lean2", "lake2.log")
+            lean["stripped"] = [x for x in read(os.path.join(dirs["lean"], "lean.stripped")).split() if x]
         dafny = dafny_side(dirs["dafny"]) if "dafny" in dirs else None
-        if dafny is not None:
-            dafny["files_present"] = bool(dafny["lemmas"] or dafny["comments"])
         rows = []
         for law in laws:
-            ls, ld = lean_status(law, lean) if lean else ("no_run", "")
+            ls, ld = lean_merged(law, lean) if lean else ("no_run", "")
+            if ls == "bounded-domain":
+                ls = "bounded"
             ds, dd = dafny_status(law, dafny) if dafny else ("no_run", "")
             mod = law["module"]
             rows.append({"law": f'{mod}.{law["fn"]}.{law["law"]}', "lean": ls, "lean_detail": ld,
@@ -345,11 +430,13 @@ def main():
             c["neither"] += not lu and not du
         report["targets"][tgt] = {
             "entry": entry, "module_root": mroot, "counts": dict(c), "laws": rows,
-            "lean_status": lean and lean["status"], "lean_summary": lean and lean.get("summary"),
+            "lean_status": lean and lean["status"],
+            "lean_stripped": (lean or {}).get("stripped", []),
+            "lean_isolated_status": (lean or {}).get("isolated", {}).get("status") if lean and lean.get("isolated") else None, "lean_summary": lean and lean.get("summary"),
             "dafny_status": dafny and dafny["status"], "dafny_finished": dafny and dafny["finished"],
             "lean_counts": dict(Counter(r["lean"] for r in rows)),
             "dafny_counts": dict(Counter(r["dafny"] for r in rows)),
-            "dafny_unmapped_errors": {k: v for k, v in (dafny or {}).get("errors", {}).items() if k.startswith("?::")},
+            "dafny_unmapped_errors": (dafny or {}).get("unmapped_errors", []),
             "btc": read(os.path.join(any_dir, "btc.txt")).strip(),
             "notes": (lean or {}).get("notes", []) + (dafny or {}).get("notes", []),
             "lean_lake_tail": (lean or {}).get("lake_tail", "")[-1500:],

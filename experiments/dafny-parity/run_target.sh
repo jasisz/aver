@@ -47,6 +47,28 @@ for backend in $BACKENDS; do
     # Replayed build log: per-theorem sorry / error lines for the fallback map.
     (cd "$out" && timeout 60m lake build > "$results/lake.log" 2>&1; echo "lake_exit=$?" >> "$results/lean.status")
     tar -C "$out" -czf "$results/lean.export.tgz" --exclude='.lake' .
+    # Isolation pass: a hard error in one law fails the whole build, so no
+    # law gets audited. Strip the laws that own the errors and check again,
+    # up to three rounds; the stripped laws keep their first-pass verdict.
+    if ! grep -q "lake_exit=0" "$results/lean.status"; then
+      copy="$work/root-isolated"; rm -rf "$copy"; cp -r "$root" "$copy"
+      rel="$(realpath --relative-to="$root" "$entry")"
+      log="$results/lake.log"; out2="$out"
+      : > "$results/lean.stripped"
+      for round in 1 2 3; do
+        python3 "$(dirname "$0")/strip_laws.py" "$copy" "$log" "$out2" | tee -a "$results/lean.stripped"
+        out2="$work/lean-isolated-$round"
+        timeout "$LEAN_TIMEOUT" "$AVER" proof "$copy/$rel" --module-root "$copy" -o "$out2" \
+          --check-json --sorry-budget 100000 --declined-budget 100000 \
+          > "$results/lean2.json" 2> "$results/lean2.stderr"
+        cp "$out2/proof_manifest.json" "$results/lean2.manifest.json" 2>/dev/null || true
+        (cd "$out2" && timeout 60m lake build > "$results/lake2.log" 2>&1; echo "lake_exit=$?" > "$results/lean2.status")
+        echo "round=$round" >> "$results/lean2.status"
+        log="$results/lake2.log"
+        grep -q "lake_exit=0" "$results/lean2.status" && break
+      done
+      tar -C "$out2" -czf "$results/lean2.export.tgz" --exclude='.lake' .
+    fi
   else
     out="$work/dafny"
     "$AVER" proof "$entry" --module-root "$root" --backend dafny -o "$out" > "$results/dafny.export.log" 2>&1

@@ -8,6 +8,14 @@ on:
   push:
     branches: [experiments/dafny-parity]
   workflow_dispatch:
+    inputs:
+      targets:
+        description: JSON list of targets to measure (empty = all)
+        default: ''
+      ci_cost:
+        description: Also time the Proof lanes with and without Dafny installed
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,23 +42,14 @@ jobs:
   measure:
     name: ${{ matrix.target }} / ${{ matrix.backend }}
     needs: build
+    if: inputs.targets != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         backend: [lean, dafny]
-        target:
-          - k5_fdiv
-          - payment_ops
-          - workflow_engine
-          - durable_promise
-          - btc-main-interp
-          - btc-main-laws
-          - btc-pel-laws
-          - btc-pr-interp
-          - btc-pr-laws
-          - btc-probe
+        target: ${{ fromJSON((inputs.targets != '' && inputs.targets != 'none') && inputs.targets || '["k5_fdiv","payment_ops","workflow_engine","durable_promise","btc-main-interp","btc-main-laws","btc-pel-laws","btc-pr-interp","btc-pr-laws","btc-probe"]') }}
     steps:
       - uses: actions/checkout@v5
 
@@ -124,8 +123,17 @@ jobs:
             payment_ops)     root=projects/payment_ops; entry=projects/payment_ops/infra/codec.av ;;
             workflow_engine) root=projects/workflow_engine; entry=projects/workflow_engine/infra/codec.av ;;
             durable_promise) root=projects/durable_promise; entry=projects/durable_promise/domain/promise.av ;;
-            btc-*-interp)    root=btc; entry=btc/domain/interp.av ;;
-            btc-pel-laws)    root=btc; entry=btc/domain/laws.av ;;
+            btc-*-interp)
+              # Four parallel Z3 processes on this cone exhausted the runner's
+              # memory (the runner was shut down mid-run); verify two at a time.
+              export DAFNY_CORES=2
+              root=btc; entry=btc/domain/interp.av ;;
+            btc-pel-laws)
+              # The #349 reshape names a parameter `fuel`; the Dafny fuel
+              # lowering adds its own `fuel` and the file no longer resolves.
+              # Rename it (both backends) so the rest can be measured.
+              sed -i -E 's/\bfuel\b/budget/g' btc/domain/utxostore.av
+              root=btc; entry=btc/domain/laws.av ;;
             btc-*-laws)
               cp $E/entries/btc_laws.av btc/domain/laws.av
               root=btc; entry=btc/domain/laws.av ;;
@@ -148,6 +156,44 @@ jobs:
           name: results-${{ matrix.target }}-${{ matrix.backend }}
           path: ${{ runner.temp }}/results
           retention-days: 30
+
+  ci-cost:
+    name: Proof lanes ${{ matrix.dafny }} Dafny (shard ${{ matrix.shard }}/4)
+    if: inputs.ci_cost
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        dafny: [with, without]
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dafny-parity-tests
+      - name: Install Lean
+        run: |
+          curl -sSfL --retry 6 --retry-all-errors https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install "$(cat aver-cert/assets/wall/current/lean-toolchain)"
+      - name: Install Dafny
+        if: matrix.dafny == 'with'
+        run: |
+          url="https://github.com/dafny-lang/dafny/releases/download/v${DAFNY_VERSION}/dafny-${DAFNY_VERSION}-x64-ubuntu-22.04.zip"
+          curl -fSL --retry 6 --retry-all-errors -o /tmp/dafny.zip "$url"
+          unzip -q /tmp/dafny.zip -d "$HOME/dafny-install"
+          echo "$(dirname "$(find "$HOME/dafny-install" -name dafny -type f | head -1)")" >> "$GITHUB_PATH"
+      - name: Build the proof tests
+        run: cargo nextest run -p aver-lang --test proof_spec --test map_iteration_order --test yield_module_helpers_spec --no-run
+      - name: Run the proof lanes, timed
+        run: |
+          start=$(date +%s)
+          cargo nextest run -p aver-lang --test proof_spec --test map_iteration_order --test yield_module_helpers_spec \
+            --partition slice:${{ matrix.shard }}/4 --no-fail-fast 2>&1 | tail -5 | tee tail.txt
+          echo "${{ matrix.dafny }} ${{ matrix.shard }} $(( $(date +%s) - start ))" | tee -a "$GITHUB_STEP_SUMMARY"
 
   analyze:
     name: Analyze
