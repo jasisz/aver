@@ -1,0 +1,174 @@
+name: Experiment - Dafny/Lean parity
+
+# Measurement only: exports every law of a set of proof entries to Lean and
+# to Dafny, checks both, and records a per-law verdict for each backend.
+# See experiments/dafny-parity/README.md. Nothing here gates anything.
+
+on:
+  push:
+    branches: [experiments/dafny-parity]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  DAFNY_VERSION: '4.11.0'
+
+jobs:
+  build:
+    name: Build aver
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dafny-parity
+      - run: cargo build --release -p aver-lang --bin aver
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aver-bin
+          path: target/release/aver
+          retention-days: 3
+
+  measure:
+    name: ${{ matrix.target }} / ${{ matrix.backend }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [lean, dafny]
+        target:
+          - k5_fdiv
+          - payment_ops
+          - workflow_engine
+          - durable_promise
+          - btc-main-interp
+          - btc-main-laws
+          - btc-pel-laws
+          - btc-pr-interp
+          - btc-pr-laws
+          - btc-probe
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: aver-bin
+          path: ${{ runner.temp }}/bin
+      - name: Put aver on PATH
+        run: |
+          chmod +x "$RUNNER_TEMP/bin/aver"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Check out btc-listener (main)
+        if: startsWith(matrix.target, 'btc-main') || matrix.target == 'btc-probe'
+        uses: actions/checkout@v5
+        with:
+          repository: n1bor/btc-listener
+          ref: main
+          path: btc
+      - name: Check out btc-listener (proof-entry-laws, main plus the laws.av commit)
+        if: matrix.target == 'btc-pel-laws'
+        uses: actions/checkout@v5
+        with:
+          repository: n1bor/btc-listener
+          ref: c63816b26c2cb08b637e363a6d780d9935d45c69
+          path: btc
+      - name: Check out btc-listener (PR 361 head)
+        if: startsWith(matrix.target, 'btc-pr')
+        uses: actions/checkout@v5
+        with:
+          repository: jasisz/btc-listener
+          ref: 5698c8e11d9f1c09955079add0fae5b8a94eea03
+          path: btc
+
+      - name: Install Lean (elan)
+        if: matrix.backend == 'lean'
+        run: |
+          set -o pipefail
+          for attempt in 1 2 3 4; do
+            if curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+                 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+                 | sh -s -- -y --default-toolchain stable; then break; fi
+            if [ $attempt -eq 4 ]; then exit 1; fi
+            sleep 20
+          done
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Install Dafny
+        if: matrix.backend == 'dafny'
+        run: |
+          set -euo pipefail
+          url="https://github.com/dafny-lang/dafny/releases/download/v${DAFNY_VERSION}/dafny-${DAFNY_VERSION}-x64-ubuntu-22.04.zip"
+          curl -fSL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o /tmp/dafny.zip "$url"
+          unzip -q /tmp/dafny.zip -d "$HOME/dafny-install"
+          dafny_dir="$(dirname "$(find "$HOME/dafny-install" -name dafny -type f | head -1)")"
+          chmod +x "$dafny_dir/dafny" || true
+          echo "$dafny_dir" >> "$GITHUB_PATH"
+          "$dafny_dir/dafny" --version
+
+      - name: Measure
+        env:
+          BACKENDS: ${{ matrix.backend }}
+          T: ${{ matrix.target }}
+        run: |
+          E=experiments/dafny-parity
+          R="$RUNNER_TEMP/results/$T-$BACKENDS"
+          case "$T" in
+            k5_fdiv)
+              cp $E/entries/k5_lawsentry.av projects/k5_fdiv/lawsentry.av
+              root=projects/k5_fdiv; entry=projects/k5_fdiv/lawsentry.av ;;
+            payment_ops)     root=projects/payment_ops; entry=projects/payment_ops/infra/codec.av ;;
+            workflow_engine) root=projects/workflow_engine; entry=projects/workflow_engine/infra/codec.av ;;
+            durable_promise) root=projects/durable_promise; entry=projects/durable_promise/domain/promise.av ;;
+            btc-*-interp)    root=btc; entry=btc/domain/interp.av ;;
+            btc-pel-laws)    root=btc; entry=btc/domain/laws.av ;;
+            btc-*-laws)
+              cp $E/entries/btc_laws.av btc/domain/laws.av
+              root=btc; entry=btc/domain/laws.av ;;
+            btc-probe)
+              cp $E/entries/btc_parityprobe.av btc/domain/parityprobe.av
+              root=btc; entry=btc/domain/parityprobe.av ;;
+          esac
+          if [ -d btc ]; then echo "btc_head=$(git -C btc rev-parse HEAD) aver_pin=$(cat btc/.aver-version)" > "$RUNNER_TEMP/btc.txt"; fi
+          aver check "$entry" --module-root "$root" > "$RUNNER_TEMP/check.log" 2>&1 || true
+          bash $E/run_target.sh "$T" "$root" "$entry" "$R"
+          cp "$RUNNER_TEMP/check.log" "$R/aver-check.log"
+          [ -f "$RUNNER_TEMP/btc.txt" ] && cp "$RUNNER_TEMP/btc.txt" "$R/btc.txt"
+          echo "aver_rev=$GITHUB_SHA" > "$R/aver.txt"
+          cat "$R"/*.status || true
+          tail -5 "$R/dafny.log" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.target }}-${{ matrix.backend }}
+          path: ${{ runner.temp }}/results
+          retention-days: 30
+
+  analyze:
+    name: Analyze
+    needs: measure
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: results
+          merge-multiple: true
+      - name: Per-law parity table
+        run: |
+          python3 experiments/dafny-parity/analyze.py results parity.json parity.md
+          cat parity.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parity-report
+          path: |
+            parity.json
+            parity.md
+          retention-days: 30

@@ -1,0 +1,16 @@
+module LawsEntry
+    intent =
+        "Proof entry for the Dafny/Lean parity measurement. It depends on every"
+        "law-carrying module of the K5 project and defines one trivial function,"
+        "so aver proof exports all of their laws together. Copied into"
+        "projects/k5_fdiv by the experiment workflow; not part of the project."
+    exposes [gathered]
+    depends [Domain.AwayModel, Domain.Binade, Domain.BinadeOrder, Domain.Estimate, Domain.Exponent, Domain.FloorLaws, Domain.Fprep, Domain.FracRound, Domain.FractionOrder, Domain.IntegerOrder, Domain.Kernel, Domain.ModelScale, Domain.Rational, Domain.Recip, Domain.Remainder, Domain.Round, Domain.RoundScale, Domain.StickyInt, Domain.StickyScale, Domain.Table, Domain.TruncScale, Domain.ValueChain, LeafProbe]
+    effects []
+
+fn gathered() -> Int
+    ? "How many law-carrying modules this entry gathers."
+    23
+
+verify gathered
+    gathered() => 23

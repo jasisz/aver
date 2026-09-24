@@ -1,0 +1,26 @@
+module Laws
+    intent =
+        "The second proof entry: every law-carrying module outside the Script"
+        "engine's cone, gathered under one root so aver proof can export them"
+        "together and CI can ratchet them (n1bor/btc-listener#349)."
+        "The CI proof job exports domain/interp.av, which reaches the engine"
+        "and nothing else; Chainwork's three laws sat outside it from the day"
+        "they were written, gated by nothing but aver verify, and every law"
+        "over the chain, the stores and the codecs would have too. This module"
+        "depends on those modules and defines nothing: nothing depends on it,"
+        "so it cannot make a cycle, and it exposes nothing, so nothing is"
+        "unused. Its one function is here because a module needs one to be a"
+        "program, and it says which modules the entry gathers."
+        "aver proof main.av would be the whole program and panics on a"
+        "capability resource inside a sum type (n1bor/btc-listener#350); this"
+        "leaf sidesteps that by reaching no infra module."
+    exposes [gathered]
+    depends [Domain.Block, Domain.Chainwork, Domain.Segment, Domain.Subsidy, Domain.Target, Domain.HeaderTree, Domain.Watchdog, Domain.UtxoStore]
+    effects []
+
+fn gathered() -> Int
+    ? "How many law-carrying modules this entry gathers: the depends list above."
+    8
+
+verify gathered
+    gathered() => 8
