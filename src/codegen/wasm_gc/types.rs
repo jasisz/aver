@@ -813,6 +813,23 @@ impl TypeRegistry {
                 collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
             }
         }
+        // A constructor's payload can name a list that nothing else does:
+        // `Run.Wake.Until` holds `List<Wait.Item>` in a program that returns
+        // a `Run.Wake` but never builds one. Walked in a fixed order; a
+        // program whose payload lists are already registered gets no new
+        // slot here.
+        let mut variant_fields: Vec<(&String, u32, &String)> = variants
+            .iter()
+            .flat_map(|(name, infos)| {
+                infos.iter().flat_map(move |info| {
+                    info.fields.iter().map(move |ty| (name, info.type_idx, ty))
+                })
+            })
+            .collect();
+        variant_fields.sort();
+        for (_, _, ty) in variant_fields {
+            collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
+        }
         if handler_active && !list_types.contains_key("List<String>") {
             list_types.insert("List<String>".to_string(), next_idx);
             list_order.push("List<String>".to_string());
