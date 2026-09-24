@@ -1,0 +1,41 @@
+module SumCases
+    intent =
+        "A law over a sum type whose variant carries a payload needs one case split on it."
+
+record Tally
+    a: Int
+    b: Int
+
+type Ev
+    Add(Int)
+    Move
+
+fn step(t: Tally, e: Ev) -> Tally
+    ? "Add raises a; Move shifts one unit from a to b."
+    match e
+        Ev.Add(v) -> Tally.update(t, a = t.a + v)
+        Ev.Move -> Tally.update(t, a = t.a - 1, b = t.b + 1)
+
+verify step
+    step(Tally(a = 1, b = 0), Ev.Move).b => 1
+
+fn gained(e: Ev) -> Int
+    ? "What an event adds to the total."
+    match e
+        Ev.Add(v) -> v
+        Ev.Move -> 0
+
+verify gained
+    gained(Ev.Add(3)) => 3
+
+fn total(t: Tally) -> Int
+    ? "a + b."
+    t.a + t.b
+
+verify total
+    total(Tally(a = 1, b = 2)) => 3
+
+verify step law keepsTotal
+    given t: Tally = [Tally(a = 0, b = 0), Tally(a = 5, b = -2)]
+    given e: Ev = [Ev.Add(3), Ev.Add(-1), Ev.Move]
+    total(step(t, e)) => total(t) + gained(e)

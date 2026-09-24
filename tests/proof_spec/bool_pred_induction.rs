@@ -46,12 +46,13 @@ fn proof_export_bool_pred_induction_closers_carry_the_bool_bridge() {
         "the fun_induction closer must end in the Bool bridge:\n{lean}"
     );
 
-    // The list-induction arms: the bridge sits between the `congr 1` rung and
-    // the `sorry` floor.
+    // The list-induction arms: the bridge follows the `congr 1` rung; in the
+    // cons arm only the subject-first split rung sits between it and the
+    // `sorry` floor.
     assert!(
         lean.contains(&format!(
-            "(simp_all [{defs}]; congr 1 <;> simp_all [{defs}] <;> omega){bridge_rungs} | sorry"
-        )),
+            "(simp_all [{defs}]; congr 1 <;> simp_all [{defs}] <;> omega){bridge_rungs} | (rw ["
+        )) && lean.contains("<;> (repeat' split) <;> omega) | sorry"),
         "the cons arm must try the Bool bridge before its sorry floor:\n{lean}"
     );
     assert!(

@@ -29,6 +29,8 @@ mod citation_attempts;
 mod citation_order;
 #[path = "proof_spec/citation_reuse.rs"]
 mod citation_reuse;
+#[path = "proof_spec/cited_head.rs"]
+mod cited_head;
 #[path = "proof_spec/conditional_split_omega.rs"]
 mod conditional_split_omega;
 #[path = "proof_spec/container_induction.rs"]
@@ -63,6 +65,8 @@ mod floor_citations;
 mod floor_window;
 #[path = "proof_spec/fuel_when_cites.rs"]
 mod fuel_when_cites;
+#[path = "proof_spec/int_divmod.rs"]
+mod int_divmod;
 #[path = "proof_spec/k5_sticky.rs"]
 mod k5_sticky;
 #[path = "proof_spec/knowledge_provider.rs"]
@@ -98,12 +102,18 @@ mod pool_composition_recursive;
 mod reason_rough_edges;
 #[path = "proof_spec/recursive_law_reasons.rs"]
 mod recursive_law_reasons;
+#[path = "proof_spec/refinement_given.rs"]
+mod refinement_given;
 #[path = "proof_spec/scc_list_drop.rs"]
 mod scc_list_drop;
 #[path = "proof_spec/source_only.rs"]
 mod source_only;
 #[path = "proof_spec/source_recursion.rs"]
 mod source_recursion;
+#[path = "proof_spec/subject_if_split.rs"]
+mod subject_if_split;
+#[path = "proof_spec/sum_case_split.rs"]
+mod sum_case_split;
 #[path = "proof_spec/transition_histories.rs"]
 mod transition_histories;
 #[path = "proof_spec/waterfall.rs"]

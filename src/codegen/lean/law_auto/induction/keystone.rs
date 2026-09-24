@@ -144,7 +144,12 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
         return false;
     }
     // The claim goes through the subject fn (`holds`, or an equational `=> rhs`).
-    if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
+    // A claim that combines quotients and remainders arithmetically
+    // (`n * quot(a, n) + rem(a, n) => a`) is admitted too: its closer is the
+    // quotient-remainder arm below, not the subject fn.
+    if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..))
+        && !super::super::shared::law_cone_calls_int_div_mod(ctx, vb, law)
+    {
         return false;
     }
     // Fail closed on refinement-lifted givens. A `@Nat>=0`-style refined given
@@ -1528,6 +1533,21 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     let mut closes = vec![close_with(&simp_list, &grind_call)];
     if grind_call != "grind" || simp_list_full != simp_list {
         closes.push(close_with(&simp_list_full, "grind"));
+    }
+    // Division by a variable: `omega` and `grind` know nothing about `a / n`
+    // or `a % n` unless `n` is a literal. Aver's `Int.div` / `Int.mod` are
+    // Euclidean, exactly Lean's `/` and `%` on `Int`, so the core facts apply
+    // as they are: `n * (a / n) + a % n = a` and `0 <= a % n < n` for a
+    // divisor that is not zero (positive for the upper bound). `grind`
+    // discharges those side conditions from the premise, and the
+    // `Except.withDefault` wrapper of the division result unfolds so its
+    // `n == 0` branch meets the premise too. Tried last, and only when the
+    // cone divides.
+    if super::super::shared::law_cone_calls_int_div_mod(ctx, vb, law) {
+        closes.push(close_with(
+            &simp_list_full,
+            "grind [Except.withDefault, Int.mul_ediv_add_emod, Int.emod_nonneg, Int.emod_lt_of_pos]",
+        ));
     }
     let id = format!("{}.{}", vb.fn_name, law.name);
     let floor = format!(
