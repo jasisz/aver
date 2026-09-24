@@ -120,8 +120,8 @@ impl FnKey {
 
     /// Canonical text form: `Module.name` for module-scoped fns,
     /// bare `name` for entry. Use this only when crossing an
-    /// interop boundary (Lean qualified imports, Dafny
-    /// `Aver_Module.fn` references) — internal IR / backend logic
+    /// interop boundary (Lean qualified imports) — internal IR /
+    /// backend logic
     /// should keep operating on the typed key.
     pub fn canonical(&self) -> String {
         match &self.scope {

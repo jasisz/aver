@@ -96,9 +96,8 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
         // (`recursion::rewrite_native_guarded_calls`) to mark a position
         // where Lean needs an `(by omega)` proof obligation for the
         // recursive-call precondition. Stays a plain Aver `ResolvedExpr::Ident`
-        // through the AST so Dafny's emit path (which doesn't inject this
-        // sentinel) and the type checker (already done before codegen)
-        // never see it.
+        // through the AST so the type checker (already done before codegen)
+        // never sees it.
         ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. }
             if name == crate::codegen::recursion::OMEGA_PROOF_SENTINEL =>
         {

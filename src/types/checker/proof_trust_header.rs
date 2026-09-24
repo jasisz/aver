@@ -1,21 +1,18 @@
 //! Trust-assumption header generator for Oracle v1 proof exports.
 //!
-//! Each `.dfy` / `.lean` file emitted by `aver proof` for effectful code
+//! Each `.lean` file emitted by `aver proof` for effectful code
 //! gets a short comment block at the top that tells the reader exactly
 //! which claims the proof relies on. This module is the source of truth for
 //! that generated text.
 //!
-//! Keeping the generator here (not in the Dafny / Lean backends) means:
+//! Keeping the generator here (not in the Lean backend) means the effect
+//! table read here is the same
+//! [`effect_classification::CLASSIFICATIONS`] table used by `given`
+//! inference and rejection diagnostics, so the header can never list
+//! an effect the compiler doesn't actually classify.
 //!
-//! - The two backends emit identical trust claims byte-for-byte — no
-//!   drift between target languages.
-//! - The effect table read here is the same
-//!   [`effect_classification::CLASSIFICATIONS`] table used by `given`
-//!   inference and rejection diagnostics, so the header can never list
-//!   an effect the compiler doesn't actually classify.
-//!
-//! The generator emits plain text; each backend wraps its own comment
-//! prefix (`//` for Dafny/Lean 4 both use `//`).
+//! The generator emits plain text; the backend wraps its own comment
+//! prefix (`-- ` for Lean 4).
 
 use super::effect_classification::EffectDimension;
 
@@ -64,7 +61,7 @@ pub(crate) fn generate_for_effects_with_registry(
 
     out.push_str("Numeric model:\n");
     out.push_str("  Aver `Int` is exported as the proof backend's unbounded\n");
-    out.push_str("  mathematical integer (Lean `Int`, Dafny `int`). The VM\n");
+    out.push_str("  mathematical integer (Lean `Int`). The VM\n");
     out.push_str("  runtime now matches this model exactly: `Int` is arbitrary\n");
     out.push_str("  precision and never wraps (`i64::MAX + 1` is the exact\n");
     out.push_str("  successor, not `i64::MIN`). The compiled Rust and WASM\n");
@@ -242,8 +239,7 @@ pub(crate) fn generate_for_effects_with_registry(
     out.push_str("  Surfaced as subtype helper types in the section below\n");
     out.push_str("  (`RandomIntInBounds`, `RandomFloatInUnit`, `TimeUnixMsNonneg`,\n");
     out.push_str("  `ProcessStopRequestedMonotonic`)\n");
-    out.push_str("  in Lean; `IsRandomIntInBounds` etc. as ghost predicates in\n");
-    out.push_str("  Dafny). These are *types* / *predicates*, not axioms — a\n");
+    out.push_str("  in Lean. These are *types*, not axioms — a\n");
     out.push_str("  value of `RandomIntInBounds` is a function plus a proof of\n");
     out.push_str("  the bound, which user-side theorems can construct from\n");
     out.push_str("  concrete stubs (via `decide`) or the runtime trust\n");
@@ -288,7 +284,7 @@ pub(crate) fn generate_for_effects_with_registry(
 }
 
 /// Emit the trust header with each line prefixed by the given comment
-/// marker (typically `"// "` for Dafny / `"-- "` for Lean 4). An empty /
+/// marker (typically `"-- "` for Lean 4). An empty /
 /// whitespace-only input line is still commented so the block reads as
 /// one consistent comment region in the generated file.
 ///

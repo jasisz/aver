@@ -1,7 +1,7 @@
 //! Arbitrary-precision integer for the Aver runtime.
 //!
 //! Aver's `Int` is mathematical ℤ: total, never wrapping, faithful to the
-//! Lean/Dafny proof model. `AverInt` is the runtime carrier for that model.
+//! Lean proof model. `AverInt` is the runtime carrier for that model.
 //! It is small-int optimized: any value that fits an `i64` is stored inline
 //! as `Small`, and only genuinely large magnitudes spill to a heap `BigInt`.
 //!
@@ -276,7 +276,7 @@ impl AverInt {
         }
     }
 
-    /// Euclidean quotient, matching `i64::div_euclid` and the Lean/Dafny
+    /// Euclidean quotient, matching `i64::div_euclid` and the Lean
     /// `Int.ediv` model the proofs cite: the unique `q` with a remainder in
     /// `[0, |rhs|)`. Returns `None` when `rhs == 0`. Over ℤ there is no
     /// `i64::MIN / -1` overflow edge — it is just `i64::MAX + 1`, returned as
@@ -297,7 +297,7 @@ impl AverInt {
     }
 
     /// Euclidean remainder `self - rhs * div_euclid(self, rhs)`, matching
-    /// `i64::rem_euclid` and the Lean/Dafny `Int.emod` model. Returns `None`
+    /// `i64::rem_euclid` and the Lean `Int.emod` model. Returns `None`
     /// when `rhs == 0`. The result is always non-negative and in `[0, |rhs|)`,
     /// independent of the sign of either operand.
     pub fn rem_euclid(&self, rhs: &AverInt) -> Option<AverInt> {

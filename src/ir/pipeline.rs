@@ -26,7 +26,7 @@
 //! source does not contain (`interp_lower`'s `__buf_*` chain,
 //! `buffer_build`'s `<sink>__buffered` sink, `chars_fusion`'s cursor loops,
 //! `string_index`'s workers, and `list_build`'s builders) sits below it and
-//! must never be visible to Lean / Dafny; every other pass sits above it
+//! must never be visible to Lean; every other pass sits above it
 //! and the proof exporters read its output. `run`
 //! serves both halves from one run: it snapshots the AST before the
 //! first fabricating stage and completes the copy afterwards by
@@ -90,7 +90,7 @@ pub enum PipelineStage {
     /// Refinement-via-opaque lift — type-level proof-export stage.
     /// Walks user type defs + smart constructors, populates
     /// `ProofIR.refined_types`. Opt-in via `run_refinement_lower`;
-    /// proof exporters (Lean → subtype, Dafny → subset type) enable
+    /// the proof exporter (Lean → subtype) enables
     /// it, runtime backends leave it off.
     RefinementLower,
     /// Per-module interval analysis over refinement-type carriers —
@@ -596,7 +596,7 @@ pub struct PipelineResult {
     /// `BuildSymbols`, mirroring how the symbol table is always
     /// built. Backends consume this in lieu of re-resolving
     /// `Expr` themselves. The migration of individual backends
-    /// (VM / Rust / wasm-gc / Lean / Dafny / self-host) is staged
+    /// (VM / Rust / wasm-gc / Lean / self-host) is staged
     /// across follow-up PRs in the Phase E stack.
     pub resolved_items: Vec<crate::ir::hir::ResolvedTopLevel>,
     /// Per-stage diagnostic records — one per pass that actually ran.
@@ -612,8 +612,8 @@ pub struct PipelineResult {
 
 impl PipelineResult {
     /// The view a [`crate::codegen::CodegenContext`] must be assembled
-    /// from: the proof view when the proof stages ran — so Lean and
-    /// Dafny describe the program the certified artifact was compiled
+    /// from: the proof view when the proof stages ran — so Lean
+    /// describes the program the certified artifact was compiled
     /// from — and the runtime-facing pipeline output otherwise.
     ///
     /// This is the only place the choice is made, which is what keeps
@@ -681,7 +681,7 @@ impl PipelineResult {
 /// > with the fabricating passes turned off.
 ///
 /// So one pipeline run can hand a deforested AST to a runtime backend
-/// and the unfabricated one to Lean / Dafny, and a certificate's model
+/// and the unfabricated one to Lean, and a certificate's model
 /// and its bytes describe the same program.
 ///
 /// The fields mirror the `PipelineResult` ones a `CodegenContext` is
@@ -1040,7 +1040,7 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
 }
 
 /// Lower `"a${x}b"` interpolation literals into the buffer pipeline.
-/// Skipped by proof exporters (Lean/Dafny) which want the source-level form.
+/// Skipped by the proof exporter (Lean), which wants the source-level form.
 pub fn interp_lower(items: &mut [TopLevel]) {
     crate::ir::lower_interpolation_pass(items);
 }

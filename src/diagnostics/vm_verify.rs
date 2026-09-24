@@ -265,8 +265,7 @@ fn collect_fn_call_names(expr: &Expr, out: &mut std::collections::HashSet<String
             if let Some(name) = crate::codegen::common::expr_to_dotted_name(&callee.node) {
                 // Skip namespace builtins (Console.print, List.reverse, etc.)
                 // — they don't have user-side `(a, b)!` shapes that hostile
-                // would reorder. Same heuristic the dafny collect_called_fns
-                // helper uses.
+                // would reorder.
                 if !name.contains('.') {
                     out.insert(name);
                 }

@@ -9,7 +9,7 @@
 //! `SymbolTable`.
 //! That structure is correct for backends that emit per-module
 //! artifacts (Rust → one Rust crate per Aver module, VM → per-
-//! module bytecode, Lean → namespaces, Dafny → modules).
+//! module bytecode, Lean → namespaces).
 //!
 //! The wasm-gc backend emits a single .wasm file by design — that's
 //! a *linking* decision, not a semantic one. The pipeline shouldn't
@@ -83,7 +83,7 @@ impl WasmGcLinkedView {
         }
         let mut resolve_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
         // Same current-module context every other resolution site uses
-        // (`resolve_program`, the Rust and Dafny lifters, `CodegenContext`):
+        // (`resolve_program`, the Rust lifter, `CodegenContext`):
         // a program that declares `module Local` may spell its own members
         // qualified, and `ResolveCtx::resolve_fn_id` only probes the entry
         // scope for `Local.f` when it knows `Local` IS the current module.

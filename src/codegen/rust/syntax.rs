@@ -148,8 +148,8 @@ pub(crate) fn generated_ident(stem: &str) -> String {
 /// existing program's emitted bytes move.
 ///
 /// This renames rather than refusing. The rename is deterministic, it is
-/// confined to the Rust backend's spelling of a name (the VM, wasm, Lean
-/// and Dafny backends never call this), and the only place a user meets it
+/// confined to the Rust backend's spelling of a name (the VM, wasm and
+/// Lean backends never call this), and the only place a user meets it
 /// is cosmetic: a mangled name in a generated-project backtrace or in the
 /// playground's Rust export. Refusing instead would have turned five
 /// ordinary Aver names into names no program may use on one backend.

@@ -1,14 +1,10 @@
-//! Engine B — generic cited-lemma INSTANTIATION in the list-induction step,
-//! shared by both proof backends.
+//! Engine B — generic cited-lemma INSTANTIATION in the list-induction step.
 //!
-//! The keystone (each backend's `forall`-citation / simp-pool hoist) makes every
-//! eligible earlier law available as a universal fact. That suffices when the
-//! backend can instantiate the universal itself — Z3 for the builtin
-//! `List.concat` (Dafny `seq` `+`, whose associativity it knows natively), or
-//! Lean's `simp_all` applying the pool laws as directed rewrites. It does NOT
-//! suffice for a USER-defined `append` on Dafny: Z3 never materialises the nested
-//! term `append(append(rev y, rev t), [h])`, so it cannot fire the cited
-//! associativity there.
+//! The keystone (the backend's simp-pool hoist) makes every eligible earlier law
+//! available as a universal fact. That suffices when the backend can instantiate
+//! the universal itself — Lean's `simp_all` applying the pool laws as directed
+//! rewrites. It does NOT suffice when the needed instance is a nested term
+//! (`append(append(rev y, rev t), [h])`) that the prover never materialises.
 //!
 //! This module recovers that power generically by computing EXPLICIT
 //! instantiations of the cited lemmas at exactly the arguments the inductive step
@@ -16,13 +12,12 @@
 //! from the law itself: substitute the induction variable by its
 //! `cons(head, tail)`, unfold the recursive cone fns one step, apply the
 //! induction hypothesis, then first-order-match each cited lemma's LHS against
-//! the resulting subterms. Each backend renders the returned argument terms — the
-//! Dafny consumer as explicit lemma CALLS (`rev_revDist(rev(x[1..]), [x[0]])`),
-//! the Lean consumer as `have`-facts driving a tight `simp` (`have key :=
-//! rev_law_revDist (rev tail) [head]; simp […]`).
+//! the resulting subterms. The Lean backend renders the returned argument terms
+//! as `have`-facts driving a tight `simp` (`have key := rev_law_revDist (rev
+//! tail) [head]; simp […]`).
 //!
 //! Fail-closed: every cited lemma is universal-form, so any type-correct
-//! instantiation is a valid lemma call Dafny re-proves — a redundant one is
+//! instantiation is a valid lemma application the kernel re-checks — a redundant one is
 //! harmless, and structural matching against type-correct subterms keeps the
 //! emitted calls well-typed. The engine need not be complete, only useful.
 
@@ -32,8 +27,8 @@ use crate::codegen::common::expr_to_dotted_name;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Placeholders for the cons head/tail of the induction variable in the computed
-/// instantiation arguments. Backends map these to their own syntax (Dafny
-/// `xs[0]` / `xs[1..]`, Lean's `head` / `tail` binders).
+/// instantiation arguments. The Lean backend maps these to its `head` / `tail`
+/// binders.
 pub(crate) const HEAD: &str = "__cite_h";
 pub(crate) const TAIL: &str = "__cite_t";
 const UNFOLD_FUEL: usize = 8;
@@ -52,9 +47,8 @@ const POOL_SIZE_CAP: usize = 256;
 /// Whether using `law` LEFT-TO-RIGHT as a rewrite rule would loop: its LHS
 /// pattern (givens as wildcards) matches its own RHS, so applying `lhs -> rhs`
 /// yields a term the same rule still fires on (a commutation `plus x y = plus y
-/// x` is the canonical case). Such a law is fine for Dafny (Z3 instantiates the
-/// universal, it does not rewrite) but a non-terminating simp rule on Lean — the
-/// Lean cite selector drops it, leaning on `omega` for the commutativity instead.
+/// x` is the canonical case). Such a law is a non-terminating simp rule on Lean —
+/// the Lean cite selector drops it, leaning on `omega` for the commutativity instead.
 pub(crate) fn law_rewrites_to_self(law: &VerifyLaw) -> bool {
     let wildcards: BTreeSet<String> = law.givens.iter().map(|g| g.name.clone()).collect();
     if wildcards.is_empty() {
@@ -78,8 +72,8 @@ pub(crate) struct Instantiation {
 /// cited law must be applied so the step closes. Substitute the induction
 /// variable by `cons(head, tail)`, unfold the recursive cone fns one step, apply
 /// the induction hypothesis, then first-order-match each cited law's LHS against
-/// the resulting subterms. Backends (Dafny lemma calls, Lean `have`-facts) render
-/// the returned arguments.
+/// the resulting subterms. The Lean backend renders the returned arguments as
+/// `have`-facts.
 pub(crate) fn compute_instantiations(
     law: &VerifyLaw,
     ind_param: &str,

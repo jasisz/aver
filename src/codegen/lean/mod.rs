@@ -110,8 +110,8 @@ pub enum VerifyEmitMode {
     TheoremSkeleton,
 }
 
-// RecursionPlan / ProofModeIssue moved to shared `crate::codegen::recursion`
-// so the Dafny backend can reuse the same classifier. Re-export here so
+// RecursionPlan / ProofModeIssue live in shared `crate::codegen::recursion`.
+// Re-export here so
 // existing `lean::RecursionPlan` / `lean::ProofModeIssue` call sites keep
 // working without churn.
 pub use crate::codegen::recursion::{ProofModeIssue, RecursionPlan};

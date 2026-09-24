@@ -2,13 +2,12 @@
 //!
 //! The lowering producer: types live in `src/ir/proof_ir.rs`, this
 //! file fills them in from a typechecked + analysed codegen
-//! context. Output lands in `CodegenContext.proof_ir`; both proof
-//! backends read from the same field, so any classifier-side
-//! decision flows consistently to Lean and Dafny without each
-//! backend re-running shape detection.
+//! context. Output lands in `CodegenContext.proof_ir`; the Lean
+//! exporter reads from that field, so classifier-side decisions are
+//! made once instead of being re-derived during emission.
 //!
 //! Populates three IR sections: `refined_types` (refinement-via-
-//! opaque records → Lean Subtype / Dafny subset type),
+//! opaque records → Lean Subtype),
 //! `fn_contracts` (per-pure-fn recursion shape: native /
 //! sized-fuel / linear recurrence), and `law_theorems` (per-verify-
 //! law strategy + quantifier decomposition + claim shape, with
@@ -449,7 +448,7 @@ pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
 /// dep modules), classifies the records that pair a single carrier
 /// field with a validating smart constructor, and emits
 /// `RefinedTypeDecl` entries into `ir.refined_types`. Backends
-/// (Lean → Subtype, Dafny → subset type) render these directly.
+/// (Lean → Subtype) render these directly.
 pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // Walk entry items first, then dep modules. The map is keyed by
     // opaque `TypeId` resolved through the symbol table — same
@@ -498,9 +497,8 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         };
         if ir.refined_types.contains_key(&canonical_key) {
             // Same TypeId already populated — possible if a module
-            // is walked twice through dep aliasing. Skip so we don't
-            // overwrite a verified-witness entry with a predicate-
-            // eval fallback witness.
+            // is walked twice through dep aliasing. Skip so the first
+            // entry stays authoritative.
             continue;
         }
         // Scope the smart-constructor lookup to the same module the
@@ -525,19 +523,9 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             )],
             expr: inputs.resolve_expr(info.predicate, module_prefix),
         };
-        let witness = pick_witness(
-            name,
-            canonical_key,
-            inputs,
-            info.predicate,
-            info.param_name,
-            module_prefix,
-        );
-        // A missing concrete witness is not a reason to erase the invariant.
-        // Lean permits an empty Subtype; Dafny's `witness *` expresses the
-        // same uncertainty without inventing an invalid default. Keeping the
-        // decl in ProofIR makes "emit a proof subtype" one backend-neutral,
-        // fail-closed decision.
+        // Lean permits an empty Subtype, so no inhabitation witness is
+        // needed. Keeping the decl in ProofIR makes "emit a proof subtype"
+        // one fail-closed decision.
         ir.refined_types.insert(
             canonical_key,
             RefinedTypeDecl {
@@ -546,7 +534,6 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 carrier_field: info.carrier_field.to_string(),
                 predicate_param: info.param_name.to_string(),
                 invariant,
-                witness,
                 // Filled in immediately below by `populate_refined_type_intervals`,
                 // which runs the interval analysis once over the just-built
                 // `refined_types` map. Left empty here so the two passes share
@@ -2246,7 +2233,7 @@ fn populate_fn_contracts_for_scope(
         }
 
         // ListStructural — structural recursion on a List<_> param.
-        // Lean/Dafny don't actually use a fuel helper for this on
+        // Lean doesn't actually use a fuel helper for this on
         // recent backends (structural recursion is natively
         // terminating); the metric stays as `SeqLenPlusOne` for
         // backend-symmetric framing, and the consumer ignores it
@@ -2752,18 +2739,10 @@ fn classify_law_strategy(
     // Second-order linear recurrence (fib / fibSpec shape). Detector
     // validates impl as tail-rec wrapper, spec as direct second-order
     // recurrence, helper as their shared affine worker — all three
-    // shapes pinned in `lean::recurrence`. Backends consume the
-    // (impl_fn, spec_fn, helper_fn) names from IR; the proof template
-    // differs per target (Lean Nat-helper + induction; Dafny still
-    // pending — issue #116).
-    if let Some((spec_fn, helper_fn)) =
-        detect_linear_recurrence2_spec_equivalence(law, fn_name, inputs)
-    {
-        return ProofStrategy::LinearRecurrence2SpecEquivalence {
-            impl_fn: fn_name.to_string(),
-            spec_fn,
-            helper_fn,
-        };
+    // shapes pinned in `lean::recurrence`. The Lean template re-derives
+    // the names from the law (Nat-helper + induction).
+    if detect_linear_recurrence2_spec_equivalence(law, fn_name, inputs).is_some() {
+        return ProofStrategy::LinearRecurrence2SpecEquivalence;
     }
     // Conditional implication between canonical Peano comparisons. This used
     // to be recognized twice inside Lean: once while choosing the theorem's

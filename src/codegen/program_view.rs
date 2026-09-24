@@ -38,7 +38,7 @@
 //!   helper-law / contextual-helper hint walkers inspect AST syntax through a
 //!   per-module [`crate::verify_law::FnIdFnIndex`]. Source names are resolved
 //!   once at the boundary and never serve as storage identity.
-//! - **Lean / Dafny proof + law spec recognisers**. Several recognisers
+//! - **Lean proof + law spec recognisers**. Several recognisers
 //!   (`emit_*_spec_equivalence_law`, `direct_call` AST shape match) inspect
 //!   `Spanned<Expr>` source syntax, then resolve the completed rewrite exactly
 //!   once before passing it to the resolved-only renderer.
@@ -235,32 +235,6 @@ impl ResolvedProgramView {
             }
             Some(i) => self.modules.get(i)?.fn_defs.get(entry.pos),
         }
-    }
-
-    /// First fn (entry first, then dep modules in declaration order)
-    /// whose source-level name matches. Stage 5+ of #232 uses this to
-    /// bridge ad-hoc detectors that historically searched by string
-    /// name (`is_directly_recursive` in dafny codegen) into the typed
-    /// `FnId`-keyed `ProgramShape`. Returns `None` if no such fn
-    /// exists in the resolved view.
-    ///
-    /// Note: bare-name lookup is ambiguous when the same name lives
-    /// in two dep modules. Entry-first ordering matches what the
-    /// legacy string-name detectors already assumed.
-    pub fn fn_by_name(&self, name: &str) -> Option<&ResolvedFnDef> {
-        for fd in self.entry_fns() {
-            if fd.name == name {
-                return Some(fd);
-            }
-        }
-        for m in &self.modules {
-            for fd in &m.fn_defs {
-                if fd.name == name {
-                    return Some(fd);
-                }
-            }
-        }
-        None
     }
 }
 

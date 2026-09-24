@@ -15,7 +15,6 @@ pub(super) struct Law {
     pub body: VerifyLaw,
     pub untranslate: aver::codegen::lean::untranslate::UntranslateCtx,
     pub emitted_module: String,
-    pub dafny_file: String,
 }
 
 #[derive(Default)]
@@ -46,10 +45,6 @@ impl Catalog {
             }
         }
         for law in catalog.laws.values_mut() {
-            law.dafny_file = law.scope.as_ref().map_or_else(
-                || format!("{}.dfy", aver::codegen::common::entry_basename(ctx)),
-                |scope| format!("{}.dfy", scope.replace('.', "/")),
-            );
             law.emitted_module =
                 aver::codegen::lean::citation_probe::module_name(ctx, law.scope.as_deref());
             law.untranslate = aver::codegen::lean::untranslate::context_for_law(
@@ -84,7 +79,6 @@ impl Catalog {
                 body: *body.clone(),
                 untranslate: Default::default(),
                 emitted_module: scope.unwrap_or_default().to_string(),
-                dafny_file: String::new(),
             },
         );
     }

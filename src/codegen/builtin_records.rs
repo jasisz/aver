@@ -1,19 +1,18 @@
 //! Single source of truth for compiler-owned host carrier records.
 //!
-//! Lean and Dafny both need declarations for these types in their
-//! preludes. Previously each backend kept its own hard-coded literal
-//! (a Lean `structure` block and a Dafny `datatype` block) and any
+//! The Lean proof export needs declarations for these types in its
+//! prelude. Previously each backend kept its own hard-coded literal
+//! (a Lean `structure` block, for one) and any
 //! drift between them was caught only by integration tests. This
 //! module declares each built-in record once, in a backend-neutral
 //! shape, and each backend renders it on demand.
 //!
-//! The conditional-emit helpers (`needs_in_lean`, `needs_in_dafny`)
-//! work the same way: scan the generated body for a backend-mangled
+//! The conditional-emit helper (`needs_in_body`) works the same way: scan the generated body for a backend-mangled
 //! identifier and only include the prelude entry when it's actually
 //! referenced.
 
-/// A field in a built-in record. Backend-neutral type tags so Lean
-/// and Dafny renderers can emit their own native form.
+/// A field in a built-in record. Backend-neutral type tags so each
+/// renderer can emit its own native form.
 pub struct BuiltinField {
     pub name: &'static str,
     pub ty: BuiltinType,
@@ -62,7 +61,7 @@ impl BuiltinRecord {
 
     /// Position of a field in the declaration order. Currently
     /// unused (WASM iterates `fields` directly), but kept available
-    /// for future per-key WASM/Dafny offset lookups.
+    /// for future per-key WASM offset lookups.
     #[allow(dead_code)]
     pub fn field_index(&self, name: &str) -> Option<u32> {
         self.fields
@@ -170,27 +169,6 @@ fn lean_type(ty: &BuiltinType) -> String {
     }
 }
 
-/// Render the field type as Dafny syntax.
-fn dafny_type(ty: &BuiltinType) -> String {
-    match ty {
-        BuiltinType::Int => "int".to_string(),
-        BuiltinType::Str => "string".to_string(),
-        BuiltinType::Bool => "bool".to_string(),
-        BuiltinType::Float => "real".to_string(),
-        BuiltinType::ListOf(name) => format!("seq<{}>", name.replace('.', "_")),
-        BuiltinType::MapStrListStr => "map<string, seq<string>>".to_string(),
-    }
-}
-
-/// Sanitize a field name for Dafny (Dafny reserves `method`, etc.,
-/// so user-facing names with that token need a trailing underscore).
-fn dafny_field(name: &str) -> &str {
-    match name {
-        "method" => "method_",
-        other => other,
-    }
-}
-
 /// Lean `structure` block for a built-in record.
 pub fn render_lean(record: &BuiltinRecord) -> String {
     let mut s = format!("structure {} where\n", record.backend_name());
@@ -199,17 +177,6 @@ pub fn render_lean(record: &BuiltinRecord) -> String {
     }
     s.push_str("  deriving Repr, BEq, Inhabited, DecidableEq");
     s
-}
-
-/// Dafny `datatype` block for a built-in record.
-pub fn render_dafny(record: &BuiltinRecord) -> String {
-    let bn = record.backend_name();
-    let fields: Vec<String> = record
-        .fields
-        .iter()
-        .map(|f| format!("{}: {}", dafny_field(f.name), dafny_type(&f.ty)))
-        .collect();
-    format!("datatype {} = {}({})", bn, bn, fields.join(", "))
 }
 
 /// Cheap textual scan: does the rendered backend body reference the
@@ -250,8 +217,8 @@ pub fn needs_trust_header(body: &str) -> bool {
 /// Single shared decision: which built-in records does this generated
 /// body need, in dependency-correct emission order?
 ///
-/// Both Lean and Dafny backends call this and then render each entry
-/// through `render_lean` / `render_dafny`. No backend reimplements the
+/// The Lean backend calls this and then renders each entry through
+/// `render_lean`. No backend reimplements the
 /// "what to include" logic — the source of truth is `BUILTIN_RECORDS`
 /// plus this function.
 ///
@@ -285,13 +252,6 @@ pub fn needed_records(body: &str, force_all: bool) -> Vec<&'static BuiltinRecord
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn http_request_field_method_is_renamed_in_dafny() {
-        let r = find("HttpRequest").unwrap();
-        let dafny = render_dafny(r);
-        assert!(dafny.contains("method_: string"));
-    }
 
     #[test]
     fn tcp_connection_dotted_name_maps_to_underscore() {

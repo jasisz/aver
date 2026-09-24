@@ -1479,11 +1479,10 @@ fn emit_verify_law_forall_auto_proof_inner(
     // to the existing emit which renders the Nat-helper + shift
     // lemma + helper-seed bridge (heavy ~50-line support_lines stay
     // in the legacy module). The IR pin makes the algebraic decision
-    // observable in `proof_ir.law_theorems` and provides the integration
-    // point for a future Dafny consumer (issue #116).
+    // observable in `proof_ir.law_theorems`.
     if matches!(
         law_strategy_for(ctx, &vb.fn_name, &law.name),
-        Some(crate::ir::ProofStrategy::LinearRecurrence2SpecEquivalence { .. })
+        Some(crate::ir::ProofStrategy::LinearRecurrence2SpecEquivalence)
     ) && let Some(proof) = spec::emit_second_order_linear_recurrence_spec_equivalence_law(
         vb,
         law,
@@ -2394,7 +2393,7 @@ fn emit_simp_over_prelude_lemmas_law(
 /// therefore stays `BackendDispatch`, where Dafny's Z3 already discharges
 /// the law via the sequence-length axiom (`|s + t| = |s| + |t|`) but the
 /// Lean side fell to a bare `sorry`. This Lean-only rung closes it
-/// without touching the IR strategy or the Dafny path.
+/// without touching the IR strategy.
 ///
 /// Mechanism: Aver's `String +` is the custom `HAdd String` instance
 /// (`⟨String.append⟩`); the prelude `rfl` lemma `String.add_eq_append :
