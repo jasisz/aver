@@ -83,12 +83,31 @@ for backend in $BACKENDS; do
     echo "entry_dfy=$dfy" >> "$results/dafny.status"
     echo "== dafny verify $(date -u +%T) ($(find "$out" -name '*.dfy' | wc -l) files, $(cat $(find "$out" -name '*.dfy') | wc -l) lines)"
     start=$(date +%s)
+    if [ -n "${DAFNY_PER_MODULE:-}" ]; then
+      # One dafny process per generated module, each under a memory cap, so
+      # a module whose verification exhausts memory is recorded as such
+      # instead of taking the runner (and every other module's verdict) down.
+      : > "$results/dafny.log"; : > "$results/dafny.verification.txt"; : > "$results/dafny.files"
+      for f in $(cd "$out" && find . -name '*.dfy' ! -name common.dfy | sed 's|^\./||' | sort); do
+        echo "== $f $(date -u +%T)"
+        (cd "$out" && sudo systemd-run --scope --quiet -p MemoryMax=12G -p MemorySwapMax=0 \
+            sudo -u "$USER" env PATH="$PATH" HOME="$HOME" \
+            timeout 30m dafny verify \
+            --verification-time-limit "$DAFNY_LIMIT" --cores "$DAFNY_CORES" \
+            --log-format "text;LogFileName=$work/one.txt" "$f" > "$work/one.log" 2>&1)
+        ec=$?
+        cat "$work/one.log" >> "$results/dafny.log"; cat "$work/one.txt" >> "$results/dafny.verification.txt" 2>/dev/null; rm -f "$work/one.txt"
+        echo "$f exit=$ec $(grep -o 'finished with.*' "$work/one.log" | head -1)" | tee -a "$results/dafny.files"
+      done
+      true
+    else
     (cd "$out" && timeout "$DAFNY_TIMEOUT" dafny verify --verify-included-files \
         --verification-time-limit "$DAFNY_LIMIT" --cores "$DAFNY_CORES" \
         --log-format "text;LogFileName=$results/dafny.verification.txt" \
         --log-format "csv;LogFileName=$results/dafny.verification.csv" \
         "$dfy" 2>&1 | tee "$results/dafny.log" | grep --line-buffered -E "Error:|finished with" | cut -c1-200
         exit "${PIPESTATUS[0]}")
+    fi
     echo "verify_exit=$?" >> "$results/dafny.status"
     echo "verify_seconds=$(( $(date +%s) - start ))" >> "$results/dafny.status"
     tar -C "$out" -czf "$results/dafny.export.tgz" .

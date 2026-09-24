@@ -133,7 +133,7 @@ jobs:
             btc-*-interp)
               # Four parallel Z3 processes on this cone exhausted the runner's
               # memory (the runner was shut down mid-run); verify two at a time.
-              export DAFNY_CORES=2
+              export DAFNY_CORES=2 DAFNY_PER_MODULE=1
               root=btc; entry=btc/domain/interp.av ;;
             btc-pel-laws)
               # The #349 reshape names a parameter `fuel`; the Dafny fuel

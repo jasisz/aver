@@ -231,9 +231,13 @@ def dafny_side(d):
     res["status"] = read(os.path.join(d, "dafny.status")).strip().replace("\n", " ")
     log = read(os.path.join(d, "dafny.log"))
     res["log_tail"] = log[-3000:]
-    fin = re.search(r"Dafny program verifier finished with (\d+) verified, (\d+) errors?(?:, (\d+) time outs?)?", log)
-    res["finished"] = fin.group(0) if fin else None
-    res["ran"] = bool(fin)
+    fins = re.findall(r"Dafny program verifier finished with [^\n]*", log)
+    fin = bool(fins)
+    res["finished"] = " | ".join(fins[:3]) + (f" (+{len(fins) - 3} more)" if len(fins) > 3 else "") if fins else None
+    res["ran"] = fin
+    per_file = read(os.path.join(d, "dafny.files")).strip()
+    if per_file:
+        res["notes"].append("per-module runs: " + per_file.replace("\n", "; ")[:600])
     files = tar_texts(os.path.join(d, "dafny.export.tgz"), ".dfy")
     decls = []
     comments = []
@@ -368,6 +372,10 @@ def dafny_status(law, dafny):
         oc = dafny["outcomes"].get(x["name"])
         if oc and oc != "Correct" and not dafny["_errs"].get(k):
             own.append((x["name"], f"outcome {oc}"))
+    unverified = [x["name"] for x in group if x["name"] not in dafny["outcomes"]]
+    if unverified and not own:
+        return "no_run", "no verification outcome for " + ",".join(unverified[:3]) + \
+            " (" + "; ".join(dafny["notes"])[:120] + ")"
     if own:
         classes = sorted({classify_dafny_error(m) for _, m in own})
         st = "timeout" if set(classes) <= {"timeout", "out_of_resource"} else "failed"
@@ -376,8 +384,11 @@ def dafny_status(law, dafny):
     for x in group:
         full |= dafny["cone"]((x["module"], x["name"]))
     bad = [k for k in full if dafny["_errs"].get(k) and dafny["index"][k]["kind"] != "method"]
+    bad += [k for k in full if dafny["index"][k]["kind"] == "lemma" and k[1] not in dafny["outcomes"]
+            and k not in bad]
     if bad:
-        why = "; ".join(f"{k[0]}.{k[1]}: {classify_dafny_error(dafny['_errs'][k][0])}" for k in sorted(bad)[:4])
+        why = "; ".join(f"{k[0]}.{k[1]}: " + (classify_dafny_error(dafny['_errs'][k][0]) if dafny['_errs'].get(k) else "not verified")
+                        for k in sorted(bad)[:4])
         return "failed_supplier", why[:400]
     ax = [k for k in full if dafny["index"][k]["axiom"]]
     if ax:
