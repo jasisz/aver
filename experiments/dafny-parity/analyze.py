@@ -465,6 +465,23 @@ def main():
     for tgt, c in summary_rows:
         md.append(f'| {tgt} | {c["total"]} | {c["lean_universal"]} | {c["dafny_universal"]} | {c["both"]} | '
                   f'{c["lean_only"]} | {c["dafny_only"]} | {c["neither"]} |')
+    # Unique laws of the corpus at main: every target except the PR head, the
+    # proof-entry-laws branch and the what-if runs; a law reached from two
+    # entries (btc interp and laws share ScriptParse) counts once.
+    uniq = {}
+    for tgt, r in all_rows:
+        if tgt.startswith(("btc-pr-", "btc-pel-", "k5cite", "k5slow", "btcslow")):
+            continue
+        uniq.setdefault(r["law"], r)
+    cu = Counter()
+    for r in uniq.values():
+        lu, du = r["lean"] == "universal", r["dafny"] == "universal"
+        cu["total"] += 1; cu["lean_universal"] += lu; cu["dafny_universal"] += du
+        cu["both"] += lu and du; cu["lean_only"] += lu and not du
+        cu["dafny_only"] += du and not lu; cu["neither"] += not lu and not du
+    report["corpus_unique_at_main"] = dict(cu)
+    md.append(f'| **corpus at main, unique laws** | {cu["total"]} | {cu["lean_universal"]} | {cu["dafny_universal"]} | '
+              f'{cu["both"]} | {cu["lean_only"]} | {cu["dafny_only"]} | {cu["neither"]} |')
     md += ["", "## Status counts", "", "| target | Lean | Dafny |", "|---|---|---|"]
     for tgt, t in report["targets"].items():
         md.append(f'| {tgt} | {t["lean_counts"]} | {t["dafny_counts"]} |')
