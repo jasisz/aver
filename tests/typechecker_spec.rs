@@ -5515,9 +5515,10 @@ fn law_template_typing_keeps_sample_literal_discharge_independent() {
 // ---------------------------------------------------------------------------
 
 /// The project these sources belong to: it declares the `Say` capability and
-/// marks it `answer = "Said"` in its `aver.toml`, which is what makes a call
-/// to `Say.readLine` a stop at all. A stop is a call to a capability the
-/// manifest says the program answers, so a lowering test needs a manifest.
+/// the `Said` module whose header says `answers [Say]`. A source that lists
+/// `Said` in its `depends` answers `Say`, which is what makes a call to
+/// `Say.readLine` a stop at all. Without it `Say` runs in place and the only
+/// stop left is a self tail call.
 fn yield_unit_root() -> String {
     format!(
         "{}/tests/fixtures/yield_continuations",
@@ -5544,7 +5545,7 @@ fn assert_front_error_containing(src: &str, snippet: &str) {
 }
 
 const YIELD_MODULE: &str =
-    "module Demo\n    depends [Say]\n    effects [Say.print, Say.readLine, yield]\n\n";
+    "module Demo\n    depends [Say, Said]\n    effects [Say.print, Say.readLine, yield]\n\n";
 
 const YIELD_LOOP: &str = r#"fn loop(seen: Int) -> Int
     ? "Reads lines until the reader fails, counting them."
@@ -5891,7 +5892,7 @@ fn a_capability_namespace_and_yield_stay_legal_bare_effects() {
 
 #[test]
 fn a_shadowing_arm_does_not_type_a_live_variables_state_field() {
-    let src = "module Demo\n    depends [Say]\n    effects [Say.print, yield]\n\nfn probe(s: Int, v: Result<String, String>) -> Int\n    ? \"Stops, then reads s only in the arm that does not rebind it.\"\n    ! [Say.print, yield]\n    Say.print(\"go\")\n    match v\n        Result.Ok(s) -> String.len(s)\n        Result.Err(_) -> s\n";
+    let src = "module Demo\n    depends [Say, Said]\n    effects [Say.print, yield]\n\nfn probe(s: Int, v: Result<String, String>) -> Int\n    ? \"Stops, then reads s only in the arm that does not rebind it.\"\n    ! [Say.print, yield]\n    Say.print(\"go\")\n    match v\n        Result.Ok(s) -> String.len(s)\n        Result.Err(_) -> s\n";
     let errs = front_errors(src);
     assert_eq!(
         errs.len(),
