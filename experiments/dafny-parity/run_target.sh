@@ -74,6 +74,9 @@ for backend in $BACKENDS; do
     echo "== dafny export $(date -u +%T)"
     "$AVER" proof "$entry" --module-root "$root" --backend dafny -o "$out" > "$results/dafny.export.log" 2>&1
     echo "export_exit=$?" > "$results/dafny.status"
+    if [ -n "${DAFNY_PATCH:-}" ]; then
+      find "$out" -name '*.dfy' -print0 | xargs -0 -n1 python3 "$DAFNY_PATCH" | tee "$results/dafny.patch.log"
+    fi
     mod="$(grep -m1 '^module ' "$entry" | awk '{print $2}')"
     dfy="$mod.dfy"
     [ -f "$out/$dfy" ] || dfy="$(cd "$out" && ls *.dfy 2>/dev/null | grep -v '^common.dfy$' | head -1)"

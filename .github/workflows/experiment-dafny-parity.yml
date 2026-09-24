@@ -49,7 +49,7 @@ jobs:
       fail-fast: false
       matrix:
         backend: [lean, dafny]
-        target: ${{ fromJSON((inputs.targets != '' && inputs.targets != 'none') && inputs.targets || '["k5_fdiv","payment_ops","workflow_engine","durable_promise","btc-main-interp","btc-main-laws","btc-pel-laws","btc-pr-interp","btc-pr-laws","btc-probe"]') }}
+        target: ${{ fromJSON((inputs.targets != '' && inputs.targets != 'none') && inputs.targets || '["k5_fdiv","payment_ops","workflow_engine","durable_promise","btc-main-interp","btc-main-laws","btc-pel-laws","btc-pr-interp","btc-pr-laws","btc-probe","k5cite"]') }}
     steps:
       - uses: actions/checkout@v5
 
@@ -118,6 +118,13 @@ jobs:
           R="$RUNNER_TEMP/results/$T-$BACKENDS"
           case "$T" in
             k5_fdiv)
+              cp $E/entries/k5_lawsentry.av projects/k5_fdiv/lawsentry.av
+              root=projects/k5_fdiv; entry=projects/k5_fdiv/lawsentry.av ;;
+            k5cite)
+              # What-if: the K5 export with every `forall` citation replaced by
+              # direct lemma calls (whatif/patch_forall_citations.py). Dafny only.
+              [ "$BACKENDS" = lean ] && { mkdir -p "$R"; echo skipped > "$R/skipped"; exit 0; }
+              export DAFNY_PATCH="$PWD/$E/whatif/patch_forall_citations.py"
               cp $E/entries/k5_lawsentry.av projects/k5_fdiv/lawsentry.av
               root=projects/k5_fdiv; entry=projects/k5_fdiv/lawsentry.av ;;
             payment_ops)     root=projects/payment_ops; entry=projects/payment_ops/infra/codec.av ;;

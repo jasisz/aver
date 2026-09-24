@@ -150,8 +150,10 @@ def lean_merged(law, lean):
     if iso is None or any(s.endswith(label_tail) and s.split(".")[-3:-2] in ([], [law["module"].split(".")[-1]])
                           for s in lean["stripped"]):
         st, det = lean_status(law, lean)
-        if iso is not None and st in ("universal", "bounded", "bounded-domain"):
-            st, det = "failed", "broke the whole Lean build (hard error); " + det
+        if iso is not None and st in ("universal", "bounded", "bounded-domain", "failed", "timeout"):
+            hb = "heartbeat" in det or "timeout" in det
+            st = "timeout" if hb else "failed"
+            det = "hard error that broke the whole Lean build; " + det
         return st, det
     st, det = lean_status(law, iso)
     return st, ("isolation pass: " + det) if det else "isolation pass"
@@ -393,7 +395,7 @@ def main():
     targets = defaultdict(dict)
     for dn in sorted(os.listdir(root)):
         p = os.path.join(root, dn)
-        if not os.path.isdir(p):
+        if not os.path.isdir(p) or os.path.exists(os.path.join(p, "skipped")):
             continue
         tgt, _, backend = dn.rpartition("-")
         targets[tgt][backend] = p
