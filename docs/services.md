@@ -16,7 +16,7 @@ fn validate(payload: List<Int>) -> Result<Bytes, String>
     Bytes.fromList(payload)
 ```
 
-`Bytes` is an opaque refinement over `List<Int>` whose values are all in `0..=255`. `Digest32`, imported from `Crypto.Digest32`, is a nested refinement that requires exactly 32 bytes. Both are ordinary Aver types and keep their invariants in Lean and Dafny proof export.
+`Bytes` is an opaque refinement over `List<Int>` whose values are all in `0..=255`. `Digest32`, imported from `Crypto.Digest32`, is a nested refinement that requires exactly 32 bytes. Both are ordinary Aver types and keep their invariants in the Lean proof export.
 
 `Bytes.fromList` cannot fail when its argument is a list literal whose every element is an integer literal in `0..=255`. Such a call types as plain `Bytes`, with no `?` and no `match`:
 
@@ -642,7 +642,7 @@ Contract source: `stdlib/capabilities/process.av`. The native VM, generated Rust
 |---|---|---|
 | `Process.stopRequested` | `() -> Bool` | Cooperative stop observation; once one call returns `true`, every later call on the same branch returns `true` |
 
-The native handler only changes the flag from `false` to `true` and never resets it. Oracle hostile profiles obey the same law across calls, and Lean and Dafny receive it as a capability invariant. Poll at a point where cleanup is safe: the operation does not interrupt a blocking effect or run a shutdown hook. The handler is installed by the first `Process.stopRequested` call; before that, SIGINT and SIGTERM end the process the usual way. Once it is installed, a `Wait.poll` on the VM, in generated Rust and on the wasm-gc native host notices a stop request within about 100 ms and returns the keys that are ready, possibly none, instead of sleeping out its timeout. A generated loop observes the flag at the start of its next turn, so a run parked on a long deadline stops within that moment too. The JavaScript adapter's `stop()` ends a wait at once. `examples/formal/process_stop_requested.av` has a recursive loop checked against `stopAfterThree`.
+The native handler only changes the flag from `false` to `true` and never resets it. Oracle hostile profiles obey the same law across calls, and the Lean export receives it as a capability invariant. Poll at a point where cleanup is safe: the operation does not interrupt a blocking effect or run a shutdown hook. The handler is installed by the first `Process.stopRequested` call; before that, SIGINT and SIGTERM end the process the usual way. Once it is installed, a `Wait.poll` on the VM, in generated Rust and on the wasm-gc native host notices a stop request within about 100 ms and returns the keys that are ready, possibly none, instead of sleeping out its timeout. A generated loop observes the flag at the start of its next turn, so a run parked on a long deadline stops within that moment too. The JavaScript adapter's `stop()` ends a wait at once. `examples/formal/process_stop_requested.av` has a recursive loop checked against `stopAfterThree`.
 
 The first call takes SIGINT and SIGTERM away from their default action for the rest of the process. From then on the two signals raise the flag and end nothing. The program ends when it returns, so a program that stops polling the flag holds its terminal until SIGKILL. Ctrl-C therefore gives the shell prompt back only once the program has answered the request. This applies wherever that handler is installed: the native VM, generated Rust, the embedded wasm-gc wasmtime host, and the cached provider host that runs the programs of a project with `[providers]`.
 

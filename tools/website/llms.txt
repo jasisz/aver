@@ -8,7 +8,7 @@
 - crates.io: [aver-lang](https://crates.io/crates/aver-lang)
 - License: MIT
 - Written in: Rust
-- Backends: bytecode VM, Rust codegen, WASM, Lean 4 proof export, Dafny verification
+- Backends: bytecode VM, Rust codegen, WASM, Lean 4 proof export
 
 ## Before you write Aver
 
@@ -542,7 +542,7 @@ fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
                 [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
 ```
 
-You can `verify` the generated names, match on them, and export them to Lean and Dafny like any other item. A local cases-form `verify process` can also call its source name with exact `given` stubs for every request operation. That test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet, so keep proof laws on the generated protocol. A module that exposes a yielding function exposes its protocol in its place, so an importer writes `Looper.__loopStart(...)`.
+You can `verify` the generated names, match on them, and export them to Lean like any other item. A local cases-form `verify process` can also call its source name with exact `given` stubs for every request operation. That test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet, so keep proof laws on the generated protocol. A module that exposes a yielding function exposes its protocol in its place, so an importer writes `Looper.__loopStart(...)`.
 
 ### Builtins and namespaces
 
@@ -737,7 +737,6 @@ Avoid:
 - [Independence (`?!`)](https://github.com/jasisz/aver/blob/main/docs/independence.md): parallel products
 - [Oracle](https://github.com/jasisz/aver/blob/main/docs/oracle.md): `verify <fn> trace`, `given` stubs, `--hostile`
 - [Lean proofs](https://github.com/jasisz/aver/blob/main/docs/lean.md): verify blocks to Lean 4
-- [Dafny verification](https://github.com/jasisz/aver/blob/main/docs/dafny.md): verify laws to Dafny / Z3
 - [Effect and wasm-gc support](https://github.com/jasisz/aver/blob/main/docs/effects.md): browser and host surface
 - [WASI 0.2 target](https://github.com/jasisz/aver/blob/main/docs/wasip2.md): Component Model deployment
 - [Toolchain reference (`llms-full.txt`)](https://averlang.dev/llms-full.txt): `aver run`, `verify`, `audit`, `format`, `context`, `compile`, `proof`, `replay`

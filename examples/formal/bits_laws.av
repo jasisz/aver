@@ -17,11 +17,10 @@ module BitsLaws
         "  - a left shift is multiplication — `Bits.shiftLeft(x, n)` is `x * 2^n`"
         "    over the integers, with no truncation at any width."
         ""
-        "Both provers DEFINE these rather than assuming them: Lean's `AverBits`"
-        "prelude builds the pointwise operations from `Nat` bitwise ops on the"
-        "two's-complement magnitude, and Dafny's recurses on the binary"
-        "expansion. Neither models them as opaque, and neither reaches for a"
-        "fixed-width bit-vector — an `Int` here is still ℤ."
+        "The proof export DEFINES these rather than assuming them: Lean's"
+        "`AverBits` prelude builds the pointwise operations from `Nat` bitwise"
+        "ops on the two's-complement magnitude. It does not model them as"
+        "opaque or reach for a fixed-width bit-vector — an `Int` here is still ℤ."
     effects []
 
 fn complement(x: Int) -> Int

@@ -1989,7 +1989,7 @@ function downloadProject() {
 
 document.querySelector("[data-download]")?.addEventListener("click", downloadProject);
 
-// ── Download dropdown: aver / wasm / rust / lean / dafny ────────────
+// ── Download dropdown: aver / wasm / rust / lean ────────────────────
 //
 // Toggle button next to ⬇ Download opens a small menu; each entry
 // runs the relevant compile/proof binding through the in-browser
@@ -2071,9 +2071,8 @@ async function downloadAs(format) {
     const fnName = {
         rust:  { single: "aver_compile_rust", project: "aver_compile_rust_project" },
         lean:  { single: "aver_proof_lean",   project: "aver_proof_lean_project" },
-        dafny: { single: "aver_proof_dafny",  project: "aver_proof_dafny_project" },
     }[format];
-    const label = { rust: "Rust", lean: "Lean", dafny: "Dafny" }[format];
+    const label = { rust: "Rust", lean: "Lean" }[format];
     if (!fnName) return;
 
     try {

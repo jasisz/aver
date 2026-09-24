@@ -8,7 +8,7 @@
 - crates.io: [aver-lang](https://crates.io/crates/aver-lang)
 - License: MIT
 - Written in: Rust
-- Backends: bytecode VM, Rust codegen, WASM, Lean 4 proof export, Dafny verification
+- Backends: bytecode VM, Rust codegen, WASM, Lean 4 proof export
 
 ## Before you write Aver
 

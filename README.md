@@ -8,7 +8,7 @@
 
 # Aver
 
-Aver is a statically typed language designed for AI to write and humans to review. It has a bytecode VM for running code, a Rust backend for deployment, a WASM backend for browser and embedded targets, Lean proof export for pure logic and classified effectful laws, and Dafny verification that checks laws automatically through Z3.
+Aver is a statically typed language designed for AI to write and humans to review. It has a bytecode VM for running code, a Rust backend for deployment, a WASM backend for browser and embedded targets, and Lean proof export for pure logic and classified effectful laws.
 
 An AI reviewer's opinion of generated code gets cheaper every year. A certificate checked by the Lean kernel keeps its price. Aver source carries proof obligations, and a compiled wasm-gc artifact can ship with a sidecar certificate bound to its exact bytes. The Lean kernel signs off on those guarantees, so they do not rest on someone having looked at the code once. Generated code already arrives faster than anyone can read it, and the certificate is what stays useful when spot-checks can no longer keep up.
 
@@ -20,7 +20,7 @@ Readability comes second, and it still matters. The risky part of AI-written cod
 - selected effectful behavior can be verified with explicit stubs and trace assertions
 - effectful runs can be recorded and replayed deterministically
 
-The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) is documented in [docs/cli.md](docs/cli.md). The backends have their own pages: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/dafny.md](docs/dafny.md), [docs/effects.md](docs/effects.md), [docs/wasip2.md](docs/wasip2.md) and [docs/rust.md](docs/rust.md). Compiled wasm-gc modules and wasip2 components can carry a machine-checkable certificate of what their exports compute; see [docs/certification.md](docs/certification.md).
+The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) is documented in [docs/cli.md](docs/cli.md). The backends have their own pages: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/effects.md](docs/effects.md), [docs/wasip2.md](docs/wasip2.md) and [docs/rust.md](docs/rust.md). Compiled wasm-gc modules and wasip2 components can carry a machine-checkable certificate of what their exports compute; see [docs/certification.md](docs/certification.md).
 
 Aver is optimized for AI to generate code that humans can inspect, constrain, test and ship. Typing it by hand all day is not the goal.
 
@@ -555,12 +555,11 @@ For namespaces, effectful services, and the standard library, see [docs/services
 
 ## Execution and proof backends
 
-Aver has four backend paths:
+Aver has three backend paths:
 
 - VM-based workflow for `run`, `check`, `verify`, `replay`, and `context`
 - Rust compilation for generating a native Cargo project with `aver compile`
 - Lean proof export for pure core logic, Oracle-lifted classified effectful laws, and `verify` / `verify law` obligations with `aver proof`. Supported law shapes become real universal theorems. The rest stay as executable samples or checked-domain theorems and are never presented as proofs.
-- Dafny verification for automated `verify law` checking via Z3 with `aver proof --backend dafny`
 
 The VM and generated Rust share runtime behavior through `aver-rt`. List teardown, deep `append -> match` paths and string helpers such as `String.slice` live there on purpose, so one runtime fix improves both execution paths.
 
@@ -580,23 +579,11 @@ cd out
 lake build
 ```
 
-Typical Dafny flow:
-
-```bash
-aver proof examples/data/fibonacci.av --backend dafny -o out/
-cd out
-dafny verify fibonacci.dfy
-```
-
-Rust is the deployment backend. Lean and Dafny are complementary proof backends:
-
-- **Lean** handles `verify` cases via `native_decide` (100% success on concrete examples) and supported `verify law` shapes via hand-written tactic strategies
-- **Dafny** emits `verify law` blocks as lemmas and lets Z3 attempt automated proofs. It needs no tactic authoring but is limited on concrete computation
+Rust is the deployment backend. Lean is the proof backend: it handles `verify` cases via `native_decide` and supported `verify law` shapes via tactic strategies that the Lean kernel checks.
 
 For backend-specific details, see:
 - [docs/rust.md](docs/rust.md) for Cargo generation and deployment flow
 - [docs/lean.md](docs/lean.md) for proof export, formal-verification path, and current Lean examples
-- [docs/dafny.md](docs/dafny.md) for Dafny verification and Z3-powered law checking
 - [docs/oracle.md](docs/oracle.md) for Oracle laws, classified-effect stubs, and trace assertions
 
 ---
@@ -680,7 +667,6 @@ See `examples/` and `projects/` for the full set. For repository self-documentat
 | [docs/effects.md](docs/effects.md) | Effect support across the VM, wasm-gc, and wasip2 targets |
 | [docs/wasip2.md](docs/wasip2.md) | WASI 0.2 / Component Model target and host compatibility |
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
-| [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
 | [docs/certification.md](docs/certification.md) | Artifact behavioral certificates: commands, guarantees, admitted families, and limits |
 | [docs/certification-architecture.md](docs/certification-architecture.md) | Certificate data flow, checker ownership, and trust boundary |
 | [docs/certificate-format.md](docs/certificate-format.md) | Normative certificate format reference for independent verifier reimplementors, with the trust inventory and the versioning and freeze policy |

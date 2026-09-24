@@ -1,6 +1,6 @@
 ---
 name: the-method-runner
-description: The Method proof-runner — mechanically splices a given set of helper laws into a /tmp copy of a task, runs the Aver toolchain once, and returns ONLY the Aver-level verdict (universal/sorries + which helper failed its bounded check). Never interprets or surfaces Lean/Dafny. Invoked by the the-method workflow.
+description: The Method proof-runner — mechanically splices a given set of helper laws into a /tmp copy of a task, runs the Aver toolchain once, and returns ONLY the Aver-level verdict (universal/sorries + which helper failed its bounded check). Never interprets or surfaces Lean. Invoked by the the-method workflow.
 tools: Read, Write, Edit, Bash
 ---
 

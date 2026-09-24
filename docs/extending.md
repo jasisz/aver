@@ -6,7 +6,7 @@
 2. Add a match arm in the `keyword()` function in `src/lexer.rs`
 3. Add the corresponding AST node(s) to `src/ast.rs` if needed
 4. Add a `parse_*` method in the appropriate `src/parser/*.rs` submodule and call it from `parse_top_level()` in `src/parser/module.rs`
-5. Resolve it in `src/ir/hir/resolve.rs`, lower it in `src/ir/mir/lower.rs`, and emit opcodes for it in `src/vm/compiler/mir.rs`; the other backends (`src/codegen/rust/`, `src/codegen/wasm_gc/`, `src/codegen/lean/`, `src/codegen/dafny/`) need their own handling
+5. Resolve it in `src/ir/hir/resolve.rs`, lower it in `src/ir/mir/lower.rs`, and emit opcodes for it in `src/vm/compiler/mir.rs`; the other backends (`src/codegen/rust/`, `src/codegen/wasm_gc/`, `src/codegen/lean/`) need their own handling
 
 **Example: adding `maintain` (goal-based looping).**
 
@@ -52,7 +52,7 @@ All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`).
    ```
 2. Add the row to the `vm_builtins!` table in `src/vm/builtin.rs` and the matching arm in `VmBuiltin::invoke_nv`. The table generates `VmBuiltin::ALL`, which `bootstrap_core_symbols` in `src/vm/compiler/mod.rs` reads for namespace membership.
 3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding sigs section.
-4. For a pure function, add the `codegen_builtins!` row in `src/codegen/builtins.rs`; the exhaustive matches then force the Lean (`src/codegen/lean/builtins.rs`) and Dafny (`src/codegen/dafny/expr.rs`) arms. Effectful operations have no row there (`recognize_builtin` returns `None` for services).
+4. For a pure function, add the `codegen_builtins!` row in `src/codegen/builtins.rs`; the exhaustive match then forces the Lean (`src/codegen/lean/builtins.rs`) arm. Effectful operations have no row there (`recognize_builtin` returns `None` for services).
 5. For a pure function, add the Rust arm in `src/codegen/rust/from_mir.rs` and the wasm-gc lowering in `src/codegen/wasm_gc` (`builtins/mod.rs` plus `body/from_mir/builtins.rs`). An effectful operation instead gets its Rust emission in `src/codegen/rust/builtins.rs`, an `EffectName` row in `src/codegen/wasm_gc/effects.rs` (plus its wasip2 lowering when the target supports it), and the matching `(module, field)` entry in `WASM_GC_CAPABILITIES` in `aver-cert/src/format.rs`. A test in `effects.rs` fails until both lists agree.
 6. Document the function in `docs/services.md`.
 

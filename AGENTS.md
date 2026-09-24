@@ -253,7 +253,7 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 2. Add a match arm in the `keyword()` function in `src/lexer.rs`
 3. Add the corresponding AST node(s) to `src/ast.rs` if needed
 4. Add a `parse_*` method in the appropriate `src/parser/*.rs` submodule and call it from `parse_top_level()` in `module.rs`
-5. Resolve it in `src/ir/hir/resolve.rs`, lower it in `src/ir/mir/lower.rs`, and emit opcodes for it in `src/vm/compiler/mir.rs`; the other backends (`src/codegen/rust/`, `src/codegen/wasm_gc/`, `src/codegen/lean/`, `src/codegen/dafny/`) need their own handling
+5. Resolve it in `src/ir/hir/resolve.rs`, lower it in `src/ir/mir/lower.rs`, and emit opcodes for it in `src/vm/compiler/mir.rs`; the other backends (`src/codegen/rust/`, `src/codegen/wasm_gc/`, `src/codegen/lean/`) need their own handling
 
 ### How to add a new namespace function
 
@@ -267,7 +267,7 @@ To add a pure function to an existing builtin namespace:
    ```
 2. Add the row to the `vm_builtins!` table in `src/vm/builtin.rs` and the matching arm in `VmBuiltin::invoke_nv`.
 3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding sigs section.
-4. Add the `codegen_builtins!` row in `src/codegen/builtins.rs`; the exhaustive matches then force the Lean (`src/codegen/lean/builtins.rs`) and Dafny (`src/codegen/dafny/expr.rs`) arms.
+4. Add the `codegen_builtins!` row in `src/codegen/builtins.rs`; the exhaustive match then forces the Lean (`src/codegen/lean/builtins.rs`) arm.
 5. Add the Rust arm in `src/codegen/rust/from_mir.rs` and the wasm-gc lowering in `src/codegen/wasm_gc` (`builtins/mod.rs` plus `body/from_mir/builtins.rs`).
 6. Document the function in [docs/services.md](docs/services.md).
 

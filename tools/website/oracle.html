@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <title>The randomness paradox | Aver</title>
-    <meta name="description" content="A technical note that follows one Aver Oracle law through declared verification, hostile profiles, Lean export and Dafny verification.">
+    <meta name="description" content="A technical note that follows one Aver Oracle law through declared verification, hostile profiles and Lean export.">
     <meta property="og:type" content="article">
     <meta property="og:title" content="The randomness paradox">
     <meta property="og:description" content="One Aver Oracle law, checked as a declared sample, under hostile profiles, and through both proof exporters.">
@@ -135,21 +135,10 @@ Summary: 3/6 passed | 3 failed</code></pre>
                         <h3>Lean export</h3>
                         <span class="evidence-verdict is-neutral">BUILD PASS</span>
                     </header>
-                    <p class="evidence-command"><code>aver proof examples/formal/randomness_paradox.av --backend lean --verify-mode auto --check</code></p>
+                    <p class="evidence-command"><code>aver proof examples/formal/randomness_paradox.av --verify-mode auto --check</code></p>
                     <pre class="article-code"><code>build:      passed
 sorries:    0
 universal:  no</code></pre>
-                </article>
-
-                <article class="evidence-panel">
-                    <header class="evidence-panel-header">
-                        <h3>Dafny export</h3>
-                        <span class="evidence-verdict is-fail">GATE FAIL</span>
-                    </header>
-                    <p class="evidence-command"><code>aver proof examples/formal/randomness_paradox.av --backend dafny --check</code></p>
-                    <pre class="article-code"><code>Dafny:      2 verified, 0 errors
-omitted:    1 universal obligation
-proof gate: failed</code></pre>
                 </article>
             </div>
         </section>
@@ -207,17 +196,6 @@ proof gate: failed</code></pre>
                 field says whether every law in the export got a universal
                 theorem checked by the kernel.
             </p>
-
-            <h3>Dafny</h3>
-            <p>
-                Dafny reports <strong>2 verified, 0 errors</strong> for the
-                declarations that were emitted. The universal obligation for
-                this law is left out because the claim cannot be proved. Aver
-                counts the omission separately, and the strict proof gate
-                fails with <strong>1 omitted</strong>. Dafny's error count only
-                covers what was emitted. The gate is what accounts for the
-                omitted obligation.
-            </p>
         </section>
 
         <section class="article-section" id="reproduce">
@@ -230,13 +208,9 @@ aver verify examples/formal/randomness_paradox.av
 aver verify --hostile examples/formal/randomness_paradox.av
 
 aver proof examples/formal/randomness_paradox.av \
-    --backend lean --verify-mode auto --check -o out/randomness-lean
-
-aver proof examples/formal/randomness_paradox.av \
-    --backend dafny --check -o out/randomness-dafny</code></pre>
+    --verify-mode auto --check -o out/randomness-lean</code></pre>
             <p>
-                Lean checking requires Elan and the pinned Lean toolchain. Dafny
-                checking requires Dafny 4.x with Z3. The
+                Lean checking requires Elan and the pinned Lean toolchain. The
                 <a href="https://github.com/jasisz/aver/blob/main/docs/oracle.md">Oracle guide</a>
                 covers classified effects, hostile profiles, trace laws and
                 proof lifting.

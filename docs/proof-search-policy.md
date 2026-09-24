@@ -3,22 +3,16 @@
 Source lowering and automatic search now have separate entry points.
 `proof_lower::lower` keeps source claims, premises, dependencies and induction
 arguments as written. `proof_search::populate` can add concrete applications of
-earlier laws, and both Lean and Dafny check those applications. Its
+earlier laws, and the Lean export checks those applications. Its
 `ApplicationSearchBudget` is explicit, and its report records how many
 applications it made and which steps hit a resource limit. Running search again
 replaces its earlier suggestions. A zero budget removes them and leaves the
 source obligations alone.
 
-Dafny's fixed-count unfolding policy now lives inside the backend, and the old
-`LawUnfolding.depth` field is gone from ProofIR. Budget values and supported
-source shapes are the same as before. Moving the policy does not make it
-complete, and Lean does not share it.
-
 The experimental acyclic-reversal switch from the earlier draft of #1324 has
 been withdrawn. The list library still checks the general reverse/append and
 double-reversal lemmas, which are tested separately with true and false claims.
-The reverse examples below stay as source-level diagnostic inputs. This change
-no longer claims that Dafny proves them.
+The reverse examples below stay as source-level diagnostic inputs.
 
 ## Alias and import follow-up
 
@@ -33,7 +27,7 @@ it reduces the original lets.
 Concrete application search now accepts exported ordinary suppliers from earlier
 dependency modules, in addition to earlier laws in the same module. Module order
 and visibility are checked separately from ProofIR's entry-first storage order.
-Both emitters keep canonical function IDs and apply their existing gates for
+The emitter keeps canonical function IDs and applies its existing gates for
 admitting universal statements. Lean builds its definition and dependency
 citation sets from the resolved ProofIR cone, so an unrelated local `read`
 cannot stand in for `Reader.read`.
@@ -49,8 +43,9 @@ backend-specific guided induction analyses.
 On 2026-09-09 the same seven-source matrix was run again with compiler SHA-256
 `338f1c3583f5fdd4a5c406b624835f4402fc58f1325ac9bb025714eaf2c4f51d`.
 All three laws in `roundtrip_alias` and in `roundtrip_import` now prove on both
-backends. The other ten rows keep their earlier pass/open status, including the
-two open Dafny reversal cases. Every source hash matches the after-run of the
+backends of that time (Lean and the since-removed Dafny backend). The other ten
+rows keep their earlier pass/open status, including the two open Dafny reversal
+cases. Every source hash matches the after-run of the
 original checkpoint below. The binary did not change during the run and no outer
 timeout fired. Passing here means the same strict source-law count under the
 same checker budgets, not only a successful process exit.
@@ -66,13 +61,13 @@ even when their names overlap. For now these plans cover a single recursive path
 in a function owned by the law's module. Other shapes use the existing backend
 strategies.
 
-Dafny turns these plans into checked recursive lemma calls. Lean uses the same
-source call and measure to pick its induction. Both backends still prove the
-complete obligation. In laws that use `List.take`, Dafny also checks the general
-cons equation for it locally. The builtin's definition is unchanged, no axioms
-are added, and the equation stays out of unrelated SMT queries.
+Lean uses the plan's source call and measure to pick its induction, and still
+proves the complete obligation.
 
 ## Original checkpoint comparison (#1324)
+
+These measurements predate the removal of the Dafny backend; its rows are kept
+as the record of that run.
 
 One local run per binary on 2026-09-09, with two checker invocations running at
 once and the production checker budgets unchanged. The 90-second outer timeout
@@ -136,7 +131,7 @@ the measurement finished. For proof credit, read each row's `strict_passed`.
 
 This checkpoint separates the recent policies. Older ProofIR strategies and the
 backend tactic portfolios still need review. Guided list and quotient analysis
-still carry source-shape restrictions local to each backend. The plan is to move
+still carry source-shape restrictions local to the backend. The plan is to move
 toward shared source-scope analysis and dependency identity, using these
 refactoring cases as controls. Adding solver triggers or unfold instructions to
 the author's Aver proof does not fix that analysis gap.

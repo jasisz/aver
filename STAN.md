@@ -9,8 +9,7 @@ committed proof manifests > module doc-comments (`.av` intents) > `projects/*/RE
 ## What this project is
 
 Aver is a small, total, verification-first language. Every `law` in a module is judged by
-two independent backends — the Lean 4 kernel (core only, no Mathlib) and Dafny/Z3 — and
-credit is recorded per law in a committed `proof_manifest.json`: `universal` (a real
+the Lean 4 kernel (core only, no Mathlib), and credit is recorded per law in a committed `proof_manifest.json`: `universal` (a real
 ∀-theorem, axiom-whitelisted), `bounded`/`sampled` (honestly weaker tiers), and an optional
 `credit` marker distinguishing a labeled hand-written proof from a fully engine-derived
 one. The design bet: proofs are composed from previously proven laws by a small set of
@@ -32,7 +31,7 @@ the engine.
   documented next to the law in `domain/round.av`. It stays a labeled hand proof until a
   proposer exists that can introduce those intermediate terms.
 - `proof-corpus/` tracks external benchmark coverage (TIP); `tests/proof_spec` is the
-  behavioral gate for the proof pipeline (live Lean+Dafny in CI via the Proof workflow).
+  behavioral gate for the proof pipeline (live Lean in CI via the Proof workflow).
 
 ## How work happens here
 
@@ -40,10 +39,10 @@ the engine.
   by AI agents under written briefs with adversarial review; every substantive claim in a
   report must carry verbatim tool output. Failed attempts are recorded with their exact
   residuals — a documented negative result is a normal, valued outcome in this repo.
-- `aver proof <file> --backend lean --check --check-json` is the ground truth for proof
+- `aver proof <file> --check --check-json` is the ground truth for proof
   claims (use `--module-root projects/k5_fdiv` for the K5 corpus and remove any stale
-  `out/` directory first). The JSON reports sorries, hard build errors, and Dafny
-  timeouts separately — a green result means exactly what it says.
+  `out/` directory first). The JSON reports sorries and hard build errors
+  separately — a green result means exactly what it says.
 - The maintainer's working notes (plans, decision logs, research verdicts) live in a
   PRIVATE notes repository; the `prompts/` directory is intentionally gitignored here.
   This snapshot plus the K5 README plus commit messages are the public trail. If this
@@ -54,7 +53,7 @@ the engine.
 1. What is proven vs open in the K5 corpus? → K5 README stage table + manifests.
 2. Why does one rounding law have a hand-written proof? → measured engine limitation,
    documented at the law site; not a hidden shortcut (its manifest credit says so).
-3. What judges a proof? → two independent backends + an axiom whitelist; the manifest
+3. What judges a proof? → the Lean kernel + an axiom whitelist; the manifest
    is the record; nothing else grants credit.
 4. How do I check a claim myself? → the `aver proof --check` invocation above.
 5. Where did the plans go? → private notes by design; the public trail is this file,

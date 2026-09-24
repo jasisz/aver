@@ -11,8 +11,7 @@ target law now closes — looping until it closes or a budget runs out. The LLM 
 unbounded source of new lemmas; the judge keeps it sound.
 
 ## When to use
-- A `verify ... law` is open in Lean (often already provable by Z3/Dafny — then this kernel-
-  certifies it in Lean).
+- A `verify ... law` is open in Lean.
 - A goal that needs an auxiliary lemma the auto-prover can't find on its own (a missing
   homomorphism / associativity / distributivity / an equation relating subterms of the goal).
 
@@ -36,9 +35,7 @@ measurably the wrong hammer for FORM gaps (engine/executor procedures) — a pas
 2. **Driver check (syntactic, zero tokens).** A composite scrutinee (`match f(x)`),
    Nat-predecessor arithmetic, or higher-order (map/filter) in the goal's cone is a known
    executor-gap class; The Method will not fix it.
-3. **Closing-algebra check (per backend).** Int `+` closes on both backends; nonlinear Int `·`:
-   Lean has the order primitive, Z3 is native; user-ADT multiplication/distributivity on Dafny is
-   turbo-hard — do not grind it (route Lean-only with per-backend credit).
+3. **Closing-algebra check.** Int `+` closes; nonlinear Int `·` needs Lean's order primitive.
 
 ## Stop-losses (how to read repeated verdicts)
 
