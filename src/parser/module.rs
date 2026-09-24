@@ -18,6 +18,8 @@ impl Parser {
         let mut kind_line = None;
         let mut semantics = None;
         let mut semantics_line = None;
+        let mut answers = Vec::new();
+        let mut answers_line = None;
 
         if self.is_indent() {
             self.advance(); // consume INDENT
@@ -70,6 +72,16 @@ impl Parser {
                             _ => unreachable!(),
                         };
                     }
+                    // `answers [Wire]` — the capabilities this module answers
+                    // inside the turn. Contextual like `kind`: an ordinary
+                    // identifier everywhere else.
+                    TokenKind::Ident(s)
+                        if s == "answers" && matches!(&self.peek(1).kind, TokenKind::LBracket) =>
+                    {
+                        answers_line = Some(self.current().line);
+                        self.advance(); // consume 'answers'
+                        answers = self.parse_depends_list()?;
+                    }
                     TokenKind::Ident(s) if s == "semantics" => {
                         semantics_line = Some(self.current().line);
                         self.advance(); // consume 'semantics'
@@ -101,7 +113,7 @@ impl Parser {
                         ) =>
                     {
                         return Err(self.error(format!(
-                            "Unknown module header field, found {}. Allowed: intent, kind, semantics, depends, exposes, effects. \
+                            "Unknown module header field, found {}. Allowed: intent, kind, semantics, depends, exposes, effects, answers. \
                              If you meant a top-level binding, unindent it — bindings live at column 0, outside the header.",
                             self.current().kind
                         )));
@@ -136,6 +148,9 @@ impl Parser {
             semantics_line,
             yield_protocols: Vec::new(),
             yield_sources: Vec::new(),
+            answers,
+            answers_line,
+            seatings: Vec::new(),
         })
     }
 
@@ -173,6 +188,12 @@ impl Parser {
 
     pub(super) fn parse_depends(&mut self) -> Result<Vec<String>, ParseError> {
         self.expect_exact(&TokenKind::Depends)?;
+        self.parse_depends_list()
+    }
+
+    /// A bracketed list of possibly dotted module names, as `depends` and
+    /// `answers` write them.
+    pub(super) fn parse_depends_list(&mut self) -> Result<Vec<String>, ParseError> {
         self.expect_exact(&TokenKind::LBracket)?;
         let mut items = Vec::new();
 
@@ -224,5 +245,40 @@ impl Parser {
         }
 
         Ok(parts.join("."))
+    }
+
+    /// `process peer seated by Sockets.peers`. Contextual: `process`,
+    /// `seated` and `by` stay ordinary identifiers everywhere else.
+    pub(super) fn parse_process_seating(&mut self) -> Result<ProcessSeating, ParseError> {
+        let line = self.current().line;
+        self.advance(); // consume 'process'
+        let process = match self.current().kind.clone() {
+            TokenKind::Ident(name) => {
+                self.advance();
+                name
+            }
+            _ => {
+                return Err(self.error(format!(
+                    "Expected the name of a yielding function after 'process', found {}",
+                    self.current().kind
+                )));
+            }
+        };
+        for word in ["seated", "by"] {
+            if !matches!(&self.current().kind, TokenKind::Ident(s) if s == word) {
+                return Err(self.error(format!(
+                    "Expected 'seated by Module.function' after 'process {process}', found {}. A process declaration names the pure function of an answer module that lists the keys to seat '{process}' with, for example 'process {process} seated by Sockets.peers'",
+                    self.current().kind
+                )));
+            }
+            self.advance();
+        }
+        let by = self.parse_qualified_ident()?;
+        if !by.contains('.') {
+            return Err(self.error(format!(
+                "'process {process} seated by {by}' must name a function of an answer module, for example 'Sockets.{by}'"
+            )));
+        }
+        Ok(ProcessSeating { process, by, line })
     }
 }

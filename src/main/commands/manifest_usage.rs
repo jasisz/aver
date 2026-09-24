@@ -9,10 +9,9 @@ pub(super) fn collect(
     modules: &HashMap<String, ExposedModuleInfo>,
 ) -> HashMap<String, HashSet<String>> {
     let mut used = HashMap::new();
-    let Ok(Some(config)) = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))
-    else {
-        return used;
-    };
+    let config = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))
+        .ok()
+        .flatten();
     let targets: Vec<ImportTarget> = modules
         .values()
         .map(|info| ImportTarget {
@@ -21,48 +20,43 @@ pub(super) fn collect(
         })
         .collect();
     let mut names = HashSet::new();
-    if let Some(policies) = &config.run_policies {
-        names.extend([
-            policies.order.clone(),
-            policies.admit.clone(),
-            policies.stop.clone(),
-            policies.view.clone(),
-        ]);
-    }
-    if let Some(manifest) = &config.provider_manifest {
+    if let Some(manifest) = config
+        .as_ref()
+        .and_then(|config| config.provider_manifest.as_ref())
+    {
         for binding in &manifest.work_bindings {
             names.insert(binding.function.clone());
-            names.extend(
-                binding
-                    .task
-                    .iter()
-                    .chain(&binding.started)
-                    .chain(&binding.landed)
-                    .cloned(),
-            );
             names.extend([
                 format!("{}.begin", binding.capability),
                 format!("{}.take", binding.capability),
             ]);
         }
-        for binding in &manifest.answer_bindings {
-            if config.run_policies.is_some() {
-                names.insert(format!("{}.fresh", binding.module));
-            }
-            for (_, _, items) in units {
-                if aver::visibility::module_decl(items)
-                    .is_none_or(|module| module.name != binding.capability)
+    }
+    // An answer module says what it answers in its own header, and the
+    // generated loop calls its `fresh`, one function per operation, and the
+    // function a process declaration seats a family by.
+    for (_, _, items) in units {
+        let Some(module) = aver::visibility::module_decl(items) else {
+            continue;
+        };
+        for seating in &module.seatings {
+            names.insert(seating.by.clone());
+        }
+        if module.answers.is_empty() {
+            continue;
+        }
+        names.insert(format!("{}.fresh", module.name));
+        for capability in &module.answers {
+            for (_, _, capability_items) in units {
+                if aver::visibility::module_decl(capability_items)
+                    .is_none_or(|declared| &declared.name != capability)
                 {
                     continue;
                 }
-                for item in items {
+                for item in capability_items.iter() {
                     if let TopLevel::Capability(CapabilityItem::Operation(operation)) = item {
-                        names.insert(format!("{}.{}", binding.module, operation.name));
-                        names.insert(format!("{}.{}", binding.capability, operation.name));
-                        names.insert(aver::capability::answer::reply_type_name(
-                            &binding.capability,
-                            &operation.name,
-                        ));
+                        names.insert(format!("{}.{}", module.name, operation.name));
+                        names.insert(format!("{capability}.{}", operation.name));
                     }
                 }
             }

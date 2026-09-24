@@ -712,6 +712,19 @@ pub struct ProgramLoadCache {
     resolved: HashMap<String, Result<Option<ModuleSource>, String>>,
     parsed: HashMap<PathBuf, CachedProgramModule>,
     verify_config: Option<Option<crate::config::ProjectConfig>>,
+    /// Capabilities answered anywhere in a batch of programs a command walks
+    /// together, as (capability, module): a library module reached as the
+    /// entry of its own walk is lowered against the answer modules of the
+    /// programs it belongs to, which its own cone may not reach.
+    batch_answers: Vec<(String, String)>,
+}
+
+impl ProgramLoadCache {
+    /// Answer every later walk against these answered capabilities as well
+    /// as against the ones its own modules declare.
+    pub fn set_batch_answers(&mut self, answers: Vec<(String, String)>) {
+        self.batch_answers = answers;
+    }
 }
 
 #[derive(Clone)]
@@ -751,7 +764,23 @@ pub fn load_program_with_cache(
         walk.marked = walk.marked.with_run_entry(&module.name);
     }
     walk.follow_edges(entry_path, &entry_items)?;
-    let marked = walk.marked.clone();
+    // The answer modules say what they answer in their own headers, so the
+    // program's answered capabilities are known once its modules are.
+    let entry_decl_name = visibility::module_decl(&entry_items)
+        .map(|module| module.name.clone())
+        .unwrap_or_default();
+    let marked = walk
+        .marked
+        .with_items(
+            walk.modules
+                .iter()
+                .map(|module| (module.dep_name.as_str(), module.items.as_slice()))
+                .chain(std::iter::once((
+                    entry_decl_name.as_str(),
+                    entry_items.as_slice(),
+                ))),
+        )
+        .with_answer_pairs(&walk.cache.batch_answers);
     let mut modules = walk.modules;
     let entry_name = visibility::module_decl(&entry_items)
         .map(|module| module.name.clone())
@@ -985,21 +1014,25 @@ pub fn load_module_tree_from_map(
     root_deps: &[String],
     files: &HashMap<String, String>,
 ) -> Result<Vec<LoadedModule>, String> {
-    let marked = marked_capabilities_in_map(files);
     let mut result = Vec::new();
     let mut loaded: HashSet<String> = HashSet::new();
     let mut loading: Vec<String> = Vec::new();
     for dep in root_deps {
         load_recursive_from_map(dep, files, &mut loaded, &mut loading, &mut result)?;
     }
+    let marked = marked_capabilities_in_map(files).with_items(
+        result
+            .iter()
+            .map(|module| (module.dep_name.as_str(), module.items.as_slice())),
+    );
     // The playground analyses every file of the project separately, so a
     // module that fails to lower reports it under its own name there.
     let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut result, None, &marked);
     Ok(result)
 }
 
-/// The capabilities a virtual project answers itself, read from the
-/// `aver.toml` of its own file map.
+/// The job kinds a virtual project binds, read from the `aver.toml` of its
+/// own file map. The capabilities it answers come from its modules.
 ///
 /// A browser project is a project: it has a manifest if the author wrote one,
 /// and without this the playground would cut no `yield` function at all and
@@ -1119,11 +1152,13 @@ pub fn load_module_tree_with_lowering(
         .into_iter()
         .map(|module| module.as_loaded())
         .collect();
-    let errors = crate::ir::pipeline::lower_loaded_yield_modules(
-        &mut modules,
-        Some(module_root),
-        &crate::config::MarkedCapabilities::for_project_dir(Some(module_root)),
+    let marked = crate::config::MarkedCapabilities::for_project_dir(Some(module_root)).with_items(
+        modules
+            .iter()
+            .map(|module| (module.dep_name.as_str(), module.items.as_slice())),
     );
+    let errors =
+        crate::ir::pipeline::lower_loaded_yield_modules(&mut modules, Some(module_root), &marked);
     Ok((modules, errors))
 }
 
@@ -1456,22 +1491,23 @@ mod tests {
     }
 
     #[test]
-    fn a_virtual_project_reads_its_own_manifest_for_what_it_answers() {
+    fn a_virtual_project_reads_its_answer_modules_for_what_it_answers() {
         let mut files = std::collections::HashMap::new();
-        files.insert(
-            "aver.toml".to_string(),
-            "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Pooled\"\n".to_string(),
-        );
         files.insert(
             "pool.av".to_string(),
             "module Pool\n    kind = capability\n    semantics = effectful\n    intent = \"test\"\n    exposes [claim]\n\noperation claim(peer: Int) -> Int\n    ? \"The handle for one peer.\"\n    oracle = generative\n    replay = recorded\n".to_string(),
         );
         files.insert(
+            "pooled.av".to_string(),
+            "module Pooled\n    intent = \"test\"\n    depends [Pool]\n    answers [Pool]\n\nfn fresh() -> Int\n    ? \"Nothing claimed.\"\n    0\n".to_string(),
+        );
+        files.insert(
             "looper.av".to_string(),
             "module Looper\n    intent = \"test\"\n    depends [Pool]\n    effects [Pool.claim, yield]\n    exposes [loop]\n\nfn loop(n: Int) -> Int\n    ? \"Asks the pool once.\"\n    ! [Pool.claim, yield]\n    Pool.claim(n)\n".to_string(),
         );
-        let loaded = load_module_tree_from_map(&["Looper".to_string()], &files)
-            .expect("the virtual project loads");
+        let loaded =
+            load_module_tree_from_map(&["Looper".to_string(), "Pooled".to_string()], &files)
+                .expect("the virtual project loads");
         let looper = loaded
             .iter()
             .find(|module| module.dep_name == "Looper")
@@ -1486,7 +1522,7 @@ mod tests {
             .collect();
         assert!(
             names.contains(&"__loopStart") && !names.contains(&"loop"),
-            "the manifest in the file map is what says Pool.claim is a request: {names:?}"
+            "the answers header in the file map is what says Pool.claim is a request: {names:?}"
         );
         let pool = loaded
             .iter()
@@ -1498,7 +1534,7 @@ mod tests {
                 crate::ast::TopLevel::TypeDef(crate::ast::TypeDef::Sum { name, .. })
                     if name.starts_with("__")
             )),
-            "nothing is generated into the answered capability: its reply sums are the program's to declare"
+            "nothing is generated into the answered capability"
         );
     }
 

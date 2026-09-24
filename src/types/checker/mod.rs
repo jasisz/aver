@@ -83,6 +83,10 @@ pub struct TypeCheckResult {
     pub laws: std::collections::BTreeSet<String>,
     /// Exposed dependency protocols, resolved in their declaring module's type scope.
     pub imported_processes: HashMap<String, crate::yield_lowering::ProcessProtocol>,
+    /// Every `answers [...]` header of the checked module and of every module
+    /// it loaded, as (capability, answering module): the program's answer
+    /// modules as far as this check can see.
+    pub answers: Vec<(String, String)>,
     /// How source the compiler generates into this module spells the types
     /// whose source spelling would not name them here; see
     /// [`SymbolTable::generated_type_spellings`].
@@ -352,6 +356,15 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
     check_module_effect_boundary(items, &mut checker.errors);
 
     let type_spellings = checker.symbol_table.generated_type_spellings();
+    let mut answers = checker.program_answers;
+    if let Some(module) = TypeChecker::module_decl(items) {
+        for capability in &module.answers {
+            let pair = (capability.clone(), module.name.clone());
+            if !answers.contains(&pair) {
+                answers.push(pair);
+            }
+        }
+    }
     TypeCheckResult {
         errors: checker.errors,
         fn_sigs,
@@ -359,6 +372,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         capabilities: checker.capabilities,
         laws: checker.available_laws,
         imported_processes: checker.imported_processes,
+        answers,
         type_spellings,
     }
 }
@@ -720,6 +734,8 @@ struct TypeChecker {
     /// dependencies are checked.
     available_laws: std::collections::BTreeSet<String>,
     imported_processes: HashMap<String, crate::yield_lowering::ProcessProtocol>,
+    /// `answers [...]` headers of every loaded module, as (capability, module).
+    program_answers: Vec<(String, String)>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, Type>,
     /// Local bindings in the current function/scope.
@@ -806,6 +822,7 @@ impl TypeChecker {
             current_module_prefix: None,
             available_laws: std::collections::BTreeSet::new(),
             imported_processes: HashMap::new(),
+            program_answers: Vec::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),

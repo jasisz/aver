@@ -532,9 +532,12 @@ pub fn check_module_intent_with_sigs_in(
                         extra_spans: vec![],
                     });
                 }
+                // A `main` that calls `Run.all()` performs the generated
+                // loop's effects through it, and the loop widens its list.
                 if let Some(sigs) = fn_sigs
                     && let Some((_, _, declared_effects)) = sigs.get(&f.name)
                     && !declared_effects.is_empty()
+                    && !crate::yield_lowering::calls_run_all(f)
                 {
                     let used_effects = collect_used_effects(f, sigs);
                     let unused_effects: Vec<String> = declared_effects

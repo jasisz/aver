@@ -172,7 +172,8 @@ export async function createWorkHost(module, options = {}) {
         const socketEntries = entries.filter(([, item]) => item.variant.endsWith("Socket"));
         if (socketEntries.length && !options.pollSockets) throw new Error("Wait.poll: this host needs a pollSockets adapter");
         // Awaiting an already-resolved promise only drains microtasks. A run
-        // full of NextTurn requests must still deliver worker message events.
+        // whose requests wait on nothing but the next turn must still deliver
+        // worker message events.
         await new Promise(resolve => {
             if (typeof globalThis.setImmediate === "function") globalThis.setImmediate(resolve);
             else setTimeout(resolve, 0);

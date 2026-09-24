@@ -679,6 +679,35 @@ pub fn run_verify_for_items_vm_with_mode_and_bindings(
         mode,
         provider_bindings,
         false,
+        None,
+    )
+}
+
+/// VM verify of one module of a program, lowered against the answer
+/// modules of the whole program rather than of the module's own cone: a
+/// library whose yielding helpers ask a capability another module answers
+/// is checked as the program sees it.
+#[cfg(feature = "runtime")]
+#[allow(clippy::too_many_arguments)]
+pub fn run_verify_for_items_vm_with_marks(
+    items: Vec<TopLevel>,
+    config: Option<ProjectConfig>,
+    base_dir: Option<&str>,
+    source_file: &str,
+    mode: ExpansionMode,
+    provider_bindings: &[crate::provider::ProviderBinding],
+    parallel_cases: bool,
+    marked: &crate::config::MarkedCapabilities,
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_impl(
+        items,
+        config,
+        base_dir,
+        source_file,
+        mode,
+        provider_bindings,
+        parallel_cases,
+        Some(marked),
     )
 }
 
@@ -705,6 +734,7 @@ pub fn run_verify_for_items_vm_parallel_with_mode_and_bindings(
         mode,
         provider_bindings,
         true,
+        None,
     )
 }
 
@@ -859,6 +889,7 @@ pub fn run_prepared_verify_vm_with_bindings(
         .collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_verify_for_items_vm_impl(
     mut items: Vec<TopLevel>,
     config: Option<ProjectConfig>,
@@ -867,6 +898,7 @@ fn run_verify_for_items_vm_impl(
     mode: ExpansionMode,
     provider_bindings: &[crate::provider::ProviderBinding],
     parallel_cases: bool,
+    program_marks: Option<&crate::config::MarkedCapabilities>,
 ) -> Result<Vec<VerifyResult>, String> {
     // Everything appended below this line is compiler-fabricated, so
     // this is where the program the user wrote ends — the scope the
@@ -915,7 +947,9 @@ fn run_verify_for_items_vm_impl(
         Some(prepared) => crate::ir::TypecheckMode::WithCheckedLoaded(&prepared.loaded),
         None => crate::ir::TypecheckMode::Full { base_dir },
     };
-    let marked = crate::config::MarkedCapabilities::for_project_dir(base_dir);
+    let marked = program_marks
+        .cloned()
+        .unwrap_or_else(|| crate::config::MarkedCapabilities::for_project_dir(base_dir));
     let tc_result =
         crate::ir::pipeline::front_gate(&mut items, &typecheck_mode, user_program_len, &marked);
     if !tc_result.errors.is_empty() {
