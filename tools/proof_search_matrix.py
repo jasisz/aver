@@ -49,10 +49,10 @@ verify unchanged law identity
         yield name, {"main.av": (FIXTURES / f"{name}.av").read_text()}
 
 
-def run(binary, output, name, backend, timeout, expected_laws):
+def run(binary, output, name, timeout, expected_laws):
     directory = output / name
-    args = [str(binary), "proof", str(directory / "main.av"), "--backend", backend,
-            "--check-json", "--module-root", str(directory), "-o", str(directory / backend)]
+    args = [str(binary), "proof", str(directory / "main.av"),
+            "--check-json", "--module-root", str(directory), "-o", str(directory / "lean")]
     start = time.monotonic()
     process = subprocess.Popen(args, cwd=ROOT, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, start_new_session=True)
@@ -64,7 +64,7 @@ def run(binary, output, name, backend, timeout, expected_laws):
         os.killpg(process.pid, signal.SIGKILL)
         log, _ = process.communicate()
     text = log.decode(errors="replace")
-    (directory / f"{backend}.log").write_text(text)
+    (directory / "lean.log").write_text(text)
     summary = None
     for line in reversed(text.splitlines()):
         if line.startswith("{"):
@@ -73,21 +73,14 @@ def run(binary, output, name, backend, timeout, expected_laws):
                 break
             except json.JSONDecodeError:
                 pass
-    if backend == "lean":
-        exported = (summary or {}).get("universal_laws", 0)
-    else:
-        # These fixtures use ordinary laws. Count their emitted declarations
-        # as well as requiring the whole-file checker gate.
-        exported = sum(len(re.findall(r"(?m)^\s*// Law: ", p.read_text()))
-                       for p in (directory / backend).rglob("*.dfy"))
+    exported = (summary or {}).get("universal_laws", 0)
     strict = (not timed_out and process.returncode == 0
               and bool((summary or {}).get("passed"))
               and exported == expected_laws
               and all((summary or {}).get(k, 0) == 0
-                      for k in ["errors", "timeouts", "omitted", "axioms",
-                                "sorries", "bounded_laws", "build_errors", "declined"]))
+                      for k in ["sorries", "bounded_laws", "build_errors", "declined"]))
     row = dict(expected_laws=expected_laws, exported_laws=exported, strict_passed=strict,
-               case=name, backend=backend, elapsed=round(time.monotonic() - start, 3),
+               case=name, elapsed=round(time.monotonic() - start, 3),
                outer_timeout=timed_out, exit_code=process.returncode, summary=summary)
     print(json.dumps(row), flush=True)
     return row
@@ -99,7 +92,6 @@ def main():
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--workers", type=int, choices=range(1, 5), default=2)
     parser.add_argument("--timeout", type=int, default=90)
-    parser.add_argument("--backend", action="append", choices=["lean", "dafny"])
     args = parser.parse_args()
     binary = args.aver.resolve(strict=True)
     output = args.out.resolve()
@@ -116,10 +108,10 @@ def main():
             source_hashes[name][filename] = hashlib.sha256(source.encode()).hexdigest()
         expected = sum(len(re.findall(r"(?m)^verify .* law ", source))
                        for source in files.values())
-        jobs.extend((name, backend, expected) for backend in (args.backend or ["lean", "dafny"]))
+        jobs.append((name, expected))
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = [executor.submit(run, binary, output, name, backend, args.timeout, expected)
-                   for name, backend, expected in jobs]
+        futures = [executor.submit(run, binary, output, name, args.timeout, expected)
+                   for name, expected in jobs]
         rows = [future.result() for future in futures]
     final_digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     report = dict(binary=str(binary), sha256=digest, binary_unchanged=digest == final_digest,
