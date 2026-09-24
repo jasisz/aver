@@ -164,6 +164,11 @@ module:
   signature, carrier, and structure facts;
 - `ClaimAxes` derives policy, termination, totality, and contracts;
 - family soundness and `Discharge*` modules prove the reusable simulations;
+- `DeclaredLayout` confirms a producer-declared module layout (where each
+  function's code entry, type and export entry are) against the decoders
+  once, and proves that the checks reading it imply the decoder-based ones,
+  so the declaration saves searching and decoding without changing what is
+  accepted;
 - `AcceptedArtifact` and the artifact-specific bridge assemble the single
   acceptance statement.
 
