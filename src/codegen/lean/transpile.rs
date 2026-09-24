@@ -1385,7 +1385,8 @@ pub(super) fn transpile_unified(
             ),
         );
     }
-    let subtype_block = crate::types::checker::oracle_subtypes::lean_subtypes(&declared);
+    let subtype_block =
+        crate::types::checker::oracle_subtypes::lean_subtypes(&declared, cert_model);
     if !subtype_block.is_empty() {
         // Fold subtype block into the union body BEFORE computing
         // `needed_helpers` — the Oracle subtype block is what

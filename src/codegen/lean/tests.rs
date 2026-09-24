@@ -5524,6 +5524,57 @@ fn near(x: Reading, y: Reading) -> Bool
     assert!(!model.contains("instance : BEq"), "{model}");
 }
 
+/// A user function named `sizeOf` lives in its module's namespace, where a
+/// bare `sizeOf` in a termination measure would resolve to it (btc-listener's
+/// `Infra.Resolver.sizeOf` took a `List Int` and broke a `List String`
+/// measure). The measure then names the class method `SizeOf.sizeOf`.
+#[test]
+fn a_user_size_of_does_not_capture_the_termination_measure() {
+    let source = include_str!("../../../tests/fixtures/mutual_measure_forwarded.av").replace(
+        "verify itemAt",
+        "fn sizeOf(xs: List<Int>) -> Int\n    ? \"Shadow.\"\n    List.len(xs)\n\nverify itemAt",
+    );
+    let mut ctx = ctx_from_source(&source, "mutual_measure_forwarded");
+    ctx.refresh_facts();
+    let lean = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    let measures: Vec<&str> = lean
+        .lines()
+        .filter(|line| line.trim_start().starts_with("termination_by"))
+        .collect();
+    assert_eq!(
+        measures,
+        vec![
+            "  termination_by (SizeOf.sizeOf tail, 2)",
+            "  termination_by (SizeOf.sizeOf items, 1)"
+        ],
+        "{lean}"
+    );
+}
+
+/// A record with a field that has no `default` (a capability handle) states
+/// no `Inhabited` in the certificate model: `default` for the handle does not
+/// elaborate, and one failing instance fails the build of the whole module.
+#[test]
+fn cert_model_states_no_inhabited_for_a_record_holding_a_handle() {
+    let mut ctx = ctx_from_source(
+        r#"module Holder
+    exposes [portOf]
+    effects []
+record Reader
+    connection: Tcp.Connection
+    port: Int
+record Plain
+    port: Int
+fn portOf(r: Reader, p: Plain) -> Int
+    r.port + p.port
+"#,
+        "Holder",
+    );
+    let model = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    assert!(!model.contains("instance : Inhabited Reader"), "{model}");
+    assert!(model.contains("instance : Inhabited Plain"), "{model}");
+}
+
 mod untranslate_context;
 
 mod citation_probe;

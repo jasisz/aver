@@ -85,7 +85,11 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
                 return String::new();
             };
             let lean_name = aver_name_to_lean(name);
-            let args = " default".repeat(seed.fields.len());
+            let args: String = seed
+                .fields
+                .iter()
+                .map(|field| format!(" {}", field_default_term(field, ctx, scope)))
+                .collect();
             format!(
                 "instance : Inhabited {lean_name} := ⟨{lean_name}.{}{args}⟩",
                 lean_ctor_name(&seed.name)
@@ -97,9 +101,25 @@ pub fn emit_inhabited_instance(td: &TypeDef, ctx: &CodegenContext, scope: Option
             if crate::codegen::common::find_refined_type_scoped(ctx, name, scope).is_some() {
                 return String::new();
             }
+            // A field with no `Inhabited` (a capability handle, a refined
+            // type) has no `default`: the instance would fail the build of
+            // the whole module, so the record states none.
+            let mut seeding = vec![canonical_type_name(name, scope)];
+            if !fields
+                .iter()
+                .all(|(_, field)| field_defaults_without(field, name, ctx, scope, &mut seeding))
+            {
+                return String::new();
+            }
             let assignments = fields
                 .iter()
-                .map(|(field_name, _)| format!("{} := default", aver_name_to_lean(field_name)))
+                .map(|(field_name, field)| {
+                    format!(
+                        "{} := {}",
+                        aver_name_to_lean(field_name),
+                        field_default_term(field, ctx, scope)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             let value = if assignments.is_empty() {
@@ -238,6 +258,29 @@ fn named_type_is_inhabitable(
     inhabitable
 }
 
+/// The empty octet list as a `Bytes` value, the refinement discharged the way
+/// the model's own `Nonempty Bytes` instance does.
+const EMPTY_BYTES: &str = "⟨[], by simp [Bytes.allInRange]⟩";
+
+/// The term a stated `Inhabited` instance writes for a field: `default`, or
+/// for a field of exactly the standard `Bytes` type the empty octet list.
+/// `Bytes` is a `Subtype` abbrev, and the checker's audit refuses an instance
+/// at a core type, so the model states no `Inhabited Bytes` to default from.
+fn field_default_term(field: &str, ctx: &CodegenContext, scope: Option<&str>) -> &'static str {
+    if is_stdlib_bytes(field.trim(), ctx, scope) {
+        EMPTY_BYTES
+    } else {
+        "default"
+    }
+}
+
+/// Is this the standard `Bytes` type (`Bytes.Bytes`)?
+fn is_stdlib_bytes(name: &str, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+    find_type_def_scoped(ctx, name, scope).is_some_and(|(td, td_scope)| {
+        td_scope == Some("Bytes") && crate::codegen::common::type_def_name(td) == "Bytes"
+    })
+}
+
 /// Is this annotation's named reference a capability's resource type? Bare
 /// inside the capability's own module, dotted everywhere else — the two
 /// spellings a dependent module and the contract itself use for one type.
@@ -278,6 +321,10 @@ fn field_defaults_without(
     if crate::codegen::common::type_ref_contains(trimmed, type_name) {
         return false;
     }
+    // Written as the empty octet list ([`field_default_term`]).
+    if is_stdlib_bytes(trimmed, ctx, scope) {
+        return true;
+    }
     let mut named = HashSet::new();
     crate::codegen::lean::decl_order::collect_annotation_type_refs(trimmed, &mut named);
     named
@@ -289,11 +336,13 @@ fn field_defaults_without(
 /// emission pass? Builtins and unresolved names keep the prior behavior —
 /// defaultable (their instances come from Lean itself or the prelude). A
 /// canonical Peano sum lifts to builtin `Nat`. A refined type is emitted as a
-/// `Subtype` abbrev with deliberately NO instance — never defaultable. A
-/// plain record always gets an emitted instance. A sum gets one exactly when
+/// `Subtype` abbrev with deliberately NO instance — never defaultable (a
+/// field of exactly `Bytes` is written out, see [`field_default_term`]). A
+/// record gets an
+/// emitted instance exactly when every field defaults, and a sum exactly when
 /// one of its constructors bottoms out, decided by the same scan that decides
-/// the sum being seeded — resolved against the named type's OWN scope, since
-/// its variants' bare field names mean that module's types.
+/// the type being seeded — resolved against the named type's OWN scope, since
+/// its fields' bare type names mean that module's types.
 fn named_type_defaults(
     name: &str,
     ctx: &CodegenContext,
@@ -316,7 +365,22 @@ fn named_type_defaults(
         return true;
     }
     match td {
-        TypeDef::Product { .. } => true,
+        TypeDef::Product {
+            name: record_name,
+            fields,
+            ..
+        } => {
+            let canonical = canonical_type_name(record_name, td_scope);
+            if seeding.contains(&canonical) {
+                return false;
+            }
+            seeding.push(canonical);
+            let defaults = fields.iter().all(|(_, field)| {
+                field_defaults_without(field, record_name, ctx, td_scope, seeding)
+            });
+            seeding.pop();
+            defaults
+        }
         TypeDef::Sum {
             name: sum_name,
             variants,

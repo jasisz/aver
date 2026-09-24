@@ -1641,7 +1641,7 @@ pub(super) fn taken_names(items: &[TopLevel]) -> HashSet<String> {
 /// `__cur_` namespace free in this loop?", "is `<fn>__cursor` free in
 /// this program?") are questions about binders, so they share one
 /// collector.
-pub(super) fn collect_bound_names(fd: &FnDef, out: &mut HashSet<String>) {
+pub(crate) fn collect_bound_names(fd: &FnDef, out: &mut HashSet<String>) {
     out.extend(fd.params.iter().map(|(n, _)| n.clone()));
     for stmt in fd.body.stmts() {
         if let Stmt::Binding(name, _, _) = stmt {

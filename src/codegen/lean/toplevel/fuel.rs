@@ -1322,6 +1322,19 @@ pub(in crate::codegen::lean) fn native_cycle_measure(
         .collect();
     let measures = crate::codegen::recursion::cycle_measure::measure_for_cycle(fns, &plain, true)
         .map_err(|refusal| refusal.reason)?;
+    // A user function named `sizeOf` is emitted inside its module's namespace
+    // and would capture a bare `sizeOf` in a measure written there; the
+    // qualified `SizeOf.sizeOf` always means the class method.
+    let user_size_of = ctx
+        .fn_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+        .any(|fd| fd.name == "sizeOf");
+    let size_of = if user_size_of {
+        "SizeOf.sizeOf"
+    } else {
+        "sizeOf"
+    };
     Ok(fns
         .iter()
         .zip(measures.iter().zip(&candidates))
@@ -1339,7 +1352,7 @@ pub(in crate::codegen::lean) fn native_cycle_measure(
                         // matches what Lean's mutual-block wf elaboration
                         // generates internally — `decreasing_tactic` then
                         // closes the chain without `simp_wf` scrambling.
-                        MeasureKind::Structural => format!("sizeOf {lean_name}"),
+                        MeasureKind::Structural => format!("{size_of} {lean_name}"),
                         MeasureKind::Countdown => format!("Int.toNat {lean_name}"),
                     };
                     (*p, adt, term)
