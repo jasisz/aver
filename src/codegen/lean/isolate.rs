@@ -11,11 +11,15 @@
 //! This pass puts each proof theorem of a module file behind
 //! [`ISOLATION_GUARD`]. `#guard_msgs` drops the errors the theorem reports and
 //! passes every other message through (the `declaration uses 'sorry'` warning
-//! of a caught floor included). Lean's error recovery still adds the theorem,
-//! with a synthetic `sorryAx` in place of the failed proof, so everything that
-//! cites it elaborates and the axiom audit charges it as not proven. The check
-//! reads the synthetic `sorryAx` back (see [`isolation_check_source`]), so a
-//! theorem whose proof errored is reported as a failed law, never as proven.
+//! of a caught floor included). Lean's error recovery usually still adds the
+//! theorem, with a synthetic `sorryAx` in place of the failed proof, so
+//! everything that cites it elaborates and the axiom audit charges it as not
+//! proven. A runtime limit hit while the declaration itself is being finished
+//! (a heartbeat timeout in `whnf` at the `theorem` line, say) adds nothing at
+//! all: the theorem is simply absent from the built environment. The check
+//! reads both back (see [`isolation_check_source`]): a synthetic `sorryAx`, and
+//! a guarded theorem the environment does not have. Either way a theorem whose
+//! proof errored is reported as a failed law, never as proven.
 //!
 //! The bounded evidence stays outside the guard: a `_sample_N` or
 //! `_checked_domain` theorem that fails is a counterexample to the law (or a
@@ -112,6 +116,60 @@ pub fn isolate_proof_theorems(text: &str) -> String {
     out
 }
 
+/// The qualified names of the theorems [`isolate_proof_theorems`] put behind
+/// [`ISOLATION_GUARD`] in `text`: the first theorem after each guard line,
+/// qualified by the `namespace` blocks open at that point. The isolation check
+/// reports each one the built environment does not contain.
+pub fn guarded_theorem_names(text: &str) -> Vec<String> {
+    // One entry per open `namespace`/`section`: the name components it adds.
+    let mut scopes: Vec<Vec<String>> = Vec::new();
+    let mut in_mutual = false;
+    let mut pending = false;
+    let mut names = Vec::new();
+    for line in text.lines() {
+        if line == "mutual" {
+            in_mutual = true;
+            continue;
+        }
+        if in_mutual {
+            if line == "end" {
+                in_mutual = false;
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("namespace ") {
+            scopes.push(rest.trim().split('.').map(str::to_string).collect());
+            continue;
+        }
+        if line == "section"
+            || line.starts_with("section ")
+            || line == "noncomputable section"
+            || line.starts_with("noncomputable section ")
+        {
+            scopes.push(Vec::new());
+            continue;
+        }
+        if line == "end" || line.starts_with("end ") {
+            scopes.pop();
+            continue;
+        }
+        if line.starts_with(ISOLATION_GUARD_PREFIX) {
+            pending = true;
+            continue;
+        }
+        if !pending {
+            continue;
+        }
+        if let Some(name) = theorem_name(line) {
+            let mut parts: Vec<&str> = scopes.iter().flatten().map(String::as_str).collect();
+            parts.push(name);
+            names.push(parts.join("."));
+            pending = false;
+        }
+    }
+    names
+}
+
 /// The theorem name a column-0 declaration line opens, after the modifiers and
 /// an inline attribute list the emitter uses.
 fn theorem_name(line: &str) -> Option<&str> {
@@ -146,8 +204,9 @@ fn is_bounded_evidence(name: &str) -> bool {
 /// print one [`ISOLATION_ERROR_MARKER`] line per declaration of those modules
 /// whose value or type carries a synthetic `sorryAx` (the term Lean puts in
 /// place of a proof that failed to elaborate; an explicit `sorry` is not
-/// synthetic). Ends with [`ISOLATION_DONE_MARKER`].
-pub fn isolation_check_source(roots: &[String]) -> String {
+/// synthetic), and one per name of `guarded` (see [`guarded_theorem_names`])
+/// that no module declares. Ends with [`ISOLATION_DONE_MARKER`].
+pub fn isolation_check_source(roots: &[String], guarded: &[String]) -> String {
     let mut src = String::from("import Lean.Elab.Command\n");
     for root in roots {
         src.push_str("import ");
@@ -167,15 +226,30 @@ pub fn isolation_check_source(roots: &[String]) -> String {
         .map(|root| format!("`{}", lean_name_literal(root)))
         .collect();
     src.push_str(&names.join(", "));
+    src.push_str("]\n  let guarded : Array Name := #[");
+    let guarded: Vec<String> = guarded
+        .iter()
+        .map(|name| format!("`{}", lean_name_literal(name)))
+        .collect();
+    src.push_str(&guarded.join(", "));
     src.push_str(
         "]\n  \
+           let mut declared : NameSet := {}\n  \
            for root in roots do\n    \
              let some idx := env.getModuleIdx? root | continue\n    \
              for name in env.header.moduleData[idx.toNat]!.constNames do\n      \
+               declared := declared.insert ((privateToUserName? name).getD name)\n      \
                let some info := env.find? name | continue\n      \
                let value := (info.value? (allowOpaque := true)).getD (mkConst ``True)\n      \
                if synthetic value || synthetic info.type then\n        \
                  IO.println s!\"",
+    );
+    src.push_str(ISOLATION_ERROR_MARKER);
+    src.push_str(
+        "{name}\"\n  \
+           for name in guarded do\n    \
+             unless declared.contains name do\n      \
+               IO.println s!\"",
     );
     src.push_str(ISOLATION_ERROR_MARKER);
     src.push_str("{name}\"\n  IO.println \"");
@@ -284,10 +358,42 @@ mod tests {
 
     #[test]
     fn check_source_imports_every_root() {
-        let src = isolation_check_source(&["Laws".to_string(), "Domain.Chainwork".to_string()]);
+        let src = isolation_check_source(
+            &["Laws".to_string(), "Domain.Chainwork".to_string()],
+            &["Laws.f_law_id".to_string()],
+        );
         assert!(
             src.starts_with("import Lean.Elab.Command\nimport Laws\nimport Domain.Chainwork\n")
         );
         assert!(src.contains("#[`Laws, `Domain.Chainwork]"));
+        assert!(src.contains("let guarded : Array Name := #[`Laws.f_law_id]"));
+    }
+
+    #[test]
+    fn names_the_guarded_theorems_by_their_namespace() {
+        let text = "namespace M\n\
+                    theorem f_law_id_sample_1 : True := by trivial\n\
+                    #guard_msgs (drop error, pass warning, pass info, pass trace) in\n\
+                    -- aver:law-class f_law_id universal M.f.id\n\
+                    theorem f_law_id : True := by trivial\n\
+                    mutual\n\
+                    theorem inner : True := by trivial\n\
+                    end\n\
+                    namespace Inner.Deep\n\
+                    #guard_msgs (drop error, pass warning, pass info, pass trace) in\n\
+                    set_option maxHeartbeats 400000 in\n\
+                    private theorem helper : True := by trivial\n\
+                    end Inner.Deep\n\
+                    #guard_msgs (drop error, pass warning, pass info, pass trace) in\n\
+                    @[simp] theorem g_law_x : True := by trivial\n\
+                    end M\n";
+        assert_eq!(
+            guarded_theorem_names(text),
+            vec![
+                "M.f_law_id".to_string(),
+                "M.Inner.Deep.helper".to_string(),
+                "M.g_law_x".to_string(),
+            ]
+        );
     }
 }

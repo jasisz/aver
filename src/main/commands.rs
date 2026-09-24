@@ -8852,7 +8852,11 @@ fn run_proof_check(
             // probe would otherwise `#print axioms` against a stale or
             // partial environment.
             if output.status.success() && model_panic_hits == 0 {
-                Some(lean_universal_audit(output_dir, sorries.unwrap_or(0)))
+                Some(lean_universal_audit(
+                    output_dir,
+                    sorries.unwrap_or(0),
+                    isolated_errors.as_deref().unwrap_or(&[]),
+                ))
             } else {
                 Some(LeanLawAudit::FAIL_CLOSED)
             }
@@ -10379,7 +10383,11 @@ impl LeanLawAudit {
 /// all-or-nothing verdict over the whole crediting set (universal-classed
 /// AND unmarked theorems), computed from the exact same expression as
 /// before the counts existed.
-fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
+/// `isolated` names the theorems the isolation check reported as failed to
+/// elaborate: they are left out of the `#print axioms` probe (a missing one
+/// would make the probe itself fail and cost every sibling its credit) and
+/// record tier `failed`.
+fn lean_universal_audit(dir: &str, sorries: usize, isolated: &[String]) -> LeanLawAudit {
     use std::process::Command;
     // Every lakefile root is part of the program proof. The first is the entry;
     // later roots include dependency modules (plus shared support roots, which
@@ -10561,7 +10569,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
         src.push_str(r);
         src.push('\n');
     }
-    for theorem in &law_thms {
+    for theorem in law_thms.iter().filter(|thm| !isolated.contains(thm)) {
         src.push_str("#print axioms ");
         src.push_str(theorem);
         src.push('\n');
@@ -11776,28 +11784,30 @@ fn lean_lakefile_roots(dir: &str) -> Vec<String> {
 ///
 /// The export puts each proof theorem behind `#guard_msgs (drop error, …)`
 /// (see `aver::codegen::lean::isolate`), so a proof that errors no longer fails
-/// `lake build`: Lean adds the theorem with a synthetic `sorryAx` and the error
-/// is dropped. This runs the isolation check against the built environment and
-/// returns the root-qualified names of those declarations. `Ok(empty)` when the
+/// `lake build`: Lean adds the theorem with a synthetic `sorryAx` (or, when a
+/// runtime limit stops the declaration itself, does not add it at all) and the
+/// error is dropped. This runs the isolation check against the built
+/// environment and returns the root-qualified names of those declarations,
+/// missing ones included. `Ok(empty)` when the
 /// export has no guarded theorem (nothing can have been dropped). `Err` when the
 /// check could not run to its end; the caller must then fail closed, because a
 /// dropped error would otherwise pass for a clean build.
 fn lean_isolated_errors(dir: &str) -> Result<Vec<String>, String> {
     use aver::codegen::lean::isolate;
     let roots = lean_lakefile_roots(dir);
-    let guarded = roots.iter().any(|root| {
-        let path = std::path::Path::new(dir).join(format!("{}.lean", root.replace('.', "/")));
-        std::fs::read_to_string(path).is_ok_and(|contents| {
-            contents
-                .lines()
-                .any(|line| line.starts_with(isolate::ISOLATION_GUARD_PREFIX))
+    let guarded: Vec<String> = roots
+        .iter()
+        .filter_map(|root| {
+            let path = std::path::Path::new(dir).join(format!("{}.lean", root.replace('.', "/")));
+            std::fs::read_to_string(path).ok()
         })
-    });
-    if !guarded {
+        .flat_map(|contents| isolate::guarded_theorem_names(&contents))
+        .collect();
+    if guarded.is_empty() {
         return Ok(Vec::new());
     }
     let checker = std::path::Path::new(dir).join("_aver_isolation_check.lean");
-    std::fs::write(&checker, isolate::isolation_check_source(&roots))
+    std::fs::write(&checker, isolate::isolation_check_source(&roots, &guarded))
         .map_err(|e| format!("could not write the isolation check: {e}"))?;
     let out = std::process::Command::new("lake")
         .args(["env", "lean", "_aver_isolation_check.lean"])
