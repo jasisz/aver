@@ -380,6 +380,12 @@ fn poll_borrowed<'a>(
     let mut groups = Vec::<PollGroup<'a>>::new();
     let mut group_index = HashMap::<String, usize>::new();
 
+    // A socket this reactor no longer knows (closed, or dropped after an I/O
+    // error) is reported ready rather than failing the whole wait, the same
+    // way a job the engine has forgotten counts as ready. False readiness is
+    // legal, and the operation the caller runs next on that socket answers
+    // with the real error. Failing the wait instead would let one stale key
+    // end every turn that still watches it.
     let now = Instant::now();
     let mut nearest_deadline = None::<Duration>;
     for (position, socket) in sockets.iter().enumerate() {
@@ -387,10 +393,8 @@ fn poll_borrowed<'a>(
             TcpSocket::Connected(connection) => {
                 let id: &str = &connection.id;
                 let Some(reader) = connection_map.get(id) else {
-                    return Err(format!(
-                        "{operation}: unknown connection '{}'",
-                        connection.id
-                    ));
+                    ready.push(position);
+                    continue;
                 };
                 if !reader.buffer().is_empty() {
                     ready.push(position);
@@ -408,10 +412,8 @@ fn poll_borrowed<'a>(
             TcpSocket::Sending(connection) => {
                 let id: &str = &connection.id;
                 let Some(reader) = connection_map.get(id) else {
-                    return Err(format!(
-                        "{operation}: unknown connection '{}'",
-                        connection.id
-                    ));
+                    ready.push(position);
+                    continue;
                 };
                 push_group(
                     &mut groups,
@@ -425,7 +427,8 @@ fn poll_borrowed<'a>(
             TcpSocket::Dialing(dial) => {
                 let id: &str = &dial.id;
                 let Some(pending) = dial_map.get(id) else {
-                    return Err(format!("{operation}: unknown dial '{}'", dial.id));
+                    ready.push(position);
+                    continue;
                 };
                 if now >= pending.deadline {
                     ready.push(position);
@@ -450,7 +453,8 @@ fn poll_borrowed<'a>(
             TcpSocket::Listening(listener) => {
                 let id: &str = &listener.id;
                 let Some(state) = listener_map.get(id) else {
-                    return Err(format!("{operation}: unknown listener '{}'", listener.id));
+                    ready.push(position);
+                    continue;
                 };
                 push_group(
                     &mut groups,
@@ -464,6 +468,19 @@ fn poll_borrowed<'a>(
         }
     }
 
+    // Every source this wait registers is deleted from the poller again
+    // before the wait returns, whatever happened in between. The poller is
+    // the wait's own and is dropped afterwards, and `polling` asks for a
+    // source to be deleted before that. On Windows it matters beyond the
+    // contract: a registration left behind keeps an AFD poll outstanding on
+    // the socket, and the readiness the next wait's poller is waiting for can
+    // be delivered to that stale poll instead, so a wait that was woken early
+    // by a job would then sleep through the bytes that arrive afterwards.
+    let registered = Registered {
+        poller,
+        groups: &groups,
+        count: std::cell::Cell::new(0),
+    };
     for (key, group) in groups.iter().enumerate() {
         let event =
             polling::Event::new(key, !group.readable.is_empty(), !group.writable.is_empty());
@@ -474,6 +491,7 @@ fn poll_borrowed<'a>(
             }
             .map_err(|error| format_io_error(operation, &error))?;
         }
+        registered.count.set(key + 1);
     }
 
     let already_ready = !ready.is_empty();
@@ -489,6 +507,7 @@ fn poll_borrowed<'a>(
         .wait(&mut events, Some(timeout))
         .map_err(|error| format_io_error(operation, &error))?;
     collect_events(&events, &groups, &mut ready);
+    drop(registered);
 
     let after_wait = Instant::now();
     for (position, socket) in sockets.iter().enumerate() {
@@ -503,6 +522,25 @@ fn poll_borrowed<'a>(
     ready.sort_unstable();
     ready.dedup();
     Ok(ready)
+}
+
+/// The sources one wait added to its poller, deleted again when the wait is
+/// over, including when it fails half-way through registering them.
+struct Registered<'p, 'g, 'a> {
+    poller: &'p polling::Poller,
+    groups: &'g [PollGroup<'a>],
+    count: std::cell::Cell<usize>,
+}
+
+impl Drop for Registered<'_, '_, '_> {
+    fn drop(&mut self) {
+        for group in &self.groups[..self.count.get()] {
+            let _ = match group.source {
+                PollSource::Stream(stream) => self.poller.delete(stream),
+                PollSource::Listener(listener) => self.poller.delete(listener),
+            };
+        }
+    }
 }
 
 fn push_group<'a>(

@@ -35,7 +35,7 @@ pub use env::{STANDARD_ENV_FINGERPRINT, STANDARD_ENV_NATIVE_IDENTITY, StandardEn
 pub use http::{STANDARD_HTTP_FINGERPRINT, STANDARD_HTTP_NATIVE_IDENTITY, StandardHttpProvider};
 pub use process::{
     STANDARD_PROCESS_FINGERPRINT, STANDARD_PROCESS_NATIVE_IDENTITY, StandardProcessProvider,
-    standard_process_stop_requested,
+    standard_process_stop_requested, stop_watch_fired, stop_watch_installed,
 };
 pub use runtime::{
     NativeProviderRegistry, STANDARD_TIME_FINGERPRINT, STANDARD_TIME_NATIVE_IDENTITY,
@@ -53,7 +53,8 @@ pub use terminal::{
 pub use work::{
     STANDARD_WAIT_FINGERPRINT, STANDARD_WAIT_NATIVE_IDENTITY, STANDARD_WORK_FINGERPRINT,
     STANDARD_WORK_NATIVE_IDENTITY, StandardWaitProvider, StandardWorkProvider,
-    WORK_KIND_NATIVE_FINGERPRINT, WorkKindBody, WorkKindProvider,
+    WORK_KIND_NATIVE_FINGERPRINT, WaitReady, WorkKindBody, WorkKindProvider, wait_deadline,
+    wait_ready,
 };
 
 /// Whether two recorded/live identities name compiler-shipped adapters for

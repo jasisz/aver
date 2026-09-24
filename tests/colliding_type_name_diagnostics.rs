@@ -238,3 +238,28 @@ fn probeBinding() -> Int
         "Binding 'n': expression has type String, annotation says Int",
     );
 }
+
+/// A qualified type from a module the entry does not depend on names the
+/// missing `depends` edge, not the other module's `exposes`: the type is
+/// exposed, and it is this module that never asked for it.
+#[test]
+fn a_type_from_a_module_not_depended_on_asks_for_the_depends_edge() {
+    let errors = check_errors(
+        r#"module Main
+    intent = "Entry that names Alpha.Thing without depending on Alpha."
+    effects []
+
+fn probe(item: Alpha.Thing) -> Int
+    ? "Reads nothing from the item."
+    1
+"#,
+    );
+    assert_contains(
+        &errors,
+        "Type 'Alpha.Thing' belongs to module 'Alpha', which this module does not depend on — add 'Alpha' to its `depends [...]` to use it",
+    );
+    assert!(
+        !errors.iter().any(|error| error.contains("`exposes`")),
+        "the advice points at the wrong module's list: {errors:#?}"
+    );
+}

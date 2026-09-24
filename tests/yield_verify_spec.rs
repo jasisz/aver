@@ -179,7 +179,8 @@ fn coordinator_cases_pin_service_order_turn_groups_and_late_job_observations() {
             "observeJob",
             "observeCancelled",
             "historyObservation",
-            "historyJobLimit",
+            "historyJobStarts",
+            "negativeDeadline",
         ] {
             assert!(text.contains(label), "{text}");
         }
@@ -246,7 +247,7 @@ fn coordinator_laws_are_universal_beside_the_vm_schedule_scenarios() {
     )
     .unwrap();
     assert_eq!(summary["universal"], true, "{summary}");
-    assert_eq!(summary["universal_laws"], 25, "{summary}");
+    assert_eq!(summary["universal_laws"], 22, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");

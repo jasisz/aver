@@ -165,11 +165,9 @@ cancellation. Observations of the clock, of stop and of returned answer states
 are explicit events. These helpers exist for proof and verification. Normal
 execution does not record or allocate a history.
 
-The three generated `__historyRun` laws quantify over arbitrary finite lists:
+The two generated `__historyRun` laws quantify over arbitrary finite lists:
 
 - `noNewProcesses`: after initial seating, the slot count never increases.
-- `jobsStayWithinLimit`: a run that starts within `max-jobs` stays within it,
-  counting all job kinds in the same table.
 - `retiredInstanceNeverReturns`: once an instance is retired (its process is
   gone or its number has moved on), it stays retired. The per-process
   `answeringRetiresTheInstance` law establishes this premise after a current
@@ -177,9 +175,10 @@ The three generated `__historyRun` laws quantify over arbitrary finite lists:
 
 Each statement holds for any finite prefix, of any length. The admissibility
 predicate checks each event against the state left by the events before it. A
-start needs positive room. A settlement needs a nonnegative instance, and a
-seated slot if that instance is current. It does **not** assume the three
-conclusions. The history model deliberately allows more observations than the
+start needs nothing, because the engine queues a job begun at the job limit and
+the generated source carries no limit to stay within. A settlement needs a
+nonnegative instance, and a seated slot if that instance is current. It does
+**not** assume the two conclusions. The history model deliberately allows more observations than the
 live driver can produce, including arbitrary returned answer states, arbitrary
 tasks and spurious job reports. That is why these structural properties need
 no premise about a provider being honest or consistent. Semantic properties of

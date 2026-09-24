@@ -48,6 +48,23 @@ fn install_signal_handler() -> Result<(), String> {
     Err("native process signal handling is unavailable on wasm".to_string())
 }
 
+/// Whether this process watches for a stop request and one has arrived.
+///
+/// Nothing is installed here: a program that never asked
+/// `Process.stopRequested` has no handler, a signal ends it the usual way,
+/// and this answers `false`. A wait uses it to end early once the program
+/// has been asked to stop, so a stop request is observed within a bounded
+/// moment rather than at the end of however long the wait was.
+pub fn stop_watch_fired() -> bool {
+    stop_watch_installed() && stop_requested(STOP_REQUESTED.as_ref())
+}
+
+/// Whether the SIGINT/SIGTERM handler is installed, which is what makes a
+/// stop request something a wait can notice.
+pub fn stop_watch_installed() -> bool {
+    matches!(SIGNAL_HANDLER.get(), Some(Ok(())))
+}
+
 /// Observe whether SIGINT or SIGTERM requested cooperative shutdown.
 ///
 /// Installation is attempted once per process. A host conflict while

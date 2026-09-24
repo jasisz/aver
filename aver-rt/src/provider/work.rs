@@ -195,6 +195,125 @@ fn poll_sockets_beside_jobs(
     crate::tcp::poll(sockets, timeout_ms)
 }
 
+/// What one wait found ready, as positions into the sockets and the jobs it
+/// was handed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct WaitReady {
+    pub sockets: Vec<usize>,
+    pub jobs: Vec<usize>,
+}
+
+/// The longest one sleep of a wait lasts once the program watches for a stop
+/// request. A wait longer than this sleeps in slices and looks at the stop
+/// flag between them, so a stop request ends it within this long rather than
+/// at its deadline.
+const STOP_SLICE_MS: i64 = 100;
+
+/// How long the next sleep of a wait may last: what is left of the wait,
+/// rounded up to a whole millisecond so a wait never spins on its last
+/// fraction of one, and at most [`STOP_SLICE_MS`] while a stop request is
+/// something this process can notice.
+fn next_sleep_ms(deadline: Instant) -> i64 {
+    let now = Instant::now();
+    if now >= deadline {
+        return 0;
+    }
+    let left = deadline.duration_since(now).as_micros().div_ceil(1000);
+    let left = i64::try_from(left).unwrap_or(i64::MAX);
+    if super::process::stop_watch_installed() {
+        left.min(STOP_SLICE_MS)
+    } else {
+        left
+    }
+}
+
+/// The one wait of a turn, over sockets and jobs, shared by every native
+/// backend: the VM, a generated Rust artifact and the Wasmtime host.
+///
+/// It returns as soon as something in the set is ready, once `deadline`
+/// passes, or once a stop request has arrived in a process that watches for
+/// one. A job that is `None` is a handle the host no longer knows, which is
+/// reported ready: false readiness is allowed and `take` gives the real
+/// answer.
+///
+/// A settling job rings every wait blocked on its engine, including a job
+/// outside this set. That is a wake, not an answer: the wait looks at its
+/// whole set again, sockets included, with a fresh poller, and goes back to
+/// sleep while nothing in it is ready. Returning on that wake, or sleeping
+/// the rest of the timeout on the engine alone, would leave a socket that
+/// becomes ready in the meantime unreported.
+pub fn wait_ready(
+    sockets: &[crate::tcp::TcpSocket],
+    jobs: &[Option<Job>],
+    deadline: Instant,
+) -> Result<WaitReady, String> {
+    // One program has one job engine, so every job in a wait set belongs to
+    // the same one and the first handle's engine is the engine of the whole
+    // set. The debug assertion is where that would be noticed if a build
+    // ever gave a program two.
+    let engine = jobs.iter().flatten().next().map(|job| job.engine().clone());
+    debug_assert!(
+        engine.as_ref().is_none_or(|engine| jobs
+            .iter()
+            .flatten()
+            .all(|job| std::sync::Arc::ptr_eq(job.engine(), engine))),
+        "Wait.poll received jobs from more than one engine"
+    );
+    let ready_jobs = || -> Vec<usize> {
+        jobs.iter()
+            .enumerate()
+            .filter(|(_, job)| job.as_ref().is_none_or(Job::is_ready))
+            .map(|(position, _)| position)
+            .collect()
+    };
+    loop {
+        // Read the settle generation and arm the waker before deciding
+        // nothing is ready, so a job that finishes between the two wakes the
+        // sleep instead of being slept through. The waker is fresh for every
+        // attempt because the reactor registers each socket once per poller.
+        let wake = if sockets.is_empty() {
+            JobWake::default()
+        } else {
+            arm_job_wake(engine.as_ref())?
+        };
+        let generation = engine.as_ref().map(|engine| engine.generation());
+        let mut ready = WaitReady {
+            sockets: Vec::new(),
+            jobs: ready_jobs(),
+        };
+        let sleep_ms = next_sleep_ms(deadline);
+        if !sockets.is_empty() {
+            let timeout = if ready.jobs.is_empty() { sleep_ms } else { 0 };
+            ready.sockets = poll_sockets_beside_jobs(sockets, timeout, &wake)?;
+            if !jobs.is_empty() && ready.jobs.is_empty() {
+                // A job may have settled while the reactor slept.
+                ready.jobs = ready_jobs();
+            }
+        }
+        if !ready.sockets.is_empty()
+            || !ready.jobs.is_empty()
+            || Instant::now() >= deadline
+            || super::process::stop_watch_fired()
+        {
+            return Ok(ready);
+        }
+        if sockets.is_empty() {
+            let until = Instant::now()
+                .checked_add(Duration::from_millis(sleep_ms.max(0) as u64))
+                .map_or(deadline, |until| until.min(deadline));
+            match (engine.as_ref(), generation) {
+                (Some(engine), Some(generation)) => engine.wait_until(generation, until),
+                _ => {
+                    let now = Instant::now();
+                    if until > now {
+                        std::thread::sleep(until - now);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl CapabilityProvider for StandardWaitProvider {
     fn identity(&self) -> &str {
         STANDARD_WAIT_NATIVE_IDENTITY
@@ -239,6 +358,7 @@ impl CapabilityProvider for StandardWaitProvider {
 
         let mut socket_keys = Vec::new();
         let mut sockets = Vec::new();
+        let mut job_keys = Vec::new();
         let mut jobs = Vec::new();
         for (key, item) in items {
             match item {
@@ -246,108 +366,32 @@ impl CapabilityProvider for StandardWaitProvider {
                     socket_keys.push(key);
                     sockets.push(socket);
                 }
-                WaitItem::Job(handle) => jobs.push((key, handle)),
+                WaitItem::Job(handle) => {
+                    job_keys.push(key);
+                    jobs.push(Some(handle));
+                }
             }
         }
-        // One program has one job engine, so every job in a wait set belongs
-        // to the same one and the first handle's engine is the engine of the
-        // whole set. The debug assertion is where that would be noticed if a
-        // build ever gave a program two.
-        let engine = jobs.first().map(|(_, handle)| handle.engine().clone());
-        debug_assert!(
-            engine.as_ref().is_none_or(|engine| jobs
-                .iter()
-                .all(|(_, handle)| std::sync::Arc::ptr_eq(handle.engine(), engine))),
-            "Wait.poll received jobs from more than one engine"
-        );
         // The timeout is the upper bound on this one wait, so the deadline is
-        // taken once, before anything sleeps, and every sleep below stops at
-        // it. Sleeping the full timeout twice — once on the sockets, once on
-        // the engine — would make the wait take twice as long as it promised.
-        //
-        // A timeout the contract admits can name an instant this host cannot
-        // hold, and adding it would end the turn with a panic rather than a
-        // wait. It is capped instead: past the cap the timeout means "no
-        // deadline within reach", which is the wait that program asked for.
-        let deadline = deadline_for(Instant::now(), timeout_ms);
-        // Read the settle generation and arm the waker before deciding nothing
-        // is ready, so a job that finishes between the two never sleeps out
-        // the timeout.
-        let generation = engine.as_ref().map(|engine| engine.generation());
-        let wake = match arm_job_wake(engine.as_ref()) {
-            Ok(wake) => wake,
+        // taken once, before anything sleeps, and every sleep stops at it.
+        let deadline = wait_deadline(Instant::now(), timeout_ms);
+        let found = match wait_ready(&sockets, &jobs, deadline) {
+            Ok(found) => found,
             Err(message) => return Ok(err(message)),
         };
-
-        let mut ready = Vec::new();
-        for (key, handle) in &jobs {
-            if handle.is_ready() {
-                ready.push(key.clone());
-            }
-        }
-
-        if !sockets.is_empty() {
-            let socket_timeout = if ready.is_empty() {
-                remaining_ms(deadline)
-            } else {
-                0
-            };
-            match poll_sockets_beside_jobs(&sockets, socket_timeout, &wake) {
-                Ok(positions) => {
-                    for position in positions {
-                        if let Some(key) = socket_keys.get(position) {
-                            ready.push(key.clone());
-                        }
-                    }
-                }
-                Err(message) => return Ok(err(message)),
-            }
-        }
-
-        if ready.is_empty() {
-            if let (Some(engine), Some(generation)) = (engine.as_ref(), generation) {
-                // A job-only wait has no socket to sleep on; the engine's own
-                // signal is the wait. A wait that already slept on its sockets
-                // finds the deadline passed and returns at once.
-                //
-                // The engine's settle generation is per engine, not per wait
-                // set, so a job outside this set ends the sleep as well. That
-                // is a wake, not an answer: re-check this set and go back to
-                // sleep while nothing in it is ready and the deadline has not
-                // passed, or the wait returns empty long before it promised.
-                //
-                // The generation is read before every readiness decision,
-                // exactly as it was before the first one: a job of this set
-                // that settles between the decision and the sleep is then a
-                // settle the sleep has not seen yet, so it wakes at once
-                // instead of sleeping out the timeout.
-                let mut generation = generation;
-                loop {
-                    if jobs.iter().any(|(_, handle)| handle.is_ready())
-                        || Instant::now() >= deadline
-                    {
-                        break;
-                    }
-                    engine.wait_until(generation, deadline);
-                    generation = engine.generation();
-                }
-            } else if sockets.is_empty() {
-                // Neither socket nor job: the wait is the timeout itself.
-                let left = remaining_ms(deadline);
-                if left > 0 {
-                    std::thread::sleep(Duration::from_millis(left as u64));
-                }
-            }
-        }
-        for (key, handle) in &jobs {
-            if handle.is_ready() {
-                ready.push(key.clone());
-            }
-        }
-
+        let mut ready: Vec<ProviderValue> = found
+            .sockets
+            .iter()
+            .filter_map(|position| socket_keys.get(*position).cloned())
+            .chain(
+                found
+                    .jobs
+                    .iter()
+                    .filter_map(|position| job_keys.get(*position).cloned()),
+            )
+            .collect();
         // The contract answers in the order the caller's own map puts its
-        // keys in, whatever that map is keyed by. Two passes over the jobs can
-        // report the same one twice, so equal keys collapse after the sort.
+        // keys in, whatever that map is keyed by.
         ready.sort_by(super::compare_map_keys);
         ready.dedup_by(|left, right| {
             super::compare_map_keys(left, right) == std::cmp::Ordering::Equal
@@ -367,7 +411,7 @@ pub const MAX_WAIT_MS: i64 = 1000 * 60 * 60 * 24 * 365 * 100;
 
 /// The instant one wait stops at: `now` plus its timeout, capped at
 /// [`MAX_WAIT_MS`] and saturating at whatever this host's clock can hold.
-fn deadline_for(now: Instant, timeout_ms: i64) -> Instant {
+pub fn wait_deadline(now: Instant, timeout_ms: i64) -> Instant {
     let capped = timeout_ms.clamp(0, MAX_WAIT_MS);
     now.checked_add(Duration::from_millis(capped as u64))
         .unwrap_or(now)
@@ -390,26 +434,21 @@ pub const WORK_KIND_NATIVE_FINGERPRINT: &str = concat!("aver-rt/", env!("CARGO_P
 /// The bytecode VM answers a job kind with a child VM over the same program
 /// (`src/provider/work.rs` in the compiler); a generated artifact has the
 /// function itself, so the seam is this much smaller. The answers are the
-/// same, deliberately: `Ok(None)` while the job runs, `Ok(Some(r))` once,
-/// `Err("work: job already taken")`, `Err("work: job cancelled")`, and the
-/// engine's own `work: job limit N reached` from `begin`.
+/// same, deliberately: `Ok(None)` while the job is queued or runs,
+/// `Ok(Some(r))` once, `Err("work: job already taken")`,
+/// `Err("work: job cancelled")`, and `Err("work: unknown job")` once the
+/// engine has forgotten the slot. `begin` never refuses at the job limit: the
+/// engine queues the job instead.
 pub struct WorkKindProvider {
     capability: String,
     identity: String,
     engine: std::sync::Arc<crate::work::JobEngine>,
     body: WorkKindBody,
-    /// The jobs this job kind started itself.
-    ///
-    /// Every job kind of a program shares one engine and `Work.Job` is one
-    /// type, so a handle minted by one kind type-checks as an argument to
-    /// another kind's `take`. Only the runtime can tell them apart.
-    ///
-    /// An id is never removed, not by `take` and not by `cancel`: a taken or
-    /// cancelled job must still be recognised as this kind's, so that a
-    /// second `take` answers "already taken" rather than "not started by job
-    /// kind". The set therefore grows by one `u64` per job for the life of
-    /// the process, which is the price of that answer staying right.
-    minted: std::sync::Mutex<std::collections::BTreeSet<u64>>,
+    /// This job kind's owner tag in the engine, which is how `take` tells a
+    /// handle this kind began from one another kind began. The engine keeps
+    /// the tag in the job's own slot, so it is bounded exactly as the slots
+    /// are and nothing here grows with the number of jobs.
+    owner: u64,
 }
 
 impl WorkKindProvider {
@@ -418,12 +457,13 @@ impl WorkKindProvider {
         engine: std::sync::Arc<crate::work::JobEngine>,
         body: WorkKindBody,
     ) -> Self {
+        let owner = engine.new_owner();
         Self {
             capability: capability.to_string(),
             identity: format!("aver.work.{capability}/native"),
             engine,
             body,
-            minted: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            owner,
         }
     }
 
@@ -433,22 +473,28 @@ impl WorkKindProvider {
 
     fn begin(&self, task: ProviderValue) -> ProviderValue {
         let body = self.body;
-        match self.engine.begin(Box::new(move |_cancel| body(task))) {
+        match self
+            .engine
+            .begin_owned(self.owner, Box::new(move |_cancel| body(task)))
+        {
             Ok(job) => {
-                if let Ok(mut minted) = self.minted.lock() {
-                    minted.insert(job.id());
-                }
                 ProviderValue::ResultOk(Box::new(ProviderValue::Resource(job.into_resource())))
             }
             Err(message) => ProviderValue::ResultErr(Box::new(ProviderValue::String(message))),
         }
     }
 
-    fn started_here(&self, id: u64) -> bool {
-        self.minted
-            .lock()
-            .map(|minted| minted.contains(&id))
-            .unwrap_or(false)
+    /// What `take` answers for a handle: a forgotten slot is unknown
+    /// whoever asks, and a slot another kind began is refused by name.
+    fn take(&self, job: &Job) -> ProviderValue {
+        match job.engine().owner(job.id()) {
+            None => err("work: unknown job".to_string()),
+            Some(owner) if owner != self.owner => err(format!(
+                "work: this job was not started by job kind '{}'",
+                self.capability
+            )),
+            Some(_) => Self::answer(job.take()),
+        }
     }
 
     fn answer(outcome: Result<Option<ProviderValue>, String>) -> ProviderValue {
@@ -501,18 +547,7 @@ impl CapabilityProvider for WorkKindProvider {
         };
         match operation.rsplit_once('.').map(|(_, name)| name) {
             Some("begin") => Ok(self.begin(single.clone())),
-            Some("take") => {
-                let job = job(operation, single)?;
-                if !self.started_here(job.id()) {
-                    return Ok(ProviderValue::ResultErr(Box::new(ProviderValue::String(
-                        format!(
-                            "work: this job was not started by job kind '{}'",
-                            self.capability
-                        ),
-                    ))));
-                }
-                Ok(Self::answer(job.take()))
-            }
+            Some("take") => Ok(self.take(job(operation, single)?)),
             _ => Err(ProviderFault::new(
                 "unknown_operation",
                 format!(
@@ -522,15 +557,6 @@ impl CapabilityProvider for WorkKindProvider {
             )),
         }
     }
-}
-
-/// How much of this wait's timeout is left, in milliseconds.
-fn remaining_ms(deadline: Instant) -> i64 {
-    let now = Instant::now();
-    if now >= deadline {
-        return 0;
-    }
-    i64::try_from(deadline.duration_since(now).as_millis()).unwrap_or(i64::MAX)
 }
 
 fn err(message: String) -> ProviderValue {
@@ -702,9 +728,12 @@ mod tests {
         // the cap the wait has no deadline within reach, and the host's own
         // clock is never asked to hold an instant it cannot.
         let now = Instant::now();
-        assert_eq!(deadline_for(now, i64::MAX), deadline_for(now, MAX_WAIT_MS));
-        assert_eq!(deadline_for(now, 0), now);
-        assert!(deadline_for(now, i64::MAX) > now + Duration::from_secs(60 * 60 * 24 * 365));
+        assert_eq!(
+            wait_deadline(now, i64::MAX),
+            wait_deadline(now, MAX_WAIT_MS)
+        );
+        assert_eq!(wait_deadline(now, 0), now);
+        assert!(wait_deadline(now, i64::MAX) > now + Duration::from_secs(60 * 60 * 24 * 365));
     }
 
     /// The engine's settle generation is per engine, so a job outside the
@@ -764,6 +793,68 @@ mod tests {
             "the wait returned after {elapsed:?}, before the job it was over settled"
         );
         let _ = slow;
+    }
+
+    /// A mixed wait woken by a job outside its set keeps watching its
+    /// sockets. The foreign job rings the engine's waker, which ends the
+    /// socket poll early; the wait must poll its sockets again rather than
+    /// sleep the rest of its timeout on the engine alone and miss the bytes
+    /// that arrive meanwhile.
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn a_wake_from_outside_the_set_does_not_deafen_the_sockets() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let port = listener.local_addr().expect("address").port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            std::thread::sleep(Duration::from_millis(600));
+            stream.write_all(b"ping\n").expect("write");
+            std::thread::sleep(Duration::from_millis(2000));
+        });
+        let connection = crate::tcp::connect("127.0.0.1", i64::from(port)).expect("connect");
+
+        let engine = JobEngine::new(4);
+        let release = Arc::new(AtomicBool::new(false));
+        let held = release.clone();
+        let slow = engine
+            .begin(Box::new(move |cancel| {
+                while !held.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(1)))
+            }))
+            .expect("the slow job starts");
+        // Settles while the wait sleeps on its socket, and is in no wait set.
+        let _foreign = engine
+            .begin(Box::new(|_| {
+                std::thread::sleep(Duration::from_millis(100));
+                Ok(ProviderValue::Int(crate::AverInt::from_i64(2)))
+            }))
+            .expect("the foreign job starts");
+
+        let started = Instant::now();
+        let found = wait_ready(
+            &[crate::tcp::TcpSocket::Connected(connection.clone())],
+            &[Some(slow.clone())],
+            started + Duration::from_secs(5),
+        )
+        .expect("the wait answers");
+        let elapsed = started.elapsed();
+        release.store(true, Ordering::Relaxed);
+
+        assert_eq!(
+            found.sockets,
+            vec![0],
+            "the socket that became readable was not reported"
+        );
+        assert!(found.jobs.is_empty(), "the slow job was reported ready");
+        assert!(
+            elapsed < Duration::from_millis(2500),
+            "the socket that became readable after 600ms was reported after {elapsed:?}"
+        );
+        let _ = crate::tcp::close(&connection);
+        server.join().expect("server thread");
     }
 
     #[test]

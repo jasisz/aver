@@ -43,6 +43,18 @@ use crate::types::checker::TypeError;
 pub(crate) type FnSigs =
     std::collections::HashMap<String, (Vec<crate::ast::Type>, crate::ast::Type, Vec<String>)>;
 
+/// How generated source spells the types whose source spelling would not
+/// name them in the module it is generated into, keyed by identity; see
+/// `SymbolTable::generated_type_spellings`.
+pub(crate) type TypeSpellings = std::collections::HashMap<crate::ir::TypeId, String>;
+
+/// A stamped type as generated source must write it: the source spelling,
+/// except where that spelling names another type (or none) in this module,
+/// where it is the declaring module's qualified name.
+pub(crate) fn spell_type(ty: &crate::ast::Type, spellings: &TypeSpellings) -> String {
+    ty.display_with(&|id| spellings.get(&id).cloned())
+}
+
 mod build;
 mod coordinator;
 mod lower;
@@ -285,6 +297,7 @@ pub fn lower(
     fn_sigs: &FnSigs,
     imported: &std::collections::HashMap<String, ProcessProtocol>,
     laws: &std::collections::BTreeSet<String>,
+    type_spellings: &TypeSpellings,
     coordinator_stop: CoordinatorStop,
 ) -> Result<YieldLoweringReport, Vec<TypeError>> {
     debug_assert_eq!(items.len(), stamped.len());
@@ -367,7 +380,7 @@ pub fn lower(
             failed.insert(name.clone());
             continue;
         }
-        match lower::lower_fn(fd, marked, fn_sigs, &nesting) {
+        match lower::lower_fn(fd, marked, fn_sigs, type_spellings, &nesting) {
             Ok(generated) => {
                 nesting.record(&generated);
                 lowered.insert(name.clone(), generated);
@@ -424,6 +437,7 @@ pub fn lower(
         &report.sources,
         &mut report.protocols,
         fn_sigs,
+        type_spellings,
         imported,
     )?;
     report.generated.extend(traces.iter().cloned());

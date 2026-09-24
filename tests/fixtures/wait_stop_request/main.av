@@ -1,0 +1,15 @@
+module Main
+    depends [Wait]
+    intent = "A stop request ends a long wait within a moment rather than at the wait's deadline."
+    exposes [main]
+    effects [Console.print, Process.stopRequested, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Starts watching for a stop request, says so, waits thirty seconds on nothing, and reports whether a stop ended the wait."
+    ! [Console.print, Process.stopRequested, Wait.poll]
+    before = Process.stopRequested()
+    Console.print("watching for a stop request: {before}")
+    ready = Wait.poll({}, 30000)?
+    after = Process.stopRequested()
+    Console.print("stop requested: {after}, ready keys: {List.len(ready)}")
+    Result.Ok(Unit)

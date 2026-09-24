@@ -92,7 +92,7 @@ pub(super) fn write(protocols: &[ProcessProtocol], answers: &[Answer], jobs: &[J
         events.push(Event::new(
             &format!("Start{upper}"),
             &[("task", &job.task_type), ("handle", "Work.Job")],
-            "__roomLeft(run) > 0",
+            "true",
             &format!("__jobSeated{upper}(run, task, handle)"),
         ));
         events.push(Event::new(
@@ -129,7 +129,7 @@ pub(super) fn write(protocols: &[ProcessProtocol], answers: &[Answer], jobs: &[J
                 .join(", ")
         ));
     }
-    out.push_str("\nfn __historyAllowed(run: __Run, event: __HistoryEvent) -> Bool\n    ? \"Control preconditions: a start needs room, and a settlement carries a nonnegative request instance, with a current instance seated. Other observations are unrestricted, including arbitrary provider state and spurious job reports. Safety is proved over this superset of runtime histories.\"\n    match event\n");
+    out.push_str("\nfn __historyAllowed(run: __Run, event: __HistoryEvent) -> Bool\n    ? \"Control preconditions: a settlement carries a nonnegative request instance, with a current instance seated. A start needs nothing: at the job limit the engine queues a job rather than refusing it. Other observations are unrestricted, including arbitrary provider state and spurious job reports. Safety is proved over this superset of runtime histories.\"\n    match event\n");
     for event in &events {
         out.push_str(&format!("        {} -> {}\n", event.pattern(), event.guard));
     }
@@ -207,25 +207,6 @@ verify __settle{upper} law answeringRetiresTheInstance
 "#,
             outcome = protocol.outcome
         ));
-    }
-    if !jobs.is_empty() {
-        out.push_str(r#"
-verify __historyStep law jobsStayWithinLimit
-    given run: __Run = [__sampleRun()]
-    given event: __HistoryEvent = [__HistoryEvent.Observe(0, false), __HistoryEvent.Cancel(1)]
-    when __historyAllowed(run, event)
-    when Map.len(run.jobs) <= __maxJobs()
-    using []
-    Map.len(__historyStep(run, event).jobs) <= __maxJobs() holds
-
-verify __historyRun law jobsStayWithinLimit
-    given run: __Run = [__sampleRun()]
-    given events: List<__HistoryEvent> = [[], [__HistoryEvent.Cancel(1), __HistoryEvent.Observe(9, false)]]
-    when __historyAdmissible(run, events)
-    when Map.len(run.jobs) <= __maxJobs()
-    using [__historyStep.jobsStayWithinLimit]
-    Map.len(__historyRun(run, events).jobs) <= __maxJobs() holds
-"#);
     }
     out
 }

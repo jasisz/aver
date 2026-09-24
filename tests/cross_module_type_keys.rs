@@ -320,6 +320,7 @@ fn illegal(item: Low.Low.Item) -> Int
             error.contains("Low.Low.Item")
                 && (error.contains("not exposed")
                     || error.contains("not visible")
+                    || error.contains("does not depend on")
                     || error.contains("Unknown type"))
         }),
         "re-exporting Item must not silently import the Low.Low qualifier: {errors:?}"

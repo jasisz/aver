@@ -2220,7 +2220,10 @@ fn audit_unit(
             &mut transformed,
             &aver::ir::TypecheckMode::WithCheckedLoaded(&unit.loaded),
             user_program_len,
-            &aver::config::MarkedCapabilities::for_project_dir(Some(module_root)),
+            &unit_marked(
+                aver::config::MarkedCapabilities::for_project_dir(Some(module_root)),
+                unit.is_entry,
+            ),
         );
         preparation_failed |= !tc_result.errors.is_empty();
         let mut report =
@@ -2793,6 +2796,19 @@ struct VerifyRun {
     stop: Option<VerifyStop>,
 }
 
+/// The marked capabilities one report unit is lowered with: the entry's own,
+/// or a dependency's, which never hosts the default generated loop.
+fn unit_marked(
+    marked: aver::config::MarkedCapabilities,
+    is_entry: bool,
+) -> aver::config::MarkedCapabilities {
+    if is_entry {
+        marked
+    } else {
+        marked.as_dependency()
+    }
+}
+
 struct PlannedVerifyInput {
     file: String,
     units: Result<Vec<VerifyReportUnit>, String>,
@@ -2800,6 +2816,10 @@ struct PlannedVerifyInput {
 
 struct VerifyReportUnit {
     path: String,
+    /// Whether this module is the program's entry: only the entry hosts a
+    /// default generated loop, and every other unit is lowered as a
+    /// dependency.
+    is_entry: bool,
     source: String,
     items: Vec<TopLevel>,
     loaded: Vec<aver::source::LoadedModule>,
@@ -2948,6 +2968,7 @@ fn run_verify_for_units(
     for (index, unit) in units.into_iter().enumerate() {
         let VerifyReportUnit {
             path,
+            is_entry: _,
             source,
             items,
             loaded: _,
@@ -3081,6 +3102,7 @@ fn collect_verify_program_units_with_cache(
                 .map(|dependency| (dependency.path.clone(), dependency.dep_name.clone()))
                 .collect();
             VerifyReportUnit {
+                is_entry: module.is_entry,
                 path: if module.is_entry {
                     file.to_string()
                 } else {
@@ -3685,7 +3707,7 @@ pub(super) fn cmd_verify(
                     unit.items.clone(),
                     std::mem::take(&mut unit.loaded),
                     &unit.path,
-                    &marked,
+                    &unit_marked(marked.clone(), unit.is_entry),
                 )
             };
             unit.prepared = Some(prepared);
@@ -12440,7 +12462,17 @@ pub(super) fn load_compile_deps_prepared(
         )),
         Err(error) => fail(error.to_string()),
     };
-    let marked = aver::config::MarkedCapabilities::for_project_dir(Some(module_root));
+    // The loader bound an unnamed default loop to the entry, so no
+    // dependency lowered below is taken for the loop's home.
+    let marked = program.marked().clone();
+    if let Some(entry) = aver::visibility::module_decl(items) {
+        let has_main = items
+            .iter()
+            .any(|item| matches!(item, TopLevel::FnDef(fd) if fd.name == "main"));
+        if let Some(message) = marked.run_entry_mismatch(&entry.name, has_main) {
+            fail(message);
+        }
+    }
     // Keep loader faults in discovery order: the first broken edge a user
     // wrote remains the first diagnostic even though successful body checks
     // below run leaves-first.

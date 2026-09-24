@@ -234,28 +234,26 @@ fn work_jobs_two_kinds_keeps_each_kind_to_its_own_handles_on_wasip2() {
     assert_same_stdout("work_jobs_two_kinds", &["--wasip2"]);
 }
 
-/// `[work] max-jobs` decides nothing on a single-threaded target: a job runs
-/// at `begin` and is over before the next line, so there is never a second
-/// job running to refuse. The fixture treats a second `begin` that succeeds
-/// as its own failure, so what it prints here is nothing at all — and the
-/// program door says why, naming the key and the target.
+/// A job begun at the limit is queued, not refused: the wasm-gc host starts it
+/// once the running one stops, and the program prints what the VM prints.
 #[test]
-fn work_jobs_limit_is_enforced_on_wasm_gc() {
+fn work_jobs_limit_queues_on_wasm_gc() {
+    assert_same_stdout("work_jobs_limit", &["--wasm-gc"]);
     let output =
         run("work_jobs_limit", &["--wasm-gc"], &[]).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(output, "work: job limit 1 reached");
+    assert!(
+        output.contains("the second job was queued, not refused"),
+        "{output}"
+    );
 }
 
+/// `[work] max-jobs` decides nothing on wasip2: a job runs inline at `begin`
+/// and is over before the next expression. The door says so, naming the key
+/// and the target, and the program prints what the VM prints, because a
+/// begin is never refused anywhere.
 #[cfg(feature = "wasip2")]
 #[test]
 fn work_jobs_limit_says_the_manifest_key_changes_nothing_on_wasip2() {
-    assert_work_jobs_limit_is_ignored("--wasip2");
-}
-
-/// The `work_jobs_limit` case, for one wasm target: the door warns, the run
-/// prints nothing, and the VM is where the limit the fixture was written for
-/// still holds.
-fn assert_work_jobs_limit_is_ignored(target: &str) {
     let dir = fixture("work_jobs_limit");
     let out = Command::new(aver_bin())
         .current_dir(repo_root())
@@ -263,26 +261,25 @@ fn assert_work_jobs_limit_is_ignored(target: &str) {
         .arg(dir.join("main.av"))
         .arg("--module-root")
         .arg(&dir)
-        .arg(target)
+        .arg("--wasip2")
         .output()
-        .unwrap_or_else(|error| panic!("expected `aver run {target}` to execute: {error}"));
+        .unwrap_or_else(|error| panic!("expected `aver run --wasip2` to execute: {error}"));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("warning[work-max-jobs-ignored]"),
         "the program door must say the key changes nothing:\n{}",
         format_output(&out)
     );
-    assert!(stderr.contains(target), "{stderr}");
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
-        "",
-        "inline, the second `begin` succeeds, so the fixture's own refusal never prints"
-    );
-    let vm = run("work_jobs_limit", &[], &[]).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(
-        vm, "work: job limit 1 reached",
-        "the VM runs jobs beside the turn, so the limit it was written for holds there"
-    );
+    assert!(stderr.contains("--wasip2"), "{stderr}");
+    assert_same_stdout("work_jobs_limit", &["--wasip2"]);
+}
+
+/// A socket the host no longer knows is reported ready by the wait, on the
+/// wasm-gc native host exactly as on the VM, so a request parked on a socket
+/// another request closed does not end the run.
+#[test]
+fn a_closed_socket_in_a_wait_matches_the_vm_on_wasm_gc() {
+    assert_same_stdout("run_closed_socket_wait", &["--wasm-gc"]);
 }
 
 /// One wait set holding a socket and a job together: the wait has to hand

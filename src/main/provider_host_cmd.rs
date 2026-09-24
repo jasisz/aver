@@ -700,6 +700,7 @@ fn work_input_rejections(
         manifest.as_ref(),
         &tc.fn_sigs,
         entry_module,
+        true,
     )
     .iter()
     // A warning is something `aver check` tells the program's author; only an

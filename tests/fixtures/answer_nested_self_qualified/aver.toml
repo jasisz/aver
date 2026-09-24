@@ -1,0 +1,8 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Slice.Wire"
+answer = "Slice.Sockets"
+
+[run]

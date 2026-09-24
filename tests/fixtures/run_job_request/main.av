@@ -1,0 +1,19 @@
+module Node
+    intent = "One process that asks for squares computed as jobs its answer module begins itself; the second takes long enough that only a stop request ends the run."
+    depends [Calc, Calculating, Maths, Squares]
+    effects [Calc.square, Console.print, yield]
+
+fn asker() -> Unit
+    ? "Asks for one quick square and prints it, then asks for one that takes a long time and parks on it."
+    ! [Calc.square, Console.print, yield]
+    match Calc.square(7)
+        Result.Err(why) -> Console.print("the quick square failed: {why}")
+        Result.Ok(value) -> slow(value)
+
+fn slow(quick: Int) -> Unit
+    ? "Says what the quick square was, then waits for the slow one."
+    ! [Calc.square, Console.print, yield]
+    Console.print("7 squared is {quick}; asking for a square that takes a long time")
+    match Calc.square(40000000000)
+        Result.Err(why) -> Console.print("the slow square failed: {why}")
+        Result.Ok(value) -> Console.print("the slow square is {value}")

@@ -143,6 +143,19 @@ pub(super) fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
             // not a type name: a program may declare `record Http`, and
             // exempting it would make that record equal to every other
             // module's `Http`.
+            // A capability loaded under a longer path (`Slice.Wire`) that
+            // names its own type by its declared name (`Wire.Heard`) means
+            // its own type, the same one the bare `Heard` names.
+            if let Some((qualifier, bare)) = name.rsplit_once('.')
+                && qualifier != scope
+                && !qualifier.contains('.')
+                && scope.rsplit('.').next() == Some(qualifier)
+            {
+                return Type::Named {
+                    id,
+                    name: format!("{scope}.{bare}"),
+                };
+            }
             if name.contains('.')
                 || name == crate::types::branch_path::TYPE_NAME
                 || crate::stdlib::bare_stdlib_type_names().contains(&name)

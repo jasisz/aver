@@ -12,7 +12,6 @@ record View
     ready: List<Int>
     askable: List<Int>
     jobs: Int
-    room: Int
     stopping: Bool
 
 fn pooling() -> Unit
