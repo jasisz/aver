@@ -64,9 +64,11 @@ jobs:
       - name: Install pinned toolchain
         run: elan toolchain install "$LEAN_TOOLCHAIN"
       - name: Build tools
-        run: bash experiments/external-kernels/build-tools.sh "$PWD/tools"
+        # Outside the checkout, so Cargo does not take the kernels for
+        # members of this repository's workspace.
+        run: bash experiments/external-kernels/build-tools.sh "$RUNNER_TEMP/tools"
       - name: Pack
-        run: tar -czf kernel-tools.tgz tools
+        run: tar -C "$RUNNER_TEMP" -czf kernel-tools.tgz tools
       - uses: actions/upload-artifact@v4
         with:
           name: kernel-tools
