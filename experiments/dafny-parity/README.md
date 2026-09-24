@@ -13,8 +13,8 @@ Where does the Dafny backend stand against Lean on every law we have, which laws
 Targets: `projects/k5_fdiv` through `entries/k5_lawsentry.av` (a leaf module that depends on all 23 law-carrying modules), `payment_ops` and `workflow_engine` (their one law module, `infra/codec.av`), `durable_promise` (`domain/promise.av`), and btc-listener. For btc-listener, `domain/interp.av` and `domain/laws.av` at `main` (c5541f8), at PR #361's head (5698c8e, fork jasisz/btc-listener), and at the `proof-entry-laws` branch (c63816b, main plus the commit that adds `laws.av`). `laws.av` exists only on that branch, so it is copied onto `main` and the PR head. There is also a probe module, `entries/btc_parityprobe.av`, which states the bit-mask laws issues #352/#353/#356 ask for (they are not in the repository yet). Robin's pins differ from ours (main pins 600b3551, the PR head 77ff2e66). Every btc entry type-checks and exports with our main, with no source changes except the one below.
 
 Runs:
-- final measurement: https://github.com/jasisz/aver/actions/runs/36008231040
-- the same corpus, earlier iteration (identical per-law results): https://github.com/jasisz/aver/actions/runs/36002661502
+- final measurement, with the tables below in its job summary and `parity-report` artifact: https://github.com/jasisz/aver/actions/runs/36021798060
+- earlier iterations with identical per-law results: https://github.com/jasisz/aver/actions/runs/36008231040, https://github.com/jasisz/aver/actions/runs/36002661502
 - CI cost (Proof lanes with and without Dafny): https://github.com/jasisz/aver/actions/runs/36002670569
 - forall-citation what-if on K5 (`k5cite`): https://github.com/jasisz/aver/actions/runs/36005390749
 - 120 s time-limit what-if (`k5slow`, `btcslow`): https://github.com/jasisz/aver/actions/runs/36011387143
@@ -83,11 +83,11 @@ Four of the nine are nonlinear arithmetic in K5, where Z3's nonlinear solver has
 | K5 `FracRound.truncFracErrorBound.strictBound` | bounded | postcondition | turbo-hard | same |
 | K5 `FracRound.awayFracErrorBound.strictBound` | bounded | postcondition | turbo-hard | same |
 | K5 `Kernel.divide.theorem_2` | sorry | timeout | hard | rests on the open §8/§9 lemmas |
-| K5 `Recip.nrRoundedStepError.oneStepBound` | bounded | timeout | nonlinear, Z3 time | the 120 s run had not finished after 75 min |
-| K5 `Remainder.reciprocalMagnitudeBound_8_2_4.reciprocalMagnitudeComposition` | sorry | timeout | nonlinear, Z3 time | the 120 s run had not finished after 75 min |
-| K5 `Remainder.productMagnitudeBound.guarded` | sorry | timeout | nonlinear, Z3 time | the 120 s run had not finished after 75 min |
+| K5 `Recip.nrRoundedStepError.oneStepBound` | bounded | timeout | nonlinear, Z3 time | the 120 s run had not finished after 100 min |
+| K5 `Remainder.reciprocalMagnitudeBound_8_2_4.reciprocalMagnitudeComposition` | sorry | timeout | nonlinear, Z3 time | the 120 s run had not finished after 100 min |
+| K5 `Remainder.productMagnitudeBound.guarded` | sorry | timeout | nonlinear, Z3 time | the 120 s run had not finished after 100 min |
 | K5 `Remainder.signsDifferent_8_2_2.branchPositive` | sorry | postcondition | nonlinear | its sibling `branchNonpositive` is Dafny-only |
-| K5 `Table.seedBelow.intervalErrorBound` | rewrite error, **breaks the whole build** | timeout | nonlinear, Z3 time | the 120 s run had not finished after 75 min |
+| K5 `Table.seedBelow.intervalErrorBound` | rewrite error, **breaks the whole build** | timeout | nonlinear, Z3 time | the 120 s run had not finished after 100 min |
 | K5 `Table.bucketErrorOk.bucketMonotonicity` | bounded | postcondition | export gap, both | `countEpsilonOkFrom` is outside the proof subset |
 | `Codec.unescapeField.escapedRoundtrip` (payment_ops, workflow_engine) | sorry | postcondition | turbo-hard | an escape/unescape round trip over String replace |
 
@@ -110,7 +110,7 @@ The laws that end in `sorry` on Lean (16 unique) split into: seven bit-mask laws
 3. **Bit-mask bridge lemmas** (measured as a what-if): `Bits.and(a, 2^k - 1) == a mod 2^k` and `Bits.and(a, 2^k) == 2^k ⇔ (a div 2^k) mod 2 == 1` for every Int `a`. They are proved by induction in `whatif/bits_bridge.dfy` (33 verified, 0 errors) and close **6 laws**: 5 from the probe plus `Chainwork.negative.isTheMantissaTopBit`. The exporter also has to state the literal power (`BitsPow2(23) == 8388608`), because Z3 will not unfold it 23 times. The Lean analogue (`whatif/BitsBridge.lean`, core only) closes `lowFive` over every Int, so this is a win on **both** backends, not a Dafny advantage.
 4. **Mutual-recursion measure for `itemAt`/`hereOrDeeper`**: 1 termination failure blocks **5** btc ScriptState laws (4 Lean-only, 1 neither). The measure needs `|items|` with a rank for the `hereOrDeeper` hop. Not measured.
 5. **pow2 addition lemma** (`pow2(m + n) == pow2(m) * pow2(n)`, one induction): `pow2SignedHomomorphism` still fails after (1) and blocks about 7 K5 Kernel/TruncScale laws through the supplier cone. Estimated, not measured.
-6. **A longer time limit does not help.** At 120 s instead of 30 s, btc laws.av gives exactly the same per-law verdicts (the same 3 timeouts, 518 verified / 21 errors). The K5 run at 120 s had not finished after 75 minutes, against 9 minutes at 30 s. Timeouts need guidance, not time.
+6. **A longer time limit does not help.** At 120 s instead of 30 s, btc laws.av gives exactly the same per-law verdicts (the same 3 timeouts, 518 verified / 21 errors). The K5 run at 120 s had not finished after 100 minutes, against 9 minutes at 30 s. Timeouts need guidance, not time.
 7. **Sequence reverse/concat step lemmas** for the ScriptParse guided laws: about 5 root failures, 12 laws. Probably cheap, not measured.
 8. **`?` in guided laws** (Result propagation): unlocks `Segment.headerFor.readsBack`. Moderate.
 9. **AND with disjoint masks splits**: one more bridge lemma for `csvCompared` (#352's 0x0040FFFF). Small.
