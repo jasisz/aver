@@ -1,0 +1,49 @@
+module Main
+    depends [Node, Validation, Work, Wait]
+    intent = "What a handle answers once the engine has forgotten its slot: unknown job, whichever kind is asked."
+    exposes [main]
+    effects [Console.print, Validation.begin, Validation.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Collect one job, then 4100 more, then take the first again."
+    ! [Console.print, Validation.begin, Validation.take, Wait.poll]
+    first = Validation.begin(1)?
+    _a = collect(first)?
+    again = Validation.take(first)
+    Console.print("right after: {show(again)}")
+    churn(4100)?
+    later = Validation.take(first)
+    Console.print("after 4100 more: {show(later)}")
+    Result.Ok(Unit)
+
+fn collect(job: Work.Job) -> Result<Int, String>
+    ? "Wait for and take one job."
+    ! [Validation.take, Wait.poll]
+    _r = Wait.poll({1 => Wait.Item.Job(job)}, 10000)?
+    match Validation.take(job)?
+        Option.Some(v) -> Result.Ok(v)
+        Option.None -> collect(job)
+
+fn churn(n: Int) -> Result<Unit, String>
+    ? "Begin and collect n jobs."
+    ! [Validation.begin, Validation.take, Wait.poll]
+    match n < 1
+        true -> Result.Ok(Unit)
+        false -> churnOne(n)
+
+fn churnOne(n: Int) -> Result<Unit, String>
+    ? "Begins and collects one more job."
+    ! [Validation.begin, Validation.take, Wait.poll]
+    job = Validation.begin(1)?
+    _v = collect(job)?
+    churn(n - 1)
+
+fn show(r: Result<Option<Int>, String>) -> String
+    ? "Renders what a take answered, keeping only the error text that tells the cases apart."
+    match r
+        Result.Ok(_o) -> "Ok"
+        Result.Err(e) -> "Err({e})"
+
+verify show
+    show(Result.Ok(Option.None)) => "Ok"
+    show(Result.Err("work: unknown job")) => "Err(work: unknown job)"

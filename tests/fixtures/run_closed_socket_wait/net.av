@@ -1,0 +1,25 @@
+module Net
+    kind = capability
+    semantics = effectful
+    intent = "Fixture capability: one request waits for a socket to go away, another closes it."
+    exposes [GoneReply, ShutReply, gone, shut]
+
+type GoneReply
+    Now(Bool)
+    Later(Wait.Wake)
+    Then(Wait.Wake, Bool)
+
+type ShutReply
+    Now(Unit)
+    Later(Wait.Wake)
+    Then(Wait.Wake, Unit)
+
+operation gone() -> Bool
+    ? "True once the watched socket can no longer be used."
+    oracle = generative
+    replay = recorded
+
+operation shut() -> Unit
+    ? "Closes the watched socket."
+    oracle = generative
+    replay = recorded

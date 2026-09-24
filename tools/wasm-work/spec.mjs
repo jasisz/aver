@@ -10,7 +10,11 @@ try {
     const take = job => c.decode("Result<Option<Int>, String>", e.take(job));
     const stuck = start(true).ok;
     const quick = start(false).ok;
-    assert.deepEqual(start(true), { err: "work: job limit 2 reached" });
+    // At the limit a begin is queued, never refused: it answers a handle
+    // that reads as pending and starts once a worker is free.
+    const queued = start(false).ok;
+    assert.ok(queued, "a begin at the limit should be queued, not refused");
+    assert.deepEqual(take(queued), { ok: null });
     assert.deepEqual(take(stuck), { ok: null });
     const ready = await host.wait(e.waiting(stuck, quick), c.encode("Int", 10000n));
     assert.deepEqual(c.decode("List<Int>", ready), [2n]);
@@ -31,6 +35,20 @@ try {
         assert.ok(Date.now() < deadline, "zero-timeout turns must deliver worker events");
     } while (nextResult.ok === null);
     assert.deepEqual(nextResult, { ok: { some: 340282366920938463463374607431768211457n } });
+    let queuedResult;
+    do {
+        await host.wait(empty, zero);
+        queuedResult = take(queued);
+        assert.ok(Date.now() < deadline, "the queued job should start once a worker is free");
+    } while (queuedResult.ok === null);
+    assert.deepEqual(queuedResult, { ok: { some: 340282366920938463463374607431768211457n } });
+    // A queued job that is cancelled never starts.
+    const busy = [start(true).ok, start(true).ok];
+    const dropped = start(false).ok;
+    assert.deepEqual(take(dropped), { ok: null });
+    e.cancel(dropped);
+    assert.deepEqual(take(dropped), { err: "work: job cancelled" });
+    for (const job of busy) e.cancel(job);
 } finally { await host.close(); }
 
 const lines = [];

@@ -204,14 +204,15 @@ fn wait<'entries>(
     Ok(Ok(ready))
 }
 
-/// Register the completion waker before inspecting jobs: a completion between
-/// inspection and socket polling must wake the poll instead of being lost.
+/// The host-scheduled wait: the same loop the VM and generated Rust run,
+/// from `aver-rt`, over this host's sockets and the jobs its handles name. A
+/// handle this host no longer knows is reported ready, and `take` then gives
+/// the real answer.
 fn wait_host<'a>(
     work: &std::sync::Arc<super::super::host_work::HostWork>,
     entries: &'a [PollEntry],
     timeout: &super::tcp::GuestInt,
 ) -> Result<Vec<&'a PollEntry>, String> {
-    use std::time::{Duration, Instant};
     let timeout = timeout.value.ok_or_else(|| {
         format!(
             "Wait.poll: timeoutMs {} exceeds the poll limit",
@@ -221,10 +222,7 @@ fn wait_host<'a>(
     if timeout < 0 {
         return Err(format!("Wait.poll: timeoutMs {timeout} is negative"));
     }
-    let timeout = timeout.min(1000 * 60 * 60 * 24 * 365 * 100);
-    let deadline = Instant::now()
-        .checked_add(Duration::from_millis(timeout as u64))
-        .ok_or("Wait.poll: timeoutMs exceeds the host clock")?;
+    let deadline = aver_rt::provider::wait_deadline(std::time::Instant::now(), timeout);
     let mut sockets: Vec<_> = entries
         .iter()
         .filter(|entry| entry.socket.is_some())
@@ -234,44 +232,27 @@ fn wait_host<'a>(
         .iter()
         .filter_map(|entry| entry.socket.clone())
         .collect();
-    loop {
-        // poll_with_waker registers each socket once on its poller. A wake
-        // outside this wait set needs a fresh poller for the next attempt.
-        let waker = aver_rt::tcp::PollWaker::new("Wait.poll")?;
-        let _guard = work.engine.wake_with(std::sync::Arc::new(waker.clone()));
-        let generation = work.engine.generation();
-        let mut ready: Vec<_> = entries
-            .iter()
-            .filter(|entry| {
-                entry
-                    .job_id
-                    .is_some_and(|id| work.job(id, None).map_or(true, |job| job.is_ready()))
-            })
-            .collect();
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if !handles.is_empty() {
-            let timeout = if ready.is_empty() {
-                remaining.as_millis() as i64
-            } else {
-                0
-            };
-            for index in aver_rt::tcp::poll_with_waker(&handles, timeout, &waker, "Wait.poll")? {
-                ready.push(sockets[index]);
-            }
-            // A job may have completed while the reactor was blocked.
-            ready.extend(entries.iter().filter(|entry| {
-                entry
-                    .job_id
-                    .is_some_and(|id| work.job(id, None).map_or(true, |job| job.is_ready()))
-            }));
-        }
-        if !ready.is_empty() || Instant::now() >= deadline {
-            ready.sort_by_key(|entry| entry.order);
-            ready.dedup_by_key(|entry| entry.order);
-            return Ok(ready);
-        }
-        if handles.is_empty() {
-            work.engine.wait_until(generation, deadline);
-        }
-    }
+    let job_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.job_id.is_some())
+        .collect();
+    let jobs: Vec<_> = job_entries
+        .iter()
+        .map(|entry| entry.job_id.and_then(|id| work.job(id, None).ok()))
+        .collect();
+    let found = aver_rt::provider::wait_ready(&handles, &jobs, deadline)?;
+    let mut ready: Vec<&PollEntry> = found
+        .sockets
+        .iter()
+        .filter_map(|position| sockets.get(*position).copied())
+        .chain(
+            found
+                .jobs
+                .iter()
+                .filter_map(|position| job_entries.get(*position).copied()),
+        )
+        .collect();
+    ready.sort_by_key(|entry| entry.order);
+    ready.dedup_by_key(|entry| entry.order);
+    Ok(ready)
 }

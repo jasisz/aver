@@ -57,12 +57,14 @@ pub(super) fn apply_runtime_policy_to_vm(
 /// Hand one wasm plan its `work = "Module.function"` bindings, and say so
 /// when the manifest also sets a job limit the target cannot honour.
 ///
-/// A job on wasm-gc and wasip2 runs inline at `begin` — a component and a
-/// wasm-gc module are single-threaded — so at most one job is ever running
-/// and `[work] max-jobs` decides nothing. Saying it at the program door is
-/// what keeps a manifest key from quietly meaning something different per
-/// target. `has_job_kinds` keeps the warning off a program that sets the key
-/// but starts no job on this target.
+/// On wasm-gc a job runs on a host worker (the native runner and Wasmtime
+/// packs schedule worker instances; the JavaScript adapter uses Workers), and
+/// the host honours the limit. On wasip2 a job still runs inline at `begin` —
+/// a component is single-threaded — so at most one job is ever running and
+/// `[work] max-jobs` decides nothing. Saying it at the program door is what
+/// keeps a manifest key from quietly meaning something different per target.
+/// `has_job_kinds` keeps the warning off a program that sets the key but
+/// starts no job on this target.
 #[cfg(any(feature = "wasm", feature = "wasip2"))]
 pub(super) fn bind_and_warn_about_jobs(
     config: Option<&aver::config::ProjectConfig>,
@@ -79,7 +81,7 @@ pub(super) fn bind_and_warn_about_jobs(
         eprintln!(
             "{}",
             format!(
-                "warning[work-max-jobs-ignored]: aver.toml sets `[work] max-jobs`, and a job on {target} currently runs inline at `begin`, so the key changes nothing here"
+                "warning[work-max-jobs-ignored]: aver.toml sets `[work] max-jobs`, and a job on {target} currently runs inline at `begin`, so the key changes nothing here: the job is over before the next expression, `take` never answers `Ok(None)`, a job that never ends blocks the turn, and a job whose body fails stops the program"
             )
             .yellow()
         );

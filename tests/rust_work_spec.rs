@@ -306,13 +306,21 @@ fn a_wait_key_declared_in_a_dependency_module_matches_the_vm() {
     assert_same_stdout("wait_key_in_dep");
 }
 
-/// At `[work] max-jobs = 1` a second `begin` refuses instead of blocking the
-/// turn, with the engine's own message. The limit reaches the generated
-/// bootstrap from the manifest at compile time, so this also proves the
-/// manifest key crossed into the artifact.
+/// At `[work] max-jobs = 1` a second `begin` is queued instead of refused,
+/// and starts once the first one stops. Generated Rust checks no cancellation
+/// flag, so there the cancelled first job runs to its end before the queued
+/// one starts; what the program prints is the same.
 #[test]
 fn work_jobs_limit_matches_the_vm() {
     assert_same_stdout("work_jobs_limit");
+}
+
+/// A request parked on a socket that another request closed: the next wait
+/// reports the closed socket ready rather than failing, the parked request
+/// learns it is gone, and the run ends normally, as on the VM.
+#[test]
+fn a_closed_socket_in_a_wait_matches_the_vm() {
+    assert_same_stdout("run_closed_socket_wait");
 }
 
 /// Two job kinds over one engine. `Work.Job` is one type, so a handle minted
