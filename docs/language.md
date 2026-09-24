@@ -383,7 +383,7 @@ This deliberately covers less than all recursion. Non-tail recursion can still b
 
 ## Yielding functions
 
-A function whose effect list names `yield` hands control back instead of performing the operations this program answers itself. The program answers a capability when that capability's `[[providers.bindings]]` entry in `aver.toml` carries `answer = "<Module>"`, naming the module that computes the answer. Every operation of such a capability is a request. Everything else the function calls runs where it is written. The function is written in direct style (read, then the next step), but it never runs as written. The compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator you write performs the operations and feeds the answers back. `yield` is an ordinary effect: it appears in the function's `! [...]` and must be covered by the module's `effects [...]`. A bare name in an effect list (a function's `! [...]` or a module's `effects [...]`) must be `yield`, the forwarding marker `_`, or a standard capability namespace such as `Console`. A program-defined capability is named by its operations, never bare. Anything else, including a misspelled `yeild` or a bare program-defined capability name, is an error naming the unknown or disallowed effect. A yielding function is called only through its generated entry points. `__<fn>Start` and the answer functions are pure, so a coordinator that calls them declares no `yield`.
+A function whose effect list names `yield` hands control back instead of performing the operations this program answers itself. The program answers a capability when one of its modules says so in its header with `answers [<Capability>]`; see [Capabilities the program answers](services.md#capabilities-the-program-answers--answers-runwake-and-the-generated-loop). Every operation of such a capability is a request. Everything else the function calls runs where it is written. The function is written in direct style (read, then the next step), but it never runs as written. The compiler cuts it at every stop and turns it into plain data and pure functions, and a coordinator performs the operations and feeds the answers back. The coordinator is generated (see [The coordinator](#the-coordinator)), or a program writes its own. `yield` is an ordinary effect: it appears in the function's `! [...]` and must be covered by the module's `effects [...]`. A bare name in an effect list (a function's `! [...]` or a module's `effects [...]`) must be `yield`, the forwarding marker `_`, or a standard capability namespace such as `Console`. A program-defined capability is named by its operations, never bare. Anything else, including a misspelled `yeild` or a bare program-defined capability name, is an error naming the unknown or disallowed effect. A yielding function is called only through its generated entry points. `__<fn>Start` and the answer functions are pure, so a coordinator that calls them declares no `yield`.
 
 ```aver
 fn loop(id: Int, done: Int) -> Int
@@ -395,7 +395,7 @@ fn loop(id: Int, done: Int) -> Int
         Option.Some(h) -> loop(id, done + h)
 ```
 
-Inside a yielding function, a call to an operation of an answered capability is a stop (a request), and the self tail call is a stop of kind `Yield`. Everything else runs inline. That includes an operation of a capability nobody answers: it runs inside the turn, where it is written, and the generated function holding it declares it in its own `! [...]`. A function that declares `yield` and never stops (it calls no answered operation and does not tail-call itself) is an error that names both repairs: mark the capability, or drop `yield`. The reverse case is `error[intercept-outside-yield]`. A function without `yield` that performs an operation of an answered capability has made a request nobody will answer, and the message names the answer module's own function to call instead. A program that answers a capability runs on every backend: the bytecode VM, the Rust backend, `aver run --wasm-gc` and `aver run --wasip2`. The lowering leaves behind only state types and pure answer functions over the reply sums the program declared, and the job handle `Work.Job` that those sums reach through `Wait.Wake` has a representation on each backend. A job kind also runs on the two wasm targets. On wasm-gc it runs on a host worker beside the turn (the native runner and Wasmtime packs schedule worker instances, and the JavaScript adapter uses Workers), with the same queue at the job limit as the VM. On `wasip2` it runs inline at `begin`, because a component is single-threaded. Both targets bind the `Wait` and `Work` contracts, so `Wait.poll` and `Work.cancel` run there too. See "On wasm-gc and wasip2" under "Jobs" in `docs/services.md` for what a program reads differently there. For `loop`, the compiler generates the following, in the same module and in the reserved `__` namespace:
+Inside a yielding function, a call to an operation of an answered capability is a stop (a request), and the self tail call is a stop of kind `Yield`. Everything else runs inline. That includes an operation of a capability nobody answers: it runs inside the turn, where it is written, and the generated function holding it declares it in its own `! [...]`. A function that declares `yield` and never stops (it calls no answered operation and does not tail-call itself) is an error that names both repairs: mark the capability, or drop `yield`. The reverse case is `error[intercept-outside-yield]`. A function without `yield` that performs an operation of an answered capability has made a request nobody will answer, and the message names the answer module's own function to call instead. A program that answers a capability runs on every backend: the bytecode VM, the Rust backend, `aver run --wasm-gc` and `aver run --wasip2`. The lowering leaves behind only state types and pure answer functions, and the job handle `Work.Job` that an answer's `Run.Wake` can reach has a representation on each backend. A job kind also runs on the two wasm targets. On wasm-gc it runs on a host worker beside the turn (the native runner and Wasmtime packs schedule worker instances, and the JavaScript adapter uses Workers), with the same queue at the job limit as the VM. On `wasip2` it runs inline at `begin`, because a component is single-threaded. Both targets bind the `Wait` and `Work` contracts, so `Wait.poll` and `Work.cancel` run there too. See "On wasm-gc and wasip2" under "Jobs" in `docs/services.md` for what a program reads differently there. For `loop`, the compiler generates the following, in the same module and in the reserved `__` namespace:
 
 - `__LoopClaimState`: one sum type per request kind, with one variant per stop of that kind. A variant holds exactly the variables the rest of that path still reads (`AwaitR(Int, Int)` for `id` and `done`). A stop bound to a name is `Await<Name>`; an unbound stop is `Await<n>`, with its ordinal in the function.
 - `__LoopYieldState`: the state of the tail call, which is its argument tuple (`Await2(Int, Int)`).
@@ -479,211 +479,102 @@ The tail-call rule: a self tail call is the `Yield` request, and a tail call to 
 
 ## The coordinator
 
-Writing that coordinator by hand is tedious work: a slot table, an instance number per request, a wait set, a poll timeout, one dispatch arm per request kind per process, the seam a job result comes back through, and the turn around all of it. So a program does not write it. A program that puts a `[run]` table in its `aver.toml` writes **processes and answer modules, with optional custom policies**. It writes no coordinator, no `main`, no seating and no slot table. The compiler generates the rest into the entry module, in the reserved `__` namespace, in the same pass that generates the protocol. The generated names stay callable, so a program that wants its own loop over the protocol can still write one, though that is not the intended route.
+Writing the coordinator by hand is tedious work: a slot table, an instance number per request, a wait set, a poll timeout, one dispatch arm per request kind per process, and the turn around all of it. So a program does not write it. An entry module that writes processes gets it generated, in the reserved `__` namespace, in the same pass that generates the protocol. The program writes **processes, answer modules, one line per keyed process, and optionally a `stop` and an `admit` policy**. The generated names stay callable, so a program that wants its own loop over the protocol can still write one.
 
-The worked example is `tests/fixtures/run_all_slice/` (`examples/concurrency/README.md` points at it and explains why it lives there). It has a peer that fetches block bodies, a walk that connects them, an accepting process, a dialling process and a ticker. That is five processes, three answer modules, one job kind and three policies, with no coordinator code written anywhere.
+The worked example is `tests/fixtures/run_all_slice/` (`examples/concurrency/README.md` points at it and explains why it lives there). It has a peer that fetches block bodies, a walk that connects them, an accepting process, a dialling process and a ticker. That is five processes, three answer modules, one job kind and two policies, with no coordinator code written anywhere. `tests/fixtures/run_families/` seats one process per key.
 
-An empty `[run]` table selects the default policies: seated ids in slot order, every askable id admitted, and stop on the flag or when no process is seated and no job runs. The compiler owns `__View` and `__Pending`, and the program declares neither. To customize any policy, supply all four keys below and declare the view and marker types. Supplying only a subset of `order`, `admit`, `stop`, `view` is `error[run-binding]`, with the recipe to use none or all four. The entry module's `depends` lists what its own source names. The loop loads its answer modules, job kinds, `Wait` and `Work` from the manifest, and listing them explicitly is still valid.
-
-**What the program writes.** The manifest says who answers what and asks for the loop:
-
-```toml
-[[providers.bindings]]
-capability = "Wire"
-answer = "Sockets"
-
-[[providers.bindings]]
-capability = "Validation"
-work = "Ledger.validate"
-task = "Ledger.nextTask"
-started = "Ledger.taskStarted"
-landed = "Ledger.validated"
-
-[run]
-order = "Node.order"
-admit = "Node.admit"
-stop = "Node.stop"
-view = "Node.View"
-```
-
-The processes are ordinary yielding functions in direct style, written in the module the `[run]` table names. Each takes no parameters and answers `Unit`. The loop seats one of each at start-up, and a seated process asks the module that answers its first request for whatever it needs. Yielding functions in dependencies are library helpers. They run when an entry process calls them, and the loop never seats them on their own. An unused library helper is never started. See `tests/fixtures/yield_module_helpers/` for repeated and tail calls through a dependency chain, and `tests/fixtures/run_process_elsewhere/` for an imported helper under the generated loop.
+**When the loop is generated.** The loop belongs to the program's entry module. It is generated when the entry writes a process the loop can seat (a yielding function that answers `Unit`) and either has no `main`, in which case the loop's own `main` is generated, or has a `main` that calls `Run.all()`. `Run.all()` runs the loop until it is over and answers `Result<Unit, String>`, so a program with a command line of its own can run the loop from one subcommand:
 
 ```aver
-fn peer() -> Unit
-    ? "Ask the pool what to fetch, let the helper fetch it, go round; a peer the helper could not finish with is handed back."
-    ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
-    Console.print("peer: asking the pool for work")
-    match Pool.claim()
-        Pool.Assignment.Stop -> Unit
-        Pool.Assignment.Work(key, height) -> match fetchBody(key, height)
-            true -> peer()
-            false -> Pool.gone(key)
-
-fn fetchBody(key: Int, height: Int) -> Bool
-    ? "One body from one peer: the write, the read and the hand-over. True when the body landed, false when anything on the way said this peer is finished."
-    ! [Wire.write, Wire.read, Blocks.deliver, yield]
-    match Wire.write(key, Ledger.blockOf(height))
-        Result.Err(_) -> false
-        Result.Ok(_) -> match Wire.read(key, 4000000, 2000)
-            Wire.Heard.EndOfStream -> false
-            Wire.Heard.Failed(_) -> false
-            Wire.Heard.TimedOut -> false
-            Wire.Heard.Data(raw) -> match Blocks.deliver(key, height, raw)
-                Blocks.Receipt.Accepted -> true
-                Blocks.Receipt.Refused(_) -> false
+fn main() -> Result<Unit, String>
+    ? "`node` runs the loop until it is over; anything else prints the usage and runs nothing."
+    ! [Args.get, Console.print]
+    match List.contains(Args.get(), "node")
+        true -> Run.all()
+        false -> usage()
 ```
 
-`Console.print` there is not a request. Nobody answers `Console`, so it runs in place, inside the turn, and the generated function that holds it declares it. `fetchBody` is a yielding helper rather than a process. The loop seats `peer`, and the three requests `fetchBody` waits on reach the turn as requests of `peer` carrying the helper's state (see "Helpers and nested state" above). A process's own effect list still names what its helpers perform, because the program as written calls them.
+The effect list of a `main` that calls `Run.all()` is widened by what the loop performs, the way the module's own `effects [...]` is. An entry whose `main` does not call `Run.all()` drives its processes itself, and no loop is generated. A yielding function of a dependency is a library helper: it runs when an entry process calls it, and the loop never seats it. See `tests/fixtures/yield_module_helpers/` for repeated and tail calls through a dependency chain, and `tests/fixtures/run_process_elsewhere/` for an imported helper under the generated loop.
 
-The answer modules are ordinary modules with one state each. Every operation of every capability they answer gets one function, which threads that state and answers `Now(v)`, `Later(wake)` or `Then(wake, v)`. Every answer module also declares `fresh()`, the state before anything has happened, because the loop starts it there. The capability declares the sum an answer is read through, next to the operation and named after it. `Pool.claim` answers through `Pool.ClaimReply`, with `Now(R)`, `Later(Wait.Wake)` and `Then(Wait.Wake, R)`, where `R` is exactly the operation's result. The door holds it to that shape: if the program answers a capability whose `<Op>Reply` is missing or has another shape, that is `error[answer-shape]`, and the error prints the declaration to paste. A program never writes a `__` name, so no reply sum is generated:
+**Processes.** The processes are ordinary yielding functions in direct style, written in the entry module. A process without parameters is seated once, at start-up. A process that takes one parameter is seated once per key, by a declaration in the entry module:
 
 ```aver
-type ClaimReply
-    Now(Pool.Assignment)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Pool.Assignment)
-
-operation claim() -> Pool.Assignment
-    ? "Which peer should fetch which height next, or Stop once there is nothing left to fetch."
-    oracle = generative
-    replay = recorded
+process member seated by Hub.members
 ```
 
-And the function that answers it:
+`Hub.members` is a pure function of an answer module's state, `(Hub.State) -> List<Int>`, and the process's parameter has the list's element type. The loop reads the list once per turn, after the turn has served its requests, and at start-up:
+
+- a listed key with no instance and not retired is seated, in list order, under the next free slot id;
+- an instance whose key has left the list is dropped at that turn boundary: its slot goes, whatever request it waited on is forgotten, and `Run.View.dropped` counts it;
+- an instance that returns retires its key, and a retired key is seated again only after it has been absent from the list once.
+
+The same key listed twice seats one instance. Keys are compared as map keys, so a key is any type a map accepts. A request that names a key the answer module no longer knows is answered by that module, never parked: the module answers something like `Gone` and the process ends. The keys come from the module's state, so a module that wants a key reused only after its old instance is gone mints keys from a counter rather than reusing a freed one in the same turn.
+
+A process's own effect list names what its helpers perform, because the program as written calls them. A process that answers anything other than `Unit`, or takes parameters without a seating line, is refused with `error[run-binding]`, as is a seating line whose function is not `(S) -> List<K>` of an answer module.
+
+**Answer modules.** Every answer module declares `fresh()`, the state before anything has happened, because the loop starts it there, and one function per operation over that state (see `docs/services.md`). A module answers `Result.Ok(v)` or `Result.Err(wake)`, where the wake is a `Run.Wake`:
+
+- `Until(items, deadline)` parks on a list of sockets and jobs and an optional deadline in milliseconds. The request is asked again in a turn whose `Wait.poll` reported one of its items, or whose clock reading has reached the deadline, whichever comes first. False readiness is allowed, and the module may answer `Err` again. The generated loop gives every item of every parked request a key of its own in the turn's one wait, so a request may wait on as many sockets and jobs as it needs.
+- `Settled(deadline)` parks until this answer module has answered any request with something other than `Settled`, or until the deadline. Each answer module has a version that moves with every answer it gives except a `Settled` one, and a request parked on `Settled` is askable once the version has moved past the one it was parked at. The turn in which that happens waits with a zero timeout. A `Settled` answer never moves the version, so a request cannot wake itself; a module that needs to be asked again whatever happens answers `Until([], Option.Some(0))`, which asks again on the next turn.
+
+A deadline is measured against the clock reading the turn makes once, after its wait and before it serves. At park time the turn turns `ms` into the reading it falls due at, `due = now + ms`, and keeps the `ms` beside it. The request is asked again once the reading has reached `due`, or once the reading has fallen further back than `ms`. Without the second condition, a wall clock that steps backwards would leave the request waiting for a reading that never comes. A negative deadline is due at once.
+
+The answer function is not told *which* half of a wake fired. The module already knows how to find out and the turn does not: it probes the socket again (`Tcp.readNow` answering `None` means still nothing), or reads the clock in place, which an answer module may do.
+
+An `Err` leaves the **request** where it is, with the same instance number and the same arguments, and it **keeps the state the module returned**. An `Err` repeats the original arguments against the module's current state when it is asked again; it never resumes an operation instance. Identity belongs in an argument or a handle.
+
+The worked example of `Until` with a socket and a deadline is the read in the slice's `Sockets` module. On a read's first ask it records the clock reading the read falls due at, so later asks run out the deadline the caller named instead of starting a new one each time. It parks on the socket and on what is left of that deadline at once:
 
 ```aver
-fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
-    ? "The next height for the next idle peer, Stop once every height has been handed out, and a Later with a deadline while no peer is free to take one."
-    match state.nextHeight > state.lastHeight
-        true -> (state, Pool.ClaimReply.Now(Pool.Assignment.Stop))
-        false -> claimIdle(state, state.idle)
-```
-
-`Later` waits for permission to ask again. `Then` waits for permission to reveal an answer that is already known. A `Later` repeats the original arguments against the answer module's current state; it never resumes an operation instance. Identity belongs in an argument or a handle. If a peer key is rebound to a new connection before an old socket wakes it, the repeated request is answered against the new state, by design. False readiness and another `Later` remain ordinary. The name `<Op>Reply` only locates the sum. The door checks its shape against the operation's signature, and the process and the saved answer are typed by that signature rather than by the name.
-
-The model is `Now(x) = complete(request, x)`, `Later(w) = park(request, w, Retry)`, and `Then(w, x) = park(request, w, Complete(x))`. A `Then` keeps the same request, instance and returned module state that a `Later` keeps, and its slot also carries the saved result in a generated monomorphic sum. On the first turn in which the shared wake gate opens and the policies admit the slot, the loop resumes its process with that result without asking the module again. Custom policies can defer service; default policies admit every askable slot. Saving and revealing a reply adds no recording event.
-
-A `Later` leaves the **request** where it is, with the same instance number and the same request value, and it **keeps the state the module returned**, exactly as a `Now` does. A `Later` is where a module records its own progress: a partial write's offset, a retry count, a deadline of its own. So the rule to remember is that a `Later` leaves the request unchanged and keeps the module's state. It is not that a `Later` changes nothing.
-
-The worked example is a real socket, in the example's own `Sockets` module. `Tcp.writeNow` takes as many of the offered bytes as the socket has room for right now and answers with that count. A payload it did not take whole leaves an offset behind and parks until that socket is writable again. Only the module's own state carries the offset across the park, and the ask after the park continues from exactly there:
-
-```aver
-fn write(state: State, key: Int, payload: Bytes) -> Tuple<State, Wire.WriteReply>
-    ? "One ask at one peer's write. Every ask is counted, so a run can say how many asks its payloads took."
-    ! [Tcp.writeNow]
-    writing(State.update(state, asked = state.asked + 1), key, payload, Map.get(state.peers, key))
-
-fn offered(state: State, key: Int, connection: Tcp.Connection, payload: Bytes, sofar: Int) -> Tuple<State, Wire.WriteReply>
-    ? "One ask at one socket. It answers how many of the bytes offered it actually took, which is a count between nothing and the whole offer; a payload with bytes still to go records how far it got and parks on the socket becoming writable again, and the last byte answers the write."
-    ! [Tcp.writeNow]
-    match Tcp.writeNow(connection, offer(payload, sofar))
-        Result.Err(reason) -> (dropped(state, key), Wire.WriteReply.Now(Result.Err(reason)))
-        Result.Ok(count) -> match whole(payload, sofar, count)
-            true -> (finished(state, key), Wire.WriteReply.Now(Result.Ok(Unit)))
-            false -> (parked(state, key, sofar, count), Wire.WriteReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Sending(connection)))))
-```
-
-An answer module may perform effects. `answer-shape` reports this instead of refusing it, because an answer runs inside the turn and a slow one stalls every other process. This module does perform effects. It owns the `Tcp.Listener` its peers arrive on and the `Tcp.Connection` each peer key stands for. It answers `Wire.accept` from `Tcp.accept` and `Wire.read` from `Tcp.readNow`, and parks on `Connected` when nothing has arrived. That is what a `Wire` is for: the processes above it say what they want, and one module says how a socket gives it to them.
-
-What a `Later` carries is a `Wait.Wake`, and the wake **gates the ask**: a parked request is not asked again until the thing it waits for has happened.
-
-- `Item(Wait.Item)` parks on a socket or a job. The slot is asked again only in a turn whose `Wait.poll` reported its key. False readiness is allowed, and the module may answer `Later` again. The generated coordinator keys its own wait set by slot id, so those keys are whole numbers. A program that writes its own loop can key the wait by whatever type best describes what it waits for, because `Wait.poll` takes a `Map<K, Wait.Item>` for any key a map accepts.
-- `After(ms)` parks on a deadline. At park time the turn converts `ms` into the clock reading it falls due at, `due = now + ms`, and keeps the requested `ms` beside it. The slot is asked again in a turn whose clock reading has reached `due`, or in a turn whose reading has fallen further back than `ms`. Without the second condition, a wall clock that steps backwards would leave the request waiting for a reading that never comes, and would hand the wait a timeout longer than anything in the program asked for.
-- `Either(item, ms)` parks on both at once, and the slot is asked again on whichever comes first. The item goes into the turn's wait set the same way `Item` puts it there. The deadline becomes a `due` and counts in the poll timeout the same way `After` counts it, backwards clock included. A read with a deadline is exactly this: waiting for the socket, but not forever.
-- `NextTurn` asks to be asked again immediately. That makes the turn poll with a zero timeout for as long as such a request exists, so prefer `Item`, `After` or `Either` when one of them will do.
-
-The answer function is not told *which* half woke it. The module already knows how to find out and the turn does not: it probes the socket again (`Tcp.readNow` answering `None` means still nothing), or reads the clock in place, which an answer module may do. An answer function takes `op(state, args)` and nothing else, in this build as in the last one.
-
-The worked example of `Either` is the read in the same `Sockets` module. On a read's first ask it records the clock reading the read falls due at, so later asks run out the deadline the caller named instead of starting a new one each time. It parks on the socket and on what is left of that deadline at once. An ask that finds nothing after the deadline has run out answers `TimedOut`, and the process above it hands that peer back:
-
-```aver
-fn read(state: State, key: Int, max: Int, deadlineMs: Int) -> Tuple<State, Wire.ReadReply>
-    ? "The next chunk from one peer, against the deadline the caller named. Every ask is counted, including the ones that park, so a run can say afterwards how often the wait let this wire be asked. The clock is read here because the deadline is this module's to keep: what the caller named is a length, and what a park is measured against is a reading."
-    ! [Time.unixMs, Tcp.readNow]
-    asking(State.update(state, reads = state.reads + 1), key, max, deadlineMs, Time.unixMs())
-
-fn quiet(state: State, key: Int, now: Int, again: Wait.Wake) -> Tuple<State, Wire.ReadReply>
+fn quiet(state: State, key: Int, now: Int, again: Run.Wake) -> Tuple<State, Result<Wire.Heard, Run.Wake>>
     ? "A peer that has said nothing yet, and the wake that would bring this read back: the socket it is listening to and what is left of its deadline at once, whichever comes first. Past the deadline the read is over and answers TimedOut; before it the request parks on that wake."
     match now >= dueOf(state, key)
-        true -> (disarmed(state, key), Wire.ReadReply.Now(Wire.Heard.TimedOut))
-        false -> (state, Wire.ReadReply.Later(again))
+        true -> (disarmed(state, key), Result.Ok(Wire.Heard.TimedOut))
+        false -> (state, Result.Err(again))
 ```
 
-A freshly seated process and a process whose request was just answered are askable at once.
+The worked example of `Settled` is the walk in the same slice: the walk waits for the ledger to move, and a delivery, a take or the pool counting its own asks moves it.
 
-The worked example of `After` is a clock that gives out a tick fifty milliseconds after it was asked for one. The first ask arms the deadline and parks. The ask after the deadline has passed is the tick. Four ticks take eight asks, two per tick, whatever else the run is doing and however many turns it takes. The closing ask that answers `Closed` makes nine, which is why the slice's run ends with the ticker asked nine times:
+**Policies.** The run ends once nothing is seated, or once a stop was requested. Two optional functions of the entry, found by name, change that:
 
-```aver
-fn tick(state: State) -> Tuple<State, Clock.TickReply>
-    ? "The next tick. Every ask is counted, including the ones that park."
-    ticking(State.update(state, asks = state.asks + 1))
+- `fn stop(view: Run.View) -> Bool` ends the run when it answers `true`. The run still ends once nothing is seated, whatever `stop` says.
+- `fn admit(view: Run.View, id: Int) -> Bool` is asked about every askable slot, in slot order, and a slot it refuses is not served in this turn.
 
-fn armed(state: State) -> Tuple<State, Clock.TickReply>
-    ? "A tick is not due the moment it is asked for. The first ask arms the deadline and parks on it; the ask after that deadline has passed is the tick."
-    match state.armed
-        false -> (State.update(state, armed = true), Clock.TickReply.Later(Wait.Wake.After(50)))
-        true -> (State.update(state, armed = false, left = state.left - 1), Clock.TickReply.Now(Clock.Tick.Tock))
+`Run.View` and `Run.Pending` are generated, and the program names them through the standard module `Run`:
+
 ```
-
-When you customize only one policy, the other functions can be one-liners: `fn order(view: View) -> List<Int> = Map.keys(view.pending)`, `fn admit(view: View, id: Int) -> Bool = List.contains(view.askable, id)` and `fn stop(view: View) -> Bool = Bool.or(view.stopping, Bool.and(Map.len(view.pending) == 0, view.jobs == 0))`.
-
-For custom policies, declare the view and the three policy functions. The view is a record the program declares and the loop fills. The checker holds it to exactly that shape and, under `error[view-shape]`, prints the declaration it wants:
-
-```aver
-type Pending
-    Accepting(Int, Wait.Wake)
-    Dialling(Int, Wait.Wake)
-    Ticker(Int, Wait.Wake)
-    Peer(Int, Wait.Wake)
-    Walk(Int, Wait.Wake)
-
-record View
-    pending: Map<Int, Pending>
+record Run.View
+    pending: Map<Int, Run.Pending>
     ready: List<Int>
     askable: List<Int>
-    jobs: Int
+    dropped: Int
     stopping: Bool
 
-fn order(view: View) -> List<Int>
-    ? "Every seated process, in slot order. The loop asks admit about each one in turn."
-    Map.keys(view.pending)
-
-fn admit(view: View, id: Int) -> Bool
-    ? "Whether to serve this id in this turn."
-    match Map.get(view.pending, id)
-        Option.None -> false
-        Option.Some(marker) -> admitted(view, marker)
-
-fn stop(view: View) -> Bool
-    ? "The run ends when the process asked us to, and not before: the flag was read by the turn and reaches here as data."
-    view.stopping
+type Run.Pending
+    <Process>(Int, Run.Wake)          for a process without a key
+    <Process>(K, Int, Run.Wake)       for a process seated by key
 ```
 
-`Pending` has one constructor per process, carrying the instance number of the request that process is waiting on and the wake it is parked on. `ready` is what the turn's one wait reported. `askable` is the ids the turn may ask in this turn, in slot order: `ready` read through every slot's wake, plus everything parked on the next turn and everything whose deadline has passed. `order` and `admit` see the whole view, and a policy may look at a slot it cannot ask. But the turn asks `admit` only about askable ids, and it never serves a slot that is not askable, whatever `order` returned. The view carries no capability resource, on purpose. A law's `given` domain is a list of sample values written in Aver, and a program cannot construct a `Tcp.Connection` or a `Work.Job`. A policy that read the whole run could therefore never have a law with a non-trivial sample. This one can, and the example's priority law is such a law: a ready peer request is admitted whatever the job table looks like, so the turn, which serves before it starts another job, serves the peer first.
+`Pending` has one constructor per process, named after it, carrying its key when it has one, the instance number of the request it is waiting on, and the wake it is parked on. `ready` is the slots the turn's one wait reported. `askable` is the slots this turn may ask, in slot order. `dropped` is how many keyed instances the loop has dropped. `stopping` is the stop flag as data. A policy is pure, and `verify` builds sample views with `Run.View(pending = …, ready = …, askable = …, dropped = …, stopping = …)`. The slice's `admit` always admits a peer and holds the walk and the ticker back once the run is stopping, and its priority law is stated over such samples.
 
 **What the compiler generates.** `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints all of it after the protocol. In outline:
 
-- `__Process`, `__Slot` and `__Run`: the slot table (`Map<Int, __Slot>`), one field per answer module holding its state, the job table, the count of answers that arrived too late, the stop flag as data, the clock reading this turn made, and the next free id. A slot carries its instance number, its request, the wake it is parked on, `due` (the clock reading an `After` falls due at) and `ms` (the delay that `After` asked for). Its `answer: Option<__ThenAnswer>` holds a saved reply, with one monomorphic constructor per process and operation that carries the continuation state and the exact operation result.
-- `__seat<P>` / `__seated<P>`: one of every process, seated at its first request under its own slot id.
-- `__current`, `__nextInstance`, `__settle<P>`, `__settledSlot<P>`, `__park`, `__parked`, `__dueOf`, `__msOf`: the two invariants of the table. An answer that carries the current instance replaces that process's one slot and raises its number. An answer that carries an older one changes nothing and is counted. A `Later` parks the request where it stands, keeps the state the module returned, and turns the `ms` of an `After` or an `Either` into the clock reading it falls due at, keeping the requested `ms` beside it.
-- `__view`, `__pendingOf`, `__markerOf`, `__askableOf`, `__askable`, `__askableSlot`: the view the policies read, filled from the run. It includes the gate, which works out which slots this turn may ask by reading each slot's wake against the keys the wait reported and the clock reading the turn made. A slot parked on a deadline is askable once that reading has reached `due`, and also once the reading has fallen back past the moment the request was parked, so a clock that steps backwards cannot strand it. A slot parked on an item and a deadline at once is askable on whichever of the two comes first.
-- `__waitSet`, `__timeout`, `__remaining`, `__eitherWait`: one wait per turn, keyed by slot id, plus one key per running job. The timeout is zero while any request has asked for the next turn, otherwise the smallest `due - now` still ahead, and one second when nothing carries either. A negative `After` or `Either` deadline is read as zero, so it is due at once and never stands in for "no deadline". A request parked on an item and a deadline at once puts its item in the wait set and its deadline in the timeout, so both halves of it are live in the same wait.
-- `__serve`, `__serve<P>`, `__serve<P><Kind>`: the dispatch. There is one arm per request kind of each process, which calls the answer module's own function and settles or parks on what it answered. There is no arm for an unanswered operation, because the lowering makes requests only out of answered ones.
-- `__Job`, `__jobHandle`, `__takeEach<J>`, `__taken<J>`, `__reported<J>`, `__finished<J>`, `__landed<J>`, `__startJobs<J>`, `__began<J>`, `__jobSeated<J>`, `__consumed<J>`: the job seam, once per job kind `<J>` over one shared table. `__Job` is a generated sum with one variant per kind, so `jobs: Map<Int, __Job>` holds every kind, and `__jobHandle` unwraps it for the wait and the cancel. The job limit is not in the generated source: the engine queues a job begun at it, so the loop counts nothing against it and a program means the same on every machine that builds it. A job outcome is a coordinator event rather than an answer to a request. It goes into the answer state through `landed` and resumes nobody. A `take` that answers `Ok(None)` is a job reported ready that has not finished, and it keeps its handle for a later turn. A `take` that answers `Err` (cancelled, a body that stopped, an id the engine has forgotten) will never produce a payload. The handle leaves the table, the error reaches `landed` as `Result.Err(reason)`, and the run goes on instead of stopping on the take. The start side runs ask → `begin` → `started`, for every task `task` offers in the turn. `__began<J>` records nothing when `begin` answered `Err`. `__jobSeated<J>` puts the handle in the table and calls the manifest's `started` through `__consumed<J>` only once `begin` has answered `Ok`. The task is therefore consumed exactly when it is begun, and the next ask of the same turn is offered a different one. The program states the one law the generator cannot: `verify <started> law aStartedTaskIsNotAskedAgain` on its `started` function, which says that when `task(state)` offers `t`, `task(started(state, t))` does not. That is all it says: the same task is not started twice in a row. It does not rule out a task started earlier coming back later, and it does not say the offers of a turn run out, which is the program's to make true by removing the task in `started`. The generated `__consumed<J> law aStartedTaskIsNotAskedAgain` cites it with `using`, per kind. A `[run]` program whose `started` function has no law by that name is refused with `error[run-binding]` before the generated module is checked, and the refusal prints the block.
-- `__turn`, `__serveEach`, `__serveIf`, `__serveAdmitted`, `__runAll`, `main`: observe the stop flag and the clock, wait once, serve the askable slots the policy ordered and admitted, take whatever has finished in every job kind, begin every task each job kind offers, and repeat until the policy says stop or nothing is seated. The clock is read once per turn, after the wait has returned and before the turn serves. A deadline that fell due while the turn was asleep is therefore askable in that same turn rather than the next one. The wait of the following turn is measured against the same reading, and a recording replays it.
-- `__over`, `__cancelEach`, `__cancelWaited`: the end of a run. A program with a job kind cancels every job it still holds a handle for, and every job a parked request is waiting on, instead of abandoning it, so `main` performs `Work.cancel`. The second covers a job an answer module began itself and parked a request on: the job as a request, with no seam (see `docs/services.md`).
+- `__Process`, `__Slot`, `__Run`: the slot table (`Map<Int, __Slot>`), one field per answer module holding its state, per keyed process the keys it has seated and retired, the version of every answer module, the count of answers that arrived too late, the count of dropped instances, the stop flag, the clock reading and the next free id. A slot carries its instance number, its request, the wake it is parked on, `due` and `ms`, and the answer module and version a `Settled` wake waits on.
+- `__start`, `__seat<P>`, `__seatFamilies`, `__seatFamily<P>`: seating at start-up and at every turn boundary.
+- `__current`, `__nextInstance`, `__settle<P>`, `__park`, `__bump`: the two invariants of the table. An answer that carries the current instance replaces that process's one slot and raises its number. An answer that carries an older one changes nothing and is counted. An `Err` parks the request where it stands and keeps the state the module returned.
+- `__askable`, `__askableSlot`, `__deadlinePassed`, `__view`: the gate that decides which slots this turn may ask, and the view the policies read.
+- `__waitPlan`, `__timeout`: the one wait of a turn, with one key per parked item, and its timeout: zero while some request can be asked already, the soonest deadline otherwise, and one second when nothing carries either.
+- `__serve`, `__serve<P>`, `__serve<P><Kind>`: the dispatch, one arm per request kind of each process, which calls the answer module's own function and settles or parks on what it answered.
+- `__turn`, `__serveEach`, `__runAll`, `__all`, `main`: observe the stop flag, wait once, read the clock, serve every askable slot in slot order, seat the families, and repeat until the run is over.
+- `__over`, `__cancelWaited`: the end of a run, which cancels every job a parked request is still waiting on.
 
-Each of those carries its own effects rather than the program's. `__seat<P>` performs what that process performs on its way to its first request. `__serve<P><Kind>` performs what the answer module performs plus what the resumed segment performs. A process that touches nothing gets only pure functions from the loop, so one generative effect in one process cannot oracle-lift the laws about another. Only `__serve`, `__serveEach`, `__serveIf` and the turn carry the union, because the dispatch reaches every process. The entry module's own `effects [...]` is widened to admit what is generated into it. The wait, the stop observation, the clock reading (`Time.unixMs`), both ends of every job kind and the cancel are added to the list the source declares, because the module boundary has to hold the loop as well as the processes.
+Each of those carries its own effects rather than the program's. `__seat<P>` performs what that process performs on its way to its first request. `__serve<P><Kind>` performs what the answer module performs plus what the resumed segment performs. A process that touches nothing gets only pure functions from the loop. Only the dispatch, the turn and the loop's entry carry the union.
 
-**And the laws.** The generator emits ordinary Aver `verify` laws over its own transitions. They state that a stale answer leaves slots alone and increments `dropped`, that `Later` preserves the request and instance, that `Then` saves an answer behind its wake gate, that a current settlement retires that instance, and that settling an existing process never grows the slot table. Deadline laws cover delayed asks, backwards clocks, and the maximum wait requested by `After` and `Either`.
+The loop generates no laws into a program. Its invariants are stated once, as laws over the generated functions of `tests/fixtures/run_schedule_cases/`, which the test suite checks on the VM and on the Lean wall: a late answer changes nothing and is counted, an `Err` keeps the request's instance, the next instance is higher, a deadline that has passed fires and no deadline never does, the wait never exceeds a deadline, and a `Settled` answer moves no version. The source-trace observers a proof law can cite are generated in the entry module only when one of its own laws cites them; a library module keeps generating them for an importer's laws.
 
-It also generates a concrete event type and a fold over arbitrary finite histories after initial seating. The `__historyRun` laws compose the transitions: process slots never increase, and a retired request instance never becomes current again. There is no law about the job limit, because the generated source carries no limit: the engine queues a job begun at it. Admissibility checks the control preconditions at each preceding state (a nonnegative settlement instance and a seated current request; a start needs nothing). It does not assume these safety conclusions. Arbitrary returned provider states and job observations are allowed, so provider-specific semantic invariants remain the program's own responsibility.
+**Where it runs.** The loop is ordinary Aver, so it runs wherever the program does: the bytecode VM under `aver run`, a native binary from `aver compile --target rust`, whose generated crate carries the same loop with the wait and the job engine answered by `aver-rt`, the wasm-gc runner and Wasmtime packs, which run jobs on host threads and wake the loop when a job settles, and JavaScript hosts, which use the same job ABI and the generated post-wait step (see [Parallel Work on wasm-gc](wasm-work.md)). In a side-by-side run, do not read anything into the order of two processes' output: requests park on wall-clock deadlines and on jobs, so the turn in which a job lands depends on how long it took. The wasip2 job lowering is still inline and warns that `max-jobs` has no effect: there a job is over before the next expression, `take` never answers `Ok(None)`, a job that never ends blocks the turn, and a job whose body fails stops the component. On wasip2 the generated turn keeps `Run.View.stopping = false`, because WASI 0.2 has no signal subscription, so a run ends through `stop` or once nothing is seated.
 
-`aver verify` runs the supplied samples. `aver proof --backend lean --check` checks the universal statements by induction over the history, with the usual manifest and axiom audit. The generated history helpers call the live driver's pure transitions and create no runtime event log. Proving correspondence with the effectful driver and with the original direct-style request trace remains a separate obligation. See [Generated coordinator laws](knowledge.md#generated-coordinator-laws) for the precise scope.
-
-**Where it runs.** The loop is ordinary Aver, so it runs wherever the program does. That means the bytecode VM under `aver run`, and a native binary from `aver compile --target rust`, whose generated crate carries the same answer modules, the same policies and the same turn, with the wait, the job engine and the job kinds answered by `aver-rt` instead of by the VM's providers. In a side-by-side run, do not read anything into the order of two processes' output. The example parks requests on `Wait.Wake.After(2)`, `After(5)` and `After(50)`, which are wall-clock deadlines, so the turn in which a finished job lands depends on how long that job took. A compiled function is faster than the smallest deadline in the program and the VM's child interpreter is not, so the two backends do the same work in a different interleaving. How often a parked request is asked stays the same on both, because the wake gates the ask on both. The wasm-gc runner and Wasmtime deployment packs run jobs on host threads in separate instances, bound how many run at once by `[work] max-jobs` with the same queue as the VM, and wake the coordinator when a job settles. JavaScript hosts use the same job ABI and a generated post-wait step to receive worker messages between turns; see [Parallel Work on wasm-gc](wasm-work.md). The current wasip2 job lowering is still inline and warns that `max-jobs` has no effect: there a job is over before the next expression, `take` never answers `Ok(None)`, a job that never ends blocks the turn, and a job whose body fails stops the component. On wasip2 the generated turn keeps `View.stopping = false`, because WASI 0.2 has no signal subscription. A default run ends when no process is seated and no job remains. A custom run ends through its stop policy or normal exhaustion. A policy that waits only for `view.stopping` needs another completion condition while processes remain seated. Explicit `Process.stopRequested` calls are still unsupported on wasip2.
-
-Two limits are worth knowing before you reach them. A process takes no parameters and answers `Unit`, because the loop seats it, has nothing to hand it and has nowhere to put its result. Everything a process needs comes from the module that answers its first request. A yielding *helper* is not a process and is not held to that. It takes parameters and answers whatever its caller reads, because the process that calls it is what the loop seats.
+A yielding *helper* is not a process and is not held to the process rules. It takes parameters and answers whatever its caller reads, because the process that calls it is what the loop seats.
 
 ## Modules
 
