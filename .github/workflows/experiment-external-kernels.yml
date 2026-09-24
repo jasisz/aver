@@ -1,0 +1,148 @@
+name: Experiment external kernels
+
+# Measurement only: replays certificate packages through independent Lean
+# kernels. See experiments/external-kernels/README.md.
+on:
+  push:
+    branches: [experiments/external-kernels]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  LEAN_TOOLCHAIN: leanprover/lean4:v4.34.0
+
+jobs:
+  build-aver:
+    name: Build aver and aver-cert
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: '4'
+      CARGO_INCREMENTAL: '0'
+      RUSTFLAGS: -C debuginfo=0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: experiment-external-kernels
+      - name: Build
+        run: |
+          cargo build -p aver-lang --features wasm --bin aver
+          cargo build -p aver-cert --bin aver-cert
+          mkdir -p bin && cp target/debug/aver target/debug/aver-cert bin/
+          tar -czf aver-bins.tgz bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aver-bins
+          path: aver-bins.tgz
+          retention-days: 7
+
+  build-kernels:
+    name: Build exporter and kernels
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/lean-toolchain') }}
+      - name: Install Lean (via elan)
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+              https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+              | sh -s -- -y --default-toolchain stable
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install pinned toolchain
+        run: elan toolchain install "$LEAN_TOOLCHAIN"
+      - name: Build tools
+        run: bash experiments/external-kernels/build-tools.sh "$PWD/tools"
+      - name: Pack
+        run: tar -czf kernel-tools.tgz tools
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-tools
+          path: kernel-tools.tgz
+          retention-days: 7
+
+  measure:
+    name: Measure (${{ matrix.package }})
+    needs: [build-aver, build-kernels]
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [certkit-clockrange, k5-main, k5-laws]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/lean-toolchain') }}
+      - name: Install Lean (via elan)
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+              https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+              | sh -s -- -y --default-toolchain stable
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install pinned toolchain
+        run: elan toolchain install "$LEAN_TOOLCHAIN"
+      - uses: actions/download-artifact@v4
+        with:
+          name: aver-bins
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-tools
+      - name: Unpack
+        run: |
+          tar -xzf aver-bins.tgz
+          tar -xzf kernel-tools.tgz
+          cat tools/REVISIONS
+          nproc; free -g
+      - name: Measure
+        run: >-
+          bash experiments/external-kernels/run-package.sh ${{ matrix.package }}
+          bin/aver bin/aver-cert tools "results-${{ matrix.package }}"
+      - name: Table for this package
+        if: always()
+        run: |
+          mkdir -p one && cp -r "results-${{ matrix.package }}" one/ 2>/dev/null || true
+          python3 experiments/external-kernels/summarize.py one >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.package }}
+          path: results-${{ matrix.package }}
+          retention-days: 30
+
+  summary:
+    name: Summary
+    needs: measure
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: all
+      - name: Summary table
+        run: |
+          python3 experiments/external-kernels/summarize.py all | tee summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: summary
+          path: summary.md
+          retention-days: 30
