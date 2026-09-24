@@ -1992,9 +1992,6 @@ pub enum Category {
     KnownGap,
     /// Enforced by the Rust checker or the generated witness, not by `accepted`.
     PinnedOutsideTheWall,
-    /// Pinned to a value the wall itself computes, so the producer cannot
-    /// influence it, rather than to the artifact bytes.
-    WallOwnedConstraint,
 }
 
 impl Category {
@@ -2003,7 +2000,6 @@ impl Category {
             Category::DeclaredOnlyByDesign => "declared-only by design",
             Category::KnownGap => "KNOWN GAP",
             Category::PinnedOutsideTheWall => "pinned outside the wall",
-            Category::WallOwnedConstraint => "wall-owned constraint",
         }
     }
 }
