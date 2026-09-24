@@ -105,8 +105,11 @@ artifact-specific reason rather than receiving a weaker certificate.
 Build caches are disabled by default. `AVER_CERT_DATA_CACHE=/trusted/path`
 opts into artifact-specific Lake output, while
 `AVER_CERT_PRELUDE_CACHE=/trusted/path` also reuses artifact-independent wall
-output. Those directories become trusted local state and must not be writable
-by an attacker. Strict `verify` still authors a fresh checker witness and runs
+output. The data cache also keeps each package module's output under a key
+over its source and the package modules it imports, so after a change to one
+function the modules that do not depend on it are reused; Lake still rebuilds
+any restored module whose inputs differ. Those directories become trusted
+local state and must not be writable by an attacker. Strict `verify` still authors a fresh checker witness and runs
 the final whole-closure replay.
 
 `AVER_CERT_TIMINGS=1` prints how long each Lean step took, with Lake's per-module build times, to standard error. It is a diagnostic only and does not change the verdict.

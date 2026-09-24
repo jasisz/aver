@@ -10,7 +10,9 @@ use crate::bridge_statement::{
     self, BridgeKind, MAX_BRIDGE_STATEMENT_LEN, SourceEncoder, render_bridge_statement,
     statement_is_root_qualified,
 };
-use crate::cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
+use crate::cache::{
+    ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial, ModuleOutputCache,
+};
 use crate::lean_process::LeanRunner;
 use crate::prelude_cache::PristineWallCache;
 use crate::{format, lean_gate, wall};
@@ -581,9 +583,33 @@ fn trusted_check(
         PristineWallCache::prepare(&build.path, selected_wall, &lean)
     };
     report_step_timing("wall cache restore", wall_cache_started.elapsed(), &[]);
+    // On a whole-package miss, restore the modules whose sources (and
+    // imported package modules) are unchanged; Lake revalidates each one.
+    let module_cache_started = std::time::Instant::now();
+    let module_cache = if data_cache_hit {
+        ModuleOutputCache::disabled()
+    } else {
+        let wall_sources: Vec<&str> = selected_wall.sources.iter().map(|s| s.name).collect();
+        ModuleOutputCache::prepare(
+            &build.path,
+            &[
+                ("wall_id", wall_id),
+                ("toolchain_version", selected_wall.toolchain.trim()),
+                ("schema_version", &schema_version.to_string()),
+            ],
+            &wall_sources,
+        )
+    };
+    report_step_timing(
+        &format!("module cache restore ({} modules)", module_cache.restored()),
+        module_cache_started.elapsed(),
+        &[],
+    );
 
     let mut data_build = run_lake(&lean, &build.path, PROOF_BUILD_PHASE, &["build"])?;
-    if !data_build.status.success() && (data_cache_hit || wall_cache.was_seeded()) {
+    if !data_build.status.success()
+        && (data_cache_hit || wall_cache.was_seeded() || module_cache.restored() > 0)
+    {
         if data_cache_hit {
             cache.invalidate(&build.path);
         } else {
@@ -601,6 +627,7 @@ fn trusted_check(
         ));
     }
     cache.publish(&build.path);
+    module_cache.publish(&build.path);
 
     let witness = checker_witness(&actual_hash, &candidates);
     std::fs::write(build.path.join("CheckerWitness.lean"), witness)
