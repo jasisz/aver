@@ -108,6 +108,8 @@ mod scc_list_drop;
 mod source_only;
 #[path = "proof_spec/source_recursion.rs"]
 mod source_recursion;
+#[path = "proof_spec/subject_if_split.rs"]
+mod subject_if_split;
 #[path = "proof_spec/sum_case_split.rs"]
 mod sum_case_split;
 #[path = "proof_spec/transition_histories.rs"]
