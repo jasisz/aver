@@ -62,7 +62,9 @@ theorem core_helpers : STATEMENT := by
     unfold Domain.Chainwork.ceiling
     exact helper_doubled_nonneg 256 256 1 (by decide) (by decide)
   have ht := helper_targetOf_nonneg bits
-  apply decide_eq_true
+  -- The exported statement is the Prop equation `(ofBits bits ≥ 0) = (true = true)`.
+  simp only [eq_self_iff_true]
+  apply eq_true
   show 0 ≤ Domain.Chainwork.ofBits bits
   unfold Domain.Chainwork.ofBits Domain.Chainwork.perTarget
   split
