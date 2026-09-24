@@ -197,10 +197,7 @@ fn render_plans(analysis: &Analysis) -> String {
          namespace AverCert.Plans\n\
          open AverCert.Schema AverCert.Grammar\n\n",
     );
-    s.push_str(&format!(
-        "def types : TypeTable :=\n  {}\n\n",
-        analysis.types.lean()
-    ));
+    s.push_str(&analysis.types.lean_decls("types"));
     for e in &analysis.entries {
         s.push_str(&format!(
             "/-- `{}` (function {}). -/\ndef {} : FnPlan :=\n  {}\n\n",
@@ -228,28 +225,6 @@ fn render_plans(analysis: &Analysis) -> String {
     s.push_str(&format!("def fnPlans : List FnEntry :=\n  [{entries}]\n\n"));
     s.push_str("end AverCert.Plans\n");
     s
-}
-
-fn lean_pairs(items: &[(String, String)]) -> String {
-    format!(
-        "[{}]",
-        items
-            .iter()
-            .map(|(a, b)| format!("({}, {})", lean_str(a), lean_str(b)))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-fn lean_strings(items: &[String]) -> String {
-    format!(
-        "[{}]",
-        items
-            .iter()
-            .map(|x| lean_str(x))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
 }
 
 fn declared_uncertified(analysis: &Analysis) -> Vec<(String, String)> {
@@ -284,6 +259,40 @@ fn render_manifest_lean(analysis: &Analysis, sha: &str, target: &str, abi: &str)
         Some(i) => format!("some {i}"),
         None => "none".to_string(),
     };
+    // A big module's export lists do not fit one declaration: they are
+    // written in pieces (`lean_list_in_pieces`) ahead of `subject`.
+    let mut pieces = String::new();
+    let string_items = |items: &[String]| items.iter().map(|x| lean_str(x)).collect::<Vec<_>>();
+    let pair_items = |items: &[(String, String)]| {
+        items
+            .iter()
+            .map(|(a, b)| format!("({}, {})", lean_str(a), lean_str(b)))
+            .collect::<Vec<_>>()
+    };
+    let exports = lean_list_in_pieces(
+        &mut pieces,
+        "subject.exports",
+        "String",
+        &string_items(&analysis.certified_names()),
+    );
+    let declared = lean_list_in_pieces(
+        &mut pieces,
+        "subject.declaredUncertified",
+        "String × String",
+        &pair_items(&declared_uncertified(analysis)),
+    );
+    let capabilities = lean_list_in_pieces(
+        &mut pieces,
+        "subject.capabilities",
+        "String × String",
+        &pair_items(&analysis.module_envelope.capabilities),
+    );
+    let contracts = lean_list_in_pieces(
+        &mut pieces,
+        "subject.contracts",
+        "String",
+        &string_items(&analysis.contracts),
+    );
     format!(
         "-- The certificate's manifest: the subject (artifact identity, exports,\n\
          -- helper indices and the contracts it is conditional on), the plans and\n\
@@ -293,6 +302,7 @@ fn render_manifest_lean(analysis: &Analysis, sha: &str, target: &str, abi: &str)
          import Plans\n\n\
          namespace AverCert\n\
          open AverCert.Schema\n\n\
+         {pieces}\
          def subject : Subject :=\n  \
            {{ artifactHash := {sha}\n    \
              target := {target}, profile := {profile}, abi := {abi}\n    \
@@ -314,10 +324,6 @@ fn render_manifest_lean(analysis: &Analysis, sha: &str, target: &str, abi: &str)
         profile = lean_str(PROFILE_ID),
         abi = lean_str(abi),
         root = lean_str(ARTIFACT_CERTIFICATE_ROOT),
-        exports = lean_strings(&analysis.certified_names()),
-        declared = lean_pairs(&declared_uncertified(analysis)),
-        capabilities = lean_pairs(&analysis.module_envelope.capabilities),
-        contracts = lean_strings(&analysis.contracts),
     )
 }
 

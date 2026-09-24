@@ -459,15 +459,96 @@ fn lean_opt_nat(v: Option<u32>) -> String {
     }
 }
 
+/// The longest list literal the type table writes in one piece. Lean
+/// elaborates a list literal as one nested `List.cons` term, and a term deeper
+/// than `maxRecDepth` (512 by default) fails to elaborate; btc-listener's
+/// string segments (151 entries, the longest 570 bytes) went past it. A longer
+/// list is written as literals of at most this many elements joined by `++`.
+pub const LEAN_LIST_CHUNK: usize = 64;
+
+/// The most rendered text one producer declaration carries in a list field.
+/// Elaboration is paid per declaration (`maxHeartbeats`), so a field longer
+/// than this, or with more than [`LEAN_LIST_CHUNK`] entries, is split into
+/// its own declarations of at most this much text each, which the table joins
+/// with `++`. The split denotes the same list: the wall reads the value, never
+/// the spelling, and `decide`/`rfl` reduce the append.
+pub const LEAN_TABLE_PIECE_CHARS: usize = 4096;
+
+/// Rendered elements as one Lean list term, split by `++` into literals of at
+/// most [`LEAN_LIST_CHUNK`] elements. A short list is the plain literal.
+fn lean_list_chunked(items: &[String], separator: &str) -> String {
+    if items.is_empty() {
+        return "[]".into();
+    }
+    items
+        .chunks(LEAN_LIST_CHUNK)
+        .map(|chunk| format!("[{}]", chunk.join(separator)))
+        .collect::<Vec<_>>()
+        .join(" ++ ")
+}
+
+/// Split rendered list entries into pieces of at most [`LEAN_LIST_CHUNK`]
+/// entries and [`LEAN_TABLE_PIECE_CHARS`] of text; an entry longer than the
+/// text budget is a piece of its own.
+fn table_pieces(items: &[String]) -> Vec<&[String]> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut chars = 0;
+    for (i, item) in items.iter().enumerate() {
+        let full = i - start == LEAN_LIST_CHUNK || chars + item.len() > LEAN_TABLE_PIECE_CHARS;
+        if i > start && full {
+            pieces.push(&items[start..i]);
+            start = i;
+            chars = 0;
+        }
+        chars += item.len();
+    }
+    if start < items.len() {
+        pieces.push(&items[start..]);
+    }
+    pieces
+}
+
+/// A list of rendered Lean terms of type `ty`, as the term that denotes it:
+/// the plain literal when it fits one piece (see [`LEAN_TABLE_PIECE_CHARS`]),
+/// else the `++` of declarations `{prefix}_{k}`, one per piece, which are
+/// appended to `decls`.
+pub(crate) fn lean_list_in_pieces(
+    decls: &mut String,
+    prefix: &str,
+    ty: &str,
+    items: &[String],
+) -> String {
+    let pieces = table_pieces(items);
+    if pieces.len() <= 1 {
+        return format!("[{}]", items.join(", "));
+    }
+    pieces
+        .iter()
+        .enumerate()
+        .map(|(k, piece)| {
+            let piece_name = format!("{prefix}_{k}");
+            decls.push_str(&format!(
+                "def {piece_name} : List ({ty}) :=\n  [{}]\n\n",
+                piece.join(",\n   ")
+            ));
+            piece_name
+        })
+        .collect::<Vec<_>>()
+        .join(" ++ ")
+}
+
 impl PlanTypeTable {
-    /// The Lean `Schema.TypeTable` term.
-    pub fn lean(&self) -> String {
+    /// The Lean declaration `def {name} : Schema.TypeTable`, preceded by the
+    /// declarations `{name}_{field}_{k}` of every list field too big to write
+    /// inline (see [`LEAN_TABLE_PIECE_CHARS`]); every byte list longer than
+    /// [`LEAN_LIST_CHUNK`] is written in `++`-joined literals.
+    pub fn lean_decls(&self, name: &str) -> String {
         let records = self
             .records
             .iter()
             .map(|r| format!("⟨{}, {}, {}⟩", r.tid, r.struct_idx, lean_ty_list(&r.fields)))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect::<Vec<_>>();
         let sums = self
             .sums
             .iter()
@@ -483,41 +564,205 @@ impl PlanTypeTable {
                         .join(", ")
                 )
             })
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect::<Vec<_>>();
         let pairs = |xs: &[(PlanTy, u32)]| {
             xs.iter()
                 .map(|(t, i)| format!("({}, {i})", t.lean()))
                 .collect::<Vec<_>>()
-                .join(", ")
         };
         let results = self
             .results
             .iter()
             .map(|(t, e, i)| format!("({}, {}, {i})", t.lean(), e.lean()))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect::<Vec<_>>();
         let opaques = self
             .opaques
             .iter()
             .map(|(t, i)| format!("({t}, {i})"))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .collect::<Vec<_>>();
         let segs = self
             .str_segs
             .iter()
-            .map(|(b, i)| format!("({}, {i})", lean_bytes(b)))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .map(|(b, i)| {
+                let bytes = b.iter().map(u8::to_string).collect::<Vec<_>>();
+                format!("({}, {i})", lean_list_chunked(&bytes, ", "))
+            })
+            .collect::<Vec<_>>();
+
+        let mut decls = String::new();
+        let mut field = |field: &str, ty: &str, items: &[String]| -> String {
+            lean_list_in_pieces(&mut decls, &format!("{name}_{field}"), ty, items)
+        };
+        let records = field("records", "RecordDecl", &records);
+        let sums = field("sums", "SumDecl", &sums);
+        let options = field("options", "Ty × Nat", &pairs(&self.options));
+        let results = field("results", "Ty × Ty × Nat", &results);
+        let vecs = field("vecs", "Ty × Nat", &pairs(&self.vecs));
+        let lists = field("lists", "Ty × Nat", &pairs(&self.lists));
+        let opaques = field("opaques", "Nat × Nat", &opaques);
+        let segs = field("strSegs", "List Nat × Nat", &segs);
         format!(
-            "{{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := [{records}],\n    sums := [{sums}],\n    options := [{}], results := [{results}],\n    vecs := [{}], lists := [{}], opaques := [{opaques}],\n    strSegs := [{segs}] }}",
+            "{decls}def {name} : TypeTable :=\n  {{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := {records},\n    sums := {sums},\n    options := {options}, results := {results},\n    vecs := {vecs}, lists := {lists}, opaques := {opaques},\n    strSegs := {segs} }}\n\n",
             lean_opt_nat(self.carrier),
             lean_opt_nat(self.mag),
             lean_opt_nat(self.str_),
             lean_opt_nat(self.str_vec),
-            pairs(&self.options),
-            pairs(&self.vecs),
-            pairs(&self.lists),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every list literal in `text`, as the count of its top-level elements.
+    fn literal_lengths(text: &str) -> Vec<usize> {
+        // Per open `[`: (commas at its own level, saw an element, open
+        // parentheses/anonymous constructors inside it).
+        let mut open: Vec<(usize, bool, usize)> = Vec::new();
+        let mut lengths = Vec::new();
+        for c in text.chars() {
+            match c {
+                '[' => {
+                    if let Some(top) = open.last_mut() {
+                        top.1 = true;
+                    }
+                    open.push((0, false, 0));
+                }
+                ']' => {
+                    let (commas, any, _) = open.pop().expect("balanced brackets");
+                    lengths.push(if any { commas + 1 } else { 0 });
+                }
+                '(' | '⟨' => {
+                    if let Some(top) = open.last_mut() {
+                        top.1 = true;
+                        top.2 += 1;
+                    }
+                }
+                ')' | '⟩' => {
+                    if let Some(top) = open.last_mut() {
+                        top.2 -= 1;
+                    }
+                }
+                ',' => {
+                    if let Some(top) = open.last_mut()
+                        && top.2 == 0
+                    {
+                        top.0 += 1;
+                    }
+                }
+                c if !c.is_whitespace() => {
+                    if let Some(top) = open.last_mut() {
+                        top.1 = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        lengths
+    }
+
+    /// The numerals of `text` in order.
+    fn numerals(text: &str) -> Vec<u64> {
+        text.split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().unwrap())
+            .collect()
+    }
+
+    /// The bodies of the piece declarations of one field, in order.
+    fn piece_bodies(text: &str, field: &str) -> Vec<String> {
+        let prefix = format!("def types_{field}_");
+        text.split("\n\n")
+            .filter(|d| d.starts_with(&prefix))
+            .map(|d| d.split_once(":=").unwrap().1.to_string())
+            .collect()
+    }
+
+    /// Regression: btc-listener's type table (151 string segments, the
+    /// longest 570 bytes) was one list literal past Lean's `maxRecDepth` and
+    /// one declaration past `maxHeartbeats`. A table far bigger than that is
+    /// written with no literal longer than `LEAN_LIST_CHUNK`, no piece longer
+    /// than `LEAN_TABLE_PIECE_CHARS` beyond its one oversized entry, and the
+    /// same value: `++` only concatenates, so every numeral appears once and
+    /// in the original order.
+    #[test]
+    fn a_big_type_table_is_written_in_pieces_with_the_same_value() {
+        let segs: Vec<(Vec<u8>, u32)> = (0..300u32)
+            .map(|i| {
+                let len = (i * 7 % 900) as usize;
+                ((0..len).map(|b| (b % 251) as u8).collect(), i)
+            })
+            .collect();
+        let records: Vec<PlanRecordDecl> = (0..200u32)
+            .map(|tid| PlanRecordDecl {
+                tid,
+                struct_idx: tid + 1000,
+                fields: vec![PlanTy::Int, PlanTy::Str],
+            })
+            .collect();
+        let tt = PlanTypeTable {
+            records: records.clone(),
+            str_segs: segs.clone(),
+            ..PlanTypeTable::default()
+        };
+        let text = tt.lean_decls("types");
+
+        let longest = literal_lengths(&text).into_iter().max().unwrap_or(0);
+        assert!(longest <= LEAN_LIST_CHUNK, "a literal has {longest} elements");
+
+        let seg_pieces = piece_bodies(&text, "strSegs");
+        assert!(seg_pieces.len() > 1);
+        for body in &seg_pieces {
+            let entries = body.matches("),\n").count() + 1;
+            assert!(
+                body.len() <= LEAN_TABLE_PIECE_CHARS + 16 || entries == 1,
+                "a piece of {entries} entries has {} chars",
+                body.len()
+            );
+        }
+        let expected: Vec<u64> = segs
+            .iter()
+            .flat_map(|(bytes, idx)| bytes.iter().map(|b| *b as u64).chain([*idx as u64]))
+            .collect();
+        assert_eq!(numerals(&seg_pieces.concat()), expected);
+
+        let join = text
+            .lines()
+            .find_map(|l| l.trim_start().strip_prefix("strSegs := "))
+            .unwrap();
+        let joined: Vec<&str> = join.trim_end_matches(" }").split(" ++ ").collect();
+        let declared: Vec<String> = (0..seg_pieces.len())
+            .map(|k| format!("types_strSegs_{k}"))
+            .collect();
+        assert_eq!(joined, declared);
+
+        let expected: Vec<u64> = records
+            .iter()
+            .flat_map(|r| [r.tid as u64, r.struct_idx as u64])
+            .collect();
+        assert_eq!(numerals(&piece_bodies(&text, "records").concat()), expected);
+    }
+
+    /// A table that fits one piece is written as one declaration with one
+    /// inline literal per field.
+    #[test]
+    fn a_small_type_table_is_one_declaration() {
+        let tt = PlanTypeTable {
+            carrier: Some(3),
+            records: vec![PlanRecordDecl {
+                tid: 0,
+                struct_idx: 5,
+                fields: vec![PlanTy::Int, PlanTy::Bool],
+            }],
+            str_segs: vec![(b"hi".to_vec(), 2)],
+            ..PlanTypeTable::default()
+        };
+        assert_eq!(
+            tt.lean_decls("types"),
+            "def types : TypeTable :=\n  { carrier := some 3, mag := none, str := none, strVec := none,\n    \
+             records := [⟨0, 5, [.int, .bool]⟩],\n    sums := [],\n    options := [], results := [],\n    \
+             vecs := [], lists := [], opaques := [],\n    strSegs := [([104, 105], 2)] }\n\n"
+        );
     }
 }
