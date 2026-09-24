@@ -2306,10 +2306,29 @@ fn emit_simp_over_prelude_lemmas_law(
     // over the same set. Shape-gated on the cone touching a map and on the
     // given's type being a user sum; tried after the flat simp, so a law the
     // flat simp closes keeps its proof.
-    if builtins.iter().any(|b| b.starts_with("Map."))
-        && let Some(split) = shared::first_user_sum_given(ctx, law)
-    {
-        branches.push(format!("cases {split} <;> simp [{simp_set}]; done"));
+    if let Some(split) = shared::first_user_sum_given(ctx, law) {
+        if builtins.iter().any(|b| b.starts_with("Map.")) {
+            branches.push(format!("cases {split} <;> simp [{simp_set}]; done"));
+        } else {
+            // Any other claim over a sum-typed given, fieldless variants
+            // or ones with a payload: split it by constructor, unfold the
+            // whole cone of both sides in each case and finish the
+            // arithmetic with `omega`. Tried after the flat simp.
+            let mut case_set: Vec<String> = shared::law_simp_defs_blind(ctx, vb, law)
+                .into_iter()
+                .collect();
+            let unfold_names: Vec<String> =
+                unfold_fns.iter().map(|f| aver_name_to_lean(f)).collect();
+            for name in simp_set.split(", ") {
+                if !unfold_names.iter().any(|n| n == name) && !case_set.iter().any(|n| n == name) {
+                    case_set.push(name.to_string());
+                }
+            }
+            branches.push(format!(
+                "cases {split} <;> simp [{}] <;> omega",
+                case_set.join(", ")
+            ));
+        }
     }
     Some(AutoProof {
         support_lines: Vec::new(),
