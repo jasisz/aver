@@ -133,6 +133,14 @@ pub(super) fn instantiates_to(
     }
 }
 
+/// Whether a bare type name is one the compiler ships (`Bytes`, the branch
+/// path) rather than one a module of the program declares. Such a name
+/// belongs to no module, so no module may qualify it.
+pub(super) fn is_compiler_shipped_type_name(name: &str) -> bool {
+    name == crate::types::branch_path::TYPE_NAME
+        || crate::stdlib::bare_stdlib_type_names().contains(name)
+}
+
 pub(super) fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
     match ty {
         Type::Named { id, name } => {
@@ -156,10 +164,7 @@ pub(super) fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
                     name: format!("{scope}.{bare}"),
                 };
             }
-            if name.contains('.')
-                || name == crate::types::branch_path::TYPE_NAME
-                || crate::stdlib::bare_stdlib_type_names().contains(&name)
-            {
+            if name.contains('.') || is_compiler_shipped_type_name(&name) {
                 Type::Named { id, name }
             } else {
                 Type::Named {

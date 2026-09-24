@@ -451,11 +451,17 @@ impl CapabilityAbi {
             Type::Map(_, _) => {
                 // The public Type display keeps a space after commas while the
                 // wasm-gc map monomorphisation registry uses its compact
-                // canonical spelling. Both denote the same boundary type.
-                let compact = canonical.replace(' ', "");
-                let helpers = (collection_helpers.maps)(&compact).ok_or_else(|| {
-                    WasmGcError::Validation(format!("capability ABI lacks `{canonical}` helpers"))
-                })?;
+                // canonical spelling, and a contract spells a dependency's
+                // type `Module.Type` where the flattened program wrote it
+                // bare. All of them denote the same boundary type.
+                let helpers = registry
+                    .registered_map_spelling(&canonical)
+                    .and_then(|registered| (collection_helpers.maps)(registered))
+                    .ok_or_else(|| {
+                        WasmGcError::Validation(format!(
+                            "capability ABI lacks `{canonical}` helpers"
+                        ))
+                    })?;
                 for (suffix, fn_idx) in [
                     ("empty", helpers.empty),
                     ("set", helpers.set),
@@ -701,8 +707,12 @@ fn qualified_in_module(ty: &Type, module: &str, registry: &TypeRegistry) -> Type
     match ty {
         // backend-link-stage: the field came from the contract's source text,
         // which carries no type id, so the module's own spelling is all there
-        // is to key on here.
-        Type::Named { name, .. } if !name.contains('.') => {
+        // is to key on here. A name the compiler ships (`Bytes`) is no
+        // module's, and the registry's bare-name fallback would otherwise
+        // find it under any module's prefix.
+        Type::Named { name, .. }
+            if !name.contains('.') && !crate::capability::is_compiler_shipped_type_name(name) =>
+        {
             let qualified = format!("{module}.{name}");
             let known = registry.record_type_idx(&qualified).is_some()
                 || registry.sum_root_type_idx(&qualified).is_some()

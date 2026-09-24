@@ -1,0 +1,16 @@
+module Ledger
+    depends [Bytes]
+    intent = "Records that carry Bytes, named by the job kind rather than mirrored inside it."
+    exposes [Request, Parts, Chunk]
+
+record Request
+    data: Bytes
+    size: Int
+
+record Chunk
+    at: Int
+    length: Int
+
+record Parts
+    chunks: List<Bytes>
+    index: Map<Bytes, Chunk>

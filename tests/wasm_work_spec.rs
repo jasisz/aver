@@ -186,6 +186,22 @@ fn a_job_kind_naming_nested_dependency_types_matches_the_vm_on_wasm_gc() {
     assert_eq!(wasm, "decoded block of 3 bytes from node");
 }
 
+/// A dependency's records carry `Bytes` across the job boundary: the task
+/// holds one, the answer a `List<Bytes>` and a `Map<Bytes, Ledger.Chunk>`.
+/// `Bytes` is the compiler's type in every module, never `Ledger.Bytes`, and
+/// the map is the one the flattened program instantiated as
+/// `Map<Bytes, Chunk>`, so the ABI has helpers for both.
+#[test]
+fn a_job_kind_carrying_bytes_inside_dependency_types_matches_the_vm_on_wasm_gc() {
+    assert_same_stdout("work_jobs_dependency_bytes", &["--wasm-gc"]);
+    let wasm = run("work_jobs_dependency_bytes", &["--wasm-gc"], &[])
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        wasm,
+        "chunk 0102 of 2 bytes at 0\nchunk 03faff of 3 bytes at 2"
+    );
+}
+
 #[cfg(feature = "wasip2")]
 #[test]
 fn a_unit_task_runs_on_wasip2() {

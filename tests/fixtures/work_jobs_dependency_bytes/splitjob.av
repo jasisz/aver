@@ -1,0 +1,16 @@
+module SplitJob
+    kind = capability
+    semantics = effectful
+    depends [Work, Ledger]
+    intent = "One job kind whose task and reply carry Bytes inside records of another module."
+    exposes [begin, take]
+
+operation begin(task: Ledger.Request) -> Result<Work.Job, String>
+    ? "Starts one split job off the turn and returns its job handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Ledger.Parts>, String>
+    ? "Collects one finished split job: None while it runs, Some(parts) once it finished."
+    oracle = generativeOutput
+    replay = recorded
