@@ -2111,11 +2111,11 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
         collect_called_dotted(when, &mut premise_fns);
     }
     guards.retain(|g| !premise_fns.contains(g));
-    let mut unfold = vec![super::shared::entry_qualified_lean_name(ctx, &vb.fn_name)];
+    let mut unfold = vec![super::shared::owner_qualified_lean_name(ctx, &vb.fn_name)];
     unfold.extend(
         guards
             .iter()
-            .map(|g| super::shared::entry_qualified_lean_name(ctx, g)),
+            .map(|g| super::shared::owner_qualified_lean_name(ctx, g)),
     );
     let unfold_set = unfold.join(", ");
     // Subject (+ derived guard predicate) unfold; the premises (decomposed by

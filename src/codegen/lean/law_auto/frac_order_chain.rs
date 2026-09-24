@@ -477,7 +477,7 @@ pub(super) fn emit_frac_order_chain_law(
         };
         (**callee).clone()
     })?;
-    let subject = super::shared::entry_qualified_lean_name(ctx, &subject_source);
+    let subject = super::shared::owner_qualified_lean_name(ctx, &subject_source);
     let intros: Vec<String> = law
         .givens
         .iter()

@@ -1,0 +1,29 @@
+module Checked
+    intent =
+        "An error-checking wrapper over a plain core, with the law that the"
+        "wrapper returns the core on valid input. A consumer module proves it."
+    exposes [core, checked]
+    depends []
+    effects []
+
+fn core(x: Int) -> Int
+    ? "Twice the input."
+    x * 2
+
+verify core
+    core(3) => 6
+
+fn checked(x: Int) -> Result<Int, String>
+    ? "The core, or an error for a negative input."
+    match x >= 0
+        true -> Result.Ok(core(x))
+        false -> Result.Err("negative")
+
+verify checked
+    checked(1) => Result.Ok(2)
+    checked(-1) => Result.Err("negative")
+
+verify checked law okOnValidInput
+    given x: Int = [-1, 0, 1, 5]
+    when x >= 0
+    checked(x) => Result.Ok(core(x))
