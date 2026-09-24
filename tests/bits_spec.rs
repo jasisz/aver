@@ -373,7 +373,6 @@ fn emitter_sources_do_not_duplicate_the_materialization_number() {
         "src/parser/expr.rs",
         "src/types/bits.rs",
         "src/codegen/lean/builtins.rs",
-        "src/codegen/dafny/expr.rs",
         "src/codegen/rust/from_mir.rs",
         "src/codegen/wasm_gc/types.rs",
         "src/codegen/wasm_gc/body/from_mir/builtins.rs",

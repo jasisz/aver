@@ -93,7 +93,6 @@ struct Run {
     /// model is built from. `None` when no proof stage ran.
     proof_items: Option<Vec<TopLevel>>,
     lean: String,
-    dafny: String,
     /// `buffer_build` fusion sites rewritten in the runtime half.
     fusion_rewrites: usize,
     /// `chars_fusion` producer sites moved onto a cursor, plus the
@@ -190,17 +189,10 @@ fn run(source: &str, project: &str, flags: Flags) -> Run {
         .map(|(path, body)| format!("== {path} ==\n{body}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let dafny = aver::codegen::dafny::transpile(&ctx)
-        .files
-        .iter()
-        .map(|(path, body)| format!("== {path} ==\n{body}"))
-        .collect::<Vec<_>>()
-        .join("\n");
     Run {
         runtime_items,
         proof_items,
         lean,
-        dafny,
         fusion_rewrites,
         chars_rewrites,
         string_index_rewrites,
@@ -281,7 +273,7 @@ fn assert_proof_view_is_the_unfabricated_program(source: &str, project: &str, fa
          and its bytes describe two different programs"
     );
     assert!(
-        !model.lean.is_empty() && !model.dafny.is_empty(),
+        !model.lean.is_empty(),
         "the export must be non-empty — an empty one satisfies every equality here"
     );
     assert_no_synthesized_entity(&proof_items, "the proof view");
@@ -370,7 +362,7 @@ fn fusion_cannot_change_what_gets_proven() {
         "the pristine run must not fuse — otherwise the two sides agree trivially"
     );
     assert!(
-        !pristine.lean.is_empty() && !pristine.dafny.is_empty(),
+        !pristine.lean.is_empty(),
         "the export must be non-empty — an empty one satisfies every equality here"
     );
 
@@ -378,17 +370,9 @@ fn fusion_cannot_change_what_gets_proven() {
         pristine.lean, fused.lean,
         "emitted Lean must not depend on whether the fabricating passes ran"
     );
-    assert_eq!(
-        pristine.dafny, fused.dafny,
-        "emitted Dafny must not depend on whether the fabricating passes ran"
-    );
     assert!(
         !fused.lean.contains("__buffered"),
         "the deforested shape leaked into the emitted Lean"
-    );
-    assert!(
-        !fused.dafny.contains("__buffered"),
-        "the deforested shape leaked into the emitted Dafny"
     );
 }
 
@@ -444,7 +428,7 @@ fn chars_fusion_cannot_change_what_gets_proven() {
         "the pristine run must not fuse — otherwise the two sides agree trivially"
     );
     assert!(
-        !pristine.lean.is_empty() && !pristine.dafny.is_empty(),
+        !pristine.lean.is_empty(),
         "the export must be non-empty — an empty one satisfies every equality here"
     );
 
@@ -452,11 +436,7 @@ fn chars_fusion_cannot_change_what_gets_proven() {
         pristine.lean, fused.lean,
         "emitted Lean must not depend on whether the fabricating passes ran"
     );
-    assert_eq!(
-        pristine.dafny, fused.dafny,
-        "emitted Dafny must not depend on whether the fabricating passes ran"
-    );
-    for (label, emitted) in [("Lean", &fused.lean), ("Dafny", &fused.dafny)] {
+    for (label, emitted) in [("Lean", &fused.lean)] {
         assert!(
             !emitted.contains("__cursor") && !emitted.contains("__str_"),
             "the cursor shape leaked into the emitted {label}"
@@ -509,8 +489,7 @@ fn string_index_cannot_change_what_gets_proven() {
         "the pristine run must retain source String access"
     );
     assert_eq!(pristine.lean, indexed.lean);
-    assert_eq!(pristine.dafny, indexed.dafny);
-    for (label, emitted) in [("Lean", &indexed.lean), ("Dafny", &indexed.dafny)] {
+    for (label, emitted) in [("Lean", &indexed.lean)] {
         assert!(
             !emitted.contains("__indexed") && !emitted.contains("__str_index"),
             "the indexed runtime shape leaked into emitted {label}"
@@ -565,7 +544,7 @@ fn list_build_cannot_change_what_gets_proven() {
         "the pristine run must not fuse — otherwise the two sides agree trivially"
     );
     assert!(
-        !pristine.lean.is_empty() && !pristine.dafny.is_empty(),
+        !pristine.lean.is_empty(),
         "the export must be non-empty — an empty one satisfies every equality here"
     );
 
@@ -573,11 +552,7 @@ fn list_build_cannot_change_what_gets_proven() {
         pristine.lean, fused.lean,
         "emitted Lean must not depend on whether the fabricating passes ran"
     );
-    assert_eq!(
-        pristine.dafny, fused.dafny,
-        "emitted Dafny must not depend on whether the fabricating passes ran"
-    );
-    for (label, emitted) in [("Lean", &fused.lean), ("Dafny", &fused.dafny)] {
+    for (label, emitted) in [("Lean", &fused.lean)] {
         assert!(
             !emitted.contains("__collected") && !emitted.contains("__lst_"),
             "the builder shape leaked into the emitted {label}"
@@ -637,7 +612,7 @@ fn the_byte_sink_cannot_change_what_gets_proven() {
         "the pristine run must not fuse — otherwise the two sides agree trivially"
     );
     assert!(
-        !pristine.lean.is_empty() && !pristine.dafny.is_empty(),
+        !pristine.lean.is_empty(),
         "the export must be non-empty — an empty one satisfies every equality here"
     );
 
@@ -645,11 +620,7 @@ fn the_byte_sink_cannot_change_what_gets_proven() {
         pristine.lean, fused.lean,
         "emitted Lean must not depend on whether the fabricating passes ran"
     );
-    assert_eq!(
-        pristine.dafny, fused.dafny,
-        "emitted Dafny must not depend on whether the fabricating passes ran"
-    );
-    for (label, emitted) in [("Lean", &fused.lean), ("Dafny", &fused.dafny)] {
+    for (label, emitted) in [("Lean", &fused.lean)] {
         assert!(
             !emitted.contains("__collected") && !emitted.contains("__byt_"),
             "the byte builder shape leaked into the emitted {label}"

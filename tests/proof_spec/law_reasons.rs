@@ -197,43 +197,6 @@ fn wasm_checks_declared_explanations_even_when_the_claim_is_true() {
 }
 
 #[test]
-fn dafny_checks_integer_and_option_explanations_without_dropping_false_steps() {
-    if Command::new("dafny").arg("--version").output().is_err() {
-        return;
-    }
-    let dir = temp_output_dir("aver-law-reasons-dafny");
-    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
-        .args([
-            "proof",
-            "tests/fixtures/law_reasons.av",
-            "--backend",
-            "dafny",
-            "--check-json",
-            "-o",
-            dir.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(!run.status.success());
-    let stdout = String::from_utf8_lossy(&run.stdout);
-    let json = stdout
-        .lines()
-        .rev()
-        .find(|l| l.starts_with('{'))
-        .unwrap_or_else(|| panic!("{}", format_output(&run)));
-    let summary: serde_json::Value = serde_json::from_str(json).unwrap();
-    assert_eq!(summary["passed"], false, "{summary}");
-    // Option selection and both integer laws are now admitted. The unguarded
-    // positive reason must still fail despite its true conclusion and samples.
-    assert_eq!(summary["declined"].as_u64().unwrap_or(0), 0, "{summary}");
-    assert!(summary["errors"].as_u64().unwrap() > 0, "{summary}");
-    assert_eq!(summary["axioms"], 0, "{summary}");
-    assert_eq!(summary["omitted"], 0, "{summary}");
-    assert_eq!(summary["timeouts"], 0, "{summary}");
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
 fn reasons_close_computed_list_facts_with_explicit_forward_citations() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;

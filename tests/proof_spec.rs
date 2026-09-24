@@ -27,8 +27,6 @@ mod check_gates;
 mod citation_attempts;
 #[path = "proof_spec/citation_order.rs"]
 mod citation_order;
-#[path = "proof_spec/citation_reuse.rs"]
-mod citation_reuse;
 #[path = "proof_spec/cited_head.rs"]
 mod cited_head;
 #[path = "proof_spec/conditional_split_omega.rs"]
@@ -39,18 +37,6 @@ mod container_induction;
 mod core_kit;
 #[path = "proof_spec/cross_file.rs"]
 mod cross_file;
-#[path = "proof_spec/dafny_guidance.rs"]
-mod dafny_guidance;
-#[path = "proof_spec/dafny_import_div.rs"]
-mod dafny_import_div;
-#[path = "proof_spec/dafny_inline.rs"]
-mod dafny_inline;
-#[path = "proof_spec/dafny_mutual.rs"]
-mod dafny_mutual;
-#[path = "proof_spec/dafny_structure.rs"]
-mod dafny_structure;
-#[path = "proof_spec/dafny_structured.rs"]
-mod dafny_structured;
 #[path = "proof_spec/dep_law_names.rs"]
 mod dep_law_names;
 #[path = "proof_spec/dependency_effects.rs"]
@@ -92,8 +78,6 @@ mod literalization;
 mod manifest_compare;
 #[path = "proof_spec/map_set_laws.rs"]
 mod map_set_laws;
-#[path = "proof_spec/opaque_closure.rs"]
-mod opaque_closure;
 #[path = "proof_spec/oracle_verify.rs"]
 mod oracle_verify;
 #[path = "proof_spec/panics.rs"]
@@ -243,177 +227,6 @@ fn assert_proof_builds_with_sorry_budget(
         expected_sorries,
         format_output(&run)
     );
-
-    let _ = std::fs::remove_dir_all(&output_dir);
-}
-
-/// `dafny verify` smoke test. Mirrors `assert_proof_builds` but runs
-/// the Dafny backend through the full verifier (not just the parser /
-/// compile front-end). `lake build` accepts `sorry`-bearing proofs;
-/// `dafny verify` actually closes the goal. Several examples verify
-/// cleanly and pin the IR-migrated strategy coverage (Steps 24-40 of
-/// the proof-IR migration); the remaining flagship examples
-/// (`fibonacci`, `rle`, `quicksort`, `date`, `json`) carry
-/// pre-IR-migration Dafny gaps tracked in issue #114 and are gated
-/// via [`assert_dafny_verifies_with_budgets`].
-fn assert_dafny_verifies(example_path: &str, prefix: &str) {
-    assert_dafny_verifies_with_budgets(example_path, prefix, 0, 0);
-}
-
-/// `assert_dafny_verifies`, but tolerate up to `expected_errors` Dafny
-/// verification errors AND exactly `expected_axioms` `assume {:axiom}`
-/// trust escapes.
-///
-/// The error budget is a CEILING (`<=`): the number of undischarged
-/// postconditions is platform-sensitive (Z3 build) — quicksort closes 8
-/// on macOS, 9 on Linux CI (#342) — so an exact match is fragile. A count
-/// ABOVE the ceiling is a real regression (a shape stopped closing). The
-/// axiom budget stays EXACT: `assume {:axiom}` is emitted by our codegen,
-/// not Z3, so it's deterministic — a drop means a stronger proof (tighten),
-/// a rise means a law degraded to a trusted axiom. Parses both counts from
-/// the `--check-json` summary.
-fn assert_dafny_verifies_with_budgets(
-    example_path: &str,
-    prefix: &str,
-    expected_errors: usize,
-    expected_axioms: usize,
-) {
-    dafny_check_with_budgets(
-        example_path,
-        prefix,
-        expected_errors,
-        expected_axioms,
-        false,
-    );
-}
-
-/// `assert_dafny_verifies`, but additionally assert the check's own
-/// verdict: `passed == true` in the `--check-json` summary.
-///
-/// `passed` keys on the `dafny verify` EXIT STATUS — the only place
-/// prover TIMEOUTS surface. A timed-out obligation reports as exit 4
-/// with `0 errors` in the parsed verifier summary, so an errors/axioms
-/// budget assert alone stays green while the file no longer verifies.
-/// Use this for anchors whose regression mode is a timeout rather than
-/// an error-count drift.
-fn assert_dafny_verifies_and_passes(example_path: &str, prefix: &str) {
-    dafny_check_with_budgets(example_path, prefix, 0, 0, true);
-}
-
-fn dafny_check_with_budgets(
-    example_path: &str,
-    prefix: &str,
-    expected_errors: usize,
-    expected_axioms: usize,
-    require_passed: bool,
-) {
-    if Command::new("dafny").arg("--version").output().is_err() {
-        eprintln!("skipping dafny verify smoke test: `dafny` not available");
-        return;
-    }
-
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let output_dir = temp_output_dir(prefix);
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-
-    // Same single-subprocess shape as the Lean side: generate, run
-    // `dafny verify`, parse the error count out of the verifier
-    // summary, emit JSON. Exit code is ignored — tests assert an
-    // exact-match on `errors` for regression detection in both
-    // directions (drift up = lost a strategy, drift down = budget can
-    // be tightened).
-    let run = Command::new(aver_bin)
-        .current_dir(&repo_root)
-        .arg("proof")
-        .arg(example_path)
-        .arg("--backend")
-        .arg("dafny")
-        .arg("-o")
-        .arg(&output_dir)
-        .arg("--check")
-        .arg("--check-json")
-        .output()
-        .expect("expected `aver proof --check --check-json` to run");
-
-    let json_line = run
-        .stdout
-        .split(|&b| b == b'\n')
-        .rev()
-        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
-        .unwrap_or_else(|| {
-            panic!(
-                "`aver proof --check --check-json` produced no JSON line:\n{}",
-                format_output(&run)
-            )
-        });
-    let summary: serde_json::Value = serde_json::from_str(json_line).unwrap_or_else(|e| {
-        panic!(
-            "failed to parse `aver proof --check --check-json` output as JSON ({}):\n{}",
-            e, json_line
-        )
-    });
-    let actual = summary["errors"].as_u64().unwrap_or_else(|| {
-        panic!(
-            "`errors` field missing from --check-json summary:\n{}",
-            json_line
-        )
-    }) as usize;
-    // The error budget is a CEILING (`<=`), not an exact count. The same
-    // proof can leave a DIFFERENT number of postconditions undischarged
-    // across Z3 builds: quicksort closes 8 on macOS but 9 on Linux CI,
-    // because Linux's Z3 hits a counterexample-model parse failure (an
-    // internal float `0.0`) on one extra assertion and reports it as
-    // unproven (#342). An exact `assert_eq` is fragile against that
-    // platform jitter; a ceiling tolerates it while still catching a real
-    // regression (count ABOVE the ceiling = a new shape stopped closing).
-    assert!(
-        actual <= expected_errors,
-        "{}: dafny error count {} exceeds the budget ceiling {} — a new shape \
-         regressed (the budget already tolerates platform-sensitive Z3 jitter \
-         below it). Investigate before raising the ceiling.\n{}",
-        example_path,
-        actual,
-        expected_errors,
-        format_output(&run)
-    );
-
-    // Pin the `assume {:axiom}` count too — the Dafny analog of the Lean
-    // sorry budget. An axiom is a TRUSTED (unproven) obligation: a law that
-    // silently degrades from a real proof to `assume {:axiom}` keeps
-    // `errors == 0` and would slip past an errors-only check (the symmetric
-    // twin of the Lean unsolved-goals false-green). Exact-match in both
-    // directions: a drop means the proof got stronger (lower the count), a
-    // rise means a law regressed to trust (investigate before raising).
-    let actual_axioms = summary["axioms"].as_u64().unwrap_or_else(|| {
-        panic!(
-            "`axioms` field missing from --check-json summary:\n{}",
-            json_line
-        )
-    }) as usize;
-    assert_eq!(
-        actual_axioms,
-        expected_axioms,
-        "{}: dafny axiom (assume {{:axiom}}) count drift (expected {}, got {}). \
-         These are trusted, NOT proven. A rise means a law regressed to an axiom — \
-         investigate before raising the count.\n{}",
-        example_path,
-        expected_axioms,
-        actual_axioms,
-        format_output(&run)
-    );
-
-    if require_passed {
-        assert_eq!(
-            summary["passed"].as_bool(),
-            Some(true),
-            "{}: `--check` reports passed:false even though the error budget \
-             holds — `passed` keys on the dafny exit status, where prover \
-             timeouts surface (exit 4, 0 parsed errors). The file stopped \
-             verifying within the time limit.\n{}",
-            example_path,
-            format_output(&run)
-        );
-    }
 
     let _ = std::fs::remove_dir_all(&output_dir);
 }
@@ -1011,38 +824,6 @@ fn a_decline_for_a_computed_value_on_a_counted_position_names_the_call() {
     );
 }
 
-/// The Dafny export measures a recursion group by the length of every
-/// sequence parameter. The countdown-and-list cycle is planned by a measure
-/// that counts the budget too, so the plan's ordering of the members is not
-/// an ordering of the calls that leave `|queue|` unchanged: paired with it,
-/// Dafny reported `decreases clause might not decrease`. A rank chosen for
-/// a measure Dafny does not state is not handed to it; the group lowers with
-/// fuel, which verifies. Before the group had a plan at all, the plain
-/// functions reported two termination errors.
-#[test]
-fn dafny_does_not_pair_its_measure_with_a_rank_chosen_for_another() {
-    assert_dafny_verifies_and_passes(
-        "tests/fixtures/mutual_cycle_countdown_and_list.av",
-        "aver-dafny-cycle-countdown",
-    );
-}
-
-/// A self-recursive helper receives the head and the tail of a list of
-/// lists. The head is a smaller part of the list by size, which is what the
-/// Lean measure counts, but not by length, which is what Dafny's
-/// `decreases |a| + |b|` measures: paired with the ordering chosen for the
-/// size measure, Dafny reported `decreases clause might not decrease` on the
-/// binary before this change. The analysis run for Dafny takes only a tail
-/// for a part, finds no measure, and the group lowers with fuel, which
-/// verifies.
-#[test]
-fn dafny_does_not_take_a_list_head_for_a_shorter_list() {
-    assert_dafny_verifies_and_passes(
-        "tests/fixtures/mutual_cycle_head_and_tail.av",
-        "aver-dafny-cycle-head-and-tail",
-    );
-}
-
 /// `List.take(List.drop(xs, 1), 32)` and two chains of three list operations,
 /// each the next one's receiver.
 ///
@@ -1061,8 +842,6 @@ fn a_method_application_as_a_receiver_is_parenthesised() {
 #[path = "proof_spec/reverse_algebra.rs"]
 mod reverse_algebra;
 
-#[path = "proof_spec/dafny_explain.rs"]
-mod dafny_explain;
 #[path = "proof_spec/shared_reason_imports.rs"]
 mod shared_reason_imports;
 

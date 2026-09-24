@@ -1,8 +1,0 @@
-module Mid
-    intent = "The intermediate call retains Leaf's type identity."
-    depends [Leaf]
-    exposes [read]
-    effects []
-
-fn read(op: Leaf.Op) -> Int
-    Leaf.extract(op)

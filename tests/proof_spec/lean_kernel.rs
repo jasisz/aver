@@ -850,8 +850,8 @@ fn proof_lean_proves_string_length_additivity_kernel_clean() {
     // calls builtins directly — so every cone-anchored rung declines
     // (Induction needs a recursive-ADT given; SimpOverPreludeLemmas anchors
     // its unfold set on the subject fn appearing in the lhs) and the IR
-    // strategy stays `BackendDispatch`. Dafny's Z3 already discharges the
-    // sequence-length axiom; the Lean side used to fall to a bare `sorry`.
+    // strategy stays `BackendDispatch`; the Lean side used to fall to a bare
+    // `sorry`.
     // The shape-driven `emit_string_length_additive_law` rung now closes it:
     // `String.add_eq_append` (rfl) rewrites the custom `HAdd String` `+` to
     // `++`, the core `@[simp] String.length_append` distributes the length,
@@ -924,7 +924,7 @@ fn proof_lean_proves_string_concat_monoid_kernel_clean() {
     // them: `String.add_eq_append` rewrites the custom `HAdd String` `+` to
     // `++`, then the Lean-core `String.append_empty`/`empty_append`/
     // `append_assoc` finish. Each currently fell to a bare `sorry`
-    // (BackendDispatch; Dafny's Z3 already proves them).
+    // (BackendDispatch).
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping lean string-concat-monoid test: `lake` not available");
         return;
@@ -1113,8 +1113,7 @@ fn proof_lean_proves_empty_map_facts_kernel_clean() {
     // claims it but its minimal `simp [cone, Int.add_sub_cancel]` can't reduce
     // the `AverMap.*` accessor and parks it on a sorry. The empty-map-precise
     // `emit_map_empty_fact_law` rung (before the prelude rung) closes it with
-    // a bounded `simp only [cone, AverMap.get/has/len, []-lemmas]`. Dafny's Z3
-    // already proves these.
+    // a bounded `simp only [cone, AverMap.get/has/len, []-lemmas]`.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping lean empty-map-facts test: `lake` not available");
         return;
@@ -1251,7 +1250,7 @@ fn proof_lean_proves_int_abs_identities_kernel_clean() {
     // `Int.natAbs_natCast` / `Int.natAbs_mul` / `Int.natCast_mul`
     // (+ a full-`simp` fallback for the Bool `>= 0` wrapper), `sorry`-floored.
     // Before this rung they hard-failed the build (idempotence/non-neg) or
-    // sorried (multiplicativity). Dafny's Z3 proves all three.
+    // sorried (multiplicativity).
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping lean int-abs-identities test: `lake` not available");
         return;
@@ -1318,7 +1317,6 @@ fn proof_lean_proves_map_set_nonempty_kernel_clean() {
     // `AverMap.len_set_ge_one` (stated in the exact lowered goal shape and
     // demand-shipped). The `emit_map_len_set_positive_law` rung discharges the
     // law with `exact AverMap.len_set_ge_one _ _ _`. Was a bare sorry before.
-    // Dafny's Z3 proves it.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping lean map-set-nonempty test: `lake` not available");
         return;

@@ -258,19 +258,13 @@ fn coordinator_laws_are_universal_beside_the_vm_schedule_scenarios() {
 fn proof_export_refuses_process_cases_before_emitting_a_different_oracle_model() {
     let dir = repo_root().join("tests/fixtures/yield_verify_stubs");
     let target = tempfile::tempdir().unwrap();
-    for backend in ["lean", "dafny"] {
-        let out = invoke(
-            &dir,
-            "proof",
-            &["--backend", backend, "-o", target.path().to_str().unwrap()],
-        );
-        assert!(!out.status.success(), "{}", format_output(&out));
-        assert!(
-            format_output(&out).contains("dynamic Oracle counter"),
-            "{}",
-            format_output(&out)
-        );
-    }
+    let out = invoke(&dir, "proof", &["-o", target.path().to_str().unwrap()]);
+    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(
+        format_output(&out).contains("dynamic Oracle counter"),
+        "{}",
+        format_output(&out)
+    );
 }
 
 #[test]
