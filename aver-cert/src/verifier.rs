@@ -47,7 +47,19 @@ const BRIDGE_AUDIT_MARKER: &str = "AVER_BRIDGE_AUDIT";
 const BRIDGE_NAMESPACE: &str = "AverCert.Bridge";
 const BRIDGE_COROLLARY_SUFFIX: &str = "_certified";
 const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
-const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "ArtifactCertificate"];
+/// The final replay: every constant of the checker's witness module AND of
+/// everything it imports — the wall, the artifact certificate, the model, the
+/// law and bridge modules — re-checked by the kernel in a fresh environment.
+/// A package module elaborated with the kernel check skipped therefore cannot
+/// hand any credited claim an unchecked lemma.
+const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", WITNESS_MODULE];
+/// The checker-authored witness module (pins, the accepted root).
+const WITNESS_MODULE: &str = "CheckerWitness";
+/// Report pins, `AverCertChecker.report_pin_<k>`.
+const REPORT_PIN_PREFIX: &str = "AverCertChecker.report_pin_";
+/// The audit program's decline line, and its success line.
+const AUDIT_DECLINE_MARKER: &str = "AVER_AUDIT_DECLINE";
+const AUDIT_OK_MARKER: &str = "AVER_AUDIT_OK";
 /// User-facing name of the `lake build` step in timeout and failure messages.
 const PROOF_BUILD_PHASE: &str = "certificate proof build";
 
@@ -267,6 +279,10 @@ struct SourceBridgeCandidate {
     /// those; the declared `theorem` name is checked and then discarded,
     /// because the pin cites the corollary.
     statement: String,
+    /// The declared encoders; the audit checks the records and sums they
+    /// read against the elaborated types.
+    params: Vec<SourceEncoder>,
+    result: SourceEncoder,
 }
 
 struct Candidates {
@@ -479,8 +495,8 @@ fn replay_args_for(mode: ReplayMode, override_binary: Option<&str>) -> Option<Ve
             Some(binary) if !binary.trim().is_empty() => vec![
                 "env".to_string(),
                 binary.to_string(),
-                "ArtifactCertificate".to_string(),
-                "AverCert.Artifact.certificate".to_string(),
+                WITNESS_MODULE.to_string(),
+                CHECKED_ROOT.to_string(),
                 "replay".to_string(),
                 "8".to_string(),
                 "32".to_string(),
@@ -624,11 +640,46 @@ fn trusted_check(
         ));
     }
     // Every pin ELABORATED, so every declared statement is exactly what the
-    // package proves. What remains is per-pin credit, read from the witness's
-    // own audit trace: a missing or malformed line is a decline, never credit.
-    let laws = parse_law_audits(&elaborated.combined, &candidates.laws)?;
-    let bridged_laws = parse_bridged_law_audits(&elaborated.combined, &candidates.laws)?;
-    let source_bridges = parse_bridge_audits(&elaborated.combined, &candidates.source_bridges)?;
+    // package proves. The axiom audit and the audit of what the package
+    // declared run in the checker's own program, elaborated without the
+    // package; a decline there declines the package, and per-pin credit is
+    // read from its audit lines: a missing or malformed line is a decline,
+    // never credit.
+    std::fs::write(
+        build.path.join("CheckerAudit.lean"),
+        checker_audit(&candidates, &build.package_roots),
+    )
+    .map_err(|error| format!("cannot write checker audit: {error}"))?;
+    let audited = run_lake(
+        &lean,
+        &build.path,
+        "artifact audit",
+        &["env", "lean", "--run", "CheckerAudit.lean"],
+    )?;
+    if let Some(reason) = audited
+        .combined
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(AUDIT_DECLINE_MARKER))
+    {
+        return Err(format!(
+            "certificate declined by the checker audit:{}",
+            display_safe(reason)
+        ));
+    }
+    if !audited.status.success()
+        || !audited
+            .combined
+            .lines()
+            .any(|line| line.trim() == AUDIT_OK_MARKER)
+    {
+        return Err(format!(
+            "the checker audit did not complete:\n{}",
+            tail(&audited.combined, 30)
+        ));
+    }
+    let laws = parse_law_audits(&audited.combined, &candidates.laws)?;
+    let bridged_laws = parse_bridged_law_audits(&audited.combined, &candidates.laws)?;
+    let source_bridges = parse_bridge_audits(&audited.combined, &candidates.source_bridges)?;
     if let Some(replay_args) = kernel_replay_args(replay_mode) {
         let replay_args: Vec<&str> = replay_args.iter().map(String::as_str).collect();
         let replayed = run_lake(&lean, &build.path, "final kernel replay", &replay_args)?;
@@ -716,6 +767,35 @@ fn bridged_law_indices(laws: &[LawCandidate]) -> Vec<usize> {
         .collect()
 }
 
+/// `nat_lit n`: a raw natural-number literal. A pinned statement spells its
+/// numerals this way so no `OfNat` instance takes part in what it means.
+fn lean_nat(value: impl std::fmt::Display) -> String {
+    format!("(nat_lit {value})")
+}
+
+/// An `Int` literal built from its constructors, instance-free.
+fn lean_int(value: i64) -> String {
+    if value >= 0 {
+        format!("(_root_.Int.ofNat {})", lean_nat(value))
+    } else {
+        format!(
+            "(_root_.Int.negSucc {})",
+            lean_nat(value.unsigned_abs() - 1)
+        )
+    }
+}
+
+/// The checker-owned witness module.
+///
+/// It is PURE DATA for the kernel: theorems pinning each declared fact at a
+/// checker-written statement, no `import Lean`, no command that runs code.
+/// Everything it names is `_root_`-qualified — a package cannot place a
+/// declaration where an unqualified name would resolve first — and every
+/// numeral is a `nat_lit`, so neither a namespace nor an instance the package
+/// declares takes part in what a pin says. The axiom audit of these pins runs
+/// in a separate checker-owned program ([`checker_audit`]) elaborated without
+/// the package, and the final fresh-environment replay replays this module and
+/// everything it imports.
 fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let bridged_law_indices = bridged_law_indices(&candidates.laws);
     let names = lean_str_list(
@@ -779,9 +859,9 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             divmod_role,
         )) => {
             format!(
-                "some ({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, \
+                "_root_.Option.some ({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, \
              cmp := {}, eq := {}, divmod := {} }} : \
-             CertDecode.AddSub.Roles)",
+             _root_.CertDecode.AddSub.Roles)",
                 lean_option_nat(box_role),
                 lean_option_nat(add_role),
                 lean_option_nat(mul_role),
@@ -792,7 +872,7 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
                 lean_option_nat(divmod_role),
             )
         }
-        None => "(none : Option CertDecode.AddSub.Roles)".to_string(),
+        None => "(_root_.Option.none : _root_.Option _root_.CertDecode.AddSub.Roles)".to_string(),
     };
     let string_roles = format!(
         "[{}]",
@@ -804,32 +884,28 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
                     StringHostRole::Eq => ".eq",
                     StringHostRole::Concat => ".concat",
                 };
-                format!("({index}, {role})")
+                format!("({}, {role})", lean_nat(index))
             })
             .collect::<Vec<_>>()
             .join(", ")
     );
     let wasip2_component_envelope =
         lean_wasip2_component_envelope(candidates.wasip2_component_envelope);
-    let allowed = AXIOM_WHITELIST
-        .iter()
-        .map(|name| format!("`{name}"))
-        .collect::<Vec<_>>()
-        .join(", ");
     // Law-claim surface: one type-pinning theorem per claim (built by
     // concatenation, never `format!`, so statement braces stay inert), the
-    // conditional `Laws` import, and the corollary roots the axiom audit
-    // walks. All fields were validated by `validate_law_candidate`.
+    // conditional `Laws` import, and the corollary roots the audit walks. All
+    // fields were validated by `validate_law_candidate`.
     //
     // The statement is re-elaborated inside the model theorem's OWN namespace
     // — the same context the package's `Laws.lean` uses — because `open
     // <prefix> in` at root does not reproduce it: inside `namespace Json` the
     // text `Json.jsonInt` reaches the constructor `Json.Json.jsonInt`, while
     // at root it reaches the accessor `Json.jsonInt` that `open` only adds an
-    // alias beside. The pins therefore sit OUTSIDE `namespace AverCertChecker`
-    // and name themselves `_root_.AverCertChecker.law_pin_<i>`: nested inside
-    // it the current namespace would be `AverCertChecker.<prefix>`, whose
-    // resolution is not the model's either.
+    // alias beside. The pins name themselves `_root_.AverCertChecker.law_pin_<i>`
+    // and cite `_root_.AverCert.Laws.<c>`, so the namespace cannot redirect
+    // either name. A law statement means what the MODEL's names and
+    // instances make it mean; the instances a package may declare at all are
+    // audited by `checker_audit`.
     let law_import = if candidates.laws.is_empty() {
         String::new()
     } else {
@@ -849,7 +925,6 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     // function, and removed the credit of a claim about the source model that
     // the bridge plays no part in proving.
     let mut law_pins = String::new();
-    let mut bridged_law_root_names = String::new();
     for (index, law) in candidates.laws.iter().enumerate() {
         if !law.prefix.is_empty() {
             law_pins.push_str("namespace ");
@@ -884,7 +959,6 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             law_pins.push_str(&law.corollary);
             law_pins.push_str(LAW_BRIDGED_COROLLARY_SUFFIX);
             law_pins.push_str("\n\n");
-            bridged_law_root_names.push_str(&format!("`{BRIDGED_LAW_PIN_PREFIX}{bridged_index}, "));
         }
         if !law.prefix.is_empty() {
             law_pins.push_str("end ");
@@ -892,10 +966,9 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             law_pins.push_str("\n\n");
         }
     }
-    let bridged_law_roots = bridged_law_root_names.trim_end_matches(", ").to_string();
     // Bridge pins need no namespace context: a bridge statement is rendered
-    // fully `_root_`-qualified by the producer and validated to be so here, so
-    // it means the same at the root as it does in the package's `Bridge.lean`.
+    // by the checker, fully `_root_`-qualified, so it means the same at the
+    // root as it does in the package's `Bridge.lean`.
     let mut bridge_pins = String::new();
     for (index, bridge) in candidates.source_bridges.iter().enumerate() {
         bridge_pins.push_str(&format!(
@@ -907,29 +980,99 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
         bridge_pins.push_str(&bridge.corollary);
         bridge_pins.push_str("\n\n");
     }
-    // The audit walks the CHECKER-NAMED pins, never the package's bare
-    // corollary names: the pin's term cites `_root_.AverCert.Laws.<c>` (so an
-    // `open <prefix>`-shadowed decoy cannot be substituted), and auditing
-    // `AverCertChecker.law_pin_<i>` covers exactly the closure the pin proved.
-    let law_roots = (0..candidates.laws.len())
-        .map(|index| format!("`{LAW_PIN_PREFIX}{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let bridge_roots = (0..candidates.source_bridges.len())
-        .map(|index| format!("`{BRIDGE_PIN_PREFIX}{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    // The two audits are deliberately asymmetric. The accepted-artifact root
-    // THROWS: a non-whitelisted axiom under an export closure is a rejected
-    // certificate. A law pin instead LOGS its result, because a law that fails
-    // only its axiom audit loses its own credit and must not take the exports
-    // down with it — the pin still had to elaborate at the declared statement
-    // to get here, which is the integrity half of the claim. Rust reads the
-    // logged lines back; a pin with no line is a decline, so a parse miss can
-    // never become credit.
+    // The report pins bind every JSON report field to the Lean manifest and
+    // the artifact data. Each is a THEOREM the audit walks with the accepted
+    // root: a pin closed by `decide +kernel` through a package-declared
+    // decision procedure carries that procedure's axioms into the audit.
+    let data = "_root_.AverCert.Artifact.data";
+    let manifest = "_root_.AverCert.manifest";
+    let report_pins: Vec<(String, &str)> = vec![
+        (
+            format!("{data}.modBytes = _root_.AverCert.ArtifactBytes.modBytes"),
+            "rfl",
+        ),
+        (
+            format!("{data}.modLen = _root_.AverCert.ArtifactBytes.modLen"),
+            "rfl",
+        ),
+        (format!("{data}.manifest = {manifest}"), "rfl"),
+        (
+            format!("{data}.wasip2ComponentEnvelope = {wasip2_component_envelope}"),
+            "rfl",
+        ),
+        (
+            format!("{manifest}.subject.artifactHash = \"{sha}\""),
+            "rfl",
+        ),
+        (
+            format!(
+                "{manifest}.subject.artifactRoot = \"{}\"",
+                format::ARTIFACT_CERTIFICATE_ROOT
+            ),
+            "rfl",
+        ),
+        (
+            format!("{manifest}.obligations.map (fun o => o.export_) = {names}"),
+            "rfl",
+        ),
+        (format!("{manifest}.subject.exports = {names}"), "rfl"),
+        (
+            format!("_root_.AverCert.ClaimAxes.reportEntries {data} = {report_entries}"),
+            "by first | rfl | decide +kernel",
+        ),
+        (
+            format!("_root_.AverCert.ClaimAxes.reportFacets {data} = {report_facets}"),
+            "by first | rfl | decide +kernel",
+        ),
+        (
+            format!("{manifest}.obligations.map (fun o => o.policy) = {policies}"),
+            "rfl",
+        ),
+        (
+            format!("{manifest}.obligations.map (fun o => o.termination?) = {terminations}"),
+            "rfl",
+        ),
+        (format!("{manifest}.subject.contracts = {contracts}"), "rfl"),
+        (
+            format!("{manifest}.subject.declaredUncertified = {declared}"),
+            "rfl",
+        ),
+        (
+            format!("{manifest}.subject.capabilities = {capabilities}"),
+            "rfl",
+        ),
+        (format!("{manifest}.subject.start = {start}"), "rfl"),
+        (format!("{manifest}.subject.hostRoleTable = {roles}"), "rfl"),
+        (
+            format!("{manifest}.subject.stringHostRoles = {string_roles}"),
+            "rfl",
+        ),
+        (
+            format!("{manifest}.subject.target = \"{}\"", candidates.target),
+            "rfl",
+        ),
+        (
+            format!("{manifest}.subject.profile = \"{}\"", candidates.profile),
+            "rfl",
+        ),
+        (
+            format!("{manifest}.subject.abi = \"{}\"", candidates.abi),
+            "rfl",
+        ),
+    ];
+    assert_eq!(
+        report_pins.len(),
+        REPORT_PIN_COUNT,
+        "the audit walks exactly the report pins the witness writes"
+    );
+    let mut report = String::new();
+    for (index, (statement, proof)) in report_pins.iter().enumerate() {
+        report.push_str(&format!(
+            "theorem _root_.{REPORT_PIN_PREFIX}{index} :\n    {statement} :=\n  {proof}\n\n"
+        ));
+    }
     format!(
         "-- Authored by aver-cert; never accepted from the certificate.\n\
-         import Lean\n\
          import AcceptedArtifact\n\
          import ArtifactBytes\n\
          import Manifest\n\
@@ -941,73 +1084,179 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          set_option autoImplicit false\n\n\
          {bridge_pins}\
          {law_pins}\
-         namespace AverCertChecker\n\n\
-         example : AverCert.Artifact.data.modBytes = AverCert.ArtifactBytes.modBytes := rfl\n\
-         example : AverCert.Artifact.data.modLen = AverCert.ArtifactBytes.modLen := rfl\n\
-         example : AverCert.Artifact.data.manifest = AverCert.manifest := rfl\n\
-         example : AverCert.Artifact.data.wasip2ComponentEnvelope = {wasip2_component_envelope} := rfl\n\n\
-         example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\
-         example : AverCert.manifest.subject.artifactRoot = \"{}\" := rfl\n\
-         example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
-         example : AverCert.manifest.subject.exports = {names} := rfl\n\
-         example : AverCert.ClaimAxes.reportEntries AverCert.Artifact.data = {report_entries} :=\n  \
-           by first | rfl | decide +kernel\n\
-         example : AverCert.ClaimAxes.reportFacets AverCert.Artifact.data = {report_facets} :=\n  \
-           by first | rfl | decide +kernel\n\
-         example : AverCert.manifest.obligations.map (fun o => o.policy) = {policies} := rfl\n\
-         example : AverCert.manifest.obligations.map (fun o => o.termination?) = {terminations} := rfl\n\
-         example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
-         example : AverCert.manifest.subject.declaredUncertified = {declared} := rfl\n\
-         example : AverCert.manifest.subject.capabilities = {capabilities} := rfl\n\
-         example : AverCert.manifest.subject.start = {start} := rfl\n\
-         example : AverCert.manifest.subject.hostRoleTable = {roles} := rfl\n\
-         example : AverCert.manifest.subject.stringHostRoles = {string_roles} := rfl\n\
-         example : AverCert.manifest.subject.target = \"{}\" := rfl\n\
-         example : AverCert.manifest.subject.profile = \"{}\" := rfl\n\
-         example : AverCert.manifest.subject.abi = \"{}\" := rfl\n\n\
-         theorem checked : AverCert.AcceptedArtifact.accepted AverCert.Artifact.data :=\n\
-           AverCert.Artifact.certificate\n\n\
-         end AverCertChecker\n\n\
-         open Lean in\n\
-         run_cmd do\n  \
-           let allowed : List Lean.Name := [{allowed}]\n  \
-           let axioms ← Lean.collectAxioms `{CHECKED_ROOT}\n  \
-           for usedAxiom in axioms do\n    \
-             unless allowed.contains usedAxiom do\n      \
-               throwError s!\"non-whitelisted axiom: {{usedAxiom}}\"\n  \
-           let lawRoots : List Lean.Name := [{law_roots}]\n  \
-           for lawRoot in lawRoots do\n    \
-             let lawAxioms ← Lean.collectAxioms lawRoot\n    \
-             let offending := lawAxioms.filter (fun used => not (allowed.contains used))\n    \
-             if offending.isEmpty then\n      \
-               logInfo s!\"{LAW_AUDIT_MARKER} {{lawRoot}} ok\"\n    \
-             else\n      \
-               let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
-               logInfo s!\"{LAW_AUDIT_MARKER} {{lawRoot}} axioms {{names}}\"\n  \
-           let bridgedLawRoots : List Lean.Name := [{bridged_law_roots}]\n  \
-           for bridgedLawRoot in bridgedLawRoots do\n    \
-             let bridgedLawAxioms ← Lean.collectAxioms bridgedLawRoot\n    \
-             let offending := bridgedLawAxioms.filter (fun used => not (allowed.contains used))\n    \
-             if offending.isEmpty then\n      \
-               logInfo s!\"{LAW_BRIDGE_AUDIT_MARKER} {{bridgedLawRoot}} ok\"\n    \
-             else\n      \
-               let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
-               logInfo s!\"{LAW_BRIDGE_AUDIT_MARKER} {{bridgedLawRoot}} axioms {{names}}\"\n  \
-           let bridgeRoots : List Lean.Name := [{bridge_roots}]\n  \
-           for bridgeRoot in bridgeRoots do\n    \
-             let bridgeAxioms ← Lean.collectAxioms bridgeRoot\n    \
-             let offending := bridgeAxioms.filter (fun used => not (allowed.contains used))\n    \
-             if offending.isEmpty then\n      \
-               logInfo s!\"{BRIDGE_AUDIT_MARKER} {{bridgeRoot}} ok\"\n    \
-             else\n      \
-               let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
-               logInfo s!\"{BRIDGE_AUDIT_MARKER} {{bridgeRoot}} axioms {{names}}\"\n",
-        format::ARTIFACT_CERTIFICATE_ROOT,
-        candidates.target,
-        candidates.profile,
-        candidates.abi,
+         {report}\
+         theorem _root_.{CHECKED_ROOT} :\n    \
+           _root_.AverCert.AcceptedArtifact.accepted _root_.AverCert.Artifact.data :=\n  \
+           _root_.AverCert.Artifact.certificate\n"
     )
 }
+
+/// Number of report pins [`checker_witness`] writes (they are numbered
+/// `report_pin_0 ..`); the audit walks every one of them.
+const REPORT_PIN_COUNT: usize = 21;
+
+/// A Lean `Name` literal list: `` [`A.b, `C] ``. Every name is checker-chosen
+/// or a validated package module root.
+fn lean_name_list(names: &[String]) -> String {
+    format!(
+        "[{}]",
+        names
+            .iter()
+            .map(|name| format!("`{name}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// The checker-owned audit program, run as `lake env lean --run
+/// CheckerAudit.lean` after the witness is built.
+///
+/// It is elaborated with ONLY the Lean toolchain in scope — no package module
+/// is imported while its code is elaborated — so no instance, notation or
+/// declaration a package ships can change what it computes. At run time it
+/// loads the built witness environment and:
+///
+/// 1. walks the axioms of the accepted root and of every report pin; any name
+///    outside the whitelist declines the package;
+/// 2. refuses a package that declares anything under the reserved
+///    `AverCertChecker` prefix, any scoped instance, any parser extension
+///    entry (notation, syntax, mixfix operators), or an instance outside the
+///    admitted forms (see [`AUDIT_INSTANCE_RULES`]);
+/// 3. logs one line per law, bridged-law and bridge pin with its own axiom
+///    audit, which Rust reads back for per-claim credit.
+///
+/// A decline is a line `AVER_AUDIT_DECLINE <reason>` and a nonzero exit.
+fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String {
+    let strict_roots: Vec<String> = std::iter::once(CHECKED_ROOT.to_string())
+        .chain((0..REPORT_PIN_COUNT).map(|index| format!("{REPORT_PIN_PREFIX}{index}")))
+        .collect();
+    let law_roots: Vec<String> = (0..candidates.laws.len())
+        .map(|index| format!("{LAW_PIN_PREFIX}{index}"))
+        .collect();
+    let bridged_law_roots: Vec<String> = (0..bridged_law_indices(&candidates.laws).len())
+        .map(|index| format!("{BRIDGED_LAW_PIN_PREFIX}{index}"))
+        .collect();
+    let bridge_roots: Vec<String> = (0..candidates.source_bridges.len())
+        .map(|index| format!("{BRIDGE_PIN_PREFIX}{index}"))
+        .collect();
+    let allowed: Vec<String> = AXIOM_WHITELIST
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    let mut records: Vec<(String, Vec<String>)> = Vec::new();
+    let mut sums: Vec<(String, Vec<(String, usize)>)> = Vec::new();
+    for bridge in &candidates.source_bridges {
+        for encoder in bridge.params.iter().chain(std::iter::once(&bridge.result)) {
+            collect_encoder_shapes(encoder, &mut records, &mut sums);
+        }
+    }
+    let records = format!(
+        "[{}]",
+        records
+            .iter()
+            .map(|(ty, fields)| format!("(`{ty}, {})", lean_name_list(fields)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let sums = format!(
+        "[{}]",
+        sums.iter()
+            .map(|(ty, ctors)| format!(
+                "(`{ty}, [{}])",
+                ctors
+                    .iter()
+                    .map(|(ctor, fields)| format!("(`{ctor}, {})", lean_nat(fields)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    AUDIT_TEMPLATE
+        .replace("@RECORDS@", &records)
+        .replace("@SUMS@", &sums)
+        .replace("@PACKAGE_MODULES@", &lean_name_list(package_modules))
+        .replace("@ALLOWED@", &lean_name_list(&allowed))
+        .replace("@STRICT_ROOTS@", &lean_name_list(&strict_roots))
+        .replace("@LAW_ROOTS@", &lean_name_list(&law_roots))
+        .replace("@BRIDGED_LAW_ROOTS@", &lean_name_list(&bridged_law_roots))
+        .replace("@BRIDGE_ROOTS@", &lean_name_list(&bridge_roots))
+        .replace("@LAW_MARKER@", LAW_AUDIT_MARKER)
+        .replace("@BRIDGED_LAW_MARKER@", LAW_BRIDGE_AUDIT_MARKER)
+        .replace("@BRIDGE_MARKER@", BRIDGE_AUDIT_MARKER)
+        .replace("@DECLINE_MARKER@", AUDIT_DECLINE_MARKER)
+        .replace("@OK_MARKER@", AUDIT_OK_MARKER)
+}
+
+/// Every record and sum a bridge encoder reads, with the members it lists
+/// (names without `_root_.`; a record's fields by their last segment). Each
+/// type is listed once, at its first encoder.
+fn collect_encoder_shapes(
+    encoder: &SourceEncoder,
+    records: &mut Vec<(String, Vec<String>)>,
+    sums: &mut Vec<(String, Vec<(String, usize)>)>,
+) {
+    let bare = |name: &str| {
+        name.strip_prefix(bridge_statement::ROOT_PREFIX)
+            .unwrap_or(name)
+            .to_string()
+    };
+    match encoder {
+        SourceEncoder::Int | SourceEncoder::Bool | SourceEncoder::Float | SourceEncoder::Str => {}
+        SourceEncoder::Record {
+            lean_type, fields, ..
+        } => {
+            let ty = bare(lean_type);
+            let listed: Vec<String> = fields
+                .iter()
+                .map(|(accessor, _)| {
+                    accessor
+                        .rsplit_once('.')
+                        .map_or(accessor.clone(), |(_, field)| field.to_string())
+                })
+                .collect();
+            if !records.iter().any(|(seen, _)| *seen == ty) {
+                records.push((ty, listed));
+            }
+            for (_, field) in fields {
+                collect_encoder_shapes(field, records, sums);
+            }
+        }
+        SourceEncoder::Sum {
+            lean_type, ctors, ..
+        } => {
+            let ty = bare(lean_type);
+            if !sums.iter().any(|(seen, _)| *seen == ty) {
+                sums.push((
+                    ty,
+                    ctors
+                        .iter()
+                        .map(|(ctor, fields)| (bare(ctor), fields.len()))
+                        .collect(),
+                ));
+            }
+            for field in ctors.iter().flat_map(|(_, fields)| fields) {
+                collect_encoder_shapes(field, records, sums);
+            }
+        }
+        SourceEncoder::Option(inner)
+        | SourceEncoder::List(inner)
+        | SourceEncoder::Vector(inner) => collect_encoder_shapes(inner, records, sums),
+        SourceEncoder::Result { ok, err } => {
+            collect_encoder_shapes(ok, records, sums);
+            collect_encoder_shapes(err, records, sums);
+        }
+        SourceEncoder::Tuple { elems, .. } => {
+            for elem in elems {
+                collect_encoder_shapes(elem, records, sums);
+            }
+        }
+    }
+}
+
+/// The audit program's source; `@…@` placeholders are filled by
+/// [`checker_audit`].
+const AUDIT_TEMPLATE: &str = include_str!("checker_audit.lean");
 
 fn read_manifest(cert_dir: &Path) -> Result<Value, String> {
     let path = cert_dir.join("cert-manifest.json");
@@ -1422,6 +1671,22 @@ fn read_candidates(
             }
             law.bridges.push(at);
         }
+        // The bridges a law conjoins are those of the functions its statement
+        // names — all of them, in first-appearance order — and nothing else.
+        if !law.bridges.is_empty() {
+            let models: Vec<&str> = source_bridges
+                .iter()
+                .map(|bridge| bridge.model.as_str())
+                .collect();
+            let mentioned = bridge_statement::law_mentioned_bridges(&law.statement, &models);
+            if law.bridges != mentioned {
+                return Err(format!(
+                    "law-claim `{}` cites bridges that are not exactly those of the functions \
+                     its statement names",
+                    display_safe(&law.label)
+                ));
+            }
+        }
         laws.push(law);
     }
     // The label→corollary underscore flattening is not injective; a duplicate
@@ -1688,6 +1953,8 @@ fn validate_source_bridge_candidate(
         model: bridge.model,
         kind: bridge.kind,
         statement,
+        params: bridge.params,
+        result: bridge.result,
     })
 }
 
@@ -1998,7 +2265,7 @@ fn parse_pin_audits(
 
 fn parse_termination(value: Option<&Value>, export: &str) -> Result<String, String> {
     let Some(value) = value else {
-        return Ok("none".to_string());
+        return Ok("_root_.Option.none".to_string());
     };
     let measure = value
         .get("measure")
@@ -2019,7 +2286,9 @@ fn parse_termination(value: Option<&Value>, export: &str) -> Result<String, Stri
         .and_then(Value::as_i64)
         .ok_or_else(|| format!("export `{export}` has invalid termination descent"))?;
     Ok(format!(
-        "some ({{ measure := .intNatAbs {parameter}, descent := ({descent} : Int) }} : AverCert.Schema.TerminationWitness)"
+        "_root_.Option.some ({{ measure := .intNatAbs {}, descent := {} }} : _root_.AverCert.Schema.TerminationWitness)",
+        lean_nat(parameter),
+        lean_int(descent)
     ))
 }
 
@@ -2137,6 +2406,7 @@ fn is_checker_owned(name: &str, selected_wall: &wall::Wall) -> bool {
                 | "ArtifactComponentBytes.lean"
                 | "lakefile.lean"
                 | "CheckerWitness.lean"
+                | "CheckerAudit.lean"
         )
 }
 
@@ -2147,7 +2417,7 @@ fn assemble_build(
     selected_wall: &wall::Wall,
     memory_limit_mb: u64,
 ) -> Result<BuildDir, String> {
-    let build = BuildDir::new()?;
+    let mut build = BuildDir::new()?;
     let mut roots = Vec::new();
     let mut flat_files: Vec<(String, PathBuf)> = Vec::new();
     let mut subdirectories: Vec<(String, PathBuf)> = Vec::new();
@@ -2243,6 +2513,7 @@ fn assemble_build(
             .map_err(|error| format!("cannot stage {relative}: {error}"))?;
         roots.push(root);
     }
+    build.package_roots = roots.clone();
     for source in selected_wall.sources {
         std::fs::write(build.path.join(source.name), source.contents)
             .map_err(|error| format!("cannot stage {}: {error}", source.name))?;
@@ -2312,6 +2583,7 @@ fn reject_shadowed_root(root: &str, selected_wall: &wall::Wall) -> Result<(), St
             "ArtifactBytes",
             "ArtifactComponentBytes",
             "CheckerWitness",
+            "CheckerAudit",
             "lakefile",
         ]
         .iter()
@@ -2419,7 +2691,7 @@ fn scan_for_code_exec(name: &str, contents: &[u8]) -> Result<(), String> {
     let text = String::from_utf8_lossy(contents);
     if let Some(token) = lean_gate::code_exec_token(&text) {
         return Err(format!(
-            "cert data file `{name}` contains elaboration-executing token `{token}`"
+            "cert data file `{name}` contains refused construct `{token}`"
         ));
     }
     Ok(())
@@ -2462,18 +2734,24 @@ fn lean_string_pair_list(items: &[(String, String)]) -> String {
 }
 
 fn lean_option_nat(value: Option<u32>) -> String {
-    value.map_or_else(|| "none".to_string(), |value| format!("some {value}"))
+    value.map_or_else(
+        || "_root_.Option.none".to_string(),
+        |value| format!("(_root_.Option.some {})", lean_nat(value)),
+    )
 }
 
 fn lean_wasip2_component_envelope(
     value: Option<format::Wasip2ComponentEnvelopeDeclaration>,
 ) -> String {
     value.map_or_else(
-        || "(none : Option AverCert.Wasip2Envelope.ComponentEnvelope)".to_string(),
+        || "(_root_.Option.none : _root_.Option _root_.AverCert.Wasip2Envelope.ComponentEnvelope)"
+            .to_string(),
         |value| {
             format!(
-                "some ({{ prefixLen := {}, embeddedCoreModuleLen := {}, suffixLen := {} }} : AverCert.Wasip2Envelope.ComponentEnvelope)",
-                value.prefix_len, value.embedded_core_module_len, value.suffix_len
+                "_root_.Option.some ({{ prefixLen := {}, embeddedCoreModuleLen := {}, suffixLen := {} }} : _root_.AverCert.Wasip2Envelope.ComponentEnvelope)",
+                lean_nat(value.prefix_len),
+                lean_nat(value.embedded_core_module_len),
+                lean_nat(value.suffix_len)
             )
         },
     )
@@ -2485,6 +2763,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 struct BuildDir {
     path: PathBuf,
+    /// Module roots of the staged certificate package (never wall or
+    /// checker-authored modules).
+    package_roots: Vec<String>,
 }
 
 impl BuildDir {
@@ -2503,7 +2784,10 @@ impl BuildDir {
         builder
             .create(&path)
             .map_err(|error| format!("cannot create checker build dir: {error}"))?;
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            package_roots: Vec::new(),
+        })
     }
 }
 
@@ -3114,11 +3398,9 @@ mod tests {
         );
         assert!(
             candidate.statement.starts_with(
-                "∃ o, _root_.AverCert.GrammarBridge.exportObligation _root_.AverCert.manifest \
-                 \"Domain_Rational_plus\" = _root_.Option.some o"
-            ) && candidate
-                .statement
-                .contains("_root_.AverCert.Schema.Obligation.model o fuel"),
+                "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \
+                 \"Domain_Rational_plus\""
+            ),
             "the claim's left-hand side is the export's own obligation model: {}",
             candidate.statement
         );
@@ -3906,5 +4188,121 @@ mod tests {
         // prefix failing its right boundary.
         let err = scan("elab_rules foo").unwrap_err();
         assert!(err.contains("elab_rules"), "{err}");
+    }
+
+    fn witness_candidates() -> Candidates {
+        let mut laws = law_candidates(&["Domain.plus.comm"]);
+        laws[0].bridges = vec![0];
+        let mut bridge = raw_bridge("Domain_plus");
+        bridge.model = "Domain.plus".to_string();
+        bridge.params = vec![fraction_encoder(), fraction_encoder()];
+        bridge.result = fraction_encoder();
+        Candidates {
+            certified: vec![CertifiedCandidate {
+                name: "Domain_plus".to_string(),
+                class: format::PLAN_CLASS.to_string(),
+                facets: vec!["recursive".to_string()],
+                policy: "simulatesModelTotally".to_string(),
+                policy_lean: ".simulatesModelTotally",
+                termination_lean: parse_termination(
+                    Some(&serde_json::json!({
+                        "measure": {"kind": "intNatAbs", "param_index": 1},
+                        "descent": -3
+                    })),
+                    "Domain_plus",
+                )
+                .unwrap(),
+            }],
+            laws,
+            source_bridges: vec![validate_source_bridge_candidate(bridge).unwrap()],
+            contracts: vec!["c".to_string()],
+            declared_uncertified: Vec::new(),
+            capabilities: Vec::new(),
+            start: Some(7),
+            host_role_table: Some((Some(7), Some(8), None, None, None, None, None, Some(13))),
+            string_host_roles: vec![(21, StringHostRole::Eq)],
+            target: "wasm-gc".to_string(),
+            profile: "AverUserProfile/v1".to_string(),
+            abi: "aver-wasm-gc/0".to_string(),
+            wasip2_component_envelope: None,
+        }
+    }
+
+    /// The witness is pure pins: no `Lean` import, no command that runs code,
+    /// every wall or package name `_root_`-qualified (so a declaration under
+    /// `AverCertChecker.AverCert.…` is never reached), and no numeral an
+    /// `OfNat` instance could reinterpret.
+    #[test]
+    fn the_witness_names_everything_from_the_root() {
+        let witness = checker_witness("ab12", &witness_candidates());
+        assert!(!witness.contains("import Lean"), "{witness}");
+        assert!(!witness.contains("run_cmd") && !witness.contains("#eval"));
+        assert!(!witness.contains("namespace AverCertChecker"));
+        for (at, _) in witness.match_indices("AverCert") {
+            let before = &witness[..at];
+            assert!(
+                // A name, or the root's name inside a string literal.
+                before.ends_with("_root_.") || before.ends_with('"'),
+                "unqualified name at {at}: {}",
+                &witness[at.saturating_sub(40)..(at + 40).min(witness.len())]
+            );
+        }
+        assert!(witness.contains(&format!(
+            "theorem _root_.{CHECKED_ROOT} :\n    \
+             _root_.AverCert.AcceptedArtifact.accepted _root_.AverCert.Artifact.data :=\n  \
+             _root_.AverCert.Artifact.certificate"
+        )));
+        for index in 0..REPORT_PIN_COUNT {
+            assert!(witness.contains(&format!("theorem _root_.{REPORT_PIN_PREFIX}{index} :")));
+        }
+        assert!(witness.contains("(_root_.Option.some (nat_lit 7))"));
+        assert!(witness.contains("(_root_.Int.negSucc (nat_lit 2))"));
+        assert!(witness.contains("((nat_lit 21), .eq)"));
+        assert!(!witness.contains("some 7") && !witness.contains("≤"));
+    }
+
+    /// The audit program is fully instantiated, walks the pins the witness
+    /// writes, and reads the encoder shapes the bridges declare.
+    #[test]
+    fn the_audit_program_walks_every_pin() {
+        let candidates = witness_candidates();
+        let audit = checker_audit(&candidates, &["Manifest".to_string(), "Laws".to_string()]);
+        assert!(!audit.contains('@'), "an unfilled placeholder: {audit}");
+        assert!(audit.contains("def packageModules : List Name := [`Manifest, `Laws]"));
+        assert!(audit.contains(&format!("`{CHECKED_ROOT}, `{REPORT_PIN_PREFIX}0,")));
+        assert!(audit.contains(&format!("`{REPORT_PIN_PREFIX}{}]", REPORT_PIN_COUNT - 1)));
+        assert!(audit.contains(&format!("[`{LAW_PIN_PREFIX}0]")));
+        assert!(audit.contains(&format!("[`{BRIDGED_LAW_PIN_PREFIX}0]")));
+        assert!(audit.contains(&format!("[`{BRIDGE_PIN_PREFIX}0]")));
+        assert!(
+            audit.contains("[(`Domain.Fraction, [`top, `bottom])]"),
+            "{audit}"
+        );
+    }
+
+    /// The final replay covers the witness module, so every module it imports
+    /// — laws, bridges and model included — is replayed.
+    #[test]
+    fn the_fresh_replay_replays_the_witness_closure() {
+        assert_eq!(FRESH_REPLAY_ARGS[3], "CheckerWitness");
+        assert_eq!(
+            replay_args_for(ReplayMode::Fresh, None).unwrap(),
+            vec!["env", "leanchecker", "--fresh", "CheckerWitness"]
+        );
+    }
+
+    /// A law-claim's bridge list is exactly the bridges of the functions its
+    /// statement names.
+    #[test]
+    fn a_law_lists_exactly_the_bridges_its_statement_names() {
+        let models = ["Domain.plus", "Domain.times"];
+        assert_eq!(
+            bridge_statement::law_mentioned_bridges(
+                "∀ (a : Int), Domain.times (Domain.plus a a) a = Domain.plus a a",
+                &models
+            ),
+            vec![1, 0]
+        );
+        assert!(bridge_statement::law_mentioned_bridges("∀ (a : Int), a = a", &models).is_empty());
     }
 }

@@ -194,28 +194,63 @@ impl SourceEncoder {
 
     /// The plan-grammar type (`Grammar.Ty`) of an encoded value.
     pub fn grammar_ty(&self) -> String {
+        self.grammar_ty_as(false)
+    }
+
+    /// [`Self::grammar_ty`], with `nat_lit` type ids when `raw`.
+    fn grammar_ty_as(&self, raw: bool) -> String {
+        let tid_of = |tid: &u32| {
+            if raw {
+                format!("(nat_lit {tid})")
+            } else {
+                tid.to_string()
+            }
+        };
         match self {
             SourceEncoder::Int => format!("{TY}.int"),
             SourceEncoder::Bool => format!("{TY}.bool"),
             SourceEncoder::Float => format!("{TY}.float"),
             SourceEncoder::Str => format!("{TY}.string"),
             SourceEncoder::Record { tid, .. } | SourceEncoder::Tuple { tid, .. } => {
-                format!("({TY}.record {tid})")
+                format!("({TY}.record {})", tid_of(tid))
             }
-            SourceEncoder::Sum { tid, .. } => format!("({TY}.sum {tid})"),
-            SourceEncoder::Option(elem) => format!("({TY}.option {})", elem.grammar_ty()),
+            SourceEncoder::Sum { tid, .. } => format!("({TY}.sum {})", tid_of(tid)),
+            SourceEncoder::Option(elem) => format!("({TY}.option {})", elem.grammar_ty_as(raw)),
             SourceEncoder::Result { ok, err } => {
-                format!("({TY}.result {} {})", ok.grammar_ty(), err.grammar_ty())
+                format!(
+                    "({TY}.result {} {})",
+                    ok.grammar_ty_as(raw),
+                    err.grammar_ty_as(raw)
+                )
             }
-            SourceEncoder::List(elem) => format!("({TY}.list {})", elem.grammar_ty()),
-            SourceEncoder::Vector(elem) => format!("({TY}.vec {})", elem.grammar_ty()),
+            SourceEncoder::List(elem) => format!("({TY}.list {})", elem.grammar_ty_as(raw)),
+            SourceEncoder::Vector(elem) => format!("({TY}.vec {})", elem.grammar_ty_as(raw)),
         }
     }
 
     /// The `SVal` term for the source value `value` (already a Lean term).
     /// `fresh` numbers the pattern binders a sum, option, result, list or
     /// vector encoder introduces, so nested encoders never shadow each other.
+    /// Type ids and constructor positions are ordinary numerals: this is the
+    /// form of the producer's own proof targets.
     pub fn encode(&self, value: &str, fresh: &mut usize) -> String {
+        self.encode_as(value, fresh, false)
+    }
+
+    /// [`Self::encode`] with every numeral a `nat_lit`: the form a PINNED
+    /// statement uses, so no `OfNat` instance takes part in what it says.
+    pub fn encode_pinned(&self, value: &str, fresh: &mut usize) -> String {
+        self.encode_as(value, fresh, true)
+    }
+
+    fn encode_as(&self, value: &str, fresh: &mut usize, raw: bool) -> String {
+        let num = |n: usize| {
+            if raw {
+                format!("(nat_lit {n})")
+            } else {
+                n.to_string()
+            }
+        };
         let bind = |fresh: &mut usize| {
             let name = format!("y{fresh}");
             *fresh += 1;
@@ -231,20 +266,22 @@ impl SourceEncoder {
             SourceEncoder::Record { tid, fields, .. } => {
                 let leaves = fields
                     .iter()
-                    .map(|(accessor, enc)| enc.encode(&format!("{accessor} ({value})"), fresh))
+                    .map(|(accessor, enc)| {
+                        enc.encode_as(&format!("{accessor} ({value})"), fresh, raw)
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{SVAL}.record {tid} [{leaves}]")
+                format!("{SVAL}.record {} [{leaves}]", num(*tid as usize))
             }
             SourceEncoder::Tuple { tid, elems } => {
                 let components = tuple_components(value, elems.len());
                 let leaves = elems
                     .iter()
                     .zip(components)
-                    .map(|(enc, component)| enc.encode(&component, fresh))
+                    .map(|(enc, component)| enc.encode_as(&component, fresh, raw))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{SVAL}.record {tid} [{leaves}]")
+                format!("{SVAL}.record {} [{leaves}]", num(*tid as usize))
             }
             SourceEncoder::Sum { tid, ctors, .. } => {
                 let mut arms = String::new();
@@ -253,7 +290,7 @@ impl SourceEncoder {
                     let leaves = fields
                         .iter()
                         .zip(&names)
-                        .map(|(enc, name)| enc.encode(name, fresh))
+                        .map(|(enc, name)| enc.encode_as(name, fresh, raw))
                         .collect::<Vec<_>>()
                         .join(", ");
                     arms.push_str(" | ");
@@ -262,46 +299,50 @@ impl SourceEncoder {
                         arms.push(' ');
                         arms.push_str(name);
                     }
-                    arms.push_str(&format!(" => {SVAL}.variant {tid} {index} [{leaves}]"));
+                    arms.push_str(&format!(
+                        " => {SVAL}.variant {} {} [{leaves}]",
+                        num(*tid as usize),
+                        num(index)
+                    ));
                 }
                 format!("(match ({value}) with{arms})")
             }
             SourceEncoder::Option(elem) => {
                 let y = bind(fresh);
-                let ty = elem.grammar_ty();
+                let ty = elem.grammar_ty_as(raw);
                 format!(
                     "(match ({value}) with | _root_.Option.none => {SVAL}.none {ty} \
                      | _root_.Option.some {y} => {SVAL}.some {ty} ({}))",
-                    elem.encode(&y, fresh)
+                    elem.encode_as(&y, fresh, raw)
                 )
             }
             SourceEncoder::Result { ok, err } => {
                 let y = bind(fresh);
                 let z = bind(fresh);
-                let (t, e) = (ok.grammar_ty(), err.grammar_ty());
+                let (t, e) = (ok.grammar_ty_as(raw), err.grammar_ty_as(raw));
                 format!(
                     "(match ({value}) with | _root_.Except.ok {y} => {SVAL}.ok {t} {e} ({}) \
                      | _root_.Except.error {z} => {SVAL}.err {t} {e} ({}))",
-                    ok.encode(&y, fresh),
-                    err.encode(&z, fresh)
+                    ok.encode_as(&y, fresh, raw),
+                    err.encode_as(&z, fresh, raw)
                 )
             }
             SourceEncoder::List(elem) => {
                 let y = bind(fresh);
                 let acc = bind(fresh);
-                let ty = elem.grammar_ty();
+                let ty = elem.grammar_ty_as(raw);
                 format!(
                     "(_root_.List.foldr (fun {y} {acc} => {SVAL}.cons {ty} ({}) {acc}) \
                      ({SVAL}.nil {ty}) ({value}))",
-                    elem.encode(&y, fresh)
+                    elem.encode_as(&y, fresh, raw)
                 )
             }
             SourceEncoder::Vector(elem) => {
                 let y = bind(fresh);
                 format!(
                     "{SVAL}.vec {} (_root_.List.map (fun {y} => {}) (_root_.Array.toList ({value})))",
-                    elem.grammar_ty(),
-                    elem.encode(&y, fresh)
+                    elem.grammar_ty_as(raw),
+                    elem.encode_as(&y, fresh, raw)
                 )
             }
         }
@@ -561,12 +602,112 @@ pub fn export_obligation(export: &str) -> String {
     format!("_root_.AverCert.GrammarBridge.exportObligation _root_.AverCert.manifest \"{export}\"")
 }
 
-/// The bridge statement for one export.
+/// The binder of a pinned statement: one variable `x` of the tuple of the
+/// parameter types (`Unit` for a nullary function), and the term of each
+/// parameter as a component of `x`.
+fn pinned_binder(params: &[SourceEncoder]) -> (String, Vec<String>) {
+    match params.len() {
+        0 => ("_root_.Unit".to_string(), Vec::new()),
+        1 => (params[0].binder_type(), vec!["x".to_string()]),
+        n => {
+            let mut ty = params[n - 1].binder_type();
+            for param in params[..n - 1].iter().rev() {
+                ty = format!("(_root_.Prod {} {ty})", param.binder_type());
+            }
+            (ty, tuple_components("x", n))
+        }
+    }
+}
+
+/// The bridge statement for one export: what the checker pins and what the
+/// package's `_certified` corollary must state.
 ///
-/// This is the single definition of what a bridge SAYS. Both the producer's
-/// `Bridge.lean` and the checker's `bridge_pin_<i>` are rendered from it, so the
-/// two agree by construction rather than by comparison.
+/// This is the single definition of what a bridge SAYS. The statement is an
+/// application of the wall's own `GrammarBridge.Exact` / `GrammarBridge.Adequate`
+/// — whose `≤`, quantifiers and numerals were elaborated inside the wall — to
+/// the manifest, the export name, and two functions of one tuple binder: the
+/// encoded argument list and the encoded source result. Every numeral in those
+/// functions is a `nat_lit`, and every name is `_root_`-qualified, so neither a
+/// namespace nor an instance the package declares can change what it says.
 pub fn render_bridge_statement(
+    export: &str,
+    model: &str,
+    kind: BridgeKind,
+    params: &[SourceEncoder],
+    result: &SourceEncoder,
+) -> String {
+    let (binder, components) = pinned_binder(params);
+    let mut fresh = 0;
+    let args = params
+        .iter()
+        .zip(&components)
+        .map(|(encoder, component)| encoder.encode_pinned(component, &mut fresh))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let call = if components.is_empty() {
+        format!("{ROOT_PREFIX}{model}")
+    } else {
+        format!("{ROOT_PREFIX}{model} {}", components.join(" "))
+    };
+    let image = result.encode_pinned(&call, &mut fresh);
+    let definition = match kind {
+        BridgeKind::Exact => "_root_.AverCert.GrammarBridge.Exact",
+        BridgeKind::Adequate => "_root_.AverCert.GrammarBridge.Adequate",
+    };
+    format!(
+        "{definition} _root_.AverCert.manifest \"{export}\" \
+         (fun (x : {binder}) => [{args}]) (fun (x : {binder}) => {image})"
+    )
+}
+
+/// The proof term that turns the producer's expanded bridge theorem
+/// (`theorem`, stated by [`render_bridge_statement_expanded`]) into the
+/// pinned statement: the same facts, with the parameters read off the tuple
+/// binder.
+pub fn pinned_from_expanded(theorem: &str, kind: BridgeKind, arity: usize) -> String {
+    let components = match arity {
+        0 => Vec::new(),
+        1 => vec!["x".to_string()],
+        n => tuple_components("x", n),
+    };
+    let applied = |head: &str| {
+        if components.is_empty() {
+            head.to_string()
+        } else {
+            format!("{head} {}", components.join(" "))
+        }
+    };
+    let x = if arity == 0 { "_" } else { "x" };
+    let (definition, term) = match kind {
+        BridgeKind::Exact => (
+            "_root_.AverCert.GrammarBridge.Exact",
+            format!(
+                "match {theorem} with | ⟨o, ho, ht, k, hk⟩ => \
+                 ⟨o, ho, fun {x} => {}, k, fun fuel hf {x} => {}⟩",
+                applied("ht"),
+                applied("hk fuel hf")
+            ),
+        ),
+        BridgeKind::Adequate => (
+            "_root_.AverCert.GrammarBridge.Adequate",
+            format!(
+                "match {theorem} with | ⟨o, ho, ht, hk⟩ => \
+                 ⟨o, ho, fun {x} => {}, fun fuel {x} v h => {} v h⟩",
+                applied("ht"),
+                applied("hk fuel")
+            ),
+        ),
+    };
+    format!("(by unfold {definition}; exact ({term}))")
+}
+
+/// The producer's own proof target for one bridge: the pinned statement with
+/// the wall definition unfolded, one binder per parameter and ordinary
+/// numerals — the form its tactic scripts are written against. It is never
+/// pinned: the `_certified` corollary restates it as [`render_bridge_statement`]
+/// through [`pinned_from_expanded`], so a package instance that changed what
+/// this text means makes that restatement fail rather than weakening the pin.
+pub fn render_bridge_statement_expanded(
     export: &str,
     model: &str,
     kind: BridgeKind,
@@ -659,6 +800,40 @@ pub fn statement_is_root_qualified(statement: &str) -> bool {
         .all(|token| token.starts_with(ROOT_PREFIX))
 }
 
+/// The identifier tokens of a law statement, in first-appearance order: a
+/// token is a maximal run of Lean identifier characters, stripped of leading
+/// and trailing dots.
+pub fn statement_tokens(statement: &str) -> Vec<&str> {
+    let mut found: Vec<&str> = Vec::new();
+    for token in
+        statement.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\''))
+    {
+        let token = token.trim_matches('.');
+        if !token.is_empty() && !found.contains(&token) {
+            found.push(token);
+        }
+    }
+    found
+}
+
+/// The bridges a law statement mentions: the positions in `models` (the
+/// declared bridges' source functions) of every model the statement names, in
+/// first-appearance order. This is the ONE rule the producer writes a law's
+/// `bridges` list by and the checker holds the list to, so the bridges a
+/// `_bridged` corollary conjoins are exactly those of the functions its
+/// statement speaks about — never a chosen subset or an unrelated bridge.
+pub fn law_mentioned_bridges(statement: &str, models: &[&str]) -> Vec<usize> {
+    let mut covering = Vec::new();
+    for token in statement_tokens(statement) {
+        if let Some(index) = models.iter().position(|model| *model == token)
+            && !covering.contains(&index)
+        {
+            covering.push(index);
+        }
+    }
+    covering
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,10 +872,60 @@ mod tests {
     /// The rendered text is the claim. This pins it verbatim for both kinds,
     /// so a change to the renderer has to be a deliberate edit of an expected
     /// string rather than a silent reshaping of what every certificate says.
+    /// The pinned text: the wall's definitions, one tuple binder, `nat_lit`
+    /// numerals, nothing a package instance or namespace can reinterpret.
+    #[test]
+    fn pinned_statements_go_through_the_wall_definitions() {
+        assert_eq!(
+            render_bridge_statement(
+                "addOne",
+                "CertificateHello.addOne",
+                BridgeKind::Exact,
+                &[SourceEncoder::Int],
+                &SourceEncoder::Int
+            ),
+            "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \"addOne\" \
+             (fun (x : _root_.Int) => [_root_.AverCert.Grammar.SVal.i (x)]) \
+             (fun (x : _root_.Int) => _root_.AverCert.Grammar.SVal.i \
+             (_root_.CertificateHello.addOne x))"
+        );
+        let pinned = render_bridge_statement(
+            "Domain_Rational_plus",
+            "Domain.Rational.plus",
+            BridgeKind::Adequate,
+            &[fraction(), op()],
+            &fraction(),
+        );
+        assert!(
+            pinned.starts_with(
+                "_root_.AverCert.GrammarBridge.Adequate _root_.AverCert.manifest \
+             \"Domain_Rational_plus\" (fun (x : (_root_.Prod _root_.Domain.Rational.Fraction \
+             _root_.CertGoals.Op)) => [_root_.AverCert.Grammar.SVal.record (nat_lit 0) ["
+            ),
+            "{pinned}"
+        );
+        assert!(pinned.contains("_root_.AverCert.Grammar.SVal.variant (nat_lit 1) (nat_lit 0)"));
+        assert!(
+            pinned.contains(
+                "(_root_.Domain.Rational.plus (_root_.Prod.fst (x)) (_root_.Prod.snd (x)))"
+            )
+        );
+        // No `≤`, no bare numeral: the only order and numbers in a pinned
+        // statement are the wall's.
+        assert!(!pinned.contains('≤'));
+        assert!(!pinned.contains(" 0 ") && !pinned.contains(" 1 "));
+        assert_eq!(
+            pinned_from_expanded("_root_.AverCert.Bridge.f", BridgeKind::Exact, 0),
+            "(by unfold _root_.AverCert.GrammarBridge.Exact; exact (match \
+             _root_.AverCert.Bridge.f with | ⟨o, ho, ht, k, hk⟩ => ⟨o, ho, fun _ => ht, k, \
+             fun fuel hf _ => hk fuel hf⟩))"
+        );
+    }
+
     #[test]
     fn both_kinds_render_their_exact_statement() {
         assert_eq!(
-            render_bridge_statement(
+            render_bridge_statement_expanded(
                 "addOne",
                 "CertificateHello.addOne",
                 BridgeKind::Exact,
@@ -716,7 +941,7 @@ mod tests {
              (_root_.CertificateHello.addOne x0)))"
         );
         assert_eq!(
-            render_bridge_statement(
+            render_bridge_statement_expanded(
                 "sumFrom",
                 "RecGen.sumFrom",
                 BridgeKind::Adequate,
@@ -732,7 +957,7 @@ mod tests {
         );
         // Nullary: no parameter binders, and the source call is the bare name.
         assert_eq!(
-            render_bridge_statement(
+            render_bridge_statement_expanded(
                 "Domain_Rational_zeroFraction",
                 "Domain.Rational.zeroFraction",
                 BridgeKind::Exact,
@@ -881,9 +1106,9 @@ mod tests {
                 &[permuted, fraction()]
             )
         );
-        // A tautology is unrepresentable: the left-hand side is always the
-        // named obligation's model, never the source call.
-        assert!(honest.contains("_root_.AverCert.Schema.Obligation.model o fuel"));
+        // A tautology is unrepresentable: the statement is always the wall's
+        // own `Exact`/`Adequate` of the named export's obligation.
+        assert!(honest.starts_with("_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest"));
     }
 
     #[test]

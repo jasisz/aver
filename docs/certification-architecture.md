@@ -44,6 +44,7 @@ standard error, and exit status.
 | Soundness wall | Verifier | Embedded, selected by exact `wall_id`, and materialized by the checker |
 | Lean toolchain and build files | Verifier | Pinned to Lean 4.34 and authored by the checker |
 | `CheckerWitness.lean` | Verifier | Generated for this artifact; never accepted from the package |
+| `CheckerAudit.lean` | Verifier | Generated for this artifact; elaborated without the package; never accepted from the package |
 
 The public package therefore contains no `.plan` files and no
 `ArtifactBytes.lean`. A JSON plan AST is not needed for acceptance: using one
@@ -70,7 +71,7 @@ checker-generated pins and report agreement -----------+
                                                        v
                               AverCertChecker.checked
                                                        |
-                              axiom audit + leanchecker --fresh
+             audit program (declarations, axioms) + leanchecker --fresh
                                                        v
                                       CERTIFIED
 ```
@@ -103,15 +104,28 @@ The steps are:
    family plans. These are outputs of the proof check, not manifest choices.
 9. Check `AverCert.Artifact.certificate` and alias it at the fixed type as
    `AverCertChecker.checked`. The checker witness also pins the Lean manifest
-   and atomically derived `(export, class)` report entries to the JSON envelope.
-10. Collect the named root's axioms and reject any name outside the whitelist
-    `[propext, Classical.choice, Quot.sound]`. The same witness additionally
-    pins each declared law-claim and each declared plan-equals-source bridge at
-    its manifest statement and logs a per-pin audit line; a pin that does not
-    elaborate declines the package, while a pin whose closure leaves the
-    whitelist loses only its own credit.
-11. Replay the checker module with `lake env leanchecker --fresh`. Only after
-    all checks succeed is the human-readable report constructed.
+   and atomically derived `(export, class)` report entries to the JSON
+   envelope, each as a theorem, and pins each declared law-claim and each
+   declared plan-equals-source bridge at its statement. The witness imports
+   no `Lean`, runs no code, and names everything `_root_`-qualified with
+   `nat_lit` numerals, so neither a package namespace nor a package instance
+   changes what a pin says. A pin that does not elaborate declines the
+   package.
+10. Run the checker's audit program (`lake env lean --run CheckerAudit.lean`).
+    It is elaborated with only the Lean toolchain in scope and loads the built
+    witness environment at run time. It declines a package that declares under
+    the reserved `AverCertChecker` prefix, extends the parser, declares a
+    scoped instance or an instance outside the admitted forms (the class read
+    off the elaborated declaration), or whose bridge encoders do not list a
+    record's fields or a sum's constructors exactly. It rejects any axiom
+    outside the whitelist `[propext, Classical.choice, Quot.sound]` under the
+    accepted root or a report pin, and logs a per-pin audit line for every law,
+    bridged-law and bridge pin; a pin whose closure leaves the whitelist loses
+    only its own credit.
+11. Replay the checker witness module and its whole import closure — wall,
+    artifact certificate, model, laws and bridges — with `lake env leanchecker
+    --fresh CheckerWitness`. Only after all checks succeed is the
+    human-readable report constructed.
 
 Build caches are disabled by default. Explicitly configured data or prelude
 caches never replace the checker-authored witness or the final fresh-environment
@@ -122,9 +136,9 @@ ignored.
 
 The separate `aver cert check` developer preflight runs steps 1–10 but omits
 step 11. It therefore trusts the locally built or explicitly cached `.olean`
-graph and emits `CHECKED`, not `CERTIFIED`. The checker-owned witness is still
-written and elaborated after cache restoration on every invocation, so the
-report pins and axiom whitelist continue to run. This mode is suitable for
+graph and emits `CHECKED`, not `CERTIFIED`. The checker-owned witness and audit
+are still written and run after cache restoration on every invocation, so the
+report pins, the declaration audit and the axiom whitelist continue to run. This mode is suitable for
 inner-loop and source/manifest tamper tests, never for release or admission.
 
 ## Why one Rust Wasm validator remains
@@ -221,7 +235,9 @@ the verdict.
 ## Fail-closed behavior
 
 Verification rejects malformed or invalid Wasm, hash/version/wall mismatches,
-unsafe package structure, unsupported plans or classes, noncanonical
+unsafe package structure, refused package text (section 9 stage 7 of the
+format reference), package instances or parser extensions outside the admitted
+forms, unsupported plans or classes, noncanonical
 lowerings, byte/type/host/structure disagreement, weakened semantic faces,
 incorrect policy or contract axes, Lean build failure, a mismatched named root,
 non-whitelisted axioms, and failed fresh replay.
