@@ -1,0 +1,99 @@
+module LawGuardedCone
+    intent =
+        "Guarded claims over a record and helpers that branch: a store that"
+        "starts a new segment past a cap never goes past it, and a silence rule"
+        "that holds for any pool with somebody in it."
+    effects []
+
+record Location
+    segment: Int
+    offset: Int
+
+record SegmentState
+    segment: Int
+    used: Int
+
+record Placement
+    location: Location
+    state: SegmentState
+
+fn capBytes() -> Int
+    ? "How many bytes a segment holds."
+    4096
+
+verify capBytes
+    capBytes() => 4096
+
+fn headerBytes() -> Int
+    ? "Every record starts with this many bytes of length."
+    4
+
+verify headerBytes
+    headerBytes() => 4
+
+fn rolls(state: SegmentState, blockBytes: Int) -> Bool
+    ? "A non-empty segment rolls when the record would take it past the cap."
+    match state.used > 0
+        true -> state.used + headerBytes() + blockBytes > capBytes()
+        false -> false
+
+verify rolls
+    rolls(SegmentState(segment = 0, used = 0), 100) => false
+    rolls(SegmentState(segment = 0, used = 4000), 100) => true
+
+fn rolled(state: SegmentState, blockBytes: Int) -> Placement
+    ? "Start the next segment with this block."
+    next = state.segment + 1
+    Placement(location = Location(segment = next, offset = headerBytes()), state = SegmentState(segment = next, used = headerBytes() + blockBytes))
+
+verify rolled
+    rolled(SegmentState(segment = 0, used = 10), 6) => Placement(location = Location(segment = 1, offset = 4), state = SegmentState(segment = 1, used = 10))
+
+fn appended(state: SegmentState, blockBytes: Int) -> Placement
+    ? "Add the block to the open segment."
+    Placement(location = Location(segment = state.segment, offset = state.used + headerBytes()), state = SegmentState(segment = state.segment, used = state.used + headerBytes() + blockBytes))
+
+verify appended
+    appended(SegmentState(segment = 2, used = 60), 40) => Placement(location = Location(segment = 2, offset = 64), state = SegmentState(segment = 2, used = 104))
+
+fn place(state: SegmentState, blockBytes: Int) -> Placement
+    ? "Where the next block goes, and the state that follows it."
+    match rolls(state, blockBytes)
+        true -> rolled(state, blockBytes)
+        false -> appended(state, blockBytes)
+
+verify place
+    place(SegmentState(segment = 0, used = 0), 100) => Placement(location = Location(segment = 0, offset = 4), state = SegmentState(segment = 0, used = 104))
+
+verify place law staysUnderCap
+    given state: SegmentState = [SegmentState(segment = 0, used = 0), SegmentState(segment = 0, used = 104), SegmentState(segment = 0, used = 3992), SegmentState(segment = 3, used = 4096)]
+    given blockBytes: Int = [0, 1, 100, 4092]
+    when Bool.and(headerBytes() + blockBytes <= capBytes(), state.used <= capBytes())
+    place(state, blockBytes).state.used <= capBytes() => true
+
+fn unheardFor(silentMs: Int, deadlineMs: Int) -> Option<Int>
+    ? "The deadline that passed, or None while it has not."
+    match silentMs < deadlineMs
+        true -> Option.None
+        false -> Option.Some(deadlineMs)
+
+verify unheardFor
+    unheardFor(0, 150000) => Option.None
+    unheardFor(150000, 150000) => Option.Some(150000)
+
+fn unheard(silentMs: Int, peers: Int, dialling: Bool, deadlineMs: Int) -> Option<Int>
+    ? "Why the pool's silence ends the run: nobody spoke for the deadline and somebody could have."
+    match Bool.and(peers == 0, dialling)
+        true -> Option.None
+        false -> unheardFor(silentMs, deadlineMs)
+
+verify unheard
+    unheard(0, 3, false, 150000) => Option.None
+    unheard(150000, 3, true, 150000) => Option.Some(150000)
+
+verify unheard law aPoolWithSomebodyKeepsTheRule
+    given silentMs: Int = [0, 149999, 150000, 174601]
+    given peers: Int = [1, 8, 125]
+    given dialling: Bool = [false, true]
+    when peers > 0
+    (unheard(silentMs, peers, dialling, 150000) == Option.None) => silentMs < 150000

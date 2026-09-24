@@ -15,6 +15,7 @@ def tripleSum (a : Int) (b : Int) (c : Int) : Int :=
 
 example : tripleSum 1 2 3 = 6 := by decide +kernel
 
+#guard_msgs (drop error, pass warning, pass info, pass trace) in
 -- verify law tripleSum.mirror (512 cases)
 -- given a: Int = 0..7
 -- given b: Int = 0..7

@@ -147,8 +147,12 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     // A claim that combines quotients and remainders arithmetically
     // (`n * quot(a, n) + rem(a, n) => a`) is admitted too: its closer is the
     // quotient-remainder arm below, not the subject fn.
+    // A guarded comparison or equation that goes through the subject fn
+    // (`place(s, n).state.used <= cap`, `(f(x) == Option.None) => x < k`) is
+    // admitted too; the probe decides whether its arms close it.
     if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..))
         && !super::super::shared::law_cone_calls_int_div_mod(ctx, vb, law)
+        && !(law.when.is_some() && super::super::core_kit::lhs_calls_subject(vb, law))
     {
         return false;
     }
@@ -1548,6 +1552,23 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
             &simp_list_full,
             "grind [Except.withDefault, Int.mul_ediv_add_emod, Int.emod_nonneg, Int.emod_lt_of_pos]",
         ));
+    }
+    // Products of non-constant terms: the core sign facts for each product
+    // (and the nonnegativity of each square) as hypotheses, so `omega` and
+    // `grind` read the product as an atom whose sign they know.
+    let sign_haves = super::super::core_kit::sign_fact_haves(law, ctx);
+    if !sign_haves.is_empty() {
+        closes.push(format!(
+            "  | ({}; simp only [{simp_list_full}] {simp_at} <;> first | omega | grind)",
+            sign_haves.join("; ")
+        ));
+    }
+    // A guarded claim over records and helpers that branch: `grind` handed
+    // the unfolded cone, then again after `simp` has unfolded it.
+    if law.when.is_some() {
+        for arm in super::super::core_kit::cone_grind_arms(vb, law, ctx) {
+            closes.push(format!("  | ({arm})"));
+        }
     }
     let id = format!("{}.{}", vb.fn_name, law.name);
     let floor = format!(

@@ -8644,6 +8644,40 @@ fn run_proof_check(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
+    // Lean: the theorems whose proof failed to elaborate behind the isolation
+    // guard. Only a built project can be asked; a failed build keeps failing.
+    let isolated_errors: Result<Vec<String>, String> = match backend {
+        super::cli::ProofBackend::Lean if output.status.success() => {
+            lean_isolated_errors(output_dir)
+        }
+        _ => Ok(Vec::new()),
+    };
+    if let Err(reason) = &isolated_errors {
+        eprintln!(
+            "{}",
+            format!(
+                "--check: could not tell which proofs failed to elaborate, so the check \
+                 fails closed: {reason}"
+            )
+            .red()
+        );
+    }
+    let isolated_error_labels: Vec<String> = match &isolated_errors {
+        Ok(names) if !names.is_empty() => lean_isolated_error_labels(output_dir, names),
+        _ => Vec::new(),
+    };
+    if !isolated_error_labels.is_empty() && !check_json {
+        eprintln!(
+            "{}",
+            format!(
+                "--check: {} proof(s) failed to elaborate and count as sorry: {}",
+                isolated_error_labels.len(),
+                isolated_error_labels.join(", ")
+            )
+            .yellow()
+        );
+    }
+
     // Per-backend metric + pass decision.
     //
     // Lean: the build itself must SUCCEED (lake exit 0), not merely stay
@@ -8737,10 +8771,15 @@ fn run_proof_check(
             )
         }
         super::cli::ProofBackend::Lean => {
-            let sorries = count_lean_sorries(&stderr) + count_lean_sorries(&stdout);
+            // A theorem whose proof failed to elaborate carries a synthetic
+            // `sorry` and no warning; it is charged exactly like a caught one.
+            let sorries = count_lean_sorries(&stderr)
+                + count_lean_sorries(&stdout)
+                + isolated_errors.as_ref().map_or(0, Vec::len);
             model_panic_hits = lean_codegen::count_model_panic_lines(&stdout)
                 + lean_codegen::count_model_panic_lines(&stderr);
             let passed = output.status.success()
+                && isolated_errors.is_ok()
                 && sorries <= sorry_budget_v
                 && model_panic_hits == 0
                 && declined_within_budget;
@@ -8768,8 +8807,15 @@ fn run_proof_check(
     // Lean error that `sorries` hides; `timeouts` surfaces Dafny timeouts the
     // `errors` count is blind to.
     let (lean_build_errors, dafny_timeouts): (Option<usize>, Option<usize>) = match backend {
+        // An error the isolation guard dropped is still a hard error: counted
+        // here so `build_errors == 0` keeps meaning "no proof escaped its
+        // `sorry` floor".
         super::cli::ProofBackend::Lean => (
-            Some(count_lean_build_errors(&stderr) + count_lean_build_errors(&stdout)),
+            Some(
+                count_lean_build_errors(&stderr)
+                    + count_lean_build_errors(&stdout)
+                    + isolated_errors.as_ref().map_or(0, Vec::len),
+            ),
             None,
         ),
         super::cli::ProofBackend::Dafny => (None, Some(count_dafny_timeouts(&stdout))),
@@ -8806,7 +8852,11 @@ fn run_proof_check(
             // probe would otherwise `#print axioms` against a stale or
             // partial environment.
             if output.status.success() && model_panic_hits == 0 {
-                Some(lean_universal_audit(output_dir, sorries.unwrap_or(0)))
+                Some(lean_universal_audit(
+                    output_dir,
+                    sorries.unwrap_or(0),
+                    isolated_errors.as_deref().unwrap_or(&[]),
+                ))
             } else {
                 Some(LeanLawAudit::FAIL_CLOSED)
             }
@@ -8824,7 +8874,11 @@ fn run_proof_check(
     // or on Dafny. Also anchors `--explain`'s residual attribution below.
     let sorry_laws: Vec<String> = match backend {
         super::cli::ProofBackend::Lean if sorries.unwrap_or(0) > 0 => {
-            lean_sorry_laws(output_dir, &format!("{stdout}{stderr}"))
+            let mut laws = lean_sorry_laws(output_dir, &format!("{stdout}{stderr}"));
+            laws.extend(isolated_error_labels.iter().cloned());
+            laws.sort();
+            laws.dedup();
+            laws
         }
         _ => Vec::new(),
     };
@@ -9142,6 +9196,24 @@ fn run_proof_check(
         }
         if let Some(be) = lean_build_errors {
             obj.insert("build_errors".into(), be.into());
+        }
+        // Proofs that failed to elaborate behind the isolation guard (Lean):
+        // already in `build_errors`, `sorries` and `sorry_laws`; listed here
+        // so a reader can tell them from a caught `sorry`. Emitted only when
+        // there are any.
+        if !isolated_error_labels.is_empty() {
+            obj.insert(
+                "isolated_errors".into(),
+                serde_json::Value::Array(
+                    isolated_error_labels
+                        .iter()
+                        .map(|l| serde_json::Value::String(l.clone()))
+                        .collect(),
+                ),
+            );
+        }
+        if isolated_errors.is_err() {
+            obj.insert("isolation_check".into(), "failed".into());
         }
         if let Some(a) = axioms {
             obj.insert("axioms".into(), a.into());
@@ -10311,7 +10383,11 @@ impl LeanLawAudit {
 /// all-or-nothing verdict over the whole crediting set (universal-classed
 /// AND unmarked theorems), computed from the exact same expression as
 /// before the counts existed.
-fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
+/// `isolated` names the theorems the isolation check reported as failed to
+/// elaborate: they are left out of the `#print axioms` probe (a missing one
+/// would make the probe itself fail and cost every sibling its credit) and
+/// record tier `failed`.
+fn lean_universal_audit(dir: &str, sorries: usize, isolated: &[String]) -> LeanLawAudit {
     use std::process::Command;
     // Every lakefile root is part of the program proof. The first is the entry;
     // later roots include dependency modules (plus shared support roots, which
@@ -10493,7 +10569,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
         src.push_str(r);
         src.push('\n');
     }
-    for theorem in &law_thms {
+    for theorem in law_thms.iter().filter(|thm| !isolated.contains(thm)) {
         src.push_str("#print axioms ");
         src.push_str(theorem);
         src.push('\n');
@@ -10872,6 +10948,7 @@ fn lean_residual_goals(
                         while j < lines.len() {
                             let tj = lines[j].trim_start();
                             if tj.starts_with("theorem ")
+                                || tj.starts_with(lean_codegen::isolate::ISOLATION_GUARD_PREFIX)
                                 || tj.starts_with(lean_codegen::LAW_CLASS_MARKER_PREFIX.trim())
                                 || tj.starts_with("-- verify law ")
                                 || tj == format!("end {entry_root}")
@@ -11075,6 +11152,7 @@ fn lean_goal_json(
                         while j < lines.len() {
                             let tj = lines[j].trim_start();
                             if tj.starts_with("theorem ")
+                                || tj.starts_with(lean_codegen::isolate::ISOLATION_GUARD_PREFIX)
                                 || tj.starts_with(lean_codegen::LAW_CLASS_MARKER_PREFIX.trim())
                                 || tj.starts_with("-- verify law ")
                                 || tj == format!("end {entry_root}")
@@ -11702,6 +11780,94 @@ fn lean_lakefile_roots(dir: &str) -> Vec<String> {
     Vec::new()
 }
 
+/// Proof theorems of a built export whose proof failed to elaborate.
+///
+/// The export puts each proof theorem behind `#guard_msgs (drop error, …)`
+/// (see `aver::codegen::lean::isolate`), so a proof that errors no longer fails
+/// `lake build`: Lean adds the theorem with a synthetic `sorryAx` (or, when a
+/// runtime limit stops the declaration itself, does not add it at all) and the
+/// error is dropped. This runs the isolation check against the built
+/// environment and returns the root-qualified names of those declarations,
+/// missing ones included. `Ok(empty)` when the
+/// export has no guarded theorem (nothing can have been dropped). `Err` when the
+/// check could not run to its end; the caller must then fail closed, because a
+/// dropped error would otherwise pass for a clean build.
+fn lean_isolated_errors(dir: &str) -> Result<Vec<String>, String> {
+    use aver::codegen::lean::isolate;
+    let roots = lean_lakefile_roots(dir);
+    let guarded: Vec<String> = roots
+        .iter()
+        .filter_map(|root| {
+            let path = std::path::Path::new(dir).join(format!("{}.lean", root.replace('.', "/")));
+            std::fs::read_to_string(path).ok()
+        })
+        .flat_map(|contents| isolate::guarded_theorem_names(&contents))
+        .collect();
+    if guarded.is_empty() {
+        return Ok(Vec::new());
+    }
+    let checker = std::path::Path::new(dir).join("_aver_isolation_check.lean");
+    std::fs::write(&checker, isolate::isolation_check_source(&roots, &guarded))
+        .map_err(|e| format!("could not write the isolation check: {e}"))?;
+    let out = std::process::Command::new("lake")
+        .args(["env", "lean", "_aver_isolation_check.lean"])
+        .current_dir(dir)
+        .output();
+    let _ = std::fs::remove_file(&checker);
+    let out = out.map_err(|e| format!("could not run the isolation check: {e}"))?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    isolate::parse_isolation_check(&combined).ok_or_else(|| {
+        let tail: Vec<&str> = combined.lines().rev().take(12).collect();
+        format!(
+            "the isolation check did not finish:\n{}",
+            tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+        )
+    })
+}
+
+/// The `fn.law` identity of each errored declaration that is a law or
+/// obligation theorem (a `_partN` chunk maps to its law); other declarations
+/// (a strategy's helper lemma) keep their qualified name.
+fn lean_isolated_error_labels(dir: &str, errored: &[String]) -> Vec<String> {
+    let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for root in lean_lakefile_roots(dir) {
+        let path = std::path::Path::new(dir).join(format!("{}.lean", root.replace('.', "/")));
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in contents.lines() {
+            if let Some(rest) = line
+                .strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX)
+                .or_else(|| line.strip_prefix(lean_codegen::LAW_OBLIGATION_MARKER_PREFIX))
+            {
+                let mut parts = rest.split_whitespace();
+                if let (Some(thm), Some(_class), Some(label)) =
+                    (parts.next(), parts.next(), parts.next())
+                {
+                    labels.insert(format!("{root}.{thm}"), label.to_string());
+                }
+            }
+        }
+    }
+    let mut out: Vec<String> = errored
+        .iter()
+        .map(|name| {
+            labels
+                .get(name)
+                .or_else(|| law_class_base_name(name).and_then(|base| labels.get(base)))
+                .cloned()
+                .unwrap_or_else(|| name.clone())
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn lean_entry_scope_header(dir: &str, entry_root: &str) -> String {
     let path = std::path::Path::new(dir).join(format!("{entry_root}.lean"));
     let opens = std::fs::read_to_string(path)
@@ -11940,6 +12106,27 @@ fn run_lean_speculative(
             .status();
     }
     let mut failed = speculative::parse_failures(&probe_out);
+    if probe_ok {
+        // Behind the isolation guard a candidate whose proof errored no longer
+        // fails the build; it carries a synthetic `sorry` and never reaches its
+        // trace floor. Ask the built environment which ones did.
+        match lean_isolated_errors(output_dir) {
+            Ok(names) => failed.extend(speculative::ids_for_theorems(&names, &probed)),
+            Err(reason) => {
+                speculative::set_committed(std::collections::HashSet::new());
+                cmd_proof_lean(file, output_dir, ctx, verify_mode);
+                eprintln!(
+                    "{}",
+                    format!(
+                        "speculative-universal: could not tell which probe proofs failed \
+                         ({reason}) — every candidate kept its bounded statement"
+                    )
+                    .yellow()
+                );
+                return;
+            }
+        }
+    }
     if !probe_ok {
         // A `sorry` is only a warning, so the probe build succeeds even when
         // every candidate fails to close; a FAILED probe build means a hard
@@ -12084,6 +12271,9 @@ fn run_lean_minimize(
 
     // 3) FAIL-SAFE verify.
     let (collapsed_ok, _) = build(output_dir);
+    // A collapsed proof that errors behind the isolation guard still builds;
+    // it must restore the normal proof exactly like a failed build.
+    let collapsed_ok = collapsed_ok && lean_isolated_errors(output_dir).is_ok_and(|e| e.is_empty());
     if collapsed_ok {
         println!(
             "{}",

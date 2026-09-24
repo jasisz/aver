@@ -653,6 +653,37 @@ pub mod speculative {
         Some(errored)
     }
 
+    /// The candidates whose probe theorem (or one of its `_sample_N` /
+    /// `_checked_domain` / `_partN` companions) is among `theorems`, the
+    /// root-qualified declarations the isolation check found with a proof that
+    /// failed to elaborate. Such a theorem never reaches its trace floor, so
+    /// it must count as open exactly like a hard error in the build log.
+    pub fn ids_for_theorems(theorems: &[String], probed: &HashSet<String>) -> HashSet<String> {
+        let mut by_prefix: Vec<(String, String)> = probed
+            .iter()
+            .filter_map(|id| {
+                let (f, l) = id.rsplit_once('.')?;
+                Some((format!("{}_law_{}", f.replace('.', "_"), l), id.clone()))
+            })
+            .collect();
+        by_prefix.sort_by_key(|(prefix, _)| std::cmp::Reverse(prefix.len()));
+        theorems
+            .iter()
+            .filter_map(|name| {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                by_prefix
+                    .iter()
+                    .find(|(prefix, _)| {
+                        bare == prefix
+                            || bare
+                                .strip_prefix(prefix.as_str())
+                                .is_some_and(|tail| tail.starts_with('_'))
+                    })
+                    .map(|(_, id)| id.clone())
+            })
+            .collect()
+    }
+
     pub fn parse_failures(build_output: &str) -> HashSet<String> {
         const MARKER: &str = "AVERSPEC_SORRY:";
         let mut failed = HashSet::new();

@@ -101,3 +101,73 @@ fn proof_dep_law_builtin_names_lean_closes_kernel_genuine() {
     assert_eq!(summary["universal"], true, "{json_line}");
     assert_eq!(summary["universal_laws"], 3, "{json_line}");
 }
+
+/// A dependency module's law proved from a leaf entry: the strategy that
+/// unfolds the law's own function by its full name must use the namespace of
+/// the module that declares it (`Checked.checked`), not the entry's
+/// (`OwnerNamesEntry.checked`, which does not exist, so the whole arm failed
+/// and the law fell to `sorry`).
+#[test]
+fn proof_dep_law_unfolds_its_own_module_function() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = repo_root.join("tests/fixtures/dep_law_owner_names");
+    let output_dir = temp_output_dir("aver-proof-dep-law-owner-export");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(root.join("main.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("aver proof should run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let lean = std::fs::read_to_string(output_dir.join("Checked.lean"))
+        .expect("Checked.lean must be emitted for the dependency module");
+    assert!(
+        lean.contains("simp only [Checked.checked]"),
+        "the dependency law must unfold its own module's function:\n{lean}"
+    );
+    assert!(
+        !lean.contains("OwnerNamesEntry.checked"),
+        "the dependency law must not name the entry's namespace:\n{lean}"
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping the lake half of the owner-name test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-dep-law-owner-check");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(root.join("main.av"))
+        .arg("--module-root")
+        .arg(&root)
+        .arg("-o")
+        .arg(&output_dir)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof --check should run");
+    let summary: serde_json::Value = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|line| serde_json::from_slice(line).ok())
+        .unwrap_or_else(|| panic!("no JSON summary:\n{}", format_output(&run)));
+    assert_eq!(
+        (
+            summary["universal_laws"].as_u64(),
+            summary["sorries"].as_u64(),
+            summary["build_errors"].as_u64(),
+        ),
+        (Some(1), Some(0), Some(0)),
+        "the dependency law must close kernel-genuine:\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}

@@ -35,6 +35,8 @@ mod cited_head;
 mod conditional_split_omega;
 #[path = "proof_spec/container_induction.rs"]
 mod container_induction;
+#[path = "proof_spec/core_kit.rs"]
+mod core_kit;
 #[path = "proof_spec/cross_file.rs"]
 mod cross_file;
 #[path = "proof_spec/dafny_guidance.rs"]
@@ -65,6 +67,8 @@ mod floor_window;
 mod fuel_when_cites;
 #[path = "proof_spec/int_divmod.rs"]
 mod int_divmod;
+#[path = "proof_spec/isolation.rs"]
+mod isolation;
 #[path = "proof_spec/k5_sticky.rs"]
 mod k5_sticky;
 #[path = "proof_spec/knowledge_provider.rs"]

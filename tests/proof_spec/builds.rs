@@ -1102,7 +1102,7 @@ fn proof_dafny_verifies_rational_ring_laws_when_dafny_is_available() {
 /// its OWN `-- aver:law-class … bounded-domain` marker, so the audit must
 /// key its `bounded_laws` dedup on each theorem's own class (direct lookup
 /// first) and count TWO — never fold them onto one phantom base by name
-/// alone. Both laws stay bounded (nonlinear `a * b`, no lane recognizer),
+/// alone. Both laws stay bounded (`a*a - 2*b*b != 0` has no core closer),
 /// so the file is a clean `bounded_laws == 2` probe.
 #[test]
 fn proof_bounded_laws_counts_distinct_part_named_laws_separately() {

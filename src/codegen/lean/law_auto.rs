@@ -5,6 +5,7 @@
 mod applications;
 mod clique_mono;
 mod container_induction;
+mod core_kit;
 mod decimal;
 mod floor_arith;
 mod floor_window;
@@ -329,6 +330,12 @@ pub fn emit_verify_law_forall_auto_proof(
     // first alternative, so grind can do NEW work — guaranteed closers
     // like `omega`/`rfl` are left byte-identical).
     let mut proof = maybe_wrap_with_grind_rung(vb, law, ctx, inner);
+    // A literal bit mask (`Bits.and(x, 128)`) is a closed form no portfolio
+    // arm reaches; its arm is a fixed rewrite chain that closes or fails
+    // fast, so it goes first.
+    if let Some(arm) = core_kit::mask_arm(vb, law, ctx) {
+        proof = prepend_arm(proof, arm);
+    }
     // Every structured, still-open portfolio can compose the same earlier
     // laws. Keeping this at the common exit prevents an earlier strategy from
     // hiding composition merely by supplying its own `sorry` floor.
@@ -347,6 +354,46 @@ pub fn emit_verify_law_forall_auto_proof(
         }
     }
     Some(proof)
+}
+
+/// Put `arm` in front of an open proof: `intro …` then `first | (arm) | (the
+/// rest of the proof)`. A proof that replaces its theorem, whose first
+/// alternative is already a guaranteed closer, or that is not the canonical
+/// `intro` + body shape is left as it is.
+fn prepend_arm(proof: AutoProof, arm: String) -> AutoProof {
+    use crate::codegen::lean::tactic_ir::Tactic;
+    if proof.replaces_theorem || proof.first_arm_is_guaranteed_closer {
+        return proof;
+    }
+    let lines = proof.body.render();
+    if !lines
+        .first()
+        .is_some_and(|l| l.trim_start().starts_with("intro "))
+    {
+        return proof;
+    }
+    let AutoProof {
+        support_lines,
+        body,
+        replaces_theorem,
+        first_arm_is_guaranteed_closer,
+    } = proof;
+    let body = match body {
+        Tactic::Seq(mut steps) if !steps.is_empty() => {
+            let intro = steps.remove(0);
+            Tactic::Seq(vec![
+                Tactic::Leaf(intro.render().join("\n").trim().to_string()),
+                Tactic::First(vec![Tactic::Leaf(arm), Tactic::Seq(steps)]),
+            ])
+        }
+        other => other,
+    };
+    AutoProof {
+        support_lines,
+        body,
+        replaces_theorem,
+        first_arm_is_guaranteed_closer,
+    }
 }
 
 /// Whether the additive `grind` rung is SHAPE-AMENABLE for this law:
@@ -2888,11 +2935,21 @@ fn emit_simp_omega_from_ir(
         // The floor here predates the global one and the sign-split arm is NOT a
         // guaranteed closer (a Bool-comparison identity falls through it), so the
         // frontier reading of the trailing `sorry` stands: flag stays false.
+        // A cone function that matches an `Int` on literals, compared with a
+        // range predicate: split the literal match and let `simp_all` /
+        // `omega` settle each branch. It goes ahead of the sign split, which
+        // commits on such a goal without closing it.
+        let mut arms = Vec::new();
+        if core_kit::cone_matches_int_literals(unfold_fns, ctx) {
+            arms.push(core_kit::INT_LITERAL_MATCH_ARM.to_string());
+        }
+        arms.push(format!("{by_cases_chain} <;> simp [{simp_args}]"));
+        arms.push(cmp);
         SimpOmegaProof {
             body: intro_prefix_then_first(
                 intro_names,
                 vec![format!("unfold {}", lean_names.join(" "))],
-                vec![format!("{by_cases_chain} <;> simp [{simp_args}]"), cmp],
+                arms,
             ),
             first_arm_is_guaranteed_closer: false,
         }

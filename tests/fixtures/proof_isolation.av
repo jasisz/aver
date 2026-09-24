@@ -1,0 +1,49 @@
+module ProofIsolation
+    intent =
+        "One law whose exported proof ends in a hard Lean error, next to laws"
+        "that close. The error must cost only its own law, never the build."
+    effects []
+
+fn listed(hashType: Int) -> Bool
+    ? "Zero to three and 129 to 130, one literal at a time."
+    match hashType
+        0 -> true
+        1 -> true
+        2 -> true
+        3 -> true
+        129 -> true
+        130 -> true
+        _ -> false
+
+verify listed
+    listed(0) => true
+    listed(129) => true
+    listed(4) => false
+
+fn inRanges(hashType: Int) -> Bool
+    ? "Zero to three and 129 to 131, as two ranges: one more than listed."
+    Bool.or(Bool.and(0 <= hashType, hashType <= 3), Bool.and(129 <= hashType, hashType <= 131))
+
+// True on every sample, false at 131: no proof can close it, and the
+// exported portfolio leaves goals behind instead of falling to `sorry`.
+verify inRanges law agreesOnTheSamples
+    given h: Int = [-1, 0, 1, 2, 3, 4, 127, 128, 129, 130, 132, 255]
+    inRanges(h) => listed(h)
+
+fn double(x: Int) -> Int
+    ? "Twice a number."
+    x + x
+
+verify double law isTimesTwo
+    given x: Int = [-2, 0, 3]
+    double(x) => x * 2
+
+fn clampLow(x: Int) -> Int
+    ? "The number, or zero when it is negative."
+    match x < 0
+        true -> 0
+        false -> x
+
+verify clampLow law neverNegative
+    given x: Int = [-3, 0, 4]
+    clampLow(x) >= 0 => true

@@ -1,0 +1,37 @@
+module LawIntLiteralMatch
+    intent =
+        "A hash-type set written as a literal match and again as two ranges."
+    effects []
+
+fn validHashType(hashType: Int) -> Bool
+    ? "Zero to three, or 129 to 131, spelled one literal at a time."
+    match hashType
+        0 -> true
+        1 -> true
+        2 -> true
+        3 -> true
+        129 -> true
+        130 -> true
+        131 -> true
+        _ -> false
+
+verify validHashType
+    validHashType(0) => true
+    validHashType(129) => true
+    validHashType(4) => false
+
+fn inRanges(hashType: Int) -> Bool
+    ? "The same set written as two ranges."
+    Bool.or(Bool.and(0 <= hashType, hashType <= 3), Bool.and(129 <= hashType, hashType <= 131))
+
+verify inRanges law isValidHashType
+    given h: Int = [-1, 0, 1, 2, 3, 4, 127, 128, 129, 130, 131, 132, 255]
+    inRanges(h) => validHashType(h)
+
+fn double(x: Int) -> Int
+    ? "Twice a number."
+    x + x
+
+verify double law isSum
+    given x: Int = [-2, 0, 3]
+    double(x) => x * 2

@@ -264,6 +264,7 @@ example : AverMap.keys intKeyed = [2, 10] := by decide +kernel
 
 example : AverMap.values boolKeyed = [0, 1] := by decide +kernel
 
+#guard_msgs (drop error, pass warning, pass info, pass trace) in
 -- verify law built.setKeepsWhatItWrote (6 cases)
 -- given k: String = ["a", "q", "z"]
 -- given v: Int = [0, 7]
