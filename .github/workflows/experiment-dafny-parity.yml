@@ -143,6 +143,7 @@ jobs:
           esac
           if [ -d btc ]; then echo "btc_head=$(git -C btc rev-parse HEAD) aver_pin=$(cat btc/.aver-version)" > "$RUNNER_TEMP/btc.txt"; fi
           aver check "$entry" --module-root "$root" > "$RUNNER_TEMP/check.log" 2>&1 || true
+          vmstat -t -S M 60 &
           bash $E/run_target.sh "$T" "$root" "$entry" "$R"
           cp "$RUNNER_TEMP/check.log" "$R/aver-check.log"
           [ -f "$RUNNER_TEMP/btc.txt" ] && cp "$RUNNER_TEMP/btc.txt" "$R/btc.txt"
@@ -156,6 +157,34 @@ jobs:
           name: results-${{ matrix.target }}-${{ matrix.backend }}
           path: ${{ runner.temp }}/results
           retention-days: 30
+
+  whatif:
+    name: What-if proofs (bit-mask bridge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Dafny
+        run: |
+          url="https://github.com/dafny-lang/dafny/releases/download/v${DAFNY_VERSION}/dafny-${DAFNY_VERSION}-x64-ubuntu-22.04.zip"
+          curl -fSL --retry 6 --retry-all-errors -o /tmp/dafny.zip "$url"
+          unzip -q /tmp/dafny.zip -d "$HOME/dafny-install"
+          echo "$(dirname "$(find "$HOME/dafny-install" -name dafny -type f | head -1)")" >> "$GITHUB_PATH"
+      - name: Verify the Dafny bridge lemmas and the probe laws
+        run: |
+          dafny verify --verification-time-limit 30 experiments/dafny-parity/whatif/bits_bridge.dfy 2>&1 | tee whatif-dafny.log
+      - name: Look up the matching Lean core lemmas in the pinned toolchain
+        run: |
+          curl -sSfL --retry 6 --retry-all-errors https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          tc="$(cat aver-cert/assets/wall/current/lean-toolchain)"
+          "$HOME/.elan/bin/elan" toolchain install "$tc"
+          src="$(find "$HOME/.elan/toolchains" -maxdepth 1 -mindepth 1 -type d | head -1)/src/lean"
+          grep -rn -E "theorem (and_two_pow_sub_one_eq_mod|and_two_pow|testBit_two_pow|and_pow_two_sub_one|testBit_to_div_mod|emod_two_pow|bmod|and_two_pow_sub_one)\b" "$src/Init" | tee whatif-lean.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: whatif
+          path: whatif-*.log
 
   ci-cost:
     name: Proof lanes ${{ matrix.dafny }} Dafny (shard ${{ matrix.shard }}/4)

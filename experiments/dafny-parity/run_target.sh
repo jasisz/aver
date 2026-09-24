@@ -71,18 +71,21 @@ for backend in $BACKENDS; do
     fi
   else
     out="$work/dafny"
+    echo "== dafny export $(date -u +%T)"
     "$AVER" proof "$entry" --module-root "$root" --backend dafny -o "$out" > "$results/dafny.export.log" 2>&1
     echo "export_exit=$?" > "$results/dafny.status"
     mod="$(grep -m1 '^module ' "$entry" | awk '{print $2}')"
     dfy="$mod.dfy"
     [ -f "$out/$dfy" ] || dfy="$(cd "$out" && ls *.dfy 2>/dev/null | grep -v '^common.dfy$' | head -1)"
     echo "entry_dfy=$dfy" >> "$results/dafny.status"
+    echo "== dafny verify $(date -u +%T) ($(find "$out" -name '*.dfy' | wc -l) files, $(cat $(find "$out" -name '*.dfy') | wc -l) lines)"
     start=$(date +%s)
     (cd "$out" && timeout "$DAFNY_TIMEOUT" dafny verify --verify-included-files \
         --verification-time-limit "$DAFNY_LIMIT" --cores "$DAFNY_CORES" \
         --log-format "text;LogFileName=$results/dafny.verification.txt" \
         --log-format "csv;LogFileName=$results/dafny.verification.csv" \
-        "$dfy" > "$results/dafny.log" 2>&1)
+        "$dfy" 2>&1 | tee "$results/dafny.log" | grep --line-buffered -E "Error:|finished with" | cut -c1-200
+        exit "${PIPESTATUS[0]}")
     echo "verify_exit=$?" >> "$results/dafny.status"
     echo "verify_seconds=$(( $(date +%s) - start ))" >> "$results/dafny.status"
     tar -C "$out" -czf "$results/dafny.export.tgz" .

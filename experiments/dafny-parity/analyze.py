@@ -163,7 +163,10 @@ def lean_status(law, lean):
     if rec is None and law["module"] != "<entry>":
         rec = lean["laws"].get(key_of("<entry>", law["fn"], law["law"]))
     thm = f'{law["fn"]}_law_{law["law"]}'
-    iss = [i for n, v in lean["theorem_issues"].items() if n.split(".")[-1] == thm for i in v]
+
+    def bare(n):
+        return n.split(".")[-1].replace("'", "").replace("«", "").replace("»", "")
+    iss = [i for n, v in lean["theorem_issues"].items() if bare(n) == thm for i in v]
     detail = "; ".join(f"{a}: {b}" for a, b in iss[:3])
     if rec:
         return rec["status"], detail or ",".join(rec["axioms"])
@@ -175,9 +178,9 @@ def lean_status(law, lean):
         return ("timeout" if any("heartbeat" in e or "timeout" in e for e in errs) else "failed"), detail
     if any("sorry" in m for _, m in iss):
         return "sorry", detail
-    present = any(n.split(".")[-1] == thm for n in lean["theorems"])
+    present = any(bare(n) == thm for n in lean["theorems"])
     if present and lean["build_failed"] and not lean["laws"]:
-        cls = lean["classes"].get(thm, "?")
+        cls = next((c for n, c in lean["classes"].items() if bare(n) == thm), "?")
         # The build failed elsewhere, so no axiom audit ran; this theorem itself
         # elaborated without error or sorry.
         return {"universal": "universal", "bounded": "bounded"}.get(cls, cls), "unaudited: build failed elsewhere"
