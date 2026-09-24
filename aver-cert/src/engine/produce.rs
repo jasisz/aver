@@ -801,9 +801,13 @@ pub fn analyze(
 mod produce_tests {
     use super::*;
 
+    /// A wasm-gc module the compiler emitted, kept byte-for-byte under
+    /// `tests/fixtures/one-grammar/`. The plans below are written against
+    /// these exact bytes (function indices, helper slots), so the fixtures
+    /// are committed rather than rebuilt: a new compiler would move them.
     fn fixture(name: &str) -> Vec<u8> {
         let path = format!(
-            "{}/../prompts/probe-artifacts/one-grammar-p4/fixture/{name}.wasm",
+            "{}/tests/fixtures/one-grammar/{name}.wasm",
             env!("CARGO_MANIFEST_DIR")
         );
         std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
