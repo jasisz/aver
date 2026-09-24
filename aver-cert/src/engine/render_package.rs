@@ -548,8 +548,11 @@ fn render_artifact(
         helpers = nats(&closure.helpers),
         admitted = nats(&closure.admitted),
     );
+    // The String roles are decided through `roleTableFast`, which reads a
+    // function's signature only when its type has a helper's shape.
     let strings = "theorem strings_ok : decodedStringHostRoles data := by\n  \
-         unfold decodedStringHostRoles; decide +kernel\n\n";
+         unfold decodedStringHostRoles\n  \
+         rw [← AverCert.DeclaredLayout.StringFast.roleTableFast_eq]; decide +kernel\n\n";
     // With a declared layout the closure scan reads each member's code entry
     // from it (one slice) instead of decoding the code section per member.
     let closure_ok = if layout {

@@ -614,4 +614,171 @@ theorem arithRoleCheck_of_layout {n len : Nat} {L : Layout}
   | none => rfl
   | some idx => simp only [bodyBytesAtFuncIndex_of_layout h]
 
+
+/-! ### String helper roles with a signature-shape index
+
+`StringHost.roleTable` classifies every defined function by the signature of
+its type, read from an array by type index; the kernel pays a walk of the
+decoded type list for each function. Only a function whose signature has the
+shape of an eq or concat helper can be classified, so `roleTableFast` first
+folds the signature list into a bitmap of those shapes (one numeral, read
+with two GMP operations per function) and reads a signature only for such a
+function. `roleTableFast_eq` shows it is `roleTable`. -/
+
+namespace StringFast
+open CertDecode.StringHost
+
+/-- A signature of the shape an eq (`[ref, ref] → i32`) or concat
+    (`[ref] → ref`) helper has. -/
+def candShape (sbat : List Nat) : Option CertDecode.StringHost.Sig → Bool
+  | some ([Ty.ref l, Ty.ref r], Ty.i32 :: _) => l == r && sbat.contains l
+  | some ([Ty.ref _], Ty.ref b :: _) => sbat.contains b
+  | _ => false
+
+/-- Bit `i` is set when signature `i` has a helper shape. -/
+def shapeBits (sbat : List Nat) : List (Option CertDecode.StringHost.Sig) → Nat
+  | [] => 0
+  | s :: ss => (if candShape sbat s then 1 else 0) + 2 * shapeBits sbat ss
+
+theorem shapeBits_at (sbat : List Nat) : ∀ (ts : List (Option CertDecode.StringHost.Sig)) (i : Nat),
+    packedAt (shapeBits sbat ts) 1 i = if candShape sbat ((ts[i]?).getD none) then 1 else 0
+  | [], i => by simp [shapeBits, packedAt, candShape]
+  | s :: ss, 0 => by
+      have h := packedAt_zero (if candShape sbat s then 1 else 0) (shapeBits sbat ss) 1 (by split <;> decide)
+      simpa [shapeBits] using h
+  | s :: ss, i + 1 => by
+      have h := packedAt_succ (if candShape sbat s then 1 else 0) (shapeBits sbat ss) 1 i (by split <;> decide)
+      simp only [Nat.pow_one] at h
+      simp only [shapeBits, h, List.getElem?_cons_succ]
+      exact shapeBits_at sbat ss i
+
+/-- `classify` over a signature lookup function. -/
+def classifyBy (nimp : Nat) (sbat : List Nat) (look : Nat → Option CertDecode.StringHost.Sig) :
+    Nat → List Nat → List (Nat × Nat × Nat) → List (Nat × Role)
+  | _,       [],        _  => []
+  | _,       _ :: _,    [] => []
+  | def_idx, ty :: tys, (nloc, bodyN, bodyLen) :: locs =>
+      match classifyOne sbat (look ty) nloc bodyN bodyLen with
+      | some role => (nimp + def_idx, role) :: classifyBy nimp sbat look (def_idx+1) tys locs
+      | none => classifyBy nimp sbat look (def_idx+1) tys locs
+
+theorem classify_eq_by (nimp : Nat) (sbat : List Nat) (tsigs : Array (Option CertDecode.StringHost.Sig)) :
+    ∀ (d : Nat) (tys : List Nat) (locs : List (Nat × Nat × Nat)),
+      classify nimp sbat tsigs d tys locs =
+        classifyBy nimp sbat (fun ty => (tsigs[ty]?).getD none) d tys locs
+  | _, [], _ => by simp [classify, classifyBy]
+  | _, _ :: _, [] => by simp [classify, classifyBy]
+  | d, ty :: tys, (nloc, bodyN, bodyLen) :: locs => by
+      simp only [classify, classifyBy]
+      rw [classify_eq_by nimp sbat tsigs (d + 1) tys locs]
+      rfl
+
+theorem classifyBy_congr (nimp : Nat) (sbat : List Nat) (f g : Nat → Option CertDecode.StringHost.Sig)
+    (h : ∀ ty nloc bodyN bodyLen,
+      classifyOne sbat (f ty) nloc bodyN bodyLen = classifyOne sbat (g ty) nloc bodyN bodyLen) :
+    ∀ (d : Nat) (tys : List Nat) (locs : List (Nat × Nat × Nat)),
+      classifyBy nimp sbat f d tys locs = classifyBy nimp sbat g d tys locs
+  | _, [], _ => by simp [classifyBy]
+  | _, _ :: _, [] => by simp [classifyBy]
+  | d, ty :: tys, (nloc, bodyN, bodyLen) :: locs => by
+      simp only [classifyBy, h ty nloc bodyN bodyLen,
+        classifyBy_congr nimp sbat f g h (d + 1) tys locs]
+
+theorem eqCandidate_some {s : Option CertDecode.StringHost.Sig} {nloc lhs : Nat}
+    (h : eqCandidate s nloc = some lhs) :
+    ∃ rs, s = some ([Ty.ref lhs, Ty.ref lhs], Ty.i32 :: rs) := by
+  unfold eqCandidate at h
+  split at h
+  · split at h
+    · rename_i l r rs
+      by_cases hc : (l == r && nloc == 2) = true
+      · simp only [hc, ↓reduceIte] at h
+        simp only [Bool.and_eq_true, beq_iff_eq] at hc
+        obtain ⟨rfl, _⟩ := hc
+        cases h
+        exact ⟨rs, rfl⟩
+      · simp only [hc, Bool.false_eq_true, ↓reduceIte, reduceCtorEq] at h
+    · cases h
+  · cases h
+
+theorem concatCandidate_some {s : Option CertDecode.StringHost.Sig} {nloc c b : Nat}
+    (h : concatCandidate s nloc = some (c, b)) :
+    ∃ rs, s = some ([Ty.ref c], Ty.ref b :: rs) := by
+  unfold concatCandidate at h
+  split at h
+  · split at h
+    · rename_i c' b' rs
+      by_cases hc : (nloc == 7) = true
+      · simp only [hc, ↓reduceIte] at h
+        cases h
+        exact ⟨rs, rfl⟩
+      · simp only [hc, Bool.false_eq_true, ↓reduceIte, reduceCtorEq] at h
+    · cases h
+  · cases h
+
+theorem classifyOne_of_not_shape (sbat : List Nat) (s : Option CertDecode.StringHost.Sig)
+    (hs : candShape sbat s = false) (nloc bodyN bodyLen : Nat) :
+    classifyOne sbat s nloc bodyN bodyLen = none := by
+  unfold classifyOne
+  split
+  · rename_i lhs he
+    obtain ⟨rs, rfl⟩ := eqCandidate_some he
+    have : lhs ∉ sbat := by simpa [candShape] using hs
+    simp [this]
+  · split
+    · rename_i c b hc
+      obtain ⟨rs, rfl⟩ := concatCandidate_some hc
+      have : b ∉ sbat := by simpa [candShape] using hs
+      simp [this]
+    · rfl
+
+/-- The signature lookup through the shape bitmap. -/
+def sigLook (sbat : List Nat) (ts : List (Option CertDecode.StringHost.Sig)) (ty : Nat) : Option CertDecode.StringHost.Sig :=
+  if packedAt (shapeBits sbat ts) 1 ty == 1 then (ts[ty]?).getD none else none
+
+theorem classifyOne_sigLook (sbat : List Nat) (ts : List (Option CertDecode.StringHost.Sig)) (ty nloc bodyN bodyLen : Nat) :
+    classifyOne sbat (sigLook sbat ts ty) nloc bodyN bodyLen =
+      classifyOne sbat ((ts[ty]?).getD none) nloc bodyN bodyLen := by
+  unfold sigLook
+  rw [shapeBits_at]
+  by_cases hs : candShape sbat ((ts[ty]?).getD none) = true
+  · simp [hs]
+  · have hs' : candShape sbat ((ts[ty]?).getD none) = false := by simpa using hs
+    have h0 : ((if candShape sbat ((ts[ty]?).getD none) = true then 1 else 0) == 1) = false := by
+      simp [hs']
+    simp only [h0, Bool.false_eq_true, ↓reduceIte]
+    rw [classifyOne_of_not_shape sbat _ hs', classifyOne_of_not_shape sbat none rfl]
+
+/-- `roleTable`, reading signatures through the shape bitmap. -/
+def roleTableFast (n len : Nat) : Option (List (Nat × Role)) :=
+  match decodeTypeSigs n len, CertDecode.decodeFuncTypes n len,
+        CertDecode.funcImportBase n len, bodyLocs n len with
+  | some (tsigs, sbat), some ftys, some nimp, some locs =>
+      some (classifyBy nimp sbat (sigLook sbat tsigs.toList) 0 ftys locs)
+  | _, _, _, _ => none
+
+theorem roleTableFast_eq (n len : Nat) : roleTableFast n len = roleTable n len := by
+  unfold roleTableFast roleTable
+  cases decodeTypeSigs n len with
+  | none => rfl
+  | some p =>
+      obtain ⟨tsigs, sbat⟩ := p
+      cases CertDecode.decodeFuncTypes n len with
+      | none => rfl
+      | some ftys =>
+          cases CertDecode.funcImportBase n len with
+          | none => rfl
+          | some nimp =>
+              cases bodyLocs n len with
+              | none => rfl
+              | some locs =>
+                  show some _ = some _
+                  rw [classify_eq_by]
+                  congr 1
+                  apply classifyBy_congr
+                  intro ty nloc bodyN bodyLen
+                  rw [classifyOne_sigLook, Array.getElem?_toList]
+
+end StringFast
+
 end AverCert.DeclaredLayout
