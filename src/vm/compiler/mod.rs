@@ -1465,10 +1465,6 @@ impl<'a> FnCompiler<'a> {
         self.code.push((val & 0xFF) as u8);
     }
 
-    pub(super) fn emit_i16(&mut self, val: i16) {
-        self.emit_u16(val as u16);
-    }
-
     pub(super) fn emit_u32(&mut self, val: u32) {
         self.code.push((val >> 24) as u8);
         self.code.push(((val >> 16) & 0xFF) as u8);
@@ -1503,27 +1499,42 @@ impl<'a> FnCompiler<'a> {
         &mut self.code
     }
 
+    /// A relative jump offset, as every jump and match-fail operand carries
+    /// it: a big-endian `i32`. Sixteen bits were once enough and then were
+    /// not — a generated function body past 32 KiB of bytecode wrapped a
+    /// forward jump into a backward one — so the offset is as wide as any
+    /// function body the compiler can emit.
+    pub(super) fn emit_i32(&mut self, val: i32) {
+        self.emit_u32(val as u32);
+    }
+
     pub(super) fn emit_jump(&mut self, op: u8) -> usize {
         self.emit_op(op);
         let patch_pos = self.code.len();
-        self.emit_i16(0);
+        self.emit_i32(0);
         patch_pos
     }
 
     pub(super) fn patch_jump(&mut self, patch_pos: usize) {
         let target = self.code.len();
-        let offset = (target as isize - patch_pos as isize - 2) as i16;
-        let bytes = (offset as u16).to_be_bytes();
-        self.code[patch_pos] = bytes[0];
-        self.code[patch_pos + 1] = bytes[1];
+        self.patch_jump_to(patch_pos, target);
     }
 
+    /// Point the offset at `patch_pos` at `target`. The offset counts from
+    /// the byte after the four offset bytes, which is where `ip` stands when
+    /// the VM reads it.
     pub(super) fn patch_jump_to(&mut self, patch_pos: usize, target: usize) {
-        let offset = (target as isize - patch_pos as isize - 2) as i16;
-        let bytes = (offset as u16).to_be_bytes();
-        self.code[patch_pos] = bytes[0];
-        self.code[patch_pos + 1] = bytes[1];
+        let offset = jump_offset(patch_pos + 4, target);
+        self.code[patch_pos..patch_pos + 4].copy_from_slice(&offset.to_be_bytes());
     }
+}
+
+/// The relative offset from `from` to `target`. A function body cannot reach
+/// two gigabytes of bytecode, so running out of `i32` is a compiler bug, and
+/// it stops here rather than wrapping into a jump somewhere else.
+pub(super) fn jump_offset(from: usize, target: usize) -> i32 {
+    i32::try_from(target as isize - from as isize)
+        .expect("a VM function body is larger than a relative jump can span")
 }
 
 #[cfg(test)]

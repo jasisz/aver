@@ -143,7 +143,7 @@ pub const GT_FLOAT: u8 = 0x27;
 /// `compile_pattern` emits — one dispatch instead of four in the hot
 /// path of every `match n { 0 -> ... }` shape.
 ///
-/// Encoding: `MATCH_INT_LITERAL imm:i64 fail_offset:i16`.
+/// Encoding: `MATCH_INT_LITERAL imm:i64 fail_offset:i32`.
 pub const MATCH_INT_LITERAL: u8 = 0x7F;
 
 // -- String ------------------------------------------------------------------
@@ -154,10 +154,10 @@ pub const CONCAT: u8 = 0x28;
 // -- Control flow ------------------------------------------------------------
 
 /// Unconditional relative jump: ip += offset.
-pub const JUMP: u8 = 0x30; // offset:i16
+pub const JUMP: u8 = 0x30; // offset:i32
 
 /// Pop top, if falsy: ip += offset.
-pub const JUMP_IF_FALSE: u8 = 0x31; // offset:i16
+pub const JUMP_IF_FALSE: u8 = 0x31; // offset:i32
 
 // -- Calls -------------------------------------------------------------------
 
@@ -266,18 +266,18 @@ pub const LIST_PREPEND: u8 = 0x6E;
 // -- Pattern matching --------------------------------------------------------
 
 /// Peek top (must be variant): if variant_id != expected, ip += fail_offset.
-pub const MATCH_VARIANT: u8 = 0x71; // ctor_id:u16, fail_offset:i16
+pub const MATCH_VARIANT: u8 = 0x71; // ctor_id:u16, fail_offset:i32
 
 /// Peek top: if not wrapper of `kind`, ip += fail_offset.
 /// If matches, replace top with inner value (unwrap in-place).
 /// kind: 0=Ok, 1=Err, 2=Some.
-pub const MATCH_UNWRAP: u8 = 0x72; // kind:u8, fail_offset:i16
+pub const MATCH_UNWRAP: u8 = 0x72; // kind:u8, fail_offset:i32
 
 /// Peek top: if not Nil, ip += fail_offset.
-pub const MATCH_NIL: u8 = 0x73; // fail_offset:i16
+pub const MATCH_NIL: u8 = 0x73; // fail_offset:i32
 
 /// Peek top: if Nil (not a cons), ip += fail_offset.
-pub const MATCH_CONS: u8 = 0x74; // fail_offset:i16
+pub const MATCH_CONS: u8 = 0x74; // fail_offset:i32
 
 /// Pop cons cell, push tail then push head.
 pub const LIST_HEAD_TAIL: u8 = 0x75;
@@ -286,7 +286,7 @@ pub const LIST_HEAD_TAIL: u8 = 0x75;
 pub const EXTRACT_FIELD: u8 = 0x76; // field_idx:u8
 
 /// Peek top: if not a tuple of `count` items, ip += fail_offset.
-pub const MATCH_TUPLE: u8 = 0x78; // count:u8, fail_offset:i16
+pub const MATCH_TUPLE: u8 = 0x78; // count:u8, fail_offset:i32
 
 /// Peek top tuple, push `items[item_idx]` (non-destructive).
 pub const EXTRACT_TUPLE_ITEM: u8 = 0x79; // item_idx:u8
@@ -311,7 +311,7 @@ pub const MATCH_DISPATCH: u8 = 0x7A;
 /// onto the stack and the match body is skipped entirely.
 ///
 /// Encoding:
-///   MATCH_DISPATCH_CONST count:u8 default_offset:i16
+///   MATCH_DISPATCH_CONST count:u8 default_offset:i32
 ///     [(kind:u8, expected:u64, result:u64) × count]
 ///
 /// Hit → pop subject, push result NanValue.
@@ -791,8 +791,11 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | WRAP => 1,
 
         // 2-byte (u16 or u8+u8)
-        LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_NIL | MATCH_CONS
-        | LOAD_LOCAL_2 | VECTOR_GET_OR | TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => 2,
+        LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | LOAD_LOCAL_2 | VECTOR_GET_OR | TAIL_CALL_SELF
+        | TAIL_CALL_SELF_THIN => 2,
+
+        // A relative jump offset alone: i32.
+        JUMP | JUMP_IF_FALSE | MATCH_NIL | MATCH_CONS => 4,
 
         // owned:u8 + target_slot:u8. The slot is the target's own local cell,
         // which the runtime fence must exempt: the fusion deletes the
@@ -802,28 +805,39 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         VECTOR_SET_OR_KEEP => 2,
 
         // 3-byte
-        CALL_KNOWN | CALL_LEAF | MATCH_UNWRAP | MATCH_TUPLE | RECORD_NEW | LOAD_LOCAL_CONST => 3,
+        CALL_KNOWN | CALL_LEAF | RECORD_NEW | LOAD_LOCAL_CONST => 3,
 
         // 4-byte
         CALL_KNOWN_OWNED | TAIL_CALL_KNOWN => 4, // fn_id:u16 + argc:u8 + owned:u8
 
         // 4-byte
-        MATCH_VARIANT | RECORD_GET_NAMED | RECORD_TAKE_NAMED | LIST_NEW | TUPLE_NEW => 4,
+        RECORD_GET_NAMED | RECORD_TAKE_NAMED | LIST_NEW | TUPLE_NEW => 4,
 
         // 5-byte
         CALL_BUILTIN | VARIANT_NEW => 5,
+
+        // u8 + fail_offset:i32
+        MATCH_UNWRAP | MATCH_TUPLE => 5,
+
+        // ctor_id:u16 + fail_offset:i32
+        MATCH_VARIANT => 6,
 
         // 6-byte
         CALL_BUILTIN_OWNED => 6, // symbol_id:u32 + argc:u8 + owned:u8
 
         // 10-byte
-        MATCH_INT_LITERAL => 10, // imm:i64 + fail_offset:i16
+        MATCH_INT_LITERAL => 12, // imm:i64 + fail_offset:i32
 
         // Variable-length
         MATCH_DISPATCH | MATCH_DISPATCH_CONST if ip < code.len() => {
             let count = code[ip] as usize;
-            let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
-            3 + count * entry_size
+            // MATCH_DISPATCH (no emitter) keeps i16 offsets; the const
+            // table's default offset is a jump like any other: i32.
+            if op == MATCH_DISPATCH {
+                3 + count * 11
+            } else {
+                5 + count * 17
+            }
         }
         RECORD_UPDATE | RECORD_NEW_INDEXED if ip + 2 < code.len() => 3 + code[ip + 2] as usize,
         // CALL_PAR count:u8 unwrap:u8 [argc:u8 × count]
