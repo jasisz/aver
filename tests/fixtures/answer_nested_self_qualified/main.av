@@ -1,0 +1,11 @@
+module Node
+    intent = "Fixture: a process reads frames from a capability under slice/ whose reply sum names its own type qualified."
+    depends [Slice.Wire, Slice.Sockets]
+    effects [Console.print, Slice.Wire.frame, yield]
+
+fn reader() -> Unit
+    ? "Reads until the wire is gone."
+    ! [Console.print, Slice.Wire.frame, yield]
+    match Slice.Wire.frame()
+        Slice.Wire.Heard.Message(text) -> reader()
+        Slice.Wire.Heard.Gone(why) -> Console.print("gone {why}")

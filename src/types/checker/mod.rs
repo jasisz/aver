@@ -83,6 +83,10 @@ pub struct TypeCheckResult {
     pub laws: std::collections::BTreeSet<String>,
     /// Exposed dependency protocols, resolved in their declaring module's type scope.
     pub imported_processes: HashMap<String, crate::yield_lowering::ProcessProtocol>,
+    /// How source the compiler generates into this module spells the types
+    /// whose source spelling would not name them here; see
+    /// [`SymbolTable::generated_type_spellings`].
+    pub type_spellings: HashMap<TypeId, String>,
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
@@ -347,6 +351,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
     check_forwarded_effect_marker(items, &mut checker.errors);
     check_module_effect_boundary(items, &mut checker.errors);
 
+    let type_spellings = checker.symbol_table.generated_type_spellings();
     TypeCheckResult {
         errors: checker.errors,
         fn_sigs,
@@ -354,6 +359,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         capabilities: checker.capabilities,
         laws: checker.available_laws,
         imported_processes: checker.imported_processes,
+        type_spellings,
     }
 }
 
@@ -1014,12 +1020,18 @@ impl TypeChecker {
                 .rsplit_once('.')
                 .map(|(m, t)| (m.to_string(), t.to_string()))
                 .expect("private qualified name always has a `.`");
-            self.error_at_line(
-                line,
+            // A module this one does not depend on is not a module whose
+            // `exposes` is at fault: the missing edge is this module's own.
+            let message = if self.visible_module_names.contains(module.as_str()) {
                 format!(
                     "{source_ctx}: Type '{qualified}' is not exposed by module '{module}' — add '{type_name}' to its `exposes` list to import it",
-                ),
-            );
+                )
+            } else {
+                format!(
+                    "{source_ctx}: Type '{qualified}' belongs to module '{module}', which this module does not depend on — add '{module}' to its `depends [...]` to use it",
+                )
+            };
+            self.error_at_line(line, message);
         }
     }
 

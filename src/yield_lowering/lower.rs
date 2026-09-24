@@ -204,9 +204,11 @@ pub(super) fn lower_fn(
     fd: &FnDef,
     marked: &crate::config::MarkedCapabilities,
     fn_sigs: &super::FnSigs,
+    type_spellings: &super::TypeSpellings,
     nesting: &Nesting,
 ) -> Result<Generated, Vec<TypeError>> {
     let mut lowering = Lowering::new(fd, marked, fn_sigs, nesting);
+    lowering.type_spellings = Some(type_spellings);
     match lowering.run() {
         Ok(generated) => Ok(generated),
         Err(()) => Err(lowering.errors),
@@ -240,6 +242,9 @@ struct Lowering<'a> {
     stop_counter: usize,
     join_counter: usize,
     nest_counter: usize,
+    /// How a stamped type is spelled in generated source where its source
+    /// spelling would name another type; see `super::spell_type`.
+    type_spellings: Option<&'a super::TypeSpellings>,
 }
 
 impl<'a> Lowering<'a> {
@@ -271,6 +276,7 @@ impl<'a> Lowering<'a> {
             stop_counter: 0,
             join_counter: 0,
             nest_counter: 0,
+            type_spellings: None,
         };
         lowering.name_kinds();
         lowering
@@ -496,7 +502,10 @@ impl<'a> Lowering<'a> {
                 line,
                 &format!("{what} has the open type '{}'", ty.display()),
             ),
-            Some(ty) => Ok(ty.display()),
+            Some(ty) => Ok(match self.type_spellings {
+                Some(spellings) => super::spell_type(ty, spellings),
+                None => ty.display(),
+            }),
         }
     }
 
