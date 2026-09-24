@@ -117,9 +117,12 @@ pub fn option_admitted(name: &str) -> bool {
 /// with `\` escapes, line comments `-- ... \n`, and nested block comments
 /// `/- ... -/` (which also covers the `/--`/`/-!` doc-comment openers). Char
 /// literals are consumed just far enough that a `"` inside `'"'` / `'\"'`
-/// cannot open a phantom string. Raw / interpolated string prefixes (`r"`,
-/// `r#"`, `s!"`) and unterminated strings/comments switch the rest of the file
-/// to pure code: their contents are tokenized like everything else.
+/// cannot open a phantom string. The string parts of an `s!` interpolated
+/// string are inert and its `{…}` terms are code (see
+/// [`interpolated_string_end`]). Raw string prefixes (`r"`, `r#"`), other
+/// interpolation prefixes (`m!"`), an interpolation the lexer cannot read
+/// exactly, and unterminated strings/comments switch the rest of the file to
+/// pure code: their contents are tokenized like everything else.
 pub fn code_exec_token(text: &str) -> Option<&'static str> {
     let chars: Vec<char> = text.chars().collect();
     let tokens = tokenize(&chars);
@@ -413,15 +416,98 @@ fn is_ident_continue(c: char) -> bool {
         || (!c.is_ascii() && c.is_alphanumeric())
 }
 
+/// Where the `s!` interpolated string whose `"` is at `chars[open]` ends, and
+/// the ranges of its `{…}` terms, or `None` when it cannot be lexed exactly.
+///
+/// The string parts are inert: a `\` escapes the next character and `{` opens
+/// a term. Each term runs to the `}` that closes it at brace depth zero,
+/// skipping the normal strings, nested `s!` strings and char literals inside
+/// it the way Lean's term parser does. A comment, a raw string or an
+/// unterminated construct inside a term makes the whole string `None`, and
+/// the caller then reads the rest of the file as code.
+///
+/// Only `s!` is recognized. It is a token of Lean's prelude, so `s!"` always
+/// opens an interpolated string; `m!` and `f!` are tokens only when their
+/// modules are imported, and without them `m!"…"` is an identifier and a
+/// NORMAL string, whose quotes pair differently.
+fn interpolated_string_end(chars: &[char], open: usize) -> Option<(usize, Vec<(usize, usize)>)> {
+    let mut terms = Vec::new();
+    let mut j = open + 1;
+    loop {
+        match *chars.get(j)? {
+            '\\' => j += 2,
+            '"' => return Some((j + 1, terms)),
+            '{' => {
+                let end = interpolation_term_end(chars, j + 1)?;
+                terms.push((j + 1, end));
+                j = end + 1;
+            }
+            _ => j += 1,
+        }
+    }
+}
+
+/// The index of the `}` closing the interpolation term that starts at
+/// `start`; see [`interpolated_string_end`].
+fn interpolation_term_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut j = start;
+    loop {
+        let c = *chars.get(j)?;
+        let previous = j.checked_sub(1).map(|p| chars[p]);
+        match c {
+            '{' => depth += 1,
+            '}' if depth == 0 => return Some(j),
+            '}' => depth -= 1,
+            '"' if is_interpolation_prefix(chars, j) => {
+                j = interpolated_string_end(chars, j)?.0;
+                continue;
+            }
+            '"' if matches!(previous, Some('r' | '#' | '!')) => return None,
+            '"' => {
+                j = string_literal_end(chars, j)?;
+                continue;
+            }
+            '\'' if !previous.is_some_and(is_ident_continue) => {
+                if let Some(end) = char_literal_end(chars, j) {
+                    j = end;
+                    continue;
+                }
+            }
+            '-' if chars.get(j + 1) == Some(&'-') => return None,
+            '/' if chars.get(j + 1) == Some(&'-') => return None,
+            _ => {}
+        }
+        j += 1;
+    }
+}
+
+/// Whether the `"` at `chars[at]` opens an `s!` interpolated string: it is
+/// preceded by exactly `s!`, and the `s` does not continue an identifier.
+fn is_interpolation_prefix(chars: &[char], at: usize) -> bool {
+    at >= 2
+        && chars[at - 1] == '!'
+        && chars[at - 2] == 's'
+        && !(at >= 3 && is_ident_continue(chars[at - 3]))
+}
+
 /// Tokenize the code positions of a package file. Strings, comments and char
-/// literals are skipped; everything else becomes a token. After a raw or
-/// interpolated string prefix, or an unterminated string or comment, the rest
-/// of the file is tokenized as pure code (no span is skipped any more).
+/// literals are skipped; everything else becomes a token. The terms of an
+/// `s!` interpolated string are code and are tokenized; its string parts are
+/// skipped. After a raw string prefix, an interpolation this lexer cannot
+/// read exactly, or an unterminated string or comment, the rest of the file is
+/// tokenized as pure code (no span is skipped any more).
 fn tokenize(chars: &[char]) -> Vec<Token> {
-    let n = chars.len();
     let mut tokens = Vec::new();
+    tokenize_range(chars, 0, chars.len(), &mut tokens);
+    tokens
+}
+
+/// [`tokenize`] over `chars[start..n]`, appending to `tokens`. Token positions
+/// are indices into the whole of `chars`.
+fn tokenize_range(chars: &[char], start: usize, n: usize, tokens: &mut Vec<Token>) {
     let mut pure_code = false;
-    let mut i = 0;
+    let mut i = start;
     while i < n {
         let c = chars[i];
         if c.is_whitespace() {
@@ -430,9 +516,21 @@ fn tokenize(chars: &[char]) -> Vec<Token> {
         }
         if !pure_code {
             if c == '"' {
-                // A `"` after a raw/interpolated prefix (`r"`, `r#"`, `s!"`) is
-                // ambiguous for a normal-string scan: default to code.
-                if i > 0 && matches!(chars[i - 1], 'r' | '#' | '!') {
+                // An `s!` string: its string parts are inert, its terms code.
+                // Any other `"` after a raw/interpolated prefix (`r"`, `r#"`,
+                // `m!"`) is ambiguous for a normal-string scan: default to code.
+                if is_interpolation_prefix(chars, i) {
+                    match interpolated_string_end(chars, i) {
+                        Some((end, terms)) if end <= n => {
+                            for (term_start, term_end) in terms {
+                                tokenize_range(chars, term_start, term_end, tokens);
+                            }
+                            i = end;
+                            continue;
+                        }
+                        _ => pure_code = true,
+                    }
+                } else if i > 0 && matches!(chars[i - 1], 'r' | '#' | '!') {
                     pure_code = true;
                 } else if let Some(end) = string_literal_end(chars, i) {
                     i = end;
@@ -499,7 +597,6 @@ fn tokenize(chars: &[char]) -> Vec<Token> {
         tokens.push(Token::Symbol(c.to_string(), i));
         i += 1;
     }
-    tokens
 }
 
 /// Command keywords that end the argument list of an `open`.
@@ -755,6 +852,40 @@ mod tests {
             "structure P where\n  prefixLen : Nat\n  deriving BEq\n",
         ] {
             assert_eq!(refused(text), None, "{text:?}");
+        }
+    }
+
+    /// An `s!` string's text is inert and its terms are code, so a refused
+    /// word after one (in a comment or a later string) no longer turns the
+    /// whole rest of the file into code, while a refused word inside a term is
+    /// still found.
+    #[test]
+    fn interpolated_strings_are_lexed_exactly() {
+        for text in [
+            "def a (k : String) : String := s!\"case-{k}\"\n/-- payment-scoped filter -/\ndef b := 0\n",
+            "def a := s!\"[{x}] {y.z} \\{literal} {\"in\" ++ s!\"{w}\"}\"\n-- scoped\n",
+            "def a := s!\"{ { f := 1 }.f }\" ++ \"scoped\"\n",
+            "def a := s!\"{'}'}\"\n-- export\n",
+        ] {
+            assert_eq!(refused(text), None, "{text:?}");
+        }
+        for (text, word) in [
+            // A refused word inside a term is code.
+            ("def a := s!\"{scoped}\"\n", "scoped"),
+            ("def a := s!\"x {#eval 1} y\"\n", "#eval"),
+            // A comment or a raw string inside a term: the rest is code.
+            ("def a := s!\"{x -- }\"\n}\"\n-- export\n", "export"),
+            ("def a := s!\"{r\"}\"}\"\n-- export\n", "export"),
+            // Unterminated.
+            ("def a := s!\"{x\n-- export\n", "export"),
+            ("def a := s!\"abc\n-- export\n", "export"),
+            // Only `s!` opens an interpolated string. `m!"` is an identifier
+            // and a normal string without its module, whose quotes pair
+            // differently, so it stays code.
+            ("def a := m!\"{\"}\" scoped \"}\"\n", "scoped"),
+            ("def a := xs!\"{\"}\" scoped \"}\"\n", "scoped"),
+        ] {
+            assert_eq!(refused(text), Some(word), "{text:?}");
         }
     }
 

@@ -40,9 +40,17 @@ use aver_cmd::aver_command;
 use scratch_dir::{ScratchDir, temp_dir};
 use std::path::{Path, PathBuf};
 
+/// `size` reads a `Map`, so the shipped model carries the map prelude and its
+/// `AverKeyOrder` class with instances at `Int`, `String` and `Bool`: the clean
+/// certificate then shows the audit admits instances of a class the package
+/// declares. `size` itself is outside the plan grammar and stays uncertified.
 const TINY: &str = "module Tiny
     intent = \"Two bridged exports with one law each.\"
-    exposes [addTwo, double]
+    exposes [addTwo, double, size]
+
+fn size(m: Map<Int, Int>) -> Int
+    ? \"Entries.\"
+    Map.len(m)
 
 fn addTwo(x: Int) -> Int
     ? \"Adds two.\"

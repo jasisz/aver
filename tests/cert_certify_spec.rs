@@ -2867,8 +2867,8 @@ fn certify_nested_module_models_close_end_to_end() {
     assert_eq!(tally["model"], "Nested.Deep.Util.tally");
     let bridge = std::fs::read_to_string(cert_dir.join("Bridge.lean")).unwrap();
     assert!(
-        bridge.contains("_root_.Nested.Deep.Util.tally x0")
-            && !bridge.contains("Nested_Deep_Util_tally x0"),
+        bridge.contains("_root_.Nested.Deep.Util.tally x)")
+            && !bridge.contains("Nested_Deep_Util_tally x"),
         "the bridge must cite the qualified source function, never the flattened name:\n{bridge}"
     );
 

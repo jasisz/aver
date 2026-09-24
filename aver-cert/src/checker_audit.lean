@@ -148,6 +148,15 @@ def sumRefusal (env : Environment) (ty : Name) (ctors : List (Name × Nat)) : IO
       return some s!"bridge constructor {ctor} has a proof field"
   return none
 
+/-- Whether `cls` is declared a class by the module that declares it. Read
+    off that module's own class-extension entries: the environment the audit
+    imports does not rebuild the extension's state, so `isClass` would answer
+    false for every imported class. -/
+def declaredClass (env : Environment) (cls : Name) : Bool :=
+  match env.getModuleIdxFor? cls with
+  | some idx => (classExtension.getModuleEntries env idx).any (·.name == cls)
+  | none => false
+
 /-- The conclusion of a (non-reducing) pi telescope. -/
 def conclusion : Expr → Expr
   | .forallE _ _ body _ => conclusion body
@@ -188,7 +197,7 @@ def instanceRefusal (env : Environment) (inst : Name) : Option String :=
             else some s!"instance {inst} of {cls} is at a type the package does not declare"
           | _ => some s!"instance {inst} of {cls} is not at an inductive type"
         | _ => some s!"instance {inst} of {cls} is not at a named type"
-      else if inPackage env cls && isClass env cls then none
+      else if inPackage env cls && declaredClass env cls then none
       else match expectedCoreValue cls args with
         | some expected =>
           match info.value? with
