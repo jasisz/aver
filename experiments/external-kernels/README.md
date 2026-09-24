@@ -16,7 +16,7 @@ The workflow `.github/workflows/experiment-external-kernels.yml` runs on pushes 
    - sokonanoda,
    - the MathGraph checker;
 5. rewrites the export so `AverCert.ArtifactBytes.modBytes` denotes the byte-flipped module (exactly one 1024-byte numeral changes; the proofs stay as built) and replays that through the same kernels (`tamper.py`);
-6. re-elaborates the eight slowest modules of the verify build with `-Dprofiler=true -DElab.async=false` to split their time into kernel (`type checking`) and elaboration.
+6. re-elaborates every module of the verify build with `-Dprofiler=true -DElab.async=false` to split their time into kernel (`type checking`) and elaboration.
 
 Kernel revisions and build recipes follow the Lean Kernel Arena's `checkers/*.yaml` (revisions in `build-tools.sh`). Two deviations: no `-C target-cpu=native` and no profile-guided build for sokonanoda and MathGraph, since the binaries are built on one runner and run on another. The arena's "official" checker is built against the same lean4export revision as the exporter.
 
@@ -46,7 +46,7 @@ Notes:
 
 - Nat literals: the checker renders the artifact as 1024-byte numerals joined by `<<<` and `|||`; the exports carry 386 to 659 `natVal` literals, the largest 2466 to 3165 decimal digits. All kernels evaluate them through their Nat extensions (`Nat.shiftLeft`, `Nat.lor` on big integers); none fell back to unary arithmetic.
 - The big `decide +kernel` facts replay in every kernel. The external kernels are 2 to 7 times faster than `leanchecker --fresh` on the full closure.
-- About 97 % of the full closure is the Lean distribution (Init, Std): 78,810 of 78,810 + declarations replayed for clockrange, against 9,210 for the root closure. The root-restricted replay is 4 to 10 times cheaper in every kernel, including the stock one.
+- The full closure is mostly the Lean distribution: the official kernel replays 78,810 declarations for clockrange (85,497 for k5-laws), against 9,210 (9,510) in the root closure. The root-restricted replay is about 4 times cheaper for the small packages (official kernel 102 s to 23 s, nanoda 25 s to 6 s) and 1.3 to 2.6 times cheaper for k5-laws, where the package's own proofs weigh more.
 - nanoda with only `propext`, `Classical.choice` and `Quot.sound` permitted fails on the full closure (Init uses `Lean.trustCompiler`) but accepts every root closure, so it doubles as an independent axiom check of the accepted root.
 - nanoda, sokonanoda and MathGraph report a rejection by panicking (exit 101 or 1), not with a verdict line. sokonanoda and MathGraph peak at 11.5 GiB on k5-laws, close to the 16 GiB of a hosted runner; nanoda stays under 5 GiB.
 - `lean4export` loads the same `.olean` files through Lean's own loader, so an external kernel is independent in type checking only, not in reading the build.
