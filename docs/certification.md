@@ -1,16 +1,12 @@
 # Artifact Behavioral Certificates
 
-An Aver artifact certificate states what selected exports of one exact
-WebAssembly artifact compute. The artifact may be a raw wasm-gc module or a
-wasip2 component containing the checked core module. It is checked against the
-delivered bytes by Lean 4.34 and does not require trusting the Aver compiler
-that produced either the artifact or the certificate package.
+An Aver artifact certificate is a Lean proof about one exact WebAssembly artifact. It states what selected exports of that artifact compute. Lean 4.34 checks it against the delivered bytes, so you do not have to trust the Aver compiler that produced the artifact or the certificate.
 
-This is a behavioral proof, not a signature or a reproducible-build
-attestation. A valid certificate binds all accepted claims to the supplied
-artifact bytes and to a fixed, checker-owned statement schema.
+The proof runs from meaning to bytes. For every certified function the certificate carries a plan: the function's optimized MIR body, printed as Lean data. The checker's Lean wall lowers the plan to wasm the same way the compiler's MIR emitter does, requires the result to equal the function's code entry in the artifact, and proves that the lowered code computes what the plan means. The bytes are never decoded back into meaning.
 
-This document is the user guide: what a certificate is and how to produce and verify one. See [Certification Architecture](certification-architecture.md) for how the verifier reaches its verdict, and the [Certificate Format Specification](certificate-format.md) for the normative reference aimed at independent reimplementors, including the trust inventory and the versioning and freeze policy.
+A certificate is not a signature and not a reproducible-build attestation. It is a behavioral proof bound to the artifact's hash and to a statement schema the checker owns.
+
+This document is the user guide: what a certificate is and how to produce and check one. [Certification Architecture](certification-architecture.md) explains how the verifier reaches its verdict. The [Certificate Format Specification](certificate-format.md) is the normative reference for reimplementors, with the trust inventory and the versioning policy.
 
 ## Generate and verify
 
@@ -21,28 +17,20 @@ cargo install aver-lang --features wasm
 cargo install aver-cert
 ```
 
-The compiler needs the `wasm` feature for `--target wasm-gc --certify`; add
-`wasip2` for component output.
-Verification also requires a standard Elan installation; `aver-cert` selects
-the pinned Lean 4.34 toolchain through Elan and installs it when necessary.
+The compiler needs the `wasm` feature for `--target wasm-gc --certify`; add `wasip2` for component output. Verification needs a standard Elan installation. `aver-cert` selects the pinned Lean 4.34 toolchain through Elan and installs it when necessary.
 
-Generate either target and its certificate package:
+Generate an artifact and its certificate package:
 
 ```bash
 aver compile app.av --target wasm-gc --certify -o out/
 aver compile app.av --target wasip2 --certify -o out/
 ```
 
-On `wasm-gc`, `--certify --optimize` preserves the proof boundary as separate
-files: the certificate binds the emitter's exact `<name>.wasm`, while Binaryen
-writes `<name>.optimized.wasm` outside the proof. A Wasmtime pack may then AOT
-compile that derivative to `<name>.cwasm`; neither transformation receives a
-certificate claim. `wasip2` still rejects `--optimize` because Binaryen does not
-yet accept this component/wasm-gc combination. Reusing an output directory
-replaces its `cert/` package, so use one output directory per artifact.
+The certificate binds the bytes that `--certify` writes. A `--certify` build keeps a few string optimizations off (the buffer-building and chars-fusion passes and the byte sink), so its module can differ from a plain `aver compile` of the same source. Ship the module the certified build wrote.
 
-Run the fast preflight or strict verification directly with the standalone
-checker:
+On `wasm-gc`, `--certify --optimize` keeps the proof boundary in separate files. The certificate binds the emitter's exact `<name>.wasm`, and Binaryen writes `<name>.optimized.wasm` outside the proof. A Wasmtime pack may compile that derivative ahead of time to `<name>.cwasm`; neither derivative is certified. `wasip2` rejects `--optimize`, because Binaryen does not yet accept this component and wasm-gc combination. Reusing an output directory replaces its `cert/` package, so use one output directory per artifact.
+
+Check the package with the standalone verifier:
 
 ```bash
 aver-cert check out/app.wasm out/cert
@@ -54,70 +42,33 @@ aver-cert verify out/app.component.wasm out/cert
 aver-cert explain out/app.component.wasm out/cert
 ```
 
-If `aver-cert` is next to `aver` or on `PATH`, the same commands are available
-through:
+If `aver-cert` is next to `aver` or on `PATH`, `aver cert check|verify|explain ...` runs the same commands. `aver cert` is an exact subprocess shortcut: it forwards the arguments and standard streams to `aver-cert`, and the compiler binary links no verifier. `inspect` is an alias of `explain`.
 
-```bash
-aver cert check out/app.wasm out/cert
-aver cert verify out/app.wasm out/cert
-aver cert explain out/app.wasm out/cert
+`verify` is the release check. It exits successfully only when at least one export is certified and every step passes, including the final `leanchecker --fresh` replay of the whole proof. It prints `CERTIFIED`.
 
-aver cert check out/app.component.wasm out/cert
-aver cert verify out/app.component.wasm out/cert
-aver cert explain out/app.component.wasm out/cert
-```
+`check` is a faster developer and CI preflight. It runs the same Rust gates, `lake build` and checker witness, but trusts the freshly built or cached `.olean` files and skips the final replay. It prints `CHECKED`, never `CERTIFIED`. Do not use it as a release or admission gate.
 
-`aver cert` is an exact subprocess shortcut. It forwards the original
-arguments and standard streams to `aver-cert`; the compiler binary contains no
-linked verifier and no alternate acceptance path. `inspect` is an alias of
-`explain`.
-
-`verify` exits successfully only when at least one export is certified and the
-complete check passes. `explain` first performs that same check, then prints
-the accepted exports, policies, semantic faces, runtime contracts, and the
-explicitly declined surface.
-
-`check` is an explicitly weaker developer/CI preflight. It performs the same
-Rust gates, `lake build`, and fresh checker-witness elaboration, but trusts the
-freshly built or explicitly cached `.olean` closure and skips the final
-`leanchecker --fresh` whole-closure replay. It reports `CHECKED`, never
-`CERTIFIED`; do not use it as a release or admission gate.
+`explain` runs the same check as `verify`, then prints each certified export with its policy, class, facets and model line, the runtime contracts, the law-claims and source-bridges, and the declined functions with their reasons.
 
 ### Target matrix
 
-| Compile target | Certified artifact | Core bytes checked by the Wasm wall | Status |
+| Compile target | Certified artifact | Core bytes checked by the wall | Status |
 |---|---|---|---|
 | `wasm-gc` | `<name>.wasm` | The delivered module itself | Supported |
-| `wasip2` | `<name>.component.wasm` | The envelope-declared embedded module from the delivered component | Supported |
-| `rust` | Generated Cargo project | None | Unsupported: the current certificate wall is a Wasm byte wall |
+| `wasip2` | `<name>.component.wasm` | The embedded core module the envelope declares | Supported |
+| `rust` | Generated Cargo project | None | Unsupported: the wall is a Wasm byte wall |
 
-For wasip2, the manifest hash is always the full component hash. The producer
-may locate the user core while building the component, but verification splits
-only at the declared prefix/core/suffix lengths and checks equality; it never
-parses the component to rediscover the core. The wall selects a finite import
-registry from the pinned target: wasm-gc keeps its exact Aver host imports,
-while wasip2 admits the exact 75 canonical-ABI module/name pairs the compiler
-can emit, including their pinned WASI interface versions. Contract-derived
-custom-capability imports keep their exact hashed-namespace grammar on both
-targets. Any unknown interface, operation, or version is refused with an
-artifact-specific reason rather than receiving a weaker certificate.
+For wasip2 the manifest hash is the hash of the whole component. The manifest declares the component as prefix, core module and suffix by length. The verifier splits the component at those lengths and checks equality; it never parses the component to find the core. The import registry depends on the target. wasm-gc admits the exact Aver host imports, and wasip2 admits the exact 80 canonical-ABI module and name pairs the compiler can emit, with their pinned WASI interface versions. Both targets also admit contract-derived custom-capability imports under an exact hashed namespace grammar. Any other import is refused with a reason.
 
-Build caches are disabled by default. `AVER_CERT_DATA_CACHE=/trusted/path`
-opts into artifact-specific Lake output, while
-`AVER_CERT_PRELUDE_CACHE=/trusted/path` also reuses artifact-independent wall
-output. Those directories become trusted local state and must not be writable
-by an attacker. Strict `verify` still authors a fresh checker witness and runs
-the final whole-closure replay.
+### Environment variables
 
-`AVER_CERT_TIMINGS=1` prints how long each Lean step took, with Lake's per-module build times, to standard error. It is a diagnostic only and does not change the verdict.
+Build caches are off by default. `AVER_CERT_DATA_CACHE=/trusted/path` reuses artifact-specific Lake output, and `AVER_CERT_PRELUDE_CACHE=/trusted/path` reuses the build of the artifact-independent wall. A cache directory is trusted local state, so it must not be writable by an attacker. Even with caches, every run writes and elaborates a fresh checker witness, and `verify` still runs the final replay.
 
-Every Lean toolchain step (the certificate proof build, the artifact witness
-check, and the final kernel replay) runs under a wall-clock limit of 15
-minutes, so a degenerate or hostile certificate cannot hang `verify` or
-`check` forever: when a step exceeds the limit, its entire process tree is
-stopped and the certificate is declined. `AVER_CERT_PHASE_TIMEOUT_SECS=N`
-replaces the per-step limit, for slower machines or a first run that still
-installs the pinned toolchain.
+`AVER_CERT_BUILD_JOBS=N` lets `lake build` run N Lean workers at once. The default is 1. A package with more than 32 planned functions spreads its byte facts over several modules, and bridge step lemmas always come in slices of 24 per module. Lake builds those modules in parallel. Each worker gets the full heap ceiling, `AVER_CERT_MEMORY_LIMIT_MB` (16384 by default), so the two settings multiply.
+
+`AVER_CERT_TIMINGS=1` prints how long each Lean step took, with Lake's per-module build times, to standard error. It is a diagnostic and does not change the verdict.
+
+Every Lean step (the proof build, the witness check and the final replay) runs under a wall-clock limit of 15 minutes. When a step exceeds it, its whole process tree is stopped and the certificate is declined. `AVER_CERT_PHASE_TIMEOUT_SECS=N` replaces the limit, for slow machines or a first run that still installs the toolchain.
 
 ## What a successful certification means
 
@@ -128,159 +79,75 @@ AverCert.Artifact.certificate :
   AverCert.AcceptedArtifact.accepted AverCert.Artifact.data
 ```
 
-The checker binds it to the named local root
-`AverCertChecker.checked`. Acceptance establishes that:
+The checker binds it to its own root `AverCertChecker.checked`. Acceptance establishes that:
 
-- the proof concerns the exact bytes supplied to `aver-cert`;
-- every certified export has one admitted class and its standard domain,
-  codomain, representation relations, host behavior, and model constraints;
-- policy, termination evidence, totality role, and disclosed runtime contracts
-  are the canonical values derived from the checked plans;
-- certified exports, other exports, imports/capabilities, the start function,
-  and the reachable certified call surface are accounted for;
-- the proof uses no Lean axioms outside the allowed whitelist:
-  `propext`, `Classical.choice`, and `Quot.sound`.
+- the proof is about the exact bytes given to `aver-cert`;
+- every certified export's code entry is the wall's lowering of its plan, and the plan type-checks at the export's declared signature;
+- the obligations in the manifest are exactly the ones the wall derives from the plans, policy and termination witness included, and the listed runtime contracts are exactly the ones the wall derives from the helpers the lowered code calls and from the L3 obligations;
+- the declared type layout matches the type section, and every string literal matches its data segment;
+- the exports, imports, start function and the call closure of the certified exports are accounted for;
+- the proof uses no axiom outside `propext`, `Classical.choice` and `Quot.sound`.
 
-Exports outside the admitted fragment are listed as uncertified with a reason.
-The certificate makes no behavioral claim about them.
+For each certified export the theorem says: for every carrier specification and every set of runtime helpers that obey the named contracts, if the emitted function returns on well-typed, represented arguments, the result represents what the plan returns at the same fuel. Int arguments are assumed to be canonical carriers. Every carrier the runtime builds is canonical; a host that fabricates its own carrier words is outside the claim.
+
+Exports the wall does not admit are listed as uncertified with a reason. The certificate makes no claim about them.
 
 ### Certification levels
 
-Each obligation carries one of two policies:
-
 | Level | Policy | Guarantee |
 |---|---|---|
-| L1 | `simulatesModel` | If evaluation returns a value, it is represented by the declared model result. Named runtime contracts remain explicit premises. |
-| L3 | `simulatesModelTotally` | The simulation is total for the admitted inputs, using Lean-derived termination evidence and the required total runtime contracts. |
+| L1 | `simulatesModel` | If the function returns, its result represents the plan's result. The named runtime contracts are explicit premises. |
+| L3 | `simulatesModelTotally` | L1, and the function returns on every well-typed input within fuel `n.natAbs + 1`, where `n` is the first Int argument. It also assumes the add and sub helpers (and mul, when a member multiplies) always return. |
 
-A package containing both policies reports `mixed L1/L3`. A totality claim is
-never inferred from a JSON label: `ClaimAxes.lean` derives its policy,
-termination witness, totality role, and exact contract set from the checked
-family plans.
+L3 is derived by the wall (`GrammarTotal.checkTermGroup`), never read from a manifest label. It admits one recursion shape per call group: every parameter is an Int, the result is an Int or a Bool, the body is `if n <= 0 then base else step`, the arms use only literals, parameters, Int `+ - *` and calls to group members, and every such call passes `n - 1` as its first argument. A package with both policies reports `mixed L1/L3`.
 
-### Admitted families
+### What is admitted
 
-The current schema admits these fail-closed families:
+Every certified export reports one class, `source-plan-v1`, with facets the wall derives from the plan: `recursive`, `mutual`, `calls`, `records`, `variants`, `strings`, `floats`.
 
-| Manifest class | Certified shape |
-|---|---|
-| `expr-fragment-v1` | Source-projectable scalar and representation fragments with canonical lowering. Bodies that call a runtime helper or return an Int carrier route through the record projection-compute face, whose model IS the checked plan; its certified domain assumes canonical carriers (see [certificate-format.md](certificate-format.md) §4.3). |
-| `verbatim-string-eq` | Audited `String.eq` leaf |
-| `verbatim-string-concat` | Audited `String.concat` leaf |
-| `adt-constructor` | Admitted user-ADT constructor shapes |
-| `self-recursive` | Single-argument integer recursion |
-| `multi-argument self-recursive` | Integer accumulator recursion |
-| `mutual-recursive` | Admitted mutually recursive integer SCCs |
-| `verbatim-dispatch` | Verbatim ADT/variant dispatch |
-| `int-dispatch` | Integer-valued ADT/variant dispatch |
-| `field-projection` | Byte- and type-bound field projection |
-| `cross-function-composition` | Admitted direct-call composition closure |
+The plan grammar is the admitted subset of optimized MIR. It covers Int, Bool, Float and String literals; locals and named `let`; calls to other planned functions, including self and mutual recursion and tail calls; Int `+ - *` and the six comparisons; Bool `and`, `or`, `not`, `==` and `!=`; Float comparisons other than `!=`; String `+`, `==`, `!=` and interpolation of String parts; `if`; records with two or more fields (create in declared order, and project); user variants, `Option` and `Result` (construct and match); matches on Int, Bool and String literals and flat tuple destructuring; `Option.withDefault` and `Result.withDefault`; `Option.withDefault(Vector.get(v, i), <literal>)`; `Int.div` and `Int.mod` by a nonzero literal, or fused under `Result.withDefault` with an Int default; the empty list and `List.prepend`.
 
-Plans must lower canonically to the function selected from the actual module.
-Unsupported instructions, signatures, host roles, types, call shapes, or
-noncanonical encodings are declined. Exact-bit Float results involving
-WebAssembly operations with nondeterministic NaN payloads are also declined
-unless the admitted result relation can state the weaker behavior honestly.
+A function is declined, with the MIR node or type named in the reason, when it has effects, uses raw i64 slots, negates an Int (the negation helper has no wall template yet), uses an Int literal outside the i64 range, does Float arithmetic, calls through a function value, matches on a list, or uses any other node outside the subset. A function is also declined when the producer's check finds that its plan does not lower to exactly its code entry.
 
 ## Package format
 
-The public package format is version `1`, and its certificate statement
-schema is version `2` (schema `2` made the subject's `hostRoleTable`
-optional: a module without the Int carrier runtime declares `null`, and the
-checker pins that declaration against a byte-derived proof that the module
-carries no Int box helper; a module whose host-role scan the decoder cannot
-complete satisfies no manifest declaration at all).
-A generated `cert/` directory contains:
+The package format is version `1` and the statement schema is version `9`. A `cert/` directory contains:
 
-- `cert-manifest.json`, a transport and reporting envelope;
-- `Plans.lean`, the sole authoritative plan data;
-- `Laws.lean` and `Bridge.lean` when the package claims laws or
-  plan-equals-source bridges;
-- artifact-specific model, manifest, certificate, and proof modules.
+- `cert-manifest.json`, the transport and report envelope;
+- `Plans.lean`, the plans and the declared type layout;
+- `Manifest.lean`, `Module.lean`, the `Artifact*.lean` byte-fact modules, `Final.lean` and `ArtifactCertificate.lean`;
+- the model modules under `AverModel/`, `Bridge.lean` with its proof modules, and `Laws.lean`, when the package declares source-bridges or law-claims.
 
-There are no public `fragments/*.plan` sidecars. There is also no
-certificate-supplied `ArtifactBytes.lean`: the verifier regenerates that module
-from the `.wasm` file it actually reads.
+The package does not supply `ArtifactBytes.lean`. The verifier generates it from the file it reads.
 
-`cert-manifest.json` records the format/schema versions, artifact hash,
-embedded-wall identity, report candidates, declared uncertified exports,
-capabilities, and other envelope metadata. It does not contain an
-authoritative plan AST. During verification, the checker requires its report
-view to agree with the Lean manifest and the class/order derived by
-`StandardFace.lean`. The manifest's `dom`/`cod` strings are display-only and
-are not pinned by the checker witness, so the CERTIFIED/CHECKED report prints
-only the pinned class; `aver cert explain` shows the declared face, explicitly
-labeled as manifest-declared.
+The manifest's `format.wall_id` selects one exact Lean wall embedded in the verifier. Package files cannot replace the wall, the toolchain, the build files, the artifact bytes or the checker witness.
 
-The manifest's `format.wall_id` selects one exact soundness wall embedded in
-the verifier. Files from the certificate package cannot replace the wall,
-toolchain, build configuration, generated artifact bytes, or checker witness.
+Schema 9 rejects every earlier package. Regenerate old packages with `aver compile --certify` from the matching compiler before checking them with a schema-9 verifier.
 
-The Lean 4.34.0 upgrade changes this identity. Regenerate packages made with
-the previous toolchain using the updated `aver compile --certify` producer
-before checking them with the updated verifier. The package and statement
-schema versions remain unchanged.
+## Plans, source functions and law-claims
+
+The model of every obligation is the plan. The report line of each export says so: `model: plan (the export's optimized MIR body)`.
+
+A source-bridge connects the plan to the function you wrote. It is a kernel-checked theorem that the plan computes the transpiled source function `<Module>.<fn>` through source-value encoders. The manifest declares only its structure: the export, the source function, a statement kind and one encoder per parameter and result. The verifier writes the statement from that structure and requires the package to prove exactly it.
+
+There are two kinds. An `exact` bridge says that, above some fuel, the plan returns the encoded source result on every encoded argument; the producer uses it when the call closure has no recursion. An `adequate` bridge says that whatever the plan returns is the encoded source result. It is not a termination claim: a plan that never returns satisfies it.
+
+A bridge is credited when its pin elaborates and its proof uses only whitelisted axioms. `check` and `verify` report `source-bridges: N of M credited`. `explain` then prints `model: plan ≡ <Module>.<fn>` for the export (with `wherever the plan returns` for an adequate bridge) and shows the statement the checker rendered.
+
+A law-claim is a universal law of the source model, pinned together with the certificate. Its corollary is `(law) ∧ Holds`, reported as `law-claims: N of M credited`. When every source function the law mentions has a bridge, the claim gets a second corollary that also conjoins those bridges, reported as `bridged-laws: N of M credited`. The two counters move separately: a bridge that fails costs the bridge and the bridged corollary, never the law. Neither counter changes the verdict or the exit code.
+
+Two things stay outside the bridge. The model definition `<Module>.<fn>` is emitted by the compiler with the certificate, so a bridge is proved relative to that definition. And the producer chooses the encoders, which are part of the statement. An export without a credited bridge keeps the weaker position: that its plan is your function rests on the compiler that printed it. `explain` lists why each such export got no bridge, from the package's `sourceBridgesDeclined` list.
 
 ## Trust and explicit limits
 
-The verification TCB consists of the small standalone `aver-cert` orchestration
-path, the one retained `wasmparser::Validator` validity check, the selected
-checker-owned Lean wall, Lean 4.34's elaborator/kernel and build tools, the
-approved runtime contracts, and the cryptographic hash binding. The positive
-verdict does not run the producer classifier, disassembler, or Rust obligation
-rederivation.
+A verdict trusts the small `aver-cert` Rust path, the one retained `wasmparser::Validator` check, the embedded Lean wall, the Lean 4.34 toolchain, SHA-256, and the named runtime contracts. It does not run the producer, the plan printer or any Rust reconstruction of the claim.
 
-The Lean wall independently checks the relevant byte slices and plan
-lowerings. `StandardFace.lean` fixes the admitted semantic face and host
-tables; `ClaimAxes.lean` fixes policy, termination, totality role, and runtime
-contracts. The artifact proof is then checked through the named root and its
-axiom closure.
+The runtime contracts say what the Int, String and index helpers compute. The certificate pins each helper's body to a template, but it does not prove the contracts. The bignum sub-routines those helpers call are not pinned at all, and the theorem treats every helper as a pure function that changes nothing the caller can reach.
 
-The Lake build and witness elaboration import the built `.olean` closure.
-`leanchecker --fresh` then kernel-checks that whole closure in a fresh Lean
-declaration environment. It is part of the same Lean toolchain, not a
-separately implemented or independently distributed kernel checker.
+L3 "returns" is about the wall's interpreter, where fuel counts nested calls. A real engine can still run out of stack or memory on large inputs.
 
-The canonical Elan installation directory is a local trust anchor. Every Lake,
-Lean, and leanchecker subprocess otherwise starts with a cleared environment,
-the exact pinned toolchain, disabled implicit Lake caches, and checker-owned
-temporary paths. Ambient Lean/Lake search paths and toolchain overrides are not
-forwarded.
+`leanchecker --fresh` replays the proof in a fresh environment, but it ships with the same Lean toolchain. The scheme does not yet have a second, independently written kernel.
 
-Exports certified through the projection-compute face are certified against a
-PLAN the compiler derived from your source, and the report line prints that
-plan. Where the package carries a plan-equals-source bridge and the verifier
-credits it, the identification of that plan with the function you wrote is a
-kernel-checked theorem of the package. The verifier does not read the wording
-of that theorem out of the package: the certificate declares the structure of a
-bridge — which export, which source function, and one encoder per argument and
-result out of a closed set — and the verifier writes the statement itself and
-requires the package to prove exactly that. `aver cert check` and `aver cert
-verify` report `source-bridges: N of M credited`, and `aver cert explain`
-prints `model: plan` or `model: plan ≡ <Module>.<fn> (credited source-bridge;
-see SOURCE-BRIDGES)` on each such export, with the rendered statement itself
-under that heading — the credit means that statement is proven without foreign
-axioms, so the statement, encoders included, is what to read. What the bridge
-does not settle is that the model definition it names is your source: that
-definition is emitted by the compiler alongside the certificate, which is the
-same disclosure a law-claim already carries.
+The canonical Elan installation is a local trust anchor. Every Lake, Lean and leanchecker subprocess otherwise starts with a cleared environment, the exact pinned toolchain, no implicit Lake caches and checker-owned temporary paths.
 
-A law about bridged functions gets a second corollary that conjoins the law,
-the bytes, and those identities, counted separately as `bridged-laws: N of M
-credited`. The two counters are apart on purpose: a bridge the checker cannot
-finish costs the bridge and the bridged corollary, never the law itself.
-
-An export with no bridge, or with an uncredited one, keeps the older and weaker
-position: that the plan is your function rests on the compiler that derived it.
-The shapes without a bridge today are the ones the bridge encoders do not
-reach — a nested record, a record with a non-Int field, and Float, String or
-ADT arguments and results. `aver cert explain` prints why each such export was
-declined, from the package's own `sourceBridgesDeclined` list.
-
-Some source meaning cannot be reconstructed from WebAssembly alone. In
-particular, ADT domain/representation and model declarations remain explicit
-read declarations. They are not silently inferred from bytes; the theorem is
-conditional on their stated meaning, while the wall still enforces the
-standard byte-level face and non-vacuity checks available for that family.
-
-See [Certification Architecture](certification-architecture.md) for the exact data flow and trust boundary, and the [Certificate Format Specification](certificate-format.md) for the field-by-field normative reference.
+The [Certificate Format Specification](certificate-format.md), section 12, lists every trusted item.
