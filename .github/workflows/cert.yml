@@ -68,7 +68,7 @@ jobs:
           # `lake`, and its Lean-backed tests would skip there without a word.
           # The one exception carries no Lean test.
           import glob, os
-          no_lean = {'cert_delegate_spec'}
+          no_lean = {'cert_delegate_spec', 'cert_one_build_spec'}  # no Lean: byte identity runs in ci.yml's wasm-gc lane
           laned = {lane['suite'] for lane in lanes}
           for path in sorted(glob.glob('tests/cert_*.rs')):
               suite = os.path.splitext(os.path.basename(path))[0]
