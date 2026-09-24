@@ -2980,6 +2980,12 @@ fn display_safe(value: &str) -> String {
         .collect()
 }
 
+/// Printed by `explain` under every certificate with a certified export.
+const INT_INPUT_DOMAIN_LINE: &str = "domain: every Int input (an argument, or a field, \
+     element or payload inside one) is assumed to be a canonical carrier word, the \
+     runtime's normal form; a non-canonical word is outside the certified domain. Every \
+     Int result is proved canonical.";
+
 pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> {
     let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
     println!("{}", "Artifact certificate".bold());
@@ -3000,6 +3006,13 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
         println!("    {}", export.face);
         println!("    {}", export.certified_model);
     }
+    // The one assumption every certified theorem makes about its INPUTS rather
+    // than about a helper: the wall's value relation reads an Int through
+    // `CanonRepr`, so an Int carrier word the host passes in is taken to be in
+    // the runtime's normal form. It is the same for every export, so it is
+    // stated once.
+    println!("\n{}", "Certified domain".yellow().bold());
+    println!("  {INT_INPUT_DOMAIN_LINE}");
     if !report.contracts.is_empty() {
         println!("\n{}", "Runtime contracts".yellow().bold());
         for contract in report.contracts {

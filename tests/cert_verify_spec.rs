@@ -1872,7 +1872,7 @@ fn cert_tripwire_declines_code_executing_token_in_cert_data() {
         "code-executing token in a data file must fail (o):\n{out}"
     );
     assert!(
-        out.contains("elaboration-executing") && out.contains("#eval"),
+        out.contains("contains refused construct `#eval`"),
         "wrong reason (o):\n{out}"
     );
 }
@@ -5373,11 +5373,11 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
 /// which `explain` prints from the text the checker rendered and pinned, never
 /// from the manifest (the manifest has no statement to print).
 ///
-/// (The retired record projection-compute face used to print a per-export
-/// "domain: Int leaves assumed in the runtime's normal form" line. Every
-/// export's Int inputs are now canonical carriers (`Grammar.SRepr` reads an
-/// Int through `CanonRepr`), and `explain` prints no domain line for any
-/// export.)
+/// The input domain is disclosed too. The retired record projection-compute
+/// face printed a per-export "domain: Int leaves assumed in the runtime's
+/// normal form" line; now every export's Int inputs are canonical carriers
+/// (`Grammar.SRepr` reads an Int through `CanonRepr`), so `explain` states
+/// that assumption once, for all exports, under "Certified domain".
 #[test]
 fn explain_states_the_record_compute_faces_certified_domain() {
     if Command::new("lake").arg("--version").output().is_err() {
@@ -5411,6 +5411,15 @@ fn explain_states_the_record_compute_faces_certified_domain() {
         &k5_dir.join("cert"),
     );
     assert!(ok, "k5 explain must accept the certificate:\n{explain}");
+    assert!(
+        explain.contains("Certified domain")
+            && explain.contains(
+                "domain: every Int input (an argument, or a field, element or payload \
+                 inside one) is assumed to be a canonical carrier word, the runtime's \
+                 normal form; a non-canonical word is outside the certified domain."
+            ),
+        "explain must disclose the canonical-carrier assumption on Int inputs:\n{explain}"
+    );
 
     let plus_block: Vec<&str> = explain
         .split("  Domain_Rational_plus\n")
@@ -5437,8 +5446,8 @@ fn explain_states_the_record_compute_faces_certified_domain() {
             && explain
                 .contains("Domain_Rational_plus  ≡ Domain.Rational.plus  (exact)  [credited]")
             && explain.contains(
-                "∃ o, _root_.AverCert.GrammarBridge.exportObligation _root_.AverCert.manifest \
-                 \"Domain_Rational_plus\""
+                "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \
+                 \"Domain_Rational_plus\" (fun (x : "
             ),
         "the rendered statement and its credit must be printed under SOURCE-BRIDGES:\n{explain}"
     );
