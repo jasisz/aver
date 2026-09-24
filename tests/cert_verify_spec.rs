@@ -1462,9 +1462,9 @@ fn cert_tripwire_declines_hash_rebind_to_foreign_module() {
     );
 }
 
-/// (e2) A1 hash rebind against a CLAIM-FREE certificate, whose Lean data
-/// builds green over any staged bytes: only the kernel witness's hash faces
-/// can catch this swap, so this gate keeps them exercised.
+/// (e2) A1 hash rebind against a CLAIM-FREE certificate: no plan claim can
+/// catch this swap, only the artifact-hash pin can, so this gate keeps it
+/// exercised.
 ///
 /// Compiles its own `certempty` fixture and never touches the shared
 /// `certprobe2` baseline, so it takes the lake check alone.
@@ -1479,10 +1479,13 @@ fn cert_tripwire_declines_hash_rebind_on_claim_free_cert() {
     //      obligations and ships no plan claims, so its Lean data builds green
     //      over any staged bytes. Appending an inert custom section changes the
     //      artifact hash without perturbing any byte-derived fact, and the JSON
-    //      pin is rebound to match — so ONLY the kernel witness's hash faces can
-    //      catch the swap: the theorems (and the manifest artifact-hash face) talk about
-    //      the ORIGINAL hash, not the checker-computed one. This keeps the
-    //      witness hash face exercised now that claim-covered certs die earlier.
+    //      pin is rebound to match — so ONLY the artifact-hash pin can catch the
+    //      swap: the package's Lean data still carries the ORIGINAL hash, and
+    //      the checker computes the new one from the staged bytes. Since the
+    //      checker renders `Module.lean` itself, the kernel meets that mismatch
+    //      as soon as the acceptance theorem is applied to the package data
+    //      (`artifactHash = CertModule.wasmSha256` fails `rfl`); before, it
+    //      surfaced in the witness's hash face. Either way it is the hash face.
     let empty_out = temp_dir("neg-e2-empty");
     let ec = aver_command()
         .current_dir(&repo_root)
@@ -1509,11 +1512,18 @@ fn cert_tripwire_declines_hash_rebind_on_claim_free_cert() {
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&w, &empty_out.join("cert"));
     assert!(!ok, "A1 hash rebind on claim-free cert must fail:\n{out}");
-    assert!(out.contains("does not bind"), "wrong reason (e2):\n{out}");
-    // The witness names the exact face the kernel rejected.
     assert!(
-        out.contains("AverCert.manifest.subject.artifactHash"),
-        "witness not exercised (e2):\n{out}"
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason (e2):\n{out}"
+    );
+    // The kernel names the exact face it rejected: the artifact hash.
+    assert!(
+        out.contains("manifest.subject.artifactHash"),
+        "hash face not exercised (e2):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "hash rebind credited (e2):\n{out}"
     );
 }
 
@@ -2677,7 +2687,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         "json should certify the widened data-segment functions:\n{report}"
     );
     assert!(
-        report.contains("law-claims: 10 of 10 credited"),
+        report.contains("law-claims: 11 of 11 credited"),
         "every json law-claim must pass its per-pin axiom audit:\n{report}"
     );
 

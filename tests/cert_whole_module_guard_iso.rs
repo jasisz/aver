@@ -483,9 +483,11 @@ fn weakened_arith_table_checks(cert_or_wall: &Path, copies: &[(&str, &[&str])]) 
     out
 }
 
-const CMP_NAME: &str = "      (roles.cmp == CertDecode.AddSub.cmpIdx n len) &&\n";
-const TO_INDEX_NAME: &str = "      (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&\n";
-const CARRIER_STATE: &str = "      (CertDecode.carrierState n len == some (some p.carrier)) &&\n";
+const CMP_NAME: &str = "      (roles.cmp == _root_.CertDecode.AddSub.cmpIdx n len) &&\n";
+const TO_INDEX_NAME: &str =
+    "      (roles.toIndex == _root_.CertDecode.AddSub.toIndexIdx n len) &&\n";
+const CARRIER_STATE: &str =
+    "      (_root_.CertDecode.carrierState n len == some (some p.carrier)) &&\n";
 const CMP_TEMPLATE: &str = "      arithRoleCheck n len .cmp roles.cmp p &&\n";
 const TO_INDEX_TEMPLATE: &str = "      arithRoleCheck n len .toIndex roles.toIndex p &&\n";
 const EQ_TEMPLATE: &str = "      arithRoleCheck n len .eq roles.eq p &&\n";
