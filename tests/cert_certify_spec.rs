@@ -11,6 +11,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::aver_command;
 
@@ -1107,7 +1109,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
 
 #[test]
 fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify test: `lake` not available");
         return;
     }
@@ -1312,7 +1314,7 @@ const HOSTILE_MUTUAL_MODEL_SHARDS: usize = 2;
 ///
 /// Returns `None` when `lake` is unavailable; the caller then skips, as before.
 fn hostile_models_baseline(prefix: &str) -> Option<ScratchDir> {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping hostile-model test: `lake` not available");
         return None;
     }
@@ -1644,7 +1646,7 @@ fn cert_hostile_model_fueled_recursion_definition_loses_its_bridge() {
 
 #[test]
 fn certify_straight_line_fixture_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify test: `lake` not available");
         return;
     }
@@ -1710,7 +1712,7 @@ fn certify_declines_overflowing_multiplication_recursion() {
 
 #[test]
 fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify recursion test: `lake` not available");
         return;
     }
@@ -1799,7 +1801,7 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
 
 #[test]
 fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify mutual-recursion test: `lake` not available");
         return;
     }
@@ -1841,7 +1843,7 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
 
 #[test]
 fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify verbatim-variant-dispatch test: `lake` not available");
         return;
     }
@@ -1924,7 +1926,7 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
 
 #[test]
 fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify String.concat host-contract test: `lake` not available");
         return;
     }
@@ -1971,7 +1973,7 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
 
 #[test]
 fn certify_composition_fixture_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify composition test: `lake` not available");
         return;
     }
@@ -2077,7 +2079,7 @@ fn assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(shard: usize) 
             && NONRECURSIVE_ADT_WITNESS_SHARDS <= NONRECURSIVE_ADT_WITNESS_CASES.len(),
         "shard {shard} of {NONRECURSIVE_ADT_WITNESS_SHARDS} covers no ADT witness fixture: keep the shard count at most the list length, one test function per shard"
     );
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify ADT test: `lake` not available");
         return;
     }
@@ -2174,7 +2176,7 @@ fn certify_let_named_shapes_certify_and_lake_build() {
         "no let-named shape may decline to source-level-only: {manifest:#}"
     );
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping letnamed lake build: `lake` not available");
         return;
     }
@@ -2208,7 +2210,7 @@ fn certify_arity_three_fragment_certifies_and_lake_builds() {
         "the bridge must decode all three parameters"
     );
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping arity3 lake build: `lake` not available");
         return;
     }
@@ -2223,7 +2225,7 @@ fn certify_arity_three_fragment_certifies_and_lake_builds() {
 /// would fail its own byte equality here.
 #[test]
 fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping s33 boundary test: `lake` not available");
         return;
     }
@@ -2788,7 +2790,7 @@ fn certify_nested_module_models_close_end_to_end() {
     // modules must import it by its dotted module name (never the
     // path-shaped `import AverModel/Nested/Deep/Util`) and name its functions
     // by the QUALIFIED name the model declares, and the package must build.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping nested-module certify test: `lake` not available");
         return;
     }
@@ -2898,7 +2900,7 @@ fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
         "the nested comparison shape must be the plan:\n{block}"
     );
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping clockrange check: `lake` not available");
         return;
     }
@@ -2917,7 +2919,7 @@ fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
 /// recursion under an `if` inside a match arm.
 #[test]
 fn cert_projects_payment_ops_package_checks() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify projects test: `lake` not available");
         return;
     }

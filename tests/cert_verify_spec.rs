@@ -74,6 +74,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::aver_command;
 
@@ -195,7 +197,7 @@ fn find_named_file(root: &Path, name: &str) -> Option<PathBuf> {
 
 #[test]
 fn cert_verify_rebuilds_after_cached_olean_corruption() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cert DATA-cache corruption test: `lake` not available");
         return;
     }
@@ -495,7 +497,7 @@ theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := trivial\n\n\
 /// `true` when `lake` is on PATH. Prints the skip note otherwise, exactly as
 /// the single tripwire test did before the split.
 fn tripwire_lake_available() -> bool {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cert verify test: `lake` not available");
         return false;
     }
@@ -2357,7 +2359,7 @@ fn cert_tripwire_declines_non_final_constructor_struct() {
 /// in `Plans.lean` declines the package.
 #[test]
 fn cert_verify_declines_tampered_type_table() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping type-table tamper test: `lake` not available");
         return;
     }
@@ -2409,7 +2411,7 @@ fn cert_verify_declines_tampered_type_table() {
 /// pin must close, while a one-byte-flipped expected entry must fail `rfl`.
 #[test]
 fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping big-Nat scale regression: `lake` not available");
         return;
     }
@@ -2611,7 +2613,7 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
 
 #[test]
 fn cert_verify_declines_tampered_array_new_data_operands() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping array.new_data tamper test: `lake` not available");
         return;
     }
@@ -2798,7 +2800,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 ///
 /// Returns `None` when `lake` is unavailable; the caller then skips, as before.
 fn plans_authority_baseline(prefix: &str) -> Option<ScratchDir> {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Plans.lean authority test: `lake` not available");
         return None;
     }
@@ -3073,7 +3075,7 @@ fn cert_plans_authority_declines_tampered_lean_raw_plan() {
 /// JSON alike) must be DECLINED — each role is pinned to its helper template.
 #[test]
 fn cert_verify_declines_host_role_relabel_in_plans_lean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping host-role relabel test: `lake` not available");
         return;
     }
@@ -3123,7 +3125,7 @@ fn cert_verify_declines_host_role_relabel_in_plans_lean() {
 /// literal where `intLessZero`'s `Bool` result stands must be DECLINED.
 #[test]
 fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping ill-typed plan test: `lake` not available");
         return;
     }
@@ -3149,7 +3151,7 @@ fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
 
 #[test]
 fn cert_verify_declines_tampered_string_eq_helper_shape() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping String.eq helper tamper test: `lake` not available");
         return;
     }
@@ -3315,7 +3317,7 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
 
 #[test]
 fn cert_verify_declines_tampered_string_concat_helper_shape() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping String.concat helper tamper test: `lake` not available");
         return;
     }
@@ -3689,7 +3691,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
 /// carried as a free field.
 #[test]
 fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping carrierless String.concat test: `lake` not available");
         return;
     }
@@ -3842,7 +3844,7 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
 /// must NOT print the green CERTIFIED path and must exit nonzero (fail-closed).
 #[test]
 fn empty_cert_is_admission_only_and_exits_nonzero() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping empty-cert test: `lake` not available");
         return;
     }
@@ -3990,7 +3992,7 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
 /// and out of `explain`.
 #[test]
 fn unpinned_manifest_dom_cod_never_reach_the_trusted_report() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping unpinned manifest-face report test: `lake` not available");
         return;
     }
@@ -4072,7 +4074,7 @@ fn unpinned_manifest_dom_cod_never_reach_the_trusted_report() {
 /// fields are read somewhere), but it is not the emitted code → DECLINED.
 #[test]
 fn adt_witness_body_mutation_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping ADT plan-mutation test: `lake` not available");
         return;
     }
@@ -4130,7 +4132,7 @@ fn adt_witness_body_mutation_is_declined() {
 /// different order than the emitted code → DECLINED.
 #[test]
 fn variant_dispatch_body_mutation_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping variant-dispatch plan-mutation test: `lake` not available");
         return;
     }
@@ -4195,7 +4197,7 @@ fn variant_dispatch_body_mutation_is_declined() {
 /// every caller's claim unfounded.
 #[test]
 fn composition_callee_mutation_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping composition-mutation test: `lake` not available");
         return;
     }
@@ -4249,7 +4251,7 @@ fn composition_callee_mutation_is_declined() {
 /// must reach a planned function of the same or an earlier group.
 #[test]
 fn composition_orphan_member_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping composition orphan-member test: `lake` not available");
         return;
     }
@@ -4320,7 +4322,7 @@ fn composition_orphan_member_is_declined() {
 /// projecting the other field of `User` in `userName` must be DECLINED.
 #[test]
 fn cert_verify_declines_flipped_field_projection_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping field-projection plan tamper test: `lake` not available");
         return;
     }
@@ -4343,7 +4345,7 @@ fn cert_verify_declines_flipped_field_projection_plan() {
 /// able to explain the same bytes, so it is DECLINED.
 #[test]
 fn cert_verify_declines_relabeled_projection_source_types() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping projection relabel tamper test: `lake` not available");
         return;
     }
@@ -4367,7 +4369,7 @@ fn cert_verify_declines_relabeled_projection_source_types() {
 /// no longer its function's code entry.
 #[test]
 fn cert_verify_declines_tampered_recursion_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping recursion-plan tamper test: `lake` not available");
         return;
     }
@@ -4430,7 +4432,7 @@ fn cert_verify_declines_tampered_recursion_plan() {
 /// (`AcceptedArtifact.axesOf`) — so no manifest edit can move a policy.
 #[test]
 fn cert_verify_declines_tampered_termination_manifest() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping termination manifest round-trip test: `lake` not available");
         return;
     }
@@ -4496,7 +4498,7 @@ fn cert_verify_declines_tampered_termination_manifest() {
 /// to `isEven`'s real code entry, or calls outside the planned functions.
 #[test]
 fn cert_verify_declines_tampered_mutual_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping mutual-plan tamper test: `lake` not available");
         return;
     }
@@ -4553,7 +4555,7 @@ fn cert_verify_declines_tampered_mutual_plan() {
 /// the per-plan acceptance declines even though every plan and byte is honest.
 #[test]
 fn cert_verify_declines_broken_mutual_scc_membership() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping mutual-SCC group test: `lake` not available");
         return;
     }
@@ -4607,7 +4609,7 @@ fn cert_verify_declines_broken_mutual_scc_membership() {
 /// literal-to-segment table are all bound to the bytes.
 #[test]
 fn cert_verify_declines_tampered_verbatim_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping verbatim-plan tamper test: `lake` not available");
         return;
     }
@@ -4688,7 +4690,7 @@ fn cert_verify_declines_tampered_verbatim_plan() {
 /// and the declared result kind remain bound to the emitted artifact bytes.
 #[test]
 fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping scalar-f64 verbatim test: `lake` not available");
         return;
     }
@@ -4861,7 +4863,7 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
 /// permutation nor a hostile host builder has a surface to tamper.
 #[test]
 fn cert_verify_declines_tampered_int_dispatch_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping int-dispatch-plan tamper test: `lake` not available");
         return;
     }
@@ -4928,7 +4930,7 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
 /// attacker-editable package data is DECLINED, never re-credited.
 #[test]
 fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping fused vector-read verify test: `lake` not available");
         return;
     }
@@ -5059,7 +5061,7 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
 /// passthrough of an input local (`minInt`, `bigger`).
 #[test]
 fn cert_verify_certifies_the_five_int_comparison_witnesses() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Int-comparison witness verify test: `lake` not available");
         return;
     }
@@ -5127,7 +5129,7 @@ fn cert_verify_certifies_the_five_int_comparison_witnesses() {
 /// `eq` to its template, and the plans lower to calls at the declared indices.
 #[test]
 fn cert_verify_declines_int_comparison_role_tampers() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Int-comparison tamper test: `lake` not available");
         return;
     }
@@ -5207,7 +5209,7 @@ fn cert_verify_declines_int_comparison_role_tampers() {
 /// DECLINE — the #1209 tamper class, now caught by `funcTypeMatchesExact`.
 #[test]
 fn cert_tripwire_declines_tampered_record_compute_signature() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping record-compute tamper test: `lake` not available");
         return;
     }
@@ -5297,7 +5299,7 @@ fn cert_tripwire_declines_tampered_record_compute_signature() {
 /// kind — changes the lowering the wall pins to the code entry.
 #[test]
 fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping sign-template tamper test: `lake` not available");
         return;
     }
@@ -5375,7 +5377,7 @@ fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
 /// that assumption once, for all exports, under "Certified domain".
 #[test]
 fn explain_states_the_record_compute_faces_certified_domain() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping explain model-line test: `lake` not available");
         return;
     }
@@ -5460,7 +5462,7 @@ fn explain_states_the_record_compute_faces_certified_domain() {
 /// the export verdict and exit code stand.
 #[test]
 fn cert_tripwire_declines_tampered_law_claims() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping law-claims tamper test: `lake` not available");
         return;
     }
@@ -5690,7 +5692,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
 /// unit tests in `aver-cert`.
 #[test]
 fn cert_tripwire_declines_tampered_source_bridges() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping source-bridge tamper test: `lake` not available");
         return;
     }

@@ -14,6 +14,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::aver_command;
 
@@ -29,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn lake_available() -> bool {
-    Command::new("lake").arg("--version").output().is_ok()
+    lean_required::lake_available()
 }
 
 /// Compile `fixture` (a path under the repository root) with `--certify`,

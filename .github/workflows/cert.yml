@@ -63,6 +63,17 @@ jobs:
                   bad.append(f"{suite} {family}: expected 1..{n}, got {sorted(seen)}")
           if not any(lane.get('smoke') for lane in lanes):
               bad.append("no lane is marked smoke — every pull request would run nothing")
+          # Every certificate suite runs here, where Lean is installed. A suite
+          # without a lane would run only in ci.yml, whose runners have no
+          # `lake`, and its Lean-backed tests would skip there without a word.
+          # The one exception carries no Lean test.
+          import glob, os
+          no_lean = {'cert_delegate_spec'}
+          laned = {lane['suite'] for lane in lanes}
+          for path in sorted(glob.glob('tests/cert_*.rs')):
+              suite = os.path.splitext(os.path.basename(path))[0]
+              if suite not in laned and suite not in no_lean:
+                  bad.append(f"{suite} has no lane in .github/cert-lanes.json")
           if bad:
               print("\n".join(bad)); sys.exit(1)
           print(f"{len(lanes)} lanes, {len(groups)} partitioned families, all complete")
@@ -75,8 +86,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # A pull request runs the smoke lanes only: the five cheapest that
-          # still reach all four suites, about five minutes of wall clock. They
+          # A pull request runs the smoke lanes only: the cheap ones that
+          # still reach every suite, plus the hardening tampers and the
+          # guard-isolation lanes, whose failures are soundness regressions. They
           # are marked in .github/cert-lanes.json rather than listed here, so
           # the full set stays the single source and a lane cannot be dropped
           # from one place and kept in the other.
@@ -146,6 +158,9 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
       RUSTFLAGS: -C debuginfo=0
+      # Lean is installed on these runners, so a certificate test that finds
+      # no `lake` fails instead of skipping.
+      AVER_CERT_REQUIRE_LEAN: '1'
     steps:
       - uses: actions/checkout@v5
 
@@ -233,7 +248,7 @@ jobs:
 
       - name: Run certification suite
         if: matrix.mode == 'cargo'
-        run: cargo test -p aver-lang --features wasm --test ${{ matrix.suite }}
+        run: cargo test -p aver-lang --features ${{ matrix.features || 'wasm' }} --test ${{ matrix.suite }}
 
       - name: Run certification suite lane
         # Filtering happens before slice partitioning. Each family filter (one
@@ -248,6 +263,6 @@ jobs:
         env:
           AVER_CERT_PHASE_TIMEOUT_SECS: ${{ matrix.phase_timeout_secs || 900 }}
         run: >-
-          cargo nextest run -p aver-lang --features wasm --test ${{ matrix.suite }}
+          cargo nextest run -p aver-lang --features ${{ matrix.features || 'wasm' }} --test ${{ matrix.suite }}
           -E '${{ matrix.filter }}'
           --partition slice:${{ matrix.partition }}

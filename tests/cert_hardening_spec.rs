@@ -30,6 +30,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 #[path = "support/scratch_dir.rs"]
 mod scratch_dir;
 
@@ -37,7 +39,6 @@ use aver_cert::bridge_statement::{BridgeKind, SourceEncoder, render_bridge_state
 use aver_cmd::aver_command;
 use scratch_dir::{ScratchDir, temp_dir};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const TINY: &str = "module Tiny
     intent = \"Two bridged exports with one law each.\"
@@ -64,7 +65,7 @@ verify double law isAddTwice
 ";
 
 fn lake_available() -> bool {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cert hardening test: `lake` not available");
         return false;
     }

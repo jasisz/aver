@@ -105,7 +105,9 @@ jobs:
           - name: aver-lang unit and docs
             command: cargo test -p aver-lang --lib --bins && cargo test -p aver-lang --doc
           - name: workspace crates
-            command: cargo test --workspace --exclude aver-lang
+            # The workspace test builds aver-cert with its default `verify`
+            # feature only; the producer's unit tests need `engine` as well.
+            command: cargo test --workspace --exclude aver-lang && cargo test -p aver-cert --lib --all-features
           - name: integrations 1/4
             command: python3 tools/ci_test_shard.py 0 4
           - name: integrations 2/4
