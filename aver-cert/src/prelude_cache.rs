@@ -82,6 +82,11 @@ impl PristineWallCache {
     }
 }
 
+/// Whether `AVER_CERT_PRELUDE_CACHE` names a cache directory.
+pub(crate) fn cache_configured() -> bool {
+    cache_store().is_some()
+}
+
 fn cache_store() -> Option<PathBuf> {
     let value = std::env::var_os(CACHE_ENV)?;
     let text = value.to_string_lossy();

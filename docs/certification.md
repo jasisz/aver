@@ -62,7 +62,7 @@ For wasip2 the manifest hash is the hash of the whole component. The manifest de
 
 ### Environment variables
 
-Build caches are off by default. `AVER_CERT_DATA_CACHE=/trusted/path` reuses artifact-specific Lake output, and `AVER_CERT_PRELUDE_CACHE=/trusted/path` reuses the build of the artifact-independent wall. The data cache keys each package module on its source and the package modules it imports, so after a change to one function the modules that do not depend on it are reused. Lake still rebuilds any restored module whose inputs differ. A cache directory is trusted local state, so it must not be writable by an attacker. Even with caches, every run writes and elaborates a fresh checker witness and runs the audit program, and `verify` still runs the final replay.
+Build caches are off by default. `AVER_CERT_DATA_CACHE=/trusted/path` reuses artifact-specific Lake output, and `AVER_CERT_PRELUDE_CACHE=/trusted/path` reuses the build of the artifact-independent wall. The data cache keys each package module on its source and the package modules it imports, so after a change to one function the modules that do not depend on it are reused. Lake still rebuilds any restored module whose inputs differ. A cache directory is trusted local state, so it must not be writable by an attacker. Only `check` uses them: `verify` ignores both variables, prints a notice, and builds from the staged sources alone. Every run writes and elaborates a fresh checker witness and runs the audit program, and `verify` runs the final replay.
 
 `AVER_CERT_BUILD_JOBS=N` lets `lake build` run N Lean workers at once. The default is 1. A package with more than 32 planned functions spreads its byte facts over several modules, and bridge step lemmas always come in slices of 24 per module. Lake builds those modules in parallel. Each worker gets the full heap ceiling, `AVER_CERT_MEMORY_LIMIT_MB` (16384 by default), so the two settings multiply.
 
@@ -115,10 +115,10 @@ The package format is version `1` and the statement schema is version `9`. A `ce
 
 - `cert-manifest.json`, the transport and report envelope;
 - `Plans.lean`, the plans and the declared type layout;
-- `Manifest.lean`, `Module.lean`, the `Artifact*.lean` byte-fact modules, `Final.lean` and `ArtifactCertificate.lean`;
+- `Manifest.lean`, the `Artifact*.lean` byte-fact modules, `Final.lean` and `ArtifactCertificate.lean`;
 - the model modules under `AverModel/`, `Bridge.lean` with its proof modules, and `Laws.lean`, when the package declares source-bridges or law-claims.
 
-The package does not supply `ArtifactBytes.lean`. The verifier generates it from the file it reads.
+The package does not supply `ArtifactBytes.lean` or `Module.lean`. The verifier generates them from the file it reads and its hash.
 
 The manifest's `format.wall_id` selects one exact Lean wall embedded in the verifier. Package files cannot replace the wall, the toolchain, the build files, the artifact bytes or the checker witness.
 

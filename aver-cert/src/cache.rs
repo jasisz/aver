@@ -32,8 +32,9 @@ pub(crate) struct ArtifactBuildCache {
 }
 
 impl ArtifactBuildCache {
-    pub(crate) fn prepare(build_dir: &Path, material: &KeyMaterial<'_>) -> Self {
-        let Some(store) = cache_store() else {
+    /// `enabled` is false for `verify`, which never reads or writes a cache.
+    pub(crate) fn prepare(build_dir: &Path, material: &KeyMaterial<'_>, enabled: bool) -> Self {
+        let Some(store) = cache_store().filter(|_| enabled) else {
             return Self {
                 entry: None,
                 hit: false,
@@ -76,6 +77,11 @@ impl ArtifactBuildCache {
         };
         let _ = try_publish(entry, build_dir);
     }
+}
+
+/// Whether either build cache is configured in the environment.
+pub(crate) fn any_cache_configured() -> bool {
+    cache_store().is_some() || crate::prelude_cache::cache_configured()
 }
 
 /// Any explicit value except `0|off|false` opts into a trusted cache directory.

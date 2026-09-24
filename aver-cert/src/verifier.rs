@@ -586,6 +586,15 @@ fn trusted_check(
         selected_wall,
         lean.memory_limit_mb(),
     )?;
+    // `verify` builds from the staged sources alone: a configured build cache
+    // is trusted local state, and the strict verdict does not rest on it.
+    let caches_allowed = replay_mode == ReplayMode::TrustBuiltOleans;
+    if !caches_allowed && crate::cache::any_cache_configured() {
+        eprintln!(
+            "note: aver-cert verify ignores AVER_CERT_DATA_CACHE and AVER_CERT_PRELUDE_CACHE; \
+             only `check` uses a build cache"
+        );
+    }
     let cache_pins = [("wasm_sha256", pinned_hash), ("wall_id", wall_id)];
     let mut cache = ArtifactBuildCache::prepare(
         &build.path,
@@ -594,11 +603,12 @@ fn trusted_check(
             pinned_sha256: &cache_pins,
             toolchain_version: selected_wall.toolchain.trim(),
         },
+        caches_allowed,
     );
     let data_cache_hit = cache.was_hit();
     report_step_timing("staging and data cache", stage_started.elapsed(), &[]);
     let wall_cache_started = std::time::Instant::now();
-    let mut wall_cache = if data_cache_hit {
+    let mut wall_cache = if data_cache_hit || !caches_allowed {
         PristineWallCache::disabled()
     } else {
         PristineWallCache::prepare(&build.path, selected_wall, &lean)
@@ -607,7 +617,7 @@ fn trusted_check(
     // On a whole-package miss, restore the modules whose sources (and
     // imported package modules) are unchanged; Lake revalidates each one.
     let module_cache_started = std::time::Instant::now();
-    let module_cache = if data_cache_hit {
+    let module_cache = if data_cache_hit || !caches_allowed {
         ModuleOutputCache::disabled()
     } else {
         let wall_sources: Vec<&str> = selected_wall.sources.iter().map(|s| s.name).collect();
