@@ -1,0 +1,66 @@
+module ParityProbe
+    intent =
+        "Probe laws for the Dafny/Lean parity measurement: the bit-mask facts"
+        "that n1bor/btc-listener issues 352, 353 and 356 ask for. Each law ties a"
+        "Bits.and mask to the Int.div / Int.mod form the domain code uses, or to"
+        "the domain function itself. Copied into domain/ of a btc-listener"
+        "checkout by the experiment workflow; not part of that project."
+    exposes [lowFive, lowFiveBase, anyoneCanPayMask, bip341Set, mantissaNegative, csvCompared, csvDisabled]
+    depends [Domain.Sighash, Domain.Bip341]
+    effects []
+
+fn lowFive(hashType: Int) -> Int
+    ? "The low five bits of a sighash type, by mask."
+    Bits.and(hashType, 31)
+
+verify lowFive law isModThirtyTwo
+    given h: Int = [-1, 0, 1, 2, 3, 31, 32, 34, 35, 129, 130, 131, 255, 256, 4294967267, 4294967295]
+    lowFive(h) => Int.mod(h, 32)
+
+fn lowFiveBase(hashType: Int) -> Base
+    ? "The sighash base read from the masked low five bits (issue 353)."
+    Domain.Sighash.baseOf(Bits.and(hashType, 31))
+
+verify lowFiveBase law agreesWithBaseOf
+    given h: Int = [-1, 0, 1, 2, 3, 31, 32, 34, 35, 129, 130, 131, 255, 256, 4294967267, 4294967295]
+    lowFiveBase(h) => Domain.Sighash.baseOf(h)
+
+fn anyoneCanPayMask(hashType: Int) -> Bool
+    ? "Whether bit seven (0x80) is set, by mask (issue 353)."
+    Bits.and(hashType, 128) == 128
+
+verify anyoneCanPayMask law agreesWithIsAnyoneCanPay
+    given h: Int = [-1, 0, 1, 127, 128, 129, 130, 131, 255, 256, 384, 1601138113, 1145543262]
+    anyoneCanPayMask(h) => Domain.Sighash.isAnyoneCanPay(h)
+
+fn bip341Set(hashType: Int) -> Bool
+    ? "The BIP341 set of hash types written as two ranges (issue 353)."
+    Bool.or(Bool.and(0 <= hashType, hashType <= 3), Bool.and(129 <= hashType, hashType <= 131))
+
+verify bip341Set law isValidHashType
+    given h: Int = [-1, 0, 1, 2, 3, 4, 127, 128, 129, 130, 131, 132, 255, 256, 4294967267]
+    bip341Set(h) => Domain.Bip341.validHashType(h)
+
+fn mantissaNegative(bits: Int) -> Bool
+    ? "Whether the compact-bits mantissa sign bit (0x800000) is set, by mask (issue 356)."
+    Bits.and(bits, 8388608) != 0
+
+verify mantissaNegative law isBitTwentyThree
+    given bits: Int = [-1, 0, 8388607, 8388608, 16777215, 16777216, 486604799, 495000000, 4294967295]
+    mantissaNegative(bits) => Int.mod(Int.div(bits, 8388608), 2) == 1
+
+fn csvCompared(value: Int) -> Int
+    ? "The CSV comparison mask 0x0040FFFF applied to a sequence (issue 352)."
+    Bits.and(value, 4259839)
+
+verify csvCompared law isTypeBitAndCount
+    given v: Int = [-1, 0, 1, 65535, 65536, 4194303, 4194304, 4194305, 2147483648, 4294967295]
+    csvCompared(v) => Int.mod(v, 65536) + 4194304 * Int.mod(Int.div(v, 4194304), 2)
+
+fn csvDisabled(value: Int) -> Bool
+    ? "Whether the CSV disable flag (bit 31) is set, by mask (issue 352)."
+    Bits.and(value, 2147483648) != 0
+
+verify csvDisabled law isBitThirtyOne
+    given v: Int = [-1, 0, 1, 2147483647, 2147483648, 4294967295, 4294967296, 6442450944]
+    csvDisabled(v) => Int.mod(Int.div(v, 2147483648), 2) == 1

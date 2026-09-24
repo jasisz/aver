@@ -1,0 +1,133 @@
+name: Experiment - proof core Lean kit
+
+# Measurement only. Runs `aver proof --check-json` on the K5 law leaf and on
+# btc-listener (laws.av, interp.av and the bit-mask probe) with two builds of
+# aver: main, and the branch under review. Compares the per-law manifest
+# tiers. Nothing here gates anything.
+
+on:
+  push:
+    branches: [experiments/proof-core-lean-kit]
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  E: experiments/proof-core-lean-kit
+  MAIN_REF: ce2651bf6e4e25d477d0045541d702b68980f608
+  BRANCH_REF: fix/proof-core-lean-kit
+  BTC_REF: c5541f8a4d1957d5d307af0ec0aa2faee921eb5b
+
+jobs:
+  build:
+    name: Build aver (${{ matrix.side }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [main, branch]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ matrix.side == 'main' && env.MAIN_REF || env.BRANCH_REF }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: proof-core-lean-kit-${{ matrix.side }}
+      - run: cargo build --release -p aver-lang --bin aver
+      - run: git rev-parse HEAD > target/release/aver-sha.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aver-${{ matrix.side }}
+          path: |
+            target/release/aver
+            target/release/aver-sha.txt
+          retention-days: 7
+
+  measure:
+    name: ${{ matrix.target }} (${{ matrix.side }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [main, branch]
+        target: [k5, btc-laws, btc-interp, btc-probe]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.MAIN_REF }}
+          path: main
+      - uses: actions/checkout@v5
+        if: startsWith(matrix.target, 'btc')
+        with:
+          repository: n1bor/btc-listener
+          ref: ${{ env.BTC_REF }}
+          path: btc
+      - uses: actions/download-artifact@v4
+        with:
+          name: aver-${{ matrix.side }}
+          path: ${{ runner.temp }}/bin
+      - name: Put aver and elan on PATH
+        run: |
+          chmod +x "$RUNNER_TEMP/bin/aver"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          for attempt in 1 2 3 4; do
+            if curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+                 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+                 | sh -s -- -y --default-toolchain none; then break; fi
+            [ $attempt -eq 4 ] && exit 1
+            sleep 20
+          done
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: aver proof --check-json
+        run: |
+          set +e
+          case "${{ matrix.target }}" in
+            k5)         cp $E/entries/k5_lawsentry.av main/projects/k5_fdiv/lawsentry.av
+                        root=main/projects/k5_fdiv; entry=$root/lawsentry.av ;;
+            btc-laws)   cp $E/entries/btc_laws.av btc/domain/laws.av; root=btc; entry=btc/domain/laws.av ;;
+            btc-probe)  cp $E/entries/btc_parityprobe.av btc/domain/parityprobe.av; root=btc; entry=btc/domain/parityprobe.av ;;
+            btc-interp) root=btc; entry=btc/domain/interp.av ;;
+          esac
+          R="$RUNNER_TEMP/v/${{ matrix.target }}-${{ matrix.side }}"
+          out="$RUNNER_TEMP/out"
+          mkdir -p "$R"
+          cp "$RUNNER_TEMP/bin/aver-sha.txt" "$R/"
+          aver proof "$entry" --module-root "$root" -o "$out" > "$R/export.log" 2>&1 || true
+          tc="$(cat "$out/lean-toolchain")"
+          for attempt in 1 2 3 4; do elan toolchain install "$tc" && break; sleep 15; done
+          start=$(date +%s)
+          timeout 280m aver proof "$entry" --module-root "$root" -o "$out" \
+            --check-json --sorry-budget 100000 --declined-budget 100000 \
+            > "$R/check.json" 2> "$R/check.stderr"
+          echo "check_exit=$?" > "$R/status.txt"
+          echo "check_seconds=$(( $(date +%s) - start ))" >> "$R/status.txt"
+          cp "$out/proof_manifest.json" "$R/" 2>/dev/null || true
+          tail -c 3000 "$R/check.json"; echo; cat "$R/status.txt"
+          tar -C "$out" -czf "$R/export.tgz" --exclude='.lake' .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verdict-${{ matrix.target }}-${{ matrix.side }}
+          path: ${{ runner.temp }}/v
+          retention-days: 14
+
+  compare:
+    name: Compare
+    needs: measure
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: v
+          pattern: verdict-*
+          merge-multiple: true
+      - run: python3 $E/compare.py v | tee -a "$GITHUB_STEP_SUMMARY"
