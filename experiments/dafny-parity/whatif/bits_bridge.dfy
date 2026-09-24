@@ -44,6 +44,25 @@ function BitsPow2(n: int): int
 
 // ---------------------------------------------------------------- bridge
 
+lemma MulNonneg(a: int, b: nat)
+  requires a >= 0
+  ensures a * b >= 0
+  decreases b
+{
+  if b > 0 {
+    MulNonneg(a, b - 1);
+    assert a * b == a * (b - 1) + a;
+  }
+}
+
+lemma MulAtLeast(d: int, e: int)
+  requires d > 0 && e >= 1
+  ensures d * e >= d
+{
+  MulNonneg(d, e - 1);
+  assert d * e == d * (e - 1) + d;
+}
+
 lemma ModUnique(a: int, d: int, q: int, r: int)
   requires d > 0 && 0 <= r < d && a == d * q + r
   ensures a / d == q && a % d == r
@@ -51,8 +70,46 @@ lemma ModUnique(a: int, d: int, q: int, r: int)
   var q2, r2 := a / d, a % d;
   assert a == d * q2 + r2 && 0 <= r2 < d;
   assert d * (q - q2) == r2 - r;
-  if q > q2 { assert d * (q - q2) >= d; }
-  if q < q2 { assert d * (q2 - q) >= d; }
+  if q > q2 { MulAtLeast(d, q - q2); }
+  if q < q2 { MulAtLeast(d, q2 - q); assert d * (q2 - q) == r - r2; }
+}
+
+// The exporter knows each literal mask and its exponent, so it can state the
+// power as a fact; Z3 does not unfold BitsPow2 twenty-odd times by itself.
+lemma Pow2Table()
+  ensures BitsPow2(5) == 32 && BitsPow2(7) == 128 && BitsPow2(23) == 8388608 && BitsPow2(31) == 2147483648
+{
+  assert BitsPow2(1) == 2;
+  assert BitsPow2(2) == 4;
+  assert BitsPow2(3) == 8;
+  assert BitsPow2(4) == 16;
+  assert BitsPow2(5) == 32;
+  assert BitsPow2(6) == 64;
+  assert BitsPow2(7) == 128;
+  assert BitsPow2(8) == 256;
+  assert BitsPow2(9) == 512;
+  assert BitsPow2(10) == 1024;
+  assert BitsPow2(11) == 2048;
+  assert BitsPow2(12) == 4096;
+  assert BitsPow2(13) == 8192;
+  assert BitsPow2(14) == 16384;
+  assert BitsPow2(15) == 32768;
+  assert BitsPow2(16) == 65536;
+  assert BitsPow2(17) == 131072;
+  assert BitsPow2(18) == 262144;
+  assert BitsPow2(19) == 524288;
+  assert BitsPow2(20) == 1048576;
+  assert BitsPow2(21) == 2097152;
+  assert BitsPow2(22) == 4194304;
+  assert BitsPow2(23) == 8388608;
+  assert BitsPow2(24) == 16777216;
+  assert BitsPow2(25) == 33554432;
+  assert BitsPow2(26) == 67108864;
+  assert BitsPow2(27) == 134217728;
+  assert BitsPow2(28) == 268435456;
+  assert BitsPow2(29) == 536870912;
+  assert BitsPow2(30) == 1073741824;
+  assert BitsPow2(31) == 2147483648;
 }
 
 lemma HalfSplit(a: nat, p: int)
@@ -153,7 +210,7 @@ function isAnyoneCanPay(hashType: int): bool { (hashType / 128) % 2 == 1 }
 lemma lowFive_isModThirtyTwo(h: int)
   ensures BitsAnd(h, 31) == h % 32
 {
-  assert BitsPow2(5) == 32;
+  Pow2Table();
   BitsAndLowMask(h, 5);
 }
 
@@ -166,14 +223,14 @@ lemma lowFiveBase_agreesWithBaseOf(h: int)
 lemma anyoneCanPayMask_agreesWithIsAnyoneCanPay(h: int)
   ensures (BitsAnd(h, 128) == 128) == isAnyoneCanPay(h)
 {
-  assert BitsPow2(7) == 128;
+  Pow2Table();
   BitsAndOneBit(h, 7);
 }
 
 lemma mantissaNegative_isBitTwentyThree(bits: int)
   ensures (BitsAnd(bits, 8388608) != 0) == ((bits / 8388608) % 2 == 1)
 {
-  assert BitsPow2(23) == 8388608;
+  Pow2Table();
   BitsAndOneBit(bits, 23);
 }
 
@@ -181,13 +238,13 @@ lemma mantissaNegative_isBitTwentyThree(bits: int)
 lemma negative_isTheMantissaTopBit(bits: int)
   ensures ((bits / 8388608) % 2 == 1) == (BitsAnd(bits, 8388608) == 8388608)
 {
-  assert BitsPow2(23) == 8388608;
+  Pow2Table();
   BitsAndOneBit(bits, 23);
 }
 
 lemma csvDisabled_isBitThirtyOne(v: int)
   ensures (BitsAnd(v, 2147483648) != 0) == ((v / 2147483648) % 2 == 1)
 {
-  assert BitsPow2(31) == 2147483648;
+  Pow2Table();
   BitsAndOneBit(v, 31);
 }
