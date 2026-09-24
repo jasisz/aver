@@ -1,0 +1,12 @@
+module Node
+    depends [Bytes, Ledger]
+    intent = "The pure function one split job runs, over the program's own types."
+    exposes [split]
+    effects []
+
+fn split(task: Ledger.Request) -> Ledger.Parts
+    ? "Splits the request's bytes into a head of the requested size and the rest, indexed by content."
+    head = Bytes.take(task.data, task.size)
+    rest = Bytes.drop(task.data, task.size)
+    index = {head => Ledger.Chunk(at = 0, length = Bytes.len(head)), rest => Ledger.Chunk(at = task.size, length = Bytes.len(rest))}
+    Ledger.Parts(chunks = [head, rest], index = index)

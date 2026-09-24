@@ -306,6 +306,13 @@ fn a_wait_key_declared_in_a_dependency_module_matches_the_vm() {
     assert_same_stdout("wait_key_in_dep");
 }
 
+/// A job kind whose task and answer are a dependency's records carrying
+/// `Bytes`, a `List<Bytes>` and a `Map<Bytes, Ledger.Chunk>`.
+#[test]
+fn a_job_kind_carrying_bytes_inside_dependency_types_matches_the_vm() {
+    assert_same_stdout("work_jobs_dependency_bytes");
+}
+
 /// At `[work] max-jobs = 1` a second `begin` is queued instead of refused,
 /// and starts once the first one stops. Generated Rust checks no cancellation
 /// flag, so there the cancelled first job runs to its end before the queued

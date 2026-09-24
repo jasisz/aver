@@ -1625,6 +1625,24 @@ impl TypeRegistry {
         })
     }
 
+    /// The spelling the map monomorphisation registered `canonical` under,
+    /// found the way `map_slots` finds its slot: a contract spells a
+    /// dependency's type `Module.Type`, while the flattened program that
+    /// instantiated the map spelled it bare.
+    pub(super) fn registered_map_spelling(&self, canonical: &str) -> Option<&str> {
+        let normalized = normalize_compound(canonical);
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        [normalized, aliased, bare]
+            .into_iter()
+            .find_map(|candidate| {
+                self.map_order
+                    .iter()
+                    .find(|registered| **registered == candidate)
+                    .map(String::as_str)
+            })
+    }
+
     pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
         let normalized = normalize_compound(canonical);
         let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
