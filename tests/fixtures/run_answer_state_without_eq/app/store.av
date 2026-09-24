@@ -1,0 +1,12 @@
+module Store
+    kind = capability
+    semantics = effectful
+    intent = "A store whose open handle only a provider can mint."
+    exposes [Handle, open]
+
+resource Handle
+
+operation open(dir: String) -> Result<Handle, String>
+    ? "Open the store in this directory."
+    oracle = generativeOutput
+    replay = recorded

@@ -147,6 +147,14 @@ fn an_answer_function_with_effects_is_allowed_and_said_so() {
         "an effectful answer is a warning, not a refusal:\n{}",
         format_output(&out)
     );
+    // The warning belongs to the answer module; the entry that imports it
+    // does not repeat it.
+    assert_eq!(
+        text.matches("warning[answer-shape]").count(),
+        1,
+        "{}",
+        format_output(&out)
+    );
 }
 
 /// The warning is about stalling the turn, so it names only effects that can

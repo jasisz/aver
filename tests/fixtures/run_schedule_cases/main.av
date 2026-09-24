@@ -26,7 +26,7 @@ fn seeded() -> __Run
 
 fn serveGroups(groups: List<List<Int>>) -> List<Int>
     ? "Drive the generated service path in exactly the requested groups."
-    serveRemaining(seeded(), groups).ledger.served
+    servedBy(serveRemaining(seeded(), groups))
 
 verify serveGroups
     serveGroups([[1, 2]]) => [1, 2]
@@ -44,7 +44,16 @@ fn serveRemaining(run: __Run, groups: List<List<Int>>) -> __Run
         [ids, ..rest] -> serveRemaining(__serveEach(run, [], ids), rest)
 
 verify serveRemaining
-    serveRemaining(seeded(), []).ledger.served => []
+    servedBy(serveRemaining(seeded(), [])) => []
+
+fn servedBy(run: __Run) -> List<Int>
+    ? "What the ledger recorded as served. The run holds the ledger's state between answers; it is out only while one answer function holds it."
+    match run.ledger
+        Option.Some(ledger) -> ledger.served
+        Option.None -> []
+
+verify servedBy
+    servedBy(seeded()) => []
 
 fn seating(keys: List<Int>) -> Tuple<Int, Int, Int>
     ? "Seats the family from the given keys after a first seating from the listed ones: how many slots, how many members and how many dropped instances that leaves."

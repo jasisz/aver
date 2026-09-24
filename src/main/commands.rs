@@ -340,6 +340,9 @@ fn prime_batch_answers(
         };
         if let Some(plan) = program.marked().run() {
             for pair in &plan.answers {
+                if !answer_module_named_from_root(&program, &pair.1, module_root) {
+                    continue;
+                }
                 if !answers.contains(pair) {
                     answers.push(pair.clone());
                 }
@@ -350,6 +353,30 @@ fn prime_batch_answers(
         cache.set_batch_answers(answers.clone());
     }
     answers
+}
+
+/// Whether `module`, an answer module of `program`, is named the way every
+/// other program of the batch names it.
+///
+/// A dependency carries the name its importer wrote, which is resolved from
+/// the module root. The entry carries only its own `module` line, so an
+/// answer module under a subdirectory walked as its own entry (`lib/ticks.av`
+/// declaring `module Ticks`) would hand the batch a `Ticks` that no program
+/// can import, and every program lowered against it would lose its loop's
+/// imports. Such a pair is left to the programs that import the module by
+/// its real name.
+fn answer_module_named_from_root(
+    program: &aver::source::Program,
+    module: &str,
+    module_root: &str,
+) -> bool {
+    let entry = program.entry();
+    if entry.dep_name != module {
+        return true;
+    }
+    aver::source::find_module_file(module, module_root).is_some_and(|found| {
+        aver::source::canonicalize_path(&found) == aver::source::canonicalize_path(&entry.path)
+    })
 }
 
 pub(super) fn load_report_program_with_cache(
@@ -13233,6 +13260,7 @@ error: build failed";
             program_shape: None,
             mir_program: None,
             bare_i64: Default::default(),
+            rust_owned_record_params: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),

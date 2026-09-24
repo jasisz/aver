@@ -344,6 +344,34 @@ fn two_job_kinds_under_one_generated_loop_match_the_vm_on_wasm_gc() {
     same_lines(name, &vm, &wasm).unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// Every answer function returns `Tuple<State, Result<R, Run.Wake>>`, and
+/// every tuple gets an eager `List<Tuple<..>>` in case `List.zip` builds one.
+/// Nothing compares those lists, so they must not demand an equality for a
+/// state that has none: here the state holds a List, a Map and a store
+/// handle only the provider can mint.
+#[test]
+fn an_answer_state_without_equality_compiles_on_wasm_gc() {
+    let dir = fixture("run_answer_state_without_eq");
+    let out_dir = temp_dir("answer-state-without-eq");
+    let out = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("compile")
+        .arg(dir.join("main.av"))
+        .arg("--module-root")
+        .arg(&dir)
+        .args(["--target", "wasm-gc", "-o"])
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile` to execute");
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        out_dir.join("main.wasm").is_file(),
+        "{}",
+        format_output(&out)
+    );
+    let _ = fs::remove_dir_all(&out_dir);
+}
+
 /// The generated loop over five processes, three answer modules, two
 /// policies and a job kind the answer module begins itself, answering `Wire`
 /// over real sockets.

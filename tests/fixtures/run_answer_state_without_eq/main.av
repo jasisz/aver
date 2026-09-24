@@ -1,0 +1,18 @@
+module Main
+    intent = "A process whose answer module state holds a List, a Map and a store handle, so the state has no equality."
+    depends [App.Clock, App.Owner, App.Store]
+    effects [App.Clock.tick, App.Store.open, Console.print, yield]
+
+fn ticker() -> Unit
+    ? "Three ticks."
+    ! [App.Clock.tick, App.Store.open, Console.print, yield]
+    match App.Clock.tick() >= 3
+        true -> opened(App.Store.open("."))
+        false -> ticker()
+
+fn opened(store: Result<App.Store.Handle, String>) -> Unit
+    ? "Says whether the store opened."
+    ! [Console.print]
+    match store
+        Result.Ok(_) -> Console.print("ticked")
+        Result.Err(why) -> Console.print(why)

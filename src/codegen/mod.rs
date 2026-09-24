@@ -499,6 +499,13 @@ pub struct CodegenContext {
     /// Fail-closed: empty (all-`Boxed`) for hand-assembled test contexts
     /// and for dependency-module fragments (callers unseen).
     pub bare_i64: crate::ir::mir::BareI64Facts,
+    /// Record params the Rust backend takes by value because the function
+    /// consumes them: it returns the record, updates it at its last use, or
+    /// hands it at its last use to a callee that takes it by value. Indexed
+    /// by param position. Computed once by the Rust transpile after its MIR
+    /// rewrites, so every signature and every call site read the same
+    /// decision; empty (borrow by default) everywhere else.
+    pub rust_owned_record_params: HashMap<crate::ir::FnId, Vec<bool>>,
     /// Kernel-proved lemmas parsed back from a committed
     /// `DiscoveredLemmas.lean` (the `--discover` artifact), set by the CLI
     /// on a normal `aver proof` run when the discovery-surface hash still
@@ -925,6 +932,7 @@ pub fn build_context(
         synthesized_buffered_fns,
         packed_sequence_layouts: HashMap::new(),
         bare_i64,
+        rust_owned_record_params: Default::default(),
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
         // Symbol table threaded through from the pipeline (or
@@ -1412,6 +1420,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         program_shape: None,
         mir_program: None,
         bare_i64: Default::default(),
+        rust_owned_record_params: Default::default(),
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),

@@ -446,7 +446,10 @@ fn the_dump_shows_the_loop_that_was_generated() {
         "fn __all() -> Result<Unit, String>",
         "fn main() -> Result<Unit, String>",
         "fn __servePeer(run: __Run, id: Int, seq: Int, request: __PeerRequest) -> __Run",
-        "Ledger.claim(run.ledger)",
+        // The answer module's state is handed out of the run for the one
+        // answer, so the answer function holds the only reference to it.
+        "fn __takeLedger(run: __Run) -> Tuple<__Run, Option<Ledger.State>>",
+        "Ledger.claim(__taken)",
         // An Ok settles the request, an Err parks it on the wake it named.
         "Result.Err(__wake) -> __park(",
         "Run.Wake.Settled(deadline) -> Bool.or(__versionOf(run, slot.owner) > slot.version",
@@ -819,7 +822,8 @@ fn the_loop_seats_the_scorers_and_holds_no_job() {
         "fn __seatFamilyScorer(run: __Run, keys: List<Int>) -> __Run",
         "seatedScorer: Map<Int, Int>",
         "retiredScorer: Map<Int, Bool>",
-        "__seatFamilyScorer(run, Pooled.tasks(run.pooled))",
+        "__seatFamilyScorer(run, __keysOfScorer(run))",
+        "Option.Some(state) -> Pooled.tasks(state)",
     ] {
         assert!(text.contains(line), "{line} missing from the dump");
     }
@@ -1099,4 +1103,30 @@ fn a_wrong_seating_or_policy_is_refused_with_the_shape_it_needs() {
         );
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A directory check walks `lib/ticks.av` as the entry of its own program,
+/// where it is named by its `module Ticks` line rather than the `Lib.Ticks`
+/// every importer uses. The answer modules a batch shares must carry the
+/// importer's name, or the entry's loop imports a `Ticks` nobody can load and
+/// its process loses `Lib` altogether.
+#[test]
+fn a_directory_check_names_an_answer_module_under_a_subdirectory_the_way_its_importer_does() {
+    let dir = fixture("run_process_subdir_capability");
+    for target in ["main.av", "."] {
+        let out = Command::new(aver_bin())
+            .current_dir(&dir)
+            .args(["check", target, "--module-root", "."])
+            .output()
+            .expect("aver runs");
+        assert!(out.status.success(), "{target}: {}", format_output(&out));
+        assert!(
+            !combined(&out).contains("unknown-ident"),
+            "{target}: {}",
+            format_output(&out)
+        );
+    }
+    let out = aver("run_process_subdir_capability", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ticked");
 }

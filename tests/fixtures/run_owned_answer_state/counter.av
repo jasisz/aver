@@ -1,0 +1,10 @@
+module Counter
+    kind = capability
+    semantics = effectful
+    intent = "Counts one key."
+    exposes [bump]
+
+operation bump(key: Int) -> Int
+    ? "The count of this key after one more."
+    oracle = generative
+    replay = recorded

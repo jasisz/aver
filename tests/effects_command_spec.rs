@@ -510,6 +510,50 @@ fn write_keeps_a_boundary_the_yielding_functions_need() {
 }
 
 #[test]
+fn write_adds_what_a_process_performs_in_place() {
+    // `ticker` is a process: its list belongs to the lowering for what it
+    // reaches through its stops, but `Console.print` runs in place, and
+    // `check` requires it declared. The report must name it as missing and
+    // `--write` must add it, keeping `yield` and the answered operation.
+    let root = scratch_copy("run_process_subdir_capability", "write-process-in-place");
+    let stripped = read(&root, "main.av").replace("Console.print, ", "");
+    write(&root, "main.av", &stripped);
+
+    let before = run_check(&root);
+    assert!(!before.status.success(), "{}", format_output(&before));
+    assert!(
+        stdout_of(&before).contains("does not declare it"),
+        "{}",
+        format_output(&before)
+    );
+
+    let reported = run_effects_on(&root.join("main.av"), &root, &[]);
+    assert!(reported.status.success(), "{}", format_output(&reported));
+    assert!(
+        stdout_of(&reported).contains("missing: Console.print"),
+        "{}",
+        stdout_of(&reported)
+    );
+
+    let written = run_effects_on(&root.join("main.av"), &root, &["--write"]);
+    assert!(written.status.success(), "{}", format_output(&written));
+    let main = read(&root, "main.av");
+    assert!(
+        main.contains("! [Console.print, Lib.Clock.tick, yield]"),
+        "{main}"
+    );
+    assert!(
+        main.contains("effects [Console.print, Lib.Clock.tick, yield]"),
+        "{main}"
+    );
+
+    let after = run_check(&root);
+    assert!(after.status.success(), "{}", format_output(&after));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn write_leaves_a_tree_the_report_calls_minimal_byte_identical() {
     // Reordering a list and narrowing `Disk` to the one method under it are
     // both invisible to the report, so neither is `--write`'s to make.

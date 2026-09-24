@@ -1,0 +1,10 @@
+module Clock
+    kind = capability
+    semantics = effectful
+    intent = "A tick."
+    exposes [tick]
+
+operation tick() -> Int
+    ? "The next tick."
+    oracle = generative
+    replay = recorded

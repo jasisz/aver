@@ -1,0 +1,11 @@
+module Main
+    intent = "A process calling a capability whose module lives in a subdirectory."
+    depends [Lib.Clock, Lib.Ticks]
+    effects [Console.print, Lib.Clock.tick, yield]
+
+fn ticker() -> Unit
+    ? "Three ticks."
+    ! [Console.print, Lib.Clock.tick, yield]
+    match Lib.Clock.tick() >= 3
+        true -> Console.print("ticked")
+        false -> ticker()

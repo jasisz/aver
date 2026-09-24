@@ -831,6 +831,12 @@ pub(super) fn emit_record_int_field_hash(
     }
 }
 
+/// Whether the `List<T>` / `Vector<T>` helpers of element `T` compare their
+/// elements at all: they carry `contains`, eq and hash slots exactly then.
+pub(super) fn element_dispatches_eq(elem: &str, registry: &TypeRegistry) -> bool {
+    list_eq_kind(elem, registry).is_some()
+}
+
 fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
     let trimmed = elem.trim();
     // ETAP-2 carrier-`i64`: an eligible carrier element is a NATIVE `i64`
