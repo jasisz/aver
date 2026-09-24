@@ -1,0 +1,252 @@
+name: Experiment - core Lean vs Dafny
+
+# Measurement only. Exports K5 and btc-listener with main's `aver proof`,
+# strips every exported proof, builds the model, then tries to prove the laws
+# only Dafny closed (and the bit-mask laws neither closed) in standalone Lean
+# files with core tactics plus a small lemma kit. No Mathlib anywhere.
+# See experiments/core-lean-vs-dafny/README.md. Nothing here gates anything.
+#
+# To iterate on the law files without rebuilding and re-exporting, write the
+# id of a run whose models built into experiments/core-lean-vs-dafny/models_run.
+
+on:
+  push:
+    branches: [experiments/core-lean-vs-dafny]
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  E: experiments/core-lean-vs-dafny
+  BTC_REF: c5541f8a4d1957d5d307af0ec0aa2faee921eb5b
+
+jobs:
+  cfg:
+    runs-on: ubuntu-latest
+    outputs:
+      models_run: ${{ steps.c.outputs.models_run }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: c
+        run: echo "models_run=$(cat $E/models_run 2>/dev/null | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build aver (main)
+    needs: cfg
+    if: needs.cfg.outputs.models_run == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-lean
+      - run: cargo build --release -p aver-lang --bin aver
+      - run: git rev-parse HEAD > target/release/aver-main-sha.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aver-bin
+          path: |
+            target/release/aver
+            target/release/aver-main-sha.txt
+          retention-days: 7
+
+  models:
+    name: Model ${{ matrix.target }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [k5, btc-laws, btc-probe, btc-interp]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          path: main
+      - uses: actions/checkout@v5
+        if: startsWith(matrix.target, 'btc')
+        with:
+          repository: n1bor/btc-listener
+          ref: ${{ env.BTC_REF }}
+          path: btc
+      - uses: actions/download-artifact@v4
+        with:
+          name: aver-bin
+          path: ${{ runner.temp }}/bin
+      - name: Put aver and elan on PATH
+        run: |
+          chmod +x "$RUNNER_TEMP/bin/aver"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          for attempt in 1 2 3 4; do
+            if curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+                 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+                 | sh -s -- -y --default-toolchain none; then break; fi
+            [ $attempt -eq 4 ] && exit 1
+            sleep 20
+          done
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Export, strip, build
+        run: |
+          P=experiments/dafny-parity/entries
+          case "${{ matrix.target }}" in
+            k5)         cp $P/k5_lawsentry.av main/projects/k5_fdiv/lawsentry.av
+                        root=main/projects/k5_fdiv; entry=$root/lawsentry.av ;;
+            btc-laws)   cp $P/btc_laws.av btc/domain/laws.av; root=btc; entry=btc/domain/laws.av ;;
+            btc-probe)  cp $P/btc_parityprobe.av btc/domain/parityprobe.av; root=btc; entry=btc/domain/parityprobe.av ;;
+            btc-interp) root=btc; entry=btc/domain/interp.av ;;
+          esac
+          out="$RUNNER_TEMP/model/${{ matrix.target }}"
+          mkdir -p "$RUNNER_TEMP/model"
+          aver proof "$entry" --module-root "$root" -o "$out" > "$RUNNER_TEMP/export.log" 2>&1 || true
+          tail -20 "$RUNNER_TEMP/export.log"
+          tc="$(cat "$out/lean-toolchain")"
+          for attempt in 1 2 3 4; do elan toolchain install "$tc" && break; sleep 15; done
+          tar -C "$out" -czf "$RUNNER_TEMP/model/export-${{ matrix.target }}.tgz" .
+          python3 $E/strip_proofs.py "$out" | tail -3
+          cp "$RUNNER_TEMP/bin/aver-main-sha.txt" "$out/aver-main-sha.txt"
+          if [ -d btc ]; then git -C btc rev-parse HEAD > "$out/btc-sha.txt"; fi
+          (cd "$out" && timeout 90m lake build > build.log 2>&1; echo "lake_exit=$?" > build.status)
+          cat "$out/build.status"; grep -E "error" "$out/build.log" | head -20 || true
+          tar -C "$RUNNER_TEMP/model" -czf "$RUNNER_TEMP/model-${{ matrix.target }}.tgz" "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/model-${{ matrix.target }}.tgz
+            ${{ runner.temp }}/model/export-${{ matrix.target }}.tgz
+          retention-days: 14
+
+  mainverdict:
+    name: Main's own verdict ${{ matrix.target }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [k5, btc-laws, btc-probe, btc-interp]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          path: main
+      - uses: actions/checkout@v5
+        if: startsWith(matrix.target, 'btc')
+        with:
+          repository: n1bor/btc-listener
+          ref: ${{ env.BTC_REF }}
+          path: btc
+      - uses: actions/download-artifact@v4
+        with:
+          name: aver-bin
+          path: ${{ runner.temp }}/bin
+      - name: Put aver and elan on PATH
+        run: |
+          chmod +x "$RUNNER_TEMP/bin/aver"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          for attempt in 1 2 3 4; do
+            if curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+                 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+                 | sh -s -- -y --default-toolchain none; then break; fi
+            [ $attempt -eq 4 ] && exit 1
+            sleep 20
+          done
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: aver proof --check-json
+        run: |
+          P=experiments/dafny-parity/entries
+          case "${{ matrix.target }}" in
+            k5)         cp $P/k5_lawsentry.av main/projects/k5_fdiv/lawsentry.av
+                        root=main/projects/k5_fdiv; entry=$root/lawsentry.av ;;
+            btc-laws)   cp $P/btc_laws.av btc/domain/laws.av; root=btc; entry=btc/domain/laws.av ;;
+            btc-probe)  cp $P/btc_parityprobe.av btc/domain/parityprobe.av; root=btc; entry=btc/domain/parityprobe.av ;;
+            btc-interp) root=btc; entry=btc/domain/interp.av ;;
+          esac
+          out="$RUNNER_TEMP/verdict/${{ matrix.target }}"
+          aver proof "$entry" --module-root "$root" -o "$out" > /dev/null 2>&1 || true
+          tc="$(cat "$out/lean-toolchain")"
+          for attempt in 1 2 3 4; do elan toolchain install "$tc" && break; sleep 15; done
+          timeout 100m aver proof "$entry" --module-root "$root" -o "$out" \
+            --check-json --sorry-budget 100000 --declined-budget 100000 > "$out/check.json" 2> "$out/check.stderr" || true
+          ls "$out"
+          mkdir -p "$RUNNER_TEMP/v/${{ matrix.target }}"
+          cp "$out/proof_manifest.json" "$out/check.json" "$out/check.stderr" "$RUNNER_TEMP/v/${{ matrix.target }}/" 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verdict-${{ matrix.target }}
+          path: ${{ runner.temp }}/v
+          retention-days: 14
+
+  attempts:
+    name: Core Lean attempts
+    needs: [cfg, models]
+    if: always() && (needs.cfg.outputs.models_run != '' || needs.models.result != 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - name: Models from this run
+        if: needs.cfg.outputs.models_run == ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: model-*
+          path: ${{ runner.temp }}/dl
+      - name: Models from an earlier run
+        if: needs.cfg.outputs.models_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: model-*
+          path: ${{ runner.temp }}/dl
+          run-id: ${{ needs.cfg.outputs.models_run }}
+          github-token: ${{ github.token }}
+      - name: Main verdicts from this run
+        if: needs.cfg.outputs.models_run == ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: verdict-*
+          path: ${{ runner.temp }}/verdicts
+      - name: Main verdicts from an earlier run
+        if: needs.cfg.outputs.models_run != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: verdict-*
+          path: ${{ runner.temp }}/verdicts
+          run-id: ${{ needs.cfg.outputs.models_run }}
+          github-token: ${{ github.token }}
+      - name: Unpack models and install Lean
+        run: |
+          mkdir -p "$RUNNER_TEMP/models"
+          for t in "$RUNNER_TEMP"/dl/model-*/model-*.tgz; do tar -xzf "$t" -C "$RUNNER_TEMP/models"; done
+          ls "$RUNNER_TEMP/models"; cat "$RUNNER_TEMP"/models/*/build.status || true
+          for attempt in 1 2 3 4; do
+            if curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+                 https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+                 | sh -s -- -y --default-toolchain none; then break; fi
+            [ $attempt -eq 4 ] && exit 1
+            sleep 20
+          done
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          tc="$(cat "$(ls -d "$RUNNER_TEMP"/models/*/ | head -1)/lean-toolchain")"
+          for attempt in 1 2 3 4; do "$HOME/.elan/bin/elan" toolchain install "$tc" && break; sleep 15; done
+      - name: Attempts
+        run: |
+          python3 $E/run_attempts.py "$RUNNER_TEMP/models" $E/laws $E/Kit.lean "$RUNNER_TEMP/out" "$RUNNER_TEMP/verdicts"
+          cat "$RUNNER_TEMP"/models/*/aver-main-sha.txt | head -1 | sed 's/^/aver main: /' >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/out/results.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: attempts
+          path: ${{ runner.temp }}/out
+          retention-days: 30
