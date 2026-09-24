@@ -197,7 +197,9 @@ def refN (i : Nat) : CertDecode.ValType := .ref 0x63 (Int.ofNat i)
     `cmp` / `eq` `carrier carrier -> i32`, `toIndex` `carrier -> i32`, String
     equality `$string $string -> i32`, and concatenation
     `Vector<String> -> $string`, whose result type is the one the obligation
-    wires into its contract (`hostOf`). -/
+    wires into its contract (`hostOf`), and Euclidean division
+    `carrier carrier i32 -> carrier` (its body is pinned by template, its
+    type here). -/
 def roleTypesPinned (n len : Nat) (M : MCtx) : Bool :=
   let c := refN M.carrier
   roleTypePinned n len M.box [.numeric 0x7e] [c] &&
@@ -208,7 +210,8 @@ def roleTypesPinned (n len : Nat) (M : MCtx) : Bool :=
   roleTypePinned n len M.eq [c, c] [.numeric 0x7f] &&
   roleTypePinned n len M.toIndex [c] [.numeric 0x7f] &&
   roleTypePinned n len M.streq [refN M.str, refN M.str] [.numeric 0x7f] &&
-  roleTypePinned n len M.concat [refN M.strVec] [refN M.str]
+  roleTypePinned n len M.concat [refN M.strVec] [refN M.str] &&
+  roleTypePinned n len M.divmod [c, c, .numeric 0x7f] [c]
 
 /-- Role indices are pairwise distinct and distinct from every planned
     function, so the host table resolves each role to its own contract and no

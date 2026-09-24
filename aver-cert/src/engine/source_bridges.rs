@@ -26,7 +26,8 @@
 
 use crate::bridge_statement::{
     BridgeKind, MAX_BRIDGE_STATEMENT_LEN, ROOT_PREFIX, SourceEncoder, binder_names,
-    is_plain_dotted_name, param_binders, render_bridge_statement, statement_is_root_qualified,
+    is_plain_dotted_name, param_binders, pinned_from_expanded, render_bridge_statement,
+    render_bridge_statement_expanded, statement_is_root_qualified,
     statement_is_single_plain_line, tuple_components,
 };
 
@@ -84,8 +85,21 @@ impl SourceBridge {
         format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}")
     }
 
+    /// The pinned statement (what the checker renders and pins).
     pub fn statement(&self) -> String {
         render_bridge_statement(
+            &self.export,
+            &self.model,
+            self.kind,
+            &self.params,
+            &self.result,
+        )
+    }
+
+    /// The producer's own proof target, restated as [`Self::statement`] by the
+    /// `_certified` corollary.
+    pub fn expanded_statement(&self) -> String {
+        render_bridge_statement_expanded(
             &self.export,
             &self.model,
             self.kind,
@@ -1422,7 +1436,7 @@ fn render_export(
     let typing = format!(
         "{intro}{split_cases}all_goals simp [{TYPING_SIMPS}, AverCert.Plans.fn{func_idx}]"
     );
-    let statement = bridge.statement();
+    let statement = bridge.expanded_statement();
     s.push_str(&format!(
         "/-- plan-equals-source bridge for `{export}` ({kind}): the plan its obligation\n    \
          evaluates computes `{model}`. -/\n\
@@ -1459,9 +1473,13 @@ fn render_export(
                 theorem _root_.");
     c.push_str(&bridge.corollary);
     c.push_str(" :\n    (");
-    c.push_str(&statement);
-    c.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨_root_.");
-    c.push_str(&bridge.theorem);
+    c.push_str(&bridge.statement());
+    c.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  ⟨");
+    c.push_str(&pinned_from_expanded(
+        &format!("_root_.{}", bridge.theorem),
+        bridge.kind,
+        bridge.params.len(),
+    ));
     c.push_str(", _root_.AverCert.Final.cert⟩\n\n");
     let _ = param_binders;
 }
@@ -1634,30 +1652,24 @@ fn render_bridge_lean(
 /// Over-recognition only adds a TRUE conjunct; under-recognition only costs
 /// the law its bridged corollary — fail-closed for the claim either way.
 fn law_statement_model_fns(statement: &str, info: &ModelInfo) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    for token in statement.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\'')) {
-        let token = token.trim_matches('.');
-        if token.is_empty() || !info.defs.contains_key(token) {
-            continue;
-        }
-        if !found.iter().any(|seen| seen == token) {
-            found.push(token.to_string());
-        }
-    }
-    found
+    crate::bridge_statement::statement_tokens(statement)
+        .into_iter()
+        .filter(|token| info.defs.contains_key(*token))
+        .map(str::to_string)
+        .collect()
 }
 
 /// The bridges covering every source function a law mentions (`None` when
-/// some mentioned function has no bridge; empty when it mentions none).
+/// some mentioned function has no bridge; empty when it mentions none). The
+/// list itself is the checker's rule
+/// ([`crate::bridge_statement::law_mentioned_bridges`]), so the checker finds
+/// exactly the list the manifest carries.
 fn law_bridge_coverage(statement: &str, info: &ModelInfo, bridges: &[SourceBridge]) -> Option<Vec<usize>> {
-    let mut covering = Vec::new();
     for model in law_statement_model_fns(statement, info) {
-        let index = bridges.iter().position(|bridge| bridge.model == model)?;
-        if !covering.contains(&index) {
-            covering.push(index);
-        }
+        bridges.iter().position(|bridge| bridge.model == model)?;
     }
-    Some(covering)
+    let models: Vec<&str> = bridges.iter().map(|bridge| bridge.model.as_str()).collect();
+    Some(crate::bridge_statement::law_mentioned_bridges(statement, &models))
 }
 
 /// The directory every model file ships under, and the first segment of every

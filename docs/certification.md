@@ -239,7 +239,11 @@ tables; `ClaimAxes.lean` fixes policy, termination, totality role, and runtime
 contracts. The artifact proof is then checked through the named root and its
 axiom closure.
 
-The Lake build and witness elaboration import the built `.olean` closure.
+The Lake build and witness elaboration import the built `.olean` closure. A
+checker-authored audit program, elaborated without any certificate module in
+scope, then loads that environment and checks what the package declared (no
+parser extensions, no instances outside a small admitted set, bridge encoders
+that list whole records and sums) and the axiom closure of every pin.
 `leanchecker --fresh` then kernel-checks that whole closure in a fresh Lean
 declaration environment. It is part of the same Lean toolchain, not a
 separately implemented or independently distributed kernel checker.
