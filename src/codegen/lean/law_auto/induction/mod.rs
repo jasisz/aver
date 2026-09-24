@@ -4060,6 +4060,13 @@ fn emit_list_induction(
     // THROWS on an open arm and `first` falls through) and ladderB over the
     // committed + Forward-sibling set WITH sorry (the honest building floor).
     let subject_lean = super::shared::simp_def_name(ctx, &vb.fn_name);
+    // Earlier laws cited as rewrite rules (no reversed ones: those are unfold
+    // rules, not facts to apply).
+    let cited_laws: Vec<String> = fast_simp
+        .iter()
+        .filter(|e| !e.starts_with("← "))
+        .cloned()
+        .collect();
     let mk_arms = |arm_simp: &str,
                    arm_split: &str,
                    bridges: Option<&str>,
@@ -4153,6 +4160,25 @@ fn emit_list_induction(
         let subject_split = format!(
             " | (rw [{subject_lean}]; split <;> simp only [{arm_simp}, ih] <;> (repeat' split) <;> omega)"
         );
+        // Cited laws before unfolding: unfold the subject once, then let
+        // `simp_all` use the cited laws and the induction hypothesis with
+        // every other cone fn still folded. A cited law about a
+        // non-recursive head (`ok (push x xs)` under `ok xs`) only matches
+        // while that head is folded; the rungs above unfold it first and
+        // leave the law unused. Emitted only when this ladder cites laws.
+        let arm_cites: Vec<&str> = cited_laws
+            .iter()
+            .map(String::as_str)
+            .filter(|law| arm_simp.split(", ").any(|entry| entry == *law))
+            .collect();
+        let cited_first = if arm_cites.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " | (rw [{subject_lean}]; simp_all [{}]; done)",
+                arm_cites.join(", ")
+            )
+        };
         let tail = if with_sorry { " | sorry" } else { "" };
         (
             format!(
@@ -4170,7 +4196,7 @@ fn emit_list_induction(
             // non-closing arm still degrades to the honest `sorry`. Sound, so it
             // can only ADD closures.
             format!(
-                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{second_cases_cons}{congr_cons}{bool_bridge}{subject_split}{tail}"
+                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{second_cases_cons}{congr_cons}{bool_bridge}{subject_split}{cited_first}{tail}"
             ),
         )
     };
