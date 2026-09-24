@@ -2975,3 +2975,110 @@ fn cert_projects_payment_ops_package_checks() {
         "the uncredited law must be named with the axiom that sank it:\n{report}"
     );
 }
+
+/// A program with a job kind imports the four `aver:work/v1` scheduling
+/// functions. The certificate admits them like any other host import:
+/// declared in the manifest in import order, accounted, never claimed. The
+/// job body is an ordinary pure function and certifies like one, and the
+/// generated `__work_v1_*` exports are declared uncertified with a reason.
+#[test]
+fn certify_accounts_the_work_imports_and_certifies_the_job_body() {
+    let (out_dir, manifest) = certify_fixture(
+        "tests/fixtures/cert_work_job/main.av",
+        &["--module-root", "tests/fixtures/cert_work_job"],
+        "certify-work-job",
+    );
+    let capabilities: Vec<(String, String)> = manifest["capabilities"]
+        .as_array()
+        .expect("capabilities is an array")
+        .iter()
+        .map(|c| {
+            (
+                c["module"].as_str().unwrap().to_string(),
+                c["name"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let work: Vec<&str> = capabilities
+        .iter()
+        .filter(|(module, _)| module == "aver:work/v1")
+        .map(|(_, name)| name.as_str())
+        .collect();
+    assert_eq!(work, ["submit", "take", "task", "complete"], "{manifest:#}");
+    certified_entry(&manifest, "Node_validate");
+    let declared: BTreeSet<&str> = manifest["declaredUncertified"]
+        .as_array()
+        .expect("declaredUncertified report is an array")
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    for export in ["__work_v1_started", "__work_v1_refused", "__work_v1_job_id"] {
+        assert!(
+            declared.contains(export),
+            "`{export}` must be accounted: {manifest:#}"
+        );
+    }
+
+    // The exact signatures the host runner binds (`work_abi.rs`); the wall
+    // pins names only, because a certified closure reaches no import.
+    let bytes = std::fs::read(out_dir.join("main.wasm")).expect("main.wasm");
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&bytes)
+        .expect("valid module");
+    // Every type in the module, flattened across rec groups, and the type
+    // index each `aver:work/v1` import names.
+    let mut types: Vec<wasmparser::SubType> = Vec::new();
+    let mut work_funcs: Vec<(String, u32)> = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        match payload.expect("parses") {
+            wasmparser::Payload::TypeSection(reader) => {
+                for group in reader {
+                    types.extend(group.expect("rec group").into_types());
+                }
+            }
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group") {
+                        let (_, import) = import.expect("import");
+                        if let wasmparser::TypeRef::Func(ty) = import.ty
+                            && import.module == "aver:work/v1"
+                        {
+                            work_funcs.push((import.name.to_string(), ty));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    use wasmparser::{FuncType, RefType, ValType};
+    let any = ValType::Ref(RefType::ANYREF);
+    let expected = [
+        (
+            "submit",
+            FuncType::new([ValType::I32, any, ValType::I32], [any]),
+        ),
+        (
+            "take",
+            FuncType::new([ValType::I32, any, ValType::I32], [any]),
+        ),
+        ("task", FuncType::new([ValType::I32], [any])),
+        ("complete", FuncType::new([ValType::I32, any], [])),
+    ];
+    assert_eq!(work_funcs.len(), expected.len(), "{work_funcs:?}");
+    for ((name, ty), (want_name, want)) in work_funcs.iter().zip(expected) {
+        assert_eq!(name, want_name);
+        assert_eq!(
+            types[*ty as usize].unwrap_func(),
+            &want,
+            "aver:work/v1.{name}"
+        );
+    }
+
+    if !lean_required::lake_available() {
+        eprintln!("skipping the work-import package check: `lake` not available");
+        return;
+    }
+    let (ok, report) = check_certificate(&out_dir.join("main.wasm"), &out_dir.join("cert"));
+    assert!(ok && report.contains("CHECKED"), "{report}");
+}

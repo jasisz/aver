@@ -58,7 +58,7 @@ If `aver-cert` is next to `aver` or on `PATH`, `aver cert check|verify|explain .
 | `wasip2` | `<name>.component.wasm` | The embedded core module the envelope declares | Supported |
 | `rust` | Generated Cargo project | None | Unsupported: the wall is a Wasm byte wall |
 
-For wasip2 the manifest hash is the hash of the whole component. The manifest declares the component as prefix, core module and suffix by length. The verifier splits the component at those lengths and checks equality; it never parses the component to find the core. The import registry depends on the target. wasm-gc admits the exact Aver host imports, and wasip2 admits the exact 80 canonical-ABI module and name pairs the compiler can emit, with their pinned WASI interface versions. Both targets also admit contract-derived custom-capability imports under an exact hashed namespace grammar. Any other import is refused with a reason.
+For wasip2 the manifest hash is the hash of the whole component. The manifest declares the component as prefix, core module and suffix by length. The verifier splits the component at those lengths and checks equality; it never parses the component to find the core. The import registry depends on the target. wasm-gc admits the exact Aver host imports and, for a program with job kinds, the four `aver:work/v1` scheduling imports (`submit`, `take`, `task`, `complete`), and wasip2 admits the exact 80 canonical-ABI module and name pairs the compiler can emit, with their pinned WASI interface versions. Both targets also admit contract-derived custom-capability imports under an exact hashed namespace grammar. Any other import is refused with a reason.
 
 ### Environment variables
 

@@ -39,6 +39,7 @@ PROJECTS = [
     ("examples/data/json.av", None),
     ("projects/k5_fdiv/main.av", "projects/k5_fdiv"),
     ("projects/payment_ops/main.av", "projects/payment_ops"),
+    ("tests/fixtures/cert_work_job/main.av", "tests/fixtures/cert_work_job"),
 ]
 
 

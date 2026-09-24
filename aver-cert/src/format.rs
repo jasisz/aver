@@ -180,13 +180,13 @@ pub const FN_CLAIM_DISCHARGE_THEOREM: &str = "AcceptanceSoundness.fn_claim_disch
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:63bb3a8c2f6817ad1027104c7239aae9a6982c8cdd9fef70b1d44a6f3291f974";
+    "sha256:772f88fad8850bc4e681a326522017051085ee3c56e71304d629ae33674b59ab";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
-/// This list is verifier-owned. `aver-lang` tests its `EffectName` lowering
-/// against it, so adding a compiler import cannot silently broaden what the
-/// independent verifier accepts.
+/// This list is verifier-owned. `aver-lang` tests its `EffectName` lowering and
+/// its `aver:work/v1` job-scheduling imports against it, so adding a compiler
+/// import cannot silently broaden what the independent verifier accepts.
 pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "console_print"),
     ("aver", "console_error"),
@@ -276,6 +276,10 @@ pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "work_cancel"),
     ("aver", "work_begin"),
     ("aver", "work_take"),
+    ("aver:work/v1", "submit"),
+    ("aver:work/v1", "take"),
+    ("aver:work/v1", "task"),
+    ("aver:work/v1", "complete"),
 ];
 
 /// Complete standard host-import surface admitted for a wasip2 embedded core.

@@ -14,9 +14,12 @@ open CertPrelude
 open CertPrelude
 
 /-- The finite wasm-gc host-capability registry, minted from its exhaustive
-    `EffectName.import_pair` mapping.  Artifact manifests may declare only
-    pairs in this kernel-owned list; the Wasm import section is independently
-    enumerated and must match the declaration exactly. -/
+    `EffectName.import_pair` mapping and the four `aver:work/v1` job-scheduling
+    imports a module with job kinds carries (`work_abi.rs`).  Artifact
+    manifests may declare only pairs in this kernel-owned list; the Wasm import
+    section is independently enumerated and must match the declaration
+    exactly.  An import is accounted, never claimed: the closure of every
+    certified export must reach no import at all (`closureIsolation`). -/
 def WASM_GC_CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "console_print"),
   ("aver", "console_error"),
@@ -105,7 +108,11 @@ def WASM_GC_CAPABILITY_REGISTRY : List (String × String) := [
   ("aver", "wait_poll"),
   ("aver", "work_cancel"),
   ("aver", "work_begin"),
-  ("aver", "work_take")
+  ("aver", "work_take"),
+  ("aver:work/v1", "submit"),
+  ("aver:work/v1", "take"),
+  ("aver:work/v1", "task"),
+  ("aver:work/v1", "complete")
 ]
 
 /-- Exact standard canonical-ABI import surface emitted into wasip2 core
@@ -217,6 +224,15 @@ theorem wasiStdoutIsWasip2Only :
       ("wasi:cli/stdout@0.2.4", "get-stdout") = false ∧
     (capabilityRegistryForTarget expectedWasip2ArtifactTarget).contains
       ("wasi:cli/stdout@0.2.5", "get-stdout") = false := by
+  decide
+
+theorem workV1IsWasmGcOnly :
+    (capabilityRegistryForTarget expectedWasmGcArtifactTarget).contains
+      ("aver:work/v1", "submit") = true ∧
+    (capabilityRegistryForTarget expectedWasip2ArtifactTarget).contains
+      ("aver:work/v1", "submit") = false ∧
+    (capabilityRegistryForTarget expectedWasmGcArtifactTarget).contains
+      ("aver:work/v2", "submit") = false := by
   decide
 
 /-- Backwards-compatible alias for the historical wasm-gc-only target constant. -/

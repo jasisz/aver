@@ -216,6 +216,23 @@
    "Infra.Codec.unescapeField.escapedRoundtrip"
   ]
  },
+ "tests/fixtures/cert_work_job/main.av": {
+  "bridges": [
+   "Bytes_byteToHex",
+   "Bytes_hexDigit",
+   "Bytes_highNibble",
+   "Bytes_lowNibble",
+   "Node_validate"
+  ],
+  "certified": {
+   "Bytes_byteToHex": "L1",
+   "Bytes_hexDigit": "L1",
+   "Bytes_highNibble": "L1",
+   "Bytes_lowNibble": "L1",
+   "Node_validate": "L1"
+  },
+  "laws": []
+ },
  "tools/certkit/fixtures/arity3.av": {
   "bridges": [
    "tripleCheck"

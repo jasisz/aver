@@ -14,6 +14,9 @@ use super::{
 };
 
 pub const MODULE: &str = "aver:work/v1";
+/// The four imports of [`MODULE`], in import-section order. The certificate
+/// registry (`aver_cert::format::WASM_GC_CAPABILITIES`) lists exactly these.
+pub const IMPORTS: [&str; 4] = ["submit", "take", "task", "complete"];
 pub(super) const SUBMIT: &str = "__work_v1_submit";
 pub(super) const TAKE: &str = "__work_v1_take";
 
@@ -53,10 +56,7 @@ impl WorkImports {
     }
 
     pub(super) fn emit_imports(&self, imports: &mut ImportSection) {
-        for (name, (_, ty)) in ["submit", "take", "task", "complete"]
-            .iter()
-            .zip(&self.slots)
-        {
+        for (name, (_, ty)) in IMPORTS.iter().zip(&self.slots) {
             imports.import(MODULE, name, EntityType::Function(*ty));
         }
     }

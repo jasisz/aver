@@ -250,6 +250,42 @@ mod module_envelope_tests {
     }
 
     #[test]
+    fn work_v1_imports_are_admitted_exactly_and_only_on_wasm_gc() {
+        for field in ["submit", "take", "task", "complete"] {
+            let bytes = module_with_import("aver:work/v1", field);
+            let facts = super::collect_module_envelope_facts(
+                &bytes,
+                &[],
+                crate::format::TARGET_WASM_GC,
+            )
+            .expect("the aver:work/v1 import is admitted on wasm-gc");
+            assert_eq!(facts.capabilities, [("aver:work/v1".into(), field.into())]);
+            let error = super::collect_module_envelope_facts(
+                &bytes,
+                &[],
+                crate::format::TARGET_WASIP2,
+            )
+            .expect_err("wasip2 has no aver:work/v1 imports");
+            assert!(error.contains("target `wasip2`"));
+        }
+        for (module, field) in [
+            ("aver:work/v2", "submit"),
+            ("aver:work/v1", "cancel"),
+            ("aver:work", "submit"),
+            ("aver", "submit"),
+        ] {
+            let bytes = module_with_import(module, field);
+            let error = super::collect_module_envelope_facts(
+                &bytes,
+                &[],
+                crate::format::TARGET_WASM_GC,
+            )
+            .expect_err("a near-miss job import must fail closed");
+            assert!(error.contains("target `wasm-gc`"));
+        }
+    }
+
+    #[test]
     fn wasip2_registry_accepts_only_the_exact_target_and_version() {
         let bytes = module_with_import("wasi:cli/stdout@0.2.4", "get-stdout");
         let facts = super::collect_module_envelope_facts(
