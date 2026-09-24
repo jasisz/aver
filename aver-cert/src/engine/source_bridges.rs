@@ -380,10 +380,11 @@ impl ModelInfo {
                     let mut j = i + 1;
                     while j < lines.len() && lines[j].starts_with("  ") {
                         let field = lines[j].trim();
-                        if let Some((fname, fty)) = field.split_once(" : ") {
-                            if is_plain_dotted_name(fname) && !fname.contains('.') {
-                                fields.push((fname.to_string(), fty.trim().to_string()));
-                            }
+                        if let Some((fname, fty)) = field.split_once(" : ")
+                            && is_plain_dotted_name(fname)
+                            && !fname.contains('.')
+                        {
+                            fields.push((fname.to_string(), fty.trim().to_string()));
                         }
                         j += 1;
                     }
@@ -431,19 +432,20 @@ impl ModelInfo {
                 }
             } else if let Some(rest) = trimmed.strip_prefix("def ") {
                 let name = rest.split_whitespace().next().unwrap_or("");
-                if !name.is_empty() && is_plain_dotted_name(name) {
-                    if let Some((params, ret)) = parse_def_tail(&rest[name.len()..]) {
-                        let qualified = qualify(&ns, name);
-                        self.defs.insert(
-                            qualified.clone(),
-                            LeanDef {
-                                qualified,
-                                namespace: ns.clone(),
-                                params,
-                                ret,
-                            },
-                        );
-                    }
+                if !name.is_empty()
+                    && is_plain_dotted_name(name)
+                    && let Some((params, ret)) = parse_def_tail(&rest[name.len()..])
+                {
+                    let qualified = qualify(&ns, name);
+                    self.defs.insert(
+                        qualified.clone(),
+                        LeanDef {
+                            qualified,
+                            namespace: ns.clone(),
+                            params,
+                            ret,
+                        },
+                    );
                 }
             }
             i += 1;
@@ -472,9 +474,7 @@ impl ModelInfo {
             if let Some(found) = map.get(&candidate) {
                 return Some((candidate, found));
             }
-            if scope.pop().is_none() {
-                return None;
-            }
+            scope.pop()?;
         }
     }
 
@@ -858,10 +858,13 @@ struct BridgedFn {
     /// (natAbs x + 1) x`, the transpiler's shape for mutual recursion): the
     /// step unfolds both, and callers unfold the wrapper.
     fuel: bool,
-    /// The decoder's argument shapes: the atomic values each one decodes,
-    /// its argument patterns, and the source arguments it denotes.
-    shapes: Vec<(Vec<(String, String)>, Vec<String>, Vec<String>)>,
+    /// The decoder's argument shapes.
+    shapes: Vec<DecoderShape>,
 }
+
+/// One decoder argument shape: the atomic values it decodes, its argument
+/// patterns, and the source arguments it denotes.
+type DecoderShape = (Vec<(String, String)>, Vec<String>, Vec<String>);
 
 /// The outcome of bridge planning.
 struct BridgePlan {
@@ -981,10 +984,10 @@ fn closure_of(start: u32, fns: &BTreeMap<u32, BridgedFn>) -> Vec<u32> {
     let mut seen = BTreeSet::new();
     let mut work = vec![start];
     while let Some(f) = work.pop() {
-        if seen.insert(f) {
-            if let Some(b) = fns.get(&f) {
-                work.extend(b.callees.iter().copied());
-            }
+        if seen.insert(f)
+            && let Some(b) = fns.get(&f)
+        {
+            work.extend(b.callees.iter().copied());
         }
     }
     seen.into_iter().collect()
@@ -1909,16 +1912,31 @@ fn command_preamble_start(lines: &[&str], keyword_line: usize) -> usize {
     start
 }
 
+/// The rendered bridge Lean: the proofs module, the `Bridge.lean`
+/// corollaries, and the named part files the proofs import.
+type BridgeLean = (String, String, Vec<(String, String)>);
+
 /// What `write_project` needs to render the bridge and law surfaces.
 struct Surfaces {
     model: PackagedModel,
-    bridge_lean: Option<(String, String, Vec<(String, String)>)>,
+    bridge_lean: Option<BridgeLean>,
     laws_lean: Option<String>,
     bridges: Vec<SourceBridge>,
     law_claims: Vec<LawClaim>,
     law_bridge_exports: Vec<Vec<String>>,
     declined_bridges: Vec<(String, String)>,
     declined_laws: Vec<(String, String)>,
+}
+
+impl Surfaces {
+    /// The bridges the package ships: none unless their Lean is written.
+    fn packaged_bridges(&self) -> &[SourceBridge] {
+        if self.bridge_lean.is_some() {
+            &self.bridges
+        } else {
+            &[]
+        }
+    }
 }
 
 fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {

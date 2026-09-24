@@ -888,16 +888,19 @@ fn scratch_ty(vt: &wasm_encoder::ValType, types: &TypeTableBuilder) -> Option<Pl
     }
 }
 
-/// Print every emitted user function. `fns` lists, per user function, its
-/// wasm function index, its MIR (when it lowered), its resolved definition
-/// and its declared extra locals.
+/// One emitted user function as `print_module` reads it: its wasm function
+/// index, its MIR (when it lowered), its resolved definition and its declared
+/// extra locals.
+pub type EmittedFn<'a> = (
+    u32,
+    Option<&'a MirFn>,
+    &'a ResolvedFnDef,
+    Option<&'a [wasm_encoder::ValType]>,
+);
+
+/// Print every emitted user function, one `EmittedFn` per user function.
 pub fn print_module(
-    fns: &[(
-        u32,
-        Option<&MirFn>,
-        &ResolvedFnDef,
-        Option<&[wasm_encoder::ValType]>,
-    )],
+    fns: &[EmittedFn<'_>],
     layout: &dyn PlanLayout,
     aint_eq_idx: Option<u32>,
 ) -> ModulePlans {

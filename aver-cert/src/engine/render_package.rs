@@ -751,11 +751,12 @@ fn render_manifest_json(
     target: &str,
     abi: &str,
     envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
-    laws: &[LawClaim],
-    law_bridges: &[Vec<String>],
-    bridges: &[SourceBridge],
-    declined_bridges: &[(String, String)],
+    surfaces: &Surfaces,
 ) -> String {
+    let laws = &surfaces.law_claims;
+    let law_bridges = &surfaces.law_bridge_exports;
+    let bridges = surfaces.packaged_bridges();
+    let declined_bridges = &surfaces.declined_bridges;
     let any_total = analysis.certified.iter().any(|c| c.total);
     let any_partial = analysis.certified.iter().any(|c| !c.total);
     let level = match (any_partial, any_total) {
@@ -997,11 +998,6 @@ pub fn write_project(
             write_nested(&cert_dir, path, content)?;
         }
     }
-    let bridges: &[SourceBridge] = if surfaces.bridge_lean.is_some() {
-        &surfaces.bridges
-    } else {
-        &[]
-    };
     if let Some((proofs, corollaries, parts)) = &surfaces.bridge_lean {
         for (name, text) in parts {
             write(&cert_dir, name, text)?;
@@ -1021,10 +1017,7 @@ pub fn write_project(
             target,
             abi,
             envelope,
-            &surfaces.law_claims,
-            &surfaces.law_bridge_exports,
-            bridges,
-            &surfaces.declined_bridges,
+            &surfaces,
         ),
     )
     .map_err(|e| format!("write manifest: {e}"))?;

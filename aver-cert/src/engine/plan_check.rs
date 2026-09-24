@@ -338,7 +338,7 @@ impl MCtx<'_> {
         match (c, ty) {
             (PlanCtor::User(tid, k), PlanTy::Sum(tid2)) => {
                 (tid == *tid2 && self.sum_ok(tid) && self.ctor_fields(tid, k) == Some(ts))
-                    .then(|| PlanTy::Sum(tid))
+                    .then_some(PlanTy::Sum(tid))
             }
             (PlanCtor::Some, PlanTy::Option(t)) => {
                 (ts == [t.as_ref().clone()] && has_default(t)).then(|| ty.clone())
@@ -1665,7 +1665,7 @@ impl MCtx<'_> {
 
     /// `TypeTable.valTyD` against the decoded value type.
     fn val_t(&self, t: &PlanTy) -> Option<ValT> {
-        let r = |i: u64| (i < 4_294_967_296).then(|| ValT::RefNull(i as u32));
+        let r = |i: u64| (i < 4_294_967_296).then_some(ValT::RefNull(i as u32));
         match t {
             PlanTy::Int => r(self.carrier),
             PlanTy::Bool => Some(ValT::I32),
