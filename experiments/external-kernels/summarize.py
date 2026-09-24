@@ -8,6 +8,11 @@ import pathlib
 import re
 import sys
 
+WALL = {
+    path.stem
+    for path in (pathlib.Path(__file__).resolve().parents[2] / "aver-cert/assets/wall/current").glob("*.lean")
+}
+
 KERNELS = [
     ("leanchecker --fresh (stock, on .olean)", "leanchecker-fresh", None),
     ("official kernel, from export (arena)", "official-export", "official-export-tampered"),
@@ -78,9 +83,11 @@ def main():
         for label, step, tampered in KERNELS:
             row = rows.get(step)
             trow = rows.get(tampered) if tampered else None
+            rrow = rows.get(f"{step}-root") if tampered else None
             kernel_rows.append(
                 f"| {name} | {label} | {row['wall'] if row else '-'} | {mib(row) if row else '-'} | "
-                f"{verdict(row)} | {verdict(trow) if tampered else 'n/a (no .olean for a tampered export)'} |"
+                f"{verdict(row)} | {verdict(trow) if tampered else 'n/a (no .olean for a tampered export)'} | "
+                f"{rrow['wall'] if rrow else '-'} | {verdict(rrow) if tampered else '-'} |"
             )
         for step in ("check", "verify"):
             phases = timing_phases(package / "logs" / f"{step}.log")
@@ -90,6 +97,8 @@ def main():
                 f"| {name} | {step} | {row['wall'] if row else '-'} | {verdict(row)} | {phase_text} |"
             )
         profile = package / "profile.jsonl"
+        sums = {"total": 0.0, "kernel": 0.0, "modules": 0}
+        split = {"wall": [0.0, 0.0], "package and checker": [0.0, 0.0]}
         if profile.exists():
             for line in profile.read_text().splitlines():
                 try:
@@ -104,13 +113,32 @@ def main():
                     f"{k} {v:.1f}s" for k, v in sorted(cats.items(), key=lambda kv: -kv[1])[:5]
                 )
                 share = f"{100 * kernel / total:.0f}%" if total else "?"
+                sums["total"] += total
+                sums["kernel"] += kernel
+                sums["modules"] += 1
+                side = split["wall" if module in WALL else "package and checker"]
+                side[0] += total
+                side[1] += kernel
+                if total < 2.0:
+                    continue
                 profile_rows.append(f"| {name} | {module} | {total:.1f} | {kernel:.1f} | {share} | {top} |")
+            if sums["total"]:
+                profile_rows.append(
+                    f"| {name} | **all {sums['modules']} modules** | {sums['total']:.1f} | {sums['kernel']:.1f} | "
+                    f"**{100 * sums['kernel'] / sums['total']:.0f}%** | |"
+                )
+                for side, (total, kernel) in split.items():
+                    if total:
+                        profile_rows.append(
+                            f"| {name} | {side} modules | {total:.1f} | {kernel:.1f} | "
+                            f"{100 * kernel / total:.0f}% | |"
+                        )
 
     out += [
         "## Kernels on the CheckerWitness closure",
         "",
-        "| package | kernel | wall s | peak MiB | original | one artifact byte flipped |",
-        "|---|---|---|---|---|---|",
+        "| package | kernel | wall s | peak MiB | original | one artifact byte flipped | root-only closure wall s | root-only verdict |",
+        "|---|---|---|---|---|---|---|---|",
         *kernel_rows,
         "",
         "## Package and export facts",
@@ -124,7 +152,8 @@ def main():
             f"{facts.get('package_lean_files', '?')} Lean files, {facts.get('package_lean_bytes', '?')} B; "
             f"export {facts.get('export_bytes', '?')} B, {facts.get('export_lines', '?')} lines, "
             f"{facts.get('export_natlits', '?')} Nat literals (largest {facts.get('export_max_natlit_digits', '?')} digits); "
-            f"lean4export {export['wall'] if export else '-'} s; stock `aver-cert verify` on the flipped artifact "
+            f"lean4export {export['wall'] if export else '-'} s; root-only export "
+            f"{facts.get('root_export_bytes', '?')} B, {facts.get('root_export_lines', '?')} lines; stock `aver-cert verify` on the flipped artifact "
             f"with its hash re-pinned: {verdict(tamper)}"
         )
     out += [
@@ -135,7 +164,7 @@ def main():
         "|---|---|---|---|---|",
         *phase_rows,
         "",
-        "## Kernel versus elaboration (Lean profiler, heaviest modules)",
+        "## Kernel versus elaboration (Lean profiler, every module of the verify build; rows under 2 s omitted)",
         "",
         "| package | module | profiled s (excl. import) | type checking s | kernel share | top categories |",
         "|---|---|---|---|---|---|",

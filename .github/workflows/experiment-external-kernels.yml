@@ -7,9 +7,9 @@ on:
     branches: [experiments/external-kernels]
   workflow_dispatch:
 
+# One group per commit: a long measurement is not cancelled by the next push.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.sha }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -100,6 +100,14 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Install pinned toolchain
         run: elan toolchain install "$LEAN_TOOLCHAIN"
+      - name: Install wasm-tools
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o /tmp/wasm-tools.tar.gz \
+            https://github.com/bytecodealliance/wasm-tools/releases/download/v1.246.2/wasm-tools-1.246.2-x86_64-linux.tar.gz
+          tar -xzf /tmp/wasm-tools.tar.gz -C /tmp
+          mv /tmp/wasm-tools-1.246.2-x86_64-linux/wasm-tools "$HOME/.local/bin/wasm-tools"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: actions/download-artifact@v4
         with:
           name: aver-bins

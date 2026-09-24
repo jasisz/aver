@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Flip one byte of a Wasm artifact and carry the flip into an export.
 
-`wasm OUT_WASM` writes a copy of the module with one byte flipped in the middle
-of the code section body and prints the offset as JSON.
+`candidates WASM N` prints N byte offsets to try, from the middle of the
+code section body outwards.
 
-`export WASM EXPORT OUT_EXPORT` rewrites the export of the ORIGINAL module's
+`wasm WASM OUT_WASM [OFFSET]` writes a copy of the module with one byte flipped (by default in
+the middle of the code section body) and prints the offset as JSON.
+
+`export WASM EXPORT OUT_EXPORT [OFFSET]` rewrites the export of the ORIGINAL module's
 certificate so that `AverCert.ArtifactBytes.modBytes` denotes the flipped
 module: the checker renders the bytes as numerals of 1024 bytes each
 (aver-cert/src/wall.rs, `render_byte_module`), so exactly one numeral changes,
@@ -41,8 +44,9 @@ def flip_offset(data):
     raise SystemExit("no code section")
 
 
-def flipped(data):
-    offset = flip_offset(data)
+def flipped(data, offset=None):
+    if offset is None:
+        offset = flip_offset(data)
     out = bytearray(data)
     out[offset] ^= 0x01
     return bytes(out), offset
@@ -51,10 +55,18 @@ def flipped(data):
 def main():
     sys.set_int_max_str_digits(0)
     mode = sys.argv[1]
+    if mode == "candidates":
+        # Offsets to try, from the middle of the code section outwards.
+        data = open(sys.argv[2], "rb").read()
+        middle = flip_offset(data)
+        for step in range(int(sys.argv[3])):
+            print(middle + (step + 1) // 2 * (1 if step % 2 else -1))
+        return
+    offset = int(sys.argv[-1]) if sys.argv[-1].isdigit() else None
     if mode == "wasm":
         src, dst = sys.argv[2], sys.argv[3]
         data = open(src, "rb").read()
-        out, offset = flipped(data)
+        out, offset = flipped(data, offset)
         open(dst, "wb").write(out)
         print(json.dumps({"offset": offset, "before": data[offset], "after": out[offset]}))
         return
@@ -62,7 +74,7 @@ def main():
         raise SystemExit(f"unknown mode {mode}")
     src, export, dst = sys.argv[2], sys.argv[3], sys.argv[4]
     data = open(src, "rb").read()
-    out, offset = flipped(data)
+    out, offset = flipped(data, offset)
     index = offset // CHUNK
     old = int.from_bytes(data[index * CHUNK:(index + 1) * CHUNK], "little")
     new = int.from_bytes(out[index * CHUNK:(index + 1) * CHUNK], "little")

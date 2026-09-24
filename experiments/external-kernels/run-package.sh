@@ -135,7 +135,18 @@ run_timed verify env AVER_CERT_PARALLEL_REPLAY="$HOOK" "$AVER_CERT" verify "$WAS
 
 # The stock pipeline on the tampered artifact, with the manifest's hash updated
 # to match, so the rejection has to come from Lean rather than the hash pin.
-python3 "$HERE/tamper.py" wasm "$WASM" "$WORK/tampered.wasm" > "$OUT/tamper-wasm.json"
+# The flipped byte is the one nearest the middle of the code section that
+# leaves a valid module, so wasmparser does not decline it before Lean runs.
+OFFSET=""
+for candidate in $(python3 "$HERE/tamper.py" candidates "$WASM" 400); do
+  python3 "$HERE/tamper.py" wasm "$WASM" "$WORK/candidate.wasm" "$candidate" > /dev/null
+  if wasm-tools validate "$WORK/candidate.wasm" 2>/dev/null; then
+    OFFSET="$candidate"; break
+  fi
+done
+echo "flip offset: ${OFFSET:-none valid, using the middle of the code section}"
+python3 "$HERE/tamper.py" wasm "$WASM" "$WORK/tampered.wasm" $OFFSET > "$OUT/tamper-wasm.json"
+echo "{\"still_valid_wasm\": $([ -n "$OFFSET" ] && echo true || echo false)}" >> "$OUT/tamper-wasm.json"
 cp -r "$PKG/cert" "$WORK/tampered-cert"
 old_hash=$(sha256sum "$WASM" | cut -d' ' -f1)
 new_hash=$(sha256sum "$WORK/tampered.wasm" | cut -d' ' -f1)
@@ -174,7 +185,7 @@ head -c 600 "$EXPORT"; echo
 echo "::endgroup::"
 
 TAMPERED="$WORK/witness-tampered.ndjson"
-python3 "$HERE/tamper.py" export "$WASM" "$EXPORT" "$TAMPERED" > "$OUT/tamper-export.json" 2>&1 \
+python3 "$HERE/tamper.py" export "$WASM" "$EXPORT" "$TAMPERED" $OFFSET > "$OUT/tamper-export.json" 2>&1 \
   || rm -f "$TAMPERED"
 cat "$OUT/tamper-export.json"
 
@@ -190,15 +201,33 @@ kernels "$EXPORT" ""
 if [ -s "$TAMPERED" ]; then
   kernels "$TAMPERED" "-tampered"
 fi
+rm -f "$TAMPERED"
 
-# 5. Kernel versus elaboration on the heaviest modules of the verify build.
-python3 "$HERE/profile.py" heavy "$OUT/logs/verify.log" 8 > "$OUT/heavy-modules.tsv"
+# The same, restricted to the accepted root and what it depends on, instead of
+# every declaration in the witness's import closure (Init and Std included).
+ROOT_EXPORT="$WORK/root.ndjson"
+echo "::group::export-root"
+/usr/bin/time -f '%e %M' -o "$WORK/export-root.time" \
+  lake env "$TOOLS/lean4export" CheckerWitness -- AverCertChecker.checked > "$ROOT_EXPORT" 2> "$OUT/logs/export-root.log"
+status=$?
+read -r wall rss < "$WORK/export-root.time"
+printf 'export-root\t%s\t%s\t%s\n' "$status" "$wall" "$rss" >> "$RESULTS"
+{
+  echo "root_export_bytes=$(stat -c %s "$ROOT_EXPORT")"
+  echo "root_export_lines=$(wc -l < "$ROOT_EXPORT")"
+} >> "$OUT/package.txt"
+echo "::endgroup::"
+kernels "$ROOT_EXPORT" "-root"
+rm -f "$ROOT_EXPORT" "$EXPORT"
+
+# 5. Kernel versus elaboration, module by module, over the whole verify build.
+python3 "$HERE/profile.py" heavy "$OUT/logs/verify.log" 100000 > "$OUT/heavy-modules.tsv"
 cat "$OUT/heavy-modules.tsv"
 mkdir -p "$OUT/profile"
 while IFS=$'\t' read -r module took; do
   file="${module//.//}.lean"
   [ -f "$file" ] || { echo "no source for $module"; continue; }
-  run_timed "profile-$module" lake env lean -Dprofiler=true -Dprofiler.threshold=100 \
+  KERNEL_TIMEOUT=1800 run_timed "profile-$module" lake env lean -Dprofiler=true -Dprofiler.threshold=100 \
     -DElab.async=false "$file"
   cp "$OUT/logs/profile-$module.log" "$OUT/profile/$module.log"
 done < "$OUT/heavy-modules.tsv"
