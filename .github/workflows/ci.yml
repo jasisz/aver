@@ -265,6 +265,20 @@ jobs:
         if: matrix.lane == 'checks'
         run: cargo test -p aver-lang --features wasm,wasip2 --test provider_spec --test capability_grammar_spec --test capability_target_manifest_spec
 
+      - name: Certificate coupling ratchet
+        if: matrix.lane == 'checks'
+        # An emitter or MIR change that makes a certified function decline must
+        # fail the PR that makes it, not the next Lean run. `--certify` writes
+        # the package without building it, so this needs no Lean: it compiles
+        # the certificate corpus and compares the certified exports, bridges
+        # and law-claims per program with tools/cert-baseline.json. A gain is
+        # recorded in the same commit with `python3 tools/cert_ratchet.py
+        # --update`. The binary is the one the canaries above just linked.
+        timeout-minutes: 10
+        run: |
+          cargo build -p aver-lang --bin aver --features wasm,wasip2
+          python3 tools/cert_ratchet.py --aver target/debug/aver
+
       - name: Install Node for the JavaScript Work host
         if: matrix.lane == 'wasm-gc'
         uses: actions/setup-node@v4

@@ -1,0 +1,655 @@
+{
+ "examples/data/json.av": {
+  "bridges": [
+   "Bytes_byteToHex",
+   "Bytes_hexDigit",
+   "Bytes_highNibble",
+   "Bytes_lowNibble",
+   "combineSurrogates",
+   "escapeSeq",
+   "hexAlpha",
+   "isHighSurrogate",
+   "isLowSurrogate",
+   "unescapedChar"
+  ],
+  "certified": {
+   "Bytes_byteToHex": "L1",
+   "Bytes_hexDigit": "L1",
+   "Bytes_highNibble": "L1",
+   "Bytes_lowNibble": "L1",
+   "combineSurrogates": "L1",
+   "escapeSeq": "L1",
+   "hexAlpha": "L1",
+   "isHighSurrogate": "L1",
+   "isLowSurrogate": "L1",
+   "jsonEntryKey": "L1",
+   "jsonEntryValue": "L1",
+   "jsonFloat": "L1",
+   "jsonInt": "L1",
+   "jsonList": "L1",
+   "jsonStr": "L1",
+   "prependJsonEntry": "L1",
+   "singletonJsonEntries": "L1",
+   "unescapedChar": "L1"
+  },
+  "laws": [
+   "afterIntChar.terminatedIntRoundtrip",
+   "escapeJsonChar.encodesEscapeCode",
+   "escapeJsonString.parseStringRoundtrip",
+   "finishInt.fromCanonicalInt",
+   "finishNumber.fromCanonicalIntSlice",
+   "finishString.plainSegmentRoundtrip",
+   "parseEscape.escapeCodeRoundtrip",
+   "parseLiteral.boolRoundtrip",
+   "parseNumber.fromIntRoundtrip",
+   "parseStringChunk.escapedStringRoundtrip",
+   "skipWs.skipWsAdvances"
+  ]
+ },
+ "projects/k5_fdiv/main.av": {
+  "bridges": [
+   "Domain_Rational_absFraction",
+   "Domain_Rational_absInt",
+   "Domain_Rational_isNonNeg",
+   "Domain_Rational_isNonPos",
+   "Domain_Rational_lessThan",
+   "Domain_Rational_minus",
+   "Domain_Rational_negate",
+   "Domain_Rational_oneFraction",
+   "Domain_Rational_plus",
+   "Domain_Rational_sameValue",
+   "Domain_Rational_times",
+   "Domain_Rational_zeroFraction"
+  ],
+  "certified": {
+   "Domain_Rational_absFraction": "L1",
+   "Domain_Rational_absInt": "L1",
+   "Domain_Rational_isNonNeg": "L1",
+   "Domain_Rational_isNonPos": "L1",
+   "Domain_Rational_lessThan": "L1",
+   "Domain_Rational_minus": "L1",
+   "Domain_Rational_negate": "L1",
+   "Domain_Rational_oneFraction": "L1",
+   "Domain_Rational_plus": "L1",
+   "Domain_Rational_sameValue": "L1",
+   "Domain_Rational_times": "L1",
+   "Domain_Rational_zeroFraction": "L1"
+  },
+  "laws": [
+   "Domain.Rational.isNonNeg.nonNegOfPositive",
+   "Domain.Rational.minus.equalsPlusNegate",
+   "Domain.Rational.negate.involutive",
+   "Domain.Rational.plus.associative",
+   "Domain.Rational.plus.commutative",
+   "Domain.Rational.plus.zeroIsNeutral",
+   "Domain.Rational.times.associative",
+   "Domain.Rational.times.commutative",
+   "Domain.Rational.times.distributesOverPlus",
+   "Domain.Rational.times.oneIsNeutral",
+   "Domain.Rational.times.zeroAbsorbs"
+  ]
+ },
+ "projects/payment_ops/main.av": {
+  "bridges": [
+   "App_Commands_duplicateSettlementAudit",
+   "App_Commands_duplicateWebhookAudit",
+   "App_Commands_sampleAudit",
+   "App_Commands_sampleCase",
+   "App_Commands_sampleEvent",
+   "App_Commands_sampleSettlement",
+   "App_Commands_sampleState",
+   "App_Queries_sampleCase",
+   "App_Queries_sampleEvent",
+   "App_Queries_sampleSettlement",
+   "App_Render_renderCaseItem",
+   "App_Render_sampleAudit",
+   "App_Render_sampleCase",
+   "App_Render_sampleEvent",
+   "App_Render_sampleSettlement",
+   "App_Render_sampleSummary",
+   "App_Render_settlementKindText",
+   "Bytes_byteToHex",
+   "Bytes_hexDigit",
+   "Bytes_highNibble",
+   "Bytes_lowNibble",
+   "Domain_Cases_auditForOpenedCase",
+   "Domain_Cases_auditForResolvedCase",
+   "Domain_Cases_makeCaseDraft",
+   "Domain_Cases_statusText",
+   "Domain_Ledger_emptyState",
+   "Domain_Ledger_eventAmount",
+   "Domain_Ledger_eventAt",
+   "Domain_Ledger_eventCurrency",
+   "Domain_Ledger_eventName",
+   "Domain_Ledger_samePayment",
+   "Domain_Ledger_sampleAuthorized",
+   "Domain_Ledger_sampleCaptured",
+   "Domain_Ledger_sampleOtherPayment",
+   "Domain_Ledger_sampleRefundBeforeCapture",
+   "Domain_Normalize_normalizeAdyenSettlement",
+   "Domain_Normalize_normalizeAdyenWebhook",
+   "Domain_Normalize_normalizeSettlementKind",
+   "Domain_Normalize_normalizeStripeSettlement",
+   "Domain_Normalize_normalizeStripeWebhook",
+   "Domain_Normalize_normalizeWebhookEvent",
+   "Domain_Reconcile_amountMissing",
+   "Domain_Reconcile_compareAmounts",
+   "Domain_Reconcile_sampleCaptureRow",
+   "Domain_Reconcile_sampleRefundRow",
+   "Domain_Reconcile_sampleState",
+   "Domain_Views_sampleCaptureRow",
+   "Domain_Views_sampleCase",
+   "Domain_Views_sampleEvent",
+   "Domain_Views_sampleState",
+   "Infra_Audit_auditPath",
+   "Infra_Audit_sampleAudit",
+   "Infra_Store_casesPath",
+   "Infra_Store_dataDir",
+   "Infra_Store_decodeEventKind",
+   "Infra_Store_eventsPath",
+   "Infra_Store_parseSettlementKind",
+   "Infra_Store_settlementKindText",
+   "Infra_Store_settlementsPath"
+  ],
+  "certified": {
+   "App_Commands_duplicateSettlementAudit": "L1",
+   "App_Commands_duplicateWebhookAudit": "L1",
+   "App_Commands_sampleAudit": "L1",
+   "App_Commands_sampleCase": "L1",
+   "App_Commands_sampleEvent": "L1",
+   "App_Commands_sampleSettlement": "L1",
+   "App_Commands_sampleState": "L1",
+   "App_Queries_sampleCase": "L1",
+   "App_Queries_sampleEvent": "L1",
+   "App_Queries_sampleSettlement": "L1",
+   "App_Render_renderCaseItem": "L1",
+   "App_Render_sampleAudit": "L1",
+   "App_Render_sampleCase": "L1",
+   "App_Render_sampleEvent": "L1",
+   "App_Render_sampleSettlement": "L1",
+   "App_Render_sampleSummary": "L1",
+   "App_Render_settlementKindText": "L1",
+   "Bytes_byteToHex": "L1",
+   "Bytes_hexDigit": "L1",
+   "Bytes_highNibble": "L1",
+   "Bytes_lowNibble": "L1",
+   "Domain_Cases_auditForOpenedCase": "L1",
+   "Domain_Cases_auditForResolvedCase": "L1",
+   "Domain_Cases_makeCaseDraft": "L1",
+   "Domain_Cases_statusText": "L1",
+   "Domain_Ledger_emptyState": "L1",
+   "Domain_Ledger_eventAmount": "L1",
+   "Domain_Ledger_eventAt": "L1",
+   "Domain_Ledger_eventCurrency": "L1",
+   "Domain_Ledger_eventName": "L1",
+   "Domain_Ledger_samePayment": "L1",
+   "Domain_Ledger_sampleAuthorized": "L1",
+   "Domain_Ledger_sampleCaptured": "L1",
+   "Domain_Ledger_sampleOtherPayment": "L1",
+   "Domain_Ledger_sampleRefundBeforeCapture": "L1",
+   "Domain_Normalize_normalizeAdyenSettlement": "L1",
+   "Domain_Normalize_normalizeAdyenWebhook": "L1",
+   "Domain_Normalize_normalizeSettlementKind": "L1",
+   "Domain_Normalize_normalizeStripeSettlement": "L1",
+   "Domain_Normalize_normalizeStripeWebhook": "L1",
+   "Domain_Normalize_normalizeWebhookEvent": "L1",
+   "Domain_Reconcile_amountMissing": "L1",
+   "Domain_Reconcile_compareAmounts": "L1",
+   "Domain_Reconcile_sampleCaptureRow": "L1",
+   "Domain_Reconcile_sampleRefundRow": "L1",
+   "Domain_Reconcile_sampleState": "L1",
+   "Domain_Views_sampleCaptureRow": "L1",
+   "Domain_Views_sampleCase": "L1",
+   "Domain_Views_sampleEvent": "L1",
+   "Domain_Views_sampleState": "L1",
+   "Infra_Audit_auditPath": "L1",
+   "Infra_Audit_sampleAudit": "L1",
+   "Infra_Store_casesPath": "L1",
+   "Infra_Store_dataDir": "L1",
+   "Infra_Store_decodeEventKind": "L1",
+   "Infra_Store_eventsPath": "L1",
+   "Infra_Store_parseSettlementKind": "L1",
+   "Infra_Store_settlementKindText": "L1",
+   "Infra_Store_settlementsPath": "L1"
+  },
+  "laws": [
+   "Infra.Codec.unescapeField.escapedRoundtrip"
+  ]
+ },
+ "tools/certkit/fixtures/arity3.av": {
+  "bridges": [
+   "tripleCheck"
+  ],
+  "certified": {
+   "tripleCheck": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/bool_window.av": {
+  "bridges": [
+   "inWindow"
+  ],
+  "certified": {
+   "inWindow": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/cell_at.av": {
+  "bridges": [],
+  "certified": {
+   "cellAt": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/cert_goals.av": {
+  "bridges": [
+   "addTwo",
+   "boolAndGoal",
+   "boxInt",
+   "countDown",
+   "double",
+   "evalOp",
+   "gauge",
+   "hex16",
+   "idGoal",
+   "inAsciiDigit",
+   "inWindowGoal",
+   "intEqZero",
+   "intLessZero",
+   "isEven",
+   "isOdd",
+   "mkOp",
+   "quad",
+   "quoteOrSelf",
+   "shout",
+   "sumFrom",
+   "tagName",
+   "userName"
+  ],
+  "certified": {
+   "addTwo": "L1",
+   "boolAndGoal": "L1",
+   "boxInt": "L1",
+   "countDown": "L3",
+   "double": "L1",
+   "evalOp": "L1",
+   "floatEqGoal": "L1",
+   "floatGeGoal": "L1",
+   "floatGtGoal": "L1",
+   "floatLeGoal": "L1",
+   "floatLtGoal": "L1",
+   "gauge": "L1",
+   "hex16": "L1",
+   "idGoal": "L1",
+   "inAsciiDigit": "L1",
+   "inWindowGoal": "L1",
+   "intEqZero": "L1",
+   "intLessZero": "L1",
+   "isEven": "L3",
+   "isOdd": "L3",
+   "mkOp": "L1",
+   "quad": "L1",
+   "quoteOrSelf": "L1",
+   "shout": "L1",
+   "sumFrom": "L3",
+   "tagName": "L1",
+   "userName": "L1",
+   "wrapItems": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/certempty.av": {
+  "bridges": [],
+  "certified": {},
+  "laws": []
+ },
+ "tools/certkit/fixtures/certkit_ops.av": {
+  "bridges": [
+   "cmp3",
+   "gez",
+   "gtz",
+   "iez",
+   "ltz"
+  ],
+  "certified": {
+   "cmp3": "L1",
+   "feq": "L1",
+   "fge": "L1",
+   "fgt": "L1",
+   "fle": "L1",
+   "gez": "L1",
+   "gtz": "L1",
+   "iez": "L1",
+   "ltz": "L1",
+   "roundtrip": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/certkit_zoo.av": {
+  "bridges": [
+   "addPair",
+   "boolAnd",
+   "tick"
+  ],
+  "certified": {
+   "addPair": "L1",
+   "boolAnd": "L1",
+   "classify": "L1",
+   "describe": "L1",
+   "fcmp": "L1",
+   "tick": "L3"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/certprobe.av": {
+  "bridges": [
+   "addTwo",
+   "atLeast",
+   "sameKey"
+  ],
+  "certified": {
+   "addTwo": "L1",
+   "atLeast": "L1",
+   "sameKey": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/certprobe2.av": {
+  "bridges": [
+   "countDown",
+   "sumTo"
+  ],
+  "certified": {
+   "countDown": "L3",
+   "sumTo": "L3"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/chainsum.av": {
+  "bridges": [],
+  "certified": {
+   "weight": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/clockrange.av": {
+  "bridges": [
+   "validClockValue"
+  ],
+  "certified": {
+   "validClockValue": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/compose.av": {
+  "bridges": [
+   "double",
+   "hex16",
+   "quad"
+  ],
+  "certified": {
+   "double": "L1",
+   "hex16": "L1",
+   "quad": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/f64verbatim.av": {
+  "bridges": [
+   "keepCarrier"
+  ],
+  "certified": {
+   "floatOrZero": "L1",
+   "keepCarrier": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/intcompare.av": {
+  "bridges": [
+   "below",
+   "isNonNeg",
+   "isNonNegField",
+   "isNonPos",
+   "sameValue"
+  ],
+  "certified": {
+   "below": "L1",
+   "isNonNeg": "L1",
+   "isNonNegField": "L1",
+   "isNonPos": "L1",
+   "sameValue": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/intdispatchgen.av": {
+  "bridges": [
+   "boxInt",
+   "gauge"
+  ],
+  "certified": {
+   "boxInt": "L1",
+   "gauge": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/letnamed.av": {
+  "bridges": [
+   "addTwoNamed",
+   "inRangeNamed",
+   "named"
+  ],
+  "certified": {
+   "addTwoNamed": "L1",
+   "inRangeNamed": "L1",
+   "named": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/manytypes.av": {
+  "bridges": [
+   "sumBig"
+  ],
+  "certified": {
+   "sumBig": "L3"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/meter.av": {
+  "bridges": [
+   "readout"
+  ],
+  "certified": {
+   "readout": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/mutual.av": {
+  "bridges": [
+   "isEven",
+   "isOdd"
+  ],
+  "certified": {
+   "isEven": "L3",
+   "isOdd": "L3"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/mutual3.av": {
+  "bridges": [
+   "rotA",
+   "rotB",
+   "rotC"
+  ],
+  "certified": {
+   "rotA": "L3",
+   "rotB": "L3",
+   "rotC": "L3"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/offsetrec.av": {
+  "bridges": [
+   "readCount"
+  ],
+  "certified": {
+   "readCount": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/opteval.av": {
+  "bridges": [
+   "eval",
+   "mk"
+  ],
+  "certified": {
+   "eval": "L1",
+   "mk": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/person.av": {
+  "bridges": [
+   "readAge",
+   "readMember"
+  ],
+  "certified": {
+   "readAge": "L1",
+   "readMember": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/rangepred.av": {
+  "bridges": [
+   "inAsciiDigit"
+  ],
+  "certified": {
+   "inAsciiDigit": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/recdecline.av": {
+  "bridges": [
+   "wild"
+  ],
+  "certified": {
+   "wild": "L3"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/recgen.av": {
+  "bridges": [
+   "backward",
+   "constPlus",
+   "countDown",
+   "factorial",
+   "sumFrom"
+  ],
+  "certified": {
+   "backward": "L3",
+   "constPlus": "L3",
+   "countDown": "L3",
+   "factorial": "L3",
+   "sumFrom": "L3"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/recordcompute.av": {
+  "bridges": [
+   "combine",
+   "flip"
+  ],
+  "certified": {
+   "combine": "L1",
+   "flip": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/refinedsum.av": {
+  "bridges": [
+   "bump"
+  ],
+  "certified": {
+   "bump": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/signalgauge.av": {
+  "bridges": [
+   "gauge"
+  ],
+  "certified": {
+   "gauge": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/strdispatch.av": {
+  "bridges": [
+   "bump",
+   "tagName"
+  ],
+  "certified": {
+   "bump": "L1",
+   "tagName": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/stringconcat.av": {
+  "bridges": [
+   "bump",
+   "shout"
+  ],
+  "certified": {
+   "bump": "L1",
+   "shout": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/stringeq.av": {
+  "bridges": [
+   "bump",
+   "quoteOrSelf"
+  ],
+  "certified": {
+   "bump": "L1",
+   "quoteOrSelf": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/tupleproj.av": {
+  "bridges": [
+   "pairFst",
+   "pairSnd"
+  ],
+  "certified": {
+   "pairFst": "L1",
+   "pairSnd": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/verbatimgen.av": {
+  "bridges": [
+   "tagName"
+  ],
+  "certified": {
+   "tagName": "L1",
+   "wrapItems": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/verbatimwiden.av": {
+  "bridges": [],
+  "certified": {
+   "wrapItems": "L1"
+  },
+  "laws": []
+ },
+ "tools/certkit/fixtures/widenedmatch.av": {
+  "bridges": [
+   "boxInt"
+  ],
+  "certified": {
+   "boxInt": "L1"
+  },
+  "laws": []
+ }
+}
