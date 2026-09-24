@@ -173,6 +173,16 @@ fn lean_char_lists(items: &[String], separator: &str) -> String {
     format!("[{lists}]")
 }
 
+/// Pairs of Strings as the Lean list of pairs of their character lists.
+fn lean_char_pairs(items: &[(String, String)]) -> String {
+    let pairs = items
+        .iter()
+        .map(|(a, b)| format!("({}, {})", lean_char_list(a), lean_char_list(b)))
+        .collect::<Vec<_>>()
+        .join(",\n     ");
+    format!("[{pairs}]")
+}
+
 fn plan_def_name(func_idx: u32) -> String {
     format!("fn{func_idx}")
 }
@@ -525,7 +535,10 @@ fn render_artifact(
                  show AverCert.manifest.subject.arithParams = some {params} from rfl]\n  \
                  simp only [arithTableCheck, decodedHostRole_box, decodedHostRole_toIndex, \
                  decodedHostRole_add, decodedHostRole_sub, decodedHostRole_mul, decodedHostRole_cmp, \
-                 decodedHostRole_eq, decodedHostRole_divmod, Bool.and_true, Bool.true_and]\n  \
+                 decodedHostRole_eq, decodedHostRole_divmod, Bool.and_true, Bool.true_and,\n    \
+                 AverCert.DeclaredLayout.Chars.carrierHelperAbsent_eq,\n    \
+                 AverCert.DeclaredLayout.Chars.boxIdx_eq, AverCert.DeclaredLayout.Chars.toIndexIdx_eq,\n    \
+                 AverCert.DeclaredLayout.Chars.cmpIdx_eq]\n  \
                  decide +kernel",
                 r.roles_lean_value()
             ),
@@ -570,7 +583,10 @@ fn render_artifact(
            {obligation_names}\n    \
            {declared_names}\n    \
            rfl rfl (by decide +kernel)\n\n\
-         theorem imports_ok : importsWithinCapabilities data = true := by decide +kernel\n\n\
+         theorem imports_ok : importsWithinCapabilities data = true :=\n  \
+           AverCert.DeclaredLayout.Chars.importsWithinCapabilities_of_chars data\n    \
+           {capabilities}\n    \
+           rfl (by decide +kernel)\n\n\
          theorem start_ok : startAccounted data = true := by decide +kernel\n\n",
         obligation_names = lean_char_lists(
             &analysis
@@ -581,6 +597,7 @@ fn render_artifact(
                 .collect::<Vec<_>>(),
             "\n     "
         ),
+        capabilities = lean_char_pairs(&analysis.module_envelope.capabilities),
         declared_names = lean_char_lists(
             &declared_uncertified(analysis)
                 .into_iter()

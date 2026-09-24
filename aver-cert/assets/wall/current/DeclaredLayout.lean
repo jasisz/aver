@@ -781,4 +781,185 @@ theorem roleTableFast_eq (n len : Nat) : roleTableFast n len = roleTable n len :
 
 end StringFast
 
+
+/-! ### Names as characters
+
+The kernel has no fast path for String values: converting one to its bytes
+or comparing two rebuilds their UTF-8 arrays, in time quadratic in their
+length. A package states the Strings a check reads as character lists
+(a literal is definitionally `String.ofList` of its characters, which the
+kernel checks by `rfl` without building bytes), and the lemmas below turn
+each check into the same check over the characters' code points. -/
+
+namespace Chars
+
+theorem map_toNat_inj : ∀ {a b : List Char}, a.map Char.toNat = b.map Char.toNat → a = b
+  | [], [], _ => rfl
+  | [], _ :: _, h => by simp at h
+  | _ :: _, [], h => by simp at h
+  | x :: xs, y :: ys, h => by
+      simp only [List.map_cons, List.cons.injEq] at h
+      rw [Char.toNat_inj.mp h.1, map_toNat_inj h.2]
+
+theorem stringBytes_inj {s t : String} (h : stringBytes s = stringBytes t) : s = t := by
+  have : s.toList = t.toList := map_toNat_inj h
+  simpa using congrArg String.ofList this
+
+theorem stringBytes_append (s t : String) : stringBytes (s ++ t) = stringBytes s ++ stringBytes t := by
+  simp [stringBytes, String.toList_append]
+
+/-- Membership of a String pair, decided on the pairs' bytes. -/
+theorem contains_pair_bytes (reg : List (String × String)) (s t : String) :
+    reg.contains (s, t) = (reg.map capabilityBytes).contains (stringBytes s, stringBytes t) := by
+  apply Bool.eq_iff_iff.mpr
+  simp only [List.contains_iff_mem, List.mem_map, capabilityBytes, Prod.mk.injEq]
+  constructor
+  · intro h; exact ⟨(s, t), h, rfl, rfl⟩
+  · rintro ⟨⟨a, b⟩, hab, ha, hb⟩
+    simp only at ha hb
+    rw [stringBytes_inj ha, stringBytes_inj hb] at hab
+    exact hab
+
+/-- `customCapabilityImport` over the capability's bytes. -/
+def customCapabilityImportBytes (moduleBytes operationBytes : AverCert.WasmSlice.ByteSeq) : Bool :=
+  let modulePrefix := stringBytes "aver:user/cap-n"
+  let operationPrefix := stringBytes "op-n"
+  let operationTail := operationBytes.drop operationPrefix.length
+  modulePrefix.isPrefixOf moduleBytes &&
+  customCapabilityModuleTail 0 (moduleBytes.drop modulePrefix.length) &&
+  operationPrefix.isPrefixOf operationBytes &&
+  !operationTail.isEmpty && operationTail.length % 2 == 0 &&
+  operationTail.all lowerHexByte
+
+theorem customCapabilityImport_bytes (c : String × String) :
+    customCapabilityImport c = customCapabilityImportBytes (stringBytes c.1) (stringBytes c.2) :=
+  rfl
+
+/-- `importsWithinCapabilities` with the declared capabilities as characters. -/
+def importsWithinCapabilitiesChars (artifact : ArtifactData)
+    (caps : List (List Char × List Char)) : Bool :=
+  let bytes := caps.map (fun c => (c.1.map Char.toNat, c.2.map Char.toNat))
+  byteSeqListNodup (bytes.map (fun c => c.1 ++ [46] ++ c.2)) &&
+  bytes.all (fun c =>
+    ((AverCert.Schema.capabilityRegistryForTarget artifact.manifest.subject.target).map
+        capabilityBytes).contains c ||
+      customCapabilityImportBytes c.1 c.2) &&
+  match AverCert.WasmSlice.enumImportNames artifact.modBytes artifact.modLen with
+  | some actual => actual == bytes
+  | none => false
+
+theorem importsWithinCapabilities_of_chars (artifact : ArtifactData)
+    (caps : List (List Char × List Char))
+    (hcaps : artifact.manifest.subject.capabilities =
+      caps.map (fun c => (String.ofList c.1, String.ofList c.2)))
+    (h : importsWithinCapabilitiesChars artifact caps = true) :
+    importsWithinCapabilities artifact = true := by
+  unfold importsWithinCapabilitiesChars at h
+  unfold importsWithinCapabilities
+  rw [hcaps]
+  have hdot : stringBytes "." = [46] := by decide
+  simp only [List.map_map, Function.comp_def, stringListNodup, stringBytes_append,
+    stringBytes_ofList, hdot, List.all_map, customCapabilityImport_bytes, contains_pair_bytes,
+    capabilityBytes] at h ⊢
+  exact h
+
+/-- A code point list names `s` exactly when its characters do, for a `s`
+    without the character 0 (every other code point `Char.ofNat` maps to
+    itself or to 0). -/
+theorem mkName_beq (ns : List Nat) (s : String) (hs : ∀ c ∈ s.toList, c.toNat ≠ 0) :
+    (CertDecode.mkName ns == s) = (ns == stringBytes s) := by
+  apply Bool.eq_iff_iff.mpr
+  simp only [beq_iff_eq, CertDecode.mkName, stringBytes]
+  constructor
+  · intro h
+    have hl : ns.map Char.ofNat = s.toList := by rw [← h]; simp
+    rw [← hl, List.map_map]
+    calc ns = ns.map id := (List.map_id ns).symm
+      _ = ns.map (Char.toNat ∘ Char.ofNat) := List.map_congr_left (fun n hn => ?_)
+    have hc : Char.ofNat n ∈ s.toList := hl ▸ List.mem_map_of_mem hn
+    have hz := hs _ hc
+    simp only [id, Function.comp_apply]
+    by_cases hv : n.isValidChar
+    · simp [Char.ofNat, hv, Char.ofNatAux]
+    · simp [Char.ofNat, hv] at hz
+  · intro h
+    rw [h, List.map_map]
+    have : (Char.ofNat ∘ Char.toNat) = id := by funext c; simp
+    simp [this]
+
+/-- The first function export named `s`, read on the raw export entries. -/
+theorem functionExports_find (s : String) (hs : ∀ c ∈ s.toList, c.toNat ≠ 0) :
+    ∀ raw : List CertDecode.ExportEntry,
+      ((CertDecode.functionExports raw).find? (fun e => e.1 == s)).map Prod.snd =
+        AverCert.WasmSlice.findExportFuncIndex (stringBytes s) raw
+  | [] => rfl
+  | e :: raw => by
+      simp only [CertDecode.functionExports, AverCert.WasmSlice.findExportFuncIndex]
+      by_cases hk : e.kind = 0
+      · simp only [hk, beq_self_eq_true, ↓reduceIte, List.find?_cons, mkName_beq _ _ hs, true_and]
+        by_cases hn : e.name = stringBytes s
+        · simp [hn]
+        · have hb : (e.name == stringBytes s) = false := by simpa using hn
+          simp only [hb, hn, ↓reduceIte]
+          exact functionExports_find s hs raw
+      · have : (e.kind == 0) = false := by simpa using hk
+        simp only [this, Bool.false_eq_true, ↓reduceIte, hk, false_and]
+        exact functionExports_find s hs raw
+
+theorem functionExports_all (s : String) (hs : ∀ c ∈ s.toList, c.toNat ≠ 0) :
+    ∀ raw : List CertDecode.ExportEntry,
+      (CertDecode.functionExports raw).all (fun e => e.1 != s) =
+        (AverCert.WasmSlice.findExportFuncIndex (stringBytes s) raw).isNone
+  | [] => rfl
+  | e :: raw => by
+      simp only [CertDecode.functionExports, AverCert.WasmSlice.findExportFuncIndex]
+      by_cases hk : e.kind = 0
+      · simp only [hk, beq_self_eq_true, ↓reduceIte, List.all_cons, bne, mkName_beq _ _ hs, true_and]
+        by_cases hn : e.name = stringBytes s
+        · simp [hn]
+        · have hb : (e.name == stringBytes s) = false := by simpa using hn
+          simp only [hb, hn, ↓reduceIte, Bool.not_false, Bool.true_and]
+          exact functionExports_all s hs raw
+      · have : (e.kind == 0) = false := by simpa using hk
+        simp only [this, Bool.false_eq_true, ↓reduceIte, hk, false_and]
+        exact functionExports_all s hs raw
+
+/-- The export index of a helper's name, on the raw export entries. -/
+def helperIdx (n len : Nat) (name : AverCert.WasmSlice.ByteSeq) : Option Nat :=
+  (CertDecode.decodeRawExports n len).bind (AverCert.WasmSlice.findExportFuncIndex name)
+
+theorem boxIdx_eq (n len : Nat) :
+    CertDecode.AddSub.boxIdx n len = helperIdx n len (stringBytes "__rt_aint_from_i64") := by
+  unfold CertDecode.AddSub.boxIdx helperIdx CertDecode.decodeExports
+  cases CertDecode.decodeRawExports n len with
+  | none => rfl
+  | some raw => exact functionExports_find _ (by decide) raw
+
+theorem toIndexIdx_eq (n len : Nat) :
+    CertDecode.AddSub.toIndexIdx n len = helperIdx n len (stringBytes "__aint_to_index") := by
+  unfold CertDecode.AddSub.toIndexIdx helperIdx CertDecode.decodeExports
+  cases CertDecode.decodeRawExports n len with
+  | none => rfl
+  | some raw => exact functionExports_find _ (by decide) raw
+
+theorem cmpIdx_eq (n len : Nat) :
+    CertDecode.AddSub.cmpIdx n len = helperIdx n len (stringBytes "__aint_cmp") := by
+  unfold CertDecode.AddSub.cmpIdx helperIdx CertDecode.decodeExports
+  cases CertDecode.decodeRawExports n len with
+  | none => rfl
+  | some raw => exact functionExports_find _ (by decide) raw
+
+theorem carrierHelperAbsent_eq (n len : Nat) :
+    CertDecode.AddSub.carrierHelperAbsent n len =
+      match CertDecode.decodeRawExports n len with
+      | some raw =>
+          (AverCert.WasmSlice.findExportFuncIndex (stringBytes "__rt_aint_from_i64") raw).isNone
+      | none => false := by
+  unfold CertDecode.AddSub.carrierHelperAbsent CertDecode.decodeExports
+  cases CertDecode.decodeRawExports n len with
+  | none => rfl
+  | some raw => exact functionExports_all _ (by decide) raw
+
+end Chars
+
 end AverCert.DeclaredLayout
