@@ -65,6 +65,8 @@ mod floor_window;
 mod fuel_when_cites;
 #[path = "proof_spec/int_divmod.rs"]
 mod int_divmod;
+#[path = "proof_spec/isolation.rs"]
+mod isolation;
 #[path = "proof_spec/k5_sticky.rs"]
 mod k5_sticky;
 #[path = "proof_spec/knowledge_provider.rs"]

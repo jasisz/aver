@@ -379,6 +379,13 @@ fn scan_root(root: &str, contents: &str) -> Vec<Declaration> {
         if trimmed.is_empty() || trimmed.starts_with("--") {
             continue;
         }
+        // The isolation guard belongs to the next declaration's command, not
+        // to the text of the one above it; like a comment, it is not hashed.
+        if trimmed.starts_with(lean_codegen::isolate::ISOLATION_GUARD_PREFIX) {
+            flush(&mut current, &mut declarations);
+            prefix.clear();
+            continue;
+        }
         let indent = line.len() - trimmed.len();
         if indent <= 2
             && let Some((_, name)) = header(trimmed)
