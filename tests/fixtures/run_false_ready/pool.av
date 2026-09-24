@@ -1,15 +1,15 @@
 module Pool
     kind = capability
     semantics = effectful
-    intent = "Fixture capability: hands out Int handles; the program answers it."
-    exposes [ClaimReply, claim]
+    intent = "Fixture capability: the score of one task, computed off the turn by whoever answers."
+    exposes [scored, early]
 
-type ClaimReply
-    Now(Option<Int>)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Option<Int>)
+operation scored(task: Int) -> Result<Int, String>
+    ? "What one task scores, or why it never will."
+    oracle = generative
+    replay = recorded
 
-operation claim() -> Option<Int>
-    ? "The next handle, or None when there is nothing left."
+operation early() -> Int
+    ? "How many takes found their job still running."
     oracle = generative
     replay = recorded

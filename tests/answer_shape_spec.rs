@@ -1,20 +1,17 @@
-//! Answered capabilities and the job seam (jasisz/aver#1329, leg 2.1).
+//! Answered capabilities (jasisz/aver#1329, process layer v2).
 //!
 //! The `tests/fixtures/answer_*` family holds one program per rule: one way
-//! of getting the `answer` binding, the shape of an answer module, or the two
-//! ends of a job kind's seam wrong. Every case goes through the real CLI,
-//! because the rule's whole point is that `aver check`, `aver run`,
-//! `aver verify` and `aver compile` agree about what a binding means before
-//! anything is lowered against it.
+//! of getting an `answers [...]` header or the shape of an answer module
+//! wrong. Every case goes through the real CLI, because the rule's whole
+//! point is that `aver check`, `aver run`, `aver verify` and `aver compile`
+//! agree about what a header means before anything is lowered against it.
 //!
-//! An answer function returns `Tuple<S, Cap.<Op>Reply>`, and `Cap.<Op>Reply`
-//! is a sum the program declares in the capability module beside the
-//! operation: `Now` carrying the operation's result, `Later` carrying
-//! `Wait.Wake`, and `Then` carrying that wake and the result. Nothing is generated into a capability module,
-//! and the `answer_shape_reply_*` fixtures hold the door to that declaration.
-//! The accept path — the expected parameters, the expected reply name, and a
-//! well-typed job seam over them — is also checked in
-//! `src/capability/work.rs` against a synthetic signature map.
+//! An answer function returns `Tuple<S, Result<R, Run.Wake>>`, where `R` is
+//! the operation's own result: `Ok` answers now and `Err` says when to ask
+//! again. Both are types the language already has, so a capability declares
+//! nothing beside its operations for a module to answer it. The accept path
+//! is also checked in `src/capability/work.rs` against a synthetic signature
+//! map.
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
@@ -61,27 +58,18 @@ fn assert_reports(fixture_name: &str, args: &[&str], expected: &str) {
 
 #[test]
 fn a_capability_the_compiler_ships_cannot_be_answered_by_a_module() {
-    let expected = "error[answer-binding]: aver.toml: [[providers.bindings]] index 0 binds capability 'Console' with `answer`, but 'Console' is a standard capability this compiler ships";
+    let expected = "error[answer-binding]: module 'Ledger' says `answers [Console]`, but 'Console' is a standard capability this compiler ships";
     assert_reports("answer_shape_standard_capability", &["check"], expected);
     assert_reports("answer_shape_standard_capability", &["run"], expected);
     assert_reports("answer_shape_standard_capability", &["verify"], expected);
 }
 
 #[test]
-fn an_answer_naming_no_module_of_the_program_is_refused() {
-    assert_reports(
-        "answer_shape_unknown_module",
-        &["check"],
-        "binds capability 'Pool' to answer = \"Ledger\", but this program has no module 'Ledger'",
-    );
-}
-
-#[test]
-fn a_capability_module_cannot_be_named_as_an_answer_module() {
+fn a_capability_module_cannot_answer_a_capability() {
     assert_reports(
         "answer_shape_capability_module",
         &["check"],
-        "binds capability 'Pool' to answer = \"Pool\", but 'Pool' is a capability module; an answer module is an ordinary module of the program that computes the answer",
+        "module 'Pool' says `answers [Pool]`, but 'Pool' is a capability module; an answer module is an ordinary module of the program that computes the answer",
     );
 }
 
@@ -103,101 +91,16 @@ fn every_operation_of_an_answered_capability_needs_an_answer_function() {
     );
 }
 
+/// The answer function returns the state it leaves behind and either the
+/// operation's own result or the wake that says when to ask again. A
+/// function that returns the bare result is told the whole signature it
+/// needs, spelled with the types the language already has.
 #[test]
-fn an_answer_function_answers_with_the_operations_declared_reply() {
+fn an_answer_function_answers_with_the_operations_result_or_a_wake() {
     assert_reports(
         "answer_shape_wrong_reply",
         &["check"],
-        "capability 'Pool' declares operation 'claim(key: Int) -> Pool.Assignment', so 'Ledger.claim' must be (Ledger.State, Int) -> Tuple<Ledger.State, Pool.ClaimReply>; it is (Ledger.State, Int) -> Pool.Assignment",
-    );
-}
-
-// ── answer-shape: the reply sum the capability declares ─────────────────
-
-/// The declaration the door prints, in the capability's own names, indented
-/// the way `view-shape` prints the view it wants.
-const GONE_REPLY: &str = "    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)\n        Then(Wait.Wake, Unit)";
-
-#[test]
-fn a_capability_the_program_answers_declares_the_reply_sum_of_every_operation() {
-    let expected = "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and it declares no type 'Pool.GoneReply' beside operation 'gone'; an answer to 'Pool.gone' is read through that sum, which is exactly:\n";
-    for door in ["check", "run", "verify"] {
-        assert_reports("answer_shape_reply_missing", &[door], expected);
-        assert_reports("answer_shape_reply_missing", &[door], GONE_REPLY);
-    }
-}
-
-/// The natural way to miss the declaration: the answer function is written
-/// first, names `Pool.GoneReply` in its signature, and the program has an
-/// unknown type before it has a gate. The declaration to paste is printed
-/// on every door all the same, from the capability registry alone.
-#[test]
-fn an_answer_function_naming_an_undeclared_reply_sum_is_told_the_declaration() {
-    let expected = "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and it declares no type 'Pool.GoneReply' beside operation 'gone'";
-    for door in ["check", "run", "verify"] {
-        let out = aver("answer_shape_reply_named", &[door]);
-        let text = combined(&out);
-        assert!(!out.status.success(), "{}", format_output(&out));
-        assert!(
-            text.contains(expected) && text.contains(GONE_REPLY),
-            "expected the declaration on `{door}` in:\n{}",
-            format_output(&out)
-        );
-    }
-    // `check` reports every module through source analysis, so the unknown
-    // type stands beside the declaration; `run` and `verify` stop at the
-    // door and print the declaration alone.
-    let out = aver("answer_shape_reply_named", &["check"]);
-    assert!(
-        combined(&out).contains("Unknown type 'Pool.GoneReply'"),
-        "{}",
-        format_output(&out)
-    );
-}
-
-#[test]
-fn the_now_of_a_reply_sum_carries_exactly_the_operations_result() {
-    assert_reports(
-        "answer_shape_reply_payload",
-        &["check"],
-        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and constructor 'Pool.ClaimReply.Now' carries (Int) where 'Pool.claim' answers Pool.Assignment; an answer to 'Pool.claim' is read through that sum, which is exactly:\n    type ClaimReply\n        Now(Pool.Assignment)\n        Later(Wait.Wake)\n        Then(Wait.Wake, Pool.Assignment)",
-    );
-}
-
-#[test]
-fn a_reply_sum_has_no_extra_constructor() {
-    assert_reports(
-        "answer_shape_reply_third",
-        &["check"],
-        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and sum 'Pool.ClaimReply' declares constructor 'Never', which is not Now, Later or Then",
-    );
-}
-
-#[test]
-fn the_later_of_a_reply_sum_carries_the_wake() {
-    assert_reports(
-        "answer_shape_reply_wake",
-        &["check"],
-        "error[answer-shape]: capability 'Pool' is answered by module 'Ledger', and constructor 'Pool.ClaimReply.Later' carries (Int) where a Later carries the wake, Wait.Wake",
-    );
-}
-
-/// A reply sum is only held to its shape on a capability an `answer` binding
-/// names: a host-provided capability has no answer module, so a `<Op>Reply`
-/// beside its operation is an ordinary type of the module.
-#[test]
-fn a_reply_sum_on_a_capability_nothing_answers_is_an_ordinary_type() {
-    let out = aver("answer_shape_reply_unanswered", &["check"]);
-    let text = combined(&out);
-    assert!(
-        out.status.success() && !text.contains("error["),
-        "{}",
-        format_output(&out)
-    );
-    assert!(
-        text.contains("Checked 4 module(s): 4 passed"),
-        "{}",
-        format_output(&out)
+        "capability 'Pool' declares operation 'claim(key: Int) -> Pool.Assignment', so 'Ledger.claim' must be (Ledger.State, Int) -> Tuple<Ledger.State, Result<Pool.Assignment, Run.Wake>>; it is (Ledger.State, Int) -> Pool.Assignment",
     );
 }
 
@@ -226,7 +129,7 @@ fn an_answer_function_cannot_itself_be_a_process() {
     assert_reports(
         "answer_shape_yielding_answer",
         &["check"],
-        "error[answer-shape]: aver.toml marks capability 'Pool' as answered by 'Ledger', and 'Ledger.claim' declares `yield`",
+        "error[answer-shape]: module 'Ledger' answers capability 'Pool', and 'Ledger.claim' declares `yield`",
     );
 }
 
@@ -235,12 +138,12 @@ fn an_answer_function_with_effects_is_allowed_and_said_so() {
     let out = aver("answer_shape_effectful_answer", &["check"]);
     let text = combined(&out);
     assert!(
-        text.contains("warning[answer-shape]: aver.toml marks capability 'Pool' as answered by 'Ledger', and 'Ledger.claim' declares effects [Console.print]"),
+        text.contains("warning[answer-shape]: module 'Ledger' answers capability 'Pool', and 'Ledger.claim' declares effects [Console.print]"),
         "{}",
         format_output(&out)
     );
     assert!(
-        !text.contains("error[answer-shape]"),
+        !text.contains("error["),
         "an effectful answer is a warning, not a refusal:\n{}",
         format_output(&out)
     );
@@ -259,7 +162,7 @@ fn an_answer_whose_effects_return_at_once_is_not_warned_about() {
         format_output(&out)
     );
     assert!(
-        text.contains("warning[answer-shape]: aver.toml marks capability 'Pool' as answered by 'Ledger', and 'Ledger.gone' declares effects [Console.print];"),
+        text.contains("warning[answer-shape]: module 'Ledger' answers capability 'Pool', and 'Ledger.gone' declares effects [Console.print];"),
         "{}",
         format_output(&out)
     );
@@ -280,22 +183,14 @@ fn the_effectful_answer_warning_does_not_stop_the_run_door() {
 
 /// A capability and its answer module both live under `slice/`, so the
 /// program loads them as `Slice.Wire` and `Slice.Sockets`, while each declares
-/// its short name. The capability's reply sum names its own type as
-/// `Wire.Heard`, which is how it names it when checked on its own; loaded
-/// under the longer path that is still its own type. And the answer module,
-/// checked as its own unit, is not refused for not seeing a module named
-/// `Slice.Sockets` in its own cone: the entry, whose cone is the program,
-/// judges that binding.
+/// its short name. The header says `answers [Slice.Wire]`, the name the
+/// module writes in its own `depends`, and the loop calls the module by the
+/// name the program loads it under.
 #[test]
 fn a_nested_capability_naming_its_own_type_is_answered_like_any_other() {
     for command in ["check", "run"] {
         let out = aver("answer_nested_self_qualified", &[command]);
         assert!(out.status.success(), "{command}: {}", format_output(&out));
-        assert!(
-            !combined(&out).contains("no module 'Slice.Sockets'"),
-            "{command}: {}",
-            format_output(&out)
-        );
     }
     let out = aver("answer_nested_self_qualified", &["run"]);
     assert!(
@@ -305,101 +200,7 @@ fn a_nested_capability_naming_its_own_type_is_answered_like_any_other() {
     );
 }
 
-// ── work-binding: the three ends of the job seam ────────────────────────
-
-#[test]
-fn a_seam_end_is_typed_against_the_job_kinds_task() {
-    assert_reports(
-        "answer_seam_type_mismatch",
-        &["check"],
-        "job kind 'Validation' binds task = \"Ledger.nextTask\", so that function must be (Ledger.State) -> Option<String>; it is (Ledger.State) -> Option<Int>",
-    );
-}
-
-#[test]
-fn all_ends_of_the_seam_are_pure() {
-    assert_reports(
-        "answer_seam_effectful",
-        &["check"],
-        "job kind 'Validation' binds task = \"Ledger.nextTask\", but that function declares effects [Console.print]; the turn reads the seam between waits, so all three of its ends are pure",
-    );
-}
-
-#[test]
-fn a_seam_end_names_a_function_of_an_answer_module() {
-    let out = aver("answer_seam_unanswered_module", &["check"]);
-    let text = combined(&out);
-    for field in [
-        "task = \"Node.nextTask\"",
-        "started = \"Node.taskStarted\"",
-        "landed = \"Node.validated\"",
-    ] {
-        assert!(
-            text.contains(&format!(
-                "job kind 'Validation' binds {field}, but no `answer` binding in aver.toml names module 'Node'"
-            )),
-            "{}",
-            format_output(&out)
-        );
-    }
-}
-
-#[test]
-fn a_module_that_sees_the_job_kind_but_not_the_answer_module_is_not_accused() {
-    // The seam is checked against the answer module's state, and a module
-    // whose own closure does not reach that module simply cannot see it. The
-    // manifest binds it all the same, so there is nothing to report here.
-    let dir = fixture("answer_seam_partial_closure");
-    let mut command = Command::new(aver_bin());
-    command.current_dir(repo_root());
-    command
-        .arg("check")
-        .arg(dir.join("runner.av"))
-        .arg("--module-root")
-        .arg(&dir);
-    let out = command.output().expect("aver runs");
-    let text = combined(&out);
-    assert!(
-        !text.contains("error["),
-        "a partial closure is not a manifest error:\n{}",
-        format_output(&out)
-    );
-}
-
-#[test]
-fn a_seam_end_naming_nothing_in_the_program_is_refused() {
-    assert_reports(
-        "answer_seam_unknown_function",
-        &["check"],
-        "job kind 'Validation' binds task = \"Ledger.nextTask\", but this program has no function 'Ledger.nextTask'",
-    );
-}
-
-/// The `started` end records that the task `begin` was handed is now running,
-/// so it takes the answer state and that task — not a task of a different
-/// type, and nothing that leaves the state unwritten.
-#[test]
-fn the_started_end_is_typed_against_the_job_kinds_task() {
-    assert_reports(
-        "answer_seam_started_shape",
-        &["check"],
-        "job kind 'Validation' binds started = \"Ledger.taskStarted\", so that function must be (Ledger.State, String) -> Ledger.State; it is (Ledger.State, Int) -> Ledger.State",
-    );
-}
-
-/// `task` and `started` are one seam over one state: the task is consumed
-/// from the state that offered it. A `started` whose shape is right over
-/// another answer module's state is refused all the same, and by this check
-/// rather than by the loop generator, because a program without `[run]`
-/// binds the seam too.
-#[test]
-fn the_task_and_started_ends_name_one_module() {
-    let expected = "error[work-binding]: job kind 'Validation' binds task = \"Ledger.nextTask\" and started = \"Timer.taskStarted\", but those are functions of two modules, 'Ledger' and 'Timer'; the task is consumed from the state that offered it, so `task` and `started` name functions of one answer module";
-    assert_reports("answer_seam_started_module", &["check"], expected);
-    assert_reports("answer_seam_started_module", &["run"], expected);
-}
-
-// ── the manifest keys themselves ────────────────────────────────────────
+// ── the manifest keys that are gone ─────────────────────────────────────
 
 fn temp_project(label: &str, manifest: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -427,51 +228,6 @@ fn check_project(dir: &PathBuf) -> Output {
     command.output().expect("aver runs")
 }
 
-#[test]
-fn run_imports_come_from_the_manifest_and_explicit_imports_still_work() {
-    let dir = temp_project("run-imports", "[run]\n");
-    for file in std::fs::read_dir(fixture("run_guide_example")).unwrap() {
-        let file = file.unwrap();
-        std::fs::copy(file.path(), dir.join(file.file_name())).unwrap();
-    }
-    // Keep the copied guide alone: the temporary helper's seed modules are
-    // deliberately not imported by its entry.
-    let out = check_project(&dir);
-    assert!(out.status.success(), "{}", format_output(&out));
-    let main = dir.join("main.av");
-    let source = std::fs::read_to_string(&main).unwrap();
-    std::fs::write(
-        &main,
-        source.replace(
-            "depends [Clock]",
-            "depends [Clock, Clocked, Scoring, Wait, Work]",
-        ),
-    )
-    .unwrap();
-    let out = check_project(&dir);
-    assert!(out.status.success(), "{}", format_output(&out));
-    assert!(
-        !combined(&out).contains("warning[unused"),
-        "{}",
-        format_output(&out)
-    );
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
-fn a_partial_run_table_prints_the_none_or_all_recipe() {
-    assert_manifest_rejects(
-        "partial-run",
-        "[run]\norder = \"Node.order\"\n",
-        "omit all four keys",
-    );
-    assert_manifest_rejects(
-        "partial-run-view",
-        "[run]\nview = \"Node.View\"\n",
-        "name all four for custom policies",
-    );
-}
-
 fn assert_manifest_rejects(label: &str, manifest: &str, expected: &str) {
     let dir = temp_project(label, manifest);
     let out = check_project(&dir);
@@ -484,74 +240,53 @@ fn assert_manifest_rejects(label: &str, manifest: &str, expected: &str) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The module that answers a capability says so in its own header, so the
+/// manifest key that used to say it is refused with the header to write.
 #[test]
-fn an_answer_binding_cannot_also_name_a_provider_package() {
+fn an_answer_binding_in_the_manifest_is_refused_with_the_header_to_write() {
     assert_manifest_rejects(
-        "package",
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Ledger\"\ncrate = \"pool_provider\"\npackage = \"aver-pool-provider\"\nfactory = \"binding\"\nversion = \"=0.1.0\"\n",
-        "declares both `answer` and `crate`",
+        "answer-key",
+        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Ledger\"\n",
+        "Write `answers [Pool]` in the header of module 'Ledger' and remove this binding",
     );
 }
 
+/// The job seam is gone: an answer module begins a job itself and parks the
+/// request on it.
 #[test]
-fn an_answer_binding_cannot_also_be_a_work_binding() {
-    assert_manifest_rejects(
-        "work",
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Ledger\"\nwork = \"Ledger.claim\"\n",
-        "declares both `answer` and `work`",
-    );
+fn the_job_seam_keys_are_refused_with_the_repair() {
+    for key in ["task", "started", "landed"] {
+        assert_manifest_rejects(
+            key,
+            &format!(
+                "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\n{key} = \"Ledger.f\"\n"
+            ),
+            &format!("declares `{key}`; the job seam is gone"),
+        );
+    }
 }
 
 #[test]
-fn an_answer_value_must_name_one_module() {
+fn a_run_table_is_refused_with_the_repair() {
     assert_manifest_rejects(
-        "qualified",
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Ledger.claim\"\n",
-        "answer 'Ledger.claim' must name one module of the program",
+        "run",
+        "[run]\n",
+        "error[run-binding]: aver.toml: [run] is gone",
     );
 }
 
+/// A capability the compiler ships cannot be answered, and every door says
+/// so about the header itself and nothing else.
 #[test]
-fn the_job_seam_lives_on_a_work_binding() {
-    assert_manifest_rejects(
-        "seam-on-answer",
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Ledger\"\ntask = \"Ledger.nextTask\"\nlanded = \"Ledger.validated\"\n",
-        "declares `task` beside `answer`",
-    );
-}
-
-#[test]
-fn the_job_seam_has_three_ends() {
-    assert_manifest_rejects(
-        "half-seam",
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\ntask = \"Ledger.nextTask\"\n",
-        "declares `task` without `started`",
-    );
-    assert_manifest_rejects(
-        "unrecorded-seam",
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\ntask = \"Ledger.nextTask\"\nlanded = \"Ledger.validated\"\n",
-        "declares `task` and `landed` without `started`",
-    );
-    assert_manifest_rejects(
-        "unlanded-seam",
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\ntask = \"Ledger.nextTask\"\nstarted = \"Ledger.taskStarted\"\n",
-        "declares `task` and `started` without `landed`",
-    );
-}
-
-/// A capability the compiler ships cannot be answered, and the door says so
-/// before it looks for reply sums: `Tcp` declares no `ReadReply`, and no door
-/// asks it to, so every door reports the binding itself and nothing else.
-#[test]
-fn answering_a_shipped_capability_reachable_from_wait_reports_the_binding_only() {
-    let expected = "error[answer-binding]: aver.toml: [[providers.bindings]] index 0 binds capability 'Tcp' with `answer`";
+fn answering_a_shipped_capability_reachable_from_wait_reports_the_header_only() {
+    let expected = "error[answer-binding]: module 'Sockets' says `answers [Tcp]`";
     for door in ["check", "run", "verify"] {
         assert_reports("answer_shape_reserved_reachable", &[door], expected);
         let out = aver("answer_shape_reserved_reachable", &[door]);
         let text = combined(&out);
         assert!(
-            !text.contains("Circular import") && !text.contains("ReadReply"),
-            "{door} reports the binding, not a reply sum Tcp was never asked for:\n{}",
+            !text.contains("Circular import"),
+            "{door} reports the header, nothing else:\n{}",
             format_output(&out)
         );
     }
@@ -561,10 +296,9 @@ fn answering_a_shipped_capability_reachable_from_wait_reports_the_binding_only()
 
 /// An operation of an answered capability is a request, and only a `yield`
 /// function makes one: the lowering cuts a process at the call and hands it
-/// to the coordinator. A plain function calling the same operation has
-/// nobody to answer it — the capability has no provider, and no request kind
-/// was generated for the call — so both program doors refuse it and the
-/// message names the answer function to call instead.
+/// to the loop. A plain function calling the same operation has nobody to
+/// answer it, so both program doors refuse it and the message names the
+/// answer function to call instead.
 #[test]
 fn an_answered_operation_outside_a_process_is_refused_at_the_check_door() {
     assert_reports(

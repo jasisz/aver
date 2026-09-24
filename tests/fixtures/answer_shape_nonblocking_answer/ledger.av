@@ -3,19 +3,20 @@ module Ledger
     depends [Pool]
     exposes [State, claim, gone]
     effects [Console.print, Time.unixMs]
+    answers [Pool]
 
 record State
     free: List<Int>
     stopping: Bool
 
-fn claim(state: State, key: Int) -> Pool.Assignment
+fn claim(state: State, key: Int) -> Tuple<State, Result<Pool.Assignment, Run.Wake>>
     ? "The next height for this peer; reading the clock returns at once, so it cannot stall the turn."
     ! [Time.unixMs]
     _now = Time.unixMs()
-    Pool.Assignment.Idle
+    (state, Result.Ok(Pool.Assignment.Idle))
 
-fn gone(state: State, key: Int) -> Unit
+fn gone(state: State, key: Int) -> Tuple<State, Result<Unit, Run.Wake>>
     ? "A peer that left gives its height back, and says so."
     ! [Console.print, Time.unixMs]
     _now = Time.unixMs()
-    Console.print("gone {key}")
+    (state, Result.Ok(Console.print("gone {key}")))

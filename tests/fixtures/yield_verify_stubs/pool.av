@@ -2,17 +2,7 @@ module Pool
     intent = "Requests answered by the process test's explicit stub."
     kind = capability
     semantics = effectful
-    exposes [ClaimReply, FinishReply, claim, finish, NoticeReply, notice]
-
-type ClaimReply
-    Now(Option<Int>)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Option<Int>)
-
-type FinishReply
-    Now(Result<Int, String>)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Result<Int, String>)
+    exposes [claim, finish, notice]
 
 operation claim(peer: Int) -> Option<Int>
     ? "Ask for a handle owned by the peer."
@@ -23,11 +13,6 @@ operation finish(value: Int) -> Result<Int, String>
     ? "Ask whether the result may be committed."
     oracle = generative
     replay = recorded
-
-type NoticeReply
-    Now(Unit)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Unit)
 
 operation notice(id: Int) -> Unit
     ? "A request whose answer carries no data."

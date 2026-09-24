@@ -54,7 +54,7 @@ fn unchanged_results_do_not_hide_six_different_trace_corruptions() {
         return;
     }
     let source = tempfile::tempdir().unwrap();
-    for name in ["main.av", "pool.av", "pooled.av", "aver.toml"] {
+    for name in ["main.av", "pool.av", "pooled.av"] {
         std::fs::copy(source_fixture().join(name), source.path().join(name)).unwrap();
     }
     let main = source.path().join("main.av");
@@ -203,7 +203,7 @@ fn tail_pause_cannot_be_counted_as_an_answer_or_hidden_from_consumption() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_tail_traces");
     let source = tempfile::tempdir().unwrap();
-    for name in ["main.av", "leaf.av", "pool.av", "pooled.av", "aver.toml"] {
+    for name in ["main.av", "leaf.av", "pool.av", "pooled.av"] {
         std::fs::copy(fixture.join(name), source.path().join(name)).unwrap();
     }
     let main = source.path().join("main.av");
@@ -307,7 +307,7 @@ fn equal_helper_results_do_not_justify_corrupted_splice_cursors() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_recursive_traces");
     let source = tempfile::tempdir().unwrap();
-    for name in ["main.av", "pool.av", "pooled.av", "aver.toml"] {
+    for name in ["main.av", "pool.av", "pooled.av"] {
         std::fs::copy(fixture.join(name), source.path().join(name)).unwrap();
     }
     let main = source.path().join("main.av");
@@ -403,7 +403,7 @@ fn implicit_trace_citations_keep_earlier_laws_when_adding_splice_dependencies() 
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_recursive_traces");
     let source = tempfile::tempdir().unwrap();
-    for name in ["pool.av", "pooled.av", "aver.toml"] {
+    for name in ["pool.av", "pooled.av"] {
         std::fs::copy(fixture.join(name), source.path().join(name)).unwrap();
     }
     let text = std::fs::read_to_string(fixture.join("main.av")).unwrap();

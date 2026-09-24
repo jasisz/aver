@@ -1,19 +1,18 @@
 module Clock
     kind = capability
     semantics = effectful
-    intent = "The tick the ticker waits on."
-    exposes [Tick, TickReply, tick]
+    intent = "What the ticker asks for: a tick, and the score of one task."
+    exposes [Tick, tick, score]
 
 type Tick
     Tock
-    Closed(Int)
-
-type TickReply
-    Now(Clock.Tick)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Clock.Tick)
 
 operation tick() -> Clock.Tick
-    ? "The next tick, or Closed once every job has landed, carrying what they scored together."
+    ? "The next tick."
+    oracle = generative
+    replay = recorded
+
+operation score(task: Int) -> Int
+    ? "What one task scores, or 0 when it could not be scored."
     oracle = generative
     replay = recorded

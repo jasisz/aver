@@ -4,8 +4,9 @@
 //! coordinator") and `.claude/commands/aver-tooling.md` ("Processes, answer
 //! modules and jobs in `aver.toml`") promise that every `aver` and `toml`
 //! block there is cut, as it stands, from a program that checks, verifies and
-//! runs. That program is `tests/fixtures/run_guide_example/`; the one
-//! hand-driven block comes from `tests/fixtures/yield_spike/`. This suite
+//! runs. Those programs are `tests/fixtures/run_guide_example/` and
+//! `tests/fixtures/run_families/`; the one hand-driven block comes from
+//! `tests/fixtures/yield_spike/`. This suite
 //! holds the promise from both ends: the fixture is checked, verified, run and
 //! format-checked with the binary under test, and every fenced block of those
 //! two sections is a contiguous substring of one fixture file.
@@ -20,6 +21,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const EXAMPLE: &str = "tests/fixtures/run_guide_example";
+const FAMILIES: &str = "tests/fixtures/run_families";
 const HAND_DRIVEN: &str = "tests/fixtures/yield_spike/main.av";
 const LANGUAGE_GUIDE: &str = ".claude/commands/aver.md";
 const TOOLING_GUIDE: &str = ".claude/commands/aver-tooling.md";
@@ -64,20 +66,20 @@ fn the_guide_example_checks_without_a_warning() {
 }
 
 #[test]
-fn the_guide_example_verifies_with_the_generated_laws() {
+fn the_guide_example_verifies_and_the_loop_adds_no_law() {
     let out = aver(&["verify", "main.av", "--module-root", "."]);
     assert!(out.status.success(), "{}", format_output(&out));
     let text = stdout_of(&out);
-    assert!(text.contains("| 0 failed |"), "{}", format_output(&out));
+    assert!(text.contains("| 0 failed"), "{}", format_output(&out));
     assert!(
-        text.contains("__consumedScoring law aStartedTaskIsNotAskedAgain"),
-        "the generated seam law must run beside the program's own:\n{}",
+        !text.contains("✓ __"),
+        "the generated loop states no law of its own in a program:\n{}",
         format_output(&out)
     );
 }
 
 #[test]
-fn the_default_guide_invariants_are_universal() {
+fn the_guide_example_reaches_the_lean_wall_without_an_open_law() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping the Lean wall: `lake` is not available");
         return;
@@ -104,7 +106,6 @@ fn the_default_guide_invariants_are_universal() {
         .find(|line| line.starts_with('{'))
         .unwrap_or_else(|| panic!("{}", format_output(&out)));
     let summary: serde_json::Value = serde_json::from_str(line).unwrap();
-    assert_eq!(summary["universal_laws"], 26, "{}", format_output(&out));
     for field in ["build_errors", "bounded_laws", "sorries"] {
         assert_eq!(summary[field], 0, "{field}: {}", format_output(&out));
     }
@@ -112,46 +113,24 @@ fn the_default_guide_invariants_are_universal() {
     let _ = fs::remove_dir_all(out_dir);
 }
 
+/// The loop calls the answer module's `fresh` and one function per
+/// operation, and the manifest names the job's function, so none of those
+/// exports is reported unused; an export nobody calls still is.
 #[test]
-fn saved_answers_share_the_wake_gate_and_do_not_ask_twice() {
-    let dir = repo_root().join("tests/fixtures/run_then");
-    let out = Command::new(aver_bin())
-        .current_dir(&dir)
-        .args(["verify", "main.av", "--module-root", "."])
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", format_output(&out));
-    assert!(
-        stdout_of(&out).contains("| 0 failed"),
-        "{}",
-        format_output(&out)
-    );
-    let mut targets = vec![Vec::<&str>::new()];
-    if cfg!(feature = "wasm") {
-        targets.push(vec!["--wasm-gc"]);
+fn loop_exports_are_used_but_an_unrelated_export_is_still_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    for entry in fs::read_dir(example_dir()).unwrap() {
+        let path = entry.unwrap().path();
+        fs::copy(&path, dir.path().join(path.file_name().unwrap())).unwrap();
     }
-    for target in targets {
-        let out = Command::new(aver_bin())
-            .current_dir(&dir)
-            .args(["run", "main.av", "--module-root", "."])
-            .args(target)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", format_output(&out));
-        assert_eq!(
-            stdout_of(&out).trim(),
-            "11,22,33\ndone",
-            "{}",
-            format_output(&out)
-        );
-    }
-}
-
-#[test]
-fn manifest_exports_are_used_but_an_unrelated_export_is_still_reported() {
-    let dir = repo_root().join("tests/fixtures/run_then");
+    let clocked = dir.path().join("clocked.av");
+    let source = fs::read_to_string(&clocked).unwrap().replace(
+        "exposes [State, fresh, tick, score, points]",
+        "exposes [State, fresh, tick, score, points, unused]",
+    ) + "\nfn unused() -> Int\n    ? \"Nobody calls this.\"\n    1\n\nverify unused\n    unused() => 1\n";
+    fs::write(&clocked, source).unwrap();
     let out = Command::new(aver_bin())
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .args(["check", "main.av", "--module-root", "."])
         .output()
         .unwrap();
@@ -181,10 +160,8 @@ fn the_guide_example_runs_to_the_score() {
     );
 }
 
-/// The example runs on wasm-gc to the same score. Its `tick` matches a tuple
-/// of the task queue and the running count against `([], 0)`, a shape the
-/// wasm-gc backend used to leave a trap stub, so the program stopped at the
-/// first tick instead of scoring.
+/// The example runs on wasm-gc to the same score, with its jobs on host
+/// workers.
 #[cfg(feature = "wasm")]
 #[test]
 fn the_guide_example_runs_to_the_score_on_wasm_gc() {
@@ -198,14 +175,10 @@ fn the_guide_example_runs_to_the_score_on_wasm_gc() {
     );
 }
 
-/// The example runs on the Rust backend to the same score. Its `tick`
-/// matches `(state.tasks, state.running)` against `([], 0)`, a tuple arm
-/// the Rust walker used to refuse with `MIR walker could not render fn
-/// tick`. A `cargo build` is the proof, not a `cargo check`: the arm lowers
-/// to a guard chain over cloned elements, and only the borrow checker says
-/// it holds. The crate builds in a target directory this suite keeps as
-/// its own, the way `rust_work_spec` does, so the runtime is compiled once
-/// and a later run pays seconds.
+/// The example runs on the Rust backend to the same score. A `cargo build`
+/// is the proof, not a `cargo check`. The crate builds in a target directory
+/// this suite keeps as its own, the way `rust_work_spec` does, so the
+/// runtime is compiled once and a later run pays seconds.
 #[cfg(feature = "runtime")]
 #[test]
 fn the_guide_example_runs_to_the_score_on_rust() {
@@ -308,6 +281,7 @@ fn blocks_of(guide: &str, heading: &str) -> Vec<String> {
 fn sources() -> Vec<(String, String)> {
     let mut files: Vec<PathBuf> = fs::read_dir(example_dir())
         .expect("read the guide example directory")
+        .chain(fs::read_dir(repo_root().join(FAMILIES)).expect("read the families example"))
         .map(|entry| entry.expect("directory entry").path())
         .collect();
     files.sort();

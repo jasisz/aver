@@ -1,49 +1,12 @@
 [providers]
 schema = 1
 
-# Sockets answers the request-level I/O the peer, the accepting and the
-# dialling processes wait on. It owns a real loopback listener, bound on the
-# port this program is run with, and the connection behind each peer key.
-[[providers.bindings]]
-capability = "Wire"
-answer = "Sockets"
-
-# One module answers three capabilities: the pool, the block store and chain
-# selection are one state in this program, as they are one record in a node.
-[[providers.bindings]]
-capability = "Pool"
-answer = "Ledger"
-
-[[providers.bindings]]
-capability = "Blocks"
-answer = "Ledger"
-
-[[providers.bindings]]
-capability = "Chain"
-answer = "Ledger"
-
-# The clock the ticker waits on.
-[[providers.bindings]]
-capability = "Clock"
-answer = "Clocked"
-
-# A job kind: the runtime runs Ledger.validate off the turn, takes its next
-# task from Ledger.nextTask, records the start in Ledger.taskStarted and
-# lands its result in Ledger.validated.
+# A job kind: the runtime runs Ledger.validate off the turn. Ledger begins
+# each validation itself when a body is delivered, and the walk's request
+# for the next target parks on that job until it lands.
 [[providers.bindings]]
 capability = "Validation"
 work = "Ledger.validate"
-task = "Ledger.nextTask"
-started = "Ledger.taskStarted"
-landed = "Ledger.validated"
 
 [work]
 max-jobs = 1
-
-# The three policies and the view record. Declaring this table is what asks
-# for the loop to be generated.
-[run]
-order = "Node.order"
-admit = "Node.admit"
-stop = "Node.stop"
-view = "Node.View"

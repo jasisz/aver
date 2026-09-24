@@ -1,8 +1,0 @@
-[providers]
-schema = 1
-
-[[providers.bindings]]
-capability = "Net"
-answer = "Netting"
-
-[run]

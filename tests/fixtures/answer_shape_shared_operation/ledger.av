@@ -3,6 +3,7 @@ module Ledger
     depends [Chain, Pool]
     exposes [State, claim, gone]
     effects []
+    answers [Pool, Chain]
 
 record State
     free: List<Int>
@@ -12,6 +13,6 @@ fn claim(state: State, key: Int) -> Pool.Assignment
     ? "The next height for this peer."
     Pool.Assignment.Idle
 
-fn gone(state: State, key: Int) -> Unit
+fn gone(state: State, key: Int) -> Tuple<State, Result<Unit, Run.Wake>>
     ? "A peer that left gives its height back."
-    Unit
+    (state, Result.Ok(Unit))

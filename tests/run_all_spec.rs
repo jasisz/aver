@@ -1,12 +1,13 @@
-//! The generated loop (jasisz/aver#1329, leg 2.3).
+//! The generated loop (jasisz/aver#1329, process layer v2).
 //!
 //! `tests/fixtures/run_all_slice/` is the whole claim in one program: five
-//! processes, three answer modules, one job kind and three policies, with
+//! processes, three answer modules, one job kind and two policies, with
 //! every line between them generated. This suite runs it the way a user
 //! would — `aver run`, `aver verify`, a recording and its replay, a hostile
-//! wait, and the dump that shows what was generated — and holds the two
-//! refusals that say what the program has to declare for the loop to be
-//! generated at all.
+//! wait, and the dump that shows what was generated — and holds the
+//! refusals that say what the program has to write for the loop to be
+//! generated at all. `run_families` seats one process per key, and
+//! `run_all_from_main` runs the loop from a `main` of the program's own.
 //!
 //! The slice answers `Wire` over real sockets: it binds a loopback listener
 //! on the port it is run with, accepts one peer there and talks to it with
@@ -228,10 +229,10 @@ fn a_parked_request_is_asked_again_only_when_its_wake_has_fired() {
 /// A peer that says nothing runs out the deadline its read was given.
 ///
 /// `Sockets.read` records the clock reading a read falls due at on that read's
-/// first ask and parks on `Either(Socket(Connected(conn)), left)`, so the wait
-/// reporting the socket and the deadline running out both bring it back —
-/// whichever comes first. Nothing ever arrives here, so the deadline is what
-/// comes first: the ask after it answers `Now(Heard.TimedOut)`, the peer
+/// first ask and parks on `Until([Socket(Connected(conn))], Some(left))`, so
+/// the wait reporting the socket and the deadline running out both bring it
+/// back — whichever comes first. Nothing ever arrives here, so the deadline is
+/// what comes first: the ask after it answers `Ok(Heard.TimedOut)`, the peer
 /// process says so and hands the peer back through `Pool.gone`, and the run
 /// reaches its end because the pool a peer has left hands out no more work.
 #[test]
@@ -298,23 +299,24 @@ fn a_run_of_the_slice_with_nobody_on_the_other_end_gives_up_and_ends() {
     );
 }
 
-/// A job that will never produce a result reaches `landed` as the error it is:
-/// the answer state records the rejection, the handle leaves the table, and
-/// the run reaches its end instead of stopping on the take.
+/// A job that will never produce a result: the answer module began it and
+/// cancelled it at once, the take after the wait reported it answers why, and
+/// the module answers the request with that reason rather than failing the
+/// turn. The run reaches its end.
 #[test]
-fn a_cancelled_job_lands_as_an_error_and_the_run_goes_on() {
+fn a_cancelled_job_is_answered_as_an_error_and_the_run_goes_on() {
     let out = aver("run_failed_job", &["run"]);
     assert!(out.status.success(), "{}", format_output(&out));
     assert!(
-        combined(&out).contains("cancelled, then landed: jobs 0 scored 0 rejected 1"),
+        combined(&out).contains("cancelled, then answered: work: job cancelled"),
         "{}",
         format_output(&out)
     );
 }
 
 /// The other half of the wake gate, over a real job handle: a request parked
-/// on `Item(Job(...))` is asked in a turn whose wait reported its key, and in
-/// no other turn. No law can sample this one — a job handle is a resource a
+/// on `Until([Job(...)], None)` is asked in a turn whose wait reported its
+/// key, and in no other turn. No law can sample this one — a job handle is a resource a
 /// law cannot write down — so the fixture reads the gate against a live
 /// handle instead.
 #[test]
@@ -328,10 +330,8 @@ fn a_request_parked_on_a_job_is_asked_only_when_the_wait_reports_its_key() {
     );
 }
 
-/// The same claim without a job engine: the generated seam is pure from the
-/// take's answer onwards, so `aver verify` pins both outcomes of one key and
-/// a law over `take`'s three answers pins that only a failure is recorded as
-/// a rejection.
+/// The answer module's own record of a take that failed is a pure function,
+/// so `aver verify` states it as a law.
 #[test]
 fn the_failed_job_slice_verifies_and_checks_clean() {
     for command in ["check", "verify"] {
@@ -340,12 +340,8 @@ fn the_failed_job_slice_verifies_and_checks_clean() {
     }
     let verified = combined(&aver("run_failed_job", &["verify"]));
     assert!(
-        verified.contains("probeLanded"),
-        "the seam's own verify block did not run"
-    );
-    assert!(
-        verified.contains("__reportedValidation law aFailedTakeRecordsARejection"),
-        "the law over take's answers did not run:\n{verified}"
+        verified.contains("rejectedFor law aFailedTakeIsRecorded"),
+        "the law over a failed take did not run:\n{verified}"
     );
 }
 
@@ -355,32 +351,25 @@ fn the_slice_checks_clean() {
     assert!(out.status.success(), "{}", format_output(&out));
 }
 
+/// The loop generates no laws of its own into a program: its invariants are
+/// stated once, over the generated functions, in
+/// `tests/fixtures/run_schedule_cases`. What `aver verify` runs here is the
+/// program's own policy law.
 #[test]
-fn the_generated_invariants_and_the_programs_priority_law_hold() {
+fn the_programs_priority_law_holds_and_the_loop_adds_no_law() {
     let out = aver(SLICE, &["verify"]);
     assert!(out.status.success(), "{}", format_output(&out));
     let text = combined(&out);
-    for law in [
-        "__park law laterKeepsTheInstance",
-        "__parked law laterKeepsTheRequest",
-        "__nextInstance law theNextInstanceIsHigher",
-        "__askableSlot law aBackwardsClockNeverStrandsARequest",
-        "__eitherAskable law anEitherIsAskableOnceItsDeadlineHasPassed",
-        "__remaining law theWaitNeverExceedsTheRequest",
-        "__eitherWait law theEitherWaitNeverExceedsItsDeadline",
-        "__settledSlotPeer law nowRaisesTheInstance",
-        "__current law theSlotWrittenIsTheSlotRead",
-        "__settlePeer law lateAnswerIsDropped",
-        "__settlePeer law lateAnswerIsRecorded",
-        "__settlePeer law oneSlotPerProcess",
-        "admit law readyPeerBeforeNewJob",
-    ] {
-        assert!(
-            text.contains(law),
-            "{law} missing from:\n{}",
-            combined(&out)
-        );
-    }
+    assert!(
+        text.contains("admit law aPeerIsAlwaysAdmitted"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        !text.contains("verify __") && !text.contains("✓ __"),
+        "a generated law ran in a program that states none:\n{}",
+        format_output(&out)
+    );
     assert!(text.contains("0 failed"), "{}", format_output(&out));
 }
 
@@ -413,38 +402,24 @@ fn a_recorded_run_of_the_slice_replays_to_the_same_run() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A hostile world leaves every invariant of the loop standing, and it is
-/// worth saying why it must: the loop's invariants are laws over pure
-/// functions of the slot table, which no wait and no provider can reach. The
-/// hostile profiles that do fire here are the ones a process performs in
-/// place on its way to its first request — the sample run seats every
-/// process, so every such profile is exercised under every law below it.
-///
-/// `Wait.poll`'s own hostile profiles are not among them, and cannot be
-/// today: a law that reaches the wait has to be stated over a function that
-/// performs `Wait.poll`, and such a law does not reach the Lean wall —
-/// measured on `tests/fixtures/work_jobs`, whose `readyCount law` makes
-/// `aver proof --backend lean` fail with five build errors, because an
-/// oracle-lifted function's law renders its sample theorems without the
-/// oracle arguments. Generating such a law into every program that asks for
-/// a loop would break `aver proof` for all of them, so this leg does not.
+/// A hostile world leaves the program's own laws standing: the hostile
+/// profiles that fire are the ones the answer modules and the processes
+/// perform, and the laws are over pure functions no provider reaches.
 #[test]
-fn a_hostile_world_leaves_every_invariant_of_the_loop_standing() {
+fn a_hostile_world_leaves_the_programs_laws_standing() {
     let plain = aver(SLICE, &["verify"]);
     let hostile = aver(SLICE, &["verify", "--hostile"]);
     assert!(hostile.status.success(), "{}", format_output(&hostile));
     let text = combined(&hostile);
     assert!(text.contains("0 failed"), "{}", format_output(&hostile));
     assert!(
-        text.contains("__settlePeer law lateAnswerIsDropped"),
+        text.contains("admit law aPeerIsAlwaysAdmitted"),
         "{}",
         format_output(&hostile)
     );
-    // The hostile run expands into strictly more cases than the honest one,
-    // so the profiles are actually being installed rather than skipped.
     assert!(
-        cases(&combined(&hostile)) > cases(&combined(&plain)),
-        "hostile ran no more cases than the honest run:\n{}",
+        cases(&combined(&hostile)) >= cases(&combined(&plain)),
+        "hostile ran fewer cases than the honest run:\n{}",
         format_output(&hostile)
     );
 }
@@ -463,45 +438,57 @@ fn cases(text: &str) -> usize {
 
 #[test]
 fn the_dump_shows_the_loop_that_was_generated() {
-    let dir = fixture(SLICE);
+    let text = dump(SLICE);
+    for line in [
+        "record __Run",
+        "fn __turn(run: __Run) -> Result<__Run, String>",
+        "fn __runAll(run: __Run) -> Result<__Run, String>",
+        "fn __all() -> Result<Unit, String>",
+        "fn main() -> Result<Unit, String>",
+        "fn __servePeer(run: __Run, id: Int, seq: Int, request: __PeerRequest) -> __Run",
+        "Ledger.claim(run.ledger)",
+        // An Ok settles the request, an Err parks it on the wake it named.
+        "Result.Err(__wake) -> __park(",
+        "Run.Wake.Settled(deadline) -> Bool.or(__versionOf(run, slot.owner) > slot.version",
+        // The entry's own policies are called by name.
+        "match admit(__view(run, ready), id)",
+        "Bool.or(stop(__view(run, [])), Map.len(run.slots) == 0)",
+        // The run ends by cancelling every job a parked request waits on.
+        "fn __cancelWaited(run: __Run, ids: List<Int>) -> __Run",
+        "Wait.Item.Job(job) -> __cancelledWaited(run, Work.cancel(job))",
+    ] {
+        assert!(text.contains(line), "{line} missing from the dump");
+    }
+    for gone in [
+        "__maxJobs",
+        "__roomLeft",
+        "room",
+        "__consumed",
+        "__startJobs",
+        "type __Job",
+        "__ThenAnswer",
+        "__HistoryEvent",
+        "\nverify __",
+        "SourceTrace",
+    ] {
+        assert!(
+            !text.contains(gone),
+            "{gone} is still in the generated loop:\n{text}"
+        );
+    }
+}
+
+/// The source `AVER_YIELD_DUMP=1` prints for one fixture: what the lowering
+/// and the loop generator wrote.
+fn dump(fixture_name: &str) -> String {
+    let dir = fixture(fixture_name);
     let mut command = Command::new(aver_bin());
     command.current_dir(&dir);
     command.env("AVER_YIELD_DUMP", "1");
     command.arg("check").arg("main.av");
     command.arg("--module-root").arg(&dir);
     let out = command.output().expect("aver runs");
-    let text = combined(&out);
-    for line in [
-        "record __Run",
-        "fn __turn(run: __Run) -> Result<__Run, String>",
-        "fn __runAll(run: __Run) -> Result<__Run, String>",
-        "fn main() -> Result<Unit, String>",
-        "fn __servePeer(run: __Run, id: Int, seq: Int, request: __PeerRequest) -> __Run",
-        "Ledger.claim(run.ledger)",
-        // The job seam's third end: `begin` answers a Result the turn matches
-        // on, and only the Ok half records the start through `started`.
-        "Option.Some(task) -> __beganValidation(run, task, (Validation).begin(task))",
-        "Result.Ok(job) -> __startJobsValidation(__jobSeatedValidation(run, task, job))",
-        "ledger = __consumedValidation(run.ledger, task)",
-        "fn __consumedValidation(state: Ledger.State, task: Tuple<Int, Bytes>) -> Ledger.State",
-        "(Ledger).taskStarted(state, task)",
-        "verify __settlePeer law lateAnswerIsDropped",
-        // The view is built again per id on purpose, and the generated
-        // description says so rather than leaving a reader to wonder.
-        "It is built again for every id the turn asks about, deliberately",
-        // The run ends by cancelling what is still running rather than
-        // dropping its handles.
-        "fn __cancelEach(run: __Run, keys: List<Int>) -> Result<Unit, String>",
-        "Option.Some(job) -> __cancelled(run, key, (Work).cancel(__jobHandle(job)))",
-    ] {
-        assert!(text.contains(line), "{line} missing from the dump");
-    }
-    for gone in ["__maxJobs", "__roomLeft", "__startable", "room"] {
-        assert!(
-            !text.contains(gone),
-            "{gone} is still in the generated loop, so its source depends on the job limit"
-        );
-    }
+    combined(&out)
 }
 
 /// A process split into a `yield` helper: the loop seats the process, not the
@@ -510,14 +497,7 @@ fn the_dump_shows_the_loop_that_was_generated() {
 /// table has one marker per seated process and none for the helper.
 #[test]
 fn a_yield_helper_is_nested_in_its_caller_and_never_seated() {
-    let dir = fixture(SLICE);
-    let mut command = Command::new(aver_bin());
-    command.current_dir(&dir);
-    command.env("AVER_YIELD_DUMP", "1");
-    command.arg("check").arg("main.av");
-    command.arg("--module-root").arg(&dir);
-    let out = command.output().expect("aver runs");
-    let text = combined(&out);
+    let text = dump(SLICE);
     for line in [
         // The helper has a protocol of its own, and the caller's states hold it.
         "fn __fetchBodyStart(key: Int, height: Int) -> __FetchBodyOutcome",
@@ -546,21 +526,18 @@ fn a_yield_helper_is_nested_in_its_caller_and_never_seated() {
 /// generative effect in one process cannot oracle-lift the laws of another.
 #[test]
 fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
-    let dir = fixture(SLICE);
-    let mut command = Command::new(aver_bin());
-    command.current_dir(&dir);
-    command.env("AVER_YIELD_DUMP", "1");
-    command.arg("check").arg("main.av");
-    command.arg("--module-root").arg(&dir);
-    let out = command.output().expect("aver runs");
-    let text = combined(&out);
-    for function in ["__seatPeer", "__seatWalk", "__serveWalk", "__serveTicker"] {
+    let text = dump(SLICE);
+    for function in ["__seatPeer", "__seatWalk", "__serveTicker"] {
         assert!(
             declared_effects(&text, function) == Some("Console.print".to_string()),
-            "{function} does not carry its own effects:\n{}",
-            format_output(&out)
+            "{function} does not carry its own effects:\n{text}"
         );
     }
+    // The walk's target waits on a validation job its answer module takes.
+    assert_eq!(
+        declared_effects(&text, "__serveWalk"),
+        Some("Console.print, Validation.take".to_string())
+    );
     for function in [
         "__seatAccepting",
         "__seatDialling",
@@ -570,27 +547,26 @@ fn the_loop_carries_each_processs_own_effects_and_not_the_programs() {
     ] {
         assert!(
             declared_effects(&text, function).is_none(),
-            "{function} carries effects it does not perform:\n{}",
-            format_output(&out)
+            "{function} carries effects it does not perform:\n{text}"
         );
     }
     // Serving one request carries what the module answering it performs, and
-    // nothing the other processes perform: the peer's own two socket
-    // operations, and the accept's own four.
+    // nothing the other processes perform: the peer's socket operations and
+    // the validation its delivery begins, and the accept's own four.
     assert_eq!(
         declared_effects(&text, "__servePeer"),
-        Some("Console.print, Tcp.readNow, Tcp.writeNow, Time.unixMs".to_string())
+        Some("Console.print, Tcp.readNow, Tcp.writeNow, Time.unixMs, Validation.begin".to_string())
     );
     assert_eq!(
         declared_effects(&text, "__serveAccepting"),
         Some("Args.get, Tcp.accept, Tcp.closeListener, Tcp.listen".to_string())
     );
     // The dispatch reaches every process, so it carries the union — and the
-    // turn adds the wait, the stop observation and both ends of the job seam.
+    // loop's entry adds the wait, the stop observation and the cancel.
     assert_eq!(
         declared_effects(&text, "__serve"),
         Some(
-            "Args.get, Console.print, Tcp.accept, Tcp.closeListener, Tcp.listen, Tcp.readNow, Tcp.writeNow, Time.unixMs"
+            "Args.get, Console.print, Tcp.accept, Tcp.closeListener, Tcp.listen, Tcp.readNow, Tcp.writeNow, Time.unixMs, Validation.begin, Validation.take"
                 .to_string()
         )
     );
@@ -625,9 +601,7 @@ fn declared_effects(dump: &str, function: &str) -> Option<String> {
 /// Dependency yielding functions are library protocols. Only the entry
 /// process is seated, and it enters Walker's protocol through a tail call.
 /// Walker depends on the capability it asks, not on the module that answers
-/// it: `check` judges the answer binding at the entry, whose cone is the
-/// whole program, and a dependency checked as its own unit is not refused
-/// for not seeing the answer module.
+/// it: the program's answer modules are the ones its whole cone reaches.
 #[test]
 fn a_process_enters_an_imported_helper_under_the_generated_loop() {
     for command in ["check", "run"] {
@@ -636,13 +610,10 @@ fn a_process_enters_an_imported_helper_under_the_generated_loop() {
     }
 }
 
-/// The same under an empty `[run]`: the default loop belongs to the entry, so
-/// a dependency whose yielding function takes a key is a library helper and
-/// is never seated, at any door. Every door used to lower the dependency as
-/// its own unit with the default loop bound to it, and refused it for having
-/// "nothing to seat" its keyed helper with.
+/// The loop belongs to the entry, so a dependency whose yielding function
+/// takes a key is a library helper and is never seated, at any door.
 #[test]
-fn an_empty_run_table_never_seats_a_dependency_helper() {
+fn a_dependency_helper_is_never_seated() {
     for command in ["check", "run", "verify"] {
         let out = aver("run_default_process_elsewhere", &[command]);
         assert!(out.status.success(), "{command}: {}", format_output(&out));
@@ -658,24 +629,6 @@ fn an_empty_run_table_never_seats_a_dependency_helper() {
         "{}",
         format_output(&out)
     );
-}
-
-/// Policies named in a module other than the one the entry is loaded as
-/// generate no loop, and an entry without `main` then runs nothing. That used
-/// to exit 0 in silence; every door now refuses it and says which two names
-/// disagree.
-#[test]
-fn policies_named_in_another_module_than_the_entry_are_refused() {
-    for command in ["check", "run"] {
-        let out = aver("run_policies_elsewhere", &[command]);
-        assert!(!out.status.success(), "{command}: {}", format_output(&out));
-        let text = combined(&out);
-        assert!(
-            text.contains("error[run-binding]: aver.toml: [run] names its policies and view in module 'Slice.Node', but this program's entry is loaded as module 'Node'"),
-            "{command}: {}",
-            format_output(&out)
-        );
-    }
 }
 
 /// Generated source is parsed again in the entry's scope. A type the process
@@ -739,11 +692,11 @@ fn a_socket_closed_while_a_request_is_parked_on_it_does_not_end_the_run() {
     }
 }
 
-/// A limit above one runs rather than being refused: `started` consumes the
-/// task the moment its job begins, so the turn's next ask is offered a
-/// different one and the slots of room start different tasks. The slice is
-/// raised to `max-jobs = 4` and played against the same loopback peer; the
-/// three bodies are fetched, validated and connected exactly as before.
+/// A limit above one runs the same slice: the answer module begins one
+/// validation per delivered body, and the engine runs up to four at once.
+/// The slice is raised to `max-jobs = 4` and played against the same
+/// loopback peer; the three bodies are fetched, validated and connected
+/// exactly as before.
 #[test]
 fn a_job_limit_above_one_runs_the_same_slice() {
     let dir = scratch("max-jobs");
@@ -800,19 +753,21 @@ fn a_job_limit_above_one_runs_the_same_slice() {
 
 /// `Wait.poll`'s contract allows false-positive readiness: a job may be
 /// reported ready and still be running, and then `take` answers `Ok(None)`.
-/// The seam must keep the handle for a later turn rather than drop it while
-/// the computation continues. The fixture takes a job it has just started —
-/// which is exactly what a wait is allowed to report — and then, once the
-/// job has really settled, takes it again.
+/// The answer module must keep the handle and wait on the job again rather
+/// than drop it while the computation continues. The fixture takes its job
+/// the moment it begins, which is exactly what a wait is allowed to report,
+/// and answers once the job has really landed.
 #[test]
 fn a_job_reported_ready_before_it_finished_keeps_its_handle_and_lands_later() {
     let out = aver("run_false_ready", &["run"]);
     assert!(out.status.success(), "{}", format_output(&out));
-    assert!(
-        combined(&out).contains("kept the handle, then landed: jobs 0 scored 2"),
-        "{}",
-        format_output(&out)
-    );
+    let text = combined(&out);
+    for line in [
+        "kept the handle, then landed: scored 2",
+        "a take found the job still running",
+    ] {
+        assert!(text.contains(line), "{line}: {}", format_output(&out));
+    }
 }
 
 #[test]
@@ -821,53 +776,11 @@ fn the_false_ready_slice_checks_clean() {
     assert!(out.status.success(), "{}", format_output(&out));
 }
 
-/// The same claim at the lowering: `__taken<Kind>` hands the whole run and the
-/// key on, and only an outcome the job will not repeat — a payload or an error
-/// — removes it from the table.
-#[test]
-fn the_generated_take_removes_a_job_only_when_its_outcome_is_final() {
-    let dir = fixture(SLICE);
-    let mut command = Command::new(aver_bin());
-    command.current_dir(&dir);
-    command.env("AVER_YIELD_DUMP", "1");
-    command.arg("check").arg("main.av");
-    command.arg("--module-root").arg(&dir);
-    let out = command.output().expect("aver runs");
-    let text = combined(&out);
-    for line in [
-        // The table holds one `__Job` sum over every kind, so a take key is
-        // read against the whole table and dispatched on the variant.
-        "type __Job\n    Validation(Work.Job)",
-        "jobs: Map<Int, __Job>",
-        "fn __jobHandle(job: __Job) -> Work.Job",
-        "__Job.Validation(handle) -> handle",
-        "fn __takenValidation(run: __Run, key: Int) -> __Run",
-        "Option.Some(job) -> match job",
-        "__Job.Validation(handle) -> __reportedValidation(run, key, (Validation).take(handle))",
-        "fn __reportedValidation(run: __Run, key: Int, taken: Result<Option<Int>, String>) -> __Run",
-        "Result.Err(reason) -> __landedValidation(run, key, (Result).Err(reason))",
-        "fn __finishedValidation(run: __Run, key: Int, payload: Option<Int>) -> __Run",
-        "Option.None -> run",
-        "Option.Some(value) -> __landedValidation(run, key, (Result).Ok(value))",
-        "ledger = (Ledger).validated((run).ledger, outcome)",
-    ] {
-        assert!(text.contains(line), "{line} missing from the dump");
-    }
-    // The take no longer stops the turn on an error: a job that will not land
-    // reaches `landed` as the error it is, and the run goes on.
-    assert!(
-        !text.contains("(Validation).take(job)?"),
-        "the take still propagates a job's error out of the turn"
-    );
-}
-
-/// Two job kinds under one generated loop: the turn takes and starts both
-/// kinds over one table and one shared `max-jobs` limit. The fixture queues
-/// two tasks of each kind, prints one line per landing — the kind and what it
-/// scored — and parks the process until all four have landed; each of the
-/// four lines appears exactly once, which is the proof that each task was
-/// started once and landed once, and the sum it reports is what 2+3+20+40
-/// makes.
+/// Two job kinds and one keyed family under one generated loop: one scorer is
+/// seated per task the answer module lists, each asks for its score, and the
+/// module begins one job of the task's kind for each. Each of the four
+/// landings appears exactly once, and the summary process, parked on Settled
+/// until every task has landed, reports what 2+3+20+40 makes.
 #[test]
 fn two_job_kinds_under_one_generated_loop_each_land_once() {
     let out = aver("run_two_job_kinds", &["run"]);
@@ -895,61 +808,22 @@ fn two_job_kinds_under_one_generated_loop_each_land_once() {
         let out = aver("run_two_job_kinds", &[command]);
         assert!(out.status.success(), "{command}: {}", format_output(&out));
     }
-    let verified = combined(&aver("run_two_job_kinds", &["verify"]));
-    for law in [
-        "__consumedAlpha law aStartedTaskIsNotAskedAgain",
-        "__consumedBeta law aStartedTaskIsNotAskedAgain",
-    ] {
-        assert!(verified.contains(law), "{law} missing from:\n{verified}");
-    }
-    assert!(verified.contains("0 failed"), "{verified}");
 }
 
-/// One table and one limit for every kind: `__Job` is the generated sum that
-/// lets `jobs: Map<Int, __Job>` carry both kinds, `__jobHandle` unwraps it for
-/// the wait and the cancel, and a take dispatches on the variant before it
-/// reaches this kind's `take`. The job limit is not in the generated source
-/// at all: the engine queues a job begun at it, so the loop has no room to
-/// count, and the source does not depend on the machine that built it.
+/// The loop keeps no job table: the jobs live in the answer module's state,
+/// and the loop only seats the scorers, one per listed task.
 #[test]
-fn the_two_kinds_share_one_table_and_one_limit() {
-    let dir = fixture("run_two_job_kinds");
-    let mut command = Command::new(aver_bin());
-    command.current_dir(&dir);
-    command.env("AVER_YIELD_DUMP", "1");
-    command.arg("check").arg("main.av");
-    command.arg("--module-root").arg(&dir);
-    let out = command.output().expect("aver runs");
-    let text = combined(&out);
+fn the_loop_seats_the_scorers_and_holds_no_job() {
+    let text = dump("run_two_job_kinds");
     for line in [
-        "type __Job\n    Alpha(Work.Job)\n    Beta(Work.Job)",
-        "jobs: Map<Int, __Job>",
-        "fn __jobHandle(job: __Job) -> Work.Job",
-        "__Job.Alpha(handle) -> handle",
-        "__Job.Beta(handle) -> handle",
-        "fn __takeEachAlpha(run: __Run, ready: List<Int>) -> __Run",
-        "fn __takeEachBeta(run: __Run, ready: List<Int>) -> __Run",
-        "__Job.Alpha(handle) -> __reportedAlpha(run, key, (Alpha).take(handle))",
-        "__Job.Beta(_) -> run",
-        "__Job.Beta(handle) -> __reportedBeta(run, key, (Beta).take(handle))",
-        "__Job.Alpha(_) -> run",
-        "fn __startJobsAlpha(run: __Run) -> __Run",
-        "fn __startJobsBeta(run: __Run) -> __Run",
-        "Option.Some(task) -> __beganAlpha(run, task, (Alpha).begin(task))",
-        "Option.Some(task) -> __beganBeta(run, task, (Beta).begin(task))",
-        "pooled = __consumedAlpha(run.pooled, task)",
-        "pooled = __consumedBeta(run.pooled, task)",
-        "(Pooled).alphaStarted(state, task)",
-        "(Pooled).betaStarted(state, task)",
-        // The turn takes every kind first and then starts every kind.
-        "taken0 = __takeEachAlpha(served, ready)",
-        "taken1 = __takeEachBeta(taken0, ready)",
-        "started0 = __startJobsAlpha(taken1)",
-        "__startJobsBeta(started0)",
-        "Result.Ok(__workHostStep(observed, ready))",
+        "fn __seatFamilyScorer(run: __Run, keys: List<Int>) -> __Run",
+        "seatedScorer: Map<Int, Int>",
+        "retiredScorer: Map<Int, Bool>",
+        "__seatFamilyScorer(run, Pooled.tasks(run.pooled))",
     ] {
         assert!(text.contains(line), "{line} missing from the dump");
     }
+    assert!(!text.contains("type __Job"), "the loop holds a job table");
 }
 
 /// A recorded run of the two-kind fixture replays to the same run: every job
@@ -988,26 +862,10 @@ fn a_recorded_run_of_two_job_kinds_replays_to_the_same_run() {
 }
 
 #[test]
-fn a_view_that_is_not_the_shape_the_loop_fills_is_refused_with_the_declaration_it_wants() {
-    let out = aver("run_view_shape", &["check"]);
-    let text = combined(&out);
-    assert!(
-        text.contains("error[view-shape]: record 'View' declares no field 'jobs'"),
-        "{}",
-        format_output(&out)
-    );
-    assert!(
-        text.contains("        jobs: Int"),
-        "the message prints the declaration the loop fills:\n{}",
-        format_output(&out)
-    );
-}
-
-#[test]
 fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
     // The lowering refuses before anything runs, so `run` and `verify` see
     // the same sentence `check` slugs.
-    let sentence = "aver.toml declares [run], so the generated loop seats one of every process this module writes, and it has nothing to seat 'looping' with";
+    let sentence = "the generated loop seats one 'looping' and has nothing to hand it; a process that takes a key is declared with the function that lists the keys, for example `process looping seated by Sockets.peers`";
     for command in ["check", "run", "verify"] {
         let out = aver("run_shape_parameters", &[command]);
         assert!(!out.status.success(), "{command}: {}", format_output(&out));
@@ -1025,59 +883,12 @@ fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
     );
 }
 
-/// The generated `__consumed<K> law aStartedTaskIsNotAskedAgain` cites the
-/// program's own law of that name on its `started` function. A program that
-/// states none is refused at the door, with the block to write, before the
-/// generated module is checked — never as a `using` that fails to resolve at
-/// a line of generated code.
-#[test]
-fn a_started_function_without_its_law_is_refused_with_the_block_to_write() {
-    let sentence = "aver.toml declares [run], so the generated turn records a start of job 'Validation' through 'Pooled.taskStarted' and cites the law that function states about it; 'Pooled.taskStarted' states no law named 'aStartedTaskIsNotAskedAgain'";
-    for command in ["check", "run", "verify"] {
-        let out = aver("run_started_law_missing", &[command]);
-        assert!(!out.status.success(), "{command}: {}", format_output(&out));
-        let text = combined(&out);
-        assert!(
-            text.contains(sentence),
-            "{command}: {}",
-            format_output(&out)
-        );
-        for line in [
-            "verify taskStarted law aStartedTaskIsNotAskedAgain",
-            "    given state: State = [fresh()]",
-            "    given task: Int = [...]",
-            "    when nextTask(state) == Option.Some(task)",
-            "    nextTask(taskStarted(state, task)) != Option.Some(task) holds",
-        ] {
-            assert!(
-                text.contains(line),
-                "{command}: the refusal does not print the block:\n{}",
-                format_output(&out)
-            );
-        }
-        assert!(
-            !text.contains("uses unknown or unexposed law"),
-            "{command}: the door let the generated `using` fail instead:\n{}",
-            format_output(&out)
-        );
-    }
-    let checked = aver("run_started_law_missing", &["check"]);
-    assert!(
-        combined(&checked).contains("error[run-binding]:"),
-        "{}",
-        format_output(&checked)
-    );
-}
-
-/// The generated single-transition and finite-history laws, together with
-/// the program's policy and task-consumption laws, all close universally.
-/// The history fold calls the live coordinator's pure transitions; its two
-/// inductive invariants cover slot count and retirement. There is no job
-/// bound to hold: the engine queues a job begun at the limit, so the
-/// generated source carries no limit at all.
+/// The program's own laws, the policy law among them, close universally on
+/// the Lean wall. The loop adds none of its own; its invariants are checked on
+/// `tests/fixtures/run_schedule_cases`.
 /// The manifest must retain every law without a bounded or admitted fallback.
 #[test]
-fn the_generated_invariants_reach_the_lean_wall() {
+fn the_programs_laws_reach_the_lean_wall() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping the Lean wall: `lake` is not available");
         return;
@@ -1108,7 +919,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(44),
+        Some(1),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -1125,33 +936,14 @@ fn the_generated_invariants_reach_the_lean_wall() {
         format_output(&out)
     );
     let obligations = &summary["obligations"];
-    for closed in [
-        "__park.laterKeepsTheInstance.implication",
-        "__askableSlot.aDeadlineGatesTheAsk.implication",
-        "__askableSlot.aBackwardsClockNeverStrandsARequest.implication",
-        "__eitherAskable.anEitherIsAskableOnceItsDeadlineHasPassed.implication",
-        "__settlePeer.lateAnswerIsDropped.implication",
-        "__settlePeer.lateAnswerIsRecorded.implication",
-        "admit.readyPeerBeforeNewJob.implication",
-        "__historyRun.noNewProcesses.implication",
-        "__historyRun.retiredInstanceNeverReturns.implication",
-    ] {
-        assert_eq!(
-            obligations[closed].as_str(),
-            Some("universal"),
-            "{closed} is no longer universal:\n{}",
-            format_output(&out)
-        );
-    }
     assert_eq!(
-        obligations["__settlePeer.oneSlotPerProcess.implication"].as_str(),
+        obligations["admit.aPeerIsAlwaysAdmitted.implication"].as_str(),
         Some("universal"),
-        "I1 reopened — the one-key `Map.set` size fact stopped reaching it:\n{}",
+        "the policy law is no longer universal:\n{}",
         format_output(&out)
     );
-    // The laws with no `when` carry no implication obligation of their own, so
-    // the way to pin that `laterKeepsTheRequest` closed is that nothing at all
-    // is open: no build error, nothing bounded, and an empty sorry list.
+    // Nothing at all is open: no build error, nothing bounded, and an empty
+    // sorry list.
     // The summary leaves `sorry_laws` out when nothing is open.
     let open: Vec<&str> = summary["sorry_laws"]
         .as_array()
@@ -1166,7 +958,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
 }
 
 /// The job as a request: an answer module begins a job in place and parks
-/// the request on `Wait.Item.Job`, with no `task`/`started`/`landed` seam.
+/// the request on `Until([Wait.Item.Job(job)], None)`.
 /// The quick square lands and wakes the process; the slow one never does, so
 /// only a stop request ends the run. The stop is observed within a moment,
 /// although the wait it arrives in has no deadline, and the generated `__over`
@@ -1200,5 +992,111 @@ fn a_stop_request_ends_a_run_parked_on_a_job_its_answer_module_began() {
         recording.contains("\"Work.cancel\""),
         "the job the parked request waited on was not cancelled when the run ended:\n{recording}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A keyed family: one member is seated per key the hub lists, in list
+/// order, and each is woken by Settled when the feeder's post moves the hub.
+/// The post that stops listing key 2 drops member 2 at the turn boundary,
+/// before it reads again: it never reads 20 and is never told it is gone.
+#[test]
+fn a_family_is_seated_per_key_and_dropped_when_its_key_leaves() {
+    for command in ["check", "verify"] {
+        let out = aver("run_families", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+    }
+    let out = aver("run_families", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "member 1 read 10\nmember 2 read 10\nmember 1 read 20\nmember 1 read 30\nmember 1 is gone",
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// The loop is also reachable from a `main` of the program's own: `node`
+/// runs it, anything else runs nothing.
+#[test]
+fn a_main_runs_the_loop_through_run_all() {
+    let out = aver("run_all_from_main", &["run", "--", "node"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "ticked 3 times",
+        "{}",
+        format_output(&out)
+    );
+    let out = aver("run_all_from_main", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "usage: main node",
+        "{}",
+        format_output(&out)
+    );
+    let out = aver("run_all_from_main", &["check"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        !combined(&out).contains("warning["),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// What a seating line has to name, and what a policy has to be, are said at
+/// the door with the signature wanted.
+#[test]
+fn a_wrong_seating_or_policy_is_refused_with_the_shape_it_needs() {
+    let dir = scratch("seating");
+    let families = fixture("run_families");
+    for name in ["main.av", "hub.av", "board.av"] {
+        std::fs::copy(families.join(name), dir.join(name)).expect("copy fixture");
+    }
+    let check = |dir: &Path| {
+        let mut command = Command::new(aver_bin());
+        command.current_dir(dir);
+        command
+            .arg("check")
+            .arg("main.av")
+            .arg("--module-root")
+            .arg(dir);
+        command.output().expect("aver runs")
+    };
+    let main = dir.join("main.av");
+    let source = std::fs::read_to_string(&main).expect("main");
+    for (from, to, expected) in [
+        (
+            "process member seated by Hub.members",
+            "process member seated by Hub.next",
+            "`process member seated by Hub.next` reads the keys to seat 'member' with from the state of 'Hub', so it must be 'next(Hub.State) -> List<Int>'",
+        ),
+        (
+            "process member seated by Hub.members",
+            "process member seated by Board.next",
+            "names a function of module 'Board', which answers no capability of this program",
+        ),
+        (
+            "fn stop(view: Run.View) -> Bool",
+            "fn stop(view: Run.View) -> Int",
+            "the generated loop calls 'stop' of the entry module as its policy, so it must be 'stop(view: Run.View) -> Bool'",
+        ),
+        (
+            "process member seated by Hub.members",
+            "process echo seated by Hub.members",
+            "`process echo seated by Hub.members` names no yielding function of this module",
+        ),
+    ] {
+        std::fs::write(&main, source.replace(from, to)).expect("edit main");
+        let out = check(&dir);
+        assert!(!out.status.success(), "{to}: {}", format_output(&out));
+        let text = combined(&out);
+        assert!(text.contains(expected), "{to}: {}", format_output(&out));
+        assert!(
+            text.contains("error[run-binding]"),
+            "{to}: {}",
+            format_output(&out)
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -3,6 +3,7 @@ module Sockets
     depends []
     exposes [State, tip]
     effects []
+    answers [Tcp]
 
 record State
     free: List<Int>

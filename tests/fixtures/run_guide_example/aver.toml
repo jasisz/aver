@@ -2,17 +2,8 @@
 schema = 1
 
 [[providers.bindings]]
-capability = "Clock"
-answer = "Clocked"
-
-[[providers.bindings]]
 capability = "Scoring"
-work = "Clocked.score"
-task = "Clocked.nextTask"
-started = "Clocked.taskStarted"
-landed = "Clocked.scored"
+work = "Clocked.points"
 
 [work]
 max-jobs = 2
-
-[run]

@@ -354,11 +354,9 @@ fn nested_record_job_matches_the_vm() {
 
 // ── A capability the program answers ────────────────────────────────────
 
-/// A program that answers a capability of its own, without asking for a
-/// generated loop: the processes lower to state types and pure answer
-/// functions, and the coordinator is the one the program wrote. Nothing here
-/// reaches a job, so this is the other half of the refusal that was lifted —
-/// the reply sums carrying `Wait.Wake` compile and run.
+/// A program that answers a capability of its own and drives the protocol
+/// from a `main` of its own: the processes lower to state types and pure
+/// answer functions, and the coordinator is the one the program wrote.
 #[test]
 fn an_answered_capability_matches_the_vm() {
     for fixture in ["yield_spike", "yield_continuations", "yield_cross_module"] {
@@ -366,14 +364,13 @@ fn an_answered_capability_matches_the_vm() {
     }
 }
 
-/// The generated coordinator: five processes, five answer modules, three
-/// policies and a job seam, all on the Rust backend.
+/// The generated loop: five processes, three answer modules, two policies and
+/// a job kind the answer module begins itself, all on the Rust backend.
 ///
 /// The comparison is the multiset of lines, not their order, and that is a
 /// statement about the program rather than a weakened assertion. Its answer
-/// modules park requests on `Wait.Wake.After(2)` and `After(5)` — wall-clock
-/// deadlines — so which turn a finished job lands in depends on how long the
-/// job took. The VM runs a job body on a child VM and the Rust backend runs
+/// modules park requests on wall-clock deadlines and on jobs, so which turn a
+/// finished job lands in depends on how long the job took. The VM runs a job body on a child VM and the Rust backend runs
 /// the compiled function itself, which is faster than the smallest deadline
 /// in the program, so the two interleave the same work differently. Both
 /// run every process to its end and stop.
@@ -402,14 +399,21 @@ fn run_all_slice_does_the_same_work_as_the_vm() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// Two job kinds under one generated coordinator on the Rust backend: one
-/// `__Job` sum, one shared table, one shared `max-jobs` limit. The four
-/// tasks' settle order is wall-clock, so the comparison is the multiset of
-/// lines: one per landing, kind and score, so a task started twice would show
-/// as a duplicated line, and the sum that only all four landings make.
+/// Two job kinds and one keyed family under the generated loop on the Rust
+/// backend, sharing one `max-jobs` limit. The four tasks' settle order is
+/// wall-clock, so the comparison is the multiset of lines: one per landing,
+/// kind and score, so a task started twice would show as a duplicated line,
+/// and the sum that only all four landings make.
 #[test]
 fn two_job_kinds_under_one_generated_loop_matches_the_vm() {
     assert_same_lines("run_two_job_kinds");
+}
+
+/// A keyed family seated per key and dropped when its key leaves, and a loop
+/// run from a `main` of the program's own, on the Rust backend.
+#[test]
+fn keyed_families_and_run_all_match_the_vm() {
+    assert_same_stdout("run_families");
 }
 
 /// Runs one backend against a loopback peer, on a port nobody else holds.

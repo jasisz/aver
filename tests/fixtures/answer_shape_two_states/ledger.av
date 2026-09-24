@@ -3,6 +3,7 @@ module Ledger
     depends [Chain, Pool]
     exposes [State, Store, claim, gone, nextTarget]
     effects []
+    answers [Pool, Chain]
 
 record State
     free: List<Int>
@@ -11,13 +12,13 @@ record State
 record Store
     tip: Int
 
-fn claim(state: State, key: Int) -> Pool.Assignment
+fn claim(state: State, key: Int) -> Tuple<State, Result<Pool.Assignment, Run.Wake>>
     ? "The next height for this peer."
-    Pool.Assignment.Idle
+    (state, Result.Ok(Pool.Assignment.Idle))
 
-fn gone(state: State, key: Int) -> Unit
+fn gone(state: State, key: Int) -> Tuple<State, Result<Unit, Run.Wake>>
     ? "A peer that left gives its height back."
-    Unit
+    (state, Result.Ok(Unit))
 
 fn nextTarget(store: Store, height: Int) -> Option<String>
     ? "Which hash is next at this height."

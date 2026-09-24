@@ -1,13 +1,16 @@
-The VM scenarios drive the generated coordinator with explicit service groups
-and Oracle observations. Reversed control order remains observable; duplicate
-and unknown ids do not repeat delivery. A premature readiness event keeps the
-job, and stale readiness after completion or cancellation cannot land it again.
+The VM scenarios drive the generated loop with explicit service groups and
+explicit seating. Reversed control order remains observable; duplicate and
+unknown ids do not repeat delivery. A keyed family is seated once per key,
+a key that leaves the list drops its instance, and a key whose instance
+returned is not seated again while it stays listed.
 
-`pendingThenReady` pins the existing global per-branch Oracle coordinates:
-begin is 0; each turn observes stop, wait, clock and then take. No live jobs,
-clocks, waits or socket timing are needed by the verification cases.
+The laws in `main.av` state the loop's own invariants over the generated
+functions, which a program may call by name: a late answer changes nothing
+and is counted, an Err keeps the request's instance, an Ok raises it, a
+deadline gates the ask and never makes the turn wait longer than it asked for,
+and a Settled wake opens only once its module has answered something other
+than Settled.
 
-The integration suite runs these cases with ordinary and hostile verification.
-It separately exports the same coordinator and its laws, with sampled cases
-removed, to Lean and requires every law to be universal. The resource-stub
-scenarios are VM tests, not claims about the current proof lifter's job model.
+The integration suite runs these cases with ordinary and hostile
+verification. It separately exports the same loop and its laws to Lean and
+requires every law to be universal.

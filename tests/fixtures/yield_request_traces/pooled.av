@@ -2,17 +2,18 @@ module Pooled
     intent = "A live answer distinct from every test stub."
     depends [Pool]
     exposes [State, claim, finish, notice]
+    answers [Pool]
 
 record State
     calls: Int
 
-fn claim(state: State, peer: Int) -> Tuple<State, Pool.ClaimReply>
+fn claim(state: State, peer: Int) -> Tuple<State, Result<Option<Int>, Run.Wake>>
     ? "The live answer must never supply a test request."
-    (State(calls = state.calls + 1), Pool.ClaimReply.Now(Option.Some(999)))
+    (state, Result.Ok(Option.Some(999)))
 
-fn finish(state: State, value: Int) -> Tuple<State, Pool.FinishReply>
+fn finish(state: State, value: Int) -> Tuple<State, Result<Result<Int, String>, Run.Wake>>
     ? "The live finish answer is deliberately different from the test stub."
-    (state, Pool.FinishReply.Now(Result.Err("live provider")))
+    (state, Result.Ok(Result.Err("live provider")))
 
-fn notice(state: State, id: Int) -> Tuple<State, Pool.NoticeReply>
-    (state, Pool.NoticeReply.Now(Unit))
+fn notice(state: State, id: Int) -> Tuple<State, Result<Unit, Run.Wake>>
+    (state, Result.Ok(Unit))

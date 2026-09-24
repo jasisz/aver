@@ -2,22 +2,12 @@ module Say
     intent = "Fixture capability: the lines a process reads and writes, answered by the program."
     kind = capability
     semantics = effectful
-    exposes [PrintReply, ReadLineReply, print, readLine]
-
-type PrintReply
-    Now(Unit)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Unit)
+    exposes [print, readLine]
 
 operation print(message: String) -> Unit
     ? "Writes one line for the process."
     oracle = output
     replay = reissued
-
-type ReadLineReply
-    Now(Result<String, String>)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Result<String, String>)
 
 operation readLine() -> Result<String, String>
     ? "Reads one line for the process, or reports EOF or a host input failure."

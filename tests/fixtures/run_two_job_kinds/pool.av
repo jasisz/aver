@@ -1,20 +1,15 @@
 module Pool
     kind = capability
     semantics = effectful
-    intent = "Fixture capability: hands out Int handles; the program answers it. Once the handles are gone it reports each landing — the kind and what it scored — and, when every job has landed, what they scored together."
-    exposes [Assignment, ClaimReply, claim]
+    intent = "Fixture capability: the score of one task, and what every task scored together."
+    exposes [scored, total]
 
-type Assignment
-    Handle(Int)
-    Landed(String, Int)
-    Finished(Int)
+operation scored(task: Int) -> Int
+    ? "What one task scores, computed off the turn; 0 for a task that never will."
+    oracle = generative
+    replay = recorded
 
-type ClaimReply
-    Now(Pool.Assignment)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Pool.Assignment)
-
-operation claim() -> Pool.Assignment
-    ? "The next handle while there is one, then one landing at a time, then what all four jobs scored once they have landed."
+operation total() -> Int
+    ? "What every task scored together, once every one of them has landed."
     oracle = generative
     replay = recorded

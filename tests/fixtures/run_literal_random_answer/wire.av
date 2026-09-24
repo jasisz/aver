@@ -3,16 +3,11 @@ module Wire
     semantics = effectful
     depends [Wait]
     intent = "Fixture capability: one frame at a time."
-    exposes [Heard, FrameReply, frame]
+    exposes [Heard, frame]
 
 type Heard
     Message(String)
     Gone(String)
-
-type FrameReply
-    Now(Heard)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Heard)
 
 operation frame() -> Heard
     ? "The next frame."

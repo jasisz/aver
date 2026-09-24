@@ -1,0 +1,31 @@
+module Ticks
+    intent = "Answers Clock: a tick ten milliseconds after it was asked for."
+    depends [Clock]
+    exposes [State, fresh, tick]
+    effects []
+    answers [Clock]
+
+record State
+    count: Int
+    armed: Bool
+
+fn fresh() -> State
+    ? "No tick given, no deadline armed."
+    State(count = 0, armed = false)
+
+fn tick(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The first ask arms a ten-millisecond deadline and waits for it; the ask after it is the tick."
+    match state.armed
+        false -> (State.update(state, armed = true), Result.Err(Run.Wake.Until([], Option.Some(10))))
+        true -> ticked(state.count + 1)
+
+verify tick
+    tick(fresh()) => (State(count = 0, armed = true), Result.Err(Run.Wake.Until([], Option.Some(10))))
+    tick(State(count = 0, armed = true)) => (State(count = 1, armed = false), Result.Ok(1))
+
+fn ticked(count: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The tick itself, disarming the deadline."
+    (State(count = count, armed = false), Result.Ok(count))
+
+verify ticked
+    ticked(1) => (State(count = 1, armed = false), Result.Ok(1))

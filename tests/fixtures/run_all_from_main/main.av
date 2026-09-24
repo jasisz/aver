@@ -1,0 +1,29 @@
+module Node
+    intent = "A command-line program whose node subcommand runs the generated loop, and whose every other use prints its usage."
+    depends [Clock, Ticks]
+    effects [Args.get, Clock.tick, Console.print, yield]
+
+fn main() -> Result<Unit, String>
+    ? "`node` runs the loop until it is over; anything else prints the usage and runs nothing."
+    ! [Args.get, Console.print]
+    match List.contains(Args.get(), "node")
+        true -> Run.all()
+        false -> usage()
+
+fn usage() -> Result<Unit, String>
+    ? "What this program takes."
+    ! [Console.print]
+    Console.print("usage: main node")
+    Result.Ok(Unit)
+
+fn ticker() -> Unit
+    ? "Waits for three ticks and says so."
+    ! [Clock.tick, Console.print, yield]
+    ticking(0)
+
+fn ticking(seen: Int) -> Unit
+    ? "One tick at a time until the third."
+    ! [Clock.tick, Console.print, yield]
+    match Clock.tick() >= 3
+        true -> Console.print("ticked {seen + 1} times")
+        false -> ticking(seen + 1)

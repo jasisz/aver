@@ -1,22 +1,8 @@
 module Node
-    intent = "The follow slice as processes: a peer, a walk, an accepting process, a dialling process and a ticker, with three policies over one view. The loop between them is generated."
-    depends [Bytes, Wait, Work, Wire, Pool, Blocks, Chain, Clock, Validation, Sockets, Ledger, Clocked]
+    intent = "The follow slice as processes: a peer, a walk, an accepting process, a dialling process and a ticker, with two policies over the generated view. The loop between them is generated."
+    depends [Bytes, Wire, Pool, Blocks, Chain, Clock, Sockets, Ledger, Clocked]
     effects [Wire.accept, Wire.dialled, Wire.read, Wire.write, Wire.writes, Pool.claim, Pool.gone, Pool.joined, Pool.swept, Blocks.deliver, Blocks.body, Chain.nextTarget, Chain.commit, Clock.tick, Console.print, yield]
-    exposes [Pending, View, order, admit, stop]
-
-type Pending
-    Accepting(Int, Wait.Wake)
-    Dialling(Int, Wait.Wake)
-    Ticker(Int, Wait.Wake)
-    Peer(Int, Wait.Wake)
-    Walk(Int, Wait.Wake)
-
-record View
-    pending: Map<Int, Pending>
-    ready: List<Int>
-    askable: List<Int>
-    jobs: Int
-    stopping: Bool
+    exposes [admit, stop]
 
 fn accepting() -> Unit
     ? "Every peer the listener hands over, seated in the pool, until the listener closes."
@@ -103,30 +89,26 @@ fn summary(block: Bytes) -> String
     ? "What a connected block is recorded as."
     "{Bytes.len(block)}"
 
-fn order(view: View) -> List<Int>
-    ? "Every seated process, in slot order. The loop asks admit about each one in turn."
-    Map.keys(view.pending)
-
-fn admit(view: View, id: Int) -> Bool
+fn admit(view: Run.View, id: Int) -> Bool
     ? "Whether to serve this id in this turn."
     match Map.get(view.pending, id)
         Option.None -> false
         Option.Some(marker) -> admitted(view, marker)
 
-fn admitted(view: View, marker: Pending) -> Bool
-    ? "A peer request is always admitted, whatever the job table looks like: the turn serves before it starts another job, so a ready peer is served first. Everything else steps aside once the run is stopping."
+fn admitted(view: Run.View, marker: Run.Pending) -> Bool
+    ? "A peer request is always admitted, even once the run is stopping, so a peer is never left half way through a body. Everything else steps aside once the run is stopping."
     match marker
-        Pending.Peer(_, _) -> true
-        Pending.Accepting(_, _) -> true
-        Pending.Dialling(_, _) -> true
-        Pending.Ticker(_, _) -> Bool.not(view.stopping)
-        Pending.Walk(_, _) -> Bool.not(view.stopping)
+        Run.Pending.Peer(_, _) -> true
+        Run.Pending.Accepting(_, _) -> true
+        Run.Pending.Dialling(_, _) -> true
+        Run.Pending.Ticker(_, _) -> Bool.not(view.stopping)
+        Run.Pending.Walk(_, _) -> Bool.not(view.stopping)
 
-fn stop(view: View) -> Bool
+fn stop(view: Run.View) -> Bool
     ? "The run ends when the process asked us to, or when the listener is the only thing still seated: with the pool stopped and the walk and the ticker gone, a client that arrived now would find no work, so waiting for one is over. The flag was read by the turn and reaches here as data."
     Bool.or(view.stopping, onlyTheListener(view, Map.keys(view.pending)))
 
-fn onlyTheListener(view: View, keys: List<Int>) -> Bool
+fn onlyTheListener(view: Run.View, keys: List<Int>) -> Bool
     ? "Whether every seated process under these keys is the accepting one."
     match keys
         [] -> true
@@ -134,45 +116,45 @@ fn onlyTheListener(view: View, keys: List<Int>) -> Bool
             Option.None -> onlyTheListener(view, rest)
             Option.Some(marker) -> Bool.and(isAcceptingMarker(marker), onlyTheListener(view, rest))
 
-fn isAcceptingMarker(marker: Pending) -> Bool
+fn isAcceptingMarker(marker: Run.Pending) -> Bool
     ? "Whether one marker stands for the accepting process."
     match marker
-        Pending.Accepting(_, _) -> true
-        Pending.Peer(_, _) -> false
-        Pending.Dialling(_, _) -> false
-        Pending.Ticker(_, _) -> false
-        Pending.Walk(_, _) -> false
+        Run.Pending.Accepting(_, _) -> true
+        Run.Pending.Peer(_, _) -> false
+        Run.Pending.Dialling(_, _) -> false
+        Run.Pending.Ticker(_, _) -> false
+        Run.Pending.Walk(_, _) -> false
 
-fn isPeer(view: View, id: Int) -> Bool
+fn isPeer(view: Run.View, id: Int) -> Bool
     ? "Whether the slot under this id holds the peer process."
     match Map.get(view.pending, id)
         Option.None -> false
         Option.Some(marker) -> isPeerMarker(marker)
 
-fn isPeerMarker(marker: Pending) -> Bool
+fn isPeerMarker(marker: Run.Pending) -> Bool
     ? "Whether one marker stands for the peer process."
     match marker
-        Pending.Peer(_, _) -> true
-        Pending.Accepting(_, _) -> false
-        Pending.Dialling(_, _) -> false
-        Pending.Ticker(_, _) -> false
-        Pending.Walk(_, _) -> false
+        Run.Pending.Peer(_, _) -> true
+        Run.Pending.Accepting(_, _) -> false
+        Run.Pending.Dialling(_, _) -> false
+        Run.Pending.Ticker(_, _) -> false
+        Run.Pending.Walk(_, _) -> false
 
-fn busyView() -> View
-    ? "One view with every process seated and a job running."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(3, Wait.Wake.NextTurn)), 2, Pending.Walk(1, Wait.Wake.After(2))), ready = [2], askable = [1, 2], jobs = 1, stopping = false)
+fn busyView() -> Run.View
+    ? "One view with every process seated and one of them ready."
+    Run.View(pending = Map.set(Map.set({}, 1, Run.Pending.Peer(3, Run.Wake.Until([], Option.Some(0)))), 2, Run.Pending.Walk(1, Run.Wake.Until([], Option.Some(2)))), ready = [2], askable = [1, 2], dropped = 0, stopping = false)
 
-fn quietView() -> View
-    ? "One view with no job running and nothing ready."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(1, Wait.Wake.NextTurn)), 3, Pending.Ticker(1, Wait.Wake.NextTurn)), ready = [], askable = [1, 3], jobs = 0, stopping = false)
+fn quietView() -> Run.View
+    ? "One view with nothing ready."
+    Run.View(pending = Map.set(Map.set({}, 1, Run.Pending.Peer(1, Run.Wake.Until([], Option.Some(0)))), 3, Run.Pending.Ticker(1, Run.Wake.Until([], Option.Some(0)))), ready = [], askable = [1, 3], dropped = 0, stopping = false)
 
-fn stoppingView() -> View
-    ? "One view with a job running and the run already stopping: what a peer is admitted against at the worst moment of a turn."
-    View(pending = Map.set(Map.set({}, 1, Pending.Peer(5, Wait.Wake.NextTurn)), 2, Pending.Walk(2, Wait.Wake.NextTurn)), ready = [1], askable = [1, 2], jobs = 1, stopping = true)
+fn stoppingView() -> Run.View
+    ? "One view with the run already stopping: what a peer is admitted against at the worst moment of a turn."
+    Run.View(pending = Map.set(Map.set({}, 1, Run.Pending.Peer(5, Run.Wake.Until([], Option.Some(0)))), 2, Run.Pending.Walk(2, Run.Wake.Until([], Option.Some(0)))), ready = [1], askable = [1, 2], dropped = 0, stopping = true)
 
-fn listeningView() -> View
+fn listeningView() -> Run.View
     ? "One view where the accepting process is the only one still seated."
-    View.update(quietView(), pending = Map.set({}, 4, Pending.Accepting(1, Wait.Wake.NextTurn)))
+    Run.View.update(quietView(), pending = Map.set({}, 4, Run.Pending.Accepting(1, Run.Wake.Until([], Option.Some(0)))))
 
 verify stop
     stop(busyView()) => false
@@ -186,24 +168,24 @@ verify onlyTheListener
     onlyTheListener(quietView(), []) => true
 
 verify isAcceptingMarker
-    isAcceptingMarker(Pending.Accepting(1, Wait.Wake.NextTurn)) => true
-    isAcceptingMarker(Pending.Walk(1, Wait.Wake.After(2))) => false
+    isAcceptingMarker(Run.Pending.Accepting(1, Run.Wake.Until([], Option.Some(0)))) => true
+    isAcceptingMarker(Run.Pending.Walk(1, Run.Wake.Until([], Option.Some(2)))) => false
 
-verify admit law readyPeerBeforeNewJob
-    given view: View = [busyView(), quietView(), stoppingView()]
+verify admit law aPeerIsAlwaysAdmitted
+    given view: Run.View = [busyView(), quietView(), stoppingView()]
     given id: Int = [1, 2, 3]
     when isPeer(view, id)
     because isPeer(view, id)
     admit(view, id) => true
 
 verify admitted
-    admitted(busyView(), Pending.Peer(1, Wait.Wake.NextTurn)) => true
-    admitted(busyView(), Pending.Accepting(1, Wait.Wake.NextTurn)) => true
-    admitted(busyView(), Pending.Dialling(1, Wait.Wake.NextTurn)) => true
-    admitted(busyView(), Pending.Ticker(1, Wait.Wake.NextTurn)) => true
-    admitted(busyView(), Pending.Walk(1, Wait.Wake.NextTurn)) => true
-    admitted(View(pending = {}, ready = [], askable = [], jobs = 0, stopping = true), Pending.Walk(1, Wait.Wake.NextTurn)) => false
-    admitted(View(pending = {}, ready = [], askable = [], jobs = 0, stopping = true), Pending.Ticker(1, Wait.Wake.NextTurn)) => false
+    admitted(busyView(), Run.Pending.Peer(1, Run.Wake.Until([], Option.Some(0)))) => true
+    admitted(busyView(), Run.Pending.Accepting(1, Run.Wake.Until([], Option.Some(0)))) => true
+    admitted(busyView(), Run.Pending.Dialling(1, Run.Wake.Until([], Option.Some(0)))) => true
+    admitted(busyView(), Run.Pending.Ticker(1, Run.Wake.Until([], Option.Some(0)))) => true
+    admitted(busyView(), Run.Pending.Walk(1, Run.Wake.Until([], Option.Some(0)))) => true
+    admitted(Run.View(pending = {}, ready = [], askable = [], dropped = 0, stopping = true), Run.Pending.Walk(1, Run.Wake.Until([], Option.Some(0)))) => false
+    admitted(Run.View(pending = {}, ready = [], askable = [], dropped = 0, stopping = true), Run.Pending.Ticker(1, Run.Wake.Until([], Option.Some(0)))) => false
 
 verify isPeer
     isPeer(busyView(), 1) => true
@@ -211,8 +193,8 @@ verify isPeer
     isPeer(busyView(), 9) => false
 
 verify isPeerMarker
-    isPeerMarker(Pending.Peer(1, Wait.Wake.NextTurn)) => true
-    isPeerMarker(Pending.Accepting(1, Wait.Wake.NextTurn)) => false
-    isPeerMarker(Pending.Dialling(1, Wait.Wake.NextTurn)) => false
-    isPeerMarker(Pending.Ticker(1, Wait.Wake.NextTurn)) => false
-    isPeerMarker(Pending.Walk(1, Wait.Wake.NextTurn)) => false
+    isPeerMarker(Run.Pending.Peer(1, Run.Wake.Until([], Option.Some(0)))) => true
+    isPeerMarker(Run.Pending.Accepting(1, Run.Wake.Until([], Option.Some(0)))) => false
+    isPeerMarker(Run.Pending.Dialling(1, Run.Wake.Until([], Option.Some(0)))) => false
+    isPeerMarker(Run.Pending.Ticker(1, Run.Wake.Until([], Option.Some(0)))) => false
+    isPeerMarker(Run.Pending.Walk(1, Run.Wake.Until([], Option.Some(0)))) => false

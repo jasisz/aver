@@ -6,7 +6,7 @@ use std::process::Command;
 
 fn fixture() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    for name in ["main.av", "pool.av", "pooled.av", "aver.toml"] {
+    for name in ["main.av", "pool.av", "pooled.av"] {
         std::fs::copy(
             repo_root()
                 .join("tests/fixtures/yield_request_traces")
@@ -157,7 +157,7 @@ fn imported_observers_keep_private_helpers_in_the_owning_module() {
 fn recursive_imports_without_owning_module_contracts_are_explicitly_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let source = repo_root().join("tests/fixtures/yield_module_helpers");
-    for name in ["looper.av", "pool.av", "pooled.av", "aver.toml"] {
+    for name in ["looper.av", "pool.av", "pooled.av"] {
         std::fs::copy(source.join(name), dir.path().join(name)).unwrap();
     }
     std::fs::write(dir.path().join("main.av"), "module Client\n    depends [Looper, Pool, Pooled]\n\nfn parent(id: Int) -> Int\n    ! [Pool.claim, yield]\n    Looper.loop(id, 0)\n\nverify __parentSourceTrace law correspondence\n    given id: Int = [1]\n    given inputs: List<__ParentTraceInput> = [[]]\n    using []\n    __parentSourceTrace(id, inputs) == __parentProtocolTrace(id, inputs) holds\n").unwrap();
@@ -223,7 +223,7 @@ fn recursive_helpers_preserve_subtraces_across_calls_and_tail_entry() {
 fn importing_a_finite_parent_uses_its_private_recursive_helper_contract() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = repo_root().join("tests/fixtures/yield_recursive_traces");
-    for name in ["pool.av", "pooled.av", "aver.toml"] {
+    for name in ["pool.av", "pooled.av"] {
         std::fs::copy(fixture.join(name), dir.path().join(name)).unwrap();
     }
     let leaf = std::fs::read_to_string(fixture.join("main.av"))
@@ -262,7 +262,7 @@ verify __clientSourceTrace law correspondence
 fn local_recursion_with_a_finite_import_requires_the_owning_splice_law() {
     let fixture = repo_root().join("tests/fixtures/yield_recursive_traces");
     let dir = tempfile::tempdir().unwrap();
-    for name in ["pool.av", "pooled.av", "aver.toml"] {
+    for name in ["pool.av", "pooled.av"] {
         std::fs::copy(fixture.join(name), dir.path().join(name)).unwrap();
     }
     std::fs::write(

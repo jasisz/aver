@@ -322,8 +322,8 @@ fn a_waiting_program_with_no_job_kind_matches_the_vm_on_wasm_gc() {
 
 // ── The generated coordinator ───────────────────────────────────────────
 
-/// A job that never answers: the generated turn hands the failure to the
-/// answer state through `landed` and the run goes on to its end.
+/// A job that never answers: the answer module that began it takes the
+/// failure and answers the request with it, and the run goes on to its end.
 ///
 /// wasm-gc only: the generated loop reads `Process.stopRequested`, which
 /// WASI 0.2 has no binding for.
@@ -332,12 +332,9 @@ fn run_failed_job_matches_the_vm_on_wasm_gc() {
     assert_same_stdout("run_failed_job", &["--wasm-gc"]);
 }
 
-/// Two job kinds under one generated coordinator, on wasm-gc: one `__Job`
-/// sum, one shared table, and `max-jobs = 3`, which decides nothing inline —
-/// every job lands in the turn that started it. The process prints one line
-/// per landing, in place, before it goes back to the pool: `match said(kind,
-/// score)` under a wildcard arm, a shape the wasm-gc backend used to trap on.
-/// The VM lands the four tasks in wall-clock order, so the comparison is the
+/// Two job kinds and one keyed family under the generated loop, on wasm-gc:
+/// one scorer per task, each waiting on a job its answer module began. The
+/// VM lands the four tasks in wall-clock order, so the comparison is the
 /// multiset of lines.
 #[test]
 fn two_job_kinds_under_one_generated_loop_match_the_vm_on_wasm_gc() {
@@ -347,8 +344,9 @@ fn two_job_kinds_under_one_generated_loop_match_the_vm_on_wasm_gc() {
     same_lines(name, &vm, &wasm).unwrap_or_else(|error| panic!("{error}"));
 }
 
-/// The generated coordinator over five processes, five answer modules, three
-/// policies and a job seam, answering `Wire` over real sockets.
+/// The generated loop over five processes, three answer modules, two
+/// policies and a job kind the answer module begins itself, answering `Wire`
+/// over real sockets.
 ///
 /// The comparison is the multiset of lines, as it is for the Rust backend
 /// and for the same reason: the slice's answer modules park requests on
@@ -414,7 +412,7 @@ fn a_vm_recording_replays_on_wasm_gc() {
 }
 
 /// The other direction: a recording made on wasm-gc, replayed by the VM,
-/// effect for effect. The whole seam is in it — `begin` with its task and the
+/// effect for effect. The whole job is in it — `begin` with its task and the
 /// handle it minted, `Wait.poll` with its keys, `take` with its answer — and
 /// the VM reads it without knowing which backend wrote it.
 #[test]
@@ -434,7 +432,7 @@ fn a_wasm_gc_recording_replays_on_the_vm() {
         ] {
             if !text.contains(expected) {
                 return Err(format!(
-                    "the wasm-gc recording is missing the job seam it was made for, expected {expected}:\n{text}"
+                    "the wasm-gc recording is missing the job it was made for, expected {expected}:\n{text}"
                 ));
             }
         }

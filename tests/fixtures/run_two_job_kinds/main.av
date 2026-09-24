@@ -1,18 +1,32 @@
 module Node
-    intent = "Fixture: two job kinds under one generated loop with max-jobs = 3. Four tasks share the table and the limit; the process prints one line per landing, kind and score, and the run ends when the pool reports what they scored together — which is the proof each of them started once and landed once."
-    depends [Pool]
-    effects [Console.print, Pool.claim, yield]
+    intent = "Fixture: two job kinds and one keyed family under the generated loop, with max-jobs = 3. One scorer per task asks for its score, the answer module begins one job of the task's kind for each, and every scorer prints its landing once; a summary process waits for this module's state to move until every task has landed, and says what they scored together."
+    depends [Pool, Pooled]
+    effects [Console.print, Pool.scored, Pool.total, yield]
 
-fn looping() -> Unit
-    ? "Claims handles until the pool has none, then hears each landing and says which kind landed and what it scored, until the pool finishes it — which happens only once every task has landed — and says what they scored together."
-    ! [Console.print, Pool.claim, yield]
-    match Pool.claim()
-        Pool.Assignment.Handle(_) -> looping()
-        Pool.Assignment.Landed(kind, score) -> match said(kind, score)
-            _ -> looping()
-        Pool.Assignment.Finished(scored) -> Console.print("all jobs landed: scored {scored}")
+process scorer seated by Pooled.tasks
 
-fn said(kind: String, score: Int) -> Unit
-    ? "One landing said out loud, in place, before the process goes back to the pool for the next."
+fn scorer(task: Int) -> Unit
+    ? "Asks for the score of one task and says which kind landed and what it scored."
+    ! [Console.print, Pool.scored, yield]
+    said(task, Pool.scored(task))
+
+fn said(task: Int, score: Int) -> Unit
+    ? "One landing said out loud."
     ! [Console.print]
-    Console.print("{kind} landed: scored {score}")
+    Console.print("{kindOf(task)} landed: scored {score}")
+
+fn kindOf(task: Int) -> String
+    ? "Which kind of job scores this task."
+    match task < 10
+        true -> "alpha"
+        false -> "beta"
+
+verify kindOf
+    kindOf(1) => "alpha"
+    kindOf(10) => "beta"
+
+fn summary() -> Unit
+    ? "Waits until every task has landed and says what they scored together."
+    ! [Console.print, Pool.total, yield]
+    total = Pool.total()
+    Console.print("all jobs landed: scored {total}")
