@@ -1248,39 +1248,6 @@ fn main() -> String
         text.contains("capability provider missing for 'Digest.digest'"),
         "pure and effectful operations must fail at the same provider boundary:\n{text}"
     );
-
-    let dafny_output = dir.join("dafny-out");
-    let dafny = Command::new(aver_bin())
-        .current_dir(&dir)
-        .args([
-            "proof",
-            "--backend",
-            "dafny",
-            "--module-root",
-            dir.to_str().expect("utf-8 dir"),
-            "--output",
-            dafny_output.to_str().expect("utf-8 output"),
-            "main.av",
-        ])
-        .output()
-        .expect("emit pure capability Dafny proof");
-    let dafny_report = format!(
-        "{}{}",
-        String::from_utf8_lossy(&dafny.stdout),
-        String::from_utf8_lossy(&dafny.stderr)
-    );
-    assert_eq!(
-        dafny.status.code().unwrap_or(-1),
-        0,
-        "Dafny emission must accept the same pure contract:\n{dafny_report}"
-    );
-    let dafny = collect_files_with_extension(&dafny_output, "dfy");
-    assert!(dafny.contains("type Context"), "{dafny}");
-    assert!(
-        dafny.contains("function digest(text: string): string"),
-        "{dafny}"
-    );
-    assert!(dafny.contains("Aver_Digest.digest(text)"), "{dafny}");
 }
 
 #[test]
@@ -1488,53 +1455,6 @@ verify succeeds law providerMayMint
         lean.contains("capFresh_Mint_mint"),
         "the emitted Lean law lost its hidden resource witness:\n{lean}"
     );
-
-    let dafny_output = dir.join("proof-dafny-out");
-    let has_dafny = tool_available("dafny");
-    let mut dafny_command = Command::new(aver_bin());
-    dafny_command.current_dir(&dir).args([
-        "proof",
-        "--backend",
-        "dafny",
-        "--module-root",
-        dir.to_str().expect("utf-8 dir"),
-        "--output",
-        dafny_output.to_str().expect("utf-8 output"),
-    ]);
-    if has_dafny {
-        dafny_command.arg("--check");
-    }
-    let dafny = dafny_command
-        .arg("Mint.av")
-        .output()
-        .expect("run resource Dafny proof");
-    let dafny_report = format!(
-        "{}{}",
-        String::from_utf8_lossy(&dafny.stdout),
-        String::from_utf8_lossy(&dafny.stderr)
-    );
-    if !has_dafny {
-        assert_eq!(
-            dafny.status.code().unwrap_or(-1),
-            0,
-            "Dafny emission failed without invoking an external verifier:\n{dafny_report}"
-        );
-    }
-    let dafny_source = collect_files_with_extension(&dafny_output, "dfy");
-    assert!(
-        dafny_source.contains("capFresh_Mint_mint"),
-        "the emitted Dafny law lost its hidden resource witness:\n{dafny_source}"
-    );
-    if has_dafny {
-        assert!(
-            dafny_report.contains("verified, 0 errors"),
-            "Dafny samples and universal lemmas must bind the same unconstrained token:\n{dafny_report}"
-        );
-        assert!(
-            !dafny_report.contains("resolution/type errors detected"),
-            "the resource parameter escaped its declaration scope:\n{dafny_report}"
-        );
-    }
 }
 
 #[test]

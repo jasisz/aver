@@ -10,7 +10,7 @@ module BigInt
         "arithmetic is math-faithful: no i64 wrap-around at the"
         "language boundary."
         ""
-        "Why this matters for proofs: Lean and Dafny export Aver"
+        "Why this matters for proofs: Lean exports Aver"
         "List as their native unbounded-list types (`List`, `seq`)."
         "Universal lemmas like `add commutative` are proved on the"
         "same model the VM runs — closing the math-vs-VM gap that"

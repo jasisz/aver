@@ -4,7 +4,6 @@
 mod attempt_report;
 mod backend;
 mod candidates;
-mod dafny;
 mod display;
 mod probe;
 mod source;
@@ -46,58 +45,6 @@ pub(super) fn collect(
         output,
         backend::failures(dir, output),
     )
-}
-
-pub(super) fn collect_dafny(
-    catalog: &Catalog,
-    dir: &str,
-    entry: &str,
-    output: &str,
-    checked: bool,
-    checker_failed: bool,
-) -> (BTreeMap<String, Value>, BTreeMap<String, Value>) {
-    let (mut failures, exported) = dafny::scan(catalog, dir, entry, output);
-    let mut claims = BTreeMap::new();
-    for law in catalog.laws.values() {
-        let steps = (1..=law.body.because.len()).map(|i| format!("{}.because{i}", law.id));
-        let implication = (!law.body.because.is_empty()).then(|| format!("{}.implication", law.id));
-        for id in std::iter::once(law.id.clone())
-            .chain(steps)
-            .chain(implication)
-        {
-            let emitted = exported.contains(&id);
-            let status = if !emitted {
-                "not_exported"
-            } else if checked {
-                "checked"
-            } else {
-                "unresolved"
-            };
-            claims.insert(id, json!({"exported": emitted, "status": status}));
-        }
-    }
-    // A failed process without a usable location still needs a source-facing
-    // explanation. Never infer success from the absence of a lemma diagnostic.
-    if checker_failed && failures.claims.is_empty() {
-        failures.unmapped = true;
-    }
-    let mut reports = collect_with_failures(catalog, None, &[], output, failures);
-    for report in reports.values_mut() {
-        for key in ["assumptions", "citations"] {
-            if let Some(items) = report[key].as_array_mut() {
-                for item in items {
-                    let identity = item["claim"].as_str().or_else(|| item["law"].as_str());
-                    if let Some(status) = identity
-                        .and_then(|id| claims.get(id))
-                        .map(|c| c["status"].clone())
-                    {
-                        item["status"] = status;
-                    }
-                }
-            }
-        }
-    }
-    (reports, claims)
 }
 
 fn collect_with_failures(

@@ -13,7 +13,7 @@
 //! already consume `.ty()` heavily. What's missing for the rest of
 //! the epic is a regression net that says: yes, every node in
 //! every reachable expression gets stamped. Without that gate, the
-//! Phase 3+ migration of Rust / Lean / Dafny onto `.ty()` would be
+//! Phase 3+ migration of Rust / Lean onto `.ty()` would be
 //! building on sand — a missed stamp in some corner shape would
 //! silently surface as `None` and the backend would have to fall
 //! back to the side-channel anyway.

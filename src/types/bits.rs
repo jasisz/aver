@@ -40,7 +40,7 @@ use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::RuntimeError;
 
 /// The `Result.Err` payload for a negative shift count. Shared verbatim with
-/// every other backend's model (Rust codegen, Lean prelude, Dafny prelude) —
+/// every other backend's model (Rust codegen, Lean prelude) —
 /// a verify case that matches on the error text must see the same string on
 /// all of them.
 pub const NEGATIVE_SHIFT: &str = "negative shift count";

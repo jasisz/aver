@@ -1,8 +1,8 @@
 //! ProofIR producer regression tests.
 //!
 //! `proof_lower::populate_refined_types` + `populate_fn_contracts`
-//! are the single source of truth — both Lean and Dafny exporters
-//! read `ctx.proof_ir.*` instead of re-classifying. The tests here
+//! are the single source of truth — the Lean exporter reads
+//! `ctx.proof_ir.*` instead of re-classifying. The tests here
 //! pin the producer's output shape: for each canonical source
 //! pattern, they assert the resulting `RefinedTypeDecl` /
 //! `FnContract` carries the expected carrier / predicate / fuel
@@ -570,51 +570,6 @@ fn non_refinement_records_dont_appear_in_proof_ir() {
 }
 
 #[test]
-fn inhabitation_witness_matches_legacy_for_each_example() {
-    // The legacy witness picker lives in `dafny/toplevel.rs::
-    // refinement_witness_for` and isn't pub-exported. Mirror its
-    // expected output for each flagship example so a divergence
-    // surfaces here even though we can't call the legacy fn
-    // directly. The pre-Step-2 legacy emit (from main as of the
-    // ProofIR branch start) produced:
-    //   Natural   -> witness 0  (verify case fromInt(0) => Ok)
-    //   Positive  -> witness 1  (predicate-eval fallback)
-    //   IntRange  -> witness 0  (verify case fromInt(0) => Ok)
-    let cases: &[(&str, &str, &str)] = &[
-        (
-            include_str!("../examples/refinement/natural/natural.av"),
-            "Natural",
-            "0",
-        ),
-        (
-            include_str!("../examples/refinement/positive/positive.av"),
-            "Positive",
-            "1",
-        ),
-        (
-            include_str!("../examples/refinement/int_range/int_range.av"),
-            "IntRange",
-            "0",
-        ),
-    ];
-    for (src, name, expected_witness) in cases {
-        let ctx = build_ctx(src);
-        let decl = ctx
-            .proof_ir
-            .refined_types
-            .values()
-            .find(|d| d.name == *name)
-            .unwrap_or_else(|| panic!("{} not lifted in ProofIR", name));
-        assert_eq!(
-            decl.witness.as_deref(),
-            Some(*expected_witness),
-            "Inhabitation witness mismatch for {}",
-            name
-        );
-    }
-}
-
-#[test]
 fn fib_tr_native_contract_matches_legacy_recursion_plan() {
     // fibTR is the canonical IntCountdownGuarded shape:
     //   match n { 0 -> a; _ -> fibTR(n - 1, b, a + b) }
@@ -861,7 +816,7 @@ fn list_structural_lowers_to_seq_len_fuel_contract() {
     // ListStructural — `match xs { [] -> base; [x, ..rest] -> rec(rest, ...) }`.
     // ProofIR carries `SeqLenPlusOne { param }` for symmetry with
     // the other fuel metrics; backends that emit structural recursion
-    // natively (Lean / Dafny via List induction) read the param name
+    // natively (Lean via List induction) read the param name
     // for the termination measure and ignore the +1 part.
     let src = "module M\n\
          \x20   intent = \"t\"\n\

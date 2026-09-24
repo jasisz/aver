@@ -1,9 +1,8 @@
 //! Backend-neutral proof-lemma recognizers.
 //!
 //! Pure Aver-AST walks that identify the algebraic SHAPE a law exercises and
-//! return source-name structs — no backend syntax. The Dafny renderer
-//! (`codegen::dafny::lemmas`) and the Lean renderer
-//! (`codegen::lean::law_auto::induction`) both consume these, so a single
+//! return source-name structs — no backend syntax. The Lean renderer
+//! (`codegen::lean::law_auto::induction`) consumes these, so a single
 //! recognizer drives a proof on either backend.
 use crate::ast::{Expr, FnBody, FnDef, Pattern, Spanned, Stmt, TypeDef, VerifyLaw};
 use crate::codegen::CodegenContext;
@@ -116,7 +115,7 @@ fn is_user_function_call(name: &str) -> bool {
 /// record updates. Builtin namespace methods and constructor/type calls stay
 /// excluded. The descent is `expr_walk::walk`, so a new `Expr` variant cannot
 /// be skipped silently; a hand-rolled walk here once ended in `_ => {}` and a
-/// wrapper whose only call sat inside `"{f(x)}"` never entered the Dafny opaque
+/// wrapper whose only call sat inside `"{f(x)}"` never entered the opaque
 /// closure.
 pub(crate) fn collect_called_fns(
     expr: &Spanned<Expr>,

@@ -62,8 +62,8 @@ pub(super) fn emit_floor_window_law(
     // skeleton. They are tried earlier in the dispatch, so these arms are
     // normally unreached; delegate here too so the Lean proof of each figure
     // always comes from the single content-blind rung. The figures themselves
-    // are retained only as IR pins the Dafny backend and the well-founded
-    // graduation pass still read.
+    // are retained only as IR pins the well-founded graduation pass still
+    // reads.
     if matches!(figure, FloorWindowFigure::PowPositive { .. }) {
         return super::recursive_mono::emit_recursive_positive_law(
             vb,

@@ -30,17 +30,6 @@ fn proof_export_builds_recursive_process_polling_with_monotonic_oracle() {
 }
 
 #[test]
-fn dafny_export_accepts_recursive_process_polling_boundary() {
-    // Monotonic does not mean eventually true: stopNever is valid. Dafny must
-    // therefore keep the recursive loop opaque (matching Lean's partial def)
-    // while still checking the emitted cross-call oracle predicate.
-    assert_dafny_verifies_and_passes(
-        "examples/formal/process_stop_requested.av",
-        "aver-dafny-process-stop-requested",
-    );
-}
-
-#[test]
 fn proof_export_builds_nonblocking_tcp_shell_with_option_bytes_oracle() {
     // `Tcp.readNow` is the first standard operation whose oracle returns
     // `Result<Option<Bytes>, String>` and `Tcp.writeNow` the first whose
@@ -49,14 +38,6 @@ fn proof_export_builds_nonblocking_tcp_shell_with_option_bytes_oracle() {
     assert_proof_builds(
         "examples/formal/tcp_write_now.av",
         "aver-proof-tcp-write-now",
-    );
-}
-
-#[test]
-fn dafny_export_accepts_nonblocking_tcp_shell() {
-    assert_dafny_verifies_and_passes(
-        "examples/formal/tcp_write_now.av",
-        "aver-dafny-tcp-write-now",
     );
 }
 
@@ -79,8 +60,8 @@ fn proof_export_builds_log_line_length_when_lake_is_available() {
 fn proof_export_builds_string_concat_monoid_when_lake_is_available() {
     // Pure builtin String-concat monoid identities (`s + "" = s`,
     // `"" + s = s`, `(a + b) + c = a + (b + c)`). The shape-driven
-    // `emit_string_append_monoid_law` rung closes all three as universals;
-    // Dafny's Z3 already proves them. Sorry budget 0 — revert the rung and
+    // `emit_string_append_monoid_law` rung closes all three as universals.
+    // Sorry budget 0 — revert the rung and
     // each law regresses to a bare sorry.
     assert_proof_builds_with_sorry_budget(
         "examples/formal/string_concat_monoid.av",
@@ -93,8 +74,8 @@ fn proof_export_builds_string_concat_monoid_when_lake_is_available() {
 fn proof_export_builds_empty_map_facts_when_lake_is_available() {
     // Pure builtin empty-map facts (`Map.get(empty, k) = None`,
     // `Map.has(empty, k) = false`, `Map.len(empty) = 0`). The empty-map-precise
-    // `emit_map_empty_fact_law` rung closes all three as universals; Dafny's Z3
-    // already proves them. Sorry budget 0 — revert the rung and each regresses
+    // `emit_map_empty_fact_law` rung closes all three as universals. Sorry
+    // budget 0 — revert the rung and each regresses
     // to a caught sorry.
     assert_proof_builds_with_sorry_budget(
         "examples/formal/empty_map_facts.av",
@@ -108,7 +89,7 @@ fn proof_export_builds_int_comparison_laws_when_lake_is_available() {
     // Bool-valued Int comparison identities (equality symmetry, `!(a < b) =
     // (a >= b)`, totality of `<=`). The `wrapper_return` arm's sign-split now
     // falls through to a comparison normaliser + `sorry` floor, closing these
-    // as universals; Dafny's Z3 already proves them. Sorry budget 0 — revert
+    // as universals. Sorry budget 0 — revert
     // and each hard-fails the Lean build.
     assert_proof_builds_with_sorry_budget(
         "examples/formal/int_comparison_laws.av",
@@ -121,8 +102,7 @@ fn proof_export_builds_int_comparison_laws_when_lake_is_available() {
 fn proof_export_builds_int_abs_laws_when_lake_is_available() {
     // Pure builtin `Int.abs` identities (idempotence, multiplicativity,
     // non-negativity). The `emit_int_abs_identity_law` rung closes all three
-    // as universals via the natAbs/cast lemmas; Dafny's Z3 already proves
-    // them. Sorry budget 0 — revert and idempotence/non-neg hard-fail the
+    // as universals via the natAbs/cast lemmas. Sorry budget 0 — revert and idempotence/non-neg hard-fail the
     // build and multiplicativity sorries.
     assert_proof_builds_with_sorry_budget(
         "examples/formal/int_abs_laws.av",
@@ -145,15 +125,6 @@ fn proof_export_builds_bits_laws_when_lake_is_available() {
         "aver-proof-bits-laws",
         0,
     );
-}
-
-#[test]
-fn proof_dafny_verifies_bits_laws_when_dafny_is_available() {
-    // The same three universals through Z3. Dafny has no bitwise operators on
-    // `int` at all, so this also pins that the prelude's recursive definitions
-    // TERMINATE and that `BitsPow2(n) > 0` discharges the division-by-zero
-    // obligation `shiftRight` / `low` would otherwise carry.
-    assert_dafny_verifies("examples/formal/bits_laws.av", "aver-dafny-bits-laws");
 }
 
 #[test]
@@ -229,7 +200,7 @@ fn proof_export_builds_map_set_nonempty_when_lake_is_available() {
     // `Map.len(Map.set(m, k, v)) >= 1` — set yields a non-empty map. Needs
     // induction (the hand-proved prelude lemma `AverMap.len_set_ge_one`); the
     // `emit_map_len_set_positive_law` rung discharges it. Sorry budget 0 —
-    // revert and the law regresses to a bare sorry. Dafny's Z3 proves it.
+    // revert and the law regresses to a bare sorry.
     assert_proof_builds_with_sorry_budget(
         "examples/formal/map_set_nonempty.av",
         "aver-proof-map-set-nonempty",
@@ -326,51 +297,12 @@ fn proof_export_builds_frac_monotone_geone_flip_when_lake_is_available() {
 }
 
 #[test]
-fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
-    // `goldenApprox(n)` divides `Float.fromInt(fib(n + 1))` by
-    // `Float.fromInt(fib(n))`. Float `/` lowers via the `FloatDiv`
-    // helper which mirrors Aver's IEEE-754 "no crash, b == 0 yields
-    // a defined value" semantics, so there's no division-by-zero
-    // obligation on the caller — the rest of the proof closes.
-    assert_dafny_verifies("examples/data/fibonacci.av", "aver-dafny-fibonacci");
-}
-
-#[test]
-fn proof_dafny_verifies_sum_acc_when_dafny_is_available() {
-    // Stage 8 of #232: `ProofStrategy::WrapperOverRecursion` closes
-    // the `sum(xs) == sumDirect(xs)` law on the `sum_acc` example by
-    // emitting an accumulator-decomposition aux lemma plus the main
-    // universal lemma. Both close in Z3 via list induction —
-    // demonstrates the first real consumer of the
-    // `analysis::shape::ModulePattern::WrapperOverRecursion` typed
-    // pattern. Regression guard: if a future change disables the
-    // strategy or breaks the aux template, this lemma falls back to
-    // naive induction and Dafny reports 1 error.
-    assert_dafny_verifies("examples/data/sum_acc.av", "aver-dafny-sum-acc");
-}
-
-#[test]
 fn proof_export_builds_sum_acc_when_lake_is_available() {
     // Lean template for `WrapperOverRecursion` emits the aux
     // accumulator-decomposition theorem + main universal lemma; both
     // close in core Lean 4 (`omega`) without Mathlib. Sorry budget
     // 0 — the strategy fully closes the universal proof.
     assert_proof_builds_with_sorry_budget("examples/data/sum_acc.av", "aver-proof-sum-acc", 0);
-}
-
-#[test]
-fn proof_dafny_verifies_fact_acc_when_dafny_is_available() {
-    // The multiplicative Peano-`Nat` twin of `sum_acc`:
-    // `WrapperOverRecursion` proves a tail-recursive factorial equals its
-    // recurrence. Z3 has no free associativity/commutativity for the user
-    // `mul` (a function over the `Nat` datatype, not `int`), so the support
-    // stack supplies the `plus`/`mul` monoid lemmas by induction before the
-    // accumulator-decomposition + main lemmas. Regression guard: disable the
-    // strategy or break a monoid lemma and `dafny verify` reports errors.
-    assert_dafny_verifies(
-        "proof-corpus/handwritten/fact_acc_spec.av",
-        "aver-dafny-fact-acc",
-    );
 }
 
 #[test]
@@ -387,58 +319,6 @@ fn proof_export_builds_fact_acc_when_lake_is_available() {
 }
 
 #[test]
-fn proof_dafny_verifies_list_prod_when_dafny_is_available() {
-    // List + Mul corner of the accumulator-fold grid. Z3 knows `int` `*` is
-    // associative/commutative for free, so the `seq<int>` support stack closes
-    // with no extra monoid lemmas — but the strategy must still fire and emit
-    // the decomposition + main lemmas. Regression guard for the `List` driver
-    // under the multiplicative combine.
-    assert_dafny_verifies(
-        "proof-corpus/handwritten/list_prod_spec.av",
-        "aver-dafny-list-prod",
-    );
-}
-
-#[test]
-fn proof_dafny_verifies_nat_tri_when_dafny_is_available() {
-    // Nat + Add corner. The user `plus` is a function over the `Nat` datatype,
-    // so Z3 needs the `plus` monoid lemmas (zero/succ/comm/assoc) supplied by
-    // induction before the additive accumulator-decomposition + main lemmas —
-    // the additive sibling of the factorial support stack. Regression guard
-    // that the Peano-`Nat` support stack covers the additive combine, not just
-    // the multiplicative one.
-    assert_dafny_verifies(
-        "proof-corpus/handwritten/nat_tri_spec.av",
-        "aver-dafny-nat-tri",
-    );
-}
-
-#[test]
-fn proof_dafny_verifies_aliased_peano_when_dafny_is_available() {
-    // A Peano natural named other than `Nat` (`Num`). Dafny names the datatype
-    // directly (no builtin-`Nat` lift needed), so the factorial support stack
-    // verifies over `Num` exactly as over `Nat`. Pairs with the Lean
-    // `proof_lean_lifts_aliased_peano_type_to_nat_and_proves_universal` guard.
-    assert_dafny_verifies(
-        "proof-corpus/handwritten/peano_aliased_spec.av",
-        "aver-dafny-peano-aliased",
-    );
-}
-
-#[test]
-fn proof_dafny_verifies_list_length_fold_when_dafny_is_available() {
-    // Two structural list folds (`1 + length(t)` vs `length(t) + 1`)
-    // closing by induction on `xs`. The generic structural-induction
-    // path verifies this shape on both backends (the bespoke
-    // `MatchDispatcherFold` strategy that used to pin it was removed as
-    // redundant — the generic driver subsumes it).
-    assert_dafny_verifies(
-        "examples/data/list_length_fold.av",
-        "aver-dafny-list-length-fold",
-    );
-}
-
-#[test]
 fn proof_export_builds_list_length_fold_when_lake_is_available() {
     // The generic list-induction ladder closes it: `induction xs with
     // | nil => simp | cons => simp_all; omega`, the omega discharge
@@ -448,17 +328,6 @@ fn proof_export_builds_list_length_fold_when_lake_is_available() {
         "aver-proof-list-length-fold",
         0,
     );
-}
-
-#[test]
-fn proof_dafny_verifies_result_chain_when_dafny_is_available() {
-    // Stage 8b of #232: `ProofStrategy::ResultPipelineChain` closes
-    // `chainQM(n) == chainManual(n)` — `?`-propagating Result chain
-    // vs nested `match Result.Err -> Err` chain. Both unfold to the
-    // same tree; Z3 closes by structural equality with the right
-    // fuel + unfold list. Second real consumer of a typed
-    // `ModulePattern` in proof_lower.
-    assert_dafny_verifies("examples/core/result_chain.av", "aver-dafny-result-chain");
 }
 
 #[test]
@@ -486,16 +355,6 @@ fn proof_export_builds_rle_when_lake_is_available() {
 }
 
 #[test]
-fn proof_dafny_verifies_rle_when_dafny_is_available() {
-    // Three postcondition gaps on the encode/decode roundtrip shape
-    // (one universal lemma, one sample assertion, one
-    // `decodeString` universal). Z3 can't auto-discharge them
-    // without a richer list-induction tactic the lowerer doesn't
-    // emit yet. Tracked in issue #114.
-    assert_dafny_verifies_with_budgets("examples/data/rle.av", "aver-dafny-rle", 3, 0);
-}
-
-#[test]
 fn proof_export_builds_quicksort_when_lake_is_available() {
     // `sort` / `sortWithPivot` now emit as a genuine well-founded `mutual`
     // block: the computed-arg partition recursion's termination is discharged
@@ -513,21 +372,6 @@ fn proof_export_builds_quicksort_when_lake_is_available() {
     // budget is now the build-verified count. (Native universal closure for the
     // partition SCC is the #125 native-decreases epic, not reachable here.)
     assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 3);
-}
-
-#[test]
-fn proof_dafny_verifies_quicksort_when_dafny_is_available() {
-    // Recursive postcondition gaps on `sort.resultOrdered` /
-    // `sort.lengthPreserved` / `sort.idempotent`. Sample-domain
-    // theorems still hold for ordered/length-preserved; idempotent
-    // sample assertions trip the same mutual-recursion / fuel issue
-    // tracked in #76 — sort(sort([..])) cannot unfold under Z3's
-    // budget without explicit `reveal`. Budget grew from 5 → 8 when
-    // `sort.idempotent` landed in #220 (three sample inputs ×
-    // one postcondition each). Tracked in issue #114 / #76. The budget
-    // is a CEILING: macOS Z3 leaves 8 undischarged, Linux CI 9 (one extra
-    // assertion whose counterexample model Z3 can't parse, #342).
-    assert_dafny_verifies_with_budgets("examples/data/quicksort.av", "aver-dafny-quicksort", 9, 3);
 }
 
 #[test]
@@ -638,32 +482,12 @@ fn proof_clique_cursor_monotonicity_is_universal_cross_domain() {
 }
 
 #[test]
-fn proof_dafny_verifies_json_when_dafny_is_available() {
-    // Structural shape limits: deeply-nested ADT roundtrip
-    // postconditions blow past what Dafny can auto-discharge. The
-    // large budget exists so a regression *upward* is still caught;
-    // closing this cleanly is probably out of scope for a single
-    // fix per issue #114, and would need a different proof
-    // strategy entirely.
-    // 89 → 91 errors / 16 → 17 axioms: pure corpus delta from the
-    // EscapeCode swap (the FiniteDomainCases strategy itself is
-    // Lean-only; Dafny treats it as BackendDispatch). The 4 deleted
-    // mislabeled dummy laws each had ONE failing parseEscape sample
-    // lemma (-4); `parseEscape.escapeCodeRoundtrip` adds 5 sample
-    // lemmas in the same Z3-can't-compute-parseEscape class (+5) and
-    // its universal becomes the standard fuel-bounded
-    // `assume {:axiom}` (+1 axiom); `escapeJsonChar.encodesEscapeCode`
-    // gets a real universal lemma attempt Z3 can't discharge (+1).
-    assert_dafny_verifies_with_budgets("examples/data/json.av", "aver-dafny-json", 91, 17);
-}
-
-#[test]
 fn proof_export_builds_grok_s_language_when_lake_is_available() {
     assert_proof_builds("examples/core/grok_s_language.av", "aver-proof-grok");
 }
 
 #[test]
-fn proof_export_builds_pure_question_bang_when_backends_are_available() {
+fn proof_export_builds_pure_question_bang_when_lake_is_available() {
     let source = "module Prog\n\
         \x20   intent = \"stress pure ?! proof export\"\n\
         \n\
@@ -743,63 +567,7 @@ fn proof_export_builds_pure_question_bang_when_backends_are_available() {
         );
     }
 
-    if Command::new("dafny").arg("--version").output().is_ok() {
-        let dafny_dir = dir.join("dafny");
-        let proof = Command::new(aver_bin)
-            .current_dir(&dir)
-            .arg("proof")
-            .arg("program.av")
-            .arg("--backend")
-            .arg("dafny")
-            .arg("--verify-mode")
-            .arg("auto")
-            .arg("-o")
-            .arg(&dafny_dir)
-            .output()
-            .expect("expected `aver proof --backend dafny` to run");
-        assert!(
-            proof.status.success(),
-            "Dafny proof export failed:\n{}",
-            format_output(&proof)
-        );
-
-        let verify = Command::new("dafny")
-            .current_dir(&dafny_dir)
-            .arg("verify")
-            .arg("Prog.dfy")
-            .output()
-            .expect("expected `dafny verify` to run");
-        assert!(
-            verify.status.success(),
-            "Dafny pure ?! proof verification failed:\n{}",
-            format_output(&verify)
-        );
-    }
-
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn proof_dafny_verifies_law_auto_when_dafny_is_available() {
-    assert_dafny_verifies("examples/formal/law_auto.av", "aver-dafny-law-auto");
-}
-
-#[test]
-fn proof_dafny_verifies_spec_laws_when_dafny_is_available() {
-    assert_dafny_verifies("examples/formal/spec_laws.av", "aver-dafny-spec-laws");
-}
-
-#[test]
-fn proof_dafny_verifies_oracle_independent_products_when_dafny_is_available() {
-    assert_dafny_verifies(
-        "examples/formal/oracle_independent_products.av",
-        "aver-dafny-oracle-products",
-    );
-}
-
-#[test]
-fn proof_dafny_verifies_map_when_dafny_is_available() {
-    assert_dafny_verifies("examples/data/map.av", "aver-dafny-map");
 }
 
 // --- expanded coverage (post-IR-migration audit, 0.22.0) ---
@@ -807,11 +575,6 @@ fn proof_dafny_verifies_map_when_dafny_is_available() {
 #[test]
 fn proof_export_builds_clock_as_data_when_lake_is_available() {
     assert_proof_builds("examples/formal/clock_as_data.av", "aver-proof-clock");
-}
-
-#[test]
-fn proof_dafny_verifies_clock_as_data_when_dafny_is_available() {
-    assert_dafny_verifies("examples/formal/clock_as_data.av", "aver-dafny-clock");
 }
 
 #[test]
@@ -823,21 +586,8 @@ fn proof_export_builds_file_store_pure_core_when_lake_is_available() {
 }
 
 #[test]
-fn proof_dafny_verifies_file_store_pure_core_when_dafny_is_available() {
-    assert_dafny_verifies(
-        "examples/formal/file_store_pure_core.av",
-        "aver-dafny-file-store-pure",
-    );
-}
-
-#[test]
 fn proof_export_builds_oracle_trace_when_lake_is_available() {
     assert_proof_builds("examples/formal/oracle_trace.av", "aver-proof-oracle-trace");
-}
-
-#[test]
-fn proof_dafny_verifies_oracle_trace_when_dafny_is_available() {
-    assert_dafny_verifies("examples/formal/oracle_trace.av", "aver-dafny-oracle-trace");
 }
 
 #[test]
@@ -849,52 +599,13 @@ fn proof_export_builds_terminal_size_snapshot_when_lake_is_available() {
 }
 
 #[test]
-fn proof_dafny_verifies_terminal_size_snapshot_when_dafny_is_available() {
-    assert_dafny_verifies(
-        "examples/formal/terminal_size_snapshot.av",
-        "aver-dafny-terminal-size",
-    );
-}
-
-#[test]
 fn proof_export_builds_trust_check_when_lake_is_available() {
     assert_proof_builds("examples/formal/trust_check.av", "aver-proof-trust-check");
 }
 
 #[test]
-fn proof_dafny_verifies_trust_check_when_dafny_is_available() {
-    assert_dafny_verifies("examples/formal/trust_check.av", "aver-dafny-trust-check");
-}
-
-#[test]
 fn proof_export_builds_date_when_lake_is_available() {
     assert_proof_builds("examples/data/date.av", "aver-proof-date");
-}
-
-#[test]
-fn proof_dafny_verifies_date_when_dafny_is_available() {
-    // `parseIntSlice(s, from, to)` is emitted via the safe
-    // `StringSlice` helper instead of raw `s[from..to]`, so the
-    // slice carries Aver's clamp-to-empty semantics into Dafny and
-    // there's no range obligation to discharge in the caller.
-    assert_dafny_verifies("examples/data/date.av", "aver-dafny-date");
-}
-
-#[test]
-fn proof_dafny_verifies_discharged_div_law_when_dafny_is_available() {
-    // Dafny side of the literal-divisor discharge: the discharged
-    // `Int.div(a, 2)` / `Int.mod(a, 2)` render as bare Euclidean `/` and
-    // `%` (Dafny int division is Euclidean — same rounding as the runtime
-    // on every sign), and all four laws verify with no `Result`
-    // scaffolding: the doubling identity, the quotient/remainder rebuild
-    // (the discharged-`mod` arm), the negative-literal-divisor law, and
-    // the mixed discharged + dynamic-divisor law, which is the one that
-    // forces Z3 to reason about a bare `/` and a `Result` datatype sitting
-    // in the SAME function body.
-    assert_dafny_verifies(
-        "tests/fixtures/discharged_div_law.av",
-        "aver-dafny-discharged-div-law",
-    );
 }
 
 #[test]
@@ -976,30 +687,9 @@ fn proof_export_builds_discharged_bytes_long_literal_when_lake_is_available() {
     // Closing `Bytes.allInRange [0, 0, …] = true` needs 32 unfoldings of a
     // well-founded recursive predicate, which is exactly the depth at
     // which `decide` and the pre-existing ladder both fail.
-    //
-    // Lean only, deliberately: Dafny discharges the same fact as a
-    // subset-type constraint at the use site, and its default function
-    // fuel does not unfold a 32-element sequence. The shapes BOTH backends
-    // discharge live in `discharged_bytes_law.av` above.
     assert_proof_builds(
         "tests/fixtures/discharged_bytes_long_literal.av",
         "aver-proof-discharged-bytes-long-literal",
-    );
-}
-
-#[test]
-fn proof_dafny_verifies_discharged_bytes_law_when_dafny_is_available() {
-    // Dafny side of the discharge. A refinement construction collapses to
-    // the bare carrier there, so `Bytes.fromList([0, 10, 255])` becomes the
-    // literal sequence and Dafny must discharge the subset-type constraint
-    // `allInRange(xs)` at the use site by unfolding the same recursive
-    // predicate the Lean obligation names. Includes the mixed-body law
-    // `frameOctets.literalFrameIsIndependentOfTheComputedFrame`, which
-    // Dafny closes as a lemma over the same one body that holds a
-    // discharged construction and a fallible call side by side.
-    assert_dafny_verifies(
-        "tests/fixtures/discharged_bytes_law.av",
-        "aver-dafny-discharged-bytes-law",
     );
 }
 
@@ -1081,18 +771,6 @@ fn proof_export_builds_rational_ring_laws_kernel_genuine_when_lake_is_available(
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&output_dir);
-}
-
-#[test]
-fn proof_dafny_verifies_rational_ring_laws_when_dafny_is_available() {
-    // Z3 decides all ten nonlinear ring identities push-button — the
-    // `RingIdentity` strategy is Lean-only and Dafny treats the pin as
-    // `BackendDispatch`, so this pins the family's Dafny floor at
-    // 0 errors / 0 axioms. `passed` is asserted explicitly because
-    // this family's historical regression mode is a prover TIMEOUT on
-    // concrete-literal sample asserts (exit-status-only, 0 parsed
-    // errors), which an errors-only budget cannot catch.
-    assert_dafny_verifies_and_passes("examples/data/rational.av", "aver-dafny-rational-ring");
 }
 
 /// Audit miscount guard: two DISTINCT conditional laws on the same

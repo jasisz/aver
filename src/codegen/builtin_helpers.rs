@@ -1,25 +1,20 @@
-//! Single source of truth for the prelude helper blocks every proof
+//! Single source of truth for the prelude helper blocks the Lean proof
 //! backend keeps inlined into its emit.
 //!
 //! Lean has hand-written `LEAN_PRELUDE_*` constants for things like
 //! `AverDigits` numeric parsing, `String.charAt`/`String.slice`,
 //! String code-point helpers, the `AverList` recursion helpers, and
-//! `BranchPath`'s `child`/`parse` constructors. Dafny has the same
-//! shape sitting inside `DAFNY_PRELUDE_AFTER_RECORDS`. Each backend
-//! re-decides locally whether to include each piece, with a mix of
-//! `body.contains("...")` shortcuts and "always include" defaults.
+//! `BranchPath`'s `child`/`parse` constructors.
 //!
-//! This module is the shared decision layer:
+//! This module is the decision layer:
 //! - [`BUILTIN_HELPERS`] declares each helper with its detection
 //!   token (a substring searched in the generated body) and its
 //!   declarative dependencies.
 //! - [`needed_helpers`] returns the helpers a given body actually
 //!   uses, in dependency-correct emission order.
 //!
-//! Each backend keeps its own native rendering of every helper —
-//! this module does not try to render Lean / Dafny / WASM bodies
-//! from one declarative shape (they're hand-tuned to each prover's
-//! idiom). It only decides which keys to include.
+//! The backend keeps its own native rendering of every helper — this
+//! module only decides which keys to include.
 
 /// Keys for built-in prelude helpers. Each key has a per-backend
 /// implementation (e.g. `LEAN_PRELUDE_NUMERIC_PARSE` in the Lean
@@ -29,12 +24,10 @@ pub struct BuiltinHelper {
     /// implementation of this helper).
     pub key: &'static str,
     /// Substrings searched in the generated body. The helper is
-    /// included if **any** of them appear. Backends can render the
-    /// same concept under different identifiers (`String.charAt` in
-    /// Lean output, `StringCharAt` in Dafny output), so listing all
-    /// known forms keeps the decision conservative — a helper might
-    /// be included slightly more often than strictly needed, but it
-    /// is never missed.
+    /// included if **any** of them appear. Listing every known form
+    /// keeps the decision conservative — a helper might be included
+    /// slightly more often than strictly needed, but it is never
+    /// missed.
     pub body_tokens: &'static [&'static str],
     /// Other helpers this one depends on; emitted before this one.
     pub depends_on: &'static [&'static str],
@@ -51,34 +44,15 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
     BuiltinHelper {
         key: "BranchPath",
         body_tokens: &["BranchPath"],
-        // Dafny's `BranchPath_childLiteral` uses `IntToString` (in
-        // NumericParse) and references the `datatype BranchPath` (in
-        // BranchPathDatatype).
-        // Lean's BranchPath structure includes both the datatype and the
-        // constructors in one block, so it ignores BranchPathDatatype
-        // and the NumericParse dependency.
-        depends_on: &["NumericParse", "BranchPathDatatype"],
+        depends_on: &["NumericParse"],
         doc: "Oracle's structural addressing: `BranchPath.Root`, `.child`, `.parse`. \
               Needed whenever any classified-effect function is lifted into proof.",
     },
     BuiltinHelper {
         key: "AverList",
-        body_tokens: &[
-            "AverList.",
-            "ListReverse(",
-            "ListHead(",
-            "ListTail(",
-            "ListTake(",
-            "ListDrop(",
-            "ListZip(",
-            "ListFind(",
-            "ListAny(",
-        ],
-        // Dafny's `ListHead` returns `Option<T>`. Lean has native Option.
-        depends_on: &["OptionDatatype"],
-        doc: "Recursion helpers and structural list utilities (Lean's `AverList.` namespace; \
-              Dafny's `ListReverse` / `ListHead` / `ListTail` / `ListTake` / `ListDrop` / \
-              `ListZip` / `ListFind` / `ListAny`).",
+        body_tokens: &["AverList."],
+        depends_on: &[],
+        doc: "Recursion helpers and structural list utilities (`AverList.` namespace).",
     },
     BuiltinHelper {
         key: "StringHelpers",
@@ -88,41 +62,16 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "String.chars",
             "String.containsSubstr",
             "containsSubstr ",
-            "StringCharAt(",
-            "StringChars(",
-            "StringSlice(",
-            "StringJoin(",
-            "StringSplit(",
-            "StringContains(",
-            "StringStartsWith(",
-            "StringEndsWith(",
-            "StringTrim(",
-            "StringReplace(",
             "AverString",
         ],
-        // Keep the shared datatype dependencies stable for Lean. Dafny's
-        // exact structural block uses Option; UTF-8 has its own separate key.
-        depends_on: &["OptionDatatype", "ResultDatatype"],
-        doc: "Character/slice/intercalate + split/contains/replace/trim. \
-              Lean: native `String.*`. Dafny: exact structural sequence definitions.",
+        depends_on: &[],
+        doc: "Character/slice/intercalate + split/contains/replace/trim over native `String.*`.",
     },
     BuiltinHelper {
         key: "StringCase",
-        body_tokens: &["StringToUpper(", "StringToLower(", "AverUnicodeCase."],
+        body_tokens: &["AverUnicodeCase."],
         depends_on: &[],
-        doc: "Lean and Dafny Unicode case definitions from shared VM-checked mapping and context tables.",
-    },
-    BuiltinHelper {
-        key: "StringOpaque",
-        body_tokens: &["StringByteLength(", "ListReverseStr("],
-        depends_on: &[],
-        doc: "Dafny-only uninterpreted byte-length and legacy string-list declarations.",
-    },
-    BuiltinHelper {
-        key: "StringUtf8",
-        body_tokens: &["StringToUtf8(", "StringFromUtf8("],
-        depends_on: &["ResultDatatype"],
-        doc: "Dafny-only legacy UTF-8 boundary declarations; never pulled in by unrelated text operations.",
+        doc: "Unicode case definitions from shared VM-checked mapping and context tables.",
     },
     BuiltinHelper {
         key: "NumericParse",
@@ -132,89 +81,41 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "Int.fromString",
             "Float.fromString",
             "Float.fromInt",
-            "IntToString(",
-            "IntFromString(",
-            "IntFitsUnsignedWidth(",
-            "IntBigEndianBytes(",
-            "IntLittleEndianBytes(",
-            "IntFromBigEndianBytes(",
-            "IntFromLittleEndianBytes(",
-            "FloatToString(",
-            "FloatFromString(",
-            "FloatPi(",
-            "FloatSqrt(",
-            "FloatPow(",
-            "FloatToInt(",
-            "FloatSin(",
-            "FloatCos(",
-            "FloatAtan2(",
-            "FloatDiv(",
         ],
-        // Dafny's `IntFromString` / `FloatFromString` declarations
-        // return `Result<int, string>` / `Result<real, string>`, so
-        // the Result datatype must be in scope. Lean uses native
-        // `Except` (no-op there).
-        depends_on: &["ResultDatatype"],
-        doc: "Decimal parsing/formatting. Lean: full `AverDigits` namespace, `String.fromInt`, \
-              `Int.fromString`, `Float.fromString`. Dafny: exact `IntToString`, opaque `IntFromString` \
-              / `FloatToString` / `FloatFromString` declarations.",
+        depends_on: &[],
+        doc: "Decimal parsing/formatting: the `AverDigits` namespace, `String.fromInt`, \
+              `Int.fromString`, `Float.fromString`.",
     },
     BuiltinHelper {
         key: "StringCodePoint",
-        body_tokens: &[
-            "String.firstCodePoint",
-            "String.fromCodePoint",
-            "StringFirstCodePoint(",
-            "StringFromCodePoint(",
-        ],
-        depends_on: &["OptionDatatype"],
+        body_tokens: &["String.firstCodePoint", "String.fromCodePoint"],
+        depends_on: &[],
         doc: "Unicode scalar-value helpers owned by String.",
     },
     BuiltinHelper {
         key: "AverBits",
-        // Lean renders the namespace as `AverBits.*`; Dafny spells the same
-        // definitions `BitsAnd(` / `BitsShiftLeft(` / ... at call sites.
-        body_tokens: &[
-            "AverBits.",
-            "BitsAnd(",
-            "BitsOr(",
-            "BitsXor(",
-            "BitsNot(",
-            "BitsShiftLeft(",
-            "BitsShiftRight(",
-            "BitsLow(",
-        ],
+        body_tokens: &["AverBits."],
         depends_on: &[],
         doc: "Bit-level view of `Int` under infinite two's complement, backing the `Bits` \
-              namespace. Both provers define it — never opaque, never a bit-vector.",
+              namespace — never opaque, never a bit-vector.",
     },
     BuiltinHelper {
         key: "AverMeasure",
         body_tokens: &["AverMeasure."],
         depends_on: &[],
-        doc: "Decreasing measures used by termination proofs of generic recursion shapes \
-              (Lean only — Dafny uses native `decreases`).",
+        doc: "Decreasing measures used by termination proofs of generic recursion shapes.",
     },
     BuiltinHelper {
         key: "AverMap",
-        body_tokens: &[
-            "AverMap.",
-            "MapGet(",
-            "MapEntries(",
-            "MapKeys(",
-            "MapValues(",
-            "MapFromList(",
-        ],
-        // Dafny's `MapGet` returns `Option<V>`.
-        depends_on: &["OptionDatatype"],
-        doc: "Map helper namespace. Lean: `AverMap.has_set_self` / `.get_set_self` / etc. \
-              Dafny: `MapGet` / `MapEntries` / `MapKeys` / `MapValues` / `MapFromList`.",
+        body_tokens: &["AverMap."],
+        depends_on: &[],
+        doc: "Map helper namespace: `AverMap.has_set_self` / `.get_set_self` / etc.",
     },
     BuiltinHelper {
         key: "ProofFuel",
         body_tokens: &["averStringPosFuel"],
         depends_on: &[],
-        doc: "Proof-mode fuel measure for string-position recursion (Lean only).",
+        doc: "Proof-mode fuel measure for string-position recursion.",
     },
     // Small Lean instance bundles. These used to be unconditional (~32
     // lines) but are unnecessary on pure-Int examples; they're cheap
@@ -225,7 +126,7 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
         depends_on: &[],
         doc: "`Coe Int Float`, `Float.fromInt`, `Float.unsafeDecEq` / `Float.compDecEq`, \
               and the `DecidableEq Float` instance used by `=>`-equality on Float-returning \
-              functions in proof samples (Lean only).",
+              functions in proof samples.",
     },
     BuiltinHelper {
         key: "ExceptInstances",
@@ -233,62 +134,14 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
         depends_on: &[],
         doc: "`DecidableEq (Except ε α)`, the `Except` namespace's `withDefault`, and \
               `Option.toExcept`. Needed whenever a function or law mentions a Lean `Except` \
-              (Aver `Result`) value (Lean only).",
+              (Aver `Result`) value.",
     },
     BuiltinHelper {
         key: "StringHadd",
         body_tokens: &["String"],
         depends_on: &[],
         doc: "`HAdd String String String` instance for string-concat literals like `\"a\" ++ \"b\"`. \
-              Cheap to ship but unused on pure-Int examples (Lean only).",
-    },
-    // Dafny-side built-in datatypes. Lean has Except / Option in its
-    // standard library so it doesn't need declarations; Dafny ships
-    // them in the prelude. Detection is body-token based to skip on
-    // pure-Int examples.
-    BuiltinHelper {
-        key: "ResultDatatype",
-        body_tokens: &[
-            "Result<",
-            "Result.Ok",
-            "Result.Err",
-            "Ok(",
-            "Err(",
-            "ResultWithDefault(",
-        ],
-        depends_on: &[],
-        doc: "Dafny `datatype Result<T, E>` declaration plus `ResultWithDefault` destructor. \
-              Lean uses native `Except`; this key is a no-op there.",
-    },
-    BuiltinHelper {
-        key: "OptionDatatype",
-        body_tokens: &[
-            "Option<",
-            "Option.Some",
-            "Option.None",
-            "Some(",
-            "None",
-            "OptionWithDefault(",
-        ],
-        depends_on: &[],
-        doc: "Dafny `datatype Option<T>` declaration plus `OptionWithDefault` destructor. \
-              Lean uses native `Option`; this key is a no-op there.",
-    },
-    BuiltinHelper {
-        key: "ResultFromOption",
-        body_tokens: &["ResultFromOption"],
-        depends_on: &["ResultDatatype", "OptionDatatype"],
-        doc: "Dafny `ResultFromOption` bridge function. Pulled implicitly when both Result and \
-              Option are in scope and the body explicitly converts between them.",
-    },
-    BuiltinHelper {
-        key: "BranchPathDatatype",
-        body_tokens: &["BranchPath"],
-        depends_on: &[],
-        doc: "Dafny `datatype BranchPath`. Lean's `BranchPath` structure is part of the \
-              `BranchPath` helper key (the constructors come with it); Dafny separates the \
-              datatype declaration from the constructor functions so the datatype itself \
-              can stay even on pure-math files (it doesn't, currently — Dafny no-ops this on pure files).",
+              Cheap to ship but unused on pure-Int examples.",
     },
 ];
 
@@ -338,59 +191,39 @@ pub fn needed_helpers(body: &str, force_all: bool) -> Vec<&'static BuiltinHelper
 mod tests {
     use super::*;
 
+    fn keys(body: &str, force_all: bool) -> Vec<&'static str> {
+        needed_helpers(body, force_all)
+            .iter()
+            .map(|h| h.key)
+            .collect()
+    }
+
     #[test]
     fn empty_body_needs_no_helpers() {
         assert!(needed_helpers("", false).is_empty());
     }
 
     #[test]
-    fn body_with_aver_digits_pulls_numeric_parse_with_result_dep() {
-        // NumericParse depends on ResultDatatype (Dafny's IntFromString
-        // returns Result).
-        let keys = needed_helpers("foo AverDigits.bar baz", false)
-            .iter()
-            .map(|h| h.key)
-            .collect::<Vec<_>>();
-        assert_eq!(keys, vec!["ResultDatatype", "NumericParse"]);
+    fn body_with_aver_digits_pulls_numeric_parse() {
+        assert_eq!(keys("foo AverDigits.bar baz", false), vec!["NumericParse"]);
     }
 
     #[test]
     fn body_with_string_char_at_pulls_string_helpers() {
         // `String.charAt` contains the substring `String`, so the small
         // `StringHadd` instance bundle gets pulled in alongside.
-        // StringHelpers also depends on OptionDatatype, which is emitted
-        // before StringHelpers (deps go first).
-        let keys = needed_helpers("...String.charAt s 0...", false)
-            .iter()
-            .map(|h| h.key)
-            .collect::<Vec<_>>();
         assert_eq!(
-            keys,
-            vec![
-                "OptionDatatype",
-                "ResultDatatype",
-                "StringHelpers",
-                "StringHadd"
-            ]
+            keys("...String.charAt s 0...", false),
+            vec!["StringHelpers", "StringHadd"]
         );
     }
 
     #[test]
     fn body_with_branch_path_pulls_branch_path_and_its_deps() {
-        let keys = needed_helpers("rollOnce BranchPath.Root rnd", false)
-            .iter()
-            .map(|h| h.key)
-            .collect::<Vec<_>>();
-        // BranchPath depends on NumericParse and BranchPathDatatype.
-        // NumericParse in turn depends on ResultDatatype.
+        // BranchPath depends on NumericParse, which is emitted first.
         assert_eq!(
-            keys,
-            vec![
-                "ResultDatatype",
-                "NumericParse",
-                "BranchPathDatatype",
-                "BranchPath",
-            ]
+            keys("rollOnce BranchPath.Root rnd", false),
+            vec!["NumericParse", "BranchPath"]
         );
     }
 
@@ -400,18 +233,11 @@ mod tests {
         // declared dependencies. The exact set is a conjunction of:
         // explicit token matches + transitive deps.
         let body = "AverDigits. String.charAt String.firstCodePointAv AverList. averStringPosFuel BranchPath";
-        let keys = needed_helpers(body, false)
-            .iter()
-            .map(|h| h.key)
-            .collect::<Vec<_>>();
         assert_eq!(
-            keys,
+            keys(body, false),
             vec![
-                "ResultDatatype",
                 "NumericParse",
-                "BranchPathDatatype",
                 "BranchPath",
-                "OptionDatatype",
                 "AverList",
                 "StringHelpers",
                 "StringCodePoint",
@@ -422,47 +248,17 @@ mod tests {
     }
 
     #[test]
-    fn structural_text_does_not_pull_unrelated_utf8_axioms_or_opaque_case_helpers() {
-        let keys = needed_helpers(
-            "StringCharAt(s, 0) StringSplit(s, sep) StringTrim(s)",
-            false,
-        )
-        .iter()
-        .map(|helper| helper.key)
-        .collect::<Vec<_>>();
-        assert!(keys.contains(&"StringHelpers"));
-        assert!(!keys.contains(&"StringUtf8"));
-        assert!(!keys.contains(&"StringOpaque"));
-        let utf8 = needed_helpers("StringToUtf8(s)", false)
-            .iter()
-            .map(|helper| helper.key)
-            .collect::<Vec<_>>();
-        assert!(utf8.contains(&"StringUtf8"));
-        assert!(utf8.contains(&"ResultDatatype"));
-        assert!(!utf8.contains(&"StringHelpers"));
-    }
-
-    #[test]
     fn force_all_returns_every_helper() {
-        let keys = needed_helpers("", true)
-            .iter()
-            .map(|h| h.key)
-            .collect::<Vec<_>>();
         // BranchPath depends on NumericParse so NumericParse comes
         // first; the rest follow declaration order.
         assert_eq!(
-            keys,
+            keys("", true),
             vec![
-                "ResultDatatype",
                 "NumericParse",
-                "BranchPathDatatype",
                 "BranchPath",
-                "OptionDatatype",
                 "AverList",
                 "StringHelpers",
                 "StringCase",
-                "StringOpaque",
-                "StringUtf8",
                 "StringCodePoint",
                 "AverBits",
                 "AverMeasure",
@@ -471,7 +267,6 @@ mod tests {
                 "FloatInstances",
                 "ExceptInstances",
                 "StringHadd",
-                "ResultFromOption",
             ]
         );
     }
@@ -481,10 +276,7 @@ mod tests {
         // No Float / Except / String tokens — the instance bundles
         // shouldn't be requested.
         let body = "def absVal (x : Int) : Int := if x < 0 then -x else x";
-        let keys = needed_helpers(body, false)
-            .iter()
-            .map(|h| h.key)
-            .collect::<Vec<_>>();
+        let keys = keys(body, false);
         assert!(!keys.contains(&"FloatInstances"));
         assert!(!keys.contains(&"ExceptInstances"));
         assert!(!keys.contains(&"StringHadd"));
@@ -493,11 +285,7 @@ mod tests {
     #[test]
     fn body_with_float_pulls_float_instances() {
         let body = "def f (x : Float) : Float := x + 1.0";
-        let keys = needed_helpers(body, false)
-            .iter()
-            .map(|h| h.key)
-            .collect::<Vec<_>>();
-        assert!(keys.contains(&"FloatInstances"));
+        assert!(keys(body, false).contains(&"FloatInstances"));
     }
 
     #[test]

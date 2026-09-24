@@ -254,7 +254,7 @@ pub(super) fn detect_simp_normalized_spec_equivalence(
 /// givens (only `Int` literals, given idents, `Add`, `Sub`). On
 /// match returns the two substituted bodies — backends rewrite to
 /// `change <impl> = <spec>` and close via their linear-arithmetic
-/// decision procedure (`omega` on Lean, Z3 LIA on Dafny).
+/// decision procedure (`omega` on Lean).
 pub(super) fn detect_linear_int_spec_equivalence(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
@@ -434,15 +434,14 @@ pub(super) fn detect_effectful_spec_equivalence(
 /// `n < 0` and calling a 3-arg helper with seed pair; spec_fn is a
 /// direct recurrence with `match n { 0 / 1 / _ }` arms. The shared
 /// affine recurrence must match between the helper's worker and the
-/// spec's `_` arm. Returns `(spec_fn_name, helper_fn_name)` on
-/// match. Detection lives behind the `lean::recurrence::detect_*`
+/// spec's `_` arm. Returns `Some(())` on a match. Detection lives behind the `lean::recurrence::detect_*`
 /// helpers because their AST patterns were specced there originally;
 /// the data they extract is backend-neutral.
 pub(super) fn detect_linear_recurrence2_spec_equivalence(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
     inputs: &ProofLowerInputs,
-) -> Option<(String, String)> {
+) -> Option<()> {
     use crate::codegen::lean::recurrence::{
         detect_second_order_int_linear_recurrence, detect_tailrec_int_linear_pair_worker,
         detect_tailrec_int_linear_pair_wrapper,
@@ -476,7 +475,7 @@ pub(super) fn detect_linear_recurrence2_spec_equivalence(
         return None;
     }
 
-    Some((spec_fn_name.clone(), impl_shape.helper_fn_name))
+    Some(())
 }
 
 pub(super) fn law_references_fn(expr: &Spanned<crate::ast::Expr>, target: &str) -> bool {

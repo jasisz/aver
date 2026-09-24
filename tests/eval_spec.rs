@@ -558,7 +558,7 @@ fn int_div_min_by_neg_one_is_exact_over_z() {
 }
 
 // ---------------------------------------------------------------------------
-// Int = ℤ — the VM no longer wraps; runtime matches the Lean/Dafny model.
+// Int = ℤ — the VM no longer wraps; runtime matches the Lean model.
 // ---------------------------------------------------------------------------
 
 /// Assert that an eval result is a strictly-positive Big integer equal to the

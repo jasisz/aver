@@ -9,7 +9,7 @@ module MapSetNonEmpty
         "recurses over the entry list, so the proof needs induction (its result"
         "is a non-empty list whether the key was new or already present). The"
         "Lean side carries that induction in a hand-proved prelude lemma"
-        "(`AverMap.len_set_ge_one`); Dafny's Z3 discharges it directly."
+        "(`AverMap.len_set_ge_one`)."
     effects []
 
 fn sizeAfterInsert(reg: Map<String, Int>, k: String, v: Int) -> Int

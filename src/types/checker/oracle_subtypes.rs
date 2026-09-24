@@ -69,15 +69,6 @@ impl OracleSubtypeKind {
             Self::ProcessStopRequestedMonotonic => "ProcessStopRequestedMonotonic",
         }
     }
-
-    pub const fn dafny_predicate_name(self) -> &'static str {
-        match self {
-            Self::RandomIntInBounds => "IsRandomIntInBounds",
-            Self::RandomFloatInUnit => "IsRandomFloatInUnit",
-            Self::TimeUnixMsNonneg => "IsTimeUnixMsNonneg",
-            Self::ProcessStopRequestedMonotonic => "IsProcessStopRequestedMonotonic",
-        }
-    }
 }
 
 /// True when the effect has any runtime-invariant oracle carrier in proof
@@ -167,74 +158,6 @@ pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {
     out
 }
 
-/// Dafny equivalent — subset types carrying the bound predicate.
-/// Dafny's idiom for "function + invariant" is a `predicate IsXxx(f)`
-/// that the user threads through their own lemmas with `requires`,
-/// since Dafny doesn't have first-class subtype types over function
-/// values the way Lean's `Subtype` does.
-pub(crate) fn dafny_subtype_predicates(declared: &DeclaredEffects) -> String {
-    let mut out = String::new();
-    let mut emitted_any = false;
-
-    let mut push_block = |body: &str| {
-        if !emitted_any {
-            out.push_str(
-                "// Oracle-invariant predicates. These are *predicates*, not\n\
-                 // axioms — a lemma that needs the bound on a stub takes\n\
-                 // it as a `requires` precondition. The runtime trust\n\
-                 // assumption documented in the header above discharges\n\
-                 // it for the live Aver oracle; concrete stubs can\n\
-                 // discharge it directly with the verifier.\n\n",
-            );
-            emitted_any = true;
-        }
-        out.push_str(body);
-        out.push('\n');
-    };
-
-    if declared.includes("Random.int") {
-        push_block(
-            "ghost predicate IsRandomIntInBounds(\n    \
-                 f: (BranchPath, int, int, int) -> Result<int, string>)\n\
-             {\n  \
-               forall path, n, min, max ::\n    \
-                 -9223372036854775808 <= min <= max <= 9223372036854775807 ==>\n      \
-                   exists value :: f(path, n, min, max) == Result.Ok(value)\n        \
-                     && min <= value <= max\n\
-             }\n",
-        );
-    }
-    if declared.includes("Random.float") {
-        push_block(
-            "ghost predicate IsRandomFloatInUnit(\n    \
-                 f: (BranchPath, int) -> real)\n\
-             {\n  \
-               forall path, n :: 0.0 <= f(path, n) <= 1.0\n\
-             }\n",
-        );
-    }
-    if declared.includes("Time.unixMs") {
-        push_block(
-            "ghost predicate IsTimeUnixMsNonneg(\n    \
-                 f: (BranchPath, int) -> int)\n\
-             {\n  \
-               forall path, n :: 0 <= f(path, n)\n\
-             }\n",
-        );
-    }
-    if declared.includes("Process.stopRequested") {
-        push_block(
-            "ghost predicate IsProcessStopRequestedMonotonic(\n    \
-                 f: (BranchPath, int) -> bool)\n\
-             {\n  \
-               forall path, i, j ::\n    \
-                 i <= j && f(path, i) ==> f(path, j)\n\
-             }\n",
-        );
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,40 +204,15 @@ mod tests {
     }
 
     #[test]
-    fn dafny_uses_ghost_predicates_not_axioms() {
-        let d = declared(&["Random.int", "Random.float", "Time.unixMs"]);
-        let out = dafny_subtype_predicates(&d);
-        assert!(!out.contains("{:axiom}"));
-        assert!(out.contains("ghost predicate IsRandomIntInBounds"));
-        assert!(out.contains("ghost predicate IsRandomFloatInUnit"));
-        assert!(out.contains("ghost predicate IsTimeUnixMsNonneg"));
-    }
-
-    #[test]
-    fn dafny_uses_function_arrow_syntax() {
-        let d = declared(&["Random.int"]);
-        let out = dafny_subtype_predicates(&d);
-        assert!(out.contains("(BranchPath, int, int, int) -> Result<int, string>"));
-    }
-
-    #[test]
     fn process_uses_a_cross_call_monotonicity_carrier() {
         let d = declared(&["Process.stopRequested"]);
         let lean = lean_subtypes(&d);
         assert!(lean.contains("ProcessStopRequestedMonotonic"));
         assert!(lean.contains("i ≤ j → f path i = true → f path j = true"));
 
-        let dafny = dafny_subtype_predicates(&d);
-        assert!(dafny.contains("IsProcessStopRequestedMonotonic"));
-        assert!(dafny.contains("i <= j && f(path, i) ==> f(path, j)"));
-
         let kind = OracleSubtypeKind::for_effect("Process.stopRequested")
             .expect("Process invariant classification");
         assert_eq!(kind.lean_type_name(), "ProcessStopRequestedMonotonic");
-        assert_eq!(
-            kind.dafny_predicate_name(),
-            "IsProcessStopRequestedMonotonic"
-        );
         assert!(has_oracle_subtype("Process.stopRequested"));
     }
 }

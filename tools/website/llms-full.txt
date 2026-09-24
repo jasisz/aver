@@ -22,7 +22,6 @@
 - [Constructors](https://github.com/jasisz/aver/blob/main/docs/constructors.md): constructor routing rules
 - [Oracle](https://github.com/jasisz/aver/blob/main/docs/oracle.md): proof export for classified effectful functions via `verify fn trace` and `given` stubs, plus `--hostile`
 - [Lean proof export](https://github.com/jasisz/aver/blob/main/docs/lean.md): verify blocks to Lean 4
-- [Dafny verification](https://github.com/jasisz/aver/blob/main/docs/dafny.md): verify laws to Dafny / Z3
 - [Effect and wasm-gc support](https://github.com/jasisz/aver/blob/main/docs/effects.md): browser and host surface
 - [WASI 0.2 target](https://github.com/jasisz/aver/blob/main/docs/wasip2.md): Component Model deployment
 

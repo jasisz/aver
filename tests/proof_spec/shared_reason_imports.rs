@@ -37,14 +37,8 @@ fn imported_aliases_and_both_recursive_paths_keep_their_owners_and_premises() {
             "{mutation}: {}",
             format_output(&samples)
         );
-        for backend in ["lean", "dafny"] {
-            if let Some(summary) = super::source_recursion::check(entry.to_str().unwrap(), backend)
-            {
-                assert_eq!(
-                    summary["passed"], expected,
-                    "{mutation}/{backend}: {summary}"
-                );
-            }
+        if let Some(summary) = super::source_recursion::check(entry.to_str().unwrap()) {
+            assert_eq!(summary["passed"], expected, "{mutation}: {summary}");
         }
     }
 }

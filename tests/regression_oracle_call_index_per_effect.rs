@@ -8,8 +8,8 @@
 //! silently rewrote what every stub of every other operation saw.
 //!
 //! The runtime half and the proof-export half are pinned together in this one
-//! file on purpose. The lifter writes the index into the emitted Lean and Dafny
-//! as a literal, so the two interpreters only agree while both use the same
+//! file on purpose. The lifter writes the index into the emitted Lean as a
+//! literal, so the VM and the proof only agree while both use the same
 //! numbering. `tests/regression_oracle_counter_order.rs` pins the other
 //! invariant these two halves share: arguments are charged before the call that
 //! surrounds them.
@@ -110,12 +110,12 @@ struct Export {
     report: String,
 }
 
-fn export(program: &str, slug: &str, backend: &str, file: &str) -> Export {
+fn export(program: &str, slug: &str, file: &str) -> Export {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("test-out")
-        .join(format!("oracle-call-index-{slug}-{backend}"));
+        .join(format!("oracle-call-index-{slug}"));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("create output dir");
     let source = root.join(format!("{slug}.av"));
@@ -124,15 +124,13 @@ fn export(program: &str, slug: &str, backend: &str, file: &str) -> Export {
     let output = Command::new(aver_bin)
         .arg("proof")
         .arg(&source)
-        .arg("--backend")
-        .arg(backend)
         .arg("-o")
         .arg(&root)
         .output()
         .expect("run aver proof");
     assert!(
         output.status.success(),
-        "aver proof --backend {backend} failed:\nstdout: {}\nstderr: {}",
+        "aver proof failed:\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -199,7 +197,7 @@ fn assert_law_declined(export: &Export, fn_name: &str, law_name: &str, operation
 
 #[test]
 fn exported_lean_numbers_each_operation_from_zero() {
-    let lean = export(MIXED, "mixed", "lean", "MixedCallIndex.lean").file;
+    let lean = export(MIXED, "mixed", "MixedCallIndex.lean").file;
     for call in [
         "rnd_Random_int path 0 0 100",
         "rnd_Time_unixMs path 0",
@@ -214,26 +212,6 @@ fn exported_lean_numbers_each_operation_from_zero() {
     assert!(
         !lean.contains("rnd_Random_int path 2 0 100"),
         "index 2 means the lifter still shares one counter across operations:\n{lean}"
-    );
-}
-
-#[test]
-fn exported_dafny_numbers_each_operation_from_zero() {
-    let dafny = export(MIXED, "mixed", "dafny", "MixedCallIndex.dfy").file;
-    for call in [
-        "rnd_Random_int(path, 0, 0, 100)",
-        "rnd_Time_unixMs(path, 0)",
-        "rnd_Random_int(path, 1, 0, 100)",
-    ] {
-        assert!(
-            dafny.contains(call),
-            "the Dafny export must carry the same numbering as the Lean export and the VM; \
-             `{call}` is missing from:\n{dafny}"
-        );
-    }
-    assert!(
-        !dafny.contains("rnd_Random_int(path, 2, 0, 100)"),
-        "index 2 means the lifter still shares one counter across operations:\n{dafny}"
     );
 }
 
@@ -261,7 +239,7 @@ fn vm_charges_only_the_arm_that_runs() {
 
 #[test]
 fn exported_lean_numbers_match_arms_from_the_match() {
-    let lean = export(ARMS, "arms", "lean", "ArmCallIndex.lean").file;
+    let lean = export(ARMS, "arms", "ArmCallIndex.lean").file;
     let taken = lean.matches("rnd_Random_int path 0 1 6").count();
     assert_eq!(
         taken, 2,
@@ -412,7 +390,7 @@ fn a_law_over_a_function_that_calls_an_effectful_helper_is_declined() {
         (1, 0),
         "the run hands `inner`'s read index 1, so the packed answer is 7009"
     );
-    let lean = export(HELPER, "helper", "lean", "HelperRestart.lean");
+    let lean = export(HELPER, "helper", "HelperRestart.lean");
     assert!(
         lean.file.contains("rnd_Random_int path 0 0 100"),
         "the lifted helper still starts at index 0 — that is the divergence, and the law \
@@ -420,8 +398,6 @@ fn a_law_over_a_function_that_calls_an_effectful_helper_is_declined() {
         lean.file
     );
     assert_law_declined(&lean, "outer", "helperKeepsCounting", "Random.int");
-    let dafny = export(HELPER, "helper", "dafny", "HelperRestart.dfy");
-    assert_law_declined(&dafny, "outer", "helperKeepsCounting", "Random.int");
 }
 
 #[test]
@@ -431,10 +407,8 @@ fn a_law_over_a_recursive_effectful_function_is_declined() {
         (1, 0),
         "the run numbers the three turns 0, 1 and 2, so the total is 3"
     );
-    let lean = export(DRAIN, "drain", "lean", "DrainRecursion.lean");
+    let lean = export(DRAIN, "drain", "DrainRecursion.lean");
     assert_law_declined(&lean, "drain", "turnsAreNumbered", "Random.int");
-    let dafny = export(DRAIN, "drain", "dafny", "DrainRecursion.dfy");
-    assert_law_declined(&dafny, "drain", "turnsAreNumbered", "Random.int");
 }
 
 #[test]
@@ -444,7 +418,7 @@ fn a_law_over_a_second_operation_in_a_polled_loop_is_declined() {
         (1, 0),
         "the run reads the clock at 0..5 over three turns, so the answer is 2 + 4 + 5"
     );
-    let lean = export(THREADED, "threaded", "lean", "ThreadedTwoRates.lean");
+    let lean = export(THREADED, "threaded", "ThreadedTwoRates.lean");
     assert!(
         lean.report.contains("Process.stopRequested"),
         "the reason must say that the base carried into the call counts polls, which is \
@@ -452,8 +426,6 @@ fn a_law_over_a_second_operation_in_a_polled_loop_is_declined() {
         lean.report
     );
     assert_law_declined(&lean, "follow", "twoRates", "Time.unixMs");
-    let dafny = export(THREADED, "threaded", "dafny", "ThreadedTwoRates.dfy");
-    assert_law_declined(&dafny, "follow", "twoRates", "Time.unixMs");
 }
 
 #[test]
@@ -463,10 +435,8 @@ fn a_law_over_a_call_after_uneven_match_arms_is_declined() {
         (1, 0),
         "the arm that runs reads index 0 and the read after the match reads index 1"
     );
-    let lean = export(UNEVEN_ARMS, "uneven", "lean", "UnevenArms.lean");
+    let lean = export(UNEVEN_ARMS, "uneven", "UnevenArms.lean");
     assert_law_declined(&lean, "pickUneven", "armsChargeDifferently", "Random.int");
-    let dafny = export(UNEVEN_ARMS, "uneven", "dafny", "UnevenArms.dfy");
-    assert_law_declined(&dafny, "pickUneven", "armsChargeDifferently", "Random.int");
 }
 
 /// The other side of the gate: a `Process.stopRequested` loop is the one shape
@@ -500,7 +470,7 @@ verify follow law pollsAreCounted
         (1, 0),
         "the run polls four times and stops on the fourth"
     );
-    let lean = export(POLL, "pollonly", "lean", "PollOnly.lean");
+    let lean = export(POLL, "pollonly", "PollOnly.lean");
     assert!(
         lean.file.contains("theorem follow_law_pollsAreCounted"),
         "the polling base is threaded into the recursive call, so the exported model \
@@ -590,10 +560,8 @@ fn a_law_whose_claim_makes_two_effectful_calls_is_declined() {
         "under an index-blind peer the same claim passes, which is how this shape reaches \
          export in the first place"
     );
-    let lean = export(TWO_CALLS_BLIND, "twocalls", "lean", "TwoCallsBlind.lean");
+    let lean = export(TWO_CALLS_BLIND, "twocalls", "TwoCallsBlind.lean");
     assert_law_declined(&lean, "readOne", "bothSidesRead", "Random.int");
-    let dafny = export(TWO_CALLS_BLIND, "twocalls", "dafny", "TwoCallsBlind.dfy");
-    assert_law_declined(&dafny, "readOne", "bothSidesRead", "Random.int");
 }
 
 // ---------------------------------------------------------------------------
@@ -643,7 +611,7 @@ fn a_poll_inside_an_independent_product_is_numbered_from_zero() {
         "each branch polls at index 0 in every turn, so both branch answers are false and \
          the third root poll stops the loop on turn 2"
     );
-    let lean = export(POLL_BRANCH, "pollbranch", "lean", "PollBranch.lean");
+    let lean = export(POLL_BRANCH, "pollbranch", "PollBranch.lean");
     for call in [
         "rnd_Process_stopRequested (BranchPath.child path 0) 0",
         "rnd_Process_stopRequested (BranchPath.child path 1) 0",
@@ -704,7 +672,7 @@ fn an_arm_beside_an_uneven_inner_match_still_exports() {
         (1, 0),
         "the two reads of the inner arm are indices 0 and 1, so the packed answer is 1"
     );
-    let lean = export(SIBLING_ARM, "siblingarm", "lean", "SiblingArm.lean");
+    let lean = export(SIBLING_ARM, "siblingarm", "SiblingArm.lean");
     assert!(
         !lean.report.contains("declined"),
         "no call follows the uneven match, so nothing in this body is approximate and the \

@@ -546,7 +546,6 @@ pub(super) fn definitions(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContex
                     }
                 }
             }
-            Vec::new()
         },
     );
     // An induction hypothesis says reason(rest) = true. Its match equation

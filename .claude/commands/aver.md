@@ -484,7 +484,7 @@ fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
                 [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
 ```
 
-You can `verify` the generated names, match on them, and export them to Lean and Dafny like any other item. A local cases-form `verify process` can also call its source name with exact `given` stubs for every request operation. That test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet, so keep proof laws on the generated protocol. A module that exposes a yielding function exposes its protocol in its place, so an importer writes `Looper.__loopStart(...)`.
+You can `verify` the generated names, match on them, and export them to Lean like any other item. A local cases-form `verify process` can also call its source name with exact `given` stubs for every request operation. That test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet, so keep proof laws on the generated protocol. A module that exposes a yielding function exposes its protocol in its place, so an importer writes `Looper.__loopStart(...)`.
 
 ### Builtins and namespaces
 

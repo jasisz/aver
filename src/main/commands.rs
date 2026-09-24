@@ -4151,7 +4151,7 @@ fn build_codegen_context(
     }
 
     // Compiler pipeline. The `apply_traversal_lowering` parameter at the
-    // command-level API is the proof-export distinction — Lean/Dafny
+    // command-level API is the proof-export distinction — the Lean
     // exporters want source-level IR (interp_lower + buffer_build off),
     // runtime backends (VM/WASM/Rust) want the deforested form. See
     // `aver::ir::pipeline` for the canonical stage order and invariants.
@@ -5068,7 +5068,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
 /// Backend-neutral textual dump of a lowered `ProofIR`. Drives
 /// `aver compile FILE --emit-ir-after=proof_lower` — same lens any
 /// other pipeline stage gets, scoped to the proof artifact a proof
-/// exporter (Lean / Dafny) would consume. Useful for debugging
+/// exporter (Lean) would consume. Useful for debugging
 /// "why did this fn get Fuel vs Native?", "what precondition did
 /// the lowerer derive?", "did this type lift to a subtype?".
 fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: &aver::ir::SymbolTable) -> String {
@@ -5090,14 +5090,12 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: &aver::ir::SymbolTable)
         .collect();
     refined.sort_by_key(|(id, _)| type_label(*id));
     for (type_id, decl) in refined {
-        let witness = decl.witness.as_deref().unwrap_or("<none>");
         writeln!(
             out,
-            "- {} : {{ {} : {} // <predicate> }} witness {}",
+            "- {} : {{ {} : {} // <predicate> }}",
             type_label(type_id),
             decl.predicate_param,
             decl.carrier_type,
-            witness,
         )
         .unwrap();
         writeln!(
@@ -5155,10 +5153,7 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: &aver::ir::SymbolTable)
                 decrease,
                 body,
             }) => {
-                let Measure::NatAbsInt { param } = measure else {
-                    writeln!(out, "Native {{ measure: {:?} }}", measure).unwrap();
-                    continue;
-                };
+                let Measure::NatAbsInt { param } = measure;
                 writeln!(
                     out,
                     "Native {{ measure: natAbs({}), preservation: {:?}, decrease: {:?} }}",
@@ -7961,10 +7956,8 @@ pub(super) fn cmd_proof(
     output_dir: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
-    backend: &super::cli::ProofBackend,
     verify_mode: &super::cli::ProofVerifyMode,
     check: bool,
-    error_budget: Option<usize>,
     sorry_budget: Option<usize>,
     declined_budget: Option<usize>,
     check_json: bool,
@@ -7982,11 +7975,8 @@ pub(super) fn cmd_proof(
     write_baseline: Option<&str>,
     compare_manifest: Option<&str>,
 ) {
-    if waterfall.waterfall.is_some()
-        && (!matches!(backend, super::cli::ProofBackend::Lean)
-            || !matches!(verify_mode, super::cli::ProofVerifyMode::Auto))
-    {
-        eprintln!("--waterfall requires --backend lean and --verify-mode auto");
+    if waterfall.waterfall.is_some() && !matches!(verify_mode, super::cli::ProofVerifyMode::Auto) {
+        eprintln!("--waterfall requires --verify-mode auto");
         std::process::exit(2);
     }
     let _waterfall_emission = waterfall
@@ -8026,16 +8016,6 @@ pub(super) fn cmd_proof(
         std::process::exit(1);
     }
 
-    // `--allow-mathlib` is Lean-only. On Dafny it is a no-op (Z3 already carries
-    // the nonlinear-floor lemmas natively, so there is no break-glass tier) —
-    // warn and proceed with the unchanged Dafny path.
-    if allow_mathlib && matches!(backend, super::cli::ProofBackend::Dafny) {
-        eprintln!(
-            "{}",
-            "--allow-mathlib applies to the Lean backend only; ignored for Dafny".yellow()
-        );
-    }
-    let allow_mathlib = allow_mathlib && matches!(backend, super::cli::ProofBackend::Lean);
     ctx.allow_mathlib = allow_mathlib;
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
@@ -8078,8 +8058,7 @@ pub(super) fn cmd_proof(
     // (re-proving them in the same `lake build` — the soundness guard) and
     // `simp`s over them. The cone-hash gate is staleness-only: a stale file
     // is IGNORED (behaves exactly like no discovery ran), never trusted.
-    // Lean-only — discovery commits no Dafny artifact today.
-    if matches!(backend, super::cli::ProofBackend::Lean) {
+    {
         let lemmas_path = std::path::Path::new(output_dir).join("DiscoveredLemmas.lean");
         // The cone-hash HEADER (any hash) is what identifies the file as the
         // discovery artifact at all — a previously-emitted entry root from a
@@ -8159,72 +8138,56 @@ pub(super) fn cmd_proof(
         }
     }
 
-    match backend {
-        super::cli::ProofBackend::Lean => {
-            // Ground-truth literalization for bounded checks: run the same
-            // Declared-mode VM verify pass `aver verify` runs (the proof flow
-            // does NOT otherwise run it) and collect each passing case's
-            // expected-side value. The Lean emitter pins the expected side of
-            // `verify` examples and law samples to these literals — model vs
-            // program result instead of model vs model — so a model that
-            // diverges from the program (fuel exhaustion included) fails the
-            // build instead of kernel-certifying a vacuous equation. A failed
-            // or impossible verify run yields an empty table → unchanged
-            // emission. Lean-only: Dafny doesn't evaluate concrete examples
-            // (it proves laws symbolically — Z3 either discharges a sample
-            // lemma or reports an error; there is no panic-returns-default
-            // evaluation path to go vacuous through).
-            let ground_truth = collect_verify_ground_truth(file, &module_root);
-            ctx.sample_expected = ground_truth.expected;
-            ctx.declined_cases = ground_truth.declined;
-            let lean_files = cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
-            // Under `--allow-mathlib` the speculative/minimize re-emit passes are
-            // SKIPPED: they run their own `lake build` probes that would choke on
-            // the not-yet-wired `aver_mathlib` macro (the Mathlib import + macro
-            // are injected by `setup_mathlib_for_project` AFTER the final emit, and
-            // a re-emit would clobber them). The break-glass arm already promotes a
-            // walling `when`-law to its true-universal form directly, so neither
-            // pass is needed on the opt-in tier.
-            if !allow_mathlib {
-                // Speculative-universal: a SINGLE-LIST conditional law cannot be
-                // statically classified as universal-closeable, so try each
-                // universally in one probe build and re-emit with the ones that
-                // CLOSED stated universally and the rest on their bounded fallback
-                // (try-universal, fall-back-to-sampled — analog of `--minimize` for
-                // the statement form). No-op when the file has no such candidate.
-                run_lean_speculative(file, output_dir, &mut ctx, verify_mode);
-                // `--minimize`: learn each portfolio's winning branch from one
-                // instrumented build, then re-emit collapsed (fail-safe — restores
-                // the normal proof if the collapsed project does not build).
-                if minimize {
-                    run_lean_minimize(file, output_dir, &mut ctx, verify_mode);
-                }
-            }
-            // `--allow-mathlib`: wire the prebuilt Mathlib cache into the generated
-            // lake project — add `require mathlib` + reuse the cached packages, and
-            // inject `import Mathlib` + the `aver_mathlib` macro into the entry
-            // file(s) that actually use the break-glass arm. Must run AFTER the
-            // final emit (no re-emit follows). Exits non-zero on a misconfigured
-            // cache so the opt-in failure is loud, never a silent core fallback.
-            if allow_mathlib {
-                setup_mathlib_for_project(output_dir);
-            }
-            if waterfall.waterfall.is_some()
-                && let Err(error) = super::proof_waterfall::run(output_dir, waterfall, &lean_files)
-            {
-                eprintln!("waterfall: {error}");
-                std::process::exit(2);
-            }
+    // Ground-truth literalization for bounded checks: run the same
+    // Declared-mode VM verify pass `aver verify` runs (the proof flow
+    // does NOT otherwise run it) and collect each passing case's
+    // expected-side value. The Lean emitter pins the expected side of
+    // `verify` examples and law samples to these literals — model vs
+    // program result instead of model vs model — so a model that
+    // diverges from the program (fuel exhaustion included) fails the
+    // build instead of kernel-certifying a vacuous equation. A failed
+    // or impossible verify run yields an empty table → unchanged
+    // emission.
+    let ground_truth = collect_verify_ground_truth(file, &module_root);
+    ctx.sample_expected = ground_truth.expected;
+    ctx.declined_cases = ground_truth.declined;
+    let lean_files = cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
+    // Under `--allow-mathlib` the speculative/minimize re-emit passes are
+    // SKIPPED: they run their own `lake build` probes that would choke on
+    // the not-yet-wired `aver_mathlib` macro (the Mathlib import + macro
+    // are injected by `setup_mathlib_for_project` AFTER the final emit, and
+    // a re-emit would clobber them). The break-glass arm already promotes a
+    // walling `when`-law to its true-universal form directly, so neither
+    // pass is needed on the opt-in tier.
+    if !allow_mathlib {
+        // Speculative-universal: a SINGLE-LIST conditional law cannot be
+        // statically classified as universal-closeable, so try each
+        // universally in one probe build and re-emit with the ones that
+        // CLOSED stated universally and the rest on their bounded fallback
+        // (try-universal, fall-back-to-sampled — analog of `--minimize` for
+        // the statement form). No-op when the file has no such candidate.
+        run_lean_speculative(file, output_dir, &mut ctx, verify_mode);
+        // `--minimize`: learn each portfolio's winning branch from one
+        // instrumented build, then re-emit collapsed (fail-safe — restores
+        // the normal proof if the collapsed project does not build).
+        if minimize {
+            run_lean_minimize(file, output_dir, &mut ctx, verify_mode);
         }
-        super::cli::ProofBackend::Dafny => {
-            if minimize {
-                eprintln!(
-                    "{}",
-                    "--minimize applies to the Lean backend only; ignored for Dafny".yellow()
-                );
-            }
-            cmd_proof_dafny(file, output_dir, &ctx);
-        }
+    }
+    // `--allow-mathlib`: wire the prebuilt Mathlib cache into the generated
+    // lake project — add `require mathlib` + reuse the cached packages, and
+    // inject `import Mathlib` + the `aver_mathlib` macro into the entry
+    // file(s) that actually use the break-glass arm. Must run AFTER the
+    // final emit (no re-emit follows). Exits non-zero on a misconfigured
+    // cache so the opt-in failure is loud, never a silent core fallback.
+    if allow_mathlib {
+        setup_mathlib_for_project(output_dir);
+    }
+    if waterfall.waterfall.is_some()
+        && let Err(error) = super::proof_waterfall::run(output_dir, waterfall, &lean_files)
+    {
+        eprintln!("waterfall: {error}");
+        std::process::exit(2);
     }
 
     // Claims the exporter would not state, collected during emission. Read out
@@ -8266,16 +8229,6 @@ pub(super) fn cmd_proof(
         || write_baseline.is_some()
         || compare_manifest.is_some()
     {
-        // For Dafny, hand the harness the real entry module filename so it
-        // verifies the file that carries the verify-law lemmas (not an
-        // arbitrary dependency module).
-        let dafny_entry = match backend {
-            super::cli::ProofBackend::Dafny => Some(format!(
-                "{}.dfy",
-                aver::codegen::common::entry_basename(&ctx)
-            )),
-            super::cli::ProofBackend::Lean => None,
-        };
         // Source-level duplicate `fn.law` identities. Detected here (where the
         // parsed items are in hand) and handed to the ratchet so it can fail
         // CLOSED rather than collapse two distinct law blocks into one manifest
@@ -8283,14 +8236,11 @@ pub(super) fn cmd_proof(
         let duplicate_laws = duplicate_program_law_identities(&ctx);
         run_proof_check(
             output_dir,
-            backend,
-            error_budget,
             sorry_budget,
             declined_budget,
             check_json,
             explain,
             allow_mathlib,
-            dafny_entry,
             gate,
             write_baseline,
             compare_manifest,
@@ -8485,14 +8435,12 @@ fn value_strings_are_literal_safe(value: &aver::value::Value) -> bool {
     }
 }
 
-/// `aver proof --check` harness: invoke the backend's verifier inside
-/// `output_dir`, require the verifier to exit cleanly, count errors +
-/// `assume {:axiom}` trust-escapes (Dafny) or residual `sorry`s (Lean),
-/// compare against the optional budget(s), and exit accordingly:
+/// `aver proof --check` harness: run `lake build` inside `output_dir`,
+/// require it to exit cleanly, count residual `sorry`s, compare against the
+/// optional budget(s), and exit accordingly:
 /// - exit 0: count ≤ budget (budget defaults to 0 when unset)
 /// - exit 1: count > budget
-/// - exit 2: harness failure (verifier not on PATH, missing .dfy entry,
-///   verifier output didn't parse)
+/// - exit 2: harness failure (verifier not on PATH, unreadable baseline)
 ///
 /// With `--check-json`, prints a structured summary to stdout
 /// instead of streaming verifier output verbatim — same exit codes,
@@ -8500,8 +8448,6 @@ fn value_strings_are_literal_safe(value: &aver::value::Value) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn run_proof_check(
     output_dir: &str,
-    backend: &super::cli::ProofBackend,
-    error_budget: Option<usize>,
     sorry_budget: Option<usize>,
     // `--declined-budget`: how many claims the exporter may refuse to state
     // before the check fails. Its own pot, never folded into `sorry_budget` —
@@ -8509,7 +8455,7 @@ fn run_proof_check(
     // refusal. Defaults to 0.
     declined_budget: Option<usize>,
     check_json: bool,
-    // `--explain`: source diagnostics for both backends. Lean additionally runs an
+    // `--explain`: source diagnostics. It additionally runs an
     // ISOLATED, fail-soft residual probe per OPEN law and populates each
     // `ManifestLaw.open_goal` with the law's `unsolved goals` text (and, with
     // `--check-json`, surface them inline as a top-level `open_goals` object).
@@ -8520,7 +8466,6 @@ fn run_proof_check(
     // `AVER_MATHLIB:fn.law` trace markers + the law's tier. Off → no `credit`
     // key is written, so the manifest stays byte-identical.
     allow_mathlib: bool,
-    dafny_entry: Option<String>,
     // The ratchet. `gate`: compare the freshly recomputed manifest against
     // this committed baseline and FAIL on any regression (a baseline law that
     // is MISSING, DEMOTED in tier, whose recorded axiom set grew — any axiom
@@ -8529,14 +8474,12 @@ fn run_proof_check(
     // this path (the human-ack path for a legitimate removal — the change
     // becomes a reviewable git diff) and exit 0. The baseline is a committed,
     // code-reviewed file; CI runs `--gate` against it, never
-    // `--write-baseline`. Both are Lean-only; on Dafny they are no-ops (no
-    // per-law manifest is produced — see `run_proof_check`'s manifest block).
+    // `--write-baseline`.
     gate: Option<&str>,
     write_baseline: Option<&str>,
     // `--compare-manifest`: an earlier `proof_manifest.json`. For every claim
     // that did not close, report whether its own script changed and which
-    // definitions in its cone changed since that manifest (Lean-only,
-    // informational; never touches `passed` or the exit code).
+    // definitions in its cone changed since that manifest (informational; never touches `passed` or the exit code).
     compare_manifest: Option<&str>,
     // Source-level `fn.law` identities declared by more than one `verify ...
     // law` block (see `duplicate_law_identities`). The ratchet fails CLOSED
@@ -8560,70 +8503,13 @@ fn run_proof_check(
 ) {
     use std::process::Command;
 
-    let (cmd, args, label, backend_tag): (&str, Vec<String>, &str, &str) = match backend {
-        super::cli::ProofBackend::Lean => {
-            ("lake", vec!["build".to_string()], "Lean / lake", "lean")
-        }
-        super::cli::ProofBackend::Dafny => {
-            // Verify the ACTUAL entry module, not whatever `read_dir`
-            // happens to yield first. The entry file holds the verify-law
-            // lemmas; in a multi-module project a dependency module picked
-            // by chance does NOT include the entry, so the entry's laws
-            // would go unverified and the check would false-green.
-            // `dafny_entry` is the entry basename derived from the codegen
-            // context (the same source the build hint prints); fall back to
-            // a directory scan only if that file is somehow absent.
-            let entry = dafny_entry
-                .filter(|e| std::path::Path::new(output_dir).join(e).is_file())
-                .or_else(|| match std::fs::read_dir(output_dir) {
-                    Ok(rd) => rd
-                        .filter_map(|e| e.ok())
-                        .map(|e| e.file_name().to_string_lossy().into_owned())
-                        .find(|n| n.ends_with(".dfy") && n != "common.dfy"),
-                    Err(e) => {
-                        eprintln!(
-                            "{}",
-                            format!("--check: read_dir({}) failed: {}", output_dir, e).red()
-                        );
-                        std::process::exit(2);
-                    }
-                });
-            let Some(entry) = entry else {
-                eprintln!(
-                    "{}",
-                    format!(
-                        "--check: no .dfy entry file found in {} (besides common.dfy)",
-                        output_dir
-                    )
-                    .red()
-                );
-                std::process::exit(2);
-            };
-            (
-                "dafny",
-                // `--verify-included-files`: by default `dafny verify` trusts
-                // every `include`d file, so a dependency module's termination
-                // obligations (native `decreases` / fuel lemmas) would go
-                // unchecked — a non-decreasing measure there would be silently
-                // accepted. Verifying includes closes that trust gap; the
-                // runtime prelude (`common.dfy`) verifies clean, so this adds
-                // coverage without introducing spurious errors.
-                vec![
-                    "verify".to_string(),
-                    "--verify-included-files".to_string(),
-                    entry,
-                ],
-                "Dafny / Z3",
-                "dafny",
-            )
-        }
-    };
+    let (cmd, args, label, backend_tag) = ("lake", ["build"], "Lean / lake", "lean");
 
     if !check_json {
         println!("{}", format!("--check: running {} verifier…", label).blue());
     }
     let output = match Command::new(cmd)
-        .args(&args)
+        .args(args)
         .current_dir(output_dir)
         .output()
     {
@@ -8644,13 +8530,12 @@ fn run_proof_check(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Lean: the theorems whose proof failed to elaborate behind the isolation
+    // The theorems whose proof failed to elaborate behind the isolation
     // guard. Only a built project can be asked; a failed build keeps failing.
-    let isolated_errors: Result<Vec<String>, String> = match backend {
-        super::cli::ProofBackend::Lean if output.status.success() => {
-            lean_isolated_errors(output_dir)
-        }
-        _ => Ok(Vec::new()),
+    let isolated_errors: Result<Vec<String>, String> = if output.status.success() {
+        lean_isolated_errors(output_dir)
+    } else {
+        Ok(Vec::new())
     };
     if let Err(reason) = &isolated_errors {
         eprintln!(
@@ -8678,31 +8563,15 @@ fn run_proof_check(
         );
     }
 
-    // Per-backend metric + pass decision.
-    //
-    // Lean: the build itself must SUCCEED (lake exit 0), not merely stay
-    // within the sorry budget. `count_lean_sorries` only sees the
-    // non-fatal `declaration uses 'sorry'` warning and is blind to hard
-    // errors like `unsolved goals` (lake exit 1, zero sorry-warnings).
+    // Metric + pass decision: the build itself must SUCCEED (lake exit 0),
+    // not merely stay within the sorry budget. `count_lean_sorries` only
+    // sees the non-fatal `declaration uses 'sorry'` warning and is blind to
+    // hard errors like `unsolved goals` (lake exit 1, zero sorry-warnings).
     // Gating on exit status closes that false-green.
-    //
-    // Dafny is the SYMMETRIC case and needs the same discipline on two
-    // fronts. (1) `dafny verify` exits non-zero not only on verification
-    // errors but on out-of-resource / timeout / inconclusive (exit 4) —
-    // none of which the parsed "M errors" field reflects — so we gate on
-    // exit status too. (2) The emitter discharges laws it cannot prove
-    // with `assume {:axiom} lhs == rhs;` (its own "sorry-style fallback",
-    // toplevel.rs:1167/1826), which Dafny TRUSTS: 0 errors, exit 0. Those
-    // axioms are the Dafny analog of Lean's `sorry`; count them and charge
-    // against the sorry budget so a trusted-but-unproven law cannot pass.
-    // (Opaque `function {:axiom}` declarations are NOT counted — like
-    // Lean's `partial def` they trust a fn's definition, not a specific
-    // law, and neither backend charges that fn-level trust to the budget.)
-    let error_budget_v = error_budget.unwrap_or(0);
     let sorry_budget_v = sorry_budget.unwrap_or(0);
     // A DECLINED claim is a third failure mode, and the one no other counter
     // can see: the claim never reached the backend, so there is no error to
-    // count and no `sorry` to catch. Charge it on BOTH backends.
+    // count and no `sorry` to catch. Charge it too.
     //
     // Charging is what makes it safe to widen a refusal. Widening moves a
     // claim out of `build_errors` / `sorries` and into `declined`; if
@@ -8710,13 +8579,10 @@ fn run_proof_check(
     // regression signal vanishes exactly when it is needed. Charged, the exit
     // code cannot improve. Printing alone does not close this — CI reads the
     // exit code, not stdout.
-    //
-    // Dafny already had this discipline for its own refusal ("universal lemma
-    // omitted", counted and charged below); Lean simply had no slot for it.
     let declined_budget_v = declined_budget.unwrap_or(0);
     let declined_count = declined.len();
     let declined_within_budget = declined_count <= declined_budget_v;
-    // Lean only: model panic lines in the captured build output. The emitted
+    // Model panic lines in the captured build output. The emitted
     // exports panic only at compiler-generated sites (fuel-wrapper
     // exhaustion or partial prelude builtins
     // string), and Lean's `panic!` RETURNS the type's `default` instead of
@@ -8725,67 +8591,19 @@ fn run_proof_check(
     // (possibly false) equality with lake exit 0 and zero sorries. The panic
     // line is the only trace, so ANY hit is a hard check failure (see
     // `count_model_panic_lines`).
-    let mut model_panic_hits = 0usize;
-    let (errors, sorries, axioms, omitted, budget, passed) = match backend {
-        super::cli::ProofBackend::Dafny => {
-            let errors = match parse_dafny_error_count(&stdout) {
-                Some(n) => n,
-                None => {
-                    eprintln!(
-                        "{}",
-                        "--check: could not parse Dafny verifier output (missing \"finished with X verified, Y errors\" line)".red()
-                    );
-                    // A missing summary normally means Dafny rejected the
-                    // program before verification. Keep JSON mode's stdout
-                    // machine-clean, but never hide the resolver/parser
-                    // diagnostic that explains the fail-closed exit.
-                    eprintln!("Dafny stdout:\n{stdout}");
-                    eprintln!("Dafny stderr:\n{stderr}");
-                    std::process::exit(2);
-                }
-            };
-            // An unproven law obligation has TWO shapes on Dafny, both of
-            // which keep `errors == 0` / exit 0 and would false-green an
-            // errors-only check: (1) `assume {:axiom} lhs == rhs;` (the law is
-            // TRUSTED), and (2) the universal lemma is DROPPED entirely and
-            // only concrete samples remain ("sample-only (universal lemma
-            // omitted)" — the law's ∀-claim is never stated, so Dafny has
-            // nothing to fail on). Both mean "this law was not proven
-            // universally"; charge BOTH against the sorry budget so a degraded
-            // law cannot pass. (Trace-projection "runtime-only" laws are a
-            // deliberate non-Dafny gate, not a coverage claim, and are excluded.)
-            let axioms = count_dafny_axioms(output_dir);
-            let omitted = count_dafny_omitted_universals(output_dir);
-            let unproven = axioms + omitted;
-            let passed = output.status.success()
-                && errors <= error_budget_v
-                && unproven <= sorry_budget_v
-                && declined_within_budget;
-            (
-                Some(errors),
-                None,
-                Some(axioms),
-                Some(omitted),
-                error_budget_v,
-                passed,
-            )
-        }
-        super::cli::ProofBackend::Lean => {
-            // A theorem whose proof failed to elaborate carries a synthetic
-            // `sorry` and no warning; it is charged exactly like a caught one.
-            let sorries = count_lean_sorries(&stderr)
-                + count_lean_sorries(&stdout)
-                + isolated_errors.as_ref().map_or(0, Vec::len);
-            model_panic_hits = lean_codegen::count_model_panic_lines(&stdout)
-                + lean_codegen::count_model_panic_lines(&stderr);
-            let passed = output.status.success()
-                && isolated_errors.is_ok()
-                && sorries <= sorry_budget_v
-                && model_panic_hits == 0
-                && declined_within_budget;
-            (None, Some(sorries), None, None, sorry_budget_v, passed)
-        }
-    };
+    // A theorem whose proof failed to elaborate carries a synthetic `sorry`
+    // and no warning; it is charged exactly like a caught one.
+    let sorries = count_lean_sorries(&stderr)
+        + count_lean_sorries(&stdout)
+        + isolated_errors.as_ref().map_or(0, Vec::len);
+    let model_panic_hits = lean_codegen::count_model_panic_lines(&stdout)
+        + lean_codegen::count_model_panic_lines(&stderr);
+    let budget = sorry_budget_v;
+    let passed = output.status.success()
+        && isolated_errors.is_ok()
+        && sorries <= sorry_budget_v
+        && model_panic_hits == 0
+        && declined_within_budget;
     if !declined_within_budget {
         // Headline only: the per-claim list already went to stdout above (and
         // under `--check-json` it travels in `declined_claims`), so repeating
@@ -8801,25 +8619,15 @@ fn run_proof_check(
         );
     }
 
-    // Additive check-json telemetry, per backend — informational only, NEVER
-    // folded into `passed` or the exit code (the floor still degrades to a
-    // caught `sorry` / the budgets still gate). `build_errors` surfaces a hard
-    // Lean error that `sorries` hides; `timeouts` surfaces Dafny timeouts the
-    // `errors` count is blind to.
-    let (lean_build_errors, dafny_timeouts): (Option<usize>, Option<usize>) = match backend {
-        // An error the isolation guard dropped is still a hard error: counted
-        // here so `build_errors == 0` keeps meaning "no proof escaped its
-        // `sorry` floor".
-        super::cli::ProofBackend::Lean => (
-            Some(
-                count_lean_build_errors(&stderr)
-                    + count_lean_build_errors(&stdout)
-                    + isolated_errors.as_ref().map_or(0, Vec::len),
-            ),
-            None,
-        ),
-        super::cli::ProofBackend::Dafny => (None, Some(count_dafny_timeouts(&stdout))),
-    };
+    // Additive check-json telemetry — informational only, NEVER folded into
+    // `passed` or the exit code (the floor still degrades to a caught `sorry` /
+    // the budgets still gate). `build_errors` surfaces a hard Lean error that
+    // `sorries` hides. An error the isolation guard dropped is still a hard
+    // error: counted here so `build_errors == 0` keeps meaning "no proof
+    // escaped its `sorry` floor".
+    let lean_build_errors = count_lean_build_errors(&stderr)
+        + count_lean_build_errors(&stdout)
+        + isolated_errors.as_ref().map_or(0, Vec::len);
 
     if model_panic_hits > 0 {
         eprintln!(
@@ -8836,60 +8644,53 @@ fn run_proof_check(
         );
     }
 
-    // Honest-coverage signal (Lean only): did the proof establish the law's
+    // Honest-coverage signal: did the proof establish the law's
     // UNIVERSAL `∀`-claim by genuine kernel reasoning, or only by bounded
     // `native_decide` enumeration over the finite sample domain? `passed`
     // stays deliberately lenient — a bounded verify-on-domain is a
     // legitimate (if weaker) check the corpus must not regress on (e.g.
     // `examples/refinement/email`) — so the proof-corpus runner keys on this
     // `universal` field instead for an honest "what Aver kernel-proves"
-    // count. (Dafny already folds the analogous "universal lemma omitted"
-    // degradation into its own `passed`, so it needs no separate field.)
-    let lean_law_audit: Option<LeanLawAudit> = match backend {
-        super::cli::ProofBackend::Lean => {
-            // Same short-circuit the bool always had: a failed counted
-            // build (or a model panic) earns no audit run at all — the
-            // probe would otherwise `#print axioms` against a stale or
-            // partial environment.
-            if output.status.success() && model_panic_hits == 0 {
-                Some(lean_universal_audit(
-                    output_dir,
-                    sorries.unwrap_or(0),
-                    isolated_errors.as_deref().unwrap_or(&[]),
-                ))
-            } else {
-                Some(LeanLawAudit::FAIL_CLOSED)
-            }
-        }
-        super::cli::ProofBackend::Dafny => None,
+    // count.
+    //
+    // Same short-circuit the bool always had: a failed counted build (or a
+    // model panic) earns no audit run at all — the probe would otherwise
+    // `#print axioms` against a stale or partial environment.
+    let lean_law_audit: LeanLawAudit = if output.status.success() && model_panic_hits == 0 {
+        lean_universal_audit(
+            output_dir,
+            sorries,
+            isolated_errors.as_deref().unwrap_or(&[]),
+        )
+    } else {
+        LeanLawAudit::FAIL_CLOSED
     };
-    let universal: Option<bool> = lean_law_audit.as_ref().map(|a| a.universal);
+    let universal = lean_law_audit.universal;
 
-    // Which law(s) actually FAILED in the gate build (Lean only): map each
+    // Which law(s) actually FAILED in the gate build: map each
     // `declaration uses 'sorry'` warning back to the `fn.law` identity of the
     // theorem that carries it, via the emitted `-- aver:law-class` markers. This
     // is the machine-readable answer to "which law failed?" — previously the user
     // had to `lake build` the generated project by hand and grep the sorry
-    // warning's line number against the emitted theorems. Empty for a clean build
-    // or on Dafny. Also anchors `--explain`'s residual attribution below.
-    let sorry_laws: Vec<String> = match backend {
-        super::cli::ProofBackend::Lean if sorries.unwrap_or(0) > 0 => {
-            let mut laws = lean_sorry_laws(output_dir, &format!("{stdout}{stderr}"));
-            laws.extend(isolated_error_labels.iter().cloned());
-            laws.sort();
-            laws.dedup();
-            laws
-        }
-        _ => Vec::new(),
+    // warning's line number against the emitted theorems. Empty for a clean
+    // build. Also anchors `--explain`'s residual attribution below.
+    let sorry_laws: Vec<String> = if sorries > 0 {
+        let mut laws = lean_sorry_laws(output_dir, &format!("{stdout}{stderr}"));
+        laws.extend(isolated_error_labels.iter().cloned());
+        laws.sort();
+        laws.dedup();
+        laws
+    } else {
+        Vec::new()
     };
 
-    // Proof manifest (Lean only): the file-level audit's per-law records as one
+    // Proof manifest: the file-level audit's per-law records as one
     // byte-reproducible per-law table, written to `<out>/proof_manifest.json`.
     // This is the artifact `--gate` diffs against a committed baseline; it
     // reuses the SAME class markers + `#print axioms` verdicts already computed
     // above (no extra lake invocation).
     //
-    // `--explain` (Lean only, opt-in, fail-soft): BEFORE writing the manifest,
+    // `--explain` (opt-in, fail-soft): BEFORE writing the manifest,
     // run an isolated residual probe over the laws that did NOT close
     // universally (tier Failed / Bounded) and merge each law's `unsolved goals`
     // text onto its `open_goal` by `fn.law` identity. Strictly additive: a law
@@ -8897,23 +8698,16 @@ fn run_proof_check(
     // absent the probe never runs, so the written bytes are unchanged. The probe
     // is gated on the COUNTED build having succeeded (no audit otherwise), and
     // its own outcome can never touch `passed` / `universal` / the exit code.
-    let mut manifest: Option<ProofManifest> = lean_law_audit.as_ref().map(|audit| {
-        let mut manifest = build_proof_manifest(&audit.laws, declined);
-        manifest.obligations = audit.obligations.clone();
-        manifest
-    });
-    // Declaration and script hashes of the emitted project (Lean only). Read
-    // off the files lake built, so they cover the export as checked, whatever
-    // the audit recorded — a build that failed hard still gets its hashes.
-    let fingerprints = manifest
-        .is_some()
-        .then(|| proof_fingerprints::Fingerprints::scan(output_dir));
-    if let (Some(m), Some(fp)) = (manifest.as_mut(), fingerprints.as_ref()) {
-        m.fingerprints = proof_fingerprints::Recorded {
-            definitions: fp.definitions.clone(),
-            scripts: fp.scripts.clone(),
-        };
-    }
+    let mut manifest: ProofManifest = build_proof_manifest(&lean_law_audit.laws, declined);
+    manifest.obligations = lean_law_audit.obligations.clone();
+    // Declaration and script hashes of the emitted project. Read off the files
+    // lake built, so they cover the export as checked, whatever the audit
+    // recorded — a build that failed hard still gets its hashes.
+    let fingerprints = proof_fingerprints::Fingerprints::scan(output_dir);
+    manifest.fingerprints = proof_fingerprints::Recorded {
+        definitions: fingerprints.definitions.clone(),
+        scripts: fingerprints.scripts.clone(),
+    };
     let mut open_goals: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     // `--explain` residuals borrowed from HEALTHY (proven) laws — see the
@@ -8922,12 +8716,8 @@ fn run_proof_check(
     let mut probe_of: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     let mut candidate_goals = None;
-    if explain
-        && matches!(backend, super::cli::ProofBackend::Lean)
-        && output.status.success()
-        && model_panic_hits == 0
-        && let Some(m) = manifest.as_mut()
-    {
+    if explain && output.status.success() && model_panic_hits == 0 {
+        let m = &mut manifest;
         // The OPEN laws to probe = every emitted MAIN law theorem (with its
         // `fn.law` identity from the class marker) MINUS the ones the manifest
         // already records as tier Universal (a genuinely-closed law has no
@@ -8996,7 +8786,7 @@ fn run_proof_check(
             candidate_goals = Some((open, goal_json));
         }
     }
-    // `--allow-mathlib` per-law credit (Lean only): tag each law `core` /
+    // `--allow-mathlib` per-law credit: tag each law `core` /
     // `mathlib` / `open`, ORTHOGONAL to its axiom-clean `tier`. The break-glass
     // arm emits a `trace "AVER_MATHLIB:fn.law"` as its first step, so a law whose
     // marker surfaces in the build log was emitted with the Mathlib arm (the
@@ -9005,10 +8795,7 @@ fn run_proof_check(
     // a Universal law without a marker closed in core (`core`); anything not
     // Universal is `open`. Set ONLY under the flag, so the default manifest is
     // byte-identical.
-    if allow_mathlib
-        && matches!(backend, super::cli::ProofBackend::Lean)
-        && let Some(m) = manifest.as_mut()
-    {
+    if allow_mathlib {
         let combined_build = format!("{stdout}{stderr}");
         let break_glass: std::collections::HashSet<&str> = combined_build
             .lines()
@@ -9016,7 +8803,7 @@ fn run_proof_check(
             .map(|rest| rest.split_whitespace().next().unwrap_or("").trim())
             .filter(|s| !s.is_empty())
             .collect();
-        for l in m.laws.iter_mut() {
+        for l in manifest.laws.iter_mut() {
             let credit = if !matches!(l.tier, LawTier::Universal) {
                 "open"
             } else if break_glass.contains(l.law.as_str()) {
@@ -9027,7 +8814,7 @@ fn run_proof_check(
             l.credit = Some(credit.to_string());
         }
     }
-    // Law PROVENANCE (Lean only): a self-declared `// aver:provenance <value>
+    // Law PROVENANCE: a self-declared `// aver:provenance <value>
     // [k=v …]` comment directly above a `verify … law` block travels into the
     // manifest as maintenance metadata. Recorded ONLY for a law that PROVES
     // (any real tier — not Failed/Missing) AND only when the marker is present,
@@ -9035,9 +8822,9 @@ fn run_proof_check(
     // and a manifest with no marked law is byte-identical to before. The marker
     // is UNVERIFIED (see `PROVENANCE_MARKER_PREFIX`): a hand-written law may
     // claim `calculated`; it is recorded as claimed — the harmless direction.
-    if let Some(m) = manifest.as_mut() {
+    {
         let src = std::fs::read_to_string(source_file).unwrap_or_default();
-        for l in m.laws.iter_mut() {
+        for l in manifest.laws.iter_mut() {
             if matches!(l.tier, LawTier::Failed | LawTier::Missing) {
                 continue; // did not prove — not an established law yet
             }
@@ -9052,13 +8839,14 @@ fn run_proof_check(
         }
     }
     // Write the manifest AFTER residuals are merged so the sidecar carries them.
-    if explain && let Some(m) = &mut manifest {
-        law_reason_report::attach_residuals(&mut m.obligations, &format!("{stdout}{stderr}"));
+    if explain {
+        law_reason_report::attach_residuals(
+            &mut manifest.obligations,
+            &format!("{stdout}{stderr}"),
+        );
     }
-    if let Some(m) = &manifest {
-        write_proof_manifest(output_dir, m);
-    }
-    // `--compare-manifest` (Lean only): for every claim that did not close —
+    write_proof_manifest(output_dir, &manifest);
+    // `--compare-manifest`: for every claim that did not close —
     // a record at tier `failed` or `missing`, a theorem carrying the
     // gate-build sorry, or a claim the build located a hard error in — say
     // whether its own script changed and which definitions in its cone
@@ -9067,8 +8855,9 @@ fn run_proof_check(
     // before the hashes existed, is a harness error (exit 2) rather than a
     // report that says nothing changed.
     let changed: Option<std::collections::BTreeMap<String, proof_fingerprints::Change>> =
-        match (compare_manifest, fingerprints.as_ref(), manifest.as_ref()) {
-            (Some(path), Some(fp), Some(m)) => {
+        match compare_manifest {
+            Some(path) => {
+                let (fp, m) = (&fingerprints, &manifest);
                 let previous = std::fs::read_to_string(path)
                 .map_err(|e| format!("cannot read {path}: {e}"))
                 .and_then(|raw| {
@@ -9113,57 +8902,28 @@ fn run_proof_check(
                         .collect(),
                 )
             }
-            (Some(_), _, _) => {
-                eprintln!(
-                    "{}",
-                    "--compare-manifest: only the Lean backend writes a manifest".red()
-                );
-                std::process::exit(2);
-            }
-            (None, _, _) => None,
+            None => None,
         };
 
-    let dafny_diagnostics = proof_sources
-        .filter(|_| matches!(backend, super::cli::ProofBackend::Dafny))
-        .map(|sources| {
-            proof_explain::collect_dafny(
-                sources,
-                output_dir,
-                args.last().map(String::as_str).unwrap_or(""),
-                &format!("{stdout}{stderr}"),
-                output.status.success()
-                    && errors == Some(0)
-                    && dafny_timeouts == Some(0)
-                    && axioms == Some(0)
-                    && omitted == Some(0)
-                    && declined_count == 0,
-                !output.status.success() || errors != Some(0) || dafny_timeouts != Some(0),
-            )
-        });
     let mut proof_reports = proof_sources
-        .filter(|_| matches!(backend, super::cli::ProofBackend::Lean))
         .map(|sources| {
             proof_explain::collect(
                 sources,
-                manifest.as_ref(),
+                Some(&manifest),
                 &sorry_laws,
                 output_dir,
                 &format!("{stdout}{stderr}"),
             )
         })
         .unwrap_or_default();
-    if let Some((reports, _)) = &dafny_diagnostics {
-        proof_reports = reports.clone();
-    }
     if output.status.success()
         && model_panic_hits == 0
-        && matches!(backend, super::cli::ProofBackend::Lean)
         && let Some(sources) = proof_sources
     {
         proof_explain::attach_citation_attempts(
             output_dir,
             sources,
-            manifest.as_ref(),
+            Some(&manifest),
             &mut proof_reports,
         );
     }
@@ -9176,31 +8936,18 @@ fn run_proof_check(
     if check_json {
         let mut obj = serde_json::Map::new();
         obj.insert("backend".into(), backend_tag.into());
-        if let Some((_, claims)) = &dafny_diagnostics {
-            obj.insert("claims".into(), serde_json::to_value(claims).unwrap());
-        }
         if !proof_reports.is_empty() {
             obj.insert(
                 "explanations".into(),
                 serde_json::to_value(&proof_reports).unwrap(),
             );
         }
-        if let Some(e) = errors {
-            obj.insert("errors".into(), e.into());
-        }
-        if let Some(t) = dafny_timeouts {
-            obj.insert("timeouts".into(), t.into());
-        }
-        if let Some(s) = sorries {
-            obj.insert("sorries".into(), s.into());
-        }
-        if let Some(be) = lean_build_errors {
-            obj.insert("build_errors".into(), be.into());
-        }
-        // Proofs that failed to elaborate behind the isolation guard (Lean):
-        // already in `build_errors`, `sorries` and `sorry_laws`; listed here
-        // so a reader can tell them from a caught `sorry`. Emitted only when
-        // there are any.
+        obj.insert("sorries".into(), sorries.into());
+        obj.insert("build_errors".into(), lean_build_errors.into());
+        // Proofs that failed to elaborate behind the isolation guard: already
+        // in `build_errors`, `sorries` and `sorry_laws`; listed here so a
+        // reader can tell them from a caught `sorry`. Emitted only when there
+        // are any.
         if !isolated_error_labels.is_empty() {
             obj.insert(
                 "isolated_errors".into(),
@@ -9214,13 +8961,6 @@ fn run_proof_check(
         }
         if isolated_errors.is_err() {
             obj.insert("isolation_check".into(), "failed".into());
-        }
-        if let Some(a) = axioms {
-            obj.insert("axioms".into(), a.into());
-            obj.insert("axiom_budget".into(), sorry_budget_v.into());
-        }
-        if let Some(o) = omitted {
-            obj.insert("omitted".into(), o.into());
         }
         // Claims the exporter refused to state. Emitted only when there ARE
         // any, so a clean run's bytes are unchanged and every existing
@@ -9246,44 +8986,34 @@ fn run_proof_check(
                 ),
             );
         }
-        if let Some(u) = universal {
-            obj.insert("universal".into(), u.into());
+        obj.insert("universal".into(), universal.into());
+        // ADDITIVE law-count fields, sourced from the same class markers and
+        // `#print axioms` audit the `universal` bool keys on (computed in the
+        // counted build).
+        obj.insert(
+            "universal_laws".into(),
+            lean_law_audit.universal_laws.into(),
+        );
+        obj.insert("bounded_laws".into(), lean_law_audit.bounded_laws.into());
+        if !lean_law_audit.obligations.is_empty() {
+            let obligations: serde_json::Map<String, serde_json::Value> = lean_law_audit
+                .obligations
+                .iter()
+                .map(|o| (o.law.clone(), o.tier.as_str().into()))
+                .collect();
+            obj.insert("obligations".into(), serde_json::Value::Object(obligations));
         }
-        if let Some(audit) = &lean_law_audit {
-            // ADDITIVE law-count fields, sourced from the same class
-            // markers and `#print axioms` audit the `universal` bool
-            // keys on (computed in the counted build).
-            obj.insert("universal_laws".into(), audit.universal_laws.into());
-            obj.insert("bounded_laws".into(), audit.bounded_laws.into());
-            if !audit.obligations.is_empty() {
-                let obligations: serde_json::Map<String, serde_json::Value> = audit
-                    .obligations
-                    .iter()
-                    .map(|o| (o.law.clone(), o.tier.as_str().into()))
-                    .collect();
-                obj.insert("obligations".into(), serde_json::Value::Object(obligations));
-            }
-        }
-        if matches!(backend, super::cli::ProofBackend::Lean) {
-            // Renamed from the short-lived `fuel_exhausted` (0.25.0-unreleased
-            // only; no consumer outside this repo's tests reads it —
-            // proof-corpus/run.sh and the proof_spec gating tests key on
-            // passed/universal/sorries) now that the gate scans for ANY model
-            // panic line, not just the fuel-exhaustion marker. `true` means
-            // the check FAILED with the compiler-model bug above regardless
-            // of budgets.
-            obj.insert("model_panicked".into(), (model_panic_hits > 0).into());
-        }
-        if manifest.is_some() {
-            // ADDITIVE path pointer: the per-law table lives in its own file
-            // (the gate's diff target), NOT inline in this summary line, so
-            // existing substring consumers of check-json are untouched.
-            obj.insert("manifest".into(), PROOF_MANIFEST_FILE.into());
-        }
-        // Which law(s) failed (Lean): the `fn.law` identities whose theorem
-        // carries the gate-build `sorry`. Answers "which law?" without a manual
-        // `lake build` + grep. Emitted only when non-empty (a clean build / Dafny
-        // adds no key), so the check-json bytes are unchanged on a pass.
+        // `true` means the check FAILED with the compiler-model bug above
+        // regardless of budgets.
+        obj.insert("model_panicked".into(), (model_panic_hits > 0).into());
+        // ADDITIVE path pointer: the per-law table lives in its own file
+        // (the gate's diff target), NOT inline in this summary line, so
+        // existing substring consumers of check-json are untouched.
+        obj.insert("manifest".into(), PROOF_MANIFEST_FILE.into());
+        // Which law(s) failed: the `fn.law` identities whose theorem carries
+        // the gate-build `sorry`. Answers "which law?" without a manual
+        // `lake build` + grep. Emitted only when non-empty (a clean build adds
+        // no key), so the check-json bytes are unchanged on a pass.
         if !sorry_laws.is_empty() {
             obj.insert(
                 "sorry_laws".into(),
@@ -9354,14 +9084,6 @@ fn run_proof_check(
         // diagnostics; we already parsed counts above.
         if explain {
             proof_explain::render(&proof_reports);
-            if let Some((_, claims)) = &dafny_diagnostics {
-                for (name, claim) in claims {
-                    println!(
-                        "  {name}: {}",
-                        claim["status"].as_str().unwrap_or("unresolved")
-                    );
-                }
-            }
             if let Some((open, goal_json)) = &candidate_goals {
                 let suggestions = proof_explain::render_candidates(
                     open,
@@ -9377,7 +9099,8 @@ fn run_proof_check(
             print!("{}", stdout);
             eprint!("{}", stderr);
         }
-        if let Some(audit) = &lean_law_audit {
+        {
+            let audit = &lean_law_audit;
             if explain {
                 let universal = audit
                     .obligations
@@ -9420,25 +9143,12 @@ fn run_proof_check(
                 );
             }
         }
-        let (metric, budget_desc) = match backend {
-            super::cli::ProofBackend::Dafny => (
-                format!(
-                    "{} errors, {} axioms, {} omitted",
-                    errors.unwrap_or(0),
-                    axioms.unwrap_or(0),
-                    omitted.unwrap_or(0)
-                ),
-                format!("errors ≤ {error_budget_v}, axioms+omitted ≤ {sorry_budget_v}"),
-            ),
-            super::cli::ProofBackend::Lean => (
-                format!(
-                    "{} sorries, universal: {}",
-                    sorries.unwrap_or(0),
-                    if universal == Some(true) { "yes" } else { "no" }
-                ),
-                format!("sorries ≤ {sorry_budget_v}"),
-            ),
-        };
+        let metric = format!(
+            "{} sorries, universal: {}",
+            sorries,
+            if universal { "yes" } else { "no" }
+        );
+        let budget_desc = format!("sorries ≤ {sorry_budget_v}");
         // A declined claim is invisible in `metric` — it produced no sorry and
         // no error — so name it explicitly, or the last line a user reads on a
         // failed run is "0 sorries" sitting next to a non-zero exit code.
@@ -9453,7 +9163,7 @@ fn run_proof_check(
             budget_desc
         };
         if passed {
-            let suffix = if error_budget_v > 0 || sorry_budget_v > 0 || declined_budget_v > 0 {
+            let suffix = if sorry_budget_v > 0 || declined_budget_v > 0 {
                 format!(" (within budget: {budget_desc})")
             } else {
                 String::new()
@@ -9467,9 +9177,8 @@ fn run_proof_check(
         }
     }
 
-    // The ratchet: `--write-baseline` and `--gate`. Both need the per-law
-    // manifest, which only the Lean lane produces (Dafny has no per-law
-    // identity — scout Risk 3). Fold the gate verdict into ONE final exit so
+    // The ratchet: `--write-baseline` and `--gate`. Both diff the per-law
+    // manifest. Fold the gate verdict into ONE final exit so
     // `--check` and `--gate` compose without a double-exit.
     if write_baseline.is_some() || gate.is_some() {
         // Fail CLOSED on duplicate source law identity. Two distinct `verify
@@ -9491,15 +9200,7 @@ fn run_proof_check(
             );
             std::process::exit(2);
         }
-        let Some(manifest) = &manifest else {
-            eprintln!(
-                "{}",
-                "--gate: no per-law manifest available (gate is Lean-only; Dafny emits no \
-                 per-law identity). Use --backend lean."
-                    .red()
-            );
-            std::process::exit(2);
-        };
+        let manifest = &manifest;
         // Ack path first: regenerate the baseline and exit 0. A
         // legitimate removal/weakening becomes a reviewable git diff.
         if let Some(path) = write_baseline {
@@ -10000,9 +9701,8 @@ fn gate_manifest(baseline: &ProofManifest, current: &ProofManifest) -> GateRepor
                 }
                 // Backend must match: a law certified under one backend that
                 // now only records another backend is a regression (the
-                // certificate the baseline trusts is gone). Future-proofs the
-                // manifest for a second backend (Dafny) without re-opening the
-                // hole that a stored-but-unchecked `backend` field leaves.
+                // certificate the baseline trusts is gone). Closes the hole a
+                // stored-but-unchecked `backend` field would leave.
                 if cur.backend != bl.backend {
                     regressions += 1;
                     lines.push(format!(
@@ -10059,79 +9759,6 @@ fn gate_manifest(baseline: &ProofManifest, current: &ProofManifest) -> GateRepor
     GateReport { regressions, lines }
 }
 
-/// Parse `Dafny program verifier finished with N verified, M errors`
-/// out of the verifier's stdout. Returns `Some(M)` on a match,
-/// `None` when the line isn't present.
-fn parse_dafny_error_count(stdout: &str) -> Option<usize> {
-    for line in stdout.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("Dafny program verifier finished with ") {
-            // Shape: "<N> verified, <M> errors"
-            if let Some((_, after_comma)) = rest.split_once(", ")
-                && let Some(m) = after_comma.split_whitespace().next()
-                && let Ok(n) = m.parse::<usize>()
-            {
-                return Some(n);
-            }
-        }
-    }
-    None
-}
-
-/// Count `assume {:axiom}` obligation trust-escapes across all emitted
-/// `.dfy` files in `dir`. These are the Dafny analog of Lean's `sorry`:
-/// when the emitter cannot prove a law (open-domain opaque recursion,
-/// past the fuel cliff) it discharges the obligation with
-/// `assume {:axiom} lhs == rhs;`, which Dafny TRUSTS — the proof verifies
-/// with 0 errors and exit 0. Counting them (and charging against the
-/// sorry budget) keeps `--check` honest and symmetric with
-/// `count_lean_sorries`. Scans every `.dfy` so axioms in dependency
-/// modules count too. (Opaque `function {:axiom}` declarations are not
-/// counted; see the note at the pass-decision site.)
-fn count_dafny_axioms(dir: &str) -> usize {
-    count_marker_in_generated_files(std::path::Path::new(dir), "dfy", "assume {:axiom}")
-}
-
-/// Count laws whose universal `∀` lemma was DROPPED to sample-only across
-/// the emitted `.dfy` files in `dir`. When the emitter cannot express a
-/// law's universal claim (e.g. it calls a recursive fn still outside the
-/// proof subset) it emits concrete sample assertions plus a
-/// `…, sample-only (universal lemma omitted)` comment and NO `∀`-lemma.
-/// Dafny then verifies with 0 errors / exit 0 because the universal claim
-/// was never stated — a false-green the errors-only and axiom-only checks
-/// both miss. These are unproven law obligations exactly like
-/// `assume {:axiom}`, so `--check` charges them against the sorry budget
-/// too. (The deliberate trace-projection `runtime-only` gate is NOT a
-/// coverage claim and carries a different marker, so it is not counted.)
-fn count_dafny_omitted_universals(dir: &str) -> usize {
-    count_marker_in_generated_files(
-        std::path::Path::new(dir),
-        "dfy",
-        "(universal lemma omitted)",
-    )
-}
-
-/// Count a marker in generated files recursively. Dotted Aver module names are
-/// emitted under matching directories (`Infra.Store` -> `Infra/Store.dfy`), so
-/// a top-level `read_dir` would miss exactly the dependency obligations these
-/// gates are meant to charge.
-fn count_marker_in_generated_files(dir: &std::path::Path, extension: &str, marker: &str) -> usize {
-    let mut total = 0;
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for entry in rd.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                total += count_marker_in_generated_files(&path, extension, marker);
-            } else if path.extension().and_then(|e| e.to_str()) == Some(extension)
-                && let Ok(contents) = std::fs::read_to_string(path)
-            {
-                total += contents.matches(marker).count();
-            }
-        }
-    }
-    total
-}
-
 /// Count Lean's `declaration uses 'sorry'` warnings in build output.
 /// Lake emits one such warning per `sorry` in the residual program;
 /// counting them matches the budget the proof_spec gating tests use.
@@ -10167,22 +9794,6 @@ fn count_lean_build_errors(s: &str) -> usize {
             let l = l.trim_start();
             l.starts_with("error:") && l.contains(".lean:")
         })
-        .count()
-}
-
-/// Count Dafny per-lemma verification timeouts in captured verifier output.
-/// The `errors` count from `parse_dafny_error_count` mirrors only Dafny's
-/// "N errors" total and is BLIND to timeouts (measured on k5_fdiv round.av:
-/// 2 errors reported while 12 additional laws timed out), so a consumer
-/// reading `errors` alone under-counts failing laws. Each timed-out lemma
-/// prints one `Verification of '…' timed out after N seconds` line; the
-/// summary "N time outs" line uses "time outs" (with a space) and is not
-/// matched, so it is not double-counted. Purely telemetry: never gates
-/// `passed` or the exit code.
-fn count_dafny_timeouts(stdout: &str) -> usize {
-    stdout
-        .lines()
-        .filter(|l| l.contains("timed out after"))
         .count()
 }
 
@@ -10356,8 +9967,8 @@ impl LeanLawAudit {
 ///     conservative: it can only withhold credit, never grant it.
 ///
 /// A task whose universal theorem was dropped entirely (`skip_universal`:
-/// const-RHS singleton or a fuel-bounded recursive callee — the Lean analog
-/// of Dafny's "universal lemma omitted") emits no `*_law_*` theorem, so the
+/// const-RHS singleton or a fuel-bounded recursive callee)
+/// emits no `*_law_*` theorem, so the
 /// empty set correctly reports `false`.
 ///
 /// Conservative on any failure (missing `lake`, import error, non-zero
@@ -12470,68 +12081,6 @@ fn setup_mathlib_for_project(output_dir: &str) {
     );
 }
 
-fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) {
-    use aver::codegen::dafny as dafny_codegen;
-
-    // Example-based `verify f` (concrete `f(x) => y` cases) are an
-    // EVALUATION check: Lean verifies them with `native_decide` (which
-    // runs the function) and `aver verify` samples them at runtime. The
-    // Dafny backend is a PROVER, not an evaluator — it cannot reduce a
-    // concrete recursive / List / String case (attempting it floods
-    // spurious errors and can hang the verifier), so it does not check
-    // case-form verify and only proves law-form `verify`. Warn so the
-    // silence isn't mistaken for a Dafny-verified pass (law blocks ARE
-    // proven; the Lean backend and `aver verify` cover the examples).
-    let entry_case_blocks = ctx
-        .items
-        .iter()
-        .filter(|i| matches!(i, TopLevel::Verify(vb) if matches!(vb.kind, VerifyKind::Cases)))
-        .count();
-    let dependency_case_blocks: usize = ctx
-        .modules
-        .iter()
-        .map(|module| {
-            module
-                .verify_blocks
-                .iter()
-                .filter(|vb| matches!(vb.kind, VerifyKind::Cases))
-                .count()
-        })
-        .sum();
-    let unchecked_case_blocks = entry_case_blocks + dependency_case_blocks;
-    let unchecked_modules = usize::from(entry_case_blocks > 0)
-        + ctx
-            .modules
-            .iter()
-            .filter(|module| {
-                module
-                    .verify_blocks
-                    .iter()
-                    .any(|vb| matches!(vb.kind, VerifyKind::Cases))
-            })
-            .count();
-    if unchecked_case_blocks > 0 {
-        eprintln!(
-            "{}",
-            format!(
-                "warning: {unchecked_case_blocks} example-based `verify` block(s) across \
-                 {unchecked_modules} module(s) are NOT checked by the Dafny backend \
-                 (Dafny proves laws, not concrete examples) — they are verified by \
-                 `aver proof --backend lean` and `aver verify {file}`"
-            )
-            .yellow()
-        );
-    }
-
-    let output = dafny_codegen::transpile(ctx);
-    let build_hint = format!(
-        "cd {} && dafny verify {}.dfy",
-        output_dir,
-        aver::codegen::common::entry_basename(ctx)
-    );
-    write_codegen_output(file, output_dir, "Dafny", &build_hint, &output);
-}
-
 /// CLI shim around the library-level wasm-gc multi-module flattener.
 /// Returns the identity-preserving qualified type-name aliases the
 /// flattener derived; thread them into the flattened compile entry.
@@ -12554,7 +12103,7 @@ pub(super) fn flatten_multimodule(
 ///
 /// One field per pipeline gate rather than a bundled "optimise" flag, so
 /// this matches the gates 1-to-1 with no magic translation in between:
-/// Proof exporters (Lean/Dafny) ask for [`Self::PRISTINE`]. The wasm-gc
+/// The Lean proof exporter asks for [`Self::PRISTINE`]. The wasm-gc
 /// family asks for [`Self::STRING_TRAVERSAL`] because it lowers the String
 /// builder, UTF-8 character cursor, packed String index, and closed byte sink,
 /// but not generic list collectors. VM and Rust turn every supported pass on
@@ -13172,7 +12721,7 @@ mod tests {
         // tier + axioms.
         let base = manifest(vec![law("f.law", super::LawTier::Universal, &["propext"])]);
         let mut cur_law = law("f.law", super::LawTier::Universal, &["propext"]);
-        cur_law.backend = "dafny".to_string();
+        cur_law.backend = "other".to_string();
         let cur = manifest(vec![cur_law]);
         let report = super::gate_manifest(&base, &cur);
         assert_eq!(
@@ -13183,7 +12732,7 @@ mod tests {
             report
                 .lines
                 .iter()
-                .any(|l| l.contains("f.law") && l.contains("backend lean -> dafny")),
+                .any(|l| l.contains("f.law") && l.contains("backend lean -> other")),
             "must name the law and the backend change: {:?}",
             report.lines
         );
@@ -13621,33 +13170,6 @@ mod tests {
     }
 
     #[test]
-    fn dafny_trust_escape_counts_recurse_into_module_directories() {
-        let root =
-            std::env::temp_dir().join(format!("aver-dafny-recursive-count-{}", std::process::id()));
-        let nested = root.join("Infra");
-        std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(
-            root.join("Main.dfy"),
-            "assume {:axiom} true;\n// sample-only (universal lemma omitted)\n",
-        )
-        .unwrap();
-        std::fs::write(
-            nested.join("Store.dfy"),
-            "assume {:axiom} true;\nassume {:axiom} true;\n\
-             // sample-only (universal lemma omitted)\n",
-        )
-        .unwrap();
-        std::fs::write(nested.join("Ignored.txt"), "assume {:axiom}").unwrap();
-
-        assert_eq!(super::count_dafny_axioms(root.to_str().unwrap()), 3);
-        assert_eq!(
-            super::count_dafny_omitted_universals(root.to_str().unwrap()),
-            2
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn count_lean_build_errors_counts_hard_errors_not_cascade_or_sorries() {
         // Verbatim captured pre-fix output of probe_a.av (the DEFECT-1 file):
         // one source-located hard error escaped the sorry floor while the
@@ -13673,45 +13195,6 @@ error: build failed";
         // A clean build has zero.
         assert_eq!(
             super::count_lean_build_errors("Build completed successfully"),
-            0
-        );
-    }
-
-    #[test]
-    fn count_dafny_timeouts_counts_timed_out_lemmas_not_summary() {
-        // Verbatim captured lines from the k5_fdiv round.av Dafny run
-        // (prompts/probe-artifacts/dafny-parity/.../run2.log): 12 lemmas timed
-        // out while `errors` reported only 2. Each timeout is one
-        // `timed out after` line; the "N time outs" summary (space) and the two
-        // postcondition errors must NOT be counted as timeouts.
-        let run2 = "\
-Round.dfy(244,26): Error: Verification of 'floorDiv_dividesPow2Multiple' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(278,26): Error: Verification of 'floorDiv_nestedFloorCollapse' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(340,26): Error: Verification of 'floorDiv_absorbRemainder' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(470,74): Error: Verification of 'truncErrorMagnitudeNonneg_nonneg' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(492,0): Error: a postcondition could not be proved on this return path
-Round.dfy(491,33): Related location: this is the postcondition that could not be proved
-Round.dfy(520,81): Error: Verification of 'truncErrorReconstructs_reconstructsValue' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(554,0): Error: a postcondition could not be proved on this return path
-Round.dfy(553,32): Related location: this is the postcondition that could not be proved
-Round.dfy(582,58): Error: Verification of 'truncErrorSameSign_signCondition' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(737,50): Error: Verification of 'truncComposes_composesToInner' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(768,72): Error: Verification of 'awayTruncComposes_composesToInner' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(799,76): Error: Verification of 'truncStickyComposes_composesThroughSticky' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(830,78): Error: Verification of 'awayErrorReconstructs_reconstructsValue' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(861,53): Error: Verification of 'awayErrorBound_strictBound' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-Round.dfy(923,57): Error: Verification of 'stickyErrorBound_strictBound' timed out after 30 seconds. (the limit can be increased using --verification-time-limit)
-
-Dafny program verifier finished with 158 verified, 2 errors, 12 time outs";
-        assert_eq!(super::count_dafny_timeouts(run2), 12);
-        // The `errors` parser still reports 2 on the same capture — the two are
-        // orthogonal counts.
-        assert_eq!(super::parse_dafny_error_count(run2), Some(2));
-        // A clean run has zero timeouts.
-        assert_eq!(
-            super::count_dafny_timeouts(
-                "Dafny program verifier finished with 8 verified, 0 errors"
-            ),
             0
         );
     }

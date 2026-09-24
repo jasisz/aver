@@ -8,15 +8,14 @@ docker build -t aver-one-command . && docker run --rm aver-one-command
 
 It builds a local image and then runs the image's default smoke test. The Dockerfile also runs that smoke test during the build, so if either step regresses the build fails before it produces a usable image.
 
-The first build downloads roughly 1-2 GB of Docker layers, Rust crates, Lean and Dafny, and can take tens of minutes. Later builds download much less once the Docker and Cargo caches are warm.
+The first build downloads roughly 1-2 GB of Docker layers, Rust crates and Lean, and can take tens of minutes. Later builds download much less once the Docker and Cargo caches are warm.
 
-Apple Silicon warning: the image is currently `linux/amd64` only. Dafny `4.11.0` publishes the Ubuntu x64 asset used here but no Linux ARM64 asset. Docker Desktop runs the image under qemu, so the first build and the smoke test are both much slower than on native `linux/amd64`.
+Apple Silicon warning: the image is currently `linux/amd64` only. Docker Desktop runs the image under qemu, so the first build and the smoke test are both much slower than on native `linux/amd64`.
 
 The image pins:
 
 - Rust `1.95.0`
 - Lean toolchain `leanprover/lean4:v4.34.0`
-- Dafny `4.11.0` (`dafny-4.11.0-x64-ubuntu-22.04.zip`)
 
 The Rust build is a debug build, which keeps the local quickstart's time in check. Release LTO is deliberately left out of this Docker path.
 
@@ -53,4 +52,4 @@ Only this command may print `CERTIFIED`. It is slower on purpose, because it add
 
 ## CI
 
-No Docker CI job runs this quickstart. The image downloads and installs three toolchains, including Lean and Dafny. It stays a manual verification path until a CI environment can show that it adds less than 10 minutes and carries no flake risk.
+No Docker CI job runs this quickstart. The image downloads and installs the Rust and Lean toolchains. It stays a manual verification path until a CI environment can show that it adds less than 10 minutes and carries no flake risk.

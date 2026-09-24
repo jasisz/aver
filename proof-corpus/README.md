@@ -35,8 +35,8 @@ per-PR; coverage = a number from `run.sh`, informational.
 ## Metric
 
 A task is **covered** when `aver proof <f> --check --check-json` reports
-`"passed": true` — the Lean export of the universal law kernel-checks with no
-sorry/axiom over budget, via any auto-mode strategy (structural induction,
+`"universal": true` — the Lean export of the universal law kernel-checks with
+only the whitelisted axioms, via any auto-mode strategy (structural induction,
 accumulator-fold spec-equivalence, …). Lake-gated; run `cargo build --bin aver`
 first, then `./run.sh`.
 
@@ -61,30 +61,16 @@ bound. (One un-retried sweep undercounted 8 → 2.)
 per-problem agents from the upstream `.smt2` with a self-validation loop
 (yield 88/88 compiling on the second batch). 152 TIP compile under `aver proof`.
 
-**Coverage (union) = 32 / 154 (~21%), retry-hardened. Lean: 8. Dafny: 32.**
+**Lean coverage = 8 / 154, retry-hardened** — what Aver's strategies covered at
+the time (structural induction, accumulator-fold spec-equivalence):
+`sum_acc_spec`; isaplanner `prop_46`, `prop_82`; prod `lemma_08`, `_10`, `_11`,
+`_13`, `_22`. This sweep also ran the since-removed Dafny backend, which closed
+32 tasks including all 8; those counts are the record of that run.
 
-The two backends differ a LOT, and Dafny is a STRICT SUPERSET here:
-- **Dafny (Z3) proves 32** — every task Lean proves PLUS 24 more. Z3's automated
-  induction + arithmetic closes Peano/Nat and list-induction lemmas (prop_11, 13,
-  15, 17, …, lemma_02, 05, 07, …) that Aver's hand-rolled Lean strategies miss.
-- **Lean proves 8** — only what Aver's bespoke strategies cover (structural
-  induction, accumulator-fold spec-equivalence): `sum_acc_spec`; isaplanner
-  `prop_46`, `prop_82`; prod `lemma_08`, `_10`, `_11`, `_13`, `_22`.
-- **Lean-only = ∅** — Lean proves nothing Dafny doesn't.
-
-Reading: "Lean = source of truth" is about TRUST (kernel-checked), not REACH.
-Dafny has more reach (Z3 automation) but less trust (Z3 is trusted, not
-kernel-certified). The 24 dafny-only tasks are "proved by Z3, not yet
-kernel-certified in Lean".
-
-The real frontier is the **~122 tasks NEITHER backend proves** — the genuinely
-hard inductive theorems needing auxiliary-lemma discovery / IH-generalization
-that no off-the-shelf prover auto-does. That is exactly where Aver's
+The real frontier is the genuinely hard inductive theorems needing
+auxiliary-lemma discovery / IH-generalization. That is exactly where Aver's
 lemma-discovery layer (the accumulator-generalization / relational-brick work) is
-the differentiated bet, and what the corpus should be mined for next: tasks where
-discovery cracks a goal Z3 cannot. (The Lean-strategy gap vs Dafny is a TRUST
-play — kernel-certifying what Z3 already proves — not a reach play; it does not
-grow the union.)
+the differentiated bet, and what the corpus should be mined for next.
 
 Since this measurement, a new handwritten task (`handwritten/cell_floor_grid.av`,
 the floor-grid floor-stability pair) was added; it enters future sweeps and is

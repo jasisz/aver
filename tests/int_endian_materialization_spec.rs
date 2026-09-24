@@ -14,10 +14,6 @@ fn endian_emitters_derive_the_shared_sequence_limit() {
             include_str!("../src/codegen/lean/transpile.rs"),
         ),
         (
-            "src/codegen/dafny/expr.rs",
-            include_str!("../src/codegen/dafny/expr.rs"),
-        ),
-        (
             "src/codegen/wasm_gc/builtins/endian.rs",
             include_str!("../src/codegen/wasm_gc/builtins/endian.rs"),
         ),

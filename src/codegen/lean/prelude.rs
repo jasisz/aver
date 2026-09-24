@@ -916,8 +916,8 @@ end AverList"#;
 // Built-in record types (Header, HttpResponse, HttpRequest,
 // Tcp.Connection, Terminal.Size) used to live as hard-coded literals
 // here. They now live in `crate::codegen::builtin_records` —
-// declarative descriptions consumed by Lean, Dafny, and WASM via
-// shared `needed_records()` and `render_lean()`. Drift between
+// declarative descriptions consumed via `needed_records()` and
+// `render_lean()`. Drift between
 // backends is no longer possible.
 
 const LEAN_PRELUDE_STRING_HELPERS: &str = r#"def String.charAtAv (s : String) (i : Int) : Option String :=
@@ -1489,11 +1489,6 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(generate_string_hadd_prelude(body, include_all_helpers)),
-            // Dafny-side datatype declarations — Lean has Result/Option
-            // natively (`Except`/`Option`) and BranchPath ships as part
-            // of the BranchPath helper key, so all four are no-ops here.
-            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype"
-            | "StringOpaque" | "StringUtf8" => {}
             "StringCase" => parts.push(super::string_case::source().to_string()),
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
@@ -1784,8 +1779,6 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(generate_string_hadd_prelude(union_body, false)),
-            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype"
-            | "StringOpaque" | "StringUtf8" => {}
             "StringCase" => parts.push(super::string_case::source().to_string()),
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
@@ -1797,8 +1790,8 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
     // Nonlinear-nonnegativity closing kit — demand-driven on the tactic
     // name the `NonlinearNonneg` emit invokes, so files that never need it
     // stay byte-identical. Not a `BUILTIN_HELPERS` key: it is Lean-only
-    // proof infrastructure (Z3 carries these natively, so Dafny ships
-    // nothing), keyed on emitted tactic text rather than a builtin call.
+    // proof infrastructure, keyed on emitted tactic text rather than a
+    // builtin call.
     if union_body.contains("aver_int_order") {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }

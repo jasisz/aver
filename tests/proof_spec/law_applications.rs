@@ -28,20 +28,15 @@ fn concrete_applications_cross_imports_and_transitive_modules_with_colliding_nam
         } else {
             std::fs::write(dir.join("main.av"), entry).unwrap();
         }
-        for backend in ["dafny", "lean"] {
-            let Some(summary) =
-                super::source_recursion::check(dir.join("main.av").to_str().unwrap(), backend)
-            else {
-                continue;
-            };
-            assert_eq!(
-                summary["passed"], true,
-                "transitive={transitive}/{backend}: {summary}"
-            );
-            if backend == "lean" {
-                assert_eq!(summary["universal_laws"], 3, "{summary}");
-            }
-        }
+        let Some(summary) = super::source_recursion::check(dir.join("main.av").to_str().unwrap())
+        else {
+            continue;
+        };
+        assert_eq!(
+            summary["passed"], true,
+            "transitive={transitive}: {summary}"
+        );
+        assert_eq!(summary["universal_laws"], 3, "{summary}");
     }
 }
 
@@ -67,27 +62,15 @@ fn imported_false_supplier_cannot_gain_universal_credit_from_passing_samples() {
         .output()
         .unwrap();
     assert!(samples.status.success(), "{}", format_output(&samples));
-    for backend in ["dafny", "lean"] {
-        let Some(summary) = super::source_recursion::check(path.to_str().unwrap(), backend) else {
-            continue;
-        };
-        assert_eq!(summary["passed"], false, "{backend}: {summary}");
-        assert!(
-            summary[if backend == "lean" {
-                "sorries"
-            } else {
-                "errors"
-            }]
-            .as_u64()
-            .unwrap()
-                > 0,
-            "{summary}"
-        );
-    }
+    let Some(summary) = super::source_recursion::check(path.to_str().unwrap()) else {
+        return;
+    };
+    assert_eq!(summary["passed"], false, "{summary}");
+    assert!(summary["sorries"].as_u64().unwrap() > 0, "{summary}");
 }
 
 #[test]
-fn concrete_applications_roundtrip_passes_both_checkers_after_renaming_and_radix_change() {
+fn concrete_applications_roundtrip_passes_after_renaming_and_radix_change() {
     for (label, source) in [
         ("decimal", SOURCE.to_string()),
         ("alias", SOURCE.replace("    match value > 0", "    current = value\n    match current > 0")),
@@ -117,15 +100,9 @@ fn concrete_applications_roundtrip_passes_both_checkers_after_renaming_and_radix
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("main.av");
         std::fs::write(&path, source).unwrap();
-        for backend in ["dafny", "lean"] {
-            let Some(summary) = super::source_recursion::check(path.to_str().unwrap(), backend)
-            else {
-                continue;
-            };
-            assert_eq!(summary["passed"], true, "{label}/{backend}: {summary}");
-            if backend == "lean" {
-                assert_eq!(summary["universal_laws"], if label == "unrelated" { 4 } else { 3 });
-            }
+        if let Some(summary) = super::source_recursion::check(path.to_str().unwrap()) {
+            assert_eq!(summary["passed"], true, "{label}: {summary}");
+            assert_eq!(summary["universal_laws"], if label == "unrelated" { 4 } else { 3 });
         }
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -164,21 +141,10 @@ fn concrete_applications_reject_a_missing_domain_guard_and_a_false_supplier() {
             "{label}: {}",
             format_output(&samples)
         );
-        for backend in ["dafny", "lean"] {
-            let checker = if backend == "lean" { "lake" } else { "dafny" };
-            if Command::new(checker).arg("--version").output().is_err() {
-                continue;
-            }
+        if Command::new("lake").arg("--version").output().is_ok() {
             let output = Command::new(env!("CARGO_BIN_EXE_aver"))
-                .args([
-                    "proof",
-                    path.to_str().unwrap(),
-                    "--backend",
-                    backend,
-                    "--check-json",
-                    "-o",
-                ])
-                .arg(dir.join(backend))
+                .args(["proof", path.to_str().unwrap(), "--check-json", "-o"])
+                .arg(dir.join("lean"))
                 .output()
                 .unwrap();
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -192,27 +158,11 @@ fn concrete_applications_reject_a_missing_domain_guard_and_a_false_supplier() {
             .unwrap();
             assert!(
                 !output.status.success(),
-                "{label}/{backend} must reject a false universal"
+                "{label} must reject a false universal"
             );
             assert_eq!(summary["passed"], false, "{summary}");
-            if backend == "lean" {
-                assert_eq!(summary["build_errors"], 0, "{summary}");
-                assert!(!summary["universal"].as_bool().unwrap(), "{summary}");
-            } else {
-                for field in ["axioms", "omitted"] {
-                    assert_eq!(summary[field], 0, "{summary}");
-                }
-                let errors = summary["errors"].as_u64().unwrap();
-                let timeouts = summary["timeouts"].as_u64().unwrap();
-                // On the composed missing-guard claim Z3 may exhaust search
-                // instead of constructing a counterexample. Either outcome
-                // must refuse universal credit, without emission/axiom escapes.
-                assert!(errors + timeouts > 0, "{summary}");
-                if label == "false_supplier" {
-                    assert_eq!(timeouts, 0, "{summary}");
-                    assert!(errors > 0, "{summary}");
-                }
-            }
+            assert_eq!(summary["build_errors"], 0, "{summary}");
+            assert!(!summary["universal"].as_bool().unwrap(), "{summary}");
         }
         let _ = std::fs::remove_dir_all(dir);
     }

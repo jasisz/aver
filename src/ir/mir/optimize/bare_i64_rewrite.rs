@@ -14,7 +14,7 @@
 //! ## Where it runs
 //!
 //! LATE and Rust-codegen-ONLY. The shared `optimize()` pipeline (consumed
-//! by the VM, wasm-gc, proof, Dafny, Lean) does NOT run this — those keep
+//! by the VM, wasm-gc, proof, Lean) does NOT run this — those keep
 //! the all-`Int` representation. The Rust backend applies it to a CLONE of
 //! the optimized MIR at the point it codegens. Running after proof export
 //! and shape recognition is mandatory: both key on the syntactic structure

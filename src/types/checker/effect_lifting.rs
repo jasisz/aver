@@ -87,7 +87,7 @@ pub struct LiftConfig {
     /// sites to these fns in the lifted body get `(path, oracle...)`
     /// args injected so the callee's lifted form sees them. Without
     /// this, proof export emits `helper()` bare and the typechecker
-    /// on Lean / Dafny rejects it (arity mismatch). Empty for v0
+    /// on Lean rejects it (arity mismatch). Empty for v0
     /// tests that don't have helpers.
     pub effectful_helpers: HashMap<String, Vec<String>>,
     /// Program-defined capability effects in the dependency closure.
@@ -172,7 +172,7 @@ impl IndexDivergence {
 ///
 /// Each operation counts its own calls, matching what the VM hands a stub in
 /// `take_oracle_coordinates`. The two numberings are written down twice, once
-/// as a literal in the emitted Lean and Dafny and once as the argument the VM
+/// as a literal in the emitted Lean and once as the argument the VM
 /// passes, so they only agree while both count the same thing. Where they
 /// cannot, this scope collects the reasons rather than emitting a number that
 /// is merely close.
@@ -1142,9 +1142,8 @@ fn lift_classified_call(
             // Output effects have no semantic contribution to the
             // proof — they're trace-appending side effects. Replace
             // the call with `Unit` so the lifted body emits as pure
-            // math both in Dafny and Lean (Dafny `function` happens
-            // to drop non-tail Unit statements; Lean does not, so
-            // without this replacement `Console.print(x)` leaks into
+            // math in Lean (Lean does not drop non-tail Unit
+            // statements, so without this replacement `Console.print(x)` leaks into
             // the emitted proof as an unresolved identifier).
             //
             // Still walk the args so any generative effects nested
@@ -1567,7 +1566,7 @@ fn lift_fn_def_reporting(
     // name every example and stub in the codebase writes. If the user
     // function already has a param named `path` (e.g. `persistEntry
     // (path: String, body: String)`), the synth `path: BranchPath`
-    // would shadow it on the Lean/Dafny side and the effect stub
+    // would shadow it on the Lean side and the effect stub
     // would receive a `String` where it expects a `BranchPath`. Pick
     // a collision-free fallback only when the source forces it.
     let path_name = pick_unique_path_name(&fd.params);
@@ -1635,7 +1634,7 @@ fn lift_fn_def_reporting(
     // drifts past the deduped param list — `Env.get` maps to the
     // `Random.int` slot that doesn't exist. Failure mode: lifted body
     // references `both` / wrong-typed oracle that the generated
-    // Lean / Dafny can't resolve.
+    // Lean can't resolve.
     let mut oracles_map: HashMap<String, String> = HashMap::new();
     let mut seen = std::collections::HashSet::new();
     let mut idx = 0usize;

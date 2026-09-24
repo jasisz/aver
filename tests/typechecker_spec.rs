@@ -5443,7 +5443,7 @@ fn a_rejected_given_does_not_stamp_its_samples() {
 fn ordinary_law_templates_have_scoped_primitive_interpolation_types() {
     use aver::ast::{Expr, StrPart, VerifyKind};
     use aver::types::Type;
-    let items = parse(include_str!("fixtures/dafny_structure/strings/plain.av"));
+    let items = parse(include_str!("fixtures/plain_string_display.av"));
     let errors = run_type_check(&items);
     assert!(errors.is_empty(), "{errors:?}");
     let mut saw = [false; 3];

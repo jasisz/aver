@@ -5,7 +5,7 @@
 //! [`RecursionPlan`] variant applies — or emits a [`ProofModeIssue`]
 //! when the shape falls outside the supported set.
 //!
-//! Lean and Dafny consume the same plans through
+//! The Lean export consumes the plans through
 //! [`crate::codegen::recursion::analyze_plans`]; a couple of helpers
 //! that depend on AST queries tied to Lean's `toplevel` (pure-fn
 //! predicate, recursive-type-def predicate, type-def name) still live
@@ -957,8 +957,7 @@ pub(crate) fn single_int_ascending_param(fd: &FnDef) -> Option<(usize, Spanned<E
 }
 
 /// Extract the bound expression from `match param == BOUND` as an
-/// Aver AST node. Each backend renders this into its own idiom (Lean
-/// via `bound_expr_to_lean`, Dafny via its own `emit_expr` path).
+/// Aver AST node. Lean renders it via `bound_expr_to_lean`.
 pub(crate) fn extract_equality_bound_expr(fd: &FnDef, param_name: &str) -> Option<Spanned<Expr>> {
     let tail = fd.body.tail_expr()?;
     let Expr::Match { subject, arms, .. } = &tail.node else {
@@ -1643,9 +1642,8 @@ pub(crate) fn is_scalar_like_type(type_name: &str) -> bool {
 
 /// SizeOf-measure param indices for a fn — every non-scalar param
 /// position contributes a term to the structural measure. Matches
-/// the picks made for the Lean `termination_by` clause and the
-/// Dafny native `decreases` tuple so the same params drive measure
-/// inference on both backends.
+/// the picks made for the Lean `termination_by` clause so the same
+/// params drive measure inference.
 pub fn sizeof_measure_param_indices(fd: &FnDef) -> Vec<usize> {
     fd.params
         .iter()
@@ -1997,16 +1995,6 @@ fn forwarded_same_edges(component: &[&FnDef]) -> Option<HashMap<String, HashSet<
         }
     }
     any_intra.then_some(same_edges)
-}
-
-/// Tie-break ranks for the measure that counts the parameters each member
-/// forwards by name: the ordering the plan had before the call edge
-/// analysis existed, which a backend measuring every sequence parameter
-/// (Dafny) pairs with its own measure.
-pub(crate) fn forwarded_ranks(component: &[&FnDef]) -> Option<HashMap<String, usize>> {
-    let same_edges = forwarded_same_edges(component)?;
-    let names: HashSet<String> = component.iter().map(|fd| fd.name.clone()).collect();
-    ranks_from_same_edges(&names, &same_edges)
 }
 
 pub(crate) fn supports_mutual_sizeof_ranked(

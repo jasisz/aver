@@ -48,7 +48,7 @@ They are layers around the same code. You do not run them in sequence as a pipel
 
 - **Verify blocks** live in source and run every time. This is the daily workflow.
 - **Record/replay for effects** captures effectful behavior and re-runs it without mocking infrastructure.
-- **Lean/Dafny proof generation** is a layer you add when you want a stronger guarantee. Not every function needs it, and not every project does.
+- **Lean proof generation** is a layer you add when you want a stronger guarantee. Not every function needs it, and not every project does.
 - **Rust codegen** is always available, so your code runs native.
 
 You go as deep as you need. You do not have to use the whole stack every time.
@@ -69,7 +69,7 @@ No, but it is young.
 
 The same source file runs unchanged in three execution modes: a bytecode VM, self-hosted (an Aver interpreter written in Aver and compiled to Rust), and native Rust codegen. The self-hosted pipeline alone is several thousand lines of Aver (lexer, parser, evaluator) running through the full stack.
 
-The language has its own LSP and generates proof obligations for Lean and Dafny.
+The language has its own LSP and generates proof obligations for Lean.
 
 It is early. Aver works at the scale it has been tested at, and that scale grows with every release.
 

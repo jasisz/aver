@@ -14,8 +14,7 @@
 //! (product order), bottoms squares out on `aver_sq_nonneg`, and discharges
 //! the leaves from the premise — one generic decision step, never a
 //! per-figure template. A `prod <= var` transitivity claim is NOT admitted
-//! (it needs a witness the step cannot synthesize). Z3 carries these
-//! natively, so the Dafny backend treats the pin like `BackendDispatch`.
+//! (it needs a witness the step cannot synthesize).
 
 use super::*;
 

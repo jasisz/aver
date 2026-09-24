@@ -1,14 +1,14 @@
 //! Proof intermediate representation.
 //!
-//! Single decision substrate the Lean and Dafny proof exporters
-//! consume. Backends render text from a fully-resolved `ProofIR` —
+//! Single decision substrate the Lean proof exporter
+//! consumes. Backends render text from a fully-resolved `ProofIR` —
 //! they do not classify shapes, do not derive contracts, do not
 //! decide between native and fuel emit. Every decision happens once
 //! in the `proof_lower` pipeline stage; both backends see the same
 //! decision and either render it consistently or fail consistently.
 //!
 //! Replaces the ad-hoc "guess and emit" pattern that grew across
-//! `src/codegen/{common,recursion,lean,dafny}` during 0.22.0 with a
+//! `src/codegen/{common,recursion,lean}` during 0.22.0 with a
 //! single typed model. Each variant that says "emit native" or
 //! "lift to subtype" carries inside its payload everything the
 //! backend needs and everything the classifier proved — the type
@@ -32,7 +32,7 @@
 //! - **Identity-sensitive decisions use typed IDs.**
 //!   `fn_contracts` is keyed by [`FnId`] (not bare name);
 //!   `refined_types` is keyed by [`TypeId`]; `law_theorems` carry
-//!   the target fn's `FnId`. The Lean/Dafny native-guarded rewriter
+//!   the target fn's `FnId`. The Lean native-guarded rewriter
 //!   pins target by `FnId` (via `fn_id_for_decl`), not bare name —
 //!   regression-pinned by
 //!   `proof_export_module_owned_native_guarded_resolves_correct_fn_id`.
@@ -135,8 +135,8 @@ pub struct SmartGuard {
 /// A refinement-lifted user type — opaque record with a single
 /// carrier field, paired with a validating smart constructor. The
 /// presence of this decl in `ProofIR.refined_types` is the
-/// decision: "emit this as a subtype on Lean and a subset type on
-/// Dafny". Backends never re-decide.
+/// decision: "emit this as a subtype on Lean". Backends never
+/// re-decide.
 #[derive(Debug, Clone)]
 pub struct RefinedTypeDecl {
     /// Source-level type name (e.g. `"Natural"`). NOT canonicalised
@@ -144,12 +144,10 @@ pub struct RefinedTypeDecl {
     /// map key.
     pub name: String,
     /// Carrier annotation from the record's single field (typically
-    /// `"Int"`). Drives the Lean Subtype underlying type and the
-    /// Dafny subset type's base.
+    /// `"Int"`). Drives the Lean Subtype underlying type.
     pub carrier_type: String,
     /// Carrier-field source name (e.g. `"value"`). Lean uses `.val`
-    /// to project Subtype values regardless of source name; Dafny's
-    /// subset binds the source name in its predicate.
+    /// to project Subtype values regardless of source name.
     pub carrier_field: String,
     /// Smart constructor's input parameter name (e.g. `"n"`) — the
     /// invariant predicate's free variable.
@@ -159,32 +157,6 @@ pub struct RefinedTypeDecl {
     /// constructor's `match <pred> { true -> Ok(...); false -> Err(...)
     /// }` subject.
     pub invariant: Predicate,
-    /// Inhabitation witness: a literal value of `carrier_type` that
-    /// the lowerer verified satisfies `invariant`. Resolved by first
-    /// trying the smart constructor's verify block (`fromX(K) =>
-    /// Ok(...)` for some literal K — verified by the user via
-    /// `aver verify`), then evaluating the predicate against small
-    /// candidates as a fallback.
-    ///
-    /// Why the IR carries this even though only Dafny's subset type
-    /// strictly *requires* a non-emptiness witness: it's a fact
-    /// about the type (∃ v : carrier, invariant(v) holds), not a
-    /// Dafny-specific syntactic obligation. Backends use it as they
-    /// see fit:
-    ///
-    /// - Dafny: emits `type X = v: int | P v witness <W>`. Required
-    ///   for the subset type to be inhabited and elaborable.
-    /// - Lean: currently unused — propositional `Subtype` may be
-    ///   empty, so `{ v : Int // P v }` elaborates regardless. Step
-    ///   N+1 could emit a `def sample_X : X := ⟨W, by decide⟩` for
-    ///   roundtrip / test convenience.
-    /// - Future Z3 / Coq / etc.: same fact, rendered per target.
-    ///
-    /// `None` when no satisfier was found. This does not erase the
-    /// refinement: Lean permits an empty Subtype and Dafny emits
-    /// `witness *`, which keeps the subset predicate without inventing an
-    /// invalid target default.
-    pub witness: Option<String>,
     /// Constant integer interval over-approximating `invariant`, as
     /// derived by [`crate::ir::interval::interval_of_invariant`] from
     /// the same predicate. `Some([lo, hi])` when the invariant shape
@@ -305,8 +277,8 @@ pub enum RecursionContract {
     /// Affine second-order linear recurrence on `Int`, shape
     /// `f(n) = a*f(n-1) + b*f(n-2)` with literal `0`/`1` base cases
     /// and an `n < 0` guard. Lowered to a private Nat pair-state
-    /// worker (Lean / Dafny both emit native structural recursion on
-    /// the Nat counter, no fuel). The lowerer doesn't carry the
+    /// worker (Lean emits native structural recursion on the Nat
+    /// counter, no fuel). The lowerer doesn't carry the
     /// shape coefficients yet — backends still pattern-match the
     /// fn body via `lean::recurrence::detect_second_order_int_
     /// linear_recurrence`. Step N+1 could materialise them here.
@@ -320,14 +292,12 @@ pub enum RecursionContract {
     /// worker) will land as additional `RecursionContract` variants.
     Native {
         /// Conjunction of precondition clauses, kept as a vector so
-        /// backends can render one `requires` per clause (Dafny) or
-        /// fold into a single `&&` chain (Lean). Empty means "no
+        /// the backend can fold them into one `&&` chain. Empty means "no
         /// caller-derived precondition" — the backend synthesises a
         /// fibTR-style default (`param ≥ 0`) at emit time.
         precondition: Vec<Predicate>,
-        /// Symbolic measure (e.g. `natAbs(n)`). Backends render per
-        /// target language (`Int.natAbs n` on Lean, `n` with a
-        /// `requires n >= 0` clause on Dafny).
+        /// Symbolic measure (e.g. `natAbs(n)`), rendered as
+        /// `Int.natAbs n` on Lean.
         measure: Measure,
         /// Side-condition tag: lowerer attests the recursive args
         /// preserve the precondition. Empty enum payload — its
@@ -349,9 +319,7 @@ pub enum RecursionContract {
     /// Well-founded native def on `param.toNat` — graduates a fn out
     /// of the fuel/partial encoding so it stays kernel-transparent
     /// (Lean: `termination_by param.toNat` + a `decreasing_by` the
-    /// kernel re-checks; Dafny: `decreases if param >= 0 then param
-    /// else 0` with NO synthesized `requires`, so total callers stay
-    /// wellformed). Two validated sources:
+    /// kernel re-checks). Two validated sources:
     ///
     /// - `floor_div: Some(..)` — every self-call shrinks `param` by a
     ///   literal-divisor floor division (bare `Int.div(p, k)` in the
@@ -412,9 +380,8 @@ pub enum FuelMetric {
     /// `n.natAbs + 1` — classic IntCountdown fuel.
     NatAbsPlusOne { param: String },
     /// `(bound - n).natAbs + 1` — IntAscending: param climbs toward
-    /// a bound expression. Backends render the bound through their
-    /// own `Spanned<Expr>` emitter (Lean: `bound_expr_to_lean`,
-    /// Dafny: `emit_expr` over int subset).
+    /// a bound expression. Lean renders the bound through
+    /// `bound_expr_to_lean`.
     BoundMinusParamNatAbsPlusOne {
         param: String,
         bound: Spanned<crate::ir::hir::ResolvedExpr>,
@@ -440,8 +407,6 @@ pub enum FuelMetric {
 #[derive(Debug, Clone)]
 pub enum Measure {
     NatAbsInt { param: String },
-    SeqLen { param: String },
-    Lex(Vec<Measure>),
 }
 
 /// Marker that the lowerer constructed a proof of preservation
@@ -573,25 +538,14 @@ pub struct Quantifier {
 pub enum QuantifierType {
     /// Plain Aver type, rendered as-is on each backend.
     Plain(String),
-    /// Refinement-lifted: source declared `given a: Int`, body used
-    /// `Natural(value = a)`, so the quantifier binds at the refined
-    /// type. The carried `refined_type` key looks up in
-    /// `ProofIR.refined_types`.
-    RefinedTo { refined_type: String },
-    /// Oracle subtype: classified Generative-shape effect-givens
-    /// bind oracles wrapped in a subtype carrier
-    /// (`RandomIntInBounds`, `RandomFloatInUnit`,
-    /// `TimeUnixMsNonneg`).
-    OracleSubtype(String),
 }
 
 /// Algebraic / proof-theoretic shape of a verify-law theorem.
 ///
 /// **Naming rule**: variants describe **what the law says**, not
 /// **how a backend proves it**. The IR is target-agnostic — Lean
-/// maps `Commutative { op: Add }` to `simp [fn, Int.add_comm]`,
-/// Dafny maps the same variant to its own lemma vocabulary, a Z3
-/// backend could ship a different tactic again. Tactic names
+/// maps `Commutative { op: Add }` to `simp [fn, Int.add_comm]`;
+/// another backend could ship a different tactic. Tactic names
 /// (`SimpOverLemmas`, `simp+omega`) do not appear in variant names;
 /// Driver of a [`ProofStrategy::WrapperOverRecursion`] inner loop —
 /// the structure the recursion shrinks. `List` is the original
@@ -648,8 +602,7 @@ pub enum ProofStrategy {
     SimpOverLemmas(Vec<String>),
     /// `∀ a b, f(a, b) = f(b, a)` — commutativity of the law's fn,
     /// whose body reduces to `a <op> b`. The `op` tag lets backends
-    /// pick their own lemma vocabulary (Lean: `Int.add_comm`,
-    /// Dafny: built-in arithmetic axioms).
+    /// pick their own lemma vocabulary (Lean: `Int.add_comm`).
     Commutative { op: crate::ast::BinOp },
     /// `∀ a b c, f(f(a,b),c) = f(a,f(b,c))` — associativity of `f`.
     Associative { op: crate::ast::BinOp },
@@ -714,8 +667,7 @@ pub enum ProofStrategy {
     /// laws that don't fit a named algebraic property. The IR
     /// captures the unfold list + wrapper-return signal +
     /// refinement smart-constructor guard; backends translate to
-    /// their decision procedure (Lean: `simp + omega`, Dafny: Z3
-    /// linear int prover). Named for the **semantic** ("linear
+    /// their decision procedure (Lean: `simp + omega`). Named for the **semantic** ("linear
     /// arithmetic"), not the Lean tactic.
     LinearArithmetic {
         /// Ordered fn unfold list. Top-level law fn first — Lean's
@@ -748,8 +700,7 @@ pub enum ProofStrategy {
     /// Library axiom instance — the law instantiates a named
     /// data-structure axiom (e.g. AverMap's `has_set_self` or
     /// `get_set_self`). Backends map the axiom name to their
-    /// lemma vocabulary (Lean: `AverMap.has_set_self`; Dafny:
-    /// its own set/lookup axioms; Z3: built-in array theory).
+    /// lemma vocabulary (Lean: `AverMap.has_set_self`).
     /// Args carry the call-site expressions the axiom applies to.
     LibraryAxiom {
         /// Canonical axiom name. Recognised values today:
@@ -821,8 +772,7 @@ pub enum ProofStrategy {
     /// two fn bodies are syntactically identical (after typecheck).
     /// Backends close the goal by unfolding both fns; their bodies
     /// reduce to the same term and the equality holds by reflexivity
-    /// modulo simp normalisation. Lean emits `simpa [<unfolds>]`,
-    /// Dafny would reveal both and let Z3 prove the equivalence.
+    /// modulo simp normalisation. Lean emits `simpa [<unfolds>]`.
     /// Named for the algebraic content (functional equivalence),
     /// not the backend tactic.
     SpecEquivalence {
@@ -883,21 +833,9 @@ pub enum ProofStrategy {
     /// spec is a direct second-order recurrence (`match n { 0 -> b0;
     /// 1 -> b1; _ -> recurrence(spec(n-1), spec(n-2)) }`). The
     /// impl's helper implements the same affine recurrence as the
-    /// spec's `_` arm. Both Lean and Dafny render via a Nat-keyed
-    /// helper + shift lemma + helper-seed bridge; the algebraic
-    /// content (a fixed-point of the recurrence) is the same in both
-    /// targets but the syntactic proof template differs per backend.
-    LinearRecurrence2SpecEquivalence {
-        /// Source name of the impl (tail-recursive wrapper) fn.
-        impl_fn: String,
-        /// Source name of the spec (direct recurrence) fn.
-        spec_fn: String,
-        /// Source name of the worker fn called by `impl_fn`.
-        helper_fn: String,
-    },
-    /// Bounded universal: case-split over the declared `given`
-    /// domain, dispatch each case to a per-sample lemma.
-    BoundedUniversal,
+    /// spec's `_` arm. Lean renders it via a Nat-keyed helper + shift
+    /// lemma + helper-seed bridge.
+    LinearRecurrence2SpecEquivalence,
     /// `?`-propagating Result chain equals a manual `match`-version:
     /// the law states `chain_qm(x) == chain_manual(x)` where the
     /// LHS uses `?` for short-circuit Err propagation and the RHS
@@ -975,8 +913,6 @@ pub enum ProofStrategy {
         combine_fn: String,
         /// Combine op classified from the monoid fn's base arm.
         combine_op: crate::ast::BinOp,
-        /// Source type name of the driving Peano `Nat` ADT.
-        type_name: String,
     },
     /// Ground constant-fold over fixed ADT/enum constructor
     /// arguments. The law's call(s) pin every non-Int param of the
@@ -1098,8 +1034,7 @@ pub enum ProofStrategy {
     /// at the `finish_int_fn` leaf. The whole emission is wrapped in
     /// `first | (… ; done) | sorry` — a non-closing case degrades to a
     /// caught honest `sorry`, never a build error, and `native_decide`
-    /// never appears. Dafny treats the pin as `BackendDispatch`
-    /// (exports byte-identical).
+    /// never appears.
     ///
     /// Demonstrated by `examples/data/json.av`
     /// `parseNumber.fromIntRoundtrip` — the first universal close
@@ -1149,8 +1084,7 @@ pub enum ProofStrategy {
     /// per-char classification. Every synthesized lemma carries a
     /// `first | (…; done) | sorry` floor — a template regression
     /// degrades to caught honest sorries (loud budget red), never a
-    /// build error, and `native_decide` never appears. Dafny treats
-    /// the pin as `BackendDispatch` (exports byte-identical).
+    /// build error, and `native_decide` never appears.
     ///
     /// Demonstrated by `examples/data/json.av`
     /// `escapeJsonString.parseStringRoundtrip` and
@@ -1182,10 +1116,8 @@ pub enum ProofStrategy {
     /// emission: its permutational rewrites (`Int.mul_comm`,
     /// `Int.add_comm`, …) loop or destroy the normal forms other
     /// strategies' simp sets rely on, so they are never added to the
-    /// shared prelude registry. Dafny needs no special handling —
-    /// Z3 decides these nonlinear identities push-button — and
-    /// treats the pin like `BackendDispatch` (exports stay
-    /// byte-identical). Demonstrated by `examples/data/rational.av`.
+    /// shared prelude registry. Demonstrated by
+    /// `examples/data/rational.av`.
     RingIdentity {
         /// Ordered fn unfold list — law subject fn first, then the
         /// transitively-reached callees (sorted). Source names;
@@ -1207,9 +1139,7 @@ pub enum ProofStrategy {
     /// the premise leaves with `omega`) — NOT a per-figure template; an
     /// honest `sorry` floor keeps credit fail-closed. A `prod <= var`
     /// transitivity figure is NOT admitted (it needs a `≤`-chain witness
-    /// this step does not synthesize) and keeps its bounded fallback. Dafny
-    /// needs no special handling (Z3 carries nonlinear arithmetic
-    /// push-button) and treats the pin like `BackendDispatch`. Demonstrated
+    /// this step does not synthesize) and keeps its bounded fallback. Demonstrated
     /// by `projects/k5_fdiv/domain/estimate.av`.
     NonlinearNonneg {
         /// Ordered fn unfold list — subject fn first, then the
@@ -1222,16 +1152,14 @@ pub enum ProofStrategy {
     /// [`RecursionContract::WellFoundedToNat`] class with divisor 2),
     /// and the scaled-significand / bit-width window predicates built
     /// from them. Each [`FloorWindowFigure`] is a fully-validated
-    /// shape with a fixed proof template on both backends (Lean: the
-    /// core `Int.le_ediv_iff_mul_le` / `Int.ediv_lt_iff_lt_mul`
-    /// floor bridges + power algebra by functional induction; Dafny:
-    /// a proved division-window prelude + branch-split helper
-    /// lemmas). The recognizers are deliberately narrow — exactly the
+    /// shape with a fixed Lean proof template (the core
+    /// `Int.le_ediv_iff_mul_le` / `Int.ediv_lt_iff_lt_mul` floor
+    /// bridges + power algebra by functional induction). The recognizers are deliberately narrow — exactly the
     /// hand-validated figures; everything else declines and keeps
     /// the prior emission.
     FloorDivWindow { figure: FloorWindowFigure },
-    /// No automated strategy — emit with `sorry` (Lean) / `assume
-    /// {:axiom}` (Dafny). User fills in manually.
+    /// No automated strategy — emit with `sorry`. User fills in
+    /// manually.
     Sorry,
     /// Lowerer has not pinned a strategy for this law; the backend's
     /// `or_else` chain decides. Today reached by linear-recurrence-
@@ -1466,7 +1394,6 @@ mod tests {
             carrier_field: "value".to_string(),
             predicate_param: "n".to_string(),
             invariant: stub_predicate(),
-            witness: Some("0".to_string()),
             interval,
             op_classes: ops.into_iter().map(|(n, c)| (n.to_string(), c)).collect(),
         }

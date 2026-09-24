@@ -196,7 +196,7 @@ impl<'a> ResolverState<'a> {
     /// match sound when they bind the same name to different types
     /// (workflow_engine's `serializeTaskEvent` reuses `deadline` as
     /// `Option<String>` in one arm and `String` in another). Backends
-    /// that key off names (Rust, Lean, Dafny — all emit pattern-syntax
+    /// that key off names (Rust, Lean — both emit pattern-syntax
     /// directly) keep working unchanged. The two slot-driven backends
     /// (VM and wasm-gc) consult `MatchArm::binding_slots` for the per-
     /// arm fresh slot rather than `FnResolution.local_slots[name]`,

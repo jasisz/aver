@@ -1,6 +1,6 @@
 module DischargedBytesLongLiteral
     intent =
-        "Long-literal stress case for the literal smart-constructor discharge, Lean only. A 32-element all-literal in-range list types as plain `Bytes`, and Lean must close `Bytes.allInRange [0, 0, …] = true` through 32 unfoldings of a well-founded recursive predicate — the depth at which `decide` and the pre-existing tactic ladder both fail and the emitted `simp [Bytes.allInRange]` rung is doing the work. Dafny is deliberately NOT gated on this file: a refinement construction collapses to the bare carrier there and the subset-type constraint is discharged at the use site, which Dafny's default function fuel does not unfold that far. The three-element and empty frames, which BOTH backends discharge, live in `discharged_bytes_law.av`."
+        "Long-literal stress case for the literal smart-constructor discharge. A 32-element all-literal in-range list types as plain `Bytes`, and Lean must close `Bytes.allInRange [0, 0, …] = true` through 32 unfoldings of a well-founded recursive predicate — the depth at which `decide` and the pre-existing tactic ladder both fail and the emitted `simp [Bytes.allInRange]` rung is doing the work. The three-element and empty frames live in `discharged_bytes_law.av`."
     depends [Bytes]
     exposes [digestSizedFrame, octetCount]
     effects []

@@ -9,7 +9,7 @@ module IntComparisonLaws
         "  - `<=` is total (`(a <= b) || (b <= a) = true`)."
         ""
         "These are pure builtin facts about Int comparison — no user recursion."
-        "Dafny's Z3 discharges them; the Lean backend normalises the Bool"
+        "The Lean backend normalises the Bool"
         "comparison wrappers (`==`/decide/`||`) to a linear-order goal `omega`"
         "decides."
     effects []

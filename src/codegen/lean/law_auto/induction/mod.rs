@@ -1221,15 +1221,13 @@ fn bridge_law_lean_names(
 }
 
 /// Earlier sibling laws eligible to be CITED into THIS law's tight decomposition
-/// (Engine B). The Lean sibling of the Dafny `eligible_cites`: the same
-/// `LawProofCone` ∪ subject ∪ lhs-rooted gate as [`earlier_law_lemmas`], but
+/// (Engine B): the same `LawProofCone` ∪ subject ∪ lhs-rooted gate as [`earlier_law_lemmas`], but
 /// returning the cited law's [`VerifyLaw`] alongside its Lean theorem name, so
 /// the instantiation engine ([`compute_instantiations`]) can derive the exact
 /// application arguments and the rung can name the `have`-fact. In-file siblings
 /// only — the cross-file dep pool would need namespace-qualified theorem names
 /// the tight rung does not yet render. Unconditional (`when.is_none`) universal-
-/// form laws only; the per-declaration `#print axioms` gate keeps soundness, so
-/// the dafny-only opaque/native-mutual/oracle filters are not mirrored here.
+/// form laws only; the per-declaration `#print axioms` gate keeps soundness.
 fn earlier_law_cites(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1397,7 +1395,7 @@ fn qualify_module_calls(law: &VerifyLaw, module: &crate::codegen::ModuleInfo) ->
 }
 
 /// Render a computed instantiation argument (from `cite_instantiate`) to a Lean
-/// TERM — the mirror of the Dafny `render_dafny_arg`. The induction placeholders
+/// TERM. The induction placeholders
 /// map to the `| cons head tail ih` binders, `List.concat` to `++`, and a fn
 /// call to a space-separated application; every compound form (a call, a `++`, a
 /// constructor application) is parenthesized as a whole, so each rendered arg is
@@ -1510,7 +1508,7 @@ fn render_lean_literal(lit: &crate::ast::Literal) -> String {
 /// ```
 ///
 /// instead of the fat `first | (simp…) | (induction…) | sorry` portfolio.
-/// Soundness rides on the same fail-closed guarantee as Dafny: each `have` is a
+/// Soundness rides on a fail-closed guarantee: each `have` is a
 /// type-checked instance of a kernel-proven sibling theorem, and the
 /// per-declaration `#print axioms` gate downstream flips `universal:false` on any
 /// `sorry`. Returns the two arm bodies — the `nil` simp-set and the `cons` arm

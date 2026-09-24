@@ -1,72 +1,6 @@
 use super::*;
 
 #[test]
-fn proof_dafny_check_verifies_entry_module_not_arbitrary_dependency() {
-    // Regression: `--check` must verify the ENTRY module (which carries the
-    // verify-law lemmas), not whatever `.dfy` a directory scan yields first.
-    // The dependency module here (`Aaa`) sorts before the entry (`Zzz`) and
-    // does NOT include it, so a naive `read_dir().find()` verifies `Aaa.dfy`
-    // and never checks `Zzz`'s deliberately-false law → false-green.
-    if Command::new("dafny").arg("--version").output().is_err() {
-        eprintln!("skipping dafny entry-selection test: `dafny` not available");
-        return;
-    }
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let src = temp_output_dir("aver-mm-entry-src");
-    std::fs::create_dir_all(&src).expect("create src dir");
-    std::fs::write(
-        src.join("aaa.av"),
-        "module Aaa\n    depends []\n\nfn ident(n: Int) -> Int\n    ? \"id\"\n    n\n\n\
-         verify ident law refl\n    given n: Int = -1..1\n    ident(n) => n\n",
-    )
-    .expect("write aaa.av");
-    std::fs::write(
-        src.join("zzz.av"),
-        "module Zzz\n    depends [Aaa]\n    effects [Console.print]\n\n\
-         fn wrong(n: Int) -> Int\n    ? \"doubles; the law lies\"\n    Aaa.ident(n) + n\n\n\
-         verify wrong law falseRefl\n    given n: Int = -1..1\n    wrong(n) => n\n\n\
-         fn main() -> Unit\n    ! [Console.print]\n    Console.print(\"mm\")\n",
-    )
-    .expect("write zzz.av");
-    let out = temp_output_dir("aver-mm-entry-out");
-    let run = Command::new(aver_bin)
-        .arg("proof")
-        .arg(src.join("zzz.av"))
-        .arg("--backend")
-        .arg("dafny")
-        .arg("--module-root")
-        .arg(&src)
-        .arg("-o")
-        .arg(&out)
-        .arg("--check")
-        .arg("--check-json")
-        .output()
-        .expect("expected `aver proof --check --check-json` to run");
-    let json_line = run
-        .stdout
-        .split(|&b| b == b'\n')
-        .rev()
-        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
-        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
-    let summary: serde_json::Value =
-        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
-    assert_eq!(
-        summary["passed"].as_bool(),
-        Some(false),
-        "entry `Zzz`'s false law `wrong(n) => n` must be caught — `--check` must \
-         verify the ENTRY module, not an arbitrary dependency.\n{}",
-        format_output(&run)
-    );
-    assert!(
-        summary["errors"].as_u64().unwrap_or(0) >= 1,
-        "expected >=1 Dafny error from the false entry law\n{}",
-        format_output(&run)
-    );
-    let _ = std::fs::remove_dir_all(&src);
-    let _ = std::fs::remove_dir_all(&out);
-}
-
-#[test]
 fn proof_check_lean_universal_field_distinguishes_bounded_from_genuine() {
     // The honest-coverage gate behind `--check-json` `universal`. Lean's
     // `passed` is deliberately lenient: a law the auto-prover cannot close by
@@ -80,8 +14,7 @@ fn proof_check_lean_universal_field_distinguishes_bounded_from_genuine() {
     // `fac = qfac · 1` accumulator equivalence is the bounded-only instance:
     // genuine induction needs an IH generalization over the accumulator the
     // no-discovery auto-prover does not perform, so it falls back to the bounded
-    // sample proof. (This is the SAME law the Dafny sibling test pins as its
-    // omitted-universal instance — both flip together if the capability lands.)
+    // sample proof.
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping lean universal-field test: `lake` not available");
         return;
@@ -126,82 +59,7 @@ fn proof_check_lean_universal_field_distinguishes_bounded_from_genuine() {
         "a bounded `native_decide` proof must stay lenient on `passed` but report \
          `universal:false` (it depends on `Lean.ofReduceBool`, not the ∀-claim). \
          If `universal` flipped to true, the accumulator equivalence now closes \
-         genuinely — celebrate and re-baseline this test (and its Dafny sibling).\n{}",
-        format_output(&run)
-    );
-    let _ = std::fs::remove_dir_all(&src);
-    let _ = std::fs::remove_dir_all(&out);
-}
-
-#[test]
-fn proof_check_dafny_rejects_sample_only_universal_as_unproven() {
-    // Soundness: when the emitter cannot state a law's universal `∀`-claim it
-    // drops it to concrete samples plus a `… (universal lemma omitted)`
-    // comment. Dafny then finishes with 0 errors / exit 0 because the
-    // universal was never asserted — a false-green the errors-only and
-    // axiom-only gates both miss. `--check` must charge an omitted universal
-    // against the sorry budget (like `assume {:axiom}`) so it reports
-    // `passed:false`. The `fac = qfac · one` accumulator-equivalence is a
-    // stable instance: both fns verify cleanly (errors:0) but the universal
-    // needs an IH generalization the emitter does not do, so it is omitted.
-    if Command::new("dafny").arg("--version").output().is_err() {
-        eprintln!("skipping dafny omitted-universal soundness test: `dafny` not available");
-        return;
-    }
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let src = temp_output_dir("aver-omit-sound-src");
-    std::fs::create_dir_all(&src).expect("create src dir");
-    std::fs::write(
-        src.join("omit.av"),
-        "module Omit\n    effects []\n\n\
-         type Nat\n    Z\n    S(Nat)\n\n\
-         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
-         fn mult(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> plus(y, mult(z, y))\n\n\
-         fn fac(x: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.S(Nat.Z)\n        Nat.S(y) -> mult(x, fac(y))\n\n\
-         fn qfac(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> qfac(z, mult(x, y))\n\n\
-         verify fac law facQfac\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    fac(x) => qfac(x, Nat.S(Nat.Z))\n",
-    )
-    .expect("write omit.av");
-    let out = temp_output_dir("aver-omit-sound-out");
-    let run = Command::new(aver_bin)
-        .arg("proof")
-        .arg(src.join("omit.av"))
-        .arg("--backend")
-        .arg("dafny")
-        .arg("-o")
-        .arg(&out)
-        .arg("--check")
-        .arg("--check-json")
-        .output()
-        .expect("expected `aver proof --check --check-json` to run");
-    let json_line = run
-        .stdout
-        .split(|&b| b == b'\n')
-        .rev()
-        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
-        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
-    let summary: serde_json::Value =
-        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
-    // errors:0 confirms the ONLY reason for failure is the dropped universal,
-    // so this exercises the omitted-gate specifically.
-    assert_eq!(
-        summary["errors"].as_u64(),
-        Some(0),
-        "expected a clean verify (errors:0); the omitted-universal gate, not \
-         a Dafny error, must drive the failure.\n{}",
-        format_output(&run)
-    );
-    assert!(
-        summary["omitted"].as_u64().unwrap_or(0) >= 1,
-        "expected the `facQfac` universal to be dropped to sample-only \
-         (omitted >= 1).\n{}",
-        format_output(&run)
-    );
-    assert_eq!(
-        summary["passed"].as_bool(),
-        Some(false),
-        "a sample-only law whose universal was omitted must NOT pass --check \
-         — dropping the ∀-claim is the Dafny analog of a sorry.\n{}",
+         genuinely — celebrate and re-baseline this test.\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);
@@ -235,8 +93,6 @@ fn proof_dependency_law_verify_is_carried_not_warned() {
     let run = Command::new(aver_bin)
         .arg("proof")
         .arg(src.join("app.av"))
-        .arg("--backend")
-        .arg("dafny")
         .arg("--module-root")
         .arg(&src)
         .arg("-o")
@@ -250,10 +106,10 @@ fn proof_dependency_law_verify_is_carried_not_warned() {
          pool, not dropped — the unsampled-cases warning must not fire for it:\n{}",
         format_output(&run)
     );
-    let dep = std::fs::read_to_string(out.join("Dep.dfy")).expect("read Dep.dfy");
+    let dep = std::fs::read_to_string(out.join("Dep.lean")).expect("read Dep.lean");
     assert!(
-        dep.contains("// Law: ident.refl") && dep.contains(" ident_refl(n: int)"),
-        "the dependency's own law must be emitted in its Dafny module even when \
+        dep.contains("theorem ident_law_refl"),
+        "the dependency's own law must be emitted in its Lean module even when \
          no entry law cites it:\n{dep}"
     );
     let _ = std::fs::remove_dir_all(&src);
@@ -471,33 +327,6 @@ fn proof_check_covers_dependency_cases_and_law_as_one_program() {
 }
 
 #[test]
-fn proof_dafny_warns_example_cases_not_checked() {
-    // Dafny proves LAWS, not concrete example-cases — it cannot evaluate
-    // a `f(x) => y` case the way Lean's `native_decide` does. It must say
-    // so rather than silently pass case-form verify. Pure codegen, no
-    // verifier binary needed. `sum_acc.av` carries case-form verify blocks.
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let out = temp_output_dir("aver-dafny-case-warn");
-    let run = Command::new(aver_bin)
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .arg("proof")
-        .arg("examples/data/sum_acc.av")
-        .arg("--backend")
-        .arg("dafny")
-        .arg("-o")
-        .arg(&out)
-        .output()
-        .expect("expected `aver proof` to run");
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(
-        stderr.contains("example-based") && stderr.contains("NOT") && stderr.contains("Dafny"),
-        "expected a warning that example-based verify is not Dafny-checked, got:\n{}",
-        format_output(&run)
-    );
-    let _ = std::fs::remove_dir_all(&out);
-}
-
-#[test]
 fn proof_lean_vacuous_when_premise_law_builds_and_passes() {
     // A `when` premise that is unsatisfiable (here a nested Bool `match`
     // requiring `n > 0` AND `n < 0`) makes the law vacuously true, so a
@@ -627,78 +456,6 @@ fn proof_lean_bounded_when_law_proof_is_not_credited_universal() {
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);
-    let _ = std::fs::remove_dir_all(&out);
-}
-
-#[test]
-fn proof_check_dafny_declines_unrecognized_recursion_instead_of_guessing() {
-    // Recursion outside every recognized `decreases` pattern — the
-    // doubling/halving exponent walk on a rational num/den pair
-    // (tests/fixtures/expo_outside_subset.av). The emitter used to
-    // GUESS `decreases num` + synthesize `requires num >= 0` on the
-    // first Int param: two "decreases clause might not decrease"
-    // errors on a correct function plus a "function precondition could
-    // not be proved" error at every total caller. The honest export
-    // declines: the fn emits as an opaque `function {:axiom}`, callers
-    // stay wellformed, sample asserts are suppressed (nothing about an
-    // opaque value is provable), and the law is charged as omitted —
-    // 0 errors, 0 axiom-attributed lemmas, 1 omitted universal.
-    if Command::new("dafny").arg("--version").output().is_err() {
-        eprintln!("skipping dafny unrecognized-recursion decline test: `dafny` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let out = temp_output_dir("aver-expo-outside-subset-out");
-    let run = Command::new(aver_bin)
-        .current_dir(&repo_root)
-        .arg("proof")
-        .arg("tests/fixtures/expo_outside_subset.av")
-        .arg("--backend")
-        .arg("dafny")
-        .arg("-o")
-        .arg(&out)
-        .arg("--check")
-        .arg("--check-json")
-        .output()
-        .expect("expected `aver proof --check --check-json` to run");
-    let json_line = run
-        .stdout
-        .split(|&b| b == b'\n')
-        .rev()
-        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
-        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
-    let summary: serde_json::Value =
-        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
-    assert_eq!(
-        (
-            summary["errors"].as_u64(),
-            summary["axioms"].as_u64(),
-            summary["omitted"].as_u64(),
-        ),
-        (Some(0), Some(0), Some(1)),
-        "unrecognized recursion must decline to an omitted law, never error \
-         on a guessed measure\n{}",
-        format_output(&run)
-    );
-    let dfy = std::fs::read_to_string(out.join("ExpoOutsideSubset.dfy"))
-        .expect("read emitted ExpoOutsideSubset.dfy");
-    assert!(
-        dfy.contains("function {:axiom} expo("),
-        "expo must emit as an opaque axiom declaration; got:\n{dfy}"
-    );
-    assert!(
-        !dfy.contains("requires num >= 0"),
-        "no synthesized precondition may poison expo's callers; got:\n{dfy}"
-    );
-    assert!(
-        dfy.contains("// Sample assertions for expo.upperBound omitted"),
-        "samples over the opaque fn must be suppressed with a marker; got:\n{dfy}"
-    );
-    assert!(
-        dfy.contains("decreases if j >= 0 then j else 0"),
-        "the recognized countdown pattern (pow2) must keep its real decreases; got:\n{dfy}"
-    );
     let _ = std::fs::remove_dir_all(&out);
 }
 

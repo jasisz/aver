@@ -1,7 +1,0 @@
-module Provider
-    intent = "A transitive dependency appears in a selected supplier's guard."
-    exposes [identity]
-    effects []
-
-fn identity(value: Int) -> Int
-    value

@@ -2,8 +2,8 @@
 //
 // Runs `verify <fn>` blocks through the VM-backed verify runner
 // (the same path `aver verify` invokes for cases-form blocks). No
-// Lean / Dafny / Z3 — those are external solvers that don't make
-// sense as a fuzz target (subprocess spawn per exec). Just the
+// Lean — that is an external prover, which doesn't make sense as a
+// fuzz target (subprocess spawn per exec). Just the
 // in-process Aver pipeline:
 //
 //   bytes → lex → parse → typecheck (zero errors required)

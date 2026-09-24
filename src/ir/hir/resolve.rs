@@ -348,8 +348,8 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             // with a syntactic nonzero integer literal divisor is total, so
             // it lowers straight to the Euclidean intrinsic — no `Result`
             // wrap, direct division on every backend (VM opcode, Rust
-            // `div_euclid`, wasm-gc `__aint_divmod`, Lean `/` = `Int.ediv`,
-            // Dafny Euclidean `/`). The predicate is the SAME shared
+            // `div_euclid`, wasm-gc `__aint_divmod`, Lean `/` = `Int.ediv`).
+            // The predicate is the SAME shared
             // syntactic check the typechecker's discharge rule uses
             // (`is_literal_nonzero_int_divisor`); it must key on syntax,
             // not type stamps, because this resolver also runs in

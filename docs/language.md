@@ -341,12 +341,7 @@ seen3 = Map.remove(seen2, "alice")
 
 `Map.set(s, k, Unit)` adds an element, `Map.has(s, k)` checks membership, `Map.remove(s, k)` removes an element, and `Map.len(s)` returns the cardinality. Map literals with `Unit` values work as set literals: `{"alice" => Unit, "bob" => Unit}`.
 
-When targeting Dafny, the codegen lowers `Map<T, Unit>` to the native set type. Lean has no set type the generated project can reach, so there it stays an ordinary map:
-
-| Backend | Aver type | Target type | `Map.set(s, k, Unit)` |
-|---------|-----------|-------------|----------------------|
-| Dafny | `Map<T, Unit>` | `set<T>` | `s + {k}` |
-| Lean | `Map<T, Unit>` | `List (T × Unit)` | `AverMap.set s k ()` |
+Lean has no set type the generated project can reach, so in the proof export a set stays an ordinary map: `Map<T, Unit>` becomes `List (T × Unit)`, and `Map.set(s, k, Unit)` becomes `AverMap.set s k ()`.
 
 ## Common patterns
 
@@ -419,7 +414,7 @@ fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
                 [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
 ```
 
-Stops may sit anywhere the function runs unconditionally (in a binding, as a match subject, inside an argument) and inside `match` arms. A request in tail position, as the last expression of the body or as the leaf of a `match` arm, is a stop like any other, and its answer is what the function returns. The same operation may stop several times in one body, and `?` after a request works (`Err` leaves through `Done`). When code follows a stop that sits in a `match` arm of a non-tail statement, the rest of the path becomes a generated continuation function (`__loopJoin1`, `__loopAfterAwaitR`) that the arms call. The generated items are ordinary types and pure functions. `aver verify` runs them, every backend compiles them, and `aver proof` exports them to Lean and Dafny like anything else, so the coordinator's laws can reason about the protocol.
+Stops may sit anywhere the function runs unconditionally (in a binding, as a match subject, inside an argument) and inside `match` arms. A request in tail position, as the last expression of the body or as the leaf of a `match` arm, is a stop like any other, and its answer is what the function returns. The same operation may stop several times in one body, and `?` after a request works (`Err` leaves through `Done`). When code follows a stop that sits in a `match` arm of a non-tail statement, the rest of the path becomes a generated continuation function (`__loopJoin1`, `__loopAfterAwaitR`) that the arms call. The generated items are ordinary types and pure functions. `aver verify` runs them, every backend compiles them, and `aver proof` exports them to Lean like anything else, so the coordinator's laws can reason about the protocol.
 
 A module that exposes a yielding function exposes its protocol in its place. `exposes [loop]` becomes the generated names, and an importer writes `Looper.__loopStart(...)`, matches `Looper.__LoopOutcome` and answers with `Looper.__loopAnswerClaim(...)`. A yielding importer may also write `Looper.loop(...)`: the compiler keeps the exported source signature and nests the library's protocol into the caller. Ordinary functions use the explicit protocol entry points. Default exports follow the same rule, and private helpers stay private.
 

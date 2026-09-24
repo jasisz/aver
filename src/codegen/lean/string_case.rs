@@ -1,4 +1,4 @@
-//! Unicode case conversion from the same VM-checked tables as Dafny and wasm.
+//! Unicode case conversion from the same VM-checked tables as wasm.
 //! Lean's native String.toLower/toUpper cover ASCII only. In particular, a
 //! Char -> Char map cannot represent expansions or contextual final sigma.
 
