@@ -9,13 +9,30 @@
 //! have cost only that claim. With one rule, the producer drops or declines
 //! exactly what the checker would refuse, before it ships.
 
-/// Elaboration-executing tokens a package `.lean` file may not carry in code
-/// position (checker stage 7). `deriving` is the one token with an admitted
-/// form: the closed clause [`admitted_deriving_end`] accepts.
-pub const CODE_EXEC_TOKENS: [&str; 20] = [
-    "#eval",
+/// Words a package `.lean` file may not carry in code position (checker
+/// stage 7), matched against every `.`-separated component of every
+/// identifier token, so `Foo.elab` is refused like `elab`.
+///
+/// Three groups. Commands that run code while a file elaborates or register
+/// code that later elaboration runs (`run_cmd`, `initialize`, `macro`,
+/// `elab`, `simproc`, …). Commands that change how LATER text parses or
+/// resolves — the checker's witness re-elaborates package statements, so a
+/// package that could add a notation, a mixfix operator, a binder predicate,
+/// a syntax category, a unification hint, an exported alias or a scoped
+/// declaration could change what a pinned statement means (`notation`,
+/// `infix`, `prefix`, `binder_predicate`, `declare_syntax_cat`, `unif_hint`,
+/// `export`, `scoped`, `attribute`). And the name prefix the checker reserves
+/// for its own witness (`AverCertChecker`).
+///
+/// `deriving` is the one word with an admitted form: the closed clause
+/// [`admitted_deriving_end`] accepts. `instance` is not refused here: the
+/// model needs a few, and which ones a package may declare is decided on the
+/// ELABORATED instance by the checker's out-of-process audit, where a name
+/// alias or a class parent projection cannot disguise the class.
+pub const REFUSED_WORDS: [&str; 37] = [
     "run_cmd",
     "run_elab",
+    "run_meta",
     "run_tac",
     "initialize",
     "builtin_initialize",
@@ -25,15 +42,89 @@ pub const CODE_EXEC_TOKENS: [&str; 20] = [
     "elab_rules",
     "syntax",
     "notation",
+    "infix",
+    "infixl",
+    "infixr",
+    "prefix",
+    "postfix",
+    "binder_predicate",
+    "declare_syntax_cat",
+    "unif_hint",
+    "export",
+    "scoped",
     "unsafe",
     "implemented_by",
     "extern",
-    "deriving",
     "attribute",
-    "@[",
-    "«",
-    "open Lean",
+    "simproc",
+    "dsimproc",
+    "simproc_decl",
+    "dsimproc_decl",
+    "builtin_simproc",
+    "builtin_dsimproc",
+    "register_simp_attr",
+    "register_option",
+    "register_builtin_option",
+    "deriving",
+    "AverCertChecker",
 ];
+
+/// The `#`-commands a package may carry. Every other one (`#eval`, `#exit`,
+/// …) is refused.
+pub const ADMITTED_HASH_COMMANDS: [&str; 3] = ["#guard_msgs", "#print", "#check"];
+
+/// Options a package may set, exactly: the resource limits and elaboration
+/// switches the producer writes. Any `linter.` option is admitted as well (a
+/// linter only reports). Nothing under `debug.` — `debug.skipKernelTC` adds
+/// declarations the kernel never checked — nor any other option is admitted.
+pub const ADMITTED_OPTIONS: [&str; 7] = [
+    "autoImplicit",
+    "relaxedAutoImplicit",
+    "maxHeartbeats",
+    "maxRecDepth",
+    "smartUnfolding",
+    "synthInstance.maxSize",
+    "synthInstance.maxHeartbeats",
+];
+
+/// Namespaces a package may not `open`: the metaprogramming API (the checker's
+/// own audit is written against it) and the build system.
+pub const REFUSED_OPEN_ROOTS: [&str; 2] = ["Lean", "Lake"];
+
+/// Whether `set_option <name>` is admitted.
+pub fn option_admitted(name: &str) -> bool {
+    ADMITTED_OPTIONS.contains(&name)
+        || name
+            .strip_prefix("linter.")
+            .is_some_and(|rest| !rest.is_empty())
+}
+
+/// The first refused construct in code position, if any, named by the word or
+/// symbol that opens it (`set_option` for a refused option, `open Lean` for an
+/// open of a refused namespace, `#command` for a refused `#`-command other
+/// than `#eval`).
+///
+/// This is a fail-closed trust-boundary defense. The file is TOKENIZED — the
+/// rules below look at identifier and symbol tokens, never at substrings — so
+/// whitespace, line breaks and comments between the words of a construct
+/// (`open  Lean`, `open /- -/ Lean`, `set_option\n debug.x`) change nothing.
+/// The notion of "this span is an inert string or comment" is a deliberate
+/// SOUND OVER-APPROXIMATION of code: on any lexical ambiguity it defaults to
+/// code, so a token Lean would elaborate is never skipped as inert. It may
+/// over-reject but must never under-reject.
+///
+/// Inert spans recognized (and only these): normal string literals `"..."`
+/// with `\` escapes, line comments `-- ... \n`, and nested block comments
+/// `/- ... -/` (which also covers the `/--`/`/-!` doc-comment openers). Char
+/// literals are consumed just far enough that a `"` inside `'"'` / `'\"'`
+/// cannot open a phantom string. Raw / interpolated string prefixes (`r"`,
+/// `r#"`, `s!"`) and unterminated strings/comments switch the rest of the file
+/// to pure code: their contents are tokenized like everything else.
+pub fn code_exec_token(text: &str) -> Option<&'static str> {
+    let chars: Vec<char> = text.chars().collect();
+    let tokens = tokenize(&chars);
+    first_refused(&chars, &tokens)
+}
 
 /// The classes a `deriving` clause on a type declaration may name.
 ///
@@ -52,37 +143,6 @@ pub const DERIVING_CLASSES: [&str; 3] = ["BEq", "DecidableEq", "Inhabited"];
 /// the lawfulness of a derived `BEq`, which the model's law proofs rewrite
 /// `==` to `=` with.
 pub const DERIVING_INSTANCE_CLASSES: [&str; 2] = ["ReflBEq", "LawfulBEq"];
-
-/// The first elaboration-executing token in code position, if any.
-///
-/// This is a fail-closed trust-boundary defense: the scanner's notion of "this
-/// span is an inert string or comment" is a deliberate SOUND
-/// OVER-APPROXIMATION of code — on any lexical ambiguity it defaults to code
-/// and scans, so a token Lean would elaborate is never skipped as inert. It may
-/// over-reject (treat inert bytes as code) but must never under-reject.
-///
-/// Inert spans recognized (and only these): normal string literals `"..."`
-/// with `\` escapes, line comments `-- ... \n`, and nested block comments
-/// `/- ... -/` (which also covers the `/--`/`/-!` doc-comment openers). Char
-/// literals are consumed as code just far enough that a `"` inside `'"'` /
-/// `'\"'` cannot open a phantom string. Raw / interpolated string prefixes
-/// (`r"`, `r#"`, `s!"`) and unterminated strings/comments fall back to
-/// scanning the remainder as pure code. A `deriving` token is admitted only as
-/// the exact closed clause [`admitted_deriving_end`] recognizes.
-pub fn code_exec_token(text: &str) -> Option<&'static str> {
-    let chars: Vec<char> = text.chars().collect();
-    find_code_exec_token(&chars)
-}
-
-/// Where scanning resumes after a token that opens an admitted clause, or
-/// `None` when the token is refused.
-fn admitted_clause_end(token: &str, chars: &[char], at: usize) -> Option<usize> {
-    if token == "deriving" {
-        admitted_deriving_end(chars, at)
-    } else {
-        None
-    }
-}
 
 /// Recognize an admitted `deriving` clause starting at `chars[start]` and
 /// return the index of the end of its line.
@@ -246,50 +306,6 @@ pub fn law_claim_identifiers(
     Ok(())
 }
 
-/// A Lean identifier-continuation character, narrowed to ASCII alphanumerics and
-/// `_`. This is intentionally an UNDER-approximation of Lean's identifier
-/// alphabet: it is used only for the word-boundary check, and treating fewer
-/// characters as identifier-continuation makes the scanner *more* likely to
-/// reject (fail-closed), never less.
-fn is_ident_continuation(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// A forbidden token is treated as a whole *word* (boundary-checked so `elab`
-/// does not fire inside `relabel`) exactly when every one of its bytes is an
-/// ASCII identifier-continuation character. Tokens carrying punctuation, spaces,
-/// or non-ASCII bytes (`#eval`, `@[`, `«`, `open Lean`) are matched as raw
-/// substrings in code position, where a word boundary has no meaning.
-fn token_is_word(token: &str) -> bool {
-    token
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-}
-
-/// Returns the offending token if one starts, in code position, at `chars[i]`.
-fn token_at(
-    tokens: &[(&'static str, Vec<char>, bool)],
-    chars: &[char],
-    i: usize,
-) -> Option<&'static str> {
-    for (token, needle, is_word) in tokens {
-        let len = needle.len();
-        if i + len > chars.len() || &chars[i..i + len] != needle.as_slice() {
-            continue;
-        }
-        if *is_word {
-            let left_boundary = i == 0 || !is_ident_continuation(chars[i - 1]);
-            let right_boundary = i + len == chars.len() || !is_ident_continuation(chars[i + len]);
-            if left_boundary && right_boundary {
-                return Some(token);
-            }
-        } else {
-            return Some(token);
-        }
-    }
-    None
-}
-
 /// Index just past the closing `"` of the normal string literal opening at
 /// `chars[open]`, or `None` if the string never closes before EOF (an
 /// unterminated string is a lexer error in Lean; the caller then defaults to
@@ -356,95 +372,235 @@ fn char_literal_end(chars: &[char], open: usize) -> Option<usize> {
     }
 }
 
-/// Scan `chars[start..]` as pure code (no string/comment skipping) and return
-/// the first forbidden token. Used as the default-to-code fallback for
-/// unterminated strings/comments and raw/interpolated string prefixes.
-fn scan_remainder_as_code(
-    tokens: &[(&'static str, Vec<char>, bool)],
-    chars: &[char],
-    start: usize,
-) -> Option<&'static str> {
-    let mut i = start;
-    while i < chars.len() {
-        if let Some(token) = token_at(tokens, chars, i) {
-            match admitted_clause_end(token, chars, i) {
-                Some(end) => {
-                    i = end;
-                    continue;
-                }
-                None => return Some(token),
-            }
-        }
-        i += 1;
-    }
-    None
+/// One token of a package file in code position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Token {
+    /// An identifier, dotted segments included (`Foo.bar'`), with the index
+    /// of its first character.
+    Ident(String, usize),
+    /// A `#`-command word (`#eval`), with its start.
+    Hash(String, usize),
+    /// Any other significant character or symbol (`@[` is one symbol), with
+    /// its start.
+    Symbol(String, usize),
 }
 
-/// The context-aware core of [`code_exec_token`]: a mini Lean lexer that
-/// walks the file, skips inert string/comment spans, and reports the first
-/// forbidden token that appears in code position.
-fn find_code_exec_token(chars: &[char]) -> Option<&'static str> {
-    let tokens: Vec<(&'static str, Vec<char>, bool)> = CODE_EXEC_TOKENS
-        .iter()
-        .map(|token| (*token, token.chars().collect(), token_is_word(token)))
-        .collect();
+impl Token {
+    fn start(&self) -> usize {
+        match self {
+            Token::Ident(_, at) | Token::Hash(_, at) | Token::Symbol(_, at) => *at,
+        }
+    }
+}
+
+/// A character that may start an identifier segment: ASCII letters and `_`,
+/// and every non-ASCII alphabetic character (Lean admits Greek and other
+/// letter-like characters). Over-admitting here only makes more text an
+/// identifier, which the rules then inspect.
+fn is_ident_start(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_' || (!c.is_ascii() && c.is_alphabetic())
+}
+
+/// A character that may continue an identifier segment. Lean continues an
+/// identifier with `'`, `!` and `?` too, so `prefix'` is one identifier and
+/// never the refused word `prefix`.
+fn is_ident_continue(c: char) -> bool {
+    is_ident_start(c)
+        || c.is_ascii_digit()
+        || c == '\''
+        || c == '!'
+        || c == '?'
+        || (!c.is_ascii() && c.is_alphanumeric())
+}
+
+/// Tokenize the code positions of a package file. Strings, comments and char
+/// literals are skipped; everything else becomes a token. After a raw or
+/// interpolated string prefix, or an unterminated string or comment, the rest
+/// of the file is tokenized as pure code (no span is skipped any more).
+fn tokenize(chars: &[char]) -> Vec<Token> {
     let n = chars.len();
+    let mut tokens = Vec::new();
+    let mut pure_code = false;
     let mut i = 0;
     while i < n {
         let c = chars[i];
-        // Inert-span openers take priority. None of them is a token start, so
-        // handling them here never skips over a forbidden token.
-        if c == '"' {
-            // A `"` preceded by a raw/interpolated string prefix (`r"`, `r#"`,
-            // `s!"`) is lexically ambiguous for a normal-string scan; default to
-            // code and scan the remainder rather than risk a desynced skip.
-            if i > 0 && matches!(chars[i - 1], 'r' | '#' | '!') {
-                return scan_remainder_as_code(&tokens, chars, i);
-            }
-            match string_literal_end(chars, i) {
-                Some(end) => {
-                    i = end;
-                    continue;
-                }
-                None => return scan_remainder_as_code(&tokens, chars, i),
-            }
-        }
-        if c == '-' && chars.get(i + 1) == Some(&'-') {
-            // Line comment through end of line (or EOF).
-            let mut j = i + 2;
-            while j < n && chars[j] != '\n' {
-                j += 1;
-            }
-            i = j;
+        if c.is_whitespace() {
+            i += 1;
             continue;
         }
-        if c == '/' && chars.get(i + 1) == Some(&'-') {
-            match block_comment_end(chars, i) {
-                Some(end) => {
+        if !pure_code {
+            if c == '"' {
+                // A `"` after a raw/interpolated prefix (`r"`, `r#"`, `s!"`) is
+                // ambiguous for a normal-string scan: default to code.
+                if i > 0 && matches!(chars[i - 1], 'r' | '#' | '!') {
+                    pure_code = true;
+                } else if let Some(end) = string_literal_end(chars, i) {
                     i = end;
                     continue;
+                } else {
+                    pure_code = true;
                 }
-                None => return scan_remainder_as_code(&tokens, chars, i),
+            } else if c == '-' && chars.get(i + 1) == Some(&'-') {
+                while i < n && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            } else if c == '/' && chars.get(i + 1) == Some(&'-') {
+                match block_comment_end(chars, i) {
+                    Some(end) => {
+                        i = end;
+                        continue;
+                    }
+                    None => pure_code = true,
+                }
+            } else if c == '\''
+                && !matches!(i.checked_sub(1).map(|p| chars[p]), Some(p) if is_ident_continue(p))
+                && let Some(end) = char_literal_end(chars, i)
+            {
+                i = end;
+                continue;
             }
         }
-        // A `'` that opens a char literal is consumed; otherwise it is an
-        // identifier prime and falls through as ordinary code.
-        if c == '\''
-            && let Some(end) = char_literal_end(chars, i)
-        {
-            i = end;
+        if is_ident_start(c) {
+            let start = i;
+            loop {
+                while i < n && is_ident_continue(chars[i]) {
+                    i += 1;
+                }
+                if i + 1 < n && chars[i] == '.' && is_ident_start(chars[i + 1]) {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            tokens.push(Token::Ident(chars[start..i].iter().collect(), start));
             continue;
         }
-        if let Some(token) = token_at(&tokens, chars, i) {
-            match admitted_clause_end(token, chars, i) {
-                Some(end) => {
-                    i = end;
-                    continue;
-                }
-                None => return Some(token),
+        if c.is_ascii_digit() {
+            while i < n && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
             }
+            continue;
         }
+        if c == '#' && chars.get(i + 1).is_some_and(|next| is_ident_start(*next)) {
+            let start = i;
+            i += 1;
+            while i < n && is_ident_continue(chars[i]) {
+                i += 1;
+            }
+            tokens.push(Token::Hash(chars[start..i].iter().collect(), start));
+            continue;
+        }
+        if c == '@' && chars.get(i + 1) == Some(&'[') {
+            tokens.push(Token::Symbol("@[".to_string(), i));
+            i += 2;
+            continue;
+        }
+        tokens.push(Token::Symbol(c.to_string(), i));
         i += 1;
+    }
+    tokens
+}
+
+/// Command keywords that end the argument list of an `open`.
+const COMMAND_WORDS: [&str; 26] = [
+    "def",
+    "theorem",
+    "lemma",
+    "abbrev",
+    "instance",
+    "structure",
+    "inductive",
+    "class",
+    "namespace",
+    "section",
+    "end",
+    "open",
+    "set_option",
+    "variable",
+    "universe",
+    "noncomputable",
+    "private",
+    "protected",
+    "partial",
+    "mutual",
+    "example",
+    "opaque",
+    "axiom",
+    "import",
+    "in",
+    "where",
+];
+
+/// Apply the rules to the token stream; the first refused construct wins.
+fn first_refused(chars: &[char], tokens: &[Token]) -> Option<&'static str> {
+    let mut at = 0;
+    while at < tokens.len() {
+        match &tokens[at] {
+            Token::Symbol(symbol, _) => {
+                if symbol == "@[" {
+                    return Some("@[");
+                }
+                if symbol == "«" || symbol == "»" {
+                    return Some("«");
+                }
+            }
+            Token::Hash(command, _) => {
+                if command == "#eval" {
+                    return Some("#eval");
+                }
+                if !ADMITTED_HASH_COMMANDS.contains(&command.as_str()) {
+                    return Some("#command");
+                }
+            }
+            Token::Ident(name, start) => {
+                if name == "deriving" {
+                    // The admitted clause resumes past its own line: skip every
+                    // token it covers.
+                    let Some(end) = admitted_deriving_end(chars, *start) else {
+                        return Some("deriving");
+                    };
+                    at += 1;
+                    while tokens.get(at).is_some_and(|token| token.start() < end) {
+                        at += 1;
+                    }
+                    continue;
+                }
+                if let Some(word) = name
+                    .split('.')
+                    .find_map(|segment| REFUSED_WORDS.iter().find(|word| **word == segment))
+                {
+                    return Some(word);
+                }
+                if name == "set_option" {
+                    match tokens.get(at + 1) {
+                        Some(Token::Ident(option, _)) if option_admitted(option) => {}
+                        _ => return Some("set_option"),
+                    }
+                }
+                if name == "open" {
+                    let mut next = at + 1;
+                    while let Some(token) = tokens.get(next) {
+                        match token {
+                            Token::Ident(opened, _) => {
+                                if COMMAND_WORDS.contains(&opened.as_str()) {
+                                    break;
+                                }
+                                let root = opened.split('.').next().unwrap_or_default();
+                                if REFUSED_OPEN_ROOTS.contains(&root) {
+                                    return Some("open Lean");
+                                }
+                            }
+                            Token::Symbol(symbol, _)
+                                if matches!(symbol.as_str(), "(" | ")" | ",") => {}
+                            _ => break,
+                        }
+                        next += 1;
+                    }
+                }
+            }
+        }
+        at += 1;
     }
     None
 }
@@ -518,6 +674,88 @@ mod tests {
             refused("  deriving BEq\n@[simp] theorem t : True := trivial\n"),
             Some("@[")
         );
+    }
+
+    /// The gate reads tokens, so spacing, line breaks and comments between the
+    /// words of a construct do not hide it.
+    #[test]
+    fn refused_constructs_are_found_whatever_the_spacing() {
+        for text in [
+            "open Lean\n",
+            "open  Lean in\n",
+            "open\tLean.Elab\n",
+            "open /- c -/ Lean\n",
+            "open Foo\n  Lean\n",
+            "open Foo (bar) Lake\n",
+        ] {
+            assert_eq!(refused(text), Some("open Lean"), "{text:?}");
+        }
+        for text in [
+            "set_option debug.skipKernelTC true\n",
+            "set_option\n  debug.skipKernelTC true in\ntheorem t : True := trivial\n",
+            "theorem t : True := by\n  set_option /- x -/ debug.skipKernelTC true in\n  trivial\n",
+            "set_option pp.all true\n",
+            "set_option trace.Meta.synthInstance true\n",
+            "set_option\n",
+        ] {
+            assert_eq!(refused(text), Some("set_option"), "{text:?}");
+        }
+        for (text, word) in [
+            ("infixl:65 \" +' \" => f\n", "infixl"),
+            ("local infix:50 \" ≤ \" => fun _ _ => False\n", "infix"),
+            ("prefix:max \"√\" => f\n", "prefix"),
+            ("postfix:max \"!\" => f\n", "postfix"),
+            ("scoped notation \"x\" => 1\n", "scoped"),
+            (
+                "binder_predicate x \" > \" y:term => `($x > $y)\n",
+                "binder_predicate",
+            ),
+            ("export Foo (bar)\n", "export"),
+            ("declare_syntax_cat foo\n", "declare_syntax_cat"),
+            ("scoped instance : LE Nat := ⟨fun _ _ => False⟩\n", "scoped"),
+            (
+                "unif_hint (n : Nat) where n =?= 0 ⊢ n + 1 =?= 1\n",
+                "unif_hint",
+            ),
+            ("attribute [instance] foo\n", "attribute"),
+            ("simproc foo (x) := fun e => pure .continue\n", "simproc"),
+            ("namespace AverCertChecker.AverCert\n", "AverCertChecker"),
+            (
+                "def _root_.AverCertChecker.checked := 0\n",
+                "AverCertChecker",
+            ),
+            ("#exit\n", "#command"),
+            ("#eval 1\n", "#eval"),
+            (
+                "theorem t : True := by\n  native_decide\n@ [simp] def x := 0\n@[simp] def y := 0\n",
+                "@[",
+            ),
+        ] {
+            assert_eq!(refused(text), Some(word), "{text:?}");
+        }
+    }
+
+    /// What the producer writes passes: the admitted options, `#guard_msgs`,
+    /// `#print axioms`, opens of model namespaces, instances (their class is
+    /// judged on the elaborated declaration by the checker's audit), primed
+    /// identifiers spelling a refused word, and refused words inside strings
+    /// and comments.
+    #[test]
+    fn producer_text_is_admitted() {
+        for text in [
+            "set_option maxHeartbeats 4000000\nset_option linter.unusedSimpArgs false\n",
+            "theorem t : True := by\n  first\n  | (set_option maxHeartbeats 1000000 in\n      trivial)\n",
+            "set_option smartUnfolding false in\ndef f (x : Int) : Int := x\n",
+            "set_option synthInstance.maxSize 256\nset_option autoImplicit false\n",
+            "#guard_msgs (drop error) in\ntheorem t : True := trivial\n#print axioms t\n",
+            "open AverCert AverCert.Schema\nopen Classical in\ntheorem t : True := trivial\n",
+            "instance : Inhabited Op := ⟨Op.zero⟩\ninstance : HAdd String String String := ⟨String.append⟩\n",
+            "def prefix' (s : String) : String := s\ndef infix' := 0\n",
+            "def s := \"infix prefix open Lean set_option debug.x\"\n-- open Lean\n/- #eval -/\n",
+            "structure P where\n  prefixLen : Nat\n  deriving BEq\n",
+        ] {
+            assert_eq!(refused(text), None, "{text:?}");
+        }
     }
 
     #[test]
