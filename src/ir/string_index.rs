@@ -77,6 +77,18 @@ struct FlowFacts {
 /// with two tracked String parameters, or any generated-name collision,
 /// leaves the complete source component untouched.
 pub fn run_string_index_pass(items: &mut Vec<TopLevel>) -> StringIndexPassReport {
+    run_string_index_pass_keeping(items, &HashSet::new())
+}
+
+/// [`run_string_index_pass`] for a pipeline whose chars fusion left the
+/// functions in `kept` unfused (see [`crate::ir::cert_shape`]). A kept
+/// classifier's `<fn>__code` variant is discovered from its codepoint-rewritten
+/// copy, as it would have been had chars fusion rewritten it, so indexed
+/// workers keep reading one codepoint while the classifier keeps its body.
+pub fn run_string_index_pass_keeping(
+    items: &mut Vec<TopLevel>,
+    kept: &HashSet<String>,
+) -> StringIndexPassReport {
     let signatures: HashMap<String, Vec<String>> = fn_defs(items)
         .map(|fd| {
             (
@@ -147,15 +159,17 @@ pub fn run_string_index_pass(items: &mut Vec<TopLevel>) -> StringIndexPassReport
         return report;
     }
 
-    let code_variant_plans = discover_index_code_variants(items, &taken, &fn_names);
+    let code_variant_plans = discover_index_code_variants(items, &taken, &fn_names, kept);
     let code_classifiers: BTreeMap<String, usize> = code_variant_plans
         .iter()
         .map(|(name, plan)| (name.clone(), plan.param_index))
         .collect();
 
+    // A worker is synthesized, so a kept function's worker starts from the
+    // codepoint-rewritten copy chars fusion would have left in its place.
     let originals: Vec<FnDef> = fn_defs(items)
         .filter(|fd| accepted.contains_key(&fd.name))
-        .cloned()
+        .map(|fd| code_form_if_kept(fd, kept))
         .collect();
     let mut workers = Vec::with_capacity(originals.len());
     let mut used_code_classifiers = BTreeSet::new();
@@ -819,8 +833,11 @@ fn discover_index_code_variants(
     items: &[TopLevel],
     taken: &HashSet<String>,
     fn_names: &BTreeSet<String>,
+    kept: &HashSet<String>,
 ) -> BTreeMap<String, IndexCodeVariant> {
-    let candidates: Vec<FnDef> = fn_defs(items).cloned().collect();
+    let candidates: Vec<FnDef> = fn_defs(items)
+        .map(|fd| code_form_if_kept(fd, kept))
+        .collect();
     let mut variants = BTreeMap::new();
     loop {
         let available: BTreeMap<String, usize> = variants
@@ -863,6 +880,15 @@ fn discover_index_code_variants(
         variants.extend(discovered);
     }
     variants
+}
+
+/// `fd`, or for a function in `kept` its codepoint-rewritten copy (see
+/// [`run_string_index_pass_keeping`]).
+fn code_form_if_kept(fd: &FnDef, kept: &HashSet<String>) -> FnDef {
+    kept.contains(&fd.name)
+        .then(|| crate::ir::chars_fusion::codepoint_form(fd))
+        .flatten()
+        .unwrap_or_else(|| fd.clone())
 }
 
 fn expand_code_variant_dependencies(
@@ -1328,6 +1354,58 @@ fn walk(text: String, pos: Int, acc: Int) -> Int
 fn count(text: String) -> Int
     walk(text, 0, 0)
 "#;
+
+    const KEPT_CLASSIFIER: &str = r#"module Kept
+    intent = "A scan whose per-character step is a classifier the certificate printer prints."
+    effects []
+
+fn scan(s: String, pos: Int) -> Int
+    match String.charAt(s, pos)
+        Option.None -> pos
+        Option.Some(c) -> scan(s, pos + step(c))
+
+fn step(c: String) -> Int
+    match c
+        "." -> 2
+        "e" -> 3
+        _ -> 1
+"#;
+
+    /// A kept classifier keeps its source body, and the indexed loop still
+    /// reads one codepoint through the `__code` variant built from its
+    /// rewritten copy: keeping costs the classifier's own callers only.
+    #[test]
+    fn a_kept_classifier_still_grows_the_code_variant_the_indexed_loop_calls() {
+        let run = |keep: bool| {
+            let mut items = prepared(KEPT_CLASSIFIER);
+            let kept: HashSet<String> = if keep {
+                crate::ir::cert_shape::kept_unfused(&items)
+            } else {
+                HashSet::new()
+            };
+            let original_step = rendered_fn(&items, "step");
+            crate::ir::run_chars_fusion_pass_keeping(&mut items, &kept);
+            let report = run_string_index_pass_keeping(&mut items, &kept);
+            (items, report, original_step)
+        };
+        let (fused, fused_report, _) = run(false);
+        let (kept, kept_report, original_step) = run(true);
+        assert_eq!(kept_report.code_variants, vec!["step__code".to_string()]);
+        assert_eq!(kept_report.code_variants, fused_report.code_variants);
+        assert_eq!(
+            kept_report.codepoint_accesses,
+            fused_report.codepoint_accesses
+        );
+        for name in ["scan__indexed", "step__code"] {
+            assert_eq!(
+                rendered_fn(&kept, name),
+                rendered_fn(&fused, name),
+                "{name}"
+            );
+        }
+        assert_eq!(rendered_fn(&kept, "step"), original_step);
+        assert_ne!(rendered_fn(&fused, "step"), original_step);
+    }
 
     #[test]
     fn recursive_string_flow_builds_one_wrapper_index_and_forwards_it() {

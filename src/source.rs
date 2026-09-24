@@ -1271,6 +1271,7 @@ fn load_compile_deps_with_runtime_strings(
                 run_string_index: true,
                 run_list_build: false,
                 run_byte_sink: runtime_strings,
+                keep_printable_unfused: runtime_strings,
                 alloc_policy: Some(&neutral_policy),
                 ..Default::default()
             },

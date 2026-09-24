@@ -645,6 +645,11 @@ impl Printer<'_> {
                     }
                     MirCallee::Builtin(b) => {
                         let name = self.layout.builtin_name(*b).unwrap_or_default();
+                        // The passes keep a function unfused by this same
+                        // list (`ir::cert_shape`); nothing outside it prints.
+                        if !crate::ir::cert_shape::PRINTED_BUILTINS.contains(&name.as_str()) {
+                            return Err(format!("Call Builtin({name})"));
+                        }
                         let callee = match name.as_str() {
                             "Bool.and" => PlanCallee::Builtin(PlanBuiltin::BoolAnd),
                             "Bool.or" => PlanCallee::Builtin(PlanBuiltin::BoolOr),

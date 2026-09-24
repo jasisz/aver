@@ -130,6 +130,7 @@ fn build_component(
             run_string_index: true,
             run_list_build: false,
             run_byte_sink: true,
+            keep_printable_unfused: true,
             ..Default::default()
         },
     );

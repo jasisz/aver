@@ -234,6 +234,17 @@ impl CharsFusionPassReport {
 /// `resolver::resolve_program` (everything here matches on
 /// `Expr::Ident`, which the resolver rewrites to `Expr::Resolved`).
 pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport {
+    run_chars_fusion_pass_keeping(items, &HashSet::new())
+}
+
+/// [`run_chars_fusion_pass`] that rewrites neither call sites nor codepoint
+/// matches inside a function named in `kept` (see
+/// [`crate::ir::cert_shape`]). Synthesized variants are never kept: they do
+/// not exist in the source, so no certificate is about them.
+pub fn run_chars_fusion_pass_keeping(
+    items: &mut Vec<TopLevel>,
+    kept: &HashSet<String>,
+) -> CharsFusionPassReport {
     let mut report = CharsFusionPassReport::default();
 
     let fn_names: HashSet<String> = items
@@ -293,6 +304,9 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
     // than left in the program as dead synthesized code.
     let mut fired: HashSet<String> = HashSet::new();
     for fd in fn_defs_mut(items) {
+        if kept.contains(&fd.name) {
+            continue;
+        }
         let scope = CallScope::of(fd, &fn_names);
         let body = Arc::make_mut(&mut fd.body);
         for stmt in body.stmts_mut() {
@@ -320,7 +334,19 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
     // The codepoint rewrite runs last so the synthesized variants —
     // which carry the same match sites the originals do — are covered
     // by the same walk.
+    //
+    // A kept function's own body stays as written, but its rewritten copy
+    // still answers whether it can take a code: the `<fn>__code` variant is
+    // synthesized from that copy, so the loops that call it keep the
+    // codepoint and only the source function stays printable.
+    let mut kept_code_forms: HashMap<String, FnDef> = HashMap::new();
     for fd in fn_defs_mut(items) {
+        if kept.contains(&fd.name) {
+            if let Some(form) = codepoint_form(fd) {
+                kept_code_forms.insert(fd.name.clone(), form);
+            }
+            continue;
+        }
         let mut count = 0;
         let body = Arc::make_mut(&mut fd.body);
         for stmt in body.stmts_mut() {
@@ -340,7 +366,7 @@ pub fn run_chars_fusion_pass(items: &mut Vec<TopLevel>) -> CharsFusionPassReport
     // code itself, so a cursor loop that only ever hands its head to
     // such classifiers binds the head's codepoint instead of the
     // one-character string.
-    rewrite_codepoint_calls(items, &taken, &mut report);
+    rewrite_codepoint_calls(items, &taken, &kept_code_forms, &mut report);
 
     report
 }
@@ -989,6 +1015,20 @@ impl Cursorer<'_> {
 
 // ── Codepoint match rewrite ─────────────────────────────────────────
 
+/// `fd` with its single-character matches rewritten onto codepoints, or
+/// `None` when no match qualifies. Leaves `fd` itself alone: a function the
+/// certificate printer could print keeps its source body, and this copy only
+/// feeds the `<fn>__code` variants synthesized from it.
+pub(super) fn codepoint_form(fd: &FnDef) -> Option<FnDef> {
+    let mut form = fd.clone();
+    let body = Arc::make_mut(&mut form.body);
+    let mut count = 0;
+    for stmt in body.stmts_mut() {
+        count += rewrite_codepoint_matches(stmt_expr_mut(stmt));
+    }
+    (count > 0).then_some(form)
+}
+
 /// Rewrite every `match` whose arms are single-character ASCII string
 /// literals into a match on the subject's codepoint. Returns how many
 /// fired.
@@ -1107,6 +1147,7 @@ enum CodeFold {
 fn rewrite_codepoint_calls(
     items: &mut Vec<TopLevel>,
     taken: &HashSet<String>,
+    kept_code_forms: &HashMap<String, FnDef>,
     report: &mut CharsFusionPassReport,
 ) {
     // The peel shape this stage rewrites exists only inside cursor
@@ -1119,6 +1160,7 @@ fn rewrite_codepoint_calls(
     // nothing — the loop it sits in keeps the head binding it has.
     let mut callees: BTreeMap<String, CodeFold> = BTreeMap::new();
     for fd in fn_defs(items) {
+        let fd = kept_code_forms.get(&fd.name).unwrap_or(fd);
         if let Some(fold) = qualifies_as_code_callee(fd)
             && !taken.contains(&format!("{}{CODE_SUFFIX}", fd.name))
         {
@@ -1163,6 +1205,7 @@ fn rewrite_codepoint_calls(
         let fd = fn_defs(items)
             .find(|fd| &fd.name == name)
             .expect("collected from these items above");
+        let fd = kept_code_forms.get(name).unwrap_or(fd);
         variants.push(build_code_variant(fd, *fold, &variant_name));
         report.synthesized.push(variant_name);
     }

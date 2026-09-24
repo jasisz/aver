@@ -5281,17 +5281,18 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
 ///
 /// String builders/cursors/indexes and the closed byte sink run on every
 /// ordinary runtime backend, while generic list collectors remain Rust/VM-only.
-/// Proof exporters skip all fabricating passes, and certified wasm-gc artifacts
-/// keep their independently classified source-level traversal. The diagnostic
+/// Proof exporters skip all fabricating passes, and wasm-gc/wasip2 builds (with
+/// or without `--certify`) leave unfused every function the certificate
+/// printer could print in source form (`ir::cert_shape`). The diagnostic
 /// runs one observational pipeline regardless of `--target`, so every report
 /// names the artifacts its count actually describes.
 const COLLECTOR_TARGETS_JSON: &str = "[\"rust\",\"vm\"]";
 const COLLECTOR_TARGETS_NOTE: &str =
     "generic __lst_* rewrites apply only to the rust and VM pipelines";
 const RUNTIME_STRING_TARGETS_JSON: &str = "[\"rust\",\"vm\",\"wasm-gc\",\"wasip2\"]";
-const BYTE_SINK_TARGETS_NOTE: &str = "packed __byt_* rewrites apply to rust, VM, ordinary wasm-gc, and wasip2; certified/boxed wasm-gc retains source traversal";
-const BUFFER_BUILD_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, ordinary wasm-gc, and wasip2; certified wasm-gc retains source traversal until its byte-level wall classifies the builder helpers";
-const CHARS_FUSION_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, ordinary wasm-gc, and wasip2; certified wasm-gc retains source traversal until its byte-level wall classifies the cursor helpers";
+const BYTE_SINK_TARGETS_NOTE: &str = "packed __byt_* rewrites apply to rust, VM, wasm-gc, and wasip2; boxed-sequence wasm-gc retains source traversal; wasm-gc and wasip2 leave unfused a function the certificate printer could print";
+const BUFFER_BUILD_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, wasm-gc, and wasip2; wasm-gc and wasip2 leave unfused a function the certificate printer could print";
+const CHARS_FUSION_TARGETS_NOTE: &str = "counted for every runtime pipeline — rust, VM, wasm-gc, and wasip2; wasm-gc and wasip2 leave unfused a function the certificate printer could print";
 const STRING_INDEX_TARGETS_NOTE: &str =
     "counted for every runtime pipeline — rust, VM, wasm-gc, and wasip2";
 
@@ -6845,18 +6846,13 @@ fn cmd_compile_wasm_gc(
     // calls remain implicitly visible. Preload them before symbol/MIR building
     // so the target sees a real capability callee rather than an unresolved
     // call that lowers to a trap.
-    // Artifact certification has its own byte-level wall for handwritten wasm
-    // helpers. Until that wall classifies the cursor family, keep certified
-    // artifacts on the already-covered String-index-only shape; ordinary
-    // wasm-gc compilation and execution use the cursor lowering below.
-    let mut wasm_lowering = if certify {
-        DepLowering::STRING_INDEX_ONLY
-    } else {
-        DepLowering::STRING_TRAVERSAL
-    };
+    // `--certify` does not change the compile: a certificate is for the bytes
+    // that ship. The fabricating passes leave every function the plan printer
+    // could print unfused in both modes instead (`ir::cert_shape`).
+    let mut wasm_lowering = DepLowering::STRING_TRAVERSAL;
     // `--test-boxed-sequences` removes packed nominal layouts by design, so
-    // the byte sink must remain source traversal just like certification.
-    wasm_lowering.byte_sink = !certify && packed_sequences_enabled;
+    // the byte sink must remain source traversal.
+    wasm_lowering.byte_sink = packed_sequences_enabled;
     let prepared_deps = load_compile_deps_prepared(&items, &module_root, wasm_lowering);
     let dep_modules = prepared_deps.modules;
     use aver::ir::{PipelineConfig, TypecheckMode};
@@ -6870,17 +6866,17 @@ fn cmd_compile_wasm_gc(
             dep_modules: &dep_modules,
             // Interpolation keeps the backend's native variadic concat shape;
             // joined collecting loops use the growable GC String builder.
-            // The independent byte-level certificate wall has not classified
-            // either handwritten helper family yet, so certified artifacts
-            // retain their already-covered source traversal.
+            // Functions the certificate printer could print stay unfused, in
+            // plain and `--certify` builds alike.
             run_interp_lower: false,
-            run_buffer_build: !certify,
-            run_chars_fusion: !certify,
+            run_buffer_build: true,
+            run_chars_fusion: true,
             run_string_index: true,
             run_list_build: false,
-            // Certified and boxed-sequence differential artifacts stay on
-            // source traversal until a packed nominal carrier is available.
-            run_byte_sink: !certify && packed_sequences_enabled,
+            // Boxed-sequence differential artifacts stay on source traversal
+            // until a packed nominal carrier is available.
+            run_byte_sink: packed_sequences_enabled,
+            keep_printable_unfused: true,
             ..Default::default()
         },
     );
@@ -6899,9 +6895,9 @@ fn cmd_compile_wasm_gc(
     // call sites to `Ident("Fractal_render")`. Component Model is a
     // future separate mode (see `project_wasm_gc_multimodule.md`).
     // The wasm-gc compile path lowers String traversal, joined collectors, and
-    // canonical packed-byte consumers (all stay off only where their carrier
-    // or certificate-wall role is unavailable), but not generic list
-    // collectors. It does not use the self-host typecheck driver.
+    // canonical packed-byte consumers (the byte sink stays off only where its
+    // carrier is unavailable), but not generic list collectors. It does not
+    // use the self-host typecheck driver.
     reject_unsupported_capability_targets(
         &items,
         &dep_modules,
@@ -7494,12 +7490,8 @@ fn cmd_compile_wasip2(
             }
         };
 
-        let wasip2_lowering = if certify {
-            DepLowering::STRING_INDEX_ONLY
-        } else {
-            DepLowering::STRING_TRAVERSAL
-        };
-        let prepared_deps = load_compile_deps_prepared(&items, &module_root, wasip2_lowering);
+        let prepared_deps =
+            load_compile_deps_prepared(&items, &module_root, DepLowering::STRING_TRAVERSAL);
         let dep_modules = prepared_deps.modules;
         use aver::ir::{PipelineConfig, TypecheckMode};
         let neutral_policy = aver::ir::NeutralAllocPolicy;
@@ -7512,11 +7504,12 @@ fn cmd_compile_wasip2(
                 alloc_policy: Some(&neutral_policy),
                 dep_modules: &dep_modules,
                 run_interp_lower: false,
-                run_buffer_build: !certify,
-                run_chars_fusion: !certify,
+                run_buffer_build: true,
+                run_chars_fusion: true,
                 run_string_index: true,
                 run_list_build: false,
-                run_byte_sink: !certify,
+                run_byte_sink: true,
+                keep_printable_unfused: true,
                 ..Default::default()
             },
         );
@@ -7756,6 +7749,10 @@ fn cmd_compile_wasip2(
                 process::exit(1);
             }
         }
+        // A wasip2-only build has no certificate engine; the flag was
+        // already refused at dispatch (`certify_flag_rejection`).
+        #[cfg(not(feature = "certify"))]
+        let _ = certify;
     }
 }
 
@@ -12355,6 +12352,9 @@ pub(super) struct DepLowering {
     pub string_index: bool,
     pub list_build: bool,
     pub byte_sink: bool,
+    /// Leave functions the certificate printer could print unfused
+    /// (`PipelineConfig::keep_printable_unfused`).
+    pub keep_printable_unfused: bool,
     /// Self-host typecheck driver — bypasses the opaque-type checks so
     /// `domain/builtins.av` can round-trip host types.
     pub self_host: bool,
@@ -12388,28 +12388,23 @@ impl DepLowering {
         string_index: false,
         list_build: false,
         byte_sink: false,
+        keep_printable_unfused: false,
         self_host: false,
-    };
-
-    /// Certificate-wall shape: immutable indexed access is covered, while the
-    /// handwritten cursor helper family still awaits byte-level wall roles.
-    #[cfg(any(feature = "wasm", feature = "wasip2", feature = "certify"))]
-    pub(super) const STRING_INDEX_ONLY: Self = Self {
-        string_index: true,
-        ..Self::PRISTINE
     };
 
     /// Runtime wasm-gc / wasip2 shape: joined String collectors use the
     /// growable GC buffer, character traversal uses the native UTF-8 cursor,
     /// indexed access uses a native i32 boundary array, and canonical
     /// `Bytes.fromList` consumers use the packed byte sink. Generic list
-    /// collectors remain unsupported.
+    /// collectors remain unsupported. Functions the certificate printer could
+    /// print stay unfused, so `--certify` compiles the same bytes.
     #[cfg(any(feature = "wasm", feature = "wasip2"))]
     pub(super) const STRING_TRAVERSAL: Self = Self {
         buffer_build: true,
         chars_fusion: true,
         string_index: true,
         byte_sink: true,
+        keep_printable_unfused: true,
         ..Self::PRISTINE
     };
 
@@ -12424,6 +12419,7 @@ impl DepLowering {
             // Full list-build already includes byte retargeting. The separate
             // gate exists only for backends that must refuse generic lists.
             byte_sink: false,
+            keep_printable_unfused: false,
             self_host,
         }
     }
@@ -12512,6 +12508,7 @@ pub(super) fn load_compile_deps_prepared(
                 run_string_index: lowering.string_index,
                 run_list_build: lowering.list_build,
                 run_byte_sink: lowering.byte_sink,
+                keep_printable_unfused: lowering.keep_printable_unfused,
                 alloc_policy: Some(&neutral_policy),
                 ..Default::default()
             },

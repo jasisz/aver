@@ -190,6 +190,7 @@ pub(super) fn try_run_wasm_gc(
             run_string_index: true,
             run_list_build: false,
             run_byte_sink: packed_sequences_enabled,
+            keep_printable_unfused: true,
             ..Default::default()
         },
     );

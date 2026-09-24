@@ -111,6 +111,7 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
             run_string_index: false,
             run_list_build: false,
             run_byte_sink: false,
+            keep_printable_unfused: false,
             run_resolve: false,
             run_last_use: false,
             run_analyze: true,

@@ -2662,9 +2662,12 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // now 141: `combineSurrogates` moved from the denominator into the
     // numerator (13) when the record projection-compute face gained scalar
     // parameters and absorbed the retired straight-line integer face. The one
-    // plan grammar certifies five more: 18 of 154.
+    // plan grammar certifies five more: 18 of 154. Since `--certify` compiles
+    // the same module as a plain build, the String cursor, builder and
+    // codepoint variants the plain build synthesizes are in it too, eight more
+    // functions that carry no claim: 18 of 162.
     assert!(
-        compile_report.contains("(18 certified, 136 source-level-only)"),
+        compile_report.contains("(18 certified, 144 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );

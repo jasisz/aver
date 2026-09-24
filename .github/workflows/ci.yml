@@ -319,6 +319,7 @@ jobs:
             bigint_literals_differential \
             cert_certify_spec \
             cert_decode_spec \
+            cert_one_build_spec \
             cert_verify_spec \
             cross_backend_proptest \
             cross_backend_stress \

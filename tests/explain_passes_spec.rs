@@ -261,7 +261,7 @@ fn main() -> String
 }
 
 /// The human report names every runtime artifact that now carries the
-/// String builder and also calls out the certified-wasm exception.
+/// String builder and also calls out the certificate-printable exception.
 #[test]
 fn buffer_build_report_names_the_targets_its_count_belongs_to() {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
@@ -293,8 +293,8 @@ fn main() -> String
     assert!(output.status.success());
     let report = String::from_utf8_lossy(&output.stdout);
     assert!(
-        report.contains("ordinary wasm-gc, and wasip2")
-            && report.contains("certified wasm-gc retains source traversal"),
+        report.contains("rust, VM, wasm-gc, and wasip2")
+            && report.contains("leave unfused a function the certificate printer could print"),
         "the buffer_build section must scope its count to the runtime targets:\n{report}"
     );
 }
