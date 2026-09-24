@@ -1654,6 +1654,10 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     parts.join("\n\n")
 }
 
+/// The library's name is a declaration in the lakefile's own environment, so
+/// it is fixed rather than taken from the module: a module called `Min` or
+/// `Max` would otherwise redeclare a core Lean name and the lakefile would not
+/// load. The roots still name the modules.
 pub(super) fn generate_lakefile_with_roots(project_name: &str, extra_roots: &[String]) -> String {
     let mut roots: Vec<String> = vec![format!("`{}", project_name)];
     for r in extra_roots {
@@ -1668,12 +1672,11 @@ package «{}» where
   version := v!"0.1.0"
 
 @[default_target]
-lean_lib «{}» where
+lean_lib «AverProof» where
   srcDir := "."
   roots := #[{}]
 "#,
         project_name.to_lowercase(),
-        project_name,
         roots_str
     )
 }

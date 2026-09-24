@@ -1783,9 +1783,9 @@ fn emit_verify_law_forall_auto_proof_inner(
             None
         })
         .or_else(|| {
-            emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
+            emit_guarded_domain_law(law).map(|body| AutoProof {
                 support_lines: Vec::new(),
-                body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
+                body,
                 replaces_theorem: false,
                 first_arm_is_guaranteed_closer: false,
             })

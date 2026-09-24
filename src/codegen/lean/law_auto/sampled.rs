@@ -1,40 +1,33 @@
-use super::indent_lines;
 use crate::ast::VerifyLaw;
+use crate::codegen::lean::tactic_ir::Tactic;
 
 /// Guarded laws with explicit finite `given` domains can be proved generically
 /// by splitting the generated domain hypotheses and discharging each concrete
-/// branch with `native_decide`.
-pub(super) fn emit_guarded_domain_law(law: &VerifyLaw) -> Option<Vec<String>> {
+/// branch with `native_decide`. The split sits under a `sorry` floor, so a
+/// sample that does not elaborate or decide leaves this one law open instead
+/// of failing the build for every law in the file.
+pub(super) fn emit_guarded_domain_law(law: &VerifyLaw) -> Option<Tactic> {
     law.when.as_ref()?;
     if law.givens.is_empty() {
         return None;
     }
 
-    let mut lines = Vec::new();
     let intro_names: Vec<String> = law
         .givens
         .iter()
         .map(|given| super::super::expr::aver_name_to_lean(&given.name))
         .collect();
-    if !intro_names.is_empty() {
-        lines.push(format!("intro {}", intro_names.join(" ")));
-    }
-
     let domain_hyp_names: Vec<String> = law
         .givens
         .iter()
         .map(|given| format!("h_{}", super::super::expr::aver_name_to_lean(&given.name)))
         .collect();
-    if !domain_hyp_names.is_empty() {
-        lines.push(format!("intro {}", domain_hyp_names.join(" ")));
-    }
-
-    lines.extend(emit_guarded_domain_case_tactic_lines(
-        law,
-        0,
-        &["native_decide".to_string()],
-    )?);
-    Some(indent_lines(lines, 2))
+    let split = emit_guarded_domain_case_tactic_lines(law, 0, &["native_decide".to_string()])?;
+    Some(Tactic::Seq(vec![
+        Tactic::Leaf(format!("intro {}", intro_names.join(" "))),
+        Tactic::Leaf(format!("intro {}", domain_hyp_names.join(" "))),
+        Tactic::First(vec![Tactic::raw(split), Tactic::Sorry]),
+    ]))
 }
 
 pub(super) fn emit_guarded_domain_case_tactic_lines(
@@ -66,6 +59,14 @@ pub(super) fn emit_guarded_domain_case_tactic_lines(
     Some(lines)
 }
 
+/// Replace a quantified variable by its sample. `subst` rewrites with the
+/// equation `x = v` whatever `v` is; `cases` on the same equation needs
+/// dependent elimination, which fails when `v` is a refinement literal
+/// `⟨0, proof⟩` and is a build error, not a caught failure.
+fn eliminate_sample(hyp_name: &str) -> String {
+    format!("first | subst {hyp_name} | cases {hyp_name}")
+}
+
 fn emit_domain_cases(
     lines: &mut Vec<String>,
     hyp_names: &[String],
@@ -83,7 +84,7 @@ fn emit_domain_cases(
     match domain_sizes[idx] {
         0 => lines.push(format!("{pad}cases {}", hyp_names[idx])),
         1 => {
-            lines.push(format!("{pad}cases {}", hyp_names[idx]));
+            lines.push(format!("{pad}{}", eliminate_sample(&hyp_names[idx])));
             emit_domain_cases(
                 lines,
                 hyp_names,
@@ -119,7 +120,7 @@ fn emit_disjunction_cases(
 ) {
     let pad = " ".repeat(indent);
     if remaining_cases == 1 {
-        lines.push(format!("{pad}cases {hyp_name}"));
+        lines.push(format!("{pad}{}", eliminate_sample(hyp_name)));
         emit_domain_cases(
             lines,
             hyp_names,
@@ -136,7 +137,7 @@ fn emit_disjunction_cases(
     lines.push(format!(
         "{pad}rcases {hyp_name} with {left_name} | {rest_name}"
     ));
-    lines.push(format!("{pad}· cases {left_name}"));
+    lines.push(format!("{pad}· {}", eliminate_sample(&left_name)));
     emit_domain_cases(
         lines,
         hyp_names,

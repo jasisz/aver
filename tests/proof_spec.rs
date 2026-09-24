@@ -98,6 +98,8 @@ mod pool_composition_recursive;
 mod reason_rough_edges;
 #[path = "proof_spec/recursive_law_reasons.rs"]
 mod recursive_law_reasons;
+#[path = "proof_spec/refinement_given.rs"]
+mod refinement_given;
 #[path = "proof_spec/scc_list_drop.rs"]
 mod scc_list_drop;
 #[path = "proof_spec/source_only.rs"]
