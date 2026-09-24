@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <title>The randomness paradox — Aver</title>
-    <meta name="description" content="A technical note tracing one Aver Oracle law through declared verification, hostile profiles, Lean export, and Dafny verification.">
+    <title>The randomness paradox | Aver</title>
+    <meta name="description" content="A technical note that follows one Aver Oracle law through declared verification, hostile profiles, Lean export and Dafny verification.">
     <meta property="og:type" content="article">
     <meta property="og:title" content="The randomness paradox">
     <meta property="og:description" content="One Aver Oracle law, checked as a declared sample, under hostile profiles, and through both proof exporters.">
@@ -53,10 +53,10 @@
         <header class="article-hero">
             <h1>The randomness paradox.</h1>
             <p class="article-deck">
-                This note follows one 33-line Aver program through declared
-                verification, hostile effect profiles, and both proof exporters.
-                The results include the proof-gate fields that determine whether
-                a successful backend run established a universal law.
+                This note runs one 33-line Aver program through declared
+                verification, hostile effect profiles and both proof exporters.
+                The results include the proof-gate fields. Those fields say
+                whether a successful backend run actually proved a universal law.
             </p>
             <p class="article-meta">
                 <span>Oracle verification</span>
@@ -70,9 +70,9 @@
             <h2>The program</h2>
             <p>
                 <code>twoFloatsDistinct</code> reads <code>Random.float</code>
-                twice and compares the results. Its law supplies
-                <code>distinctStub</code>, a deterministic oracle whose result
-                depends on the call index of <code>Random.float</code> itself.
+                twice and compares the two results. Its law supplies
+                <code>distinctStub</code>, a deterministic oracle. The value it
+                returns depends on the call index of <code>Random.float</code>.
             </p>
             <pre class="article-code"><code>fn distinctStub(path: BranchPath, n: Int) -&gt; Float
     ? "Stub returning n+1 as a Float — different value per call counter."
@@ -89,17 +89,17 @@ verify twoFloatsDistinct law alwaysDistinct
     given rnd: Random.float = [distinctStub]
     twoFloatsDistinct() holds</code></pre>
             <p>
-                The final <code>holds</code> states that the Boolean result must
-                be true. The <code>given</code> line provides the declared world
-                used by ordinary verification; it is not itself a restriction on
-                the universal oracle type.
+                The final <code>holds</code> says the Boolean result must be
+                true. The <code>given</code> line supplies the declared world
+                that ordinary verification uses. It does not restrict the
+                universal oracle type.
             </p>
         </section>
 
         <section class="article-section" id="results">
             <h2>Recorded results</h2>
             <p>
-                These are the current outcomes for
+                Current outcomes for
                 <code>examples/formal/randomness_paradox.av</code>. Backend
                 success and proof-gate status are reported separately.
             </p>
@@ -157,33 +157,32 @@ proof gate: failed</code></pre>
         <section class="article-section" id="declared">
             <h2>Declared verification</h2>
             <p>
-                Ordinary <code>aver verify</code> executes the law with the stub
-                named in <code>given</code>. The first call receives counter
-                <code>0</code> and returns <code>1.0</code>; the second receives
-                counter <code>1</code> and returns <code>2.0</code>. Their
-                inequality is true, so the law contributes one passing case.
-                Together with the two checks for <code>distinctStub</code>, the
-                file reports <strong>3/3</strong>.
+                Plain <code>aver verify</code> runs the law with the stub named
+                in <code>given</code>. The first call gets counter <code>0</code>
+                and returns <code>1.0</code>. The second gets counter
+                <code>1</code> and returns <code>2.0</code>. The two differ, so
+                the law adds one passing case. With the two checks for
+                <code>distinctStub</code>, the file reports <strong>3/3</strong>.
             </p>
         </section>
 
         <section class="article-section" id="hostile">
             <h2>Hostile profiles</h2>
             <p>
-                <code>aver verify --hostile</code> retains the declared case and
+                <code>aver verify --hostile</code> keeps the declared case and
                 also runs the law with the three registered
                 <code>Random.float</code> profiles:
-                <code>midrange</code>, <code>always_zero</code>, and
-                <code>always_one</code>. Each profile returns the same value for
-                both calls, so all three hostile cases fail. The complete file
-                therefore reports <strong>3/6</strong>.
+                <code>midrange</code>, <code>always_zero</code> and
+                <code>always_one</code>. Each profile returns the same value on
+                both calls, so all three hostile cases fail and the whole file
+                reports <strong>3/6</strong>.
             </p>
             <p>
-                If distinct oracle results are an intended precondition, the law
-                can state that precondition with <code>when</code>. Hostile mode
-                then skips profiles outside the declared assumption. If the goal
-                is only to record behavior under one concrete stub, the check
-                should remain sample-shaped rather than claim universality.
+                If distinct oracle results are meant as a precondition, the law
+                can say so with <code>when</code>. Hostile mode then skips
+                profiles that fall outside that assumption. If you only want to
+                record behavior under one concrete stub, keep the check
+                sample-shaped and do not claim it holds universally.
             </p>
         </section>
 
@@ -192,32 +191,32 @@ proof gate: failed</code></pre>
             <p>
                 Oracle lifting turns the effect into an explicit proof parameter,
                 addressed by <code>BranchPath</code> and that operation's own call index. A
-                universal form of this law would need to establish that
+                universal version of this law would have to show that
                 <code>twoFloatsDistinct</code> returns true for every admissible
-                <code>Random.float</code> oracle. A constant oracle is an immediate
+                <code>Random.float</code> oracle. Any constant oracle is a
                 counterexample.
             </p>
 
             <h3>Lean</h3>
             <p>
                 The generated Lean project builds with
-                <strong>zero sorries</strong>. The exporter keeps the available
-                checked-domain evidence without crediting this law as universal,
-                so the gate reports <code>universal: no</code>. A clean build
-                confirms the emitted declarations; the universal field states
-                whether every law in the export received a kernel-genuine
-                universal theorem.
+                <strong>zero sorries</strong>. The exporter keeps the
+                checked-domain evidence it has but does not count this law as
+                universal, so the gate reports <code>universal: no</code>. A
+                clean build confirms the emitted declarations. The universal
+                field says whether every law in the export got a universal
+                theorem checked by the kernel.
             </p>
 
             <h3>Dafny</h3>
             <p>
                 Dafny reports <strong>2 verified, 0 errors</strong> for the
                 declarations that were emitted. The universal obligation for
-                this law is omitted because the claim cannot be established.
-                Aver counts that omission separately and the strict proof gate
-                fails with <strong>1 omitted</strong>. The backend error count
-                covers the declarations that were emitted; the gate accounts
-                for the omitted obligation.
+                this law is left out because the claim cannot be proved. Aver
+                counts the omission separately, and the strict proof gate
+                fails with <strong>1 omitted</strong>. Dafny's error count only
+                covers what was emitted. The gate is what accounts for the
+                omitted obligation.
             </p>
         </section>
 
@@ -239,7 +238,7 @@ aver proof examples/formal/randomness_paradox.av \
                 Lean checking requires Elan and the pinned Lean toolchain. Dafny
                 checking requires Dafny 4.x with Z3. The
                 <a href="https://github.com/jasisz/aver/blob/main/docs/oracle.md">Oracle guide</a>
-                documents classified effects, hostile profiles, trace laws, and
+                covers classified effects, hostile profiles, trace laws and
                 proof lifting.
             </p>
         </section>

@@ -1,6 +1,6 @@
 # Aver — Formatting
 
-`aver format` is intentionally conservative. It normalizes layout without trying to rewrite the program structure or invent style preferences.
+`aver format` is deliberately conservative. It normalizes layout. It does not rewrite program structure or impose style preferences.
 
 ## Commands
 
@@ -28,4 +28,4 @@ aver format . --check               # non-zero exit if changes would be made
 - reflow prose strings or comments
 - act like a full opinionated pretty-printer
 
-The current formatter is best understood as a stability tool for repositories and generated edits, not as a heavy syntax-normalizing compiler pass.
+Think of the current formatter as a tool that keeps repositories and generated edits stable. It is a light pass and does not normalize syntax the way a compiler pass would.

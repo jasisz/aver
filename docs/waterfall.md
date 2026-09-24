@@ -1,9 +1,10 @@
 # Optional waterfall proof discovery
 
-`aver proof --waterfall PATH --check` tries additional proof search after Aver’s
-existing automation. `PATH` is a locally built [waterfall](https://github.com/samth/waterfall)
-checkout. The option is off by default and supports the Lean backend in `auto`
-verify mode. It cannot be combined with `--allow-mathlib`.
+`aver proof --waterfall PATH --check` runs extra proof search after Aver’s
+existing automation has finished. `PATH` is a locally built
+[waterfall](https://github.com/samth/waterfall) checkout. The option is off by
+default and works with the Lean backend in `auto` verify mode. It cannot be
+combined with `--allow-mathlib`.
 
 ```sh
 aver proof program.av -o out/proof --check --waterfall /path/to/waterfall
@@ -17,8 +18,9 @@ aver proof program.av -o out/proof --check-json \
 ## Installation
 
 The integration was tested with waterfall revision
-`e04ea93b678c831c404067dd86573b821bc528e4` and Aver’s generated Lean 4.34.0 project.
-Build waterfall using the **same toolchain as the exported `lean-toolchain`**:
+`e04ea93b678c831c404067dd86573b821bc528e4` and the Lean 4.34.0 project that
+Aver generates. Build waterfall with the **same toolchain as the exported
+`lean-toolchain`**:
 
 ```sh
 git clone https://github.com/samth/waterfall.git /path/to/waterfall
@@ -27,80 +29,86 @@ cd /path/to/waterfall
 lake +leanprover/lean4:v4.34.0 build
 ```
 
-Aver does not fetch packages or change the checkout. Only search subprocesses
-receive its compiled import directory. Generated proofs and their normal Lake
-build have no waterfall dependency.
+Aver does not fetch packages and does not modify the checkout. Its compiled
+import directory is passed only to search subprocesses. Generated proofs and
+their normal Lake build do not depend on waterfall.
 
 ## What is checked
 
-1. The exporter emits compiler-owned candidate statements and admissible helper
-   names. Explicit `using` retains its existing citation rules, including `using []`.
-   Claims declined at provider or unproved fuel boundaries remain declined.
-2. Existing universal proofs get a transitive axiom audit first. For a bounded
-   law, the compiler builds a universal candidate using its normal statement
-   builder: it omits sample-membership premises and retains `when` guards and
-   refinement binders.
-3. Unresolved candidates try `waterfall?` in search mode, then committed mode.
-   Each attempt uses one worker, effort 1,000 and 1,000,000 Lean heartbeats.
-   `--waterfall-effort N` changes effort; `--waterfall-timeout N` changes the
-   default 30-second limit per baseline, search, or replay subprocess. Dependency
-   builds have a separate five-minute limit. These are per-attempt limits, not a
-   bound on total project time; `--waterfall-law` can restrict the work.
+1. The exporter emits candidate statements owned by the compiler, plus the
+   names of admissible helpers. An explicit `using` keeps its existing
+   citation rules, including `using []`. Claims declined at provider
+   boundaries or at unproved fuel boundaries stay declined.
+2. Existing universal proofs first get a transitive axiom audit. For a bounded
+   law, the compiler builds a universal candidate with its normal statement
+   builder. It drops the sample-membership premises and keeps `when` guards
+   and refinement binders.
+3. Unresolved candidates try `waterfall?` in search mode and then in committed
+   mode. Each attempt uses one worker, effort 1,000 and 1,000,000 Lean
+   heartbeats. `--waterfall-effort N` changes the effort.
+   `--waterfall-timeout N` changes the default 30-second limit for each
+   baseline, search or replay subprocess. Dependency builds have their own
+   five-minute limit. All of these limit a single attempt and do not bound the
+   total time for a project; use `--waterfall-law` to restrict the work.
 4. A suggested ordinary Lean script is replayed without importing waterfall.
-   Only a successful Lean exit and an explicit audit containing at most
-   `propext`, `Classical.choice`, and `Quot.sound` allow replacement. Missing
-   diagnostics, timeout, `sorryAx`, and `Lean.ofReduceBool` earn no credit.
-5. The full generated project passes through the existing build, law and
-   obligation audits, budgets, and manifest gate. Each `because` obligation
-   remains separate; the root proof still composes those obligations.
+   It replaces the old proof only if Lean exits successfully and an explicit
+   audit shows at most `propext`, `Classical.choice` and `Quot.sound`. Missing
+   diagnostics, a timeout, `sorryAx` or `Lean.ofReduceBool` all count as
+   failure.
+5. The full generated project then goes through the existing build, law and
+   obligation audits, budgets and manifest gate. Each `because` obligation
+   stays separate, and the root proof still composes them.
 
-Failed search retains the original proof or bounded statement. A broken
-dependency build prevents discovery in its consumers. A hard error in an earlier
-declaration can also prevent an isolated attempt from reaching its target; this
-initial integration does not repair arbitrary errors in an export.
+A failed search keeps the original proof or bounded statement. A broken
+dependency build blocks discovery in its consumers. A hard error in an earlier
+declaration can also stop an isolated attempt from reaching its target. This
+first integration does not repair arbitrary errors in an export.
 
 ## Retained output
 
 - Generated `.lean` files contain the accepted ordinary scripts.
-- `proof_waterfall_cache.json` retains scripts keyed by the preceding emitted
-  context, exact candidate statement, and helper hints. Keep it beside the export
-  to reuse discoveries after regeneration. Cache proposals are rechecked on every
-  use, including against the current imported dependencies; a cache entry grants
-  no proof credit by itself. If every needed script replays, the original
-  waterfall checkout need not be present.
+- `proof_waterfall_cache.json` keeps scripts keyed by the preceding emitted
+  context, the exact candidate statement and the helper hints. Keep it next to
+  the export to reuse discoveries after regeneration. Cached proposals are
+  rechecked on every use, including against the current imported dependencies,
+  so a cache entry never grants proof credit on its own. If every needed
+  script replays, the original waterfall checkout does not have to be present.
 - `proof_waterfall.json` reports `existing-proof`, `discovered`, `replayed`,
-  `unresolved`, or `dependency-build-failed` for selected candidates. Discovery
-  results are preliminary: `proof_manifest.json` from the final check determines
-  whole-project proof status.
-- `proof_waterfall.log` records attempted Lean commands and their diagnostics.
+  `unresolved` or `dependency-build-failed` for the selected candidates.
+  Discovery results are preliminary. The `proof_manifest.json` from the final
+  check decides the proof status of the whole project.
+- `proof_waterfall.log` records the Lean commands that were tried and their
+  diagnostics.
 
-Search and replay use the definitions and preceding declarations of the emitted
-module, never an import of the target module containing its own theorem. Larger
-modules batch their initial baseline audit. Changed suppliers rebuild before
-their consumers are searched. Failed dependency builds cannot supply stale oleans.
+Search and replay use the definitions and preceding declarations of the
+emitted module. They never import the target module that contains the theorem
+itself. Larger modules batch their initial baseline audit. Changed suppliers
+are rebuilt before their consumers are searched. A failed dependency build
+cannot supply stale oleans.
 
 ## Validation
 
-The integrated CLI closes the tree accumulator example, after which existing
-automation closes its traversal corollary: two universal laws, no `sorry`.
-Regeneration replays the retained script with the waterfall checkout absent.
-The regression canary also corrupts a cache entry with `sorry` and checks that a
-false `because` remains failed even when its final implication is easy.
+The integrated CLI closes the tree accumulator example, and existing
+automation then closes its traversal corollary: two universal laws, no
+`sorry`. Regeneration replays the retained script without the waterfall
+checkout. The regression canary also corrupts a cache entry with `sorry` and
+checks that a false `because` still fails, even when its final implication is
+easy.
 
 On btc-listener `ba4303a5a4c247f39b5257f0ca43d694340386d6`, the integrated CLI
 finds a committed-mode script for
 `isMinimalPush.directPushIsMinimalUnlessSmallNumber` in `domain/stackitem.av`.
-The full export checks with **51 universal laws, zero bounded laws, zero sorries,
-and zero build errors**. The original byte guard remains; this removes enumeration
-without expanding the intended byte domain.
+The full export checks with **51 universal laws, zero bounded laws, zero
+sorries, and zero build errors**. The original byte guard is still there. The
+script removes enumeration without widening the intended byte domain.
 
-Run the integration canary explicitly after building waterfall:
+After building waterfall, run the integration canary explicitly:
 
 ```sh
 AVER_WATERFALL_DIR=/path/to/waterfall \
   cargo test --test proof_spec waterfall -- --ignored
 ```
 
-Earlier standalone experiments and their limitations are in
+Earlier standalone experiments and their limitations are described in
 [tools/waterfall/README.md](../tools/waterfall/README.md) and
 [the btc-listener report](../tools/waterfall/BTC.md).

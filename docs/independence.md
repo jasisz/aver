@@ -2,33 +2,31 @@
 
 ## What `!` means
 
-A tuple denotes a product of values.
-A tuple followed by `!` denotes a product of independent computations.
-A tuple followed by `?!` denotes a product of independent Result computations with error propagation.
+A plain tuple is a product of values. With `!` after it, it is a product of independent computations. With `?!` after it, it is a product of independent Result computations that propagates errors.
 
 ## Core definitions
 
-**`(a, b)!`** — product of independent computations.
+**`(a, b)!`** is a product of independent computations.
 
-For pure computations, independence follows structurally: tuple elements have no data dependency on each other, and under Aver's core restrictions (no mutation, no closures, no shared state) they cannot interfere.
+For pure computations, independence follows from the structure. Tuple elements have no data dependency on each other, and Aver's core restrictions (no mutation, no closures, no shared state) leave them no way to interfere.
 
-For effectful computations, `!` is a declaration by the author that the effects of the elements are safe to reorder or execute concurrently. The compiler checks shape and types, but does not prove effect commutativity.
+For effectful computations, `!` is the author's declaration that the elements' effects are safe to reorder or run concurrently. The compiler checks shape and types. It does not prove that the effects commute.
 
-The runtime may therefore evaluate elements sequentially (left-to-right) or concurrently.
+So the runtime may evaluate the elements one after another (left-to-right) or concurrently.
 
-**`(a, b)?!`** — product of independent Result computations.
+**`(a, b)?!`** is a product of independent `Result` computations.
 
-`(a, b)?!` is the independent product of `Result` computations. If all branches produce `Ok`, the result is the tuple of unwrapped values. If one or more branches produce `Err`, the product evaluates to `Err`. The propagated error is selected deterministically in left-to-right order.
+If every branch produces `Ok`, `(a, b)?!` gives the tuple of unwrapped values. If one or more branches produce `Err`, the product is `Err`. Which error propagates is chosen deterministically, in left-to-right order.
 
-**`(a, b)`** — product of values. Standard tuple semantics. No independence claim.
+**`(a, b)`** is a product of values, with ordinary tuple semantics and no claim of independence.
 
 ## Soundness envelope
 
-`!` is sound by construction only for pure terms. For effectful terms, it is an unchecked semantic contract: the programmer asserts that all schedules permitted by the execution mode are observationally acceptable.
+`!` is sound by construction only for pure terms. For effectful terms it is a semantic contract that nobody checks. The programmer asserts that every schedule the execution mode allows gives an acceptable observable result.
 
 ## Formal semantics
 
-Let τ range over observable effect traces. For an independent product, each branch is evaluated from the same incoming trace prefix. The runtime may choose any schedule consistent with the execution mode.
+Let τ range over observable effect traces. In an independent product, every branch starts from the same incoming trace prefix. The runtime may pick any schedule the execution mode allows.
 
 **Pure / all-success case:**
 
@@ -61,7 +59,7 @@ Let τ range over observable effect traces. For an independent product, each bra
 ⟨(a, b)?!, τ₀⟩ ⇓ ⟨Err(e), τ₀ · τ⟩
 ```
 
-If multiple branches produce `Err`, the propagated error is the first `Err` in left-to-right order. The single-failure rules generalize to multiple failures by replacing `Err(e)` with the `Err` from the leftmost branch that produces one.
+If several branches produce `Err`, the first `Err` in left-to-right order propagates. The single-failure rules extend to several failures by taking `Err(e)` to be the `Err` of the leftmost failing branch.
 
 **Bare `!`:**
 
@@ -73,28 +71,28 @@ If multiple branches produce `Err`, the propagated error is the first `Err` in l
 ⟨(a, b)!, τ₀⟩ ⇓ ⟨(v₁, v₂), τ₀ · τ⟩
 ```
 
-**Replay invariant:** replay records tuples of `(group_id, branch_path, effect_occurrence, effect_type, effect_args, result)`. Within a group, matching is by `(group_id, branch_path, effect_occurrence, effect_type, effect_args)`, not by position in the execution schedule. `branch_path` is a dotted path encoding the branch position within nested products (e.g. `"0.1"` = branch 0 of outer product, branch 1 of inner). `effect_occurrence` is the per-branch ordinal of effect emission (0-based), disambiguating multiple emissions of the same effect within a single branch. Together these make replay deterministic with respect to branch identity and repeated effects within nested and recursive compositions. Reordering within an independent product does not invalidate replay.
+**Replay invariant:** replay records tuples of `(group_id, branch_path, effect_occurrence, effect_type, effect_args, result)`. Within a group, entries are matched by `(group_id, branch_path, effect_occurrence, effect_type, effect_args)`. Their position in the execution schedule plays no part. `branch_path` is a dotted path giving the branch position inside nested products (e.g. `"0.1"` = branch 0 of the outer product, branch 1 of the inner one). `effect_occurrence` is the 0-based count of effect emissions within a branch, which tells apart several emissions of the same effect in one branch. With both, replay stays deterministic across branch identity and repeated effects, in nested and recursive compositions alike. Reordering inside an independent product does not break replay.
 
-**Cancellation and error priority:** a cancellation error is an execution artifact, not a primary failure. When `?!` unwraps results, a real `Result.Err` from a branch always takes priority over a cancellation error from a sibling. A cancellation error propagates only if no branch produced a real `Err`.
+**Cancellation and error priority:** a cancellation error is a by-product of execution and does not count as a primary failure. When `?!` unwraps results, a real `Result.Err` from one branch always wins over a cancellation error from a sibling. A cancellation error propagates only when no branch produced a real `Err`.
 
-**Backend coverage:** the VM backend and the compiled Rust backend (`aver compile`) both implement cooperative cancellation. The VM checks periodically while executing bytecode. The compiled Rust backend checks at generated function boundaries and before effectful builtins. Error selection is deterministic (left-to-right) across backends. Replay `branch_path` and `effect_occurrence` are recorded in all backends that support replay.
+**Backend coverage:** the VM and the compiled Rust backend (`aver compile`) both implement cooperative cancellation. The VM checks at intervals while it runs bytecode. Compiled Rust checks at generated function boundaries and before effectful builtins. Every backend selects errors the same deterministic way (left-to-right). Every backend that supports replay records `branch_path` and `effect_occurrence`.
 
 ## Structural properties
 
-1. **Structural independence** — tuple elements cannot reference each other. There is no binding site inside a tuple expression that could make one element visible to another.
+1. **Structural independence**: tuple elements cannot refer to each other. A tuple expression has no binding site that could make one element visible to another.
 
-2. **Composition** — `!` products compose exactly like tuples:
+2. **Composition**: `!` products compose exactly like tuples:
    - Nested: `(a, (b, c)!)!`
    - Recursive: `(f(x), g(xs))?!`
    - Flat: `(a, b, c, d)?!`
 
-3. **Error algebra** — `(a, b)?!` is the independent product of `Result` computations. If all branches produce `Ok`, the result is the tuple of unwrapped values. If one or more branches produce `Err`, the product evaluates to `Err` according to the error selection policy described in Core definitions.
+3. **Error algebra**: `(a, b)?!` is the independent product of `Result` computations. If every branch produces `Ok`, the result is the tuple of unwrapped values. If one or more branches produce `Err`, the product is `Err`, chosen by the error selection rule in Core definitions.
 
-4. **Recursion builds products** — a recursive function over a list constructs a product at each step: the computation for the current element and the computation for the rest. With `?!`, this gives recursive structured fork/join, which can expose fan-out parallelism and latency hiding without introducing futures or async syntax.
+4. **Recursion builds products**: a recursive function over a list builds a product at each step, pairing the work for the current element with the work for the rest. With `?!` this is a recursive, structured fork/join. It can expose fan-out parallelism and hide latency without futures or async syntax.
 
-5. **Execution model** — the language does not prescribe how independent products are evaluated. Sequential and concurrent evaluation are both valid implementations, given that the programmer has correctly declared effect independence. Replay records effects and their grouping, accepting any order within a product.
+5. **Execution model**: the language does not say how independent products are evaluated. Sequential and concurrent evaluation are both valid, provided the programmer declared effect independence correctly. Replay records effects and their grouping and accepts any order inside a product.
 
-6. **Cancellation policy** — when one branch of a `?!` product fails, sibling branches may already be in flight or completed. The runtime behaviour is configurable via `aver.toml`:
+6. **Cancellation policy**: when one branch of a `?!` product fails, its siblings may already be running or finished. What the runtime does next is set in `aver.toml`:
 
    ```toml
    [independence]
@@ -102,27 +100,27 @@ If multiple branches produce `Err`, the propagated error is the first `Err` in l
    # mode = "cancel"   # signal siblings to stop on first error
    ```
 
-   - **`complete`** (default) — the runtime lets all branches finish and chooses one error. This means `?!` on effectful terms may perform speculative work: a sibling effect can execute even if its result is ultimately discarded due to another branch's failure.
-   - **`cancel`** — the runtime sets a shared cancellation flag when one branch fails. Sibling branches check this flag periodically and bail early with a cancellation error. Effects that already started will complete (cancellation is cooperative, not preemptive). Sibling branches stop initiating further work after they observe the cancellation flag. Cancel mode reduces wasted compute but cannot reduce wasted I/O wait: a branch blocked in a kernel syscall (e.g. an HTTP request with a long timeout) will not observe the flag until the syscall returns.
+   - **`complete`** (default): the runtime lets every branch finish and picks one error. So `?!` over effectful terms may do speculative work. A sibling's effect can run even though its result is thrown away because another branch failed.
+   - **`cancel`**: when one branch fails, the runtime sets a shared cancellation flag. Sibling branches check it at intervals and stop early with a cancellation error. Effects that have already started still complete, because cancellation is cooperative and never preempts. Once a sibling sees the flag, it starts no new work. Cancel mode cuts wasted compute but not wasted I/O wait. A branch blocked in a kernel syscall (e.g. an HTTP request with a long timeout) sees the flag only after the syscall returns.
 
 ## `aver check` hazard heuristics
 
-`aver check` emits `warning[independence-hazard]` when a branch pair in an independent product uses effects that are likely to be unsafe or nondeterministic when reordered or overlapped.
+`aver check` emits `warning[independence-hazard]` when two branches of an independent product use effects that are likely unsafe or nondeterministic once reordered or overlapped.
 
-Today the heuristic is intentionally small and conservative:
+The heuristic is deliberately small and conservative for now:
 
-- Any mix of `Console.*` and `Terminal.*` warns. This includes cross-namespace pairs like `Console.print` with `Terminal.flush`, because both share the terminal/output channel.
+- Any mix of `Console.*` and `Terminal.*` warns. That covers pairs across the two namespaces, such as `Console.print` with `Terminal.flush`, since both write to the same terminal/output channel.
 - Any pair of `Tcp.*` effects warns.
-- `Disk.*` warns when at least one side is mutating: `writeText`, `appendText`, `writeBytes`, `appendBytes`, `delete`, `deleteDir`, `makeDir`, `sync`. `sync` writes no new content, but it is an ordering barrier — making a new file durable means syncing the file and then its parent directory, which is exactly the order an independent product does not keep.
+- `Disk.*` warns when at least one side is mutating: `writeText`, `appendText`, `writeBytes`, `appendBytes`, `delete`, `deleteDir`, `makeDir`, `sync`. `sync` writes no new content, but it is an ordering barrier. Making a new file durable means syncing the file and then its parent directory, and an independent product does not keep that order.
 - `Http.*` warns when at least one side is mutating: `post`, `put`, `patch`, `delete`.
 - `Env.*` warns when at least one side is mutating: `set`.
-- Broad namespace effects such as `! [Console]` or `! [Disk]` participate in the same rules.
+- Whole-namespace effects such as `! [Console]` or `! [Disk]` follow the same rules.
 
-This is a heuristic, not a proof system. It does not yet reason about concrete resource identity such as "same file path" or "same environment key". Use it as a review signal: if the warning is intentional, suppress it with `[[check.suppress]]` and a reason in `aver.toml`.
+This is a heuristic and proves nothing. It does not yet reason about which concrete resource is touched, such as "same file path" or "same environment key". Treat it as a prompt to review. If the pattern is intended, suppress the warning with `[[check.suppress]]` and a reason in `aver.toml`.
 
 ### Serve-path warnings
 
-`aver check` also emits `warning[serve-path]` for a poll loop that hands one of its turns to an effectful loop. A function that calls a wait directly — `Tcp.poll`, or the `Wait.poll` the generated coordinator performs — is a turn of an event loop. The recursive loops are computed on the module's call graph with every function that calls `Tcp.poll` directly removed, the poller among them: a loop that passes through a poller passes through its wait and vanishes with it, while a loop that avoids every wait survives the cut. The walk starts at the poller's callees, never re-enters the poller, and stops at any function that itself calls `Tcp.poll` directly, because that is the next turn, not a stall. If the walk reaches a function that is recursive in that reduced graph and whose declared effects include an input operation — `Disk.read*`, `Disk.size`, `Disk.listDir`, `Disk.exists`, `Tcp.read*`, `Tcp.accept`, `Tcp.dialled`, `Tcp.peerAddress`, the dialling and round-tripping `Tcp.send`, `Tcp.sendBytes`, `Tcp.ping` and `Tcp.connect`, or a bare `Disk` or `Tcp` — that function runs to completion before the next wait, and every peer that became ready in the meantime is not served until it returns. Writes alone (`Disk.write*`, `Disk.append*`, `Tcp.write*`, `Tcp.close`) do not count: a loop that only writes what it already holds is bounded by this turn's data, and `[verify] turn-budget` covers its length. One more shape is exempt: a loop that walks a list it was handed, where every recursive call in the loop passes back the `rest` of a `[_, ..rest]` match on that parameter, at the same position. That is how a server serves the keys a poll returned, one key per step, and it ends with the list; a loop that recurses on a counter, on a value read from the world, or on anything else does not. The condition is purely structural — the call graph, its recursive components, the declared effect sets, and the syntactic shape of the recursive calls — and the warning sits on the poller's call into the path, once per (poller, loop) pair. The repair is to do one step of the loop per turn, or to run the loop as its own command. `aver verify` can measure the same thing dynamically with `[verify] turn-budget`. The check looks for a direct call to `Tcp.poll`: a wrapper that only forwards to `Tcp.poll` is the poller, so a loop started after such a wrapper in the caller is not seen; this is a known limitation. As with the hazard heuristics, an intentional case is suppressed with `[[check.suppress]]` and a reason.
+`aver check` also emits `warning[serve-path]` when a poll loop hands one of its turns to an effectful loop. A function that calls a wait directly (`Tcp.poll`, or the `Wait.poll` the generated coordinator performs) is one turn of an event loop. Recursive loops are found in the module's call graph after removing every function that calls `Tcp.poll` directly, the poller included. A loop that goes through a poller goes through its wait and disappears with it. A loop that avoids every wait is still there after the cut. The walk starts at the poller's callees, never goes back into the poller, and stops at any function that calls `Tcp.poll` directly itself, since that is the next turn and not a stall. Suppose the walk reaches a function that is recursive in the reduced graph and declares an input operation among its effects: `Disk.read*`, `Disk.size`, `Disk.listDir`, `Disk.exists`, `Tcp.read*`, `Tcp.accept`, `Tcp.dialled`, `Tcp.peerAddress`, the dialling and round-tripping `Tcp.send`, `Tcp.sendBytes`, `Tcp.ping` and `Tcp.connect`, or a bare `Disk` or `Tcp`. That function runs to completion before the next wait, and no peer that became ready in the meantime is served until it returns. Writes alone (`Disk.write*`, `Disk.append*`, `Tcp.write*`, `Tcp.close`) do not count. A loop that only writes what it already holds is bounded by this turn's data, and `[verify] turn-budget` covers its length. One more shape is exempt: a loop over a list it was handed, where every recursive call in the loop passes back the `rest` of a `[_, ..rest]` match on that parameter, in the same position. A server serves the keys a poll returned this way, one key per step, and the loop ends when the list does. A loop that recurses on a counter, on a value read from the world, or on anything else is not exempt. The condition is purely structural: the call graph, its recursive components, the declared effect sets, and the syntactic shape of the recursive calls. The warning is placed on the poller's call into the path, once per (poller, loop) pair. To fix it, do one step of the loop per turn, or run the loop as its own command. `aver verify` can measure the same thing at run time with `[verify] turn-budget`. The check looks for a direct call to `Tcp.poll`. A wrapper that only forwards to `Tcp.poll` counts as the poller, so a loop started after such a wrapper in its caller goes unseen. This is a known limitation. As with the hazard heuristics, suppress an intended case with `[[check.suppress]]` and a reason.
 
 ## Examples
 
@@ -183,7 +181,7 @@ fn pipelineContinue(ready: String, remaining: List<String>) -> Result<Unit, Stri
                 (_, nextBody) -> pipelineContinue(nextBody, rest)
 ```
 
-`process(ready)` and `fetchOne(url)` form an independent product: item N is consumed while item N+1 is produced. This is not streaming — there is no incremental delivery mechanism. It is structured overlap: each recursive step overlaps one unit of consumption with one unit of production.
+`process(ready)` and `fetchOne(url)` form an independent product, so item N is consumed while item N+1 is produced. Each recursive step overlaps one unit of consumption with one unit of production. There is no incremental delivery mechanism, so this does not count as streaming.
 
 ### Static-width windowing (bounded concurrency)
 
@@ -210,23 +208,23 @@ fn processInWindows(urls: List<String>) -> Result<Unit, String>
             Result.Err(e) -> Result.Err(e)
 ```
 
-The window size is a compile-time constant (3 here) — the list is chunked at runtime via recursive pattern matching, each chunk handed to a fixed-arity `?!`. Concurrency is bounded to the window size without a runtime knob.
+The window size is a compile-time constant (3 here). At runtime, recursive pattern matching cuts the list into chunks and hands each chunk to a fixed-arity `?!`. Concurrency is bounded by the window size, with no runtime setting.
 
 ### What these patterns are
 
-These patterns are not new semantic primitives; they emerge from composing independent products with sequential control flow:
+Both patterns come from combining independent products with sequential control flow. Neither adds a semantic primitive.
 
-- **Pipeline parallelism** — overlap production and consumption via `?!` + recursion
-- **Static-width windowing** — chunk a list by pattern, apply a fixed-arity `?!` per chunk, bounded concurrency falls out
+- **Pipeline parallelism**: overlap production and consumption with `?!` + recursion.
+- **Static-width windowing**: chunk a list by pattern and apply a fixed-arity `?!` to each chunk, which bounds concurrency.
 
-These are not: element-by-element streaming, demand-driven backpressure, channel-based communication, or dynamic-arity fan-out (`?!` is statically shaped — the number of concurrent branches is fixed at the call site).
+They do not give element-by-element streaming, demand-driven backpressure, channel-based communication, or dynamic-arity fan-out. `?!` has a static shape: the number of concurrent branches is fixed at the call site.
 
 ## What Aver does not have
 
-Aver does not have tasks, futures, async/await, channels, streams, thread pools, or executors as language concepts. It has products and independence. The runtime handles execution strategy.
+Tasks, futures, async/await, channels, streams, thread pools and executors are not language concepts in Aver. The language has products and independence, and the runtime picks the execution strategy.
 
 ## Why this works
 
-Products describe computation shape. `!` and `?!` additionally declare that the runtime may exploit independence when choosing an evaluation schedule.
+Products describe the shape of a computation. `!` and `?!` also declare that the runtime may use the independence when it picks an evaluation schedule.
 
-Aver uses the same expression-form operator for fixed-width and recursive dynamic fan-out, instead of exposing separate user-facing concurrency constructs for those cases.
+Fixed-width fan-out and recursive dynamic fan-out use the same expression-form operator. Aver has no separate user-facing concurrency construct for either case.

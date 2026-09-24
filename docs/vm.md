@@ -2,63 +2,38 @@
 
 This document describes the bytecode virtual machine used by `aver run`, `aver verify`, and `aver replay`.
 
-It is a design note, not a frozen spec. The opcode set and internal representation may still change while the VM matures.
+It is a design note. The opcode set and the internal representation may still change while the VM matures, so treat nothing here as a frozen spec.
 
 ## What It Is
 
-The Aver VM is the sole execution backend for Aver programs.
+The Aver VM is the only execution backend for Aver programs.
 
-It is intentionally **language-shaped**, not generic:
+Its design follows the language rather than a generic IR. Opcodes model Aver concepts directly. Pattern matching compiles to explicit match and destructure instructions. Tail calls are part of the ISA. Records, variants, wrappers, lists and tuples are ordinary runtime values.
 
-- opcodes model Aver concepts directly
-- pattern matching is compiled to explicit match/destructure instructions
-- tail calls are part of the ISA
-- records, variants, wrappers, lists, and tuples are first-class runtime values
-
-This is not a mini-JVM or a universal IR. It is a runtime designed around the constraints of Aver.
+It is a runtime built around Aver's constraints, with no ambition to be a mini-JVM or a universal IR.
 
 ## Execution Model
 
-The VM compiles resolved Aver AST into bytecode function chunks:
+The VM compiles the resolved Aver AST into bytecode function chunks:
 
 - `src/vm/compiler/` lowers the program to bytecode (`mir.rs` walks MIR and emits opcodes; MIR is the only VM codegen path)
 - `src/vm/execute/` runs the stack machine (`dispatch.rs` is the opcode loop)
 - `src/vm/opcode.rs` defines the ISA
 - `src/vm/runtime.rs` handles builtins, effects, and record/replay at the host boundary
 
-Execution is stack-based:
+Execution is stack-based. Locals live in the current frame, operands are pushed onto the VM stack, calls create or reuse frames, and a return leaves one value on the caller's stack.
 
-- locals live in the current frame
-- operands are pushed onto the VM stack
-- calls create or reuse frames
-- returns leave one value on the caller stack
+The VM also marks **thin functions** and **parent-thin functions**, using a conservative classifier.
 
-The VM now also marks conservatively-classified **thin functions** and **parent-thin functions**.
+A thin function is a small helper that does not use tail-call frame reuse, does not write globals, and does not emit obvious aggregate-construction opcodes such as `RECORD_UPDATE`, `WRAP`, `LIST_*`, `TUPLE_NEW`, or `VARIANT_NEW`.
 
-These are small helpers that do not use tail-call frame reuse, do not write globals, and do not emit obvious aggregate-construction opcodes such as `RECORD_UPDATE`, `WRAP`, `LIST_*`, `TUPLE_NEW`, or `VARIANT_NEW`.
+When a thin function returns and the runtime can confirm that its local `young` / `yard` / `handoff` marks never moved, the VM skips the normal boundary relocation path. Many tiny Aver helpers therefore keep normal stack locals while running and pay no survivor/stable bookkeeping on return. The exception is a helper that did create local heap state after all.
 
-When a thin function returns and the runtime can confirm that its local `young` / `yard` / `handoff` marks never moved, the VM skips the normal boundary relocation path entirely.
-In practice this means many tiny Aver helpers now behave like:
+`parent-thin` is narrower and more specific to Aver. It is meant for wrapper-like helpers, not small functions in general. Such a helper borrows the caller's `young` lane directly and avoids ordinary-return `handoff` as long as it never touches `yard` / `handoff`. Its local `young` scratch dies later, at the caller's boundary, so the helper needs no relocation step of its own.
 
-- keep normal stack locals while running
-- but do not pay full survivor/stable bookkeeping on return
-- unless they actually created local heap state after all
+The classifier is less strict than a "single expression only" rule. Small `match` helpers with local bindings can still be `parent-thin`. Field and tuple extraction and other tiny control-flow opcodes are allowed. Nullary variant constructors (`Status.Todo`) count as inline results, so they can stay on the thin / parent-thin fast path. List destructuring and builtins that obviously build aggregates keep a function out of `parent-thin`.
 
-`parent-thin` is narrower and more Aver-specific:
-
-- it is meant for wrapper-like helpers, not for general small functions
-- it borrows the caller `young` lane directly
-- it avoids ordinary-return `handoff` as long as it never touches `yard` / `handoff`
-- its local `young` scratch dies later at the caller boundary instead of forcing a helper-local relocation step
-
-The classifier is deliberately less strict than a pure "single expression only" rule:
-
-- small `match` helpers with local bindings can still be `parent-thin`
-- field/tuple extraction and other tiny control-flow opcodes are allowed
-- nullary variant constructors (`Status.Todo`) are treated as inline results, so they can still stay on the thin / parent-thin fast path
-- list destructuring and obviously aggregate-building builtins still stay out of `parent-thin`
-
-Execution-backed commands run through the VM:
+Every command that executes code runs through the VM:
 
 ```bash
 aver run app.av
@@ -68,11 +43,11 @@ aver replay recordings/
 
 ## Value Representation
 
-The VM runs on `NanValue`, not on the higher-level `Value` enum.
+The VM runs on `NanValue`. It does not use the higher-level `Value` enum.
 
-The current layout is best thought of as **semantic tags first, storage second**.
+In the current layout the semantic tag comes first and the storage choice second.
 
-Floats still use the plain IEEE path. Everything else is a tagged quiet-NaN:
+Floats use the plain IEEE path. Everything else is a tagged quiet NaN:
 
 ```text
 63      50 49  46 45                    0
@@ -100,7 +75,7 @@ Current tags:
 | `11` | `Record` | arena record |
 | `12` | `Variant` | arena payload variant |
 
-The important convention in `v2` is that `bit45` is now mostly the **“does this value carry an arena reference?”** discriminator:
+In `v2`, `bit45` mostly answers one question: **does this value carry an arena reference?**
 
 - `Int`: inline int vs arena big-int
 - `String`: inline small string vs arena string
@@ -108,11 +83,11 @@ The important convention in `v2` is that `bit45` is now mostly the **“does thi
 - `List` / `Map`: empty singleton vs arena aggregate
 - `Tuple` / `Record` / `Variant`: always arena-backed
 
-That makes the representation much more regular than the older wrapper-heavy scheme.
+This makes the representation much more regular than the older scheme, which leaned heavily on wrappers.
 
 ### Inline Cases That Matter
 
-The point of `v2` is not only compactness. It is to keep the common Aver shapes cheap:
+`v2` is compact, and it also keeps the common Aver shapes cheap:
 
 - `Bool`, `Unit`, and `None` are pure inline singletons
 - `Some(true)`, `Ok(Unit)`, `Err(None)` stay inline
@@ -121,11 +96,11 @@ The point of `v2` is not only compactness. It is to keep the common Aver shapes 
 - strings up to 5 UTF-8 bytes stay inline under `TAG_STRING`
 - nullary variants such as `Status.Todo` or `Color.Red` travel as `Symbol` handles instead of arena entries
 
-That keeps `Result` / `Option` pipelines, empty collections, and short-string-heavy code from manufacturing arena churn just to move tiny values around.
+So `Result` / `Option` pipelines, empty collections and code heavy on short strings do not create arena churn only to move tiny values around.
 
 ### What Still Goes To The Arena
 
-The arena is still where the real aggregate payloads live:
+The real aggregate payloads live in the arena:
 
 - large `Int`
 - long `String`
@@ -136,57 +111,45 @@ The arena is still where the real aggregate payloads live:
 - payload-carrying `Variant`
 - boxed wrapper payloads when `Some` / `Ok` / `Err` cannot stay inline
 
-This is the main reason the VM can stay small without dragging a bigger object model through every helper call.
+This is the main reason the VM can stay small without carrying a bigger object model through every helper call.
 
 ## Memory Model
 
-The VM no longer uses one “grow forever” arena.
+The VM no longer uses a single arena that grows forever.
 
-Instead it splits heap-backed values into four runtime spaces:
+Heap-backed values are split into four runtime spaces:
 
 - `young` for short-lived temporaries created while evaluating the current step
 - `yard` as a tail-position construction lane
 - `handoff` as an ordinary-return construction lane
 - `stable` as the canonical long-lived space
 
-Each call frame records marks for the local `young`, `yard`, and `handoff` suffixes it owns.
-That means the VM knows exactly which heap entries were created “during this frame” and can reclaim them in bulk.
+Each call frame records marks for the local `young`, `yard`, and `handoff` suffixes it owns. The VM therefore knows exactly which heap entries were created during this frame and can reclaim them in bulk.
 
 ### What Those Spaces Mean Today
 
-Conceptually:
+Conceptually, `young` is local scratch work. `yard` holds a value being built for a tail-call path, and `handoff` a value being built for an ordinary return. `stable` holds values that are safe to keep past the current frame boundary.
 
-- `young` means “local scratch work”
-- `yard` means “this value is being built for a tail-call path”
-- `handoff` means “this value is being built for an ordinary return path”
-- `stable` means “this value is safe to keep beyond the current frame boundary”
-
-Implementation-wise, the current VM now splits boundary behavior by control-flow shape:
+In the implementation, boundary behavior depends on the shape of the control flow:
 
 - values can still be *allocated* into `yard` or `handoff` in obvious tail/return positions
 - at `TAIL_CALL_*` boundaries, live roots are kept in `yard`, so loop-carried state stays out of `stable`
-- at ordinary `RETURN` boundaries to another Aver frame, live roots stay on the handoff path instead of being forced into `stable`
-- parent-thin wrappers are the exception: they borrow caller `young` and skip ordinary-return handoff entirely unless they spill into `yard` / `handoff`
+- at ordinary `RETURN` boundaries to another Aver frame, live roots stay on the handoff path and are not forced into `stable`
+- parent-thin wrappers are the exception: they borrow the caller's `young` and skip ordinary-return handoff entirely unless they spill into `yard` / `handoff`
 - pure-`handoff`, pure-`young`, and single-result mixed helper returns use fast ordinary-return paths
-- larger mixed `young + handoff` graphs still fall back to full evacuation, because correctness matters more than over-eager survivor cleverness
+- larger mixed `young + handoff` graphs fall back to full evacuation, because correctness matters more than clever survivor handling
 - only globals, host-facing escapes, and top-level completion are canonicalized into `stable`
-- then the frame-local `young` / `yard` / `handoff` suffixes are truncated or compacted as appropriate
+- after that, the frame-local `young` / `yard` / `handoff` suffixes are truncated or compacted as appropriate
 
-This matters because it gives the VM a real survivor lane for TCO-heavy programs and for ordinary helper chains, without forcing every “survives one more call boundary” value through `stable`.
+This gives the VM a real survivor lane for TCO-heavy programs and for ordinary chains of helpers. A value that only has to survive one more call boundary does not have to pass through `stable`.
 
-So the current VM is:
+In summary, the current VM uses regions for local scratch memory, the yard for tail-call survivors, and handoff for ordinary helper returns (with a conservative fallback for larger mixed graphs). Stable space is for globals, host-facing escapes and top-level canonicalization. The VM is explicit about which lane each construction uses.
 
-- region-style for local scratch memory
-- yard-based for tail-call survivors
-- handoff-based for ordinary helper returns, with a conservative fallback for larger mixed graphs
-- stable-space based for globals, host-facing escapes, and top-level canonicalization
-- explicit about which lanes are used during construction
-
-That already gives us the most important property: frame-local garbage dies in bulk, and long-lived values stop pretending to live in temporary memory.
+The most important property follows from that: frame-local garbage dies in bulk, and long-lived values no longer sit in temporary memory.
 
 ### Memory Flow
 
-The easiest way to think about the VM is:
+The simplest way to follow a value through the VM:
 
 1. New local work starts in `young`.
 2. In obvious tail-position construction, aggregates may be built in `yard`.
@@ -196,24 +159,14 @@ The easiest way to think about the VM is:
 6. On top-level completion or real escape boundaries, live roots are canonicalized into `stable`.
 7. The frame-local `young` / `yard` / `handoff` suffixes are then truncated in one shot.
 
-For helper-sized functions there are now two extra fast paths:
+Helper-sized functions get two more fast paths:
 
 8. If a frame returns with unchanged local marks, the VM skips boundary promotion/truncation work for that frame and resumes the caller directly.
 9. If a `parent-thin` frame only touched borrowed `young`, it returns directly to the caller without building ordinary-return handoff state at all.
 
-That means the VM still distinguishes:
+The VM keeps four cases apart: local scratch work, tail-position construction, construction of a value returned to the caller, and values that really live long.
 
-- local scratch work
-- tail-position construction
-- caller-facing return construction
-- truly long-lived values
-
-The important distinction now is:
-
-- `yard` survives the next tail-call boundary
-- `handoff` survives the next ordinary call/return boundary
-- borrowed parent-`young` is the cheapest path of all, but only for very narrow wrapper-like helpers
-- `stable` is for values that really outlive the current Aver call chain
+What separates them is how long a value has to survive. `yard` survives the next tail-call boundary. `handoff` survives the next ordinary call/return boundary. Borrowed parent-`young` is the cheapest path, but only very narrow wrapper-like helpers can use it. `stable` is for values that outlive the current Aver call chain.
 
 ### What Goes Where
 
@@ -230,35 +183,30 @@ Typical examples:
 - storing a value into globals, returning from top-level, or passing a value across a host boundary:
   goes to `stable`
 
-The point is not only speed. The point is that the runtime distinguishes “temporary while computing” from “safe to keep after this frame ends”.
+This helps speed, and it also lets the runtime tell "temporary while computing" apart from "safe to keep after this frame ends".
 
 ### Why There Is Still No Full GC Loop
 
-The VM still does not need a classical "GC everywhere" story:
+The VM does not need a classical collector running everywhere. `young`, `yard`, and `handoff` are reclaimed by explicit truncation at boundaries. `stable` is compacted from live roots at top-level completion or at explicit escape boundaries.
 
-- `young`, `yard`, and `handoff` are reclaimed by explicit boundary truncation
-- `stable` is compacted from live roots at top-level completion or explicit escape boundaries
-
-So there is still tracing and relocation, but not as one global always-on collector. Most memory dies because control flow tells us it can die, and only `stable` needs long-lived root-driven maintenance.
+There is still tracing and relocation, but no single global collector that is always on. Most memory dies because the control flow says it can die. Only `stable` needs long-lived maintenance driven by roots.
 
 ## List Representation
 
-Lists in the VM are not just flat `Vec` payloads.
-
-The current arena list storage supports four shapes:
+VM lists are more than flat `Vec` payloads. Arena list storage supports four shapes:
 
 - `Flat` for compact literal / materialized lists
 - `Prepend` for cheap `List.prepend` and `LIST_CONS`
 - `Concat` for cheap structural concatenation
 - `Segments` for concat-tail views produced by repeated destructuring
 
-Repeated `List.append` does not keep building a one-element-deep concat chain forever. The VM grows the right edge in flat chunks, so append-heavy code stays structural without turning indexed access into a totally degenerate tree walk.
+Repeated `List.append` does not build an ever-longer chain of one-element concats. The VM grows the right edge in flat chunks, so append-heavy code stays structural and indexed access does not degrade into a long tree walk.
 
-This matters because the VM can now keep list construction aligned with Aver semantics instead of flattening on every prepend.
+As a result, list construction follows Aver semantics and the VM does not flatten on every prepend.
 
-Pattern matching and destructuring (`MATCH_CONS`, `LIST_HEAD_TAIL`) use list helpers that understand these shapes directly. In particular, destructuring a `Concat` tail no longer rebuilds a fresh concat suffix on every step; it can carry a cheap segment-view instead.
+Pattern matching and destructuring (`MATCH_CONS`, `LIST_HEAD_TAIL`) use list helpers that understand these shapes directly. Destructuring a `Concat` tail, for example, no longer rebuilds a fresh concat suffix on every step. It can carry a cheap segment view instead.
 
-Core list operations also have dedicated bytecode paths:
+The core list operations have their own bytecode paths:
 
 - `LIST_LEN`
 - `LIST_GET`
@@ -266,15 +214,15 @@ Core list operations also have dedicated bytecode paths:
 - `LIST_PREPEND`
 - `LIST_GET_MATCH`
 
-That avoids paying full generic builtin-dispatch overhead for the most common list operations in real Aver programs.
+The most common list operations in real Aver programs therefore skip the generic builtin-dispatch overhead.
 
-In obvious tail-call positions, the VM can allocate new aggregate values directly into the frame yard instead of forcing an immediate young-to-yard copy on the next `TAIL_CALL_*`.
+In obvious tail-call positions, the VM can allocate new aggregate values directly into the frame yard, which saves a young-to-yard copy on the next `TAIL_CALL_*`.
 
-In obvious ordinary return positions, the VM can allocate new aggregate values directly into the frame handoff lane, so helper returns can survive into the caller without first pretending to be temporaries or globally-stable values.
+In obvious ordinary return positions, the VM can allocate new aggregate values directly into the frame's handoff lane. A helper's return value then survives into the caller without first being treated as a temporary or as a globally stable value.
 
 ## Symbol Table
 
-The VM now keeps a single interned table of **compile-time-known names**:
+The VM keeps one interned table of **names known at compile time**:
 
 - function names
 - builtin/service members
@@ -283,49 +231,28 @@ The VM now keeps a single interned table of **compile-time-known names**:
 
 Each entry gets a stable `symbol_id`.
 
-That lets the VM stop carrying string-ish dispatch state through hot paths:
+Hot paths therefore carry no string-based dispatch state. Function values travel as inline `Int(symbol_id)`. `CALL_VALUE` resolves `symbol_id -> function`. `CALL_BUILTIN` carries `symbol_id` instead of a builtin name or an arena string. Builtin effect checks compare interned effect ids instead of runtime strings.
 
-- function values travel as inline `Int(symbol_id)`
-- `CALL_VALUE` resolves `symbol_id -> function`
-- `CALL_BUILTIN` carries `symbol_id` instead of a builtin name or arena string
-- builtin effect checks compare interned effect ids instead of runtime strings
+The scheme is simple on purpose: one symbol table, one inline handle format, and metadata attached to each symbol entry.
 
-This is intentionally simple and Aver-shaped:
-
-- one symbol table
-- one inline handle format
-- metadata attached to the symbol entry
-
-Not every runtime value is a symbol. User data is still just data. But anything the compiler already knows by name no longer needs string dispatch during execution.
+Not every runtime value is a symbol, and user data stays plain data. But nothing the compiler already knows by name needs string dispatch during execution.
 
 ## Function References
 
-One of the more unusual choices is that the VM separates:
+The VM keeps two things apart:
 
 - **runtime symbolic values** in `NanValue` via `TAG_SYMBOL`
 - **VM-known callable ids** in bytecode and call dispatch via inline `symbol_id`
 
-That means the runtime still has one shared symbolic handle class for things like:
+The runtime has one shared class of symbolic handles for `Fn`, `Builtin`, `Namespace` and nullary variants. The hottest VM paths still dispatch directly on interned symbol ids instead of names.
 
-- `Fn`
-- `Builtin`
-- `Namespace`
-- nullary variants
+A known top-level function can be passed around as a value. `CALL_VALUE` dispatches it without a separate closure object model, and the current VM needs no upvalues or captured environments. The same inline handle model works for other names known at compile time, such as builtins and effect names.
 
-while the hottest VM paths can still dispatch directly on interned symbol ids instead of names.
-
-That means:
-
-- a known top-level function can be passed around as a first-class value
-- `CALL_VALUE` can dispatch without a separate closure object model
-- the current VM does not need upvalues or captured environments
-- the same inline handle model also works for other compile-time-known symbols such as builtins and effect names
-
-This is an internal encoding choice, not a surface-language feature. At the language level, functions are still just Aver functions.
+This is an internal encoding choice and has no surface-language counterpart. In the language, functions are ordinary Aver functions.
 
 ## Opcode Philosophy
 
-The opcode set is deliberately semantic rather than minimal.
+The opcode set is semantic by design. Keeping it minimal is not a goal.
 
 Examples:
 
@@ -343,20 +270,13 @@ Examples:
 - `LIST_PREPEND`
 - `LIST_GET_MATCH`
 
-These opcodes exist because Aver already has strong opinions:
+These opcodes exist because Aver already fixes a few things. `match` is the only branching construct. `Result` and `Option` are explicit and common. Recursion and TCO matter more than loop machinery. Records, variants and tuples are core language shapes.
 
-- `match` is the only branching construct
-- `Result` and `Option` are explicit and common
-- recursion and TCO matter more than loop machinery
-- records, variants, and tuples are core language shapes
-
-So instead of lowering everything into overly generic bytecode, the VM keeps those concepts visible.
+The VM keeps those concepts visible in the bytecode instead of lowering everything into very generic instructions.
 
 ## Match Lowering
 
-Pattern matching is compiled into a short sequence of checks and destructuring steps.
-
-Typical pieces are:
+Pattern matching compiles into a short sequence of checks and destructuring steps. The usual pieces:
 
 - tag checks (`MATCH_TAG`)
 - wrapper checks/unwrapping (`MATCH_UNWRAP`)
@@ -365,24 +285,24 @@ Typical pieces are:
 - variant checks (`MATCH_VARIANT`)
 - field extraction (`EXTRACT_FIELD`)
 
-This keeps the execute loop simple while preserving the structure of Aver patterns.
+The execute loop stays simple and the structure of Aver patterns is preserved.
 
-The current VM no longer uses arm-local match-region opcodes. In practice they were adding machinery at the wrong granularity for Aver: most functions are tiny, and the bigger wins came from better list/value placement and more semantic bytecode around common patterns such as `match List.get(xs, i)`.
+The current VM no longer has arm-local match-region opcodes. They added machinery at the wrong granularity for Aver, where most functions are tiny. The bigger gains came from better placement of lists and values and from more semantic bytecode around common patterns such as `match List.get(xs, i)`.
 
 ## Recent Correctness Notes
 
-Two recent fixes are worth calling out because they affected real example programs:
+Two recent fixes affected real example programs:
 
 - mutual tail calls with a larger target `local_count` now resize the VM stack before clearing new locals, which removed a crash in large verify suites such as `examples/data/json.av`
 - ordered string comparison was corrected, so examples like `examples/data/date.av` behave correctly under `verify`
 
-Those are not design shifts, but they matter because they closed the last obvious correctness gaps in the VM path.
+Neither changed the design. They closed the last obvious correctness gaps in the VM path.
 
 ## Effects And Host Runtime
 
 The VM enforces declared effects at runtime.
 
-That logic does not live in the main execute loop. Instead:
+That logic lives outside the main execute loop:
 
 - `src/vm/execute/` is the core machine (`dispatch.rs` holds the opcode loop)
 - `src/vm/runtime.rs` is the host/runtime bridge
@@ -394,52 +314,37 @@ That logic does not live in the main execute loop. Instead:
 - record/replay integration
 - CLI argument access
 
-This split is intentional: the VM core should mostly be “bytecode mechanics”, while effectful services stay at the boundary.
+The split is deliberate. The VM core should be mostly bytecode mechanics, and effectful services stay at the boundary.
 
 ## Higher-order calls
 
-Named top-level functions can be passed directly to an ordinary Aver helper.
-The VM invokes them through its normal `CALL_VALUE` path; there is no
-host-to-guest callback bridge. `HttpServer`, for example, runs entirely in Aver
-and calls its request handler like any other function value.
+Named top-level functions can be passed directly to an ordinary Aver helper. The VM invokes them through its normal `CALL_VALUE` path, and there is no host-to-guest callback bridge. `HttpServer`, for example, runs entirely in Aver and calls its request handler like any other function value.
 
 ## Tail Calls
 
-Tail calls are not an afterthought.
-
-The compiler emits:
+Tail calls were designed in from the start. The compiler emits:
 
 - `TAIL_CALL_SELF`
 - `TAIL_CALL_KNOWN`
 
-So recursive and mutual-recursive tail calls can reuse frames directly in the VM.
+Recursive and mutually recursive tail calls can therefore reuse frames directly in the VM.
 
-That matches the rest of Aver, where recursion is the normal control-flow mechanism instead of loops.
+This matches the rest of Aver, where recursion is the normal control-flow mechanism and there are no loops.
 
 ## Current Boundaries
 
-What is still true today:
+What holds today:
 
 - the bytecode format is internal and not stable yet
 - function values are modeled around top-level Aver functions, which matches the language today
-- builtin calls are primarily compiled as direct builtin operations, not passed around as first-class VM values
+- builtin calls are mostly compiled as direct builtin operations and are not passed around as VM values
 
-These are mostly implementation boundaries, not evidence that the VM is “toy” or “partial”. The VM should be thought of as a real runtime path whose internals are still settling.
+These are implementation boundaries. They do not make the VM a toy or a partial runtime. It is a real execution path whose internals are still settling.
 
 ## Why This Shape Fits Aver
 
-The VM is small partly because Aver itself is narrow and explicit:
+The VM is small partly because Aver is narrow and explicit. It has one branching construct and explicit effects. It has no exceptions, no hidden mutation model and no execution model built on closures.
 
-- one branching construct
-- explicit effects
-- no exceptions
-- no hidden mutation model
-- no closure-heavy execution model
+So the VM can stay simple. It has fewer opcodes than a generic language VM and more semantic opcodes than a minimal stack machine, and surface-language constructs map directly onto runtime behavior.
 
-That lets the VM stay simple in the good sense:
-
-- fewer opcodes than a generic language VM
-- more semantic opcodes than a minimal stack toy
-- a direct correspondence between surface-language constructs and runtime behavior
-
-That is the design goal: not “generic bytecode purity”, but a runtime that matches how Aver already wants programs to look.
+The design goal is a runtime that matches how Aver programs already look. Generic bytecode purity is not a goal.

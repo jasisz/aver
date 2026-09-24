@@ -1,11 +1,6 @@
 # Rust Backend
 
-Rust is the deployment backend for Aver.
-
-Use it when you want:
-- a native Cargo project
-- a normal Rust build/test/run loop
-- deployment without the Aver runtime
+Rust is Aver's deployment backend. Use it when you want a native Cargo project, the usual Rust build/test/run loop, and deployment without the Aver runtime.
 
 ## Quick start
 
@@ -20,21 +15,17 @@ Compiled examples/core/hello.av → /tmp/hello-rs/ [Rust]
   cd /tmp/hello-rs && cargo run --profile iteration  # final: cargo build --release
 ```
 
-To validate the generated crate immediately, add `--check`:
+Add `--check` to validate the generated crate right away:
 
 ```bash
 aver compile examples/core/hello.av -o /tmp/hello-rs --check
 ```
 
-For the Rust target, `--check` runs `cargo check` against the generated
-manifest, forwards Cargo's diagnostics, and exits non-zero when Cargo or rustc
-rejects the project. The generated files remain available for inspection after
-a failure. Without the flag, `aver compile` only emits the project and does not
-invoke Cargo.
+For the Rust target, `--check` runs `cargo check` against the generated manifest, forwards Cargo's diagnostics, and exits non-zero when Cargo or rustc rejects the project. The generated files stay on disk after a failure so you can inspect them. Without the flag, `aver compile` only emits the project and never invokes Cargo.
 
 ## Check, iterate, release
 
-Generated projects keep three workflows separate:
+Generated projects keep three workflows apart:
 
 | Goal | Command | What it optimises for |
 |---|---|---|
@@ -42,19 +33,13 @@ Generated projects keep three workflows separate:
 | edit and run | `cargo run --profile iteration` | incremental codegen, no LTO, 256 codegen units, `opt-level = 1` |
 | deploy | `cargo build --release` | whole-program LTO and one codegen unit |
 
-`aver compile` writes a generated `README.md` with these commands. Repeating
-the compile against the same output directory compares every generated file by
-bytes and leaves an unchanged file's mtime alone. Cargo can therefore retain a
-true no-op and reuse incremental state when only one Aver module changes.
+`aver compile` writes a generated `README.md` listing these commands. When you compile again into the same output directory, every generated file is compared byte for byte, and an unchanged file keeps its mtime. Cargo then sees a true no-op, and when only one Aver module changed it can reuse its incremental state.
 
-The iteration profile inherits release semantics but deliberately does not
-weaken the final release profile. Measurements and the current decision to keep
-one generated crate are recorded in
-[Rust iteration build measurements](rust-iteration-builds.md).
+The iteration profile inherits release semantics and leaves the final release profile as strong as it was. The measurements, and the current decision to keep a single generated crate, are in [Rust iteration build measurements](rust-iteration-builds.md).
 
 ## What it generates
 
-Generates a complete Cargo project:
+The output is a complete Cargo project:
 
 ```
 out/
@@ -92,15 +77,11 @@ The generated Rust keeps:
 - the root `aver_generated` module tree
 - the final `fn main()` entry point
 
-Generated Cargo projects now target Rust edition 2024.
+Generated Cargo projects target Rust edition 2024.
 
 ## Representation capabilities
 
-The Rust backend derives representation traits from an explicit capability
-contract for each fully qualified Aver type. Two modules may therefore expose
-types with the same bare name without sharing `Clone`, equality, hashing, or
-display decisions. Composite types receive each trait independently, and only
-when every field's selected Rust representation supports it.
+The Rust backend derives representation traits from an explicit capability contract per fully qualified Aver type. Two modules can therefore expose types with the same bare name and still make separate `Clone`, equality, hashing and display decisions. A composite type gets each trait independently, and only when the selected Rust representation of every field supports it.
 
 | Aver representation | Generated capabilities |
 |---|---|
@@ -110,25 +91,20 @@ when every field's selected Rust representation supports it.
 | packed byte refinement | the same equality, hashing, and display contract as ordinary `List<Int>` |
 | capability resource | cloneable opaque handle and opaque Aver display; no Aver equality or hashing |
 
-`Hash` and ordering are separate capabilities: a representation may be
-hashable without being an admissible ordered map key. Provider resource
-carriers retain the host-side comparison needed to move and clone composites,
-but that implementation detail does not make resource identity observable in
-Aver; source equality, hashing, and resource-containing operations that would
-expose it are rejected before Rust emission.
+`Hash` and ordering are separate capabilities. A representation can be hashable and still not be an admissible ordered map key. Provider resource carriers keep the host-side comparison they need to move and clone composites. That implementation detail does not make resource identity observable in Aver: source equality, hashing, and any resource-containing operation that would expose it are rejected before Rust is emitted.
 
 ## Runtime dependency
 
-`Cargo.toml` is generated around the shared `aver-rt` runtime crate. Service-specific runtime features are enabled only when needed:
+`Cargo.toml` is generated around the shared `aver-rt` runtime crate. Service-specific runtime features are turned on only when needed:
 
 | Aver service | Rust crate |
 |-------------|------------|
 | no `Http` effects | `aver-rt = { version = "=0.2.1" }` |
 | `Http` effects present | `aver-rt = { version = "=0.2.1", features = ["http"] }` |
 
-`ureq` is pulled transitively by `aver-rt/http`; generated projects do not declare it directly.
+`ureq` comes in transitively through `aver-rt/http`. Generated projects do not declare it themselves.
 
-For local runtime development from the Aver repository, set `AVER_RUNTIME_PATH` before running `aver compile` to force a path dependency instead of the crates.io release:
+When developing the runtime inside the Aver repository, set `AVER_RUNTIME_PATH` before running `aver compile`. The generated project then uses a path dependency instead of the crates.io release:
 
 ```bash
 AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/core/hello.av -o /tmp/hello-rs
@@ -136,7 +112,7 @@ AVER_RUNTIME_PATH="$(pwd)/aver-rt" aver compile examples/core/hello.av -o /tmp/h
 
 ## Native custom capability providers
 
-A provider crate exports a public zero-argument factory returning the same checked binding accepted by an embedded VM:
+A provider crate exports a public factory with no arguments. It returns the same checked binding that an embedded VM accepts:
 
 ```rust
 pub fn binding() -> aver_rt::provider::ProviderBinding {
@@ -149,9 +125,9 @@ pub fn binding() -> aver_rt::provider::ProviderBinding {
 }
 ```
 
-Here `ClockProvider` implements `aver_rt::provider::CapabilityProvider`, and the hash and operation set describe the complete checked Aver contract.
+Here `ClockProvider` implements `aver_rt::provider::CapabilityProvider`. The hash and the operation set describe the complete checked Aver contract.
 
-Declare explicit static composition in the `aver.toml` beside the module root:
+Declare the static composition explicitly in the `aver.toml` next to the module root:
 
 ```toml
 [providers]
@@ -165,13 +141,13 @@ version = "=0.1.0"
 factory = "binding"
 ```
 
-For local development, replace `version` with a path relative to that `aver.toml`; the generated output directory does not affect it:
+For local development, replace `version` with a path relative to that `aver.toml`. The generated output directory has no effect on it:
 
 ```toml
 path = "providers/clock"
 ```
 
-Then the ordinary generated binary is the host:
+The ordinary generated binary is then the host:
 
 ```bash
 aver compile app.av --module-root . --target rust -o build/app
@@ -179,9 +155,7 @@ cd build/app
 cargo run
 ```
 
-The same manifest is part of what the program means on the ordinary bytecode
-VM: whenever a program reaches a bound capability, these commands compose the
-same packages into a cached host without any flag:
+The same manifest is part of what the program means on the ordinary bytecode VM. Whenever a program reaches a bound capability, these commands compose the same packages into a cached host, with no flag needed:
 
 ```bash
 aver run app.av --module-root .
@@ -190,56 +164,25 @@ aver audit . --module-root .
 aver run app.av --module-root . --wasip2
 ```
 
-The first invocation builds a thin Rust binary that links `aver-lang` and the
-declared factories, and says so: `Building provider host for Clock:
-clock-provider from providers/clock (cached at …)` names every package being
-built and where it comes from (a path relative to the project, or the
-registry). The consent is the `[providers]` table in the project's own
-`aver.toml`; there is no prompt. Later invocations with the same checked
-composition reuse the host silently. Normally the Aver program still compiles to bytecode. With
-`--wasip2`, the host enables the Component Model runner and adapts the same
-binding to the generated WIT import; this route currently accepts the exact WIT
-subset `Unit`, `Bool`, `Float`, and `String`. Both routes retain the checked
-registry and panic/fault isolation. VM runs additionally retain the resource
-store, replay, and provenance behavior. Changing only `.av` source does not
-rebuild the host. Changing a local provider source lets Cargo perform an
-incremental rebuild. The cache defaults to the platform user cache and can be
-redirected with `AVER_PROVIDER_HOST_CACHE`. On unix the host then takes over
-the command's own process, so the process id, the terminal, the exit status
-and every signal belong to the program that is running: a SIGINT sent to
-`aver run` is the SIGINT a program observes through `Process.stopRequested`,
-exactly as in a binary built with `--target rust`. That also means the signal
-stops ending the command: from the program's first `Process.stopRequested`
-call the handler is installed, both signals only raise its flag, and the run
-ends when the program returns. Ctrl-C gives the prompt back once the program
-has answered the request, and a program that stops polling the flag holds its
-terminal until SIGKILL. On Windows the host is a second process the command
-waits on.
+The first invocation builds a thin Rust binary that links `aver-lang` and the declared factories, and says so. The message `Building provider host for Clock: clock-provider from providers/clock (cached at …)` names every package being built and where it comes from (a path relative to the project, or the registry). The `[providers]` table in the project's own `aver.toml` is the consent, and there is no prompt. Later invocations with the same checked composition reuse the host without printing anything.
 
-`aver verify` may execute a configured pure provider in a normal case. An
-exact `given name: Capability.operation = [stub]` remains a case-local
-override and wins without mutating the process binding. A directory verify or
-audit composes the project host once, then installs only the subset of
-bindings whose capability contracts exist in each module. A single unrelated
-module likewise ignores project bindings it does not reach, and runs in
-process. The same project-to-program projection applies to `run` and
-generated Rust: `aver.toml` may describe more capabilities than one probe,
-benchmark, migration, or entry program uses, and inactive bindings are not
-linked into that artifact. A project without `[providers]` never invokes
-Cargo or executes provider package code, and its missing-provider diagnostic
-points at the `[[providers.bindings]]` entry to add. Backends are a separate
-axis: `--wasip2` adapts WIT-lowerable bindings through the same host, while
-`run --wasm-gc` and `replay --wasm-gc` adapt the same binding through the
-contract-derived raw wasm-gc ABI. `--self-host` (and currently
-`verify --wasm-gc`) has no provider host and refuses a program that reaches a
-bound capability with `error[capability-provider-unhosted]`, naming the
-binding and backend rather than running without it.
+Normally the Aver program still compiles to bytecode. With `--wasip2`, the host turns on the Component Model runner and adapts the same binding to the generated WIT import. This route currently accepts exactly the WIT subset `Unit`, `Bool`, `Float`, and `String`. Both routes keep the checked registry and panic/fault isolation. VM runs also keep the resource store, replay, and provenance behavior.
 
-`aver compile` validates the manifest, emits each reached Cargo dependency and its typed `clock_provider::binding()` bootstrap call, and stops. It does not run Cargo, download a package, or manage a lockfile; Cargo resolves the active dependencies when the generated project is built. The cached run/verify/audit host above is the only stock CLI path that builds provider code. The generated stock binary installs all active configured bindings exactly once, then runs required-provider preflight before benchmarks or Aver entry code. A missing factory or wrong return type is therefore a normal Rust compile error, while an incomplete operation set or wrong contract hash fails at bootstrap in the shared provider registry.
+Changing only `.av` source does not rebuild the host. Changing a local provider's source lets Cargo do an incremental rebuild. The cache lives in the platform user cache by default, and `AVER_PROVIDER_HOST_CACHE` redirects it.
 
-Schema 1 requires exactly one of `version` or `path` per binding. Capability names and Cargo aliases must be unique. Once `[providers]` is present, every required custom capability needs one binding. A binding whose canonical capability module exists under the project module root but is absent from the current program closure is inactive, not erroneous, and is neither built nor installed. A capability name with no project contract remains an error, so this rule does not hide typos or foreign bindings. Compiler defaults such as `Time` need no entry, but an explicit checked `Time` binding replaces the default when that program reaches it. Provider runtime configuration and secrets stay in the provider's normal host environment, not in `aver.toml`.
+On unix the host then takes over the command's own process. The process id, the terminal, the exit status and every signal belong to the running program. A SIGINT sent to `aver run` is the SIGINT the program observes through `Process.stopRequested`, exactly as in a binary built with `--target rust`. It follows that a signal no longer ends the command. From the program's first `Process.stopRequested` call the handler is installed, both signals only raise its flag, and the run ends when the program returns. Ctrl-C gives the prompt back once the program has answered the request. A program that stops polling the flag holds its terminal until SIGKILL. On Windows the host is a second process that the command waits on.
 
-Without `[providers]`, compatibility stays unchanged: a custom-capability project remains host-bound, and its stock binary exits with `error[capability-provider-missing]`. Custom embedders can still add their own host binary and use the generated library API directly:
+`aver verify` may run a configured pure provider in a normal case. An exact `given name: Capability.operation = [stub]` is still a case-local override, and it wins without changing the process binding.
+
+A directory verify or audit composes the project host once, then installs in each module only the bindings whose capability contracts exist there. A single module likewise ignores project bindings it does not reach, and runs in process. `run` and generated Rust use the same projection from project to program. `aver.toml` may describe more capabilities than one probe, benchmark, migration or entry program uses, and inactive bindings are not linked into that artifact. A project without `[providers]` never invokes Cargo or runs provider package code, and its missing-provider diagnostic points at the `[[providers.bindings]]` entry to add.
+
+Backends are a separate question. `--wasip2` adapts WIT-lowerable bindings through the same host. `run --wasm-gc` and `replay --wasm-gc` adapt the same binding through the raw wasm-gc ABI derived from the contract. `--self-host` (and, for now, `verify --wasm-gc`) has no provider host. It refuses a program that reaches a bound capability with `error[capability-provider-unhosted]`, which names the binding and the backend, instead of running without the binding.
+
+`aver compile` validates the manifest, emits each reached Cargo dependency together with its typed `clock_provider::binding()` bootstrap call, and stops there. It does not run Cargo, download packages or manage a lockfile. Cargo resolves the active dependencies when the generated project is built. The cached run/verify/audit host described above is the only path in the stock CLI that builds provider code. The generated stock binary installs all active configured bindings exactly once, then runs the required-provider preflight before benchmarks or Aver entry code. A missing factory or a wrong return type is therefore an ordinary Rust compile error. An incomplete operation set or a wrong contract hash fails at bootstrap, in the shared provider registry.
+
+Schema 1 requires exactly one of `version` or `path` per binding. Capability names and Cargo aliases must be unique. Once `[providers]` is present, every required custom capability needs a binding. A binding whose canonical capability module exists under the project module root, but which the current program closure does not reach, is inactive. That is not an error, and the binding is neither built nor installed. A capability name with no contract in the project is still an error, so typos and foreign bindings do not slip through. Compiler defaults such as `Time` need no entry, but an explicit checked `Time` binding replaces the default when the program reaches it. Provider runtime configuration and secrets stay in the provider's normal host environment and do not go into `aver.toml`.
+
+Without `[providers]`, nothing changes for compatibility. A project with a custom capability stays host-bound, and its stock binary exits with `error[capability-provider-missing]`. Custom embedders can still write their own host binary and use the generated library API directly:
 
 ```rust
 use generated_app as generated;
@@ -253,9 +196,9 @@ fn main() {
 }
 ```
 
-The binding contains an `Arc<dyn aver_rt::provider::CapabilityProvider>`, the exact contract hash, and the complete operation set. Calls use the transport-neutral `ProviderValue` tree and support all contract-v1 values, represented records/sums, and capability resources. One once-installed registry and resource store is shared by direct calls and every `!` / `?!` branch. `install_provider_bindings_exact` is available to hosts that want no compiler-shipped defaults; unlike `install_provider_bindings`, it does not add the standard `Time` provider.
+The binding holds an `Arc<dyn aver_rt::provider::CapabilityProvider>`, the exact contract hash, and the complete operation set. Calls go through the transport-neutral `ProviderValue` tree, which supports all contract-v1 values, represented records and sums, and capability resources. Direct calls and every `!` / `?!` branch share one registry and one resource store, installed once. Hosts that want none of the compiler-shipped defaults can use `install_provider_bindings_exact`. Unlike `install_provider_bindings`, it does not add the standard `Time` provider.
 
-Repeated installation in one process fails rather than racing a mutable global replacement.
+Installing twice in one process fails. It does not race to replace a mutable global.
 
 ## Scoped replay runtime
 
@@ -269,10 +212,9 @@ aver compile self_hosted/main.av \
   -o /tmp/aver-self
 ```
 
-This emits `src/replay_support.rs` and adds the `serde` / `serde_json` / `toml` dependencies needed for recording files and guest-scoped runtime policy. Without `--with-replay`, generated projects stay smaller and do not carry replay support.
+This emits `src/replay_support.rs` and adds the `serde` / `serde_json` / `toml` dependencies used for recording files and guest-scoped runtime policy. Without `--with-replay`, generated projects are smaller and carry no replay support.
 
-Use `--with-self-host-support` only for generated programs that are themselves
-self-host-like meta-runtimes and need the evaluator's scoped function store:
+Use `--with-self-host-support` only for generated programs that are themselves meta-runtimes in the style of the self-host and need the evaluator's scoped function store:
 
 ```bash
 aver compile self_hosted/main.av \
@@ -284,9 +226,9 @@ aver compile self_hosted/main.av \
   -o /tmp/aver-self
 ```
 
-This emits a separate `src/self_host_support.rs` module. It is intentionally not part of the generic generated runtime.
+This emits a separate `src/self_host_support.rs` module, which is deliberately kept out of the generic generated runtime.
 
-Generated Rust also exposes policy mode explicitly:
+Generated Rust also takes an explicit policy mode:
 
 ```bash
 aver compile app.av --policy embed
@@ -297,34 +239,26 @@ aver compile app.av --policy runtime
 - `--policy runtime` loads `aver.toml` from the active module root when the binary runs
 - default: `embed` for plain `compile`, `runtime` when `--with-replay` is enabled
 
-`--guest-entry` matters for meta-runtimes such as the self-hosted interpreter:
+`--guest-entry` matters for meta-runtimes such as the self-hosted interpreter. Bootstrap and tooling work stays outside record/replay and policy scope. Only the chosen guest entry runs inside the scoped runtime, and `aver.toml` policy and replay interception start at that boundary. The policy is loaded at runtime from the guest module root and is not baked into the binary.
 
-- bootstrap/tooling work stays outside record/replay and policy scope
-- only the chosen guest entry runs inside the scoped runtime
-- `aver.toml` policy and replay interception start at that boundary
-- policy is loaded at runtime from the guest module root instead of being baked into the binary
-
-For `--with-self-host-support`, the chosen `--guest-entry` has an additional explicit contract:
+With `--with-self-host-support`, the chosen `--guest-entry` has an extra explicit contract:
 
 - it must declare `prog: Program`
 - it must declare `moduleFns: List<FnDef>`
 
-Generated Rust uses those two parameters to install the temporary self-host callback store around the guest execution boundary. If the contract is not met, `aver compile` now fails early with a readable error instead of generating a broken project.
+Generated Rust uses those two parameters to install the temporary self-host callback store around the guest execution boundary. If the contract is not met, `aver compile` fails early with a readable error and does not generate a broken project.
 
-When the guest entry has a parameter named `guestArgs: List<String>`, generated replay support treats that parameter as the guest CLI input:
+When the guest entry has a parameter named `guestArgs: List<String>`, generated replay support treats it as the guest's CLI input:
 
 - `Args.get()` inside the scoped guest run returns `guestArgs`
 - replay `input` records only `guestArgs`, not the outer wrapper arguments
 - self-host bootstrap args such as `program_file` and `module_root` stay outside the guest trace
 
-`SelfHostRuntime.*` is also gated explicitly now:
-
-- if generated code uses `SelfHostRuntime.*`, `aver compile` requires `--with-self-host-support`
-- this detection includes top-level statements, not only function bodies
+`SelfHostRuntime.*` is also gated explicitly. If generated code uses `SelfHostRuntime.*`, `aver compile` requires `--with-self-host-support`, and the detection covers top-level statements as well as function bodies.
 
 ## Supported features
 
-All language features are transpilable:
+Every language feature can be transpiled:
 
 | Feature | Status |
 |---------|--------|
@@ -355,7 +289,7 @@ All language features are transpilable:
 
 ## Running verify blocks
 
-Verify blocks are emitted as `#[test]` functions:
+Verify blocks become `#[test]` functions:
 
 ```bash
 aver compile examples/core/calculator.av -o /tmp/calc
@@ -370,15 +304,13 @@ When a program has `depends [Data.Fibonacci]`, the transpiler:
 3. imports direct `depends [...]` modules explicitly in the generated Rust
 4. keeps qualified calls module-qualified: `Data.Fibonacci.fib` becomes `crate::aver_generated::data::fibonacci::fib`
 
-This avoids the old giant single-file output and keeps medium projects reviewable in generated Rust.
+This replaces the old output, which was one giant file, and keeps the generated Rust of medium-sized projects reviewable.
 
 ## Service runtime architecture
 
-Generated Rust uses `aver-rt` as the shared runtime. The actual service implementations live there:
+Generated Rust uses `aver-rt` as its shared runtime, and the service implementations live there:
 
-- `Tcp`: standard capability provider over the shared `aver-rt::tcp` runtime;
-  `Tcp.Connection` crosses generated code as a provider-owned resource
+- `Tcp`: standard capability provider over the shared `aver-rt::tcp` runtime; `Tcp.Connection` crosses generated code as a provider-owned resource
 - `Http`: shared `aver-rt::http` client, enabled by the `http` feature
-- incoming HTTP: pure `HttpWire` framing plus the Aver `HttpServer` loop over
-  provider-backed `Tcp`; fetch-style targets expose an explicit `--handler`
+- incoming HTTP: pure `HttpWire` framing plus the Aver `HttpServer` loop over provider-backed `Tcp`; fetch-style targets expose an explicit `--handler`
 - `Console`, `Time`, `Disk`, `Env`, `Args`: shared helpers from `aver-rt`
