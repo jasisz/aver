@@ -208,6 +208,13 @@ fn analyze_source_impl(
     let mut transformed = items.clone();
     let user_program_len = transformed.len();
     let marked = crate::config::MarkedCapabilities::from_config(project_config(options).as_ref());
+    // A module checked as a unit of a program it is not the entry of never
+    // hosts the default loop: its yielding functions are library helpers.
+    let marked = if options.include_work_bindings {
+        marked
+    } else {
+        marked.as_dependency()
+    };
     let tc_result =
         crate::ir::pipeline::front_gate(&mut transformed, &mode, user_program_len, &marked);
 
@@ -299,11 +306,38 @@ fn analyze_prechecked_items_impl(
             &options.file_label,
         ));
     }
+    // A `[run]` table whose policies live in a module other than the entry
+    // this program was loaded with generates no loop at all, and an entry
+    // without `main` then runs nothing and exits 0. Only the entry can say so.
+    if options.include_work_bindings
+        && let Some(entry) = module_decl
+    {
+        let has_main = items
+            .iter()
+            .any(|item| matches!(item, TopLevel::FnDef(fd) if fd.name == "main"));
+        let marked =
+            crate::config::MarkedCapabilities::from_config(project_config(options).as_ref());
+        if let Some(message) = marked.run_entry_mismatch(&entry.name, has_main) {
+            diagnostics.push(work_diagnostic(
+                &crate::capability::work::WorkDiagnostic {
+                    slug: "run-binding",
+                    severity: crate::capability::work::WorkSeverity::Error,
+                    message: message
+                        .trim_start_matches("error[run-binding]: ")
+                        .to_string(),
+                },
+                entry.line,
+                &source_index,
+                &options.file_label,
+            ));
+        }
+    }
     for finding in crate::capability::work::gate(
         &tc_result.capabilities,
         project_provider_manifest(options).as_ref(),
         &tc_result.fn_sigs,
         module_decl.map(|module| module.name.as_str()),
+        options.include_work_bindings,
     ) {
         if !options.include_work_bindings && finding.slug == crate::capability::work::WORK_BINDING {
             continue;

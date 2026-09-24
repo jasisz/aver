@@ -1,6 +1,6 @@
 module Walker
     intent = "Fixture: a process written outside the module the [run] table names."
-    depends [Pool]
+    depends [Pool, Pooled]
     effects [Pool.claim, yield]
     exposes [walking]
 

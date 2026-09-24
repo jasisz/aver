@@ -246,6 +246,25 @@ fn an_answer_function_with_effects_is_allowed_and_said_so() {
     );
 }
 
+/// The warning is about stalling the turn, so it names only effects that can
+/// block: an answer that reads the clock returns at once and is not warned
+/// about, and one that also prints is warned about its print alone.
+#[test]
+fn an_answer_whose_effects_return_at_once_is_not_warned_about() {
+    let out = aver("answer_shape_nonblocking_answer", &["check"]);
+    let text = combined(&out);
+    assert!(
+        !text.contains("'Ledger.claim' declares effects"),
+        "an answer that only reads the clock cannot stall the turn:\n{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("warning[answer-shape]: aver.toml marks capability 'Pool' as answered by 'Ledger', and 'Ledger.gone' declares effects [Console.print];"),
+        "{}",
+        format_output(&out)
+    );
+}
+
 #[test]
 fn the_effectful_answer_warning_does_not_stop_the_run_door() {
     // A warning is something `aver check` tells the program's author; only an
@@ -255,6 +274,33 @@ fn the_effectful_answer_warning_does_not_stop_the_run_door() {
     assert!(
         !text.contains("warning[answer-shape]"),
         "the run door reports errors, not warnings:\n{}",
+        format_output(&out)
+    );
+}
+
+/// A capability and its answer module both live under `slice/`, so the
+/// program loads them as `Slice.Wire` and `Slice.Sockets`, while each declares
+/// its short name. The capability's reply sum names its own type as
+/// `Wire.Heard`, which is how it names it when checked on its own; loaded
+/// under the longer path that is still its own type. And the answer module,
+/// checked as its own unit, is not refused for not seeing a module named
+/// `Slice.Sockets` in its own cone: the entry, whose cone is the program,
+/// judges that binding.
+#[test]
+fn a_nested_capability_naming_its_own_type_is_answered_like_any_other() {
+    for command in ["check", "run"] {
+        let out = aver("answer_nested_self_qualified", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+        assert!(
+            !combined(&out).contains("no module 'Slice.Sockets'"),
+            "{command}: {}",
+            format_output(&out)
+        );
+    }
+    let out = aver("answer_nested_self_qualified", &["run"]);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("gone done"),
+        "{}",
         format_output(&out)
     );
 }

@@ -242,6 +242,39 @@ pub fn job_kinds(
         .collect()
 }
 
+/// The standard operations that answer at once, whatever the world does: the
+/// non-blocking half of `Tcp`, the clock, randomness, the stop flag and a
+/// job's cancel. An answer function that performs only these, or the
+/// `begin`/`take` of a job kind, cannot stall the turn, so the answer-shape
+/// warning does not name them.
+const ANSWERS_AT_ONCE: [&str; 14] = [
+    "Tcp.readNow",
+    "Tcp.writeNow",
+    "Tcp.accept",
+    "Tcp.dialled",
+    "Tcp.beginConnect",
+    "Tcp.listen",
+    "Tcp.close",
+    "Tcp.closeListener",
+    "Time.unixMs",
+    "Time.now",
+    "Random.int",
+    "Random.float",
+    "Process.stopRequested",
+    "Work.cancel",
+];
+
+/// Whether one effect of an answer function returns at once.
+fn answers_at_once(registry: &CapabilityRegistry, effect: &str) -> bool {
+    if ANSWERS_AT_ONCE.contains(&effect) {
+        return true;
+    }
+    match effect.rsplit_once('.') {
+        Some((capability, "begin" | "take")) => is_job_kind(registry, capability),
+        _ => false,
+    }
+}
+
 /// Whether `module` is a job kind of `registry`.
 ///
 /// Naming `Work.Job` at the boundary is the whole test, so this is the same
@@ -347,11 +380,17 @@ pub type FnSignature = (Vec<Type>, Type, Vec<String>);
 /// `entry_module` is the module the command was pointed at: a capability
 /// module checked on its own still declares its own shape, but it is not yet
 /// a program, so it does not need a binding.
+///
+/// `whole_program` says whether `fn_sigs` is the whole program. A dependency
+/// checked as its own unit sees only its own cone, so a module the manifest
+/// names that lies outside that cone is not missing from the program; only
+/// the entry, whose cone is the program, can say it is.
 pub fn gate(
     registry: &CapabilityRegistry,
     manifest: Option<&crate::config::ProviderPackageManifest>,
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
     entry_module: Option<&str>,
+    whole_program: bool,
 ) -> Vec<WorkDiagnostic> {
     let mut errors = Vec::new();
     let mut shapes = Vec::new();
@@ -369,7 +408,13 @@ pub fn gate(
     let answer_bindings = manifest
         .map(|manifest| manifest.answer_bindings.as_slice())
         .unwrap_or(&[]);
-    let (answers, answer_errors) = check_answers(registry, answer_bindings, fn_sigs, entry_module);
+    let (answers, answer_errors) = check_answers(
+        registry,
+        answer_bindings,
+        fn_sigs,
+        entry_module,
+        whole_program,
+    );
     errors.extend(answer_errors);
     errors.extend(requests_outside_a_process(registry, &answers, fn_sigs));
     errors.extend(check_bindings(
@@ -727,6 +772,7 @@ pub fn check_answers(
     answer_bindings: &[ProviderAnswerBinding],
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
     entry_module: Option<&str>,
+    whole_program: bool,
 ) -> (Vec<AnswerShape>, Vec<WorkDiagnostic>) {
     let mut findings = Vec::new();
     let mut modules: Vec<(String, Vec<&ProviderAnswerBinding>)> = Vec::new();
@@ -762,10 +808,16 @@ pub fn check_answers(
             continue;
         }
         if !module_has_functions(fn_sigs, &binding.module) {
-            findings.push(answer_binding_error(format!(
-                "aver.toml: [[providers.bindings]] index {} binds capability '{}' to answer = \"{}\", but this program has no module '{}'",
-                binding.index, binding.capability, binding.module, binding.module
-            )));
+            // A dependency checked as its own unit sees only its own cone;
+            // the answer module may lie outside it and still be part of the
+            // program. The entry, whose cone is the program, is the one that
+            // can say the module is missing.
+            if whole_program {
+                findings.push(answer_binding_error(format!(
+                    "aver.toml: [[providers.bindings]] index {} binds capability '{}' to answer = \"{}\", but this program has no module '{}'",
+                    binding.index, binding.capability, binding.module, binding.module
+                )));
+            }
             continue;
         }
         match modules
@@ -896,10 +948,18 @@ fn check_answer_module(
             )));
             continue;
         }
-        if !effects.is_empty() {
+        let blocking: Vec<&String> = effects
+            .iter()
+            .filter(|effect| !answers_at_once(registry, effect))
+            .collect();
+        if !blocking.is_empty() {
             findings.push(answer_shape_warning(format!(
                 "aver.toml marks capability '{capability}' as answered by '{module}', and '{key}' declares effects [{}]; an answer runs inside the turn, so this is allowed, but it can stall every other process",
-                effects.join(", ")
+                blocking
+                    .iter()
+                    .map(|effect| effect.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )));
         }
         let Some(state) = &state else { continue };
@@ -1419,7 +1479,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
     fn a_well_shaped_answer_module_passes_and_reports_its_state() {
         let registry = registry_of(&[("Pool", POOL)]);
         let (shapes, findings) =
-            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None);
+            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None, true);
         assert!(findings.is_empty(), "unexpected findings: {findings:?}");
         assert_eq!(shapes.len(), 1);
         assert_eq!(shapes[0].module, "Ledger");
@@ -1435,7 +1495,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
         );
         let registry = registry_of(&[("Pool", pool.as_str())]);
         let (shapes, findings) =
-            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None);
+            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None, true);
         assert_eq!(shapes.len(), 1, "the state is still read: {findings:?}");
         assert_eq!(findings.len(), 1, "unexpected findings: {findings:?}");
         assert_eq!(findings[0].slug, ANSWER_SHAPE);
@@ -1471,7 +1531,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
         let findings = reply_sums(&registry, Some(&manifest), None);
         assert_eq!(findings.len(), 1, "unexpected findings: {findings:?}");
         let (_, gate_findings) =
-            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None);
+            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None, true);
         assert_eq!(
             findings[0].message, gate_findings[0].message,
             "the door without a signature says what the gate says"
@@ -1510,7 +1570,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             (vec![Type::Str], Type::Int, Vec::new()),
         );
         let answer_bindings = vec![answer_binding()];
-        let (answers, findings) = check_answers(&registry, &answer_bindings, &sigs, None);
+        let (answers, findings) = check_answers(&registry, &answer_bindings, &sigs, None, true);
         assert!(findings.is_empty(), "unexpected findings: {findings:?}");
 
         let work_bindings = vec![ProviderWorkBinding {

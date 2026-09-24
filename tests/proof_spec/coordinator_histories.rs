@@ -1,6 +1,6 @@
 use super::*;
 
-fn assert_audited_histories(dir: &std::path::Path, jobs: bool) {
+fn assert_audited_histories(dir: &std::path::Path) {
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap())
             .unwrap();
@@ -11,10 +11,12 @@ fn assert_audited_histories(dir: &std::path::Path, jobs: bool) {
                 .any(|law| law["law"] == format!("__historyRun.{name}"))
         );
     }
-    assert_eq!(
-        laws.iter()
-            .any(|law| law["law"] == "__historyRun.jobsStayWithinLimit"),
-        jobs
+    // There is no job bound to hold: the engine queues a job begun at the
+    // limit, so the generated source names no limit.
+    assert!(
+        !laws
+            .iter()
+            .any(|law| law["law"] == "__historyRun.jobsStayWithinLimit")
     );
     for law in laws {
         assert_eq!(law["tier"], "universal", "{law}");
@@ -46,7 +48,7 @@ fn histories_cover_two_job_kinds_and_a_coordinator_without_jobs() {
         for key in ["bounded_laws", "build_errors", "sorries"] {
             assert_eq!(summary[key], 0, "{summary}");
         }
-        assert_audited_histories(dir.path(), jobs);
+        assert_audited_histories(dir.path());
         let entry = std::fs::read_to_string(dir.path().join("Node.lean")).unwrap();
         assert!(entry.contains("(events : List __HistoryEvent)"));
         // Neither a hand-written companion nor sampled list enumeration is
@@ -56,7 +58,7 @@ fn histories_cover_two_job_kinds_and_a_coordinator_without_jobs() {
             "missing history induction"
         );
         if jobs {
-            assert_eq!(summary["universal_laws"], 32, "{summary}");
+            assert_eq!(summary["universal_laws"], 28, "{summary}");
         }
     }
 }
@@ -101,13 +103,6 @@ verify __historyRun law missingInitialRetirement
     when __historyAdmissible(run, events)
     using []
     __retired(__historyRun(run, events), id, seq) holds
-
-verify __historyRun law missingInitialJobLimit
-    given run: __Run = [__fresh()]
-    given events: List<__HistoryEvent> = [[]]
-    when __historyAdmissible(run, events)
-    using []
-    Map.len(__historyRun(run, events).jobs) <= __maxJobs() holds
 "#);
     std::fs::write(&main, text).unwrap();
     let cases = Command::new(env!("CARGO_BIN_EXE_aver"))
@@ -127,12 +122,8 @@ verify __historyRun law missingInitialJobLimit
     assert!(!run.status.success(), "false laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
-    assert_eq!(summary["universal_laws"], 29, "{summary}");
-    for law in [
-        "missingAdmissibility",
-        "missingInitialRetirement",
-        "missingInitialJobLimit",
-    ] {
+    assert_eq!(summary["universal_laws"], 26, "{summary}");
+    for law in ["missingAdmissibility", "missingInitialRetirement"] {
         assert_eq!(
             summary["obligations"][format!("__historyRun.{law}.implication")],
             "failed",

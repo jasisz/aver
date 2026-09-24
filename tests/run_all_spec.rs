@@ -22,6 +22,11 @@ mod loopback_peer;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
 use loopback_peer::{free_port, loopback_peer, silent_peer};
+#[cfg(unix)]
+#[path = "support/sigint.rs"]
+mod sigint;
+#[cfg(unix)]
+use sigint::stopped_by_sigint;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -491,6 +496,12 @@ fn the_dump_shows_the_loop_that_was_generated() {
     ] {
         assert!(text.contains(line), "{line} missing from the dump");
     }
+    for gone in ["__maxJobs", "__roomLeft", "__startable", "room"] {
+        assert!(
+            !text.contains(gone),
+            "{gone} is still in the generated loop, so its source depends on the job limit"
+        );
+    }
 }
 
 /// A process split into a `yield` helper: the loop seats the process, not the
@@ -613,11 +624,118 @@ fn declared_effects(dump: &str, function: &str) -> Option<String> {
 
 /// Dependency yielding functions are library protocols. Only the entry
 /// process is seated, and it enters Walker's protocol through a tail call.
+/// Walker depends on the capability it asks, not on the module that answers
+/// it: `check` judges the answer binding at the entry, whose cone is the
+/// whole program, and a dependency checked as its own unit is not refused
+/// for not seeing the answer module.
 #[test]
 fn a_process_enters_an_imported_helper_under_the_generated_loop() {
     for command in ["check", "run"] {
         let out = aver("run_process_elsewhere", &[command]);
         assert!(out.status.success(), "{command}: {}", format_output(&out));
+    }
+}
+
+/// The same under an empty `[run]`: the default loop belongs to the entry, so
+/// a dependency whose yielding function takes a key is a library helper and
+/// is never seated, at any door. Every door used to lower the dependency as
+/// its own unit with the default loop bound to it, and refused it for having
+/// "nothing to seat" its keyed helper with.
+#[test]
+fn an_empty_run_table_never_seats_a_dependency_helper() {
+    for command in ["check", "run", "verify"] {
+        let out = aver("run_default_process_elsewhere", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+        assert!(
+            !combined(&out).contains("nothing to seat"),
+            "{command}: {}",
+            format_output(&out)
+        );
+    }
+    let out = aver("run_default_process_elsewhere", &["run"]);
+    assert!(
+        combined(&out).contains("peer 1 closed"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// Policies named in a module other than the one the entry is loaded as
+/// generate no loop, and an entry without `main` then runs nothing. That used
+/// to exit 0 in silence; every door now refuses it and says which two names
+/// disagree.
+#[test]
+fn policies_named_in_another_module_than_the_entry_are_refused() {
+    for command in ["check", "run"] {
+        let out = aver("run_policies_elsewhere", &[command]);
+        assert!(!out.status.success(), "{command}: {}", format_output(&out));
+        let text = combined(&out);
+        assert!(
+            text.contains("error[run-binding]: aver.toml: [run] names its policies and view in module 'Slice.Node', but this program's entry is loaded as module 'Node'"),
+            "{command}: {}",
+            format_output(&out)
+        );
+    }
+}
+
+/// Generated source is parsed again in the entry's scope. A type the process
+/// reads from its capability (`Wire.Heard`) shares its bare name with a
+/// record of another dependency (`Other.Heard`), so the protocol and trace
+/// types must spell it qualified; spelled bare, `Heard` was ambiguous in
+/// every generated type that carried it.
+#[test]
+fn a_generated_type_names_an_answer_type_whose_bare_name_is_taken() {
+    for command in ["check", "run", "verify"] {
+        let out = aver("run_colliding_answer_type", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+        assert!(
+            !combined(&out).contains("Ambiguous type name"),
+            "{command}: {}",
+            format_output(&out)
+        );
+    }
+    let out = aver("run_colliding_answer_type", &["run"]);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("gone done"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// `Random.int` with literal bounds that fit is an `Int` at the call, not a
+/// `Result`: the checker narrows it. The generated trace types read what the
+/// checker stamped on the call rather than the operation's declared result,
+/// so the process's own `Int` flows into them unchanged.
+#[test]
+fn a_trace_reads_the_narrowed_type_of_an_in_place_effect() {
+    for command in ["check", "run", "verify"] {
+        let out = aver("run_literal_random_answer", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+    }
+    let out = aver("run_literal_random_answer", &["run"]);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("gone done "),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// One request parks on a listener that another request of the same turn
+/// then closes. The next turn's wait holds a socket the runtime no longer
+/// knows. That used to fail the whole wait, and with it `__runAll`; it is now
+/// reported ready, like a job the engine has forgotten, so the parked request
+/// is asked again, learns the socket is gone from the operation it runs, and
+/// the run ends normally.
+#[test]
+fn a_socket_closed_while_a_request_is_parked_on_it_does_not_end_the_run() {
+    for command in ["check", "run"] {
+        let out = aver("run_closed_socket_wait", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+    }
+    let out = aver("run_closed_socket_wait", &["run"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in ["closed the watched socket", "the watched socket is gone"] {
+        assert!(text.contains(line), "{line}: {}", format_output(&out));
     }
 }
 
@@ -781,8 +899,6 @@ fn two_job_kinds_under_one_generated_loop_each_land_once() {
     for law in [
         "__consumedAlpha law aStartedTaskIsNotAskedAgain",
         "__consumedBeta law aStartedTaskIsNotAskedAgain",
-        "__startableAlpha law aFullTableAsksNothing",
-        "__startableBeta law aFullTableAsksNothing",
     ] {
         assert!(verified.contains(law), "{law} missing from:\n{verified}");
     }
@@ -792,8 +908,9 @@ fn two_job_kinds_under_one_generated_loop_each_land_once() {
 /// One table and one limit for every kind: `__Job` is the generated sum that
 /// lets `jobs: Map<Int, __Job>` carry both kinds, `__jobHandle` unwraps it for
 /// the wait and the cancel, and a take dispatches on the variant before it
-/// reaches this kind's `take`. The room the ask checks is `max-jobs` minus
-/// the whole table, not minus this kind's own count.
+/// reaches this kind's `take`. The job limit is not in the generated source
+/// at all: the engine queues a job begun at it, so the loop has no room to
+/// count, and the source does not depend on the machine that built it.
 #[test]
 fn the_two_kinds_share_one_table_and_one_limit() {
     let dir = fixture("run_two_job_kinds");
@@ -810,8 +927,6 @@ fn the_two_kinds_share_one_table_and_one_limit() {
         "fn __jobHandle(job: __Job) -> Work.Job",
         "__Job.Alpha(handle) -> handle",
         "__Job.Beta(handle) -> handle",
-        "fn __roomLeft(run: __Run) -> Int",
-        "__maxJobs() - Map.len(run.jobs)",
         "fn __takeEachAlpha(run: __Run, ready: List<Int>) -> __Run",
         "fn __takeEachBeta(run: __Run, ready: List<Int>) -> __Run",
         "__Job.Alpha(handle) -> __reportedAlpha(run, key, (Alpha).take(handle))",
@@ -826,8 +941,7 @@ fn the_two_kinds_share_one_table_and_one_limit() {
         "pooled = __consumedBeta(run.pooled, task)",
         "(Pooled).alphaStarted(state, task)",
         "(Pooled).betaStarted(state, task)",
-        // The turn takes every kind first and then starts every kind, so a
-        // job that landed this turn frees room the same turn can use.
+        // The turn takes every kind first and then starts every kind.
         "taken0 = __takeEachAlpha(served, ready)",
         "taken1 = __takeEachBeta(taken0, ready)",
         "started0 = __startJobsAlpha(taken1)",
@@ -878,12 +992,12 @@ fn a_view_that_is_not_the_shape_the_loop_fills_is_refused_with_the_declaration_i
     let out = aver("run_view_shape", &["check"]);
     let text = combined(&out);
     assert!(
-        text.contains("error[view-shape]: record 'View' declares no field 'room'"),
+        text.contains("error[view-shape]: record 'View' declares no field 'jobs'"),
         "{}",
         format_output(&out)
     );
     assert!(
-        text.contains("        room: Int"),
+        text.contains("        jobs: Int"),
         "the message prints the declaration the loop fills:\n{}",
         format_output(&out)
     );
@@ -957,8 +1071,10 @@ fn a_started_function_without_its_law_is_refused_with_the_block_to_write() {
 
 /// The generated single-transition and finite-history laws, together with
 /// the program's policy and task-consumption laws, all close universally.
-/// The history fold calls the live coordinator's pure transitions; its three
-/// inductive invariants cover slot count, the shared job bound, and retirement.
+/// The history fold calls the live coordinator's pure transitions; its two
+/// inductive invariants cover slot count and retirement. There is no job
+/// bound to hold: the engine queues a job begun at the limit, so the
+/// generated source carries no limit at all.
 /// The manifest must retain every law without a bounded or admitted fallback.
 #[test]
 fn the_generated_invariants_reach_the_lean_wall() {
@@ -992,7 +1108,7 @@ fn the_generated_invariants_reach_the_lean_wall() {
     );
     assert_eq!(
         summary["universal_laws"].as_u64(),
-        Some(47),
+        Some(44),
         "universal-law drift:\n{}",
         format_output(&out)
     );
@@ -1018,7 +1134,6 @@ fn the_generated_invariants_reach_the_lean_wall() {
         "__settlePeer.lateAnswerIsRecorded.implication",
         "admit.readyPeerBeforeNewJob.implication",
         "__historyRun.noNewProcesses.implication",
-        "__historyRun.jobsStayWithinLimit.implication",
         "__historyRun.retiredInstanceNeverReturns.implication",
     ] {
         assert_eq!(
@@ -1048,4 +1163,42 @@ fn the_generated_invariants_reach_the_lean_wall() {
         format_output(&out)
     );
     let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// The job as a request: an answer module begins a job in place and parks
+/// the request on `Wait.Item.Job`, with no `task`/`started`/`landed` seam.
+/// The quick square lands and wakes the process; the slow one never does, so
+/// only a stop request ends the run. The stop is observed within a moment,
+/// although the wait it arrives in has no deadline, and the generated `__over`
+/// cancels the job the parked request waits on rather than abandoning it.
+#[cfg(unix)]
+#[test]
+fn a_stop_request_ends_a_run_parked_on_a_job_its_answer_module_began() {
+    for command in ["check", "verify"] {
+        let out = aver("run_job_request", &[command]);
+        assert!(out.status.success(), "{command}: {}", format_output(&out));
+    }
+    let dir = scratch("job-request-stop");
+    let record = dir.to_str().expect("utf-8 scratch path");
+    let (out, stopped_after) = stopped_by_sigint(
+        &fixture("run_job_request"),
+        "asking for a square that takes a long time",
+        &["--record", record],
+    );
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("7 squared is 49"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        stopped_after < Duration::from_secs(5),
+        "a stop request took {stopped_after:?} to end a run parked on a job"
+    );
+    let recording = std::fs::read_to_string(only_recording(&dir)).expect("the recording");
+    assert!(
+        recording.contains("\"Work.cancel\""),
+        "the job the parked request waited on was not cancelled when the run ended:\n{recording}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

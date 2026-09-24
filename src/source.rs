@@ -491,6 +491,13 @@ const _: fn() = || {
 };
 
 impl Program {
+    /// The capabilities the manifest answers, with an unnamed default loop
+    /// already bound to this program's entry, so a dependency lowered with
+    /// them never becomes the loop's home.
+    pub fn marked(&self) -> &crate::config::MarkedCapabilities {
+        &self.marked
+    }
+
     pub fn entry(&self) -> &ProgramModule {
         self.modules
             .last()

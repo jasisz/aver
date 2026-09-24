@@ -1,7 +1,7 @@
 module Node
-    intent = "The entry seats one process, which enters a yielding helper from a library."
+    intent = "Fixture: an entry loaded as Node while the [run] table names its policies in Slice.Node."
     depends [Process, Wait, Pool, Pooled, Walker]
-    effects [Pool.claim, yield]
+    effects [Console.print, Pool.claim, yield]
     exposes [Pending, View, order, admit, stop]
 
 type Pending
@@ -16,7 +16,8 @@ record View
 
 fn pooling() -> Unit
     ? "Claims handles until the pool answers None."
-    ! [Pool.claim, yield]
+    ! [Console.print, Pool.claim, yield]
+    _said = Console.print("pooling starts")
     Walker.walking()
 
 fn order(view: View) -> List<Int>

@@ -109,8 +109,8 @@ verify historyObservation
     historyObservation([__HistoryEvent.SettleRight(2, 1, __RightOutcome.Done(Unit)), __HistoryEvent.SettleLeft(1, 1, __LeftOutcome.Done(Unit))]) => (true, 0, 0 - 1, 0)
     historyObservation([__HistoryEvent.SettleLeft(99, 0 - 1, __LeftOutcome.Done(Unit))]) => (false, 2, 1, 0)
 
-fn historyJobLimit() -> Result<Tuple<Bool, Bool, Bool, Int>, String>
-    ? "Admissibility checks the job table after each preceding event; cancellation makes room again."
+fn historyJobStarts() -> Result<Tuple<Bool, Bool, Bool, Int>, String>
+    ? "A start is admissible whatever the job table holds, because the engine queues a job begun at the limit; a cancellation drops the handle it names."
     ! [Scoring.begin]
     handle = Scoring.begin(1)?
     start = __HistoryEvent.StartScoring(1, handle)
@@ -119,6 +119,16 @@ fn historyJobLimit() -> Result<Tuple<Bool, Bool, Bool, Int>, String>
     cancelled = [start, __HistoryEvent.Cancel(1), start]
     Result.Ok((__historyAdmissible(initial, [start]), __historyAdmissible(full, [start]), __historyAdmissible(initial, cancelled), Map.len(__historyRun(initial, cancelled).jobs)))
 
-verify historyJobLimit
+verify historyJobStarts
     given begin: Scoring.begin = [beginStub]
-    historyJobLimit() => Result.Ok((true, false, true, 1))
+    historyJobStarts() => Result.Ok((true, true, true, 1))
+
+fn negativeDeadline() -> Tuple<Int, Int>
+    ? "Two parked deadlines, one of them negative, in both slot orders. A negative deadline is due now, so the turn waits for nothing whichever slot holds it; read as a negative number it used to stand for 'no deadline yet' and let the order of the slots decide the wait."
+    run = __seatRight(__seatLeft(__fresh()))
+    first = __park(__park(run, 1, Wait.Wake.After(300)), 2, Wait.Wake.After(0 - 5))
+    second = __park(__park(run, 1, Wait.Wake.After(0 - 5)), 2, Wait.Wake.After(300))
+    (__timeout(first), __timeout(second))
+
+verify negativeDeadline
+    negativeDeadline() => (0, 0)

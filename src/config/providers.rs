@@ -141,7 +141,9 @@ pub struct JobSeam {
 
 /// Everything the generated loop is built from, resolved from the manifest
 /// once: the three policies and the view record, which module answers which
-/// capability, the job seams, and the job limit.
+/// capability, and the job seams. The job limit is deliberately not here: it
+/// is how much of the host a program uses, and the generated source must not
+/// depend on the machine that built it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunPlan {
     pub policies: RunPolicies,
@@ -150,8 +152,11 @@ pub struct RunPlan {
     /// One entry per job kind whose `work` binding declares all three seam
     /// ends.
     pub jobs: Vec<JobSeam>,
-    /// `[work] max-jobs`, or the host's own limit when the manifest is quiet.
-    pub max_jobs: usize,
+    /// Every job kind the manifest binds with `work =`, seam or not. A
+    /// program whose answer modules begin jobs themselves and park requests
+    /// on them has kinds without seams, and the loop cancels what those
+    /// parked requests wait on when the run is over.
+    pub job_kinds: Vec<String>,
 }
 
 /// The manifest facts the front door has to know before it lowers anything:
@@ -236,7 +241,17 @@ impl MarkedCapabilities {
                         .collect()
                 })
                 .unwrap_or_default(),
-            max_jobs: config.work_max_jobs(),
+            job_kinds: config
+                .provider_manifest
+                .as_ref()
+                .map(|manifest| {
+                    manifest
+                        .work_bindings
+                        .iter()
+                        .map(|binding| binding.capability.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
         });
         facts
     }
@@ -278,6 +293,30 @@ impl MarkedCapabilities {
             }
         }
         facts
+    }
+
+    /// Why a program entered at module `entry` would run nothing, if it
+    /// would: `[run]` names its policies and view in another module, so the
+    /// loop is generated nowhere, and the entry has no `main` of its own. The
+    /// usual cause is a module root that loads the entry under a shorter name
+    /// than the one the manifest spells, such as `Node` for `Slice.Node`.
+    pub fn run_entry_mismatch(&self, entry: &str, has_main: bool) -> Option<String> {
+        let plan = self.run.as_ref()?;
+        let module = plan.policies.module();
+        if has_main || plan.policies.defaults || module.is_empty() || module == entry {
+            return None;
+        }
+        Some(format!(
+            "error[run-binding]: aver.toml: [run] names its policies and view in module '{module}', but this program's entry is loaded as module '{entry}', and the loop is generated into the entry module only, so this program would run nothing; name them '{entry}.order', '{entry}.admit', '{entry}.stop' and '{entry}.View', or run the file that declares module '{module}' under a module root that loads it by that name"
+        ))
+    }
+
+    /// The same facts for a module that is not the program's entry, checked
+    /// or lowered as its own unit. An unnamed default loop belongs to the
+    /// entry, so it is bound away from this module: a yielding function of a
+    /// dependency stays a library helper and is never seated.
+    pub fn as_dependency(&self) -> Self {
+        self.with_run_entry("<entry>")
     }
 
     /// Imports needed by a generated loop, independent of the entry's

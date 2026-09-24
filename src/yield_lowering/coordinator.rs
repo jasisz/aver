@@ -45,11 +45,10 @@ const CANCEL: &str = "Work.cancel";
 /// The fields the view record has to declare, in order, with the type each
 /// one carries. `pending`'s value type is the program's own `Pending` sum,
 /// so it is checked separately.
-const VIEW_FIELDS: [(&str, &str); 5] = [
+const VIEW_FIELDS: [(&str, &str); 4] = [
     ("ready", "List<Int>"),
     ("askable", "List<Int>"),
     ("jobs", "Int"),
-    ("room", "Int"),
     ("stopping", "Bool"),
 ];
 
@@ -200,7 +199,12 @@ pub(super) fn generate(
     let process_effects = process_effect_lists(protocols, generated, &answers, fn_sigs);
     let serve_effects = serve_effect_list(&process_effects);
     let turn_effects = turn_effect_list(&serve_effects, &jobs, coordinator_stop);
-    let main_effects = main_effect_list(&turn_effects, &process_effects, &jobs);
+    let main_effects = main_effect_list(
+        &turn_effects,
+        &process_effects,
+        &jobs,
+        !plan.job_kinds.is_empty(),
+    );
     let source = write_loop(
         protocols,
         plan,
@@ -706,8 +710,8 @@ fn write_loop(
         ));
     }
     out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n    due: Int\n    ms: Int\n    answer: Option<__ThenAnswer>\n");
-    // One table holds every job kind, so the job count the room limit reads
-    // is the count across all of them and the wait watches each entry once.
+    // One table holds every job kind, so the job count the view reads is the
+    // count across all of them and the wait watches each entry once.
     // The variant is how the entry remembers which seam takes and lands it.
     if has_jobs {
         out.push_str("\ntype __Job\n");
@@ -727,14 +731,10 @@ fn write_loop(
     }
     out.push_str("    dropped: Int\n    stopping: Bool\n    now: Int\n    nextId: Int\n");
 
-    out.push_str(&format!(
-        "\nfn __maxJobs() -> Int\n    ? \"The job limit this program was built with, from [work] max-jobs in aver.toml.\"\n    {}\n",
-        plan.max_jobs
-    ));
+    // The job limit is not in the generated source: it is how much of the
+    // host the program uses, the engine queues a job begun at it, and a
+    // program built on one machine means the same on another.
     if has_jobs {
-        out.push_str(&format!(
-            "\nfn __roomLeft(run: __Run) -> Int\n    ? \"How many more jobs this run may hold: the limit, minus every entry of the one table, of every kind.\"\n    __maxJobs() - Map.len(run.{JOBS_FIELD})\n"
-        ));
         out.push_str(
             "\nfn __jobHandle(job: __Job) -> Work.Job\n    ? \"The runtime handle one table entry wraps, so the wait and the cancel name the job and never the kind.\"\n    match job\n",
         );
@@ -772,8 +772,8 @@ fn write_loop(
     out.push_str("\nfn __current(run: __Run, id: Int) -> Int\n    ? \"The instance number of the request one process is waiting on, or -1 when nothing is seated under that id.\"\n    match Map.get(run.slots, id)\n        Option.None -> 0 - 1\n        Option.Some(slot) -> slot.seq\n");
     out.push_str("\nfn __nextInstance(seq: Int) -> Int\n    ? \"The instance number an answer for the current one leaves behind. It rises, so the instance just answered can never be current again.\"\n    seq + 1\n");
     out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake, now: Int) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, because ms is how long from now and the turn asks against the clock; the ms that was asked for is kept beside it, so a clock that steps backwards cannot strand the request behind a due it will never reach.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(wake, now), ms = __msOf(wake), answer = Option.None)\n");
-    out.push_str("\nfn __dueOf(wake: Wait.Wake, now: Int) -> Int\n    ? \"The clock reading a request parked on a deadline may be asked again at. A request parked on an item and a deadline at once carries the deadline half's. A request parked on a socket, on a job, or on the next turn carries none.\"\n    match wake\n        Wait.Wake.After(ms) -> now + ms\n        Wait.Wake.Either(_, ms) -> now + ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
-    out.push_str("\nfn __msOf(wake: Wait.Wake) -> Int\n    ? \"How long the request asked to be left alone for. A request parked on an item and a deadline at once asked for the deadline half's. A request parked on a socket, on a job, or on the next turn asked for nothing.\"\n    match wake\n        Wait.Wake.After(ms) -> ms\n        Wait.Wake.Either(_, ms) -> ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
+    out.push_str("\nfn __dueOf(wake: Wait.Wake, now: Int) -> Int\n    ? \"The clock reading a request parked on a deadline may be asked again at. A request parked on an item and a deadline at once carries the deadline half's. A request parked on a socket, on a job, or on the next turn carries none. A negative deadline is due now.\"\n    match wake\n        Wait.Wake.After(ms) -> now + Int.max(ms, 0)\n        Wait.Wake.Either(_, ms) -> now + Int.max(ms, 0)\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
+    out.push_str("\nfn __msOf(wake: Wait.Wake) -> Int\n    ? \"How long the request asked to be left alone for. A request parked on an item and a deadline at once asked for the deadline half's. A request parked on a socket, on a job, or on the next turn asked for nothing. A negative ms asks for nothing either: it is read as zero, so it can never be mistaken for the turn's own 'no deadline yet'.\"\n    match wake\n        Wait.Wake.After(ms) -> Int.max(ms, 0)\n        Wait.Wake.Either(_, ms) -> Int.max(ms, 0)\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
     out.push_str("\nfn __park(run: __Run, id: Int, wake: Wait.Wake) -> __Run\n    ? \"A Later: the request stays where it is with the same instance number. The state the answer module returned was already written back, because a Later is where a module records its own progress.\"\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __Run.update(run, slots = Map.set(run.slots, id, __parked(slot, wake, run.now)))\n");
     out.push_str("\nfn __staleInstance(run: __Run, id: Int, seq: Int) -> Bool\n    ? \"Why an answer carrying this instance number changes nothing: it is not the number the slot under this id is waiting on.\"\n    seq != __current(run, id)\n");
 
@@ -806,7 +806,7 @@ fn write_loop(
         }
     ));
     out.push_str(&format!(
-        "\nfn __viewOf(run: __Run, ready: List<Int>, jobs: Int, ids: List<Int>) -> {view}\n    ? \"The view, once the turn has counted the jobs it is running and the ids it is summarising. The ids are handed in rather than read twice, so a program that asks for a loop is never warned about a repetition it did not write.\"\n    {view}(pending = __pendingOf(run, ids, {{}}), ready = ready, askable = __askableOf(run, ready, ids, []), jobs = jobs, room = __maxJobs() - jobs, stopping = run.stopping)\n"
+        "\nfn __viewOf(run: __Run, ready: List<Int>, jobs: Int, ids: List<Int>) -> {view}\n    ? \"The view, once the turn has counted the jobs it is running and the ids it is summarising. The ids are handed in rather than read twice, so a program that asks for a loop is never warned about a repetition it did not write.\"\n    {view}(pending = __pendingOf(run, ids, {{}}), ready = ready, askable = __askableOf(run, ready, ids, []), jobs = jobs, stopping = run.stopping)\n"
     ));
     out.push_str(&format!(
         "\nfn __pendingOf(run: __Run, ids: List<Int>, acc: Map<Int, {marker}>) -> Map<Int, {marker}>\n    ? \"One marker per seated process, in key order.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __pendingOf(run, rest, __pendingAt(run, id, acc))\n"
@@ -927,16 +927,43 @@ fn write_loop(
         &seated,
         &stopping,
         main_effects,
-        has_jobs,
+        has_jobs || !plan.job_kinds.is_empty(),
         coordinator_stop,
     ));
     out.push_str(&format!(
         "\nfn main() -> Result<Unit, String>\n    ? \"Seats one of every process this program writes and turns until the policy stops the run.\"\n{}    __over(__runAll({seated})?)\n",
         effects(main_effects)
     ));
+    // A request parked on a job its answer module began itself — the job as
+    // a request, with no seam — holds a handle the loop never put in its
+    // table. It is over with the run, so its job is cancelled with the rest
+    // rather than left running.
+    let cancels_waited = !plan.job_kinds.is_empty();
+    if cancels_waited {
+        out.push_str(&format!(
+            "\nfn __cancelWaited(run: __Run, ids: List<Int>) -> __Run\n    ? \"Every job a parked request is waiting on, cancelled, in slot order. A request whose answer module began a job and parked on it is over with the run, and its job must not outlive it.\"\n    ! [{CANCEL}]\n    match ids\n        [] -> run\n        [id, ..rest] -> __cancelWaited(__cancelWaitedAt(run, id), rest)\n"
+        ));
+        out.push_str(&format!(
+            "\nfn __cancelWaitedAt(run: __Run, id: Int) -> __Run\n    ? \"The job the request seated under one id waits on, if it waits on one.\"\n    ! [{CANCEL}]\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __cancelWake(run, slot.waiting)\n"
+        ));
+        out.push_str(&format!(
+            "\nfn __cancelWake(run: __Run, wake: Wait.Wake) -> __Run\n    ? \"Only an item can name a job; a deadline or the next turn names none.\"\n    ! [{CANCEL}]\n    match wake\n        Wait.Wake.Item(item) -> __cancelItem(run, item)\n        Wait.Wake.Either(item, _) -> __cancelItem(run, item)\n        Wait.Wake.After(_) -> run\n        Wait.Wake.NextTurn -> run\n"
+        ));
+        out.push_str(&format!(
+            "\nfn __cancelItem(run: __Run, item: Wait.Item) -> __Run\n    ? \"A job is cancelled; a socket belongs to its answer module and is left alone.\"\n    ! [{CANCEL}]\n    match item\n        Wait.Item.Job(job) -> __cancelledWaited(run, {CANCEL}(job))\n        Wait.Item.Socket(_) -> run\n"
+        ));
+        out.push_str(
+            "\nfn __cancelledWaited(run: __Run, cancelled: Unit) -> __Run\n    ? \"The run once one waited-on job has been cancelled; the slot itself stays as it was.\"\n    run\n",
+        );
+    }
+    let waited = if cancels_waited {
+        "__cancelWaited(run, Map.keys(run.slots))"
+    } else {
+        "run"
+    };
     if has_jobs {
         out.push_str(&format!(
-            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, whatever is still seated stays where it is, and every job still running is cancelled rather than abandoned.\"\n    ! [{CANCEL}]\n    __cancelEach(run, Map.keys(run.{JOBS_FIELD}))\n"
+            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, whatever is still seated stays where it is, and every job still running — in the table, or waited on by a parked request — is cancelled rather than abandoned.\"\n    ! [{CANCEL}]\n    parked = {waited}\n    __cancelEach(parked, Map.keys(parked.{JOBS_FIELD}))\n"
         ));
         out.push_str(&format!(
             "\nfn __cancelEach(run: __Run, keys: List<Int>) -> Result<Unit, String>\n    ? \"Every job the run still holds a handle for, in key order.\"\n    ! [{CANCEL}]\n    match keys\n        [] -> Result.Ok(Unit)\n        [key, ..rest] -> __cancelEach(__cancelOne(run, key), rest)\n"
@@ -946,6 +973,10 @@ fn write_loop(
         ));
         out.push_str(&format!(
             "\nfn __cancelled(run: __Run, key: Int, cancelled: Unit) -> __Run\n    ? \"The table once one job has been cancelled: the handle is gone, so nothing cancels it twice.\"\n    __Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key))\n"
+        ));
+    } else if cancels_waited {
+        out.push_str(&format!(
+            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, whatever is still seated stays where it is, and every job a parked request waits on is cancelled rather than abandoned.\"\n    ! [{CANCEL}]\n    _parked = {waited}\n    Result.Ok(Unit)\n"
         ));
     } else {
         out.push_str("\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, and whatever is still seated stays where it is.\"\n    Result.Ok(Unit)\n");
@@ -961,7 +992,7 @@ fn write_loop(
         out.push_str(then_reply::laws());
     }
     if plan.policies.defaults {
-        out.push_str("\nverify __order law seatedIdsInSlotOrder\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    __order(view) => Map.keys(view.pending)\n\nverify __admit law everyAskableIdIsAdmitted\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    given id: Int = [0, 1, 2]\n    __admit(view, id) => List.contains(view.askable, id)\n\nverify __stop law runningJobsKeepAnEmptyRunAlive\n    given jobs: Int = [1, 2, 7]\n    when jobs > 0\n    __stop(__View(pending = {}, ready = [], askable = [], jobs = jobs, room = 0, stopping = false)) => false\n");
+        out.push_str("\nverify __order law seatedIdsInSlotOrder\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    __order(view) => Map.keys(view.pending)\n\nverify __admit law everyAskableIdIsAdmitted\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    given id: Int = [0, 1, 2]\n    __admit(view, id) => List.contains(view.askable, id)\n\nverify __stop law runningJobsKeepAnEmptyRunAlive\n    given jobs: Int = [1, 2, 7]\n    when jobs > 0\n    __stop(__View(pending = {}, ready = [], askable = [], jobs = jobs, stopping = false)) => false\n");
     }
     out
 }
@@ -1042,7 +1073,8 @@ fn write_serve(
 }
 
 /// The three ends of one job kind's seam, as the turn crosses them: the
-/// take, and the ask-begin-record start that runs while there is room.
+/// take, and the ask-begin-record start that runs while the state offers a
+/// task.
 fn write_job(job: &Job, jobs: &[Job]) -> String {
     let upper = marker_variant(&job.capability);
     let task_field = &job.task_field;
@@ -1080,25 +1112,20 @@ fn write_job(job: &Job, jobs: &[Job]) -> String {
         "\nfn __landed{upper}(run: __Run, key: Int, outcome: Result<{}, String>) -> __Run\n    ? \"Where a job that is over goes: the `landed` function of the answer state, which resumes nobody. The handle leaves the table either way, because this job has no second outcome to give.\"\n    __Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key), {landed_field} = {}(run.{landed_field}, outcome))\n",
         job.payload_type, job.landed
     ));
-    // The ask is one step of its own, so the room check and the answer live
-    // in one place a law can name; the record is `started`, applied through
-    // `__jobSeated` the moment `begin` has said this task is running. The
-    // name is kind-first because `__seated<P>` is a process's, and a process
-    // named `job<K>` would otherwise be seated twice under one name.
+    // The record is `started`, applied through `__jobSeated` the moment
+    // `begin` has said this task is begun. The name is kind-first because
+    // `__seated<P>` is a process's, and a process named `job<K>` would
+    // otherwise be seated twice under one name.
     out.push_str(&format!(
-        "\nfn __startable{upper}(room: Int, state: {}) -> {}\n    ? \"The next task this kind may start, while the one job table has this much room for it. No room asks nothing, so no task is ever offered twice to make room it cannot use. This is the pure half of the room bound: the loop that starts while there is room performs begin, so no law can sample it, and the bound is stated here, where each ask is decided.\"\n    match room <= 0\n        true -> Option.None\n        false -> {}(state)\n",
-        job.seam_state, job.task_option, job.task
+        "\nfn __startJobs{upper}(run: __Run) -> __Run\n    ? \"While the answer state has a task, start one: ask, begin, then record the start. Nothing here counts against the job limit: at the limit the engine queues a job rather than refusing it, so every task the state offers this turn is begun, and `started` is what makes the next ask offer a different one. A begin that answers Err starts nothing, and the task stays in the answer state to be offered again, because `started` runs only after a begin that answered Ok.\"\n    ! [{}.begin]\n    match {}(run.{task_field})\n        Option.None -> run\n        Option.Some(task) -> __began{upper}(run, task, {}.begin(task))\n",
+        job.capability, job.task, job.capability
     ));
     out.push_str(&format!(
-        "\nfn __startJobs{upper}(run: __Run) -> __Run\n    ? \"While there is room under [work] max-jobs and the answer state has a task, start one: ask, begin, then record the start. A begin the engine answers Err starts nothing this turn — at the engine's own limit that answer is how the limit is honoured — and the task stays in the answer state to be offered again, because `started` runs only after a begin that answered Ok.\"\n    ! [{}.begin]\n    match __startable{upper}(__roomLeft(run), run.{task_field})\n        Option.None -> run\n        Option.Some(task) -> __began{upper}(run, task, {}.begin(task))\n",
-        job.capability, job.capability
-    ));
-    out.push_str(&format!(
-        "\nfn __began{upper}(run: __Run, task: {}, began: Result<Work.Job, String>) -> __Run\n    ? \"What one begin answered. An Err starts nothing: the task was never recorded, so the next ask offers it again once there is room to take it.\"\n    ! [{}.begin]\n    match began\n        Result.Err(_) -> run\n        Result.Ok(job) -> __startJobs{upper}(__jobSeated{upper}(run, task, job))\n",
+        "\nfn __began{upper}(run: __Run, task: {}, began: Result<Work.Job, String>) -> __Run\n    ? \"What one begin answered. An Err starts nothing: the task was never recorded, so a later turn offers it again.\"\n    ! [{}.begin]\n    match began\n        Result.Err(_) -> run\n        Result.Ok(job) -> __startJobs{upper}(__jobSeated{upper}(run, task, job))\n",
         job.task_type, job.capability
     ));
     out.push_str(&format!(
-        "\nfn __jobSeated{upper}(run: __Run, task: {}, job: Work.Job) -> __Run\n    ? \"The run once this task's job has begun: the handle sits under the next free key for the wait to watch, and the task is consumed from the answer state, which is what makes two starts in one turn start two different tasks.\"\n    __Run.update(run, {JOBS_FIELD} = Map.set(run.{JOBS_FIELD}, run.nextId, __Job.{upper}(job)), nextId = run.nextId + 1, {task_field} = __consumed{upper}(run.{task_field}, task))\n",
+        "\nfn __jobSeated{upper}(run: __Run, task: {}, job: Work.Job) -> __Run\n    ? \"The run once this task's job has begun: the handle sits under the next free key for the wait to watch, and the task is consumed from the answer state through `started`, which is what makes the next ask offer a different task than this one.\"\n    __Run.update(run, {JOBS_FIELD} = Map.set(run.{JOBS_FIELD}, run.nextId, __Job.{upper}(job)), nextId = run.nextId + 1, {task_field} = __consumed{upper}(run.{task_field}, task))\n",
         job.task_type
     ));
     out.push_str(&format!(
@@ -1285,12 +1312,12 @@ fn write_laws(protocols: &[ProcessProtocol], jobs: &[Job]) -> String {
             protocol.outcome
         ));
     }
-    // The two halves of "n starts in one turn take n distinct tasks". The
-    // first is the program's own law about its answer module — `started`
-    // consumes the task it was handed, so `task` never offers it again —
-    // which this generated law cites: `__consumed<K>` is `started` under a
-    // generated name. The second is the room gate itself: a full table asks
-    // nothing, so a start can never be offered a task it has no slot for.
+    // What the program's own law about `started` buys, cited here under the
+    // generated name `__consumed<K>`: the task `task` offered is not the task
+    // it offers next. That is all it says. It does not say a task already
+    // started is never offered again later, and it does not say the offers
+    // of one turn run out; `started` is the program's to write so that they
+    // do, because the loop begins every task the state offers in a turn.
     for job in jobs {
         let upper = marker_variant(&job.capability);
         let owner = job
@@ -1314,10 +1341,6 @@ fn write_laws(protocols: &[ProcessProtocol], jobs: &[Job]) -> String {
             job.task,
             owner,
             job.started
-        ));
-        out.push_str(&format!(
-            "\nverify __startable{upper} law aFullTableAsksNothing\n    given room: Int = [0 - 1, 0, 1]\n    given state: {} = [{}.fresh()]\n    when room <= 0\n    because room <= 0\n    __startable{upper}(room, state) => Option.None\n",
-            job.seam_state, owner
         ));
     }
     out
@@ -1465,12 +1488,17 @@ fn turn_effect_list(
 
 /// What the generated entry point performs: it seats every process, turns,
 /// and cancels whatever job is still running when the run is over.
-fn main_effect_list(turn: &[String], effects: &[ProcessEffects], jobs: &[Job]) -> Vec<String> {
+fn main_effect_list(
+    turn: &[String],
+    effects: &[ProcessEffects],
+    jobs: &[Job],
+    has_job_kinds: bool,
+) -> Vec<String> {
     let mut found: std::collections::BTreeSet<String> = turn.iter().cloned().collect();
     for process in effects {
         found.extend(process.seat.iter().cloned());
     }
-    if !jobs.is_empty() {
+    if !jobs.is_empty() || has_job_kinds {
         found.insert(CANCEL.to_string());
     }
     found.into_iter().collect()
