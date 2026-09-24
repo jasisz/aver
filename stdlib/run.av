@@ -1,0 +1,10 @@
+module Run
+    intent =
+        "The vocabulary of the generated loop. Wake says when a request that an answer module did not answer yet is asked again."
+    depends [Wait]
+    exposes [Wake]
+    effects []
+
+type Wake
+    Until(List<Wait.Item>, Option<Int>)
+    Settled(Option<Int>)

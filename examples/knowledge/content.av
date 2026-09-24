@@ -3,7 +3,7 @@ module Content
     semantics = effectful
     intent = "Peers offer content, never verdicts. Readers ask for one body's locally computed verdict."
     depends [Bytes]
-    exposes [Peer, Snapshot, OfferReply, ReadReply, offer, read]
+    exposes [Peer, Snapshot, offer, read]
 
 record Peer
     hash: String
@@ -12,16 +12,6 @@ record Peer
 record Snapshot
     body: Bytes
     valid: Bool
-
-type OfferReply
-    Now(Bool)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Bool)
-
-type ReadReply
-    Now(Result<Content.Snapshot, String>)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Result<Content.Snapshot, String>)
 
 operation offer(first: Content.Peer, second: Content.Peer) -> Bool
     ? "Admit both contributions from their content alone, then merge and queue local validation; false leaves the entire batch out."

@@ -28,6 +28,7 @@ pub(super) fn generate(
     fn_sigs: &FnSigs,
     type_spellings: &super::TypeSpellings,
     imported: &HashMap<String, ProcessProtocol>,
+    is_entry: bool,
 ) -> Result<Vec<TopLevel>, Vec<crate::types::checker::TypeError>> {
     let mut generated = Vec::new();
     let segments: Vec<_> = items
@@ -58,11 +59,13 @@ pub(super) fn generate(
                 })
         });
         // Library processes carry their source observer in their own module,
-        // where private helpers and private layouts retain their original scope.
-        if !requested
-            && !(exposes.contains(&protocol.fn_name)
-                || (exposes.is_empty() && !protocol.fn_name.starts_with('_')))
-        {
+        // where private helpers and private layouts retain their original scope,
+        // so an importer's law can cite it. The entry module has no importer:
+        // its observers are generated only when one of its own laws cites
+        // them, which keeps them out of every program that states no such law.
+        let exported = exposes.contains(&protocol.fn_name)
+            || (exposes.is_empty() && !protocol.fn_name.starts_with('_'));
+        if !requested && (is_entry || !exported) {
             continue;
         }
         let model = Model::new(

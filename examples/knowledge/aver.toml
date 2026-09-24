@@ -2,17 +2,8 @@
 schema = 1
 
 [[providers.bindings]]
-capability = "Content"
-answer = "Stored"
-
-[[providers.bindings]]
 capability = "Validation"
 work = "Stored.validate"
-task = "Stored.nextTask"
-started = "Stored.taskStarted"
-landed = "Stored.validated"
 
 [work]
 max-jobs = 2
-
-[run]

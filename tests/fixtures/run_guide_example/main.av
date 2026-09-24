@@ -1,11 +1,17 @@
 module Node
     intent = "One process, one answer module and one job kind; the loop between them is generated."
-    depends [Clock]
-    effects [Clock.tick, Console.print, yield]
+    depends [Clock, Clocked]
+    effects [Clock.score, Clock.tick, Console.print, yield]
 
 fn ticker() -> Unit
-    ? "Waits on the clock until it closes, then says what the jobs scored together."
-    ! [Clock.tick, Console.print, yield]
-    match Clock.tick()
-        Clock.Tick.Tock -> ticker()
-        Clock.Tick.Closed(total) -> Console.print("scored {total}")
+    ? "Scores three tasks off the turn, one tick apart, then says what they scored together."
+    ! [Clock.score, Clock.tick, Console.print, yield]
+    tallying([1, 2, 3], 0)
+
+fn tallying(tasks: List<Int>, total: Int) -> Unit
+    ? "Waits for a tick, then for the score of the next task, until no task is left."
+    ! [Clock.score, Clock.tick, Console.print, yield]
+    match tasks
+        [] -> Console.print("scored {total}")
+        [task, ..rest] -> match Clock.tick()
+            Clock.Tick.Tock -> tallying(rest, total + Clock.score(task))

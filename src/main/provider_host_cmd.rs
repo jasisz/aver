@@ -341,6 +341,21 @@ fn plan_for_programs(
         else {
             continue;
         };
+        // The loop is the entry's: bind it there, so a yielding helper of a
+        // dependency checked here stays a helper.
+        let entry_name = program
+            .report_units()
+            .last()
+            .and_then(|entry| aver::visibility::module_decl(&entry.items))
+            .map(|module| module.name.clone())
+            .unwrap_or_else(|| "<entry>".to_string());
+        let marked = marked
+            .with_items(
+                program
+                    .report_units()
+                    .map(|module| (module.dep_name.as_str(), module.items.as_slice())),
+            )
+            .with_run_entry(&entry_name);
         for module in program
             .report_units()
             .filter(|module| planned.insert(aver::source::canonicalize_path(&module.path)))
@@ -653,12 +668,17 @@ fn work_input_rejections(
     let Ok(config) = aver::config::ProjectConfig::load_from_dir(Path::new(module_root)) else {
         return empty;
     };
-    let marked = aver::config::MarkedCapabilities::from_config(config.as_ref());
+    let marked = aver::config::MarkedCapabilities::from_config(config.as_ref()).with_items(
+        program
+            .report_units()
+            .map(|module| (module.dep_name.as_str(), module.items.as_slice())),
+    );
     let manifest = config.and_then(|config| config.provider_manifest);
-    let answers = manifest
-        .as_ref()
-        .map(|manifest| !manifest.answer_bindings.is_empty())
-        .unwrap_or(false);
+    // Any `answers [...]` header counts, including one naming a capability
+    // the compiler ships: that is a mistake the gate below reports.
+    let answers = program.report_units().any(|module| {
+        aver::visibility::module_decl(&module.items).is_some_and(|decl| !decl.answers.is_empty())
+    });
     // Nothing here refuses a target since jasisz/aver#1329, so a program with
     // neither a job kind nor an answered capability has nothing for this gate
     // to say, whichever backend it was pointed at.
@@ -685,27 +705,27 @@ fn work_input_rejections(
         aver::visibility::module_decl(&entry.items).map(|module| module.name.as_str());
     if !tc.errors.is_empty() {
         // Type errors are the command's own report; a binding cannot be
-        // judged against signatures that did not survive the typecheck. The
-        // reply sums can, because they are declarations of the capability
-        // module: an answer function written before its `Cap.<Op>Reply` was
-        // declared is exactly such a type error, and the declaration to
-        // paste is what it needs to hear.
-        return aver::capability::work::reply_sums(&capabilities, manifest.as_ref(), entry_module)
-            .iter()
-            .map(aver::capability::work::WorkDiagnostic::rendered)
-            .collect();
+        // judged against signatures that did not survive the typecheck.
+        return Vec::new();
     }
+    // The bindings belong to the program that runs the jobs, as at the
+    // `aver check` door: an entry with a `main`, written or generated.
+    let runs = items
+        .iter()
+        .any(|item| matches!(item, aver::ast::TopLevel::FnDef(fd) if fd.name == "main"));
     aver::capability::work::gate(
         &tc.capabilities,
         manifest.as_ref(),
+        &tc.answers,
         &tc.fn_sigs,
         entry_module,
-        true,
+        runs,
     )
     .iter()
     // A warning is something `aver check` tells the program's author; only an
     // error stops the command on its way to the backend.
     .filter(|finding| finding.is_error())
+    .filter(|finding| runs || finding.slug != aver::capability::work::WORK_BINDING)
     .map(aver::capability::work::WorkDiagnostic::rendered)
     .collect()
 }

@@ -1,6 +1,6 @@
 module Node
-    intent = "Fixture: the entry's process enters a library helper that takes a key, under an empty [run]."
-    depends [Clock, Lib]
+    intent = "Fixture: the entry's process enters a library helper that takes a key, under the generated loop."
+    depends [Clock, Clocked, Lib]
     effects [Clock.tick, Console.print, yield]
 
 fn peer1() -> Unit

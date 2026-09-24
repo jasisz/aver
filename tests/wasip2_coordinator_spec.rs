@@ -70,15 +70,16 @@ fn default_guide_runs_and_compiles_without_a_signal_import() {
 }
 
 #[test]
-fn saved_answers_including_unit_finish_on_wasip2() {
+fn a_keyed_family_is_seated_and_dropped_on_wasip2() {
+    let dir = fixture("run_families");
     assert_eq!(
-        stdout(&run(&fixture("run_then"), Some("--wasip2"))),
-        "11,22,33\ndone"
+        stdout(&run(&dir, Some("--wasip2"))),
+        stdout(&run(&dir, None))
     );
 }
 
 #[test]
-fn cancelled_job_errors_land_under_a_custom_policy() {
+fn a_cancelled_job_is_answered_the_same_on_wasip2() {
     let dir = fixture("run_failed_job");
     assert_eq!(
         stdout(&run(&dir, Some("--wasip2"))),
@@ -110,20 +111,25 @@ fn a_custom_policy_can_stop_with_a_process_still_seated() {
 #[test]
 fn an_explicit_signal_read_in_a_process_is_still_rejected() {
     let dir = tempfile::tempdir().unwrap();
-    for name in ["main.av", "pulse.av", "pulsed.av", "aver.toml"] {
-        fs::copy(fixture("run_then").join(name), dir.path().join(name)).unwrap();
+    for name in ["main.av", "clock.av", "ticks.av"] {
+        fs::copy(
+            fixture("run_all_from_main").join(name),
+            dir.path().join(name),
+        )
+        .unwrap();
     }
     let main = dir.path().join("main.av");
     let source = fs::read_to_string(&main)
         .unwrap()
-        .replace("Console.print,", "Console.print, Process.stopRequested,")
         .replace(
-            "    first =",
-            "    Console.print(\"{Process.stopRequested()}\")\n    first =",
+            "effects [Args.get, Clock.tick, Console.print, yield]",
+            "effects [Args.get, Clock.tick, Console.print, Process.stopRequested, yield]",
+        )
+        .replace(
+            "    ! [Clock.tick, Console.print, yield]\n    ticking(0)",
+            "    ! [Clock.tick, Console.print, Process.stopRequested, yield]\n    Console.print(\"{Process.stopRequested()}\")\n    ticking(0)",
         );
-    // The fixture's pure verify-only seeded() helper assumes seating has no
-    // effects. This case deliberately adds an in-place effect before seating.
-    fs::write(main, source.split("\nfn seeded()").next().unwrap()).unwrap();
+    fs::write(main, source).unwrap();
     let out_dir = tempfile::tempdir().unwrap();
     for output in [
         run(dir.path(), Some("--wasip2")),
@@ -148,7 +154,7 @@ fn an_explicit_signal_read_in_a_process_is_still_rejected() {
 #[test]
 fn native_lowering_keeps_the_host_signal_observation() {
     let output = Command::new(aver_bin())
-        .current_dir(fixture("run_then"))
+        .current_dir(fixture("run_guide_example"))
         .args(["check", "main.av", "--module-root", "."])
         .env("AVER_YIELD_DUMP", "1")
         .output()

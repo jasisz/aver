@@ -3,11 +3,12 @@ module Ledger
     depends [Pool]
     exposes [State, claim]
     effects []
+    answers [Pool]
 
 record State
     free: List<Int>
     stopping: Bool
 
-fn claim(state: State, key: Int) -> Pool.Assignment
+fn claim(state: State, key: Int) -> Tuple<State, Result<Pool.Assignment, Run.Wake>>
     ? "The next height for this peer."
-    Pool.Assignment.Idle
+    (state, Result.Ok(Pool.Assignment.Idle))

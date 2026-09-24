@@ -1,156 +1,101 @@
 module Pooled
-    intent = "Fixture answer module: the answer this program gives to Pool, and all three ends of both job seams. Two kinds, two task queues, one limit they share, and a list of the landings the process has not yet been told about."
-    depends [Pool, Wait]
-    exposes [State, fresh, claim, reporting, scoreAlpha, scoreBeta, alphaTask, alphaStarted, alphaLanded, betaTask, betaStarted, betaLanded, landing]
-    effects []
+    intent = "Fixture answer module: every score is a job of one of two kinds this module begins itself, alpha for a task below ten and beta for the rest. Both kinds share one engine and one limit."
+    depends [Alpha, Beta, Pool, Wait, Work]
+    exposes [State, fresh, tasks, scored, total, scoreAlpha, scoreBeta]
+    effects [Alpha.begin, Alpha.take, Beta.begin, Beta.take]
+    answers [Pool]
 
 record State
-    left: Int
-    alphas: List<Int>
-    betas: List<Int>
+    jobs: Map<Int, Work.Job>
     scored: Int
     landed: Int
-    unreported: List<Tuple<String, Int>>
 
 fn fresh() -> State
-    ? "Two handles to give out, two alpha tasks and two beta tasks to run, nothing scored, nothing landed and nothing to report yet."
-    State(left = 2, alphas = [1, 2], betas = [10, 20], scored = 0, landed = 0, unreported = [])
+    ? "No job running, nothing scored and nothing landed."
+    State(jobs = {}, scored = 0, landed = 0)
 
-fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
-    ? "A handle while there is one. Once the handles are gone, each landing the process has not heard of yet, one per ask; with none to report the request parks until every task has landed, then answers what they scored together."
-    match state.left == 0
-        false -> (State.update(state, left = state.left - 1), Pool.ClaimReply.Now(Pool.Assignment.Handle(state.left)))
-        true -> reporting(state, state.unreported)
+fn tasks(state: State) -> List<Int>
+    ? "The tasks the loop seats one scorer for each of: two alpha tasks and two beta tasks."
+    [1, 2, 10, 20]
 
-fn reporting(state: State, unreported: List<Tuple<String, Int>>) -> Tuple<State, Pool.ClaimReply>
-    ? "One landing not yet reported, or — with none left — the sum once everything has landed and a park until then."
-    match unreported
-        [head, ..rest] -> match head
-            (kind, score) -> (State.update(state, unreported = rest), Pool.ClaimReply.Now(Pool.Assignment.Landed(kind, score)))
-        [] -> match state.landed == 4
-            true -> (state, Pool.ClaimReply.Now(Pool.Assignment.Finished(state.scored)))
-            false -> (state, Pool.ClaimReply.Later(Wait.Wake.NextTurn))
+verify tasks
+    tasks(fresh()) => [1, 2, 10, 20]
+
+fn scored(state: State, task: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The first ask for a task begins its job and waits on it; an ask after the wait reported it takes it."
+    ! [Alpha.begin, Alpha.take, Beta.begin, Beta.take]
+    match Map.get(state.jobs, task)
+        Option.Some(job) -> match task < 10
+            true -> takeAlpha(state, task, job)
+            false -> takeBeta(state, task, job)
+        Option.None -> match task < 10
+            true -> beginAlpha(state, task)
+            false -> beginBeta(state, task)
+
+fn beginAlpha(state: State, task: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Begins an alpha job and waits on it; a job that could not begin lands at once, scoring 0."
+    ! [Alpha.begin]
+    match Alpha.begin(task)
+        Result.Err(_) -> (landedWith(state, task, 0), Result.Ok(0))
+        Result.Ok(job) -> (State.update(state, jobs = Map.set(state.jobs, task, job)), Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+
+fn beginBeta(state: State, task: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Begins a beta job and waits on it; a job that could not begin lands at once, scoring 0."
+    ! [Beta.begin]
+    match Beta.begin(task)
+        Result.Err(_) -> (landedWith(state, task, 0), Result.Ok(0))
+        Result.Ok(job) -> (State.update(state, jobs = Map.set(state.jobs, task, job)), Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+
+fn takeAlpha(state: State, task: Int, job: Work.Job) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Takes an alpha job."
+    ! [Alpha.take]
+    takenWith(state, task, Run.Wake.Until([Wait.Item.Job(job)], Option.None), Alpha.take(job))
+
+fn takeBeta(state: State, task: Int, job: Work.Job) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Takes a beta job."
+    ! [Beta.take]
+    takenWith(state, task, Run.Wake.Until([Wait.Item.Job(job)], Option.None), Beta.take(job))
+
+fn takenWith(state: State, task: Int, again: Run.Wake, outcome: Result<Option<Int>, String>) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "What one take answered: nothing yet waits again, a score lands, and a job that will never finish lands scoring 0."
+    match outcome
+        Result.Err(_) -> (landedWith(state, task, 0), Result.Ok(0))
+        Result.Ok(found) -> match found
+            Option.None -> (state, Result.Err(again))
+            Option.Some(points) -> (landedWith(state, task, points), Result.Ok(points))
+
+verify takenWith
+    takenWith(fresh(), 1, Run.Wake.Settled(Option.None), Result.Ok(Option.None)) => (fresh(), Result.Err(Run.Wake.Settled(Option.None)))
+    takenWith(fresh(), 1, Run.Wake.Settled(Option.None), Result.Ok(Option.Some(2))) => (State.update(fresh(), scored = 2, landed = 1), Result.Ok(2))
+    takenWith(fresh(), 1, Run.Wake.Settled(Option.None), Result.Err("work: job cancelled")) => (State.update(fresh(), landed = 1), Result.Ok(0))
+
+fn landedWith(state: State, task: Int, points: Int) -> State
+    ? "One task has landed: its handle goes, and its score counts."
+    State.update(state, jobs = Map.remove(state.jobs, task), scored = state.scored + points, landed = state.landed + 1)
+
+verify landedWith
+    landedWith(fresh(), 1, 3) => State.update(fresh(), scored = 3, landed = 1)
+
+fn total(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The sum once every task has landed; until then the request waits for this module's state to move."
+    match state.landed == 4
+        true -> (state, Result.Ok(state.scored))
+        false -> (state, Result.Err(Run.Wake.Settled(Option.None)))
+
+verify total
+    total(fresh()) => (fresh(), Result.Err(Run.Wake.Settled(Option.None)))
+    total(State.update(fresh(), landed = 4, scored = 65)) => (State.update(fresh(), landed = 4, scored = 65), Result.Ok(65))
 
 fn scoreAlpha(task: Int) -> Int
     ? "What one alpha job computes off the turn."
     task + 1
 
+verify scoreAlpha
+    scoreAlpha(1) => 2
+
 fn scoreBeta(task: Int) -> Int
     ? "What one beta job computes off the turn."
     task * 2
 
-fn alphaTask(state: State) -> Option<Int>
-    ? "The next alpha task waiting to be started, if anything."
-    match state.alphas
-        [] -> Option.None
-        [head, ..rest] -> Option.Some(head)
-
-fn alphaStarted(state: State, task: Int) -> State
-    ? "An alpha task whose job just began leaves the queue it was offered from — every copy of it — so the next ask is offered a different one. Named by aver.toml's started key."
-    State.update(state, alphas = withoutTask(state.alphas, task, []))
-
-fn alphaLanded(state: State, outcome: Result<Int, String>) -> State
-    ? "Where an alpha job that is over goes: its score, or nothing to add when it will never produce one. Either way the job has landed, and the landing waits to be reported."
-    landing(state, "alpha", outcome)
-
-fn betaTask(state: State) -> Option<Int>
-    ? "The next beta task waiting to be started, if anything."
-    match state.betas
-        [] -> Option.None
-        [head, ..rest] -> Option.Some(head)
-
-fn betaStarted(state: State, task: Int) -> State
-    ? "A beta task whose job just began leaves the queue it was offered from — every copy of it — so the next ask is offered a different one. Named by aver.toml's started key."
-    State.update(state, betas = withoutTask(state.betas, task, []))
-
-fn betaLanded(state: State, outcome: Result<Int, String>) -> State
-    ? "Where a beta job that is over goes: its score, or nothing to add when it will never produce one. Either way the job has landed, and the landing waits to be reported."
-    landing(state, "beta", outcome)
-
-fn landing(state: State, kind: String, outcome: Result<Int, String>) -> State
-    ? "One job of one kind that is over: counted as landed, its score added when it has one, and queued for the process to report — a job that will never produce a score is reported as scoring nothing."
-    match outcome
-        Result.Err(_) -> State.update(state, landed = state.landed + 1, unreported = List.concat(state.unreported, [(kind, 0)]))
-        Result.Ok(score) -> State.update(state, scored = state.scored + score, landed = state.landed + 1, unreported = List.concat(state.unreported, [(kind, score)]))
-
-fn withoutTask(pending: List<Int>, task: Int, acc: List<Int>) -> List<Int>
-    ? "A queue with every copy of one task taken out, in the order the rest were queued."
-    match pending
-        [] -> acc
-        [head, ..rest] -> withoutTask(rest, task, keptUnlessTask(acc, head, task))
-
-fn keptUnlessTask(acc: List<Int>, entry: Int, task: Int) -> List<Int>
-    ? "One queued entry, kept unless it is the task that just started."
-    match entry == task
-        true -> acc
-        false -> List.concat(acc, [entry])
-
-verify claim
-    claim(fresh()) => (State.update(fresh(), left = 1), Pool.ClaimReply.Now(Pool.Assignment.Handle(2)))
-    claim(State.update(fresh(), left = 0)) => (State.update(fresh(), left = 0), Pool.ClaimReply.Later(Wait.Wake.NextTurn))
-    claim(State.update(fresh(), left = 0, scored = 65, landed = 4)) => (State.update(fresh(), left = 0, scored = 65, landed = 4), Pool.ClaimReply.Now(Pool.Assignment.Finished(65)))
-    claim(State.update(fresh(), left = 0, scored = 2, landed = 1, unreported = [("alpha", 2)])) => (State.update(fresh(), left = 0, scored = 2, landed = 1), Pool.ClaimReply.Now(Pool.Assignment.Landed("alpha", 2)))
-
-verify reporting
-    reporting(fresh(), [("beta", 20), ("alpha", 2)]) => (State.update(fresh(), unreported = [("alpha", 2)]), Pool.ClaimReply.Now(Pool.Assignment.Landed("beta", 20)))
-    reporting(State.update(fresh(), landed = 4, scored = 65), []) => (State.update(fresh(), landed = 4, scored = 65), Pool.ClaimReply.Now(Pool.Assignment.Finished(65)))
-    reporting(fresh(), []) => (fresh(), Pool.ClaimReply.Later(Wait.Wake.NextTurn))
-
-verify scoreAlpha
-    scoreAlpha(1) => 2
-
 verify scoreBeta
     scoreBeta(10) => 20
-
-verify alphaTask
-    alphaTask(fresh()) => Option.Some(1)
-    alphaTask(State.update(fresh(), alphas = [])) => Option.None
-
-verify withoutTask law theStartedTaskIsOut
-    given pending: List<Int> = [[], [1], [1, 2]]
-    given task: Int = [1, 2]
-    given acc: List<Int> = [[], [3]]
-    List.contains(withoutTask(pending, task, acc), task) => List.contains(acc, task)
-
-verify alphaStarted law aStartedTaskIsNotAskedAgain
-    given state: State = [fresh(), State.update(fresh(), alphas = [2, 1])]
-    given task: Int = [1, 2]
-    when alphaTask(state) == Option.Some(task)
-    using [withoutTask.theStartedTaskIsOut]
-    alphaTask(alphaStarted(state, task)) != Option.Some(task) holds
-
-verify alphaStarted
-    alphaStarted(fresh(), 1) => State.update(fresh(), alphas = [2])
-
-verify alphaLanded
-    alphaLanded(fresh(), Result.Ok(2)) => State.update(fresh(), scored = 2, landed = 1, unreported = [("alpha", 2)])
-    alphaLanded(fresh(), Result.Err("work: job cancelled")) => State.update(fresh(), landed = 1, unreported = [("alpha", 0)])
-
-verify betaTask
-    betaTask(fresh()) => Option.Some(10)
-    betaTask(State.update(fresh(), betas = [])) => Option.None
-
-verify betaStarted law aStartedTaskIsNotAskedAgain
-    given state: State = [fresh(), State.update(fresh(), betas = [20, 10])]
-    given task: Int = [10, 20]
-    when betaTask(state) == Option.Some(task)
-    using [withoutTask.theStartedTaskIsOut]
-    betaTask(betaStarted(state, task)) != Option.Some(task) holds
-
-verify betaStarted
-    betaStarted(fresh(), 10) => State.update(fresh(), betas = [20])
-
-verify betaLanded
-    betaLanded(fresh(), Result.Ok(20)) => State.update(fresh(), scored = 20, landed = 1, unreported = [("beta", 20)])
-    betaLanded(fresh(), Result.Err("work: job cancelled")) => State.update(fresh(), landed = 1, unreported = [("beta", 0)])
-
-verify landing
-    landing(fresh(), "alpha", Result.Ok(3)) => State.update(fresh(), scored = 3, landed = 1, unreported = [("alpha", 3)])
-    landing(State.update(fresh(), unreported = [("beta", 20)]), "alpha", Result.Err("work: job cancelled")) => State.update(fresh(), landed = 1, unreported = [("beta", 20), ("alpha", 0)])
-
-verify withoutTask
-    withoutTask([1, 2], 1, []) => [2]
-
-verify keptUnlessTask
-    keptUnlessTask([], 1, 1) => []
-    keptUnlessTask([], 2, 1) => [2]

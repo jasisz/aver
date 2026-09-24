@@ -1,38 +1,28 @@
 module Ledger
-    intent = "Explicit control state: order is observable and job landing is counted."
+    intent = "Explicit control state: the order ids are served in is observable, and the member keys the loop seats a member for are a plain list."
     depends [Inbox]
-    exposes [State, fresh, arrive, nextTask, started, landed, score]
+    exposes [State, fresh, arrive, members]
+    effects []
+    answers [Inbox]
 
 record State
     served: List<Int>
-    offered: Option<Int>
-    scored: Int
-    failures: Int
+    keys: List<Int>
 
 fn fresh() -> State
-    State(served = [], offered = Option.Some(1), scored = 0, failures = 0)
+    ? "Nothing served yet, and two member keys."
+    State(served = [], keys = [7, 8])
 
-fn arrive(state: State, id: Int) -> Tuple<State, Inbox.ArriveReply>
+fn arrive(state: State, id: Int) -> Tuple<State, Result<Unit, Run.Wake>>
     ? "Append this id; reversing service order must reverse this observation."
-    (State.update(state, served = List.concat(state.served, [id])), Inbox.ArriveReply.Now(Unit))
+    (State.update(state, served = List.concat(state.served, [id])), Result.Ok(Unit))
 
-fn nextTask(state: State) -> Option<Int>
-    state.offered
+verify arrive
+    arrive(fresh(), 1) => (State.update(fresh(), served = [1]), Result.Ok(Unit))
 
-fn started(state: State, task: Int) -> State
-    State.update(state, offered = Option.None)
+fn members(state: State) -> List<Int>
+    ? "The keys the loop seats one member for each of."
+    state.keys
 
-verify started law aStartedTaskIsNotAskedAgain
-    given state: State = [fresh()]
-    given task: Int = [0, 1, 2]
-    when nextTask(state) == Option.Some(task)
-    using []
-    nextTask(started(state, task)) != Option.Some(task) holds
-
-fn landed(state: State, result: Result<Int, String>) -> State
-    match result
-        Result.Ok(value) -> State.update(state, scored = state.scored + value)
-        Result.Err(_) -> State.update(state, failures = state.failures + 1)
-
-fn score(task: Int) -> Int
-    task * 10
+verify members
+    members(fresh()) => [7, 8]

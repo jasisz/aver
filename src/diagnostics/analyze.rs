@@ -59,6 +59,10 @@ pub struct AnalyzeOptions {
     /// validates the composed entry once. Shape checks and request-placement
     /// checks still run in each dependency, including its private functions.
     pub include_work_bindings: bool,
+    /// What the program this module belongs to answers, as (capability,
+    /// module): a module checked as one unit of a program is lowered against
+    /// the program's answer modules, which its own cone may not reach.
+    pub program_answers: Vec<(String, String)>,
     pub include_intent_warnings: bool,
     pub include_coverage_warnings: bool,
     pub include_law_dependency_warnings: bool,
@@ -106,6 +110,7 @@ impl Default for AnalyzeOptions {
             loaded_modules: None,
             stdlib_shadowed: Vec::new(),
             include_work_bindings: true,
+            program_answers: Vec::new(),
             include_intent_warnings: true,
             include_coverage_warnings: true,
             include_law_dependency_warnings: true,
@@ -207,7 +212,8 @@ fn analyze_source_impl(
     // program the checker read; `items` stays the source as written.
     let mut transformed = items.clone();
     let user_program_len = transformed.len();
-    let marked = crate::config::MarkedCapabilities::from_config(project_config(options).as_ref());
+    let marked = crate::config::MarkedCapabilities::from_config(project_config(options).as_ref())
+        .with_answer_pairs(&options.program_answers);
     // A module checked as a unit of a program it is not the entry of never
     // hosts the default loop: its yielding functions are library helpers.
     let marked = if options.include_work_bindings {
@@ -306,40 +312,23 @@ fn analyze_prechecked_items_impl(
             &options.file_label,
         ));
     }
-    // A `[run]` table whose policies live in a module other than the entry
-    // this program was loaded with generates no loop at all, and an entry
-    // without `main` then runs nothing and exits 0. Only the entry can say so.
-    if options.include_work_bindings
-        && let Some(entry) = module_decl
-    {
-        let has_main = items
+    // The bindings belong to the program that runs the jobs: the entry of
+    // the command, and only when it runs — it has a `main`, written or
+    // generated for its loop. A library checked on its own names job kinds
+    // whose functions live wherever the program that runs it puts them.
+    let runs = options.include_work_bindings
+        && transformed
             .iter()
             .any(|item| matches!(item, TopLevel::FnDef(fd) if fd.name == "main"));
-        let marked =
-            crate::config::MarkedCapabilities::from_config(project_config(options).as_ref());
-        if let Some(message) = marked.run_entry_mismatch(&entry.name, has_main) {
-            diagnostics.push(work_diagnostic(
-                &crate::capability::work::WorkDiagnostic {
-                    slug: "run-binding",
-                    severity: crate::capability::work::WorkSeverity::Error,
-                    message: message
-                        .trim_start_matches("error[run-binding]: ")
-                        .to_string(),
-                },
-                entry.line,
-                &source_index,
-                &options.file_label,
-            ));
-        }
-    }
     for finding in crate::capability::work::gate(
         &tc_result.capabilities,
         project_provider_manifest(options).as_ref(),
+        &tc_result.answers,
         &tc_result.fn_sigs,
         module_decl.map(|module| module.name.as_str()),
-        options.include_work_bindings,
+        runs,
     ) {
-        if !options.include_work_bindings && finding.slug == crate::capability::work::WORK_BINDING {
+        if !runs && finding.slug == crate::capability::work::WORK_BINDING {
             continue;
         }
         diagnostics.push(work_diagnostic(

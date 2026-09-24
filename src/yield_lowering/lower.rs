@@ -1694,7 +1694,7 @@ impl<'a> Lowering<'a> {
         if self.kinds.is_empty() {
             return self.fail(
                 fd.line,
-                "declares `yield` but never stops: it calls no operation of a capability this program answers, and it does not tail-call itself. Mark the capability it should wait on — `answer = \"<Module>\"` on its `[[providers.bindings]]` entry in aver.toml — or remove `yield` from its effect list".to_string(),
+                "declares `yield` but never stops: it calls no operation of a capability this program answers, and it does not tail-call itself. Answer the capability it should wait on with a module of the program whose header says `answers [<Capability>]`, and list that module in `depends`, or remove `yield` from its effect list".to_string(),
             );
         }
 

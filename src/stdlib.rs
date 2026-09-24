@@ -82,6 +82,10 @@ pub(crate) fn find(name: &str) -> Option<EmbeddedModule> {
             virtual_path: "<aver-stdlib>/capabilities/wait.av",
             source: include_str!("../stdlib/capabilities/wait.av"),
         }),
+        "Run" => Some(EmbeddedModule {
+            virtual_path: "<aver-stdlib>/run.av",
+            source: include_str!("../stdlib/run.av"),
+        }),
         _ => None,
     }
 }
@@ -105,6 +109,7 @@ pub(crate) const EMBEDDED_MODULES: &[&str] = &[
     "Tcp",
     "Work",
     "Wait",
+    "Run",
 ];
 
 /// Bare type names the compiler ships.
@@ -154,6 +159,12 @@ pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &[
 /// one of their operations makes the module an implicit dependency, exactly
 /// as it does for a standard module; only the VM answers them in this build.
 pub(crate) const RESERVED_CAPABILITY_MODULES: &[&str] = &["Wait", "Work"];
+
+/// The standard module the generated loop's vocabulary lives in: `Run.Wake`
+/// is declared there, and `Run.View`, `Run.Pending` and `Run.all()` are names
+/// the generated loop answers to in the entry module. Naming it anywhere
+/// makes it a dependency, the way naming `Wait.Item` makes `Wait` one.
+pub(crate) const RUN_MODULE: &str = "Run";
 
 /// Canonical resource names (`Module.Resource`) of every embedded capability.
 ///
@@ -249,6 +260,13 @@ pub fn implicit_stdlib_deps(items: &[crate::ast::TopLevel]) -> Vec<String> {
                 }
             }
         }
+    }
+    // `Run.Wake.Until(...)` names the loop's own vocabulary, which is
+    // always within reach, like a standard capability's types.
+    if callees.iter().any(|callee| callee.starts_with("Run."))
+        && !deps.iter().any(|d| d == RUN_MODULE)
+    {
+        deps.push(RUN_MODULE.to_string());
     }
     for operation in standard_capability_registry_ref().operations() {
         if callees.contains(&operation.canonical_name)
@@ -363,7 +381,7 @@ fn collect_standard_modules_from_type(ty: &crate::types::Type, deps: &mut Vec<St
     match ty {
         Type::Named { name, .. } => {
             if let Some((module, _)) = name.split_once('.')
-                && has_shipped_provider(module)
+                && (has_shipped_provider(module) || module == RUN_MODULE)
                 && !deps.iter().any(|dependency| dependency == module)
             {
                 deps.push(module.to_string());

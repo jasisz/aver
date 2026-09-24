@@ -3,6 +3,7 @@ module Ledger
     depends []
     exposes [State, tip]
     effects []
+    answers [Console]
 
 record State
     free: List<Int>

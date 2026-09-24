@@ -986,6 +986,9 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             })
             .collect();
         let phase_one = typecheck(&written, mode);
+        // The answer modules say what they answer in their own headers, and
+        // the check has just read every module this one can see.
+        let marked = marked.with_answer_pairs(&phase_one.answers);
         match crate::yield_lowering::lower(
             items,
             &written,
@@ -993,11 +996,13 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             &marked,
             &phase_one.fn_sigs,
             &phase_one.imported_processes,
-            &phase_one.laws,
             &phase_one.type_spellings,
             coordinator_stop,
         ) {
             Ok(report) => {
+                if report.loop_source.is_some() {
+                    marked.add_loop_dependencies(items);
+                }
                 if std::env::var_os("AVER_YIELD_DUMP").is_some() {
                     eprintln!("{}", report.generated_source());
                 }

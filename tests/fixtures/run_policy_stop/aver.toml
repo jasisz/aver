@@ -1,5 +1,0 @@
-[run]
-order = "Node.order"
-admit = "Node.admit"
-stop = "Node.stop"
-view = "Node.View"

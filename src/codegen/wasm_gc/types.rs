@@ -259,8 +259,8 @@ pub(super) struct TypeRegistry {
     /// two copies of one handle are one job. See `src/codegen/wasm_gc/jobs.rs`.
     ///
     /// A handle also reaches a program that starts no job, as a type — through
-    /// `Wait.Wake` into `Wait.Item` into every answered capability's generated
-    /// reply sum — where it is only carried, compared and hashed.
+    /// `Run.Wake` into `Wait.Item` into every answer function's result — where
+    /// it is only carried, compared and hashed.
     ///
     /// `None` when no `Work.Job` is reachable, so a program without jobs
     /// carries no job bytes at all.
@@ -637,8 +637,8 @@ impl TypeRegistry {
 
         // jasisz/aver#1329 — the `Work.Job` handle slot. Allocated
         // whenever the program reaches the stdlib job handle, directly or
-        // through `Wait.Item.Job`, which every answered capability's
-        // generated reply sum reaches through `Wait.Wake`.
+        // through `Wait.Item.Job`, which every answer function's result
+        // reaches through `Run.Wake`.
         // A program with a job kind always needs the slot: the inline
         // lowering mints handles whether or not the source ever spells the
         // type.
@@ -812,6 +812,23 @@ impl TypeRegistry {
             for (_, ty) in fields {
                 collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
             }
+        }
+        // A constructor's payload can name a list that nothing else does:
+        // `Run.Wake.Until` holds `List<Wait.Item>` in a program that returns
+        // a `Run.Wake` but never builds one. Walked in a fixed order; a
+        // program whose payload lists are already registered gets no new
+        // slot here.
+        let mut variant_fields: Vec<(&String, u32, &String)> = variants
+            .iter()
+            .flat_map(|(name, infos)| {
+                infos.iter().flat_map(move |info| {
+                    info.fields.iter().map(move |ty| (name, info.type_idx, ty))
+                })
+            })
+            .collect();
+        variant_fields.sort();
+        for (_, _, ty) in variant_fields {
+            collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
         }
         if handler_active && !list_types.contains_key("List<String>") {
             list_types.insert("List<String>".to_string(), next_idx);

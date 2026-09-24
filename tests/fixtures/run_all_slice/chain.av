@@ -2,26 +2,16 @@ module Chain
     kind = capability
     semantics = effectful
     intent = "Chain selection and the commit point."
-    exposes [Landed, NextTargetReply, CommitReply, nextTarget, commit]
+    exposes [Landed, nextTarget, commit]
 
 type Landed
     Connected
     Rejected(String)
 
-type NextTargetReply
-    Now(Option<Int>)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Option<Int>)
-
 operation nextTarget() -> Option<Int>
     ? "Which height is next to connect on the chain now chosen, or None once the chain is complete."
     oracle = generative
     replay = recorded
-
-type CommitReply
-    Now(Chain.Landed)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Chain.Landed)
 
 operation commit(height: Int, summary: String) -> Chain.Landed
     ? "Records that this height is connected."

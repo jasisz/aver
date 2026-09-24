@@ -1,6 +1,6 @@
 module Node
     intent = "Fixture: a request parked on a socket that another request closes. The next wait reports the closed socket ready rather than failing, so the turn goes on and the parked request learns the socket is gone."
-    depends [Net]
+    depends [Net, Netting]
     effects [Console.print, Net.gone, Net.shut, yield]
 
 fn watcher() -> Unit

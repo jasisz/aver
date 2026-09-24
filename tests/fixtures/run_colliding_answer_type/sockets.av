@@ -3,6 +3,7 @@ module Sockets
     depends [Wire, Wait]
     exposes [State, fresh, frame]
     effects []
+    answers [Wire]
 
 record State
     left: Int
@@ -11,11 +12,11 @@ fn fresh() -> State
     ? "Two frames."
     State(left = 2)
 
-fn frame(state: State) -> Tuple<State, Wire.FrameReply>
+fn frame(state: State) -> Tuple<State, Result<Wire.Heard, Run.Wake>>
     ? "A message until none are left."
     match state.left == 0
-        true -> (state, Wire.FrameReply.Now(Wire.Heard.Gone("done")))
-        false -> (State.update(state, left = state.left - 1), Wire.FrameReply.Now(Wire.Heard.Message("hi")))
+        true -> (state, Result.Ok(Wire.Heard.Gone("done")))
+        false -> (State.update(state, left = state.left - 1), Result.Ok(Wire.Heard.Message("hi")))
 
 verify frame
-    frame(fresh()) => (State(left = 1), Wire.FrameReply.Now(Wire.Heard.Message("hi")))
+    frame(fresh()) => (State(left = 1), Result.Ok(Wire.Heard.Message("hi")))

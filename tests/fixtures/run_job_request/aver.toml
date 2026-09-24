@@ -5,11 +5,5 @@ schema = 1
 capability = "Squares"
 work = "Maths.square"
 
-[[providers.bindings]]
-capability = "Calc"
-answer = "Calculating"
-
 [work]
 max-jobs = 1
-
-[run]

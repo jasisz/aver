@@ -2,14 +2,15 @@ module Pooled
     intent = "Fixture answer module: the answers this program gives to Pool's two operations, from one state."
     depends [Pool, Wait]
     effects []
+    answers [Pool]
 
 record State
     left: Int
 
-fn claim(state: State, peer: Int) -> Tuple<State, Pool.ClaimReply>
+fn claim(state: State, peer: Int) -> Tuple<State, Result<Int, Run.Wake>>
     ? "Hands the peer its own number back as a handle."
-    (state, Pool.ClaimReply.Now(peer))
+    (state, Result.Ok(peer))
 
-fn release(state: State, handle: Int) -> Tuple<State, Pool.ReleaseReply>
+fn release(state: State, handle: Int) -> Tuple<State, Result<Bool, Run.Wake>>
     ? "Takes a handle back and says it was one this state had handed out."
-    (state, Pool.ReleaseReply.Now(true))
+    (state, Result.Ok(true))

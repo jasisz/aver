@@ -35,8 +35,6 @@ mod cited_head;
 mod conditional_split_omega;
 #[path = "proof_spec/container_induction.rs"]
 mod container_induction;
-#[path = "proof_spec/coordinator_histories.rs"]
-mod coordinator_histories;
 #[path = "proof_spec/cross_file.rs"]
 mod cross_file;
 #[path = "proof_spec/dafny_guidance.rs"]

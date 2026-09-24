@@ -177,6 +177,7 @@ stdlib/
     wait.av           — Wait contract: one poll over sockets and jobs (reserved; VM provider in aver-rt/src/provider/work.rs, inline on wasm in src/codegen/wasm_gc/jobs.rs)
     work.av           — Work contract: the running-job handle and cancel (reserved; job engine in aver-rt/src/work.rs, inline on wasm in src/codegen/wasm_gc/jobs.rs)
   crypto/digest32.av  — exactly-32-byte Digest32 refinement
+  run.av              — Run.Wake: when the generated loop asks an answer module again about a request it did not answer yet
 ```
 
 ## How to run

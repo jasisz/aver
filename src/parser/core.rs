@@ -229,14 +229,45 @@ impl Parser {
         let mut items = Vec::new();
         self.skip_newlines();
 
+        let mut seatings: Vec<ProcessSeating> = Vec::new();
         while !self.is_eof() {
+            if self.at_process_seating() {
+                seatings.push(self.parse_process_seating()?);
+                self.skip_newlines();
+                continue;
+            }
             if let Some(item) = self.parse_top_level()? {
                 items.push(item);
             }
             self.skip_newlines();
         }
+        if let Some(first) = seatings.first() {
+            let Some(module) = items.iter_mut().find_map(|item| match item {
+                TopLevel::Module(module) => Some(module),
+                _ => None,
+            }) else {
+                return Err(ParseError::Error {
+                    msg: format!(
+                        "'process {} seated by {}' belongs to the entry module of a program; add a module header",
+                        first.process, first.by
+                    ),
+                    line: first.line,
+                    col: 1,
+                });
+            };
+            module.seatings = seatings;
+        }
 
         Ok(items)
+    }
+
+    /// `process <name> seated by ...` in item position. The two-word guard
+    /// keeps `process` an ordinary identifier everywhere else, including a
+    /// top-level binding `process = 1`.
+    fn at_process_seating(&self) -> bool {
+        matches!(&self.current().kind, TokenKind::Ident(s) if s == "process")
+            && matches!(&self.peek(1).kind, TokenKind::Ident(_))
+            && matches!(&self.peek(2).kind, TokenKind::Ident(s) if s == "seated")
     }
 
     pub(super) fn parse_top_level(&mut self) -> Result<Option<TopLevel>, ParseError> {

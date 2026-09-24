@@ -2,31 +2,16 @@ module Node
     intent = "The entry seats one process, which enters a yielding helper from a library."
     depends [Process, Wait, Pool, Pooled, Walker]
     effects [Pool.claim, yield]
-    exposes [Pending, View, order, admit, stop]
-
-type Pending
-    Pooling(Int, Wait.Wake)
-
-record View
-    pending: Map<Int, Pending>
-    ready: List<Int>
-    askable: List<Int>
-    jobs: Int
-    stopping: Bool
 
 fn pooling() -> Unit
     ? "Claims handles until the pool answers None."
     ! [Pool.claim, yield]
     Walker.walking()
 
-fn order(view: View) -> List<Int>
-    ? "Every seated process, in slot order."
-    Map.keys(view.pending)
-
-fn admit(view: View, id: Int) -> Bool
+fn admit(view: Run.View, id: Int) -> Bool
     ? "Everything seated is served."
     Map.has(view.pending, id)
 
-fn stop(view: View) -> Bool
+fn stop(view: Run.View) -> Bool
     ? "The run ends when the process asked us to."
     view.stopping

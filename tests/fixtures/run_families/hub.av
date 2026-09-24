@@ -1,0 +1,61 @@
+module Hub
+    intent = "Answers Board: the posted values, and the member keys the loop seats one member for each of."
+    depends [Board]
+    answers [Board]
+    exposes [State, fresh, members, next, post]
+    effects []
+
+record State
+    keys: List<Int>
+    values: List<Int>
+    closed: Bool
+
+fn fresh() -> State
+    ? "Two members, nothing posted."
+    State(keys = [1, 2], values = [], closed = false)
+
+fn members(state: State) -> List<Int>
+    ? "The member keys the loop seats one member for each of."
+    state.keys
+
+verify members
+    members(fresh()) => [1, 2]
+
+fn next(state: State, key: Int, seen: Int) -> Tuple<State, Result<Board.Step, Run.Wake>>
+    ? "A value newer than seen answers at once. A member whose key is no longer wanted is told it is gone, which is how a request for an unknown key is answered, never by waiting. Otherwise the request waits until this module has answered something other than a wait."
+    match List.contains(state.keys, key)
+        false -> (state, Result.Ok(Board.Step.Gone))
+        true -> match seen < List.len(state.values)
+            true -> (state, Result.Ok(Board.Step.Value(valueAt(state.values, seen))))
+            false -> match state.closed
+                true -> (state, Result.Ok(Board.Step.Gone))
+                false -> (state, Result.Err(Run.Wake.Settled(Option.None)))
+
+verify next
+    next(fresh(), 3, 0) => (fresh(), Result.Ok(Board.Step.Gone))
+    next(fresh(), 1, 0) => (fresh(), Result.Err(Run.Wake.Settled(Option.None)))
+    next(State.update(fresh(), values = [10]), 1, 0) => (State.update(fresh(), values = [10]), Result.Ok(Board.Step.Value(10)))
+    next(State.update(fresh(), closed = true), 1, 0) => (State.update(fresh(), closed = true), Result.Ok(Board.Step.Gone))
+
+fn valueAt(values: List<Int>, index: Int) -> Int
+    ? "The value at index, or 0 past the end."
+    match values
+        [] -> 0
+        [head, ..rest] -> match index == 0
+            true -> head
+            false -> valueAt(rest, index - 1)
+
+verify valueAt
+    valueAt([], 0) => 0
+    valueAt([4, 5], 1) => 5
+
+fn post(state: State, value: Int) -> Tuple<State, Result<Unit, Run.Wake>>
+    ? "Posts a value. The value 30 closes the board and stops wanting member 2."
+    posted = State.update(state, values = List.concat(state.values, [value]))
+    match value >= 30
+        true -> (State.update(posted, keys = [1], closed = true), Result.Ok(Unit))
+        false -> (posted, Result.Ok(Unit))
+
+verify post
+    post(fresh(), 10) => (State.update(fresh(), values = [10]), Result.Ok(Unit))
+    post(fresh(), 30) => (State(keys = [1], values = [30], closed = true), Result.Ok(Unit))

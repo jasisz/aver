@@ -3,6 +3,7 @@ module Netting
     depends [Net, Tcp, Wait]
     exposes [State, fresh, gone, shut]
     effects [Tcp.accept, Tcp.closeListener, Tcp.listen]
+    answers [Net]
 
 record State
     listener: Option<Tcp.Listener>
@@ -11,54 +12,54 @@ fn fresh() -> State
     ? "No listener yet."
     State(listener = Option.None)
 
-fn gone(state: State) -> Tuple<State, Net.GoneReply>
+fn gone(state: State) -> Tuple<State, Result<Bool, Run.Wake>>
     ? "The first ask binds a listener nobody calls and parks on it; an ask after that looks at it, and a listener that can no longer be used is gone."
     ! [Tcp.accept, Tcp.listen]
     match state.listener
         Option.None -> bound(state, Tcp.listen(0, 1))
         Option.Some(listener) -> looked(state, Tcp.accept(listener))
 
-fn bound(state: State, listening: Result<Tcp.Listener, String>) -> Tuple<State, Net.GoneReply>
+fn bound(state: State, listening: Result<Tcp.Listener, String>) -> Tuple<State, Result<Bool, Run.Wake>>
     ? "A listener that was bound is parked on; one that could not be bound is gone at once."
     match listening
-        Result.Err(_) -> (state, Net.GoneReply.Now(true))
+        Result.Err(_) -> (state, Result.Ok(true))
         Result.Ok(listener) -> parked(State(listener = Option.Some(listener)))
 
-fn looked(state: State, accepted: Result<Option<Tcp.Connection>, String>) -> Tuple<State, Net.GoneReply>
+fn looked(state: State, accepted: Result<Option<Tcp.Connection>, String>) -> Tuple<State, Result<Bool, Run.Wake>>
     ? "An accept that fails means the listener is gone; one that answers means it is still there, so the request parks on it again."
     match accepted
-        Result.Err(_) -> (state, Net.GoneReply.Now(true))
+        Result.Err(_) -> (state, Result.Ok(true))
         Result.Ok(_) -> parked(state)
 
-fn parked(state: State) -> Tuple<State, Net.GoneReply>
+fn parked(state: State) -> Tuple<State, Result<Bool, Run.Wake>>
     ? "The request parked on the listener the state holds; with none to park on, the socket is gone."
     match state.listener
-        Option.None -> (state, Net.GoneReply.Now(true))
-        Option.Some(listener) -> (state, Net.GoneReply.Later(Wait.Wake.Item(Wait.Item.Socket(Tcp.Socket.Listening(listener)))))
+        Option.None -> (state, Result.Ok(true))
+        Option.Some(listener) -> (state, Result.Err(Run.Wake.Until([Wait.Item.Socket(Tcp.Socket.Listening(listener))], Option.None)))
 
-fn shut(state: State) -> Tuple<State, Net.ShutReply>
+fn shut(state: State) -> Tuple<State, Result<Unit, Run.Wake>>
     ? "Closes the listener, if there is one, while the other request is still parked on it."
     ! [Tcp.closeListener]
     match state.listener
-        Option.None -> (state, Net.ShutReply.Later(Wait.Wake.NextTurn))
+        Option.None -> (state, Result.Err(Run.Wake.Until([], Option.Some(0))))
         Option.Some(listener) -> closed(state, Tcp.closeListener(listener))
 
-fn closed(state: State, result: Result<Unit, String>) -> Tuple<State, Net.ShutReply>
+fn closed(state: State, result: Result<Unit, String>) -> Tuple<State, Result<Unit, Run.Wake>>
     ? "The listener is closed either way; the state keeps its handle so the parked request still names it."
-    (state, Net.ShutReply.Now(Unit))
+    (state, Result.Ok(Unit))
 
 verify fresh
     fresh() => State(listener = Option.None)
 
 verify bound
-    bound(fresh(), Result.Err("no port")) => (fresh(), Net.GoneReply.Now(true))
+    bound(fresh(), Result.Err("no port")) => (fresh(), Result.Ok(true))
 
 verify looked
-    looked(fresh(), Result.Err("unknown listener")) => (fresh(), Net.GoneReply.Now(true))
-    looked(fresh(), Result.Ok(Option.None)) => (fresh(), Net.GoneReply.Now(true))
+    looked(fresh(), Result.Err("unknown listener")) => (fresh(), Result.Ok(true))
+    looked(fresh(), Result.Ok(Option.None)) => (fresh(), Result.Ok(true))
 
 verify parked
-    parked(fresh()) => (fresh(), Net.GoneReply.Now(true))
+    parked(fresh()) => (fresh(), Result.Ok(true))
 
 verify closed
-    closed(fresh(), Result.Ok(Unit)) => (fresh(), Net.ShutReply.Now(Unit))
+    closed(fresh(), Result.Ok(Unit)) => (fresh(), Result.Ok(Unit))

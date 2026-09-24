@@ -19,9 +19,8 @@ use std::path::Path;
 
 mod providers;
 pub use providers::{
-    JobSeam, MarkedCapabilities, PROVIDER_MANIFEST_SCHEMA, ProviderAnswerBinding,
-    ProviderPackageBinding, ProviderPackageManifest, ProviderPackageSource, ProviderWorkBinding,
-    RunPlan, RunPolicies,
+    MarkedCapabilities, PROVIDER_MANIFEST_SCHEMA, ProviderAnswerBinding, ProviderPackageBinding,
+    ProviderPackageManifest, ProviderPackageSource, ProviderWorkBinding, RunPlan,
 };
 
 /// Runtime policy for a single effect namespace.
@@ -336,9 +335,6 @@ pub struct ProjectConfig {
     /// `[work] max-jobs`: how many jobs of this program may run at once.
     /// `None` means the host's own available parallelism.
     pub work_max_jobs: Option<usize>,
-    /// `[run]`: the three policies and the view record of the generated loop.
-    /// `None` means this program writes its own coordinator, or has none.
-    pub run_policies: Option<RunPolicies>,
 }
 
 impl ProjectConfig {
@@ -483,7 +479,7 @@ impl ProjectConfig {
         let (shape_layers, shape_expected) = parse_shape(&table)?;
         let provider_manifest = providers::parse_provider_manifest(&table)?;
         let work_max_jobs = parse_work_max_jobs(&table)?;
-        let run_policies = providers::parse_run_policies(&table)?;
+        providers::reject_run_table(&table)?;
 
         Ok(ProjectConfig {
             effect_policies,
@@ -496,7 +492,6 @@ impl ProjectConfig {
             shape_expected,
             provider_manifest,
             work_max_jobs,
-            run_policies,
         })
     }
 

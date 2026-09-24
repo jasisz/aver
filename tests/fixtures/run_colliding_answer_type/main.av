@@ -1,6 +1,6 @@
 module Node
     intent = "Fixture: a process reads frames; another dependency also declares Heard."
-    depends [Wire, Other]
+    depends [Wire, Other, Sockets]
     effects [Console.print, Wire.frame, yield]
 
 fn reader() -> Unit

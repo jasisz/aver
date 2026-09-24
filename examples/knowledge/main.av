@@ -1,6 +1,6 @@
 module Node
-    intent = "Two peers offer duplicate content and a reader waits for local Work. Admission and stable lookups use independent products; the generated coordinator owns the ordered queue."
-    depends [Bytes, Content, Knowledge]
+    intent = "Two peers offer duplicate content and a reader waits for local Work. Admission and stable lookups use independent products; the answer module begins the validation jobs itself and the reader waits on them."
+    depends [Bytes, Content, Knowledge, Stored]
     effects [Console.print, Content.offer, Content.read, yield]
 
 fn peer() -> Unit

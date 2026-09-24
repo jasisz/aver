@@ -1,6 +1,6 @@
 module Node
     intent = "Fixture: a process draws a random nonce with literal bounds."
-    depends [Wire]
+    depends [Wire, Sockets]
     effects [Console.print, Random.int, Wire.frame, yield]
 
 fn reader() -> Unit

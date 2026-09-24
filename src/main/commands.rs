@@ -323,6 +323,35 @@ fn collect_program_units_with_cache(
         .collect())
 }
 
+/// The capabilities every program of a batch answers, so that a library
+/// module a directory walk reaches first, as the entry of its own walk, is
+/// lowered against the answer modules of the programs it belongs to. The
+/// union is also what a module checked as one unit of those programs is
+/// lowered against.
+fn prime_batch_answers(
+    inputs: &[String],
+    module_root: &str,
+    cache: &mut aver::source::ProgramLoadCache,
+) -> Vec<(String, String)> {
+    let mut answers: Vec<(String, String)> = Vec::new();
+    for file in inputs {
+        let Ok(program) = load_report_program_with_cache(file, module_root, cache) else {
+            continue;
+        };
+        if let Some(plan) = program.marked().run() {
+            for pair in &plan.answers {
+                if !answers.contains(pair) {
+                    answers.push(pair.clone());
+                }
+            }
+        }
+    }
+    if inputs.len() > 1 {
+        cache.set_batch_answers(answers.clone());
+    }
+    answers
+}
+
 pub(super) fn load_report_program_with_cache(
     file: &str,
     module_root: &str,
@@ -1803,6 +1832,7 @@ fn check_units(
     tracker: &mut SuppressionTracker,
     unused_exposes: &HashMap<String, Vec<CheckFinding>>,
     reported_unit_keys: &HashSet<String>,
+    program_answers: &[(String, String)],
 ) -> Vec<(String, bool)> {
     let mut outcomes = Vec::with_capacity(units.len());
     // A diagnostic belongs to the module whose file it points at. When that
@@ -1837,6 +1867,7 @@ fn check_units(
             source_path: Some(path.to_string()),
             stdlib_shadowed: aver::source::collect_stdlib_shadowed(items, module_root),
             include_work_bindings: own_key == canonical_path_key(entry_path),
+            program_answers: program_answers.to_vec(),
             ..Default::default()
         };
         let report = diagnostic::analyze_source(source, &opts);
@@ -1995,6 +2026,7 @@ pub(super) fn cmd_audit(
     // reached from an earlier input is not a unit of a later one.
     let mut reported = HashSet::new();
     let mut load_cache = aver::source::ProgramLoadCache::default();
+    prime_batch_answers(&inputs, &module_root, &mut load_cache);
     let programs = inputs
         .iter()
         .map(|file| {
@@ -2220,10 +2252,7 @@ fn audit_unit(
             &mut transformed,
             &aver::ir::TypecheckMode::WithCheckedLoaded(&unit.loaded),
             user_program_len,
-            &unit_marked(
-                aver::config::MarkedCapabilities::for_project_dir(Some(module_root)),
-                unit.is_entry,
-            ),
+            &unit_marked(unit.marked.clone(), unit.is_entry),
         );
         preparation_failed |= !tc_result.errors.is_empty();
         let mut report =
@@ -2476,6 +2505,7 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
     // reached from an earlier input is not a unit of a later one.
     let mut reported = HashSet::new();
     let mut load_cache = aver::source::ProgramLoadCache::default();
+    let program_answers = prime_batch_answers(&inputs, &module_root, &mut load_cache);
     let programs = inputs
         .iter()
         .map(|file| {
@@ -2555,6 +2585,7 @@ pub(super) fn cmd_check(path: &str, module_root_override: Option<&str>, verbose:
                     &mut tracker,
                     &unused_exposes,
                     &reported_unit_keys,
+                    &program_answers,
                 );
                 checked_modules += outcomes.len();
                 failed_modules.extend(
@@ -2816,6 +2847,10 @@ struct PlannedVerifyInput {
 
 struct VerifyReportUnit {
     path: String,
+    /// What the whole program answers, and the entry its loop is bound to:
+    /// a dependency checked as its own unit still lowers against the
+    /// program's answer modules, which its own cone may not reach.
+    marked: aver::config::MarkedCapabilities,
     /// Whether this module is the program's entry: only the entry hosts a
     /// default generated loop, and every other unit is lowered as a
     /// dependency.
@@ -2968,7 +3003,8 @@ fn run_verify_for_units(
     for (index, unit) in units.into_iter().enumerate() {
         let VerifyReportUnit {
             path,
-            is_entry: _,
+            marked,
+            is_entry,
             source,
             items,
             loaded: _,
@@ -3008,12 +3044,13 @@ fn run_verify_for_units(
         let outcome = if wasm_gc {
             #[cfg(feature = "wasm")]
             {
-                aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc_with_mode(
+                aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc_with_marks(
                     items,
                     config.clone(),
                     Some(module_root),
                     &path,
                     mode,
+                    &unit_marked(marked.clone(), is_entry),
                 )
             }
             #[cfg(not(feature = "wasm"))]
@@ -3033,23 +3070,16 @@ fn run_verify_for_units(
                         parallel_cases,
                     )
                 })
-            } else if parallel_cases {
-                aver::diagnostics::vm_verify::run_verify_for_items_vm_parallel_with_mode_and_bindings(
-                    items,
-                    config.clone(),
-                    Some(module_root),
-                    &path,
-                    mode,
-                    provider_bindings,
-                )
             } else {
-                aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode_and_bindings(
+                aver::diagnostics::vm_verify::run_verify_for_items_vm_with_marks(
                     items,
                     config.clone(),
                     Some(module_root),
                     &path,
                     mode,
                     provider_bindings,
+                    parallel_cases,
+                    &unit_marked(marked.clone(), is_entry),
                 )
             }
         };
@@ -3102,6 +3132,7 @@ fn collect_verify_program_units_with_cache(
                 .map(|dependency| (dependency.path.clone(), dependency.dep_name.clone()))
                 .collect();
             VerifyReportUnit {
+                marked: program.marked().clone(),
                 is_entry: module.is_entry,
                 path: if module.is_entry {
                     file.to_string()
@@ -3666,6 +3697,7 @@ pub(super) fn cmd_verify(
     // cycle detection and leaves-first order.
     let mut reported = HashSet::new();
     let mut load_cache = aver::source::ProgramLoadCache::default();
+    prime_batch_answers(&inputs, &module_root, &mut load_cache);
     let mut plans: Vec<PlannedVerifyInput> = inputs
         .into_iter()
         .map(|file| PlannedVerifyInput {
@@ -3679,7 +3711,6 @@ pub(super) fn cmd_verify(
         })
         .collect();
     let config = load_runtime_policy(&module_root);
-    let marked = aver::config::MarkedCapabilities::for_project_dir(Some(&module_root));
     let pool = if jobs > 1 {
         match rayon::ThreadPoolBuilder::new().num_threads(jobs).build() {
             Ok(pool) => Some(pool),
@@ -3707,7 +3738,7 @@ pub(super) fn cmd_verify(
                     unit.items.clone(),
                     std::mem::take(&mut unit.loaded),
                     &unit.path,
-                    &unit_marked(marked.clone(), unit.is_entry),
+                    &unit_marked(unit.marked.clone(), unit.is_entry),
                 )
             };
             unit.prepared = Some(prepared);
@@ -12465,14 +12496,6 @@ pub(super) fn load_compile_deps_prepared(
     // The loader bound an unnamed default loop to the entry, so no
     // dependency lowered below is taken for the loop's home.
     let marked = program.marked().clone();
-    if let Some(entry) = aver::visibility::module_decl(items) {
-        let has_main = items
-            .iter()
-            .any(|item| matches!(item, TopLevel::FnDef(fd) if fd.name == "main"));
-        if let Some(message) = marked.run_entry_mismatch(&entry.name, has_main) {
-            fail(message);
-        }
-    }
     // Keep loader faults in discovery order: the first broken edge a user
     // wrote remains the first diagnostic even though successful body checks
     // below run leaves-first.

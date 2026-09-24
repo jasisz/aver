@@ -1,6 +1,0 @@
-[providers]
-schema = 1
-
-[[providers.bindings]]
-capability = "Pool"
-answer = "Pool"

@@ -1,5 +1,5 @@
 module Node
-    intent = "Fixture: a process reads frames from a capability under slice/ whose reply sum names its own type qualified."
+    intent = "Fixture: a process reads frames from a capability under slice/ answered by a module under the same directory."
     depends [Slice.Wire, Slice.Sockets]
     effects [Console.print, Slice.Wire.frame, yield]
 

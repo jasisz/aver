@@ -2,22 +2,12 @@ module Pool
     intent = "Fixture capability with two operations; no host provider, the coordinator answers both."
     kind = capability
     semantics = effectful
-    exposes [ClaimReply, ReleaseReply, claim, release]
-
-type ClaimReply
-    Now(Option<Int>)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Option<Int>)
+    exposes [claim, release]
 
 operation claim(peer: Int) -> Option<Int>
     ? "Asks the host for the next handle owned by peer, or None when the peer has nothing left."
     oracle = generative
     replay = recorded
-
-type ReleaseReply
-    Now(Bool)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Bool)
 
 operation release(handle: Int) -> Bool
     ? "Gives a handle back; false when the host refused."

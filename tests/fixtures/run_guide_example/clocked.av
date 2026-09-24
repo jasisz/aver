@@ -1,87 +1,49 @@
 module Clocked
-    intent = "The answers this program gives to Clock, and the three ends of the scoring job's seam: the tasks still to start, how many are running, and what the landed ones scored."
-    depends [Clock, Wait]
-    effects []
+    intent = "The answers this program gives to Clock: a tick fifty milliseconds after it was asked for, and a score computed by a Scoring job this module begins itself."
+    depends [Clock, Scoring, Wait, Work]
+    exposes [State, fresh, tick, score, points]
+    effects [Scoring.begin, Scoring.take]
+    answers [Clock]
 
 record State
-    tasks: List<Int>
-    running: Int
-    total: Int
+    armed: Bool
+    jobs: Map<Int, Work.Job>
 
 fn fresh() -> State
-    ? "Three tasks to score, none started, nothing scored."
-    State(tasks = [1, 2, 3], running = 0, total = 0)
+    ? "No deadline armed and no job running."
+    State(armed = false, jobs = {})
 
-fn tick(state: State) -> Tuple<State, Clock.TickReply>
-    ? "Closed once every task has started and landed; before that, a tick fifty milliseconds after it was asked for."
-    match (state.tasks, state.running)
-        ([], 0) -> (state, Clock.TickReply.Now(Clock.Tick.Closed(state.total)))
-        _ -> (state, Clock.TickReply.Then(Wait.Wake.After(50), Clock.Tick.Tock))
+fn tick(state: State) -> Tuple<State, Result<Clock.Tick, Run.Wake>>
+    ? "The first ask arms a fifty-millisecond deadline and waits for it; the ask after the deadline is the tick."
+    match state.armed
+        false -> (State.update(state, armed = true), Result.Err(Run.Wake.Until([], Option.Some(50))))
+        true -> (State.update(state, armed = false), Result.Ok(Clock.Tick.Tock))
 
 verify tick
-    tick(fresh()) => (fresh(), Clock.TickReply.Then(Wait.Wake.After(50), Clock.Tick.Tock))
-    tick(State.update(fresh(), tasks = [], total = 60)) => (State.update(fresh(), tasks = [], total = 60), Clock.TickReply.Now(Clock.Tick.Closed(60)))
+    tick(fresh()) => (State.update(fresh(), armed = true), Result.Err(Run.Wake.Until([], Option.Some(50))))
+    tick(State.update(fresh(), armed = true)) => (fresh(), Result.Ok(Clock.Tick.Tock))
 
-fn score(task: Int) -> Int
-    ? "What one job computes off the turn. Named by aver.toml's work key."
+fn score(state: State, task: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The first ask for a task begins its job and waits for it; an ask after the job has settled takes its result. A job that could not begin scores 0."
+    ! [Scoring.begin, Scoring.take]
+    match Map.get(state.jobs, task)
+        Option.Some(job) -> taken(state, task, job)
+        Option.None -> match Scoring.begin(task)
+            Result.Err(_) -> (state, Result.Ok(0))
+            Result.Ok(job) -> (State.update(state, jobs = Map.set(state.jobs, task, job)), Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+
+fn taken(state: State, task: Int, job: Work.Job) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "A job the wait reported ready that has not finished is waited for again; a finished one answers its score, and a job that will never finish scores 0."
+    ! [Scoring.take]
+    match Scoring.take(job)
+        Result.Err(_) -> (State.update(state, jobs = Map.remove(state.jobs, task)), Result.Ok(0))
+        Result.Ok(found) -> match found
+            Option.None -> (state, Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+            Option.Some(value) -> (State.update(state, jobs = Map.remove(state.jobs, task)), Result.Ok(value))
+
+fn points(task: Int) -> Int
+    ? "What one job computes off the turn. Named by the work key in aver.toml."
     task * 10
 
-verify score
-    score(3) => 30
-
-fn nextTask(state: State) -> Option<Int>
-    ? "The next task to start, if any: the head of the queue. Named by aver.toml's task key."
-    match state.tasks
-        [] -> Option.None
-        [head, ..rest] -> Option.Some(head)
-
-verify nextTask
-    nextTask(fresh()) => Option.Some(1)
-    nextTask(State.update(fresh(), tasks = [])) => Option.None
-
-fn taskStarted(state: State, task: Int) -> State
-    ? "Remove every copy of the task that just started and count its running job. Named by aver.toml's started key."
-    State.update(state, tasks = withoutTask(state.tasks, task, []), running = state.running + 1)
-
-verify taskStarted
-    taskStarted(State.update(fresh(), tasks = [1, 1]), 1).tasks => []
-    taskStarted(State.update(fresh(), tasks = [1, 2, 1, 3]), 1).tasks => [2, 3]
-
-verify taskStarted law aStartedTaskIsNotAskedAgain
-    given state: State = [fresh(), State.update(fresh(), tasks = [2, 1]), State.update(fresh(), tasks = [1, 1])]
-    given task: Int = [1, 2]
-    when nextTask(state) == Option.Some(task)
-    using [withoutTask.theStartedTaskIsOut]
-    nextTask(taskStarted(state, task)) != Option.Some(task) holds
-
-fn withoutTask(tasks: List<Int>, task: Int, acc: List<Int>) -> List<Int>
-    ? "The queue with every copy of the started task removed, preserving the order of the rest."
-    match tasks
-        [] -> acc
-        [head, ..rest] -> withoutTask(rest, task, keptUnlessTask(acc, head, task))
-
-verify withoutTask law theStartedTaskIsOut
-    given tasks: List<Int> = [[], [1, 1], [1, 2, 1]]
-    given task: Int = [1, 2]
-    given acc: List<Int> = [[], [3]]
-    List.contains(withoutTask(tasks, task, acc), task) => List.contains(acc, task)
-
-fn keptUnlessTask(acc: List<Int>, entry: Int, task: Int) -> List<Int>
-    ? "Keep an entry only when it is not the task that just started."
-    match entry == task
-        true -> acc
-        false -> List.concat(acc, [entry])
-
-verify keptUnlessTask
-    keptUnlessTask([], 1, 1) => []
-    keptUnlessTask([], 2, 1) => [2]
-
-fn scored(state: State, outcome: Result<Int, String>) -> State
-    ? "Where a job that is over lands: its score, or nothing when it will never produce one. Named by aver.toml's landed key."
-    match outcome
-        Result.Ok(points) -> State.update(state, running = state.running - 1, total = state.total + points)
-        Result.Err(_) -> State.update(state, running = state.running - 1)
-
-verify scored
-    scored(State.update(fresh(), running = 1), Result.Ok(10)) => State.update(fresh(), total = 10)
-    scored(State.update(fresh(), running = 1), Result.Err("work: job cancelled")) => fresh()
+verify points
+    points(3) => 30

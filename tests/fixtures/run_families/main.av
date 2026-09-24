@@ -1,0 +1,39 @@
+module Node
+    intent = "A keyed family of members, seated once per key the hub lists and woken by what the feeder posts. When the hub stops listing a key, the loop drops that member at the turn boundary."
+    depends [Board, Hub]
+    effects [Board.next, Board.post, Console.print, yield]
+
+process member seated by Hub.members
+
+fn member(key: Int) -> Unit
+    ? "Reads every posted value until the hub says this member is gone."
+    ! [Board.next, Console.print, yield]
+    reading(key, 0)
+
+fn reading(key: Int, seen: Int) -> Unit
+    ? "One read."
+    ! [Board.next, Console.print, yield]
+    match Board.next(key, seen)
+        Board.Step.Gone -> Console.print("member {key} is gone")
+        Board.Step.Value(value) -> reading(key, echo(key, seen, value))
+
+fn echo(key: Int, seen: Int, value: Int) -> Int
+    ? "Prints one value and counts it as seen."
+    ! [Console.print]
+    Console.print("member {key} read {value}")
+    seen + 1
+
+fn feeder() -> Unit
+    ? "Posts three values, one per turn."
+    ! [Board.post, yield]
+    Board.post(10)
+    Board.post(20)
+    Board.post(30)
+
+fn stop(view: Run.View) -> Bool
+    ? "The run is over once a stop was requested; the loop also ends it once nothing is seated."
+    view.stopping
+
+verify stop
+    stop(Run.View(pending = {}, ready = [], askable = [], dropped = 1, stopping = true)) => true
+    stop(Run.View(pending = {}, ready = [], askable = [], dropped = 0, stopping = false)) => false
