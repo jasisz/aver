@@ -19,8 +19,23 @@ theorem kit_mask : STATEMENT := by
   unfold anyoneCanPayMask Domain.Sighash.isAnyoneCanPay
   rcases Int.lt_or_le h 0 with hn | hp
   · rw [AverKit.and_of_neg h 128 128 (by decide) hn, AverKit.nat_land_bit _ 128 7 (by decide)]
-    simp only [Bool.eq_iff_iff, beq_iff_eq, bne_iff_ne]
+    rw [Bool.eq_iff_iff]
+    simp only [beq_iff_eq, bne_iff_ne]
     omega
   · rw [AverKit.and_of_nonneg h 128 128 (by decide) hp, AverKit.nat_land_bit _ 128 7 (by decide)]
-    simp only [Bool.eq_iff_iff, beq_iff_eq, bne_iff_ne]
+    rw [Bool.eq_iff_iff]
+    simp only [beq_iff_eq, bne_iff_ne]
     omega
+
+theorem kit_mask_cases : STATEMENT := by
+  intro x
+  have key : ∀ y : Int, AverBits.and y 128 = 128 * (y / 128 % 2) := by
+    intro y
+    rcases Int.lt_or_le y 0 with hn | hp
+    · rw [AverKit.and_of_neg y 128 128 (by decide) hn, AverKit.nat_land_bit _ 128 7 (by decide)]
+      omega
+    · rw [AverKit.and_of_nonneg y 128 128 (by decide) hp, AverKit.nat_land_bit _ 128 7 (by decide)]
+      omega
+  simp only [anyoneCanPayMask, Domain.Sighash.isAnyoneCanPay, key]
+  have h2 : x / 128 % 2 = 0 ∨ x / 128 % 2 = 1 := by omega
+  rcases h2 with h2 | h2 <;> simp [h2]

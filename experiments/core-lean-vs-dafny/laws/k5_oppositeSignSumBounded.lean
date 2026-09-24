@@ -31,3 +31,11 @@ theorem kit_sign_grind : STATEMENT := by
   have s := AverKit.mul_sign alpha beta
   simp only [Domain.Rational.absInt, Domain.Remainder.maxInt, Domain.Remainder.oppositeSignSumBounded, decide_eq_true_eq] at h ⊢
   grind
+
+-- Core lemmas only, cited as implications, closed by grind.
+theorem core_lemmas_grind : STATEMENT := by
+  intro alpha beta h
+  have s1 : 0 < alpha → 0 < beta → 0 < alpha * beta := Int.mul_pos
+  have s2 : alpha < 0 → beta < 0 → 0 < alpha * beta := Int.mul_pos_of_neg_of_neg
+  simp only [Domain.Rational.absInt, Domain.Remainder.maxInt, Domain.Remainder.oppositeSignSumBounded, decide_eq_true_eq] at h ⊢
+  grind

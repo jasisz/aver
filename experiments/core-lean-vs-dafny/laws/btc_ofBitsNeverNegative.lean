@@ -62,11 +62,13 @@ theorem core_helpers : STATEMENT := by
     unfold Domain.Chainwork.ceiling
     exact helper_doubled_nonneg 256 256 1 (by decide) (by decide)
   have ht := helper_targetOf_nonneg bits
-  simp only [ge_iff_le, decide_eq_true_eq]
+  apply decide_eq_true
+  show 0 ≤ Domain.Chainwork.ofBits bits
   unfold Domain.Chainwork.ofBits Domain.Chainwork.perTarget
   split
   · split
     · simp [Except.withDefault]
     · simp only [Except.withDefault]
-      exact Int.ediv_nonneg hc (by omega)
+      have hpos : 0 ≤ Domain.Block.targetOf bits + 1 := by omega
+      exact Int.ediv_nonneg hc hpos
   · exact Int.le_refl 0

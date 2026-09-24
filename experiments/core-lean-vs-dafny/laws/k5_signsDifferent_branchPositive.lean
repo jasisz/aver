@@ -28,3 +28,9 @@ theorem kit_sign_grind : STATEMENT := by
   have s := AverKit.mul_sign (x - y) (y - z)
   simp only [Domain.Rational.absInt, Domain.Remainder.signsDifferent_8_2_2, Bool.and_eq_true, decide_eq_true_eq] at h ⊢
   grind
+
+theorem core_lemmas_grind : STATEMENT := by
+  intro x y z h
+  have s : 0 ≤ x - y → y - z ≤ 0 → (x - y) * (y - z) ≤ 0 := Int.mul_nonpos_of_nonneg_of_nonpos
+  simp only [Domain.Rational.absInt, Domain.Remainder.signsDifferent_8_2_2, Bool.and_eq_true, decide_eq_true_eq] at h ⊢
+  grind
