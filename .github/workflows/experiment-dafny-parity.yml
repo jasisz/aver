@@ -63,7 +63,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Check out btc-listener (main)
-        if: startsWith(matrix.target, 'btc-main') || matrix.target == 'btc-probe'
+        if: startsWith(matrix.target, 'btc-main') || matrix.target == 'btc-probe' || matrix.target == 'btcslow'
         uses: actions/checkout@v5
         with:
           repository: n1bor/btc-listener
@@ -127,6 +127,17 @@ jobs:
               export DAFNY_PATCH="$PWD/$E/whatif/patch_forall_citations.py"
               cp $E/entries/k5_lawsentry.av projects/k5_fdiv/lawsentry.av
               root=projects/k5_fdiv; entry=projects/k5_fdiv/lawsentry.av ;;
+            k5slow|btcslow)
+              # What-if: the plain export with a 120 s per-lemma limit instead of 30 s. Dafny only.
+              [ "$BACKENDS" = lean ] && { mkdir -p "$R"; echo skipped > "$R/skipped"; exit 0; }
+              export DAFNY_LIMIT=120
+              if [ "$T" = k5slow ]; then
+                cp $E/entries/k5_lawsentry.av projects/k5_fdiv/lawsentry.av
+                root=projects/k5_fdiv; entry=projects/k5_fdiv/lawsentry.av
+              else
+                cp $E/entries/btc_laws.av btc/domain/laws.av
+                root=btc; entry=btc/domain/laws.av
+              fi ;;
             payment_ops)     root=projects/payment_ops; entry=projects/payment_ops/infra/codec.av ;;
             workflow_engine) root=projects/workflow_engine; entry=projects/workflow_engine/infra/codec.av ;;
             durable_promise) root=projects/durable_promise; entry=projects/durable_promise/domain/promise.av ;;
