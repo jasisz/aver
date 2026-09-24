@@ -190,7 +190,7 @@ pub fn readNumber(
         src.clone(),
         pos,
         acc,
-        &aver_rt::string_index_build(&src),
+        aver_rt::string_index_build(&src),
     )
 }
 
@@ -258,7 +258,7 @@ pub fn readIdent(
         pos,
         acc,
         dotted,
-        &aver_rt::string_index_build(&src),
+        aver_rt::string_index_build(&src),
     )
 }
 
@@ -379,15 +379,10 @@ pub fn readNumber__indexed(
     src @ _: AverStr,
     pos @ _: aver_rt::AverInt,
     acc @ _: aver_rt::AverInt,
-    __str_index @ _: &aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> (aver_rt::AverInt, aver_rt::AverInt) {
     crate::cancel_checkpoint();
-    crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(
-        src,
-        pos,
-        acc,
-        __str_index.clone(),
-    )
+    crate::aver_generated::domain::lexer::chars::readNumberLoop__indexed(src, pos, acc, __str_index)
 }
 
 /// Synthesized indexed worker of `readIdentLoopDotted`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
@@ -469,7 +464,7 @@ pub fn readIdent__indexed(
     pos @ _: aver_rt::AverInt,
     acc @ _: AverStr,
     dotted @ _: bool,
-    __str_index @ _: &aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> (AverStr, aver_rt::AverInt) {
     crate::cancel_checkpoint();
     if dotted {
@@ -477,14 +472,14 @@ pub fn readIdent__indexed(
             src,
             pos,
             acc,
-            __str_index.clone(),
+            __str_index,
         )
     } else {
         crate::aver_generated::domain::lexer::chars::readIdentLoopPlain__indexed(
             src,
             pos,
             acc,
-            __str_index.clone(),
+            __str_index,
         )
     }
 }

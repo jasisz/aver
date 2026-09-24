@@ -3044,7 +3044,7 @@ pub fn ctorNameToTag(name @ _: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::ctorNameToTag__indexed(
         name.clone(),
-        &aver_rt::string_index_build(&name),
+        aver_rt::string_index_build(&name),
     )
 }
 
@@ -3054,7 +3054,7 @@ pub fn userCtorTagOffset(name @ _: AverStr) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::userCtorTagOffset__indexed(
         name.clone(),
-        &aver_rt::string_index_build(&name),
+        aver_rt::string_index_build(&name),
     )
 }
 
@@ -3259,7 +3259,7 @@ pub fn builtinNameToId(name @ _: AverStr) -> Option<aver_rt::AverInt> {
 #[inline(always)]
 pub fn ctorNameToTag__indexed(
     name @ _: AverStr,
-    __str_index @ _: &aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     {
@@ -3293,14 +3293,14 @@ pub fn ctorNameToTag__indexed(
 #[inline(always)]
 pub fn userCtorTagOffset__indexed(
     name @ _: AverStr,
-    __str_index @ _: &aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> aver_rt::AverInt {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::userCtorTagOffsetLoop__indexed(
         name,
         aver_rt::AverInt::from_i64(0),
         aver_rt::AverInt::from_i64(0),
-        __str_index.clone(),
+        __str_index,
     )
 }
 

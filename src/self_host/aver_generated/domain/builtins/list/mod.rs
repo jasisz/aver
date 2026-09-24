@@ -240,19 +240,19 @@ pub fn builtinListContains(
     let pair @ _ = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (lstV, needle) = pair;
-        crate::aver_generated::domain::builtins::list::builtinListContainsInner(&lstV, &needle)
+        crate::aver_generated::domain::builtins::list::builtinListContainsInner(&lstV, needle)
     }
 }
 
 /// Inner impl of List.contains.
 pub fn builtinListContainsInner(
     lstV @ _: &crate::aver_generated::domain::value::Val,
-    needle @ _: &crate::aver_generated::domain::value::Val,
+    mut needle @ _: crate::aver_generated::domain::value::Val,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     Ok(crate::aver_generated::domain::value::Val::ValBool(
-        crate::aver_generated::domain::builtins::list::listContainsVal(items, needle.clone()),
+        crate::aver_generated::domain::builtins::list::listContainsVal(items, needle),
     ))
 }
 
