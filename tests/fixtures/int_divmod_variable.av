@@ -1,0 +1,29 @@
+module DivMod
+    intent =
+        "Division by a variable: the quotient-remainder identity and the remainder bounds."
+
+fn quot(a: Int, n: Int) -> Int
+    ? "a / n, zero when n is zero."
+    Result.withDefault(Int.div(a, n), 0)
+
+verify quot
+    quot(7, 2) => 3
+
+fn rem(a: Int, n: Int) -> Int
+    ? "a % n, zero when n is zero."
+    Result.withDefault(Int.mod(a, n), 0)
+
+verify rem
+    rem(7, 2) => 1
+
+verify quot law quotRem
+    given a: Int = [0, 1, 7, 100]
+    given n: Int = [1, 2, 3, 7]
+    when n >= 1
+    n * quot(a, n) + rem(a, n) => a
+
+verify rem law remBounds
+    given a: Int = [0, 1, 7, 100]
+    given n: Int = [1, 2, 3, 7]
+    when n >= 1
+    Bool.and(rem(a, n) >= 0, rem(a, n) < n) holds

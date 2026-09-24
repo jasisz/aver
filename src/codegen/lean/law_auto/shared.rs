@@ -1053,6 +1053,27 @@ pub(super) fn expr_calls_builtin(expr: &Spanned<Expr>, builtin: &str) -> bool {
     })
 }
 
+/// Whether the law or any fn in its cone divides with `Int.div` or `Int.mod`.
+/// Keyed on the builtin alone: the facts it unlocks are the Euclidean
+/// quotient-remainder facts, which hold for every divisor that is not zero.
+pub(super) fn law_cone_calls_int_div_mod(
+    ctx: &CodegenContext,
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+) -> bool {
+    const DIVISION: [&str; 2] = ["Int.div", "Int.mod"];
+    let in_law = law
+        .when
+        .iter()
+        .chain([&law.lhs, &law.rhs])
+        .any(|expr| DIVISION.iter().any(|b| expr_calls_builtin(expr, b)));
+    in_law
+        || law_simp_source_names(ctx, vb, law)
+            .iter()
+            .filter_map(|name| find_fn_def(ctx, name))
+            .any(|fd| DIVISION.iter().any(|b| fn_body_calls_builtin(fd, b)))
+}
+
 /// Law givens whose declared types are user sums, with their Lean binder
 /// names and constructor counts for a bounded case-analysis portfolio.
 /// Chosen by type shape alone: the given's name,
