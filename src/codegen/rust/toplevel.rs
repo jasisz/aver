@@ -479,7 +479,7 @@ fn emit_fn_def_with_visibility(
             .as_ref()
             .and_then(|p| p.fn_by_id(resolved_fd.fn_id))
             .map(|mir_fn| {
-                super::from_mir::owned_collection_param_names(mir_fn, &resolved_fd.params)
+                super::from_mir::owned_collection_param_names(mir_fn, &resolved_fd.params, ctx)
             })
             .unwrap_or_default()
     };
@@ -1691,6 +1691,7 @@ mod tests {
             program_shape: None,
             mir_program: None,
             bare_i64: Default::default(),
+            rust_owned_record_params: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),

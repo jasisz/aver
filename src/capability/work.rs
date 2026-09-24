@@ -816,7 +816,15 @@ pub fn check_answers(
     let mut shapes = Vec::new();
     for (module, group) in &modules {
         let (shape, module_findings) = check_answer_module(registry, module, group, fn_sigs);
-        findings.extend(module_findings);
+        // A warning about an answer function is the answer module's own: it
+        // is reported when that module is checked, not again by every module
+        // of the program that can see it under its imported name.
+        let foreign = entry_module.is_some_and(|entry| entry != module.as_str());
+        findings.extend(
+            module_findings
+                .into_iter()
+                .filter(|finding| !(foreign && finding.severity == WorkSeverity::Warning)),
+        );
         if let Some(shape) = shape {
             shapes.push(shape);
         }

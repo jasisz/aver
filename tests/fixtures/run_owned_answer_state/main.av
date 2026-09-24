@@ -1,0 +1,16 @@
+module Main
+    intent = "A process whose every request updates the Map its answer module holds."
+    depends [Counter, Owner]
+    effects [Console.print, Counter.bump, yield]
+
+fn ticker() -> Unit
+    ? "Bumps keys until the count runs out."
+    ! [Console.print, Counter.bump, yield]
+    ticking(200, 0)
+
+fn ticking(left: Int, total: Int) -> Unit
+    ? "One bump a request."
+    ! [Console.print, Counter.bump, yield]
+    match left <= 0
+        true -> Console.print("total {total}")
+        false -> ticking(left - 1, total + Counter.bump(left))

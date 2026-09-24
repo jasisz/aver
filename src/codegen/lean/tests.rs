@@ -75,6 +75,7 @@ fn empty_ctx() -> CodegenContext {
         program_shape: None,
         mir_program: None,
         bare_i64: Default::default(),
+        rust_owned_record_params: Default::default(),
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),

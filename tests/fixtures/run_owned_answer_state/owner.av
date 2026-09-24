@@ -1,0 +1,32 @@
+module Owner
+    intent = "Answers Counter from one Map that every request updates."
+    depends [Counter]
+    exposes [State, fresh, bump]
+    effects []
+    answers [Counter]
+
+record State
+    counts: Map<Int, Int>
+
+fn fresh() -> State
+    ? "A thousand keys already counted once."
+    State(counts = fill({}, 1000))
+
+fn fill(counts: Map<Int, Int>, left: Int) -> Map<Int, Int>
+    ? "Counts keys 1 to left once."
+    match left <= 0
+        true -> counts
+        false -> fill(Map.set(counts, left, 1), left - 1)
+
+verify fill
+    fill({}, 0) => {}
+    fill({}, 2) => {1 => 1, 2 => 1}
+
+fn bump(state: State, key: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "One more for this key."
+    next = Option.withDefault(Map.get(state.counts, key), 0) + 1
+    (State(counts = Map.set(state.counts, key, next)), Result.Ok(next))
+
+verify bump
+    bump(State(counts = {}), 7) => (State(counts = {7 => 1}), Result.Ok(1))
+    bump(State(counts = {7 => 1}), 7) => (State(counts = {7 => 2}), Result.Ok(2))

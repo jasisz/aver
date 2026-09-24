@@ -531,7 +531,7 @@ fn write_loop(
     out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Run.Wake\n    due: Int\n    ms: Int\n    owner: Int\n    version: Int\n");
     out.push_str("\nrecord __Run\n    slots: Map<Int, __Slot>\n");
     for answer in answers {
-        out.push_str(&format!("    {}: {}\n", answer.field, answer.state));
+        out.push_str(&format!("    {}: Option<{}>\n", answer.field, answer.state));
     }
     for proc in procs {
         if let Some(keyed) = &proc.keyed {
@@ -545,7 +545,10 @@ fn write_loop(
 
     out.push_str("\nfn __fresh() -> __Run\n    ? \"The run before anything has happened: nothing seated, every answer module at its own empty state.\"\n    __Run(slots = {}");
     for answer in answers {
-        out.push_str(&format!(", {} = {}.fresh()", answer.field, answer.module));
+        out.push_str(&format!(
+            ", {} = Option.Some({}.fresh())",
+            answer.field, answer.module
+        ));
     }
     for proc in procs {
         if proc.keyed.is_some() {
@@ -559,6 +562,17 @@ fn write_loop(
         ", versions = {}, late = 0, dropped = 0, stopping = false, now = 0, nextId = 1)\n",
     );
     out.push_str("\nfn __asked(pending: __Process, seq: Int) -> __Slot\n    ? \"A slot whose request is to be asked in the next turn: a process just seated, or one whose last request was just answered.\"\n    __Slot(seq = seq, pending = pending, waiting = Run.Wake.Until([], Option.Some(0)), due = 0, ms = 0, owner = 0, version = 0)\n");
+
+    // ── Handing a state out ────────────────────────────────────────
+    for answer in answers {
+        out.push_str(&format!(
+            "\nfn __take{0}(run: __Run) -> Tuple<__Run, Option<{1}>>\n    ? \"Hands the state of '{2}' out of the run and leaves none behind, so the answer function it goes to holds the only reference to it and can update it in place. The state comes back with the answer.\"\n    (__Run.update(run, {3} = Option.None), run.{3})\n",
+            super::build::capitalize(&answer.field),
+            answer.state,
+            answer.module,
+            answer.field
+        ));
+    }
 
     // ── Seating ────────────────────────────────────────────────────
     for (proc, performs) in procs.iter().zip(process_effects) {
@@ -581,27 +595,21 @@ fn write_loop(
         "\nfn __start() -> __Run\n    ? \"Seats one of every process that takes no key, then every keyed process its answer module lists.\"\n{}    __seatFamilies({unkeyed})\n",
         effects(&start_effects)
     ));
-    let families =
-        procs
-            .iter()
-            .filter(|proc| proc.keyed.is_some())
-            .fold("run".to_string(), |inner, proc| {
-                let keyed = proc.keyed.as_ref().expect("filtered");
-                format!(
-                    "__seatFamily{}({inner}, {}({inner}.{}))",
-                    proc.upper, keyed.by, keyed.field
-                )
-            });
+    let families = procs
+        .iter()
+        .filter(|proc| proc.keyed.is_some())
+        .fold("run".to_string(), |inner, proc| {
+            format!("__seatFamily{0}({inner}, __keysOf{0}({inner}))", proc.upper)
+        });
     let families = if procs.iter().filter(|proc| proc.keyed.is_some()).count() > 1 {
         // Each family reads the run the one before it left.
         let mut body = String::new();
         let mut run_of = "run".to_string();
         for (index, proc) in procs.iter().filter(|proc| proc.keyed.is_some()).enumerate() {
-            let keyed = proc.keyed.as_ref().expect("filtered");
             let name = format!("seated{index}");
             body.push_str(&format!(
-                "    {name} = __seatFamily{}({run_of}, {}({run_of}.{}))\n",
-                proc.upper, keyed.by, keyed.field
+                "    {name} = __seatFamily{0}({run_of}, __keysOf{0}({run_of}))\n",
+                proc.upper
             ));
             run_of = name;
         }
@@ -788,6 +796,10 @@ fn write_seating(out: &mut String, proc: &Proc<'_>, performs: &ProcessEffects) {
     };
     let key = &keyed.key;
     out.push_str(&format!(
+        "\nfn __keysOf{upper}(run: __Run) -> List<{key}>\n    ? \"The keys '{0}' lists for the '{1}' family. Its state is in the run at every turn boundary; it is out only while one answer function holds it.\"\n    match run.{2}\n        Option.Some(state) -> {0}(state)\n        Option.None -> []\n",
+        keyed.by, protocol.fn_name, keyed.field
+    ));
+    out.push_str(&format!(
         "\nfn __seatFamily{upper}(run: __Run, keys: List<{key}>) -> __Run\n    ? \"The '{0}' family at the turn boundary: instances whose key has left the list are dropped, retired keys that have left it may come back later, and every listed key that is neither seated nor retired is seated, in list order.\"\n{seat}    present = __keySet{upper}(keys, {{}})\n    kept = __dropLeft{upper}(run, Map.keys(run.seated{upper}), present)\n    back = __Run.update(kept, retired{upper} = __unretire{upper}(kept.retired{upper}, Map.keys(kept.retired{upper}), present))\n    __seatKeys{upper}(back, keys)\n",
         protocol.fn_name
     ));
@@ -880,15 +892,18 @@ fn write_serve(proc: &Proc<'_>, answers: &[Answer], performs: &ProcessEffects) -
         let binders: Vec<String> = (0..kind.arg_types.len())
             .map(|index| format!("__a{index}"))
             .collect();
-        let mut call_args = vec![format!("run.{}", answer.field)];
+        // The state is handed out of the run before the answer function sees
+        // it, so the run does not share it while the answer updates it.
+        let mut call_args = vec!["__taken".to_string()];
         call_args.extend(binders.iter().cloned());
         let mut pattern = binders.clone();
         pattern.push("state".to_string());
         out.push_str(&format!(
-            "        {}.{}({}) -> __serve{upper}{}(run, id, seq{key_arg}, state, {}.{op}({}))\n",
+            "        {}.{}({}) -> match __take{}(run)\n            (__rest, __held) -> match __held\n                Option.Some(__taken) -> __serve{upper}{}(__rest, id, seq{key_arg}, state, {}.{op}({}))\n                Option.None -> __rest\n",
             protocol.request,
             kind.name,
             pattern.join(", "),
+            super::build::capitalize(&answer.field),
             kind.name,
             answer.module,
             call_args.join(", ")
@@ -899,7 +914,7 @@ fn write_serve(proc: &Proc<'_>, answers: &[Answer], performs: &ProcessEffects) -
             Some(_) => ("__answer", format!("{}(state, __answer)", kind.answer_fn)),
         };
         bodies.push_str(&format!(
-            "\nfn __serve{upper}{kind_name}(run: __Run, id: Int, seq: Int{key_param}, state: {state}, answered: Tuple<{module_state}, Result<{result}, Run.Wake>>) -> __Run\n    ? \"An Ok answers the request with the answer function of this kind; an Err keeps the state the module returned and parks the request on the wake it named.\"\n{resumes}    match answered\n        (__next, __reply) -> match __reply\n            Result.Ok({binder}) -> __settle{upper}(__bump(__Run.update(run, {field} = __next), {index}), id, seq{key_arg}, {resume})\n            Result.Err(__wake) -> __park(__Run.update(run, {field} = __next), id, __wake, {index})\n",
+            "\nfn __serve{upper}{kind_name}(run: __Run, id: Int, seq: Int{key_param}, state: {state}, answered: Tuple<{module_state}, Result<{result}, Run.Wake>>) -> __Run\n    ? \"An Ok answers the request with the answer function of this kind; an Err keeps the state the module returned and parks the request on the wake it named.\"\n{resumes}    match answered\n        (__next, __reply) -> match __reply\n            Result.Ok({binder}) -> __settle{upper}(__bump(__Run.update(run, {field} = Option.Some(__next)), {index}), id, seq{key_arg}, {resume})\n            Result.Err(__wake) -> __park(__Run.update(run, {field} = Option.Some(__next)), id, __wake, {index})\n",
             kind_name = kind.name,
             state = kind.state,
             module_state = answer.state,

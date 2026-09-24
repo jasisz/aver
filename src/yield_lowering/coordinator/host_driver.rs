@@ -9,7 +9,7 @@ use super::{CoordinatorStop, effects};
 /// that waited on `__workHostWaitSet(run)` hands back keys of that set.
 pub(super) fn write_step(turn_effects: &[String]) -> String {
     format!(
-        "\nfn __workHostStep(run: __Run, keys: List<Int>) -> __Run\n    ? \"The post-wait half of one turn; external hosts deliver readiness after returning to their event loop.\"\n{}    ready = __readySlots(__waitPlan(run).owners, keys, [])\n    timed = __Run.update(run, now = Time.unixMs())\n    served = __serveEach(timed, ready, Map.keys(timed.slots))\n    __seatFamilies(served)\n",
+        "\nfn __workHostStep(run: __Run, keys: List<Int>) -> __Run\n    ? \"The post-wait half of one turn; external hosts deliver readiness after returning to their event loop.\"\n{}    ready = __readySlots(__waitPlan(run).owners, keys, [])\n    timed = __Run.update(run, now = Time.unixMs())\n    ids = Map.keys(timed.slots)\n    served = __serveEach(timed, ready, ids)\n    __seatFamilies(served)\n",
         effects(turn_effects),
     )
 }

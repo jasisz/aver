@@ -73,7 +73,6 @@ fn load_surface(
     module_root: &str,
     json: bool,
 ) -> (ProgramSurface, Vec<(String, String)>) {
-    let marked = aver::config::MarkedCapabilities::for_project_dir(Some(module_root));
     let mut cache = aver::source::ProgramLoadCache::default();
     let mut seen: BTreeMap<PathBuf, usize> = BTreeMap::new();
     let mut units: Vec<SurfaceInput> = Vec::new();
@@ -101,13 +100,17 @@ fn load_surface(
                 Ok(loaded) => loaded,
                 Err(error) => fail(error.to_string(), json, "effectSurfaceError"),
             };
+            // The capabilities this program answers, as `check` lowers it:
+            // a process is cut at its stops. The facts are already bound to
+            // the program's entry, so a dependency never hosts the loop.
+            let marked = program.marked();
             let mut transformed = module.items.clone();
             let user_program_len = transformed.len();
             let typecheck = aver::ir::pipeline::front_gate(
                 &mut transformed,
                 &aver::ir::TypecheckMode::WithLoaded(&loaded),
                 user_program_len,
-                &marked,
+                marked,
             );
             let path = module.path.to_string_lossy().to_string();
             for error in &typecheck.errors {

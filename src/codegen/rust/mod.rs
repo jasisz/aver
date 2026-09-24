@@ -155,6 +155,7 @@ fn transpile_project(
         ctx.mir_program = Some(
             crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed, &carrier),
         );
+        ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;

@@ -416,6 +416,52 @@ fn keyed_families_and_run_all_match_the_vm() {
     assert_same_stdout("run_families");
 }
 
+/// The state an answer module holds reaches its answer function uniquely
+/// owned, so every request's `Map.set` updates the Map in place instead of
+/// copying it.
+///
+/// The loop hands the state out of the run (`__takeOwner`) before the answer
+/// function sees it, and every function on the way there takes the run by
+/// value. Were any of them to borrow it, the caller's copy would still hold
+/// the Map during the answer, and each request would copy all of it.
+#[test]
+fn an_answer_modules_state_reaches_its_answer_function_uniquely_owned() {
+    let name = "run_owned_answer_state";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for by_value in [
+            "pub fn __serveIf(mut run @ _: __Run,",
+            "pub fn __serve(mut run @ _: __Run,",
+            "pub fn __serveTicker(mut run @ _: __Run,",
+            "pub fn __takeOwner(mut run @ _: __Run)",
+            "let (__rest, __held) = __takeOwner(run);",
+            "crate::aver_generated::owner::bump(__taken, __a0)",
+        ] {
+            if !entry.contains(by_value) {
+                return Err(format!(
+                    "{name}: the generated loop no longer hands the state over by value; missing `{by_value}` in:\n{entry}"
+                ));
+            }
+        }
+        let vm = run_vm(name)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary(&bin)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// Runs one backend against a loopback peer, on a port nobody else holds.
 fn with_peer(run: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
     let port = free_port();
