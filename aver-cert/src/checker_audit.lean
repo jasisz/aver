@@ -28,6 +28,36 @@ def recordShapes : List (Name × List Name) := @RECORDS@
     the number of fields it encodes for each. -/
 def sumShapes : List (Name × List (Name × Nat)) := @SUMS@
 
+/-- The namespace roots the wall and the checker declare in. A package
+    declares nothing under them. -/
+def wallRoots : List Name := @WALL_ROOTS@
+
+/-- The only namespaces under `AverCert` a package declares in: its plans,
+    byte facts, final theorem, bridges and law corollaries, and the manifest's
+    `subject` and `manifest`. -/
+def packageAverCertChildren : List Name := @PACKAGE_AVERCERT_CHILDREN@
+
+/-- Why the package constant `n` is refused for where it is declared, if it
+    is. A package name under a wall namespace, or one nesting `AverCert`
+    below its first component, is where a dotted reference in the wall or the
+    witness could resolve first, since Lean tries the innermost enclosing
+    namespace before the root. -/
+def namespaceRefusal (n : Name) : Option String :=
+  match n.eraseMacroScopes.components with
+  | [] => none
+  | first :: rest =>
+    if rest.any (fun c => c == `AverCert || c == `AverCertChecker) then
+      some s!"a certificate module declares {n}, which nests a checker namespace"
+    else if first == `AverCert then
+      match rest with
+      | second :: _ =>
+        if packageAverCertChildren.contains second then none
+        else some s!"a certificate module declares {n} inside the checker's AverCert namespace"
+      | [] => some s!"a certificate module declares {n} inside the checker's AverCert namespace"
+    else if wallRoots.contains first then
+      some s!"a certificate module declares {n} inside the checker's {first} namespace"
+    else none
+
 def lawRoots : List Name := @LAW_ROOTS@
 def bridgedLawRoots : List Name := @BRIDGED_LAW_ROOTS@
 def bridgeRoots : List Name := @BRIDGE_ROOTS@
@@ -176,6 +206,23 @@ def main : IO UInt32 := do
   for (name, _) in env.constants.map₁.toList do
     if (`AverCertChecker).isPrefixOf name && !(moduleOf env name == some `CheckerWitness) then
       return ← decline s!"a certificate module declares {name} under the checker's reserved prefix"
+  -- 1b. Names under the wall's and the checker's namespaces.
+  --     Two kinds of package constant are not names a reference resolves
+  --     to and are not refused: a private one (a match splitter or other
+  --     auxiliary Lean builds while a package proof unfolds a wall
+  --     definition), which no other module can name, and an equation lemma
+  --     or other reserved auxiliary of a wall definition, which Lean realizes
+  --     on demand in the package module that first unfolds it and which
+  --     states the wall's own fact.
+  for (name, _) in env.constants.map₁.toList do
+    if inPackage env name then
+      let wallAuxiliary :=
+        isPrivateName name ||
+          (isReservedName env name && (env.find? name.getPrefix).isSome &&
+            !inPackage env name.getPrefix)
+      unless wallAuxiliary do
+        if let some reason := namespaceRefusal name then
+          return ← decline reason
   -- 2. Parser extensions and instances declared by package modules.
   for m in packageModules do
     match env.getModuleIdx? m with

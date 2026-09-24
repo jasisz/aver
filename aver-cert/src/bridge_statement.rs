@@ -750,13 +750,20 @@ pub fn render_bridge_statement_expanded(
     )
 }
 
-/// The statement gate both the producer and the checker apply to the RENDERED
-/// text: one plain term-position line, with balanced delimiters so it cannot
-/// escape the single `(...)` the pin wraps it in.
+/// The statement gate both the producer and the checker apply to a statement
+/// before the witness pins it: one plain term-position line, with balanced
+/// delimiters so it cannot escape the single `(...)` it is elaborated in.
 ///
-/// The renderer only ever splices gated names into a fixed skeleton, so this is
-/// a backstop rather than the primary defence — but it is the backstop that
-/// makes the pin's shape independent of any future encoder.
+/// Delimiters are counted the way Lean reads them. The contents of a string
+/// literal, a character literal and a `«…»` identifier are skipped, so a `"("`
+/// in a statement is not an opening parenthesis. What this gate cannot lex
+/// exactly, it refuses: an interpolated or raw string (`s!"…"`, `r"…"`), a
+/// backtick (name literals and quotations), and any literal left unterminated.
+///
+/// The witness does not rely on this gate for the shape of a pin: it elaborates
+/// each statement as a definition of its own and conjoins the definition, so no
+/// text can re-associate the conjunction. The gate keeps the statement one
+/// term, so the definition cannot end early and add a command.
 pub fn statement_is_single_plain_line(statement: &str, max_len: usize) -> bool {
     if statement.is_empty()
         || statement.len() > max_len
@@ -764,25 +771,80 @@ pub fn statement_is_single_plain_line(statement: &str, max_len: usize) -> bool {
         || statement.contains(":=")
         || statement.contains("--")
         || statement.contains("/-")
+        || statement.contains('`')
     {
         return false;
     }
+    let chars: Vec<char> = statement.chars().collect();
+    let identifier_char =
+        |c: char| c.is_alphanumeric() || matches!(c, '_' | '\'' | '!' | '?' | '.');
     let mut depth: Vec<char> = Vec::new();
-    for character in statement.chars() {
-        let matched = match character {
-            '(' | '[' | '{' | '⟨' => {
-                depth.push(character);
-                true
+    let mut at = 0;
+    while at < chars.len() {
+        let character = chars[at];
+        let previous = at.checked_sub(1).map(|p| chars[p]);
+        match character {
+            '"' => {
+                // `s!"…"`, `m!"…"` and `r"…"` / `r#"…"#` read their body with
+                // rules of their own: refuse rather than approximate them.
+                if matches!(previous, Some('!' | '#'))
+                    || (previous == Some('r')
+                        && at.checked_sub(2).is_none_or(|p| !identifier_char(chars[p])))
+                {
+                    return false;
+                }
+                at += 1;
+                loop {
+                    match chars.get(at) {
+                        None => return false,
+                        Some('\\') => at += 2,
+                        Some('"') => break,
+                        Some(_) => at += 1,
+                    }
+                }
             }
-            ')' => depth.pop() == Some('('),
-            ']' => depth.pop() == Some('['),
-            '}' => depth.pop() == Some('{'),
-            '⟩' => depth.pop() == Some('⟨'),
-            _ => true,
-        };
-        if !matched {
-            return false;
+            '\'' if !previous.is_some_and(identifier_char) => {
+                // A character literal: one character or one escape, then `'`.
+                at += 1;
+                match chars.get(at) {
+                    None | Some('\'') => return false,
+                    Some('\\') => {
+                        at += 1;
+                        while chars.get(at).is_some_and(|c| *c != '\'') {
+                            at += 1;
+                        }
+                    }
+                    Some(_) => at += 1,
+                }
+                if chars.get(at) != Some(&'\'') {
+                    return false;
+                }
+            }
+            '«' => {
+                at += 1;
+                while chars.get(at).is_some_and(|c| *c != '»') {
+                    at += 1;
+                }
+                if at >= chars.len() {
+                    return false;
+                }
+            }
+            '»' => return false,
+            '(' | '[' | '{' | '⟨' => depth.push(character),
+            ')' | ']' | '}' | '⟩' => {
+                let opener = match character {
+                    ')' => '(',
+                    ']' => '[',
+                    '}' => '{',
+                    _ => '⟨',
+                };
+                if depth.pop() != Some(opener) {
+                    return false;
+                }
+            }
+            _ => {}
         }
+        at += 1;
     }
     depth.is_empty()
 }
@@ -1190,6 +1252,32 @@ mod tests {
             ));
             assert!(statement_is_root_qualified(&statement), "{statement}");
         }
+    }
+
+    #[test]
+    fn the_statement_gate_lexes_literals_as_lean_does() {
+        let gate = |s: &str| statement_is_single_plain_line(s, MAX_BRIDGE_STATEMENT_LEN);
+        // Parentheses inside string literals do not count: this statement
+        // closes the wrapping parenthesis early in Lean.
+        assert!(!gate("\"(\" = \"(\" ) ∨ ( M.f 0 = M.f 0 ∧ \")\" = \")\""));
+        assert!(!gate("'(' = '(' ) ∨ ( True"));
+        assert!(!gate("«(» = 0 ) ∨ ( True"));
+        // Balanced statements with delimiters inside literals pass.
+        assert!(gate("f \"(\" = \")\""));
+        assert!(gate("g '(' = ')' ∧ h '\\'' = 0"));
+        assert!(gate("∀ (x' : Int), f x' = x'"));
+        assert!(gate("M.«weird)name» 0 = 0"));
+        assert!(gate("s \"a\\\"b(\" = t"));
+        // What the gate cannot lex exactly, it refuses.
+        assert!(!gate("s!\"{x}\" = t"));
+        assert!(!gate("r\"(\" = t"));
+        assert!(!gate("r#\"(\"# = t"));
+        assert!(!gate("`(x) = y"));
+        assert!(!gate("f \"unterminated"));
+        assert!(!gate("f 'x = y"));
+        assert!(!gate("f «x = y"));
+        // An identifier ending in `r` before a string is not a raw string.
+        assert!(gate("ctr \"x\" = y"));
     }
 
     #[test]

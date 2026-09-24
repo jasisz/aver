@@ -251,7 +251,7 @@ theorem accepted_nonvacuous (artifact : ArtifactData)
     rec group that opens the type section. -/
 theorem refTest_exact_of_accepted (artifact : ArtifactData)
     (hPlans : plansAccepted artifact = true)
-    {grp : List (List Nat × CertDecode.TypeEntry)}
+    {grp : List (List Nat × _root_.CertDecode.TypeEntry)}
     (hg : firstRecGroup artifact.modBytes artifact.modLen = some grp)
     {sub : Nat → Nat → Prop} (hspec : GcTestSpec (grp.map (·.1)) sub)
     {d : SumDecl} (hd : d ∈ artifact.manifest.types.sums) {a b : Nat}

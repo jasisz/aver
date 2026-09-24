@@ -17,7 +17,12 @@
 //! * a law-claim listing a bridge of a function its statement never names;
 //! * a bridge over a record whose encoder lists only some of its fields (the
 //!   omitted one a proof of `False`, which makes every quantifier over the
-//!   record vacuous).
+//!   record vacuous);
+//! * a package `Module.lean` declaring a name the wall's `accepted` would
+//!   resolve to (the wall imports `Module`, so it is checker-rendered);
+//! * a package constant nested under a wall namespace;
+//! * a law statement whose literals hide a parenthesis that re-associates the
+//!   witness's conjunction.
 //!
 //! Gated behind `wasm` and skipped when `lake` is unavailable, like the other
 //! certificate suites.
@@ -327,4 +332,95 @@ fn cert_hardening_declines_a_record_encoder_missing_a_field() {
         &report,
         "the bridge encoder of Evil does not list exactly its fields in order",
     );
+}
+
+/// The wall's `Schema` imports `Module`, and Lean resolves a dotted name in
+/// the innermost namespace first. A package `Module.lean` declaring
+/// `AverCert.AcceptedArtifact.AverCert.ClaimAxes.checked := true` therefore
+/// replaced the runtime-contract conjunct inside the wall's own `accepted`,
+/// and a certificate with every runtime contract dropped verified. The
+/// checker now renders `Module.lean` from the bytes it read and ignores the
+/// package's, so the forged conjunct is the wall's again and the package no
+/// longer builds.
+#[test]
+fn cert_hardening_declines_a_package_module_hijacking_the_wall() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-module") else {
+        return;
+    };
+    std::fs::write(
+        cert.join("Module.lean"),
+        "namespace CertModule\n\
+         def wasmSha256 : String := \"0000\"\n\
+         end CertModule\n\n\
+         def AverCert.AcceptedArtifact.AverCert.ClaimAxes.checked {α : Type} (_ : α) : Bool := \
+         true\n",
+    )
+    .unwrap();
+    let contracts_lean = std::fs::read_to_string(cert.join("Manifest.lean")).unwrap();
+    let start = contracts_lean
+        .find("contracts := [")
+        .expect("the manifest lists its contracts");
+    let end = start + contracts_lean[start..].find("] }").unwrap() + 1;
+    std::fs::write(
+        cert.join("Manifest.lean"),
+        format!(
+            "{}contracts := []{}",
+            &contracts_lean[..start],
+            &contracts_lean[end..]
+        ),
+    )
+    .unwrap();
+    let json_path = cert.join("cert-manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+    json["runtime_contracts"] = serde_json::json!([]);
+    std::fs::write(&json_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    replace_once(
+        &cert.join("Artifact.lean"),
+        "theorem axes_ok : AverCert.ClaimAxes.checked data = true := by decide +kernel",
+        "",
+    );
+    replace_once(
+        &cert.join("ArtifactCertificate.lean"),
+        "strings_ok, axes_ok,",
+        "strings_ok, rfl,",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A package constant under a wall namespace, nested or not, is where a
+/// dotted reference in the wall resolves first. The audit declines it even
+/// when no wall module imports the package.
+#[test]
+fn cert_hardening_declines_a_constant_under_a_wall_namespace() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-nested") else {
+        return;
+    };
+    append(
+        &cert.join("Manifest.lean"),
+        "\ndef AverCert.AcceptedArtifact.AverCert.ClaimAxes.checked {α : Type} (_ : α) : Bool := \
+         true\n",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "which nests a checker namespace");
+}
+
+/// A law statement whose string literals hide parentheses: counted naively
+/// it balances, but Lean closes the witness's wrapping parenthesis after the
+/// first literal, so `(S) ∧ (Holds) ∧ (bridge)` would parse as
+/// `A ∨ (B ∧ Holds ∧ bridge)`, provable by `Or.inl rfl` with no bridge at all.
+/// The statement gate lexes literals and refuses it before Lean runs.
+#[test]
+fn cert_hardening_declines_a_law_statement_that_reassociates_its_pin() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-assoc") else {
+        return;
+    };
+    replace_once(
+        &cert.join("cert-manifest.json"),
+        "\"statement\": \"∀ (a : Int), addTwo a = (a + 2)\"",
+        "\"statement\": \"\\\"(\\\" = \\\"(\\\" ) ∨ ( addTwo 0 = addTwo 0 ∧ \\\")\\\" = \\\")\\\"\"",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "is not a single plain term-position line");
 }

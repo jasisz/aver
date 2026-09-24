@@ -718,18 +718,6 @@ fn render_artifact_certificate() -> String {
         .to_string()
 }
 
-fn render_module(file_name: &str, sha: &str) -> String {
-    format!(
-        "-- The sha256 of the certified `{}` bytes.\n\
-         import CertPrelude\n\n\
-         namespace CertModule\n\n\
-         def wasmSha256 : String := {}\n\n\
-         end CertModule\n",
-        file_name.replace('\n', " "),
-        lean_str(sha)
-    )
-}
-
 fn json_list<T>(items: &[T], render: impl Fn(&T) -> String) -> String {
     if items.is_empty() {
         return "[]".to_string();
@@ -945,11 +933,8 @@ pub fn write_project(
     let abi = artifact.abi();
     let envelope = artifact.wasip2_component_envelope();
 
-    write(
-        &cert_dir,
-        "Module.lean",
-        &render_module(artifact.file_name(), &sha),
-    )?;
+    // `Module.lean` (the artifact hash `Schema.Holds` reads) is not written:
+    // the wall imports it, so the checker renders it from the bytes it reads.
     write(&cert_dir, "Plans.lean", &render_plans(analysis))?;
     // A package with plans declares the module layout its byte checks read.
     let layout = !analysis.entries.is_empty();

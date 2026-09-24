@@ -4,7 +4,7 @@
 //! end to end, then confirms it fails closed on each tampering class. Each class
 //! is one `cert_tripwire_` test carrying the letter tag used below:
 //!   (a) one flipped wasm byte           → artifact hash mismatch
-//!   (b) a corrupted `Module.lean` hash  → lake build failure
+//!   (b) a package `Module.lean` is ignored (checker-owned)
 //!   (c) a trivialized final theorem     → kernel witness rejects the type
 //!   (d) a swapped `Schema.lean`         → IGNORED: the checker builds against
 //!       its own embedded audited schema, so a cert-supplied schema (weakened
@@ -157,12 +157,13 @@ fn rebind_cert_wasm_hash(dir: &Path, bytes: &[u8]) {
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
     let old_hash = m["wasm_sha256"].as_str().unwrap().to_string();
     let new_hash = aver::codegen::cert::sha256_hex(bytes);
-    for file in ["Module.lean", "Manifest.lean"] {
-        let path = dir.join("cert").join(file);
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(src.contains(&old_hash), "{file} should pin the old hash");
-        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
-    }
+    let path = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        src.contains(&old_hash),
+        "Manifest.lean should pin the old hash"
+    );
+    std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
     m["wasm_sha256"] = serde_json::Value::String(new_hash);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 }
@@ -1339,36 +1340,27 @@ fn cert_tripwire_declines_flipped_countdown_body_byte() {
     );
 }
 
-/// (b) A corrupted `Module.lean` hash pin fails the certificate's own lake
-/// build: `Final.cert` reads the pin by `rfl`.
+/// (b) `Module.lean` (the artifact hash `Schema.Holds` compares against) is
+/// checker-owned: the wall imports it, so the verifier renders it from the
+/// bytes it read. A package file of that name, even one pinning a wrong hash,
+/// is ignored, and the certificate still checks.
 #[test]
-fn cert_tripwire_declines_corrupted_module_body() {
+fn cert_tripwire_ignores_a_package_module_file() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-b") else {
         return;
     };
 
-    // (b) A corrupted Module.lean → lake build failure. The module now carries
-    //     only the artifact hash the final theorem pins by `rfl`.
     let dir = temp_dir("neg-b");
     copy_dir(&out_dir, &dir);
     let m = dir.join("cert").join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let hash_at = src
-        .find("def wasmSha256 : String := \"")
-        .expect("Module.lean pins the artifact hash")
-        + "def wasmSha256 : String := \"".len();
-    let mut corrupted = src.clone();
-    let flipped = if &src[hash_at..hash_at + 1] == "0" {
-        "1"
-    } else {
-        "0"
-    };
-    corrupted.replace_range(hash_at..hash_at + 1, flipped);
-    assert_ne!(src, corrupted, "fixture module shape changed");
-    std::fs::write(&m, corrupted).unwrap();
+    assert!(!m.exists(), "the producer must not write Module.lean");
+    std::fs::write(
+        &m,
+        "namespace CertModule\ndef wasmSha256 : String := \"0000\"\nend CertModule\n",
+    )
+    .unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-    assert!(!ok, "corrupted Module.lean must fail:\n{out}");
-    assert!(out.contains("did not build"), "wrong reason (b):\n{out}");
+    assert!(ok, "a package Module.lean must be ignored:\n{out}");
 }
 
 /// (c) A trivialized final theorem — same name, `: True := trivial` — fails
@@ -2740,12 +2732,13 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         m["wasm_sha256"].as_str().unwrap().to_string()
     };
     let new_hash = aver::codegen::cert::sha256_hex(&bytes);
-    for file in ["Module.lean", "Manifest.lean"] {
-        let path = dir.join("cert").join(file);
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(src.contains(&old_hash), "{file} should pin the old hash");
-        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
-    }
+    let path = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        src.contains(&old_hash),
+        "Manifest.lean should pin the old hash"
+    );
+    std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
@@ -3292,12 +3285,13 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         m["wasm_sha256"].as_str().unwrap().to_string()
     };
     let new_hash = aver::codegen::cert::sha256_hex(&bytes);
-    for file in ["Module.lean", "Manifest.lean"] {
-        let path = dir.join("cert").join(file);
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(src.contains(&old_hash), "{file} should pin the old hash");
-        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
-    }
+    let path = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        src.contains(&old_hash),
+        "Manifest.lean should pin the old hash"
+    );
+    std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
@@ -3659,12 +3653,13 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         m["wasm_sha256"].as_str().unwrap().to_string()
     };
     let new_hash = aver::codegen::cert::sha256_hex(&bytes);
-    for file in ["Module.lean", "Manifest.lean"] {
-        let path = dir.join("cert").join(file);
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(src.contains(&old_hash), "{file} should pin the old hash");
-        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
-    }
+    let path = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        src.contains(&old_hash),
+        "Manifest.lean should pin the old hash"
+    );
+    std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();

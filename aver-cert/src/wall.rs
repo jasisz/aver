@@ -252,6 +252,26 @@ pub fn render_artifact_component_bytes(bytes: &[u8]) -> String {
     )
 }
 
+/// Checker-authored `Module.lean`: the SHA-256 of the delivered artifact that
+/// `Schema.Holds` compares the manifest's hash against. The wall's `Schema`
+/// imports this module, so it must never come from a certificate package: a
+/// package module in the wall's import closure could declare names that the
+/// wall's own definitions resolve to. `sha` is the hash the verifier computed
+/// from the bytes it read (64 lowercase hex digits).
+pub fn render_module(sha: &str) -> String {
+    debug_assert!(
+        sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+        "render_module takes a hex SHA-256"
+    );
+    format!(
+        "-- Authored by aver-cert from the artifact bytes; never accepted from the certificate.\n\
+         namespace CertModule\n\n\
+         /-- SHA-256 of the delivered artifact, computed by the verifier. -/\n\
+         def wasmSha256 : String := \"{sha}\"\n\n\
+         end CertModule\n"
+    )
+}
+
 /// Bytes per hex numeral in a checker-rendered byte module.
 const BYTE_NUMERAL_CHUNK: usize = 1024;
 
@@ -352,7 +372,7 @@ mod tests {
     /// wins and each silently re-bound `toIndex`; this is what caught them.
     #[test]
     fn lint_still_flags_the_historical_index_helper_gap() {
-        const NAME_PIN: &str = "(roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&";
+        const NAME_PIN: &str = "(roles.toIndex == _root_.CertDecode.AddSub.toIndexIdx n len) &&";
         const TEMPLATE_PIN: &str = "arithRoleCheck n len .toIndex roles.toIndex p &&";
         let core = CERT_ACCEPTED_ARTIFACT_CORE;
         for pin in [NAME_PIN, TEMPLATE_PIN] {
@@ -455,7 +475,7 @@ mod tests {
     #[test]
     fn lint_flags_the_removed_code_entry_pin() {
         let core = wall_with_core_edit(
-            "        AverCert.WasmSlice.exactFuncBindingForExport n len (stringBytes e.name) bytes\n      else\n        (AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter\n          (fun b => b.codeEntry == bytes)\n",
+            "        _root_.AverCert.WasmSlice.exactFuncBindingForExport n len (stringBytes e.name) bytes\n      else\n        (_root_.AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter\n          (fun b => b.codeEntry == bytes)\n",
             "        AverCert.WasmSlice.funcBindingForExport n len (stringBytes e.name)\n      else\n        AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx\n",
         );
         let sources = sources_with_core(&core);
@@ -488,7 +508,7 @@ mod tests {
     #[test]
     fn lint_rejects_a_tautological_derivation() {
         let core = wall_with_core_edit(
-            "def startAccounted (artifact : ArtifactData) : Bool :=\n  AverCert.WasmSlice.startFuncIndex artifact.modBytes artifact.modLen ==\n    some artifact.manifest.subject.start\n",
+            "def startAccounted (artifact : ArtifactData) : Bool :=\n  _root_.AverCert.WasmSlice.startFuncIndex artifact.modBytes artifact.modLen ==\n    some artifact.manifest.subject.start\n",
             "def subjectOfManifest (m : AverCert.Schema.Manifest) : AverCert.Schema.Subject := m.subject\n\ndef startPin (m : AverCert.Schema.Manifest) : Prop :=\n  m.subject = subjectOfManifest m\n\ndef startAccounted (artifact : ArtifactData) : Prop :=\n  startPin artifact.manifest\n",
         );
         let core = core.replace(

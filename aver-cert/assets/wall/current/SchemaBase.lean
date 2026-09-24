@@ -275,15 +275,15 @@ structure Subject where
   declaredUncertified : List (String × String)
   capabilities : List (String × String)
   start        : Option Nat
-  hostRoleTable : Option CertDecode.AddSub.Roles
-  arithParams : Option ArithTemplateDerisk.ArithHostParams
-  stringHostRoles : List (Nat × CertDecode.StringHost.Role)
+  hostRoleTable : Option _root_.CertDecode.AddSub.Roles
+  arithParams : Option _root_.ArithTemplateDerisk.ArithHostParams
+  stringHostRoles : List (Nat × _root_.CertDecode.StringHost.Role)
   contracts    : List String
 
 /-- Claim-matching view of the optional module host-role table. An absent
     table binds no host roles, so any claim citing a box/add/mul/sub role
     fails to match — strictly fail-closed, never a default index. -/
-def Subject.hostRoles (s : Subject) : CertDecode.AddSub.Roles :=
+def Subject.hostRoles (s : Subject) : _root_.CertDecode.AddSub.Roles :=
   match s.hostRoleTable with
   | some roles => roles
   | none => { box := none, add := none, mul := none, sub := none,

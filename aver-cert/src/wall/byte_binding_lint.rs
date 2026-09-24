@@ -506,7 +506,9 @@ fn decl_header(line: &str) -> Option<(usize, Kind, String)> {
 }
 
 fn parse_file(name: &str, text: &str) -> Vec<Decl> {
-    let stripped = strip_comments(text);
+    // A `_root_.`-qualified reference names the same declaration the lint's
+    // resolver reaches from the root, so the prefix carries nothing here.
+    let stripped = strip_comments(text).replace("_root_.", "");
     let lines: Vec<&str> = stripped.split('\n').collect();
 
     // namespace / open context per line

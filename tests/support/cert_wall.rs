@@ -30,6 +30,11 @@ pub fn materialize(cert_dir: &Path) {
     )
     .unwrap();
     std::fs::write(
+        cert_dir.join("Module.lean"),
+        aver::codegen::cert::wall::render_module(&aver::codegen::cert::sha256_hex(&wasm_bytes)),
+    )
+    .unwrap();
+    std::fs::write(
         cert_dir.join("ArtifactComponentBytes.lean"),
         aver::codegen::cert::wall::render_artifact_component_bytes(&wasm_bytes),
     )

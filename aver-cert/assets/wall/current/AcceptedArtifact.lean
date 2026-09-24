@@ -14,15 +14,15 @@ import ArtifactComponentBytes
 namespace AverCert.AcceptedArtifact
 
 def accepted (artifact : ArtifactData) : Prop :=
-  AverCert.Schema.Holds artifact.manifest ∧
-  artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes
-    AverCert.ArtifactComponentBytes.componentLen artifact = true ∧
+  _root_.AverCert.Schema.Holds artifact.manifest ∧
+  artifactEnvelopeAccepted _root_.AverCert.ArtifactComponentBytes.componentBytes
+    _root_.AverCert.ArtifactComponentBytes.componentLen artifact = true ∧
   subjectMatchesArtifactRoot artifact ∧
   obligationsDerived artifact ∧
   plansAccepted artifact = true ∧
   decodedHostRoleTable artifact ∧
   decodedStringHostRoles artifact ∧
-  AverCert.ClaimAxes.checked artifact = true ∧
+  _root_.AverCert.ClaimAxes.checked artifact = true ∧
   acceptedWholeModule artifact
 
 end AverCert.AcceptedArtifact

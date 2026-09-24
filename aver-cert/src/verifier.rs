@@ -40,6 +40,10 @@ const LAW_BRIDGE_AUDIT_MARKER: &str = "AVER_LAW_BRIDGE_AUDIT";
 const LAW_BRIDGED_COROLLARY_SUFFIX: &str = "_bridged";
 /// Checker-owned name of the pin for manifest `sourceBridges[i]`.
 const BRIDGE_PIN_PREFIX: &str = "AverCertChecker.bridge_pin_";
+/// The checker's definitions of each pinned statement, elaborated alone
+/// before a pin conjoins them.
+const LAW_STATEMENT_PREFIX: &str = "AverCertChecker.law_statement_";
+const BRIDGE_STATEMENT_PREFIX: &str = "AverCertChecker.bridge_statement_";
 /// Marker of the per-bridge axiom-audit line, read back exactly like the
 /// law one.
 const BRIDGE_AUDIT_MARKER: &str = "AVER_BRIDGE_AUDIT";
@@ -576,6 +580,7 @@ fn trusted_check(
     let stage_started = std::time::Instant::now();
     let build = assemble_build(
         cert_dir,
+        &actual_hash,
         core_module_bytes,
         target_artifact_bytes,
         selected_wall,
@@ -958,9 +963,20 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             law_pins.push_str(&law.prefix);
             law_pins.push_str("\n\n");
         }
-        law_pins.push_str(&format!("theorem _root_.{LAW_PIN_PREFIX}{index} :\n    ("));
+        // The statement is elaborated ALONE, as a definition of its own, and
+        // the pins conjoin that definition. However its text is spelled, it
+        // is one proposition, so it cannot re-associate the conjunction with
+        // `Holds` and the bridges that follow it.
+        law_pins.push_str(&format!(
+            "def _root_.{LAW_STATEMENT_PREFIX}{index} : Prop :=\n  ("
+        ));
         law_pins.push_str(&law.statement);
-        law_pins.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
+        law_pins.push_str(")\n\n");
+        law_pins.push_str(&format!(
+            "theorem _root_.{LAW_PIN_PREFIX}{index} :\n    \
+             _root_.{LAW_STATEMENT_PREFIX}{index} ∧ \
+             (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)"
+        ));
         law_pins.push_str(" :=\n  _root_.AverCert.Laws.");
         law_pins.push_str(&law.corollary);
         law_pins.push_str("\n\n");
@@ -970,17 +986,17 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
                 .position(|at| *at == index)
                 .expect("every bridged law is enumerated");
             law_pins.push_str(&format!(
-                "theorem _root_.{BRIDGED_LAW_PIN_PREFIX}{bridged_index} :\n    ("
+                "theorem _root_.{BRIDGED_LAW_PIN_PREFIX}{bridged_index} :\n    \
+                 _root_.{LAW_STATEMENT_PREFIX}{index} ∧ \
+                 (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)"
             ));
-            law_pins.push_str(&law.statement);
-            law_pins.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
             // The declared bridges, in the manifest's order. The pin's TYPE
             // forces the package's `_bridged` corollary to prove all of them,
             // and the audit that follows walks that whole closure.
             for bridge in &law.bridges {
-                law_pins.push_str(" ∧\n      (");
-                law_pins.push_str(&candidates.source_bridges[*bridge].statement);
-                law_pins.push(')');
+                law_pins.push_str(&format!(
+                    " ∧\n      _root_.{BRIDGE_STATEMENT_PREFIX}{bridge}"
+                ));
             }
             law_pins.push_str(" :=\n  _root_.AverCert.Laws.");
             law_pins.push_str(&law.corollary);
@@ -999,11 +1015,15 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let mut bridge_pins = String::new();
     for (index, bridge) in candidates.source_bridges.iter().enumerate() {
         bridge_pins.push_str(&format!(
-            "theorem _root_.{BRIDGE_PIN_PREFIX}{index} :\n    ("
+            "def _root_.{BRIDGE_STATEMENT_PREFIX}{index} : Prop :=\n  ("
         ));
         bridge_pins.push_str(&bridge.statement);
-        bridge_pins
-            .push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  _root_.");
+        bridge_pins.push_str(")\n\n");
+        bridge_pins.push_str(&format!(
+            "theorem _root_.{BRIDGE_PIN_PREFIX}{index} :\n    \
+             _root_.{BRIDGE_STATEMENT_PREFIX}{index} ∧ \
+             (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  _root_."
+        ));
         bridge_pins.push_str(&bridge.corollary);
         bridge_pins.push_str("\n\n");
     }
@@ -1203,6 +1223,14 @@ fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String 
         .replace("@RECORDS@", &records)
         .replace("@SUMS@", &sums)
         .replace("@PACKAGE_MODULES@", &lean_name_list(package_modules))
+        .replace(
+            "@WALL_ROOTS@",
+            &lean_name_list(&WALL_NAMESPACE_ROOTS.map(str::to_string)),
+        )
+        .replace(
+            "@PACKAGE_AVERCERT_CHILDREN@",
+            &lean_name_list(&PACKAGE_AVERCERT_CHILDREN.map(str::to_string)),
+        )
         .replace("@ALLOWED@", &lean_name_list(&allowed))
         .replace("@STRICT_ROOTS@", &lean_name_list(&strict_roots))
         .replace("@LAW_ROOTS@", &lean_name_list(&law_roots))
@@ -1280,6 +1308,28 @@ fn collect_encoder_shapes(
         }
     }
 }
+
+/// Every namespace root the wall, the checker-rendered modules and the
+/// witness declare in, apart from `AverCert` itself. The audit program
+/// declines a package constant under any of them.
+const WALL_NAMESPACE_ROOTS: [&str; 9] = [
+    "AcceptanceSoundness",
+    "ArithTemplateDerisk",
+    "AverBits",
+    "AverCertChecker",
+    "CertDecode",
+    "CertModule",
+    "CertPrelude",
+    "InterpreterSequencing",
+    "AverCertAudit",
+];
+
+/// The namespaces under `AverCert` that the producer declares in (`Plans`,
+/// the `Artifact*` byte facts, `Final`, `Bridge*`, `Laws`) and the manifest's
+/// two definitions. Every other `AverCert.*` name belongs to the wall.
+const PACKAGE_AVERCERT_CHILDREN: [&str; 7] = [
+    "Artifact", "Bridge", "Final", "Laws", "Plans", "manifest", "subject",
+];
 
 /// The audit program's source; `@…@` placeholders are filled by
 /// [`checker_audit`].
@@ -2431,6 +2481,7 @@ fn is_checker_owned(name: &str, selected_wall: &wall::Wall) -> bool {
             name,
             "ArtifactBytes.lean"
                 | "ArtifactComponentBytes.lean"
+                | "Module.lean"
                 | "lakefile.lean"
                 | "CheckerWitness.lean"
                 | "CheckerAudit.lean"
@@ -2439,6 +2490,7 @@ fn is_checker_owned(name: &str, selected_wall: &wall::Wall) -> bool {
 
 fn assemble_build(
     cert_dir: &Path,
+    artifact_hash: &str,
     core_module_bytes: &[u8],
     target_artifact_bytes: &[u8],
     selected_wall: &wall::Wall,
@@ -2564,6 +2616,15 @@ fn assemble_build(
     )
     .map_err(|error| format!("cannot stage ArtifactComponentBytes.lean: {error}"))?;
     roots.push("ArtifactComponentBytes".to_string());
+    // The wall's `Schema` imports `Module`, so it is rendered here from the
+    // hash of the bytes read, never staged from the package: no package
+    // module may sit inside the wall's own import closure.
+    std::fs::write(
+        build.path.join("Module.lean"),
+        wall::render_module(artifact_hash),
+    )
+    .map_err(|error| format!("cannot stage Module.lean: {error}"))?;
+    roots.push("Module".to_string());
     roots.sort();
     roots.dedup();
     std::fs::write(
@@ -2609,6 +2670,7 @@ fn reject_shadowed_root(root: &str, selected_wall: &wall::Wall) -> Result<(), St
         }) || [
             "ArtifactBytes",
             "ArtifactComponentBytes",
+            "Module",
             "CheckerWitness",
             "CheckerAudit",
             "lakefile",
@@ -3860,6 +3922,43 @@ mod tests {
         assert_eq!(admitted.len(), 3);
     }
 
+    /// The audit's namespace rule is only as good as its list of wall roots:
+    /// every namespace a wall file opens at the top level is on it.
+    #[test]
+    fn audit_namespace_roots_cover_every_wall_namespace() {
+        let wall = wall::resolve(wall::current_id()).expect("embedded wall resolves");
+        for source in wall.sources {
+            // Blocks closed by a bare or named `end`: namespaces, sections and
+            // `mutual` groups. Only a namespace opened outside all of them
+            // names a root.
+            let mut depth = 0usize;
+            for line in source.contents.lines() {
+                let words: Vec<&str> = line.split_whitespace().collect();
+                match words.as_slice() {
+                    ["namespace", name, ..] => {
+                        if depth == 0 {
+                            let root = name.split('.').next().unwrap();
+                            assert!(
+                                root == "AverCert" || WALL_NAMESPACE_ROOTS.contains(&root),
+                                "{} opens namespace {name}, whose root the audit does not reserve",
+                                source.name
+                            );
+                        }
+                        depth += 1;
+                    }
+                    ["section", ..] | ["noncomputable", "section", ..] | ["mutual", ..] => {
+                        depth += 1
+                    }
+                    ["end", ..] => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
+        let rendered = wall::render_module(&"0".repeat(64));
+        assert!(rendered.contains("namespace CertModule"));
+        assert!(WALL_NAMESPACE_ROOTS.contains(&"CertModule"));
+    }
+
     #[test]
     fn nested_roots_shadowing_reserved_prefixes_are_rejected() {
         let wall = wall::resolve(wall::current_id()).expect("embedded wall resolves");
@@ -3871,6 +3970,8 @@ mod tests {
         assert!(reject_shadowed_root("Schema.Sub", wall).is_err());
         assert!(reject_shadowed_root("ArtifactBytes.Decoy", wall).is_err());
         assert!(reject_shadowed_root("ArtifactComponentBytes.Decoy", wall).is_err());
+        assert!(reject_shadowed_root("Module", wall).is_err());
+        assert!(reject_shadowed_root("Module.Decoy", wall).is_err());
         assert!(reject_shadowed_root("CheckerWitness.X.Y", wall).is_err());
         // A reserved name in non-prefix position does not shadow the import.
         assert!(reject_shadowed_root("Apps.Schema", wall).is_ok());
@@ -4299,6 +4400,43 @@ mod tests {
         assert!(witness.contains("(_root_.Int.negSucc (nat_lit 2))"));
         assert!(witness.contains("((nat_lit 21), .eq)"));
         assert!(!witness.contains("some 7") && !witness.contains("≤"));
+    }
+
+    /// Every pinned statement is elaborated alone, as a checker definition,
+    /// and the pins conjoin the definitions: no statement text sits beside the
+    /// `∧` that joins it to `Holds` or to a bridge, so no text can change how
+    /// the conjunction associates.
+    #[test]
+    fn the_witness_conjoins_statement_definitions_not_statement_text() {
+        let candidates = witness_candidates();
+        let witness = checker_witness("ab12", &candidates);
+        let holds = "(_root_.AverCert.Schema.Holds _root_.AverCert.manifest)";
+        assert!(witness.contains(&format!(
+            "def _root_.{LAW_STATEMENT_PREFIX}0 : Prop :=\n  ({})\n",
+            candidates.laws[0].statement
+        )));
+        assert!(witness.contains(&format!(
+            "def _root_.{BRIDGE_STATEMENT_PREFIX}0 : Prop :=\n  ({})\n",
+            candidates.source_bridges[0].statement
+        )));
+        assert!(witness.contains(&format!(
+            "theorem _root_.{LAW_PIN_PREFIX}0 :\n    _root_.{LAW_STATEMENT_PREFIX}0 ∧ {holds} :="
+        )));
+        assert!(witness.contains(&format!(
+            "theorem _root_.{BRIDGED_LAW_PIN_PREFIX}0 :\n    \
+             _root_.{LAW_STATEMENT_PREFIX}0 ∧ {holds} ∧\n      \
+             _root_.{BRIDGE_STATEMENT_PREFIX}0 :="
+        )));
+        assert!(witness.contains(&format!(
+            "theorem _root_.{BRIDGE_PIN_PREFIX}0 :\n    _root_.{BRIDGE_STATEMENT_PREFIX}0 ∧ {holds} :="
+        )));
+        // The statement text appears once per statement: in its definition.
+        assert_eq!(
+            witness
+                .matches(candidates.laws[0].statement.as_str())
+                .count(),
+            1
+        );
     }
 
     /// The audit program is fully instantiated, walks the pins the witness

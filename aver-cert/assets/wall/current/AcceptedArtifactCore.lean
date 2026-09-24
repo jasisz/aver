@@ -36,8 +36,8 @@ structure ClosureClaim where
 structure ArtifactData where
   modBytes           : Nat
   modLen             : Nat
-  manifest           : AverCert.Schema.Manifest
-  wasip2ComponentEnvelope : Option AverCert.Wasip2Envelope.ComponentEnvelope
+  manifest           : _root_.AverCert.Schema.Manifest
+  wasip2ComponentEnvelope : Option _root_.AverCert.Wasip2Envelope.ComponentEnvelope
   closureFuel        : Nat
   closureClaim       : ClosureClaim
 
@@ -140,7 +140,7 @@ def callsOrdered (fns : List FnEntry) (e : FnEntry) : Bool :=
 
 /-! ### Binding a plan to its function -/
 
-def stringBytes (s : String) : AverCert.WasmSlice.ByteSeq :=
+def stringBytes (s : String) : _root_.AverCert.WasmSlice.ByteSeq :=
   s.toList.map Char.toNat
 
 /-- The declared function type of the bound function is exactly the plan's
@@ -148,7 +148,7 @@ def stringBytes (s : String) : AverCert.WasmSlice.ByteSeq :=
 def sigPinned (n len : Nat) (M : MCtx) (sig : Sig) (typeIdx : Nat) : Bool :=
   match sig.params.mapM (valTyD M), valTyD M sig.ret with
   | some ps, some r =>
-      AverCert.WasmSlice.typeSectionMatches (AverCert.WasmSlice.checkFuncTypeExact ps [r]) n len
+      _root_.AverCert.WasmSlice.typeSectionMatches (_root_.AverCert.WasmSlice.checkFuncTypeExact ps [r]) n len
         typeIdx
   | _, _ => false
 
@@ -157,14 +157,14 @@ def sigPinned (n len : Nat) (M : MCtx) (sig : Sig) (typeIdx : Nat) : Bool :=
     through its function index. Either way the module's code entry must be
     EXACTLY `codeEntryBytes` of the plan (locals vector included). -/
 def boundFunction (n len : Nat) (M : MCtx) (e : FnEntry) :
-    Option AverCert.WasmSlice.FuncBinding :=
+    Option _root_.AverCert.WasmSlice.FuncBinding :=
   match codeEntryBytes M e.plan with
   | none => none
   | some bytes =>
       if e.exported then
-        AverCert.WasmSlice.exactFuncBindingForExport n len (stringBytes e.name) bytes
+        _root_.AverCert.WasmSlice.exactFuncBindingForExport n len (stringBytes e.name) bytes
       else
-        (AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter
+        (_root_.AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter
           (fun b => b.codeEntry == bytes)
 
 /-- One planned function: its plan types at its signature, its lowering is
@@ -181,16 +181,16 @@ def entryAccepted (n len : Nat) (M : MCtx) (fns : List FnEntry) (e : FnEntry) : 
 
 /-- The declared function type of each present role at its index; an absent
     role (`TypeTable.absent`) has no function and is never called. -/
-def roleTypePinned (n len : Nat) (idx : Nat) (params results : List CertDecode.ValType) : Bool :=
+def roleTypePinned (n len : Nat) (idx : Nat) (params results : List _root_.CertDecode.ValType) : Bool :=
   if idx < 4294967296 then
-    match AverCert.WasmSlice.funcBindingByFuncIndex n len idx with
+    match _root_.AverCert.WasmSlice.funcBindingByFuncIndex n len idx with
     | some b =>
-        AverCert.WasmSlice.typeSectionMatches
-          (AverCert.WasmSlice.checkFuncTypeExact params results) n len b.typeIdx
+        _root_.AverCert.WasmSlice.typeSectionMatches
+          (_root_.AverCert.WasmSlice.checkFuncTypeExact params results) n len b.typeIdx
     | none => false
   else true
 
-def refN (i : Nat) : CertDecode.ValType := .ref 0x63 (Int.ofNat i)
+def refN (i : Nat) : _root_.CertDecode.ValType := .ref 0x63 (Int.ofNat i)
 
 /-- Every present helper declares exactly the function type its role fixes:
     `box` `i64 -> carrier`, the arithmetic helpers `carrier carrier -> carrier`,
@@ -229,13 +229,13 @@ def indicesDistinct (M : MCtx) (fns : List FnEntry) : Bool :=
     `codeLocs` isolates each entry (`entryN`, `entryLen`, size-LEB included);
     re-reading that size LEB yields the locals+body region as `esz` bytes. -/
 def bodyBytesAtFuncIndex (n len idx : Nat) : Option (List Nat) :=
-  match CertDecode.funcImportBase n len, CertDecode.codeLocs n len with
+  match _root_.CertDecode.funcImportBase n len, _root_.CertDecode.codeLocs n len with
   | some nimp, some locs =>
       if nimp ≤ idx then
         match locs[idx - nimp]? with
         | some loc =>
-            match CertDecode.readU loc.entryN loc.entryLen with
-            | some (esz, bodyN, _) => some (CertDecode.takeBytes esz bodyN)
+            match _root_.CertDecode.readU loc.entryN loc.entryLen with
+            | some (esz, bodyN, _) => some (_root_.CertDecode.takeBytes esz bodyN)
             | none => none
         | none => none
       else none
@@ -247,12 +247,12 @@ def bodyBytesAtFuncIndex (n len idx : Nat) : Option (List Nat) :=
     role (`none`) is vacuously pinned — no claim can cite an absent role, so no
     plan can use it. No byte is scanned to DISCOVER a role; a wrong declaration
     synthesizes the wrong bytes and fails this equality. -/
-def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
-    (idx? : Option Nat) (p : ArithTemplateDerisk.ArithHostParams) : Bool :=
+def arithRoleCheck (n len : Nat) (role : _root_.ArithTemplateDerisk.ArithRole)
+    (idx? : Option Nat) (p : _root_.ArithTemplateDerisk.ArithHostParams) : Bool :=
   match idx? with
   | none => true
   | some idx =>
-      bodyBytesAtFuncIndex n len idx == some (ArithTemplateDerisk.arithHelperBody role p)
+      bodyBytesAtFuncIndex n len idx == some (_root_.ArithTemplateDerisk.arithHelperBody role p)
 
 /-- The whole-module arith host-role pin — declare-and-confirm, no fingerprint.
     A byte-provably carrierless module (`__rt_aint_from_i64` export absent)
@@ -308,17 +308,17 @@ def arithRoleCheck (n len : Nat) (role : ArithTemplateDerisk.ArithRole)
     comparison contracts stay explicit hypotheses of `Obligation.holds` and stay
     disclosed by `ClaimAxes`. Pinning bytes narrows the artifact, not the
     trusted-computing base. -/
-def arithTableCheck (n len : Nat) (roles? : Option CertDecode.AddSub.Roles)
-    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
+def arithTableCheck (n len : Nat) (roles? : Option _root_.CertDecode.AddSub.Roles)
+    (params? : Option _root_.ArithTemplateDerisk.ArithHostParams) : Bool :=
   match roles?, params? with
-  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
+  | none, none => _root_.CertDecode.AddSub.carrierHelperAbsent n len
   | some roles, some p =>
-      !CertDecode.AddSub.carrierHelperAbsent n len &&
-      (CertDecode.carrierState n len == some (some p.carrier)) &&
-      (roles.box == CertDecode.AddSub.boxIdx n len) &&
-      (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&
-      (roles.cmp == CertDecode.AddSub.cmpIdx n len) &&
-      ArithTemplateDerisk.checkArithHostParams p &&
+      !_root_.CertDecode.AddSub.carrierHelperAbsent n len &&
+      (_root_.CertDecode.carrierState n len == some (some p.carrier)) &&
+      (roles.box == _root_.CertDecode.AddSub.boxIdx n len) &&
+      (roles.toIndex == _root_.CertDecode.AddSub.toIndexIdx n len) &&
+      (roles.cmp == _root_.CertDecode.AddSub.cmpIdx n len) &&
+      _root_.ArithTemplateDerisk.checkArithHostParams p &&
       arithRoleCheck n len .box roles.box p &&
       arithRoleCheck n len .toIndex roles.toIndex p &&
       arithRoleCheck n len .add roles.add p &&
@@ -345,7 +345,7 @@ def decodedHostRoleTable (artifact : ArtifactData) : Prop :=
     Unlike add/sub, the result is a list because every matching function is
     classified independently; duplicate roles at distinct indices are retained. -/
 def decodedStringHostRoles (artifact : ArtifactData) : Prop :=
-  CertDecode.StringHost.roleTable artifact.modBytes artifact.modLen =
+  _root_.CertDecode.StringHost.roleTable artifact.modBytes artifact.modLen =
     some artifact.manifest.subject.stringHostRoles
 
 
@@ -353,9 +353,9 @@ def decodedStringHostRoles (artifact : ArtifactData) : Prop :=
 
 /-- Distinct byte sequences, decided on their numeric keys (`WasmSlice.seqKey`,
     injective). -/
-def byteSeqListNodup (xs : List AverCert.WasmSlice.ByteSeq) : Bool :=
-  match AverCert.WasmSlice.seqKeys xs with
-  | some keys => AverCert.WasmSlice.natListNodup keys
+def byteSeqListNodup (xs : List _root_.AverCert.WasmSlice.ByteSeq) : Bool :=
+  match _root_.AverCert.WasmSlice.seqKeys xs with
+  | some keys => _root_.AverCert.WasmSlice.natListNodup keys
   | none => false
 
 /-- Distinct Strings, decided on their code points (`stringBytes` is
@@ -367,7 +367,7 @@ def lowerHexByte (byte : Nat) : Bool :=
   (decide (48 ≤ byte) && decide (byte ≤ 57)) ||
   (decide (97 ≤ byte) && decide (byte ≤ 102))
 
-def customCapabilityModuleTail : Nat → AverCert.WasmSlice.ByteSeq → Bool
+def customCapabilityModuleTail : Nat → _root_.AverCert.WasmSlice.ByteSeq → Bool
   | count, 45 :: 99 :: hash =>
       decide (0 < count) && count % 2 == 0 && hash.length == 64 &&
         hash.all lowerHexByte
@@ -392,12 +392,12 @@ def customCapabilityImport (capability : String × String) : Bool :=
   operationTail.all lowerHexByte
 
 def certifiedExportEntries
-    (manifest : AverCert.Schema.Manifest) : List AverCert.WasmSlice.ExportEntry :=
+    (manifest : _root_.AverCert.Schema.Manifest) : List _root_.AverCert.WasmSlice.ExportEntry :=
   manifest.obligations.map (fun obligation =>
     { name := stringBytes obligation.export_, kind := 0, idx := obligation.self })
 
 def declaredUncertifiedNames
-    (manifest : AverCert.Schema.Manifest) : List AverCert.WasmSlice.ByteSeq :=
+    (manifest : _root_.AverCert.Schema.Manifest) : List _root_.AverCert.WasmSlice.ByteSeq :=
   manifest.subject.declaredUncertified.map (fun entry => stringBytes entry.1)
 
 /-- An export entry keyed for the set-shaped accounting: its name's numeric
@@ -408,8 +408,8 @@ structure ExportKey where
   idx : Nat
 deriving Ord
 
-def exportEntryKey (entry : AverCert.WasmSlice.ExportEntry) : Option ExportKey :=
-  (AverCert.WasmSlice.seqKey entry.name).map (fun name => ⟨name, entry.kind, entry.idx⟩)
+def exportEntryKey (entry : _root_.AverCert.WasmSlice.ExportEntry) : Option ExportKey :=
+  (_root_.AverCert.WasmSlice.seqKey entry.name).map (fun name => ⟨name, entry.kind, entry.idx⟩)
 
 /-- Every byte-derived module export is classified exactly once: either the
     function/name/index of a claimed obligation or an explicit uncertified
@@ -418,23 +418,23 @@ def exportEntryKey (entry : AverCert.WasmSlice.ExportEntry) : Option ExportKey :
     through their numeric keys, which identify them exactly (`seqKey_inj`);
     a name without a key fails the check. -/
 def exportsAccountedOf (modBytes modLen : Nat)
-    (certified : List AverCert.WasmSlice.ExportEntry)
-    (declared : List AverCert.WasmSlice.ByteSeq) : Bool :=
-  match AverCert.WasmSlice.enumExports modBytes modLen with
+    (certified : List _root_.AverCert.WasmSlice.ExportEntry)
+    (declared : List _root_.AverCert.WasmSlice.ByteSeq) : Bool :=
+  match _root_.AverCert.WasmSlice.enumExports modBytes modLen with
   | none => false
   | some actual =>
       match actual.mapM exportEntryKey, certified.mapM exportEntryKey,
-          AverCert.WasmSlice.seqKeys declared with
+          _root_.AverCert.WasmSlice.seqKeys declared with
       | some actual, some certified, some declared =>
           let actualNames := actual.map (fun entry => entry.name)
           let certifiedNames := certified.map (fun entry => entry.name)
-          let actualNameIndex := AverCert.WasmSlice.orderedSet actualNames
-          let declaredIndex := AverCert.WasmSlice.orderedSet declared
-          let actualEntryIndex := AverCert.WasmSlice.orderedSet actual
-          let certifiedEntryIndex := AverCert.WasmSlice.orderedSet certified
-          AverCert.WasmSlice.natListNodup actualNames &&
-          AverCert.WasmSlice.natListNodup certifiedNames &&
-          AverCert.WasmSlice.natListNodup declared &&
+          let actualNameIndex := _root_.AverCert.WasmSlice.orderedSet actualNames
+          let declaredIndex := _root_.AverCert.WasmSlice.orderedSet declared
+          let actualEntryIndex := _root_.AverCert.WasmSlice.orderedSet actual
+          let certifiedEntryIndex := _root_.AverCert.WasmSlice.orderedSet certified
+          _root_.AverCert.WasmSlice.natListNodup actualNames &&
+          _root_.AverCert.WasmSlice.natListNodup certifiedNames &&
+          _root_.AverCert.WasmSlice.natListNodup declared &&
           certifiedNames.all (fun name => !declaredIndex.contains name) &&
           actual.all (fun entry =>
             certifiedEntryIndex.contains entry || declaredIndex.contains entry.name) &&
@@ -459,11 +459,11 @@ of those characters. -/
 theorem stringBytes_ofList (c : List Char) : stringBytes (String.ofList c) = c.map Char.toNat := by
   simp [stringBytes, String.toList_ofList]
 
-theorem certifiedExportEntries_of_chars {m : AverCert.Schema.Manifest} (cs : List (List Char))
+theorem certifiedExportEntries_of_chars {m : _root_.AverCert.Schema.Manifest} (cs : List (List Char))
     (h : m.obligations.map (·.export_) = cs.map String.ofList) :
     certifiedExportEntries m =
       List.zipWith (fun (o : Obligation) (c : List Char) =>
-        ({ name := c.map Char.toNat, kind := 0, idx := o.self } : AverCert.WasmSlice.ExportEntry))
+        ({ name := c.map Char.toNat, kind := 0, idx := o.self } : _root_.AverCert.WasmSlice.ExportEntry))
         m.obligations cs := by
   unfold certifiedExportEntries
   generalize m.obligations = os at h ⊢
@@ -476,7 +476,7 @@ theorem certifiedExportEntries_of_chars {m : AverCert.Schema.Manifest} (cs : Lis
           simp only [List.map_cons, List.cons.injEq] at h
           rw [List.map_cons, List.zipWith_cons_cons, ih cs h.2, h.1, stringBytes_ofList]
 
-theorem declaredUncertifiedNames_of_chars {m : AverCert.Schema.Manifest} (ds : List (List Char))
+theorem declaredUncertifiedNames_of_chars {m : _root_.AverCert.Schema.Manifest} (ds : List (List Char))
     (h : m.subject.declaredUncertified.map (·.1) = ds.map String.ofList) :
     declaredUncertifiedNames m = ds.map (List.map Char.toNat) := by
   have := congrArg (List.map stringBytes) h
@@ -489,7 +489,7 @@ theorem exportsAccounted_of_chars (artifact : ArtifactData) (cs ds : List (List 
     (hd : artifact.manifest.subject.declaredUncertified.map (·.1) = ds.map String.ofList)
     (h : exportsAccountedOf artifact.modBytes artifact.modLen
       (List.zipWith (fun (o : Obligation) (c : List Char) =>
-        ({ name := c.map Char.toNat, kind := 0, idx := o.self } : AverCert.WasmSlice.ExportEntry))
+        ({ name := c.map Char.toNat, kind := 0, idx := o.self } : _root_.AverCert.WasmSlice.ExportEntry))
         artifact.manifest.obligations cs)
       (ds.map (List.map Char.toNat)) = true) :
     exportsAccounted artifact = true := by
@@ -498,7 +498,7 @@ theorem exportsAccounted_of_chars (artifact : ArtifactData) (cs ds : List (List 
   exact h
 
 def capabilityBytes (capability : String × String) :
-    AverCert.WasmSlice.ByteSeq × AverCert.WasmSlice.ByteSeq :=
+    _root_.AverCert.WasmSlice.ByteSeq × _root_.AverCert.WasmSlice.ByteSeq :=
   (stringBytes capability.1, stringBytes capability.2)
 
 /-- The manifest capability list is exact (including import order), contains no
@@ -509,16 +509,16 @@ def importsWithinCapabilities (artifact : ArtifactData) : Bool :=
   let declared := artifact.manifest.subject.capabilities
   stringListNodup (declared.map (fun capability => capability.1 ++ "." ++ capability.2)) &&
   declared.all (fun capability =>
-    (AverCert.Schema.capabilityRegistryForTarget artifact.manifest.subject.target).contains capability ||
+    (_root_.AverCert.Schema.capabilityRegistryForTarget artifact.manifest.subject.target).contains capability ||
       customCapabilityImport capability) &&
-  match AverCert.WasmSlice.enumImportNames artifact.modBytes artifact.modLen with
+  match _root_.AverCert.WasmSlice.enumImportNames artifact.modBytes artifact.modLen with
   | some actual => actual == declared.map capabilityBytes
   | none => false
 
 /-- The manifest declares absence/presence and, when present, the exact start
     function index read from section 8. -/
 def startAccounted (artifact : ArtifactData) : Bool :=
-  AverCert.WasmSlice.startFuncIndex artifact.modBytes artifact.modLen ==
+  _root_.AverCert.WasmSlice.startFuncIndex artifact.modBytes artifact.modLen ==
     some artifact.manifest.subject.start
 
 /-- One union closure over all certified roots. Closure of a union is the union
@@ -529,20 +529,20 @@ def startAccounted (artifact : ArtifactData) : Bool :=
 def closureIsolation (artifact : ArtifactData) : Bool :=
   let claim := artifact.closureClaim
   let certified := artifact.manifest.obligations.map (fun obligation => obligation.self)
-  AverCert.WasmSlice.natListNodup claim.roots &&
-  AverCert.WasmSlice.natListNodup claim.helpers &&
-  AverCert.WasmSlice.natListNodup claim.admitted &&
-  AverCert.WasmSlice.natSetEq claim.roots certified &&
-  claim.roots.all (fun root => !AverCert.WasmSlice.natMem root claim.helpers) &&
-  AverCert.WasmSlice.natSetEq claim.admitted (claim.roots ++ claim.helpers) &&
-  AverCert.WasmSlice.noSharedMemory artifact.modBytes artifact.modLen &&
-  match AverCert.WasmSlice.closureFold artifact.modBytes artifact.modLen
+  _root_.AverCert.WasmSlice.natListNodup claim.roots &&
+  _root_.AverCert.WasmSlice.natListNodup claim.helpers &&
+  _root_.AverCert.WasmSlice.natListNodup claim.admitted &&
+  _root_.AverCert.WasmSlice.natSetEq claim.roots certified &&
+  claim.roots.all (fun root => !_root_.AverCert.WasmSlice.natMem root claim.helpers) &&
+  _root_.AverCert.WasmSlice.natSetEq claim.admitted (claim.roots ++ claim.helpers) &&
+  _root_.AverCert.WasmSlice.noSharedMemory artifact.modBytes artifact.modLen &&
+  match _root_.AverCert.WasmSlice.closureFold artifact.modBytes artifact.modLen
       artifact.closureFuel claim.roots [] with
-  | some actual => AverCert.WasmSlice.natSetEq actual claim.admitted
+  | some actual => _root_.AverCert.WasmSlice.natSetEq actual claim.admitted
   | none => false
 
 def acceptedWholeModule (artifact : ArtifactData) : Prop :=
-  CertDecode.moduleFramingValid artifact.modBytes artifact.modLen = true ∧
+  _root_.CertDecode.moduleFramingValid artifact.modBytes artifact.modLen = true ∧
   exportsAccounted artifact = true ∧
   importsWithinCapabilities artifact = true ∧
   startAccounted artifact = true ∧
@@ -598,20 +598,20 @@ def obligationsDerived (artifact : ArtifactData) : Prop :=
   artifact.manifest.obligations =
     obligationsOf artifact.manifest.subject artifact.manifest.types artifact.manifest.fnPlans
 
-def artifactCoreBytes (artifact : ArtifactData) : AverCert.Wasip2Envelope.ByteSeq :=
-  AverCert.Wasip2Envelope.ComponentEnvelope.bytes artifact.modBytes artifact.modLen
+def artifactCoreBytes (artifact : ArtifactData) : _root_.AverCert.Wasip2Envelope.ByteSeq :=
+  _root_.AverCert.Wasip2Envelope.ComponentEnvelope.bytes artifact.modBytes artifact.modLen
 
 /-- Check a single wasip2 envelope declaration against delivered component bytes
     and the already-selected core module bytes. The split is length-driven only:
     it never parses component syntax or searches for a core module. -/
 def wasip2EnvelopeAccepted
-    (env : AverCert.Wasip2Envelope.ComponentEnvelope)
+    (env : _root_.AverCert.Wasip2Envelope.ComponentEnvelope)
     (componentBytes componentLen modBytes modLen : Nat) : Bool :=
   env.embeddedCoreModuleLen != 0 &&
   componentLen == env.prefixLen + env.embeddedCoreModuleLen + env.suffixLen &&
   match env.split componentBytes componentLen with
   | some (_, core, _) =>
-      core == AverCert.Wasip2Envelope.ComponentEnvelope.bytes modBytes modLen
+      core == _root_.AverCert.Wasip2Envelope.ComponentEnvelope.bytes modBytes modLen
   | none => false
 
 /-- Bind the target artifact bytes to the core module bytes used by the existing
