@@ -323,11 +323,9 @@ impl SlotTable {
         };
         // Allocate one scratch local per unique `Vector<T>` instantiation
         // that appears as the first argument of any `Vector.set` call in
-        // this fn body. The clone-on-write emit (`emit_vector_set_*`)
-        // builds the new vector via `array.new_default` + `array.copy`
-        // and conditionally writes the changed cell on the copy — that
-        // requires a typed local to hold the copy ref between
-        // `array.copy` and the subsequent `array.set`.
+        // this fn body. The boxed `Vector.set` emit evaluates its receiver
+        // once into it, a version (`vectors.rs`), and reads it for the
+        // bounds test and the versioned `set`.
         let mut vector_set_canonicals: HashSet<String> = HashSet::new();
         let mut vector_new_canonicals: HashSet<String> = HashSet::new();
         collect_vector_scratch_canonicals(
@@ -339,10 +337,10 @@ impl SlotTable {
         let mut sorted: Vec<String> = vector_set_canonicals.into_iter().collect();
         sorted.sort(); // deterministic local order
         for canonical in sorted {
-            if let Some(vec_idx) = registry.vector_type_idx(&canonical) {
+            if let Some(vector) = registry.vector_slots(&canonical) {
                 let ty = ValType::Ref(wasm_encoder::RefType {
                     nullable: true,
-                    heap_type: wasm_encoder::HeapType::Concrete(vec_idx),
+                    heap_type: wasm_encoder::HeapType::Concrete(vector.version),
                 });
                 let local_idx = by_slot.len() as u32;
                 by_slot.push(ty);

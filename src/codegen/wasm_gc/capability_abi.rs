@@ -57,15 +57,19 @@ enum HelperKind {
     },
     ListIsEmpty,
     VectorNew {
-        type_idx: u32,
+        slots: super::types::VectorSlots,
     },
-    VectorLen,
+    VectorLen {
+        slots: super::types::VectorSlots,
+    },
     VectorGet {
-        type_idx: u32,
+        slots: super::types::VectorSlots,
+        current: u32,
         value: Option<ValType>,
     },
     VectorSet {
-        type_idx: u32,
+        slots: super::types::VectorSlots,
+        current: u32,
         value: Option<ValType>,
     },
     SumKind {
@@ -105,6 +109,8 @@ pub(super) struct IntAbiHelpers {
 
 pub(super) struct CollectionAbiHelpers<'a> {
     pub(super) maps: &'a dyn Fn(&str) -> Option<MapKVHelpers>,
+    /// The `current` helper of a `Vector<T>` (`vectors.rs`), by canonical.
+    pub(super) vector_current: &'a dyn Fn(&str) -> Option<u32>,
     pub(super) packed_sequences: &'a dyn Fn(&str) -> Option<PackedSequenceOps>,
 }
 
@@ -407,32 +413,36 @@ impl CapabilityAbi {
                 }
             }
             Type::Vector(inner) => {
-                let type_idx = *registry
-                    .vector_types
-                    .get(&canonical.replace(' ', ""))
-                    .ok_or_else(|| {
-                        WasmGcError::Validation(format!("capability ABI lacks `{canonical}` slot"))
-                    })?;
+                let compact = canonical.replace(' ', "");
+                let lacks =
+                    || WasmGcError::Validation(format!("capability ABI lacks `{canonical}` slot"));
+                let slots = registry
+                    .vector_versions
+                    .get(&compact)
+                    .copied()
+                    .ok_or_else(lacks)?;
+                let current = (collection_helpers.vector_current)(&compact).ok_or_else(lacks)?;
                 let vector = value(ty)?.expect("Vector has a wasm value");
                 let inner = value(inner)?;
                 push(
                     format!("{stem}_new"),
                     vec![ValType::I32],
                     vec![vector],
-                    HelperKind::VectorNew { type_idx },
+                    HelperKind::VectorNew { slots },
                 );
                 push(
                     format!("{stem}_len"),
                     vec![vector],
                     vec![ValType::I32],
-                    HelperKind::VectorLen,
+                    HelperKind::VectorLen { slots },
                 );
                 push(
                     format!("{stem}_get"),
                     vec![vector, ValType::I32],
                     inner.into_iter().collect(),
                     HelperKind::VectorGet {
-                        type_idx,
+                        slots,
+                        current,
                         value: inner,
                     },
                 );
@@ -443,7 +453,8 @@ impl CapabilityAbi {
                     set_params,
                     vec![],
                     HelperKind::VectorSet {
-                        type_idx,
+                        slots,
+                        current,
                         value: inner,
                     },
                 );
@@ -929,31 +940,44 @@ fn emit_helper(function: &mut Function, kind: &HelperKind) {
             function.instruction(&Instruction::LocalGet(0));
             function.instruction(&Instruction::RefIsNull);
         }
-        HelperKind::VectorNew { type_idx } => {
+        HelperKind::VectorNew { slots } => {
             function.instruction(&Instruction::LocalGet(0));
-            function.instruction(&Instruction::ArrayNewDefault(*type_idx));
+            function.instruction(&Instruction::ArrayNewDefault(slots.array));
+            super::vectors::emit_wrap_array(function, *slots);
         }
-        HelperKind::VectorLen => {
+        HelperKind::VectorLen { slots } => {
             function.instruction(&Instruction::LocalGet(0));
-            function.instruction(&Instruction::ArrayLen);
+            super::vectors::emit_version_len(function, *slots);
         }
-        HelperKind::VectorGet { type_idx, value } => {
+        HelperKind::VectorGet {
+            slots,
+            current,
+            value,
+        } => {
             function.instruction(&Instruction::LocalGet(0));
+            function.instruction(&Instruction::Call(*current));
             function.instruction(&Instruction::LocalGet(1));
-            function.instruction(&Instruction::ArrayGet(*type_idx));
+            function.instruction(&Instruction::ArrayGet(slots.array));
             if value.is_none() {
                 function.instruction(&Instruction::Drop);
             }
         }
-        HelperKind::VectorSet { type_idx, value } => {
+        // The host fills a vector it has just made with `_new`: no other
+        // version exists yet, so the cell is written in place.
+        HelperKind::VectorSet {
+            slots,
+            current,
+            value,
+        } => {
             function.instruction(&Instruction::LocalGet(0));
+            function.instruction(&Instruction::Call(*current));
             function.instruction(&Instruction::LocalGet(1));
             if value.is_some() {
                 function.instruction(&Instruction::LocalGet(2));
             } else {
                 function.instruction(&Instruction::I32Const(0));
             }
-            function.instruction(&Instruction::ArraySet(*type_idx));
+            function.instruction(&Instruction::ArraySet(slots.array));
         }
         HelperKind::SumKind { variants } => {
             for (tag, variant) in variants.iter().enumerate() {

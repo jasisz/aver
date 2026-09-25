@@ -2349,6 +2349,12 @@ pub(super) fn emit_module_with(
         capability_int_abi,
         &super::capability_abi::CollectionAbiHelpers {
             maps: &|canonical| map_helpers.kv_helpers(canonical),
+            vector_current: &|canonical| {
+                let element = super::types::TypeRegistry::vector_element_type(canonical)?;
+                list_helpers
+                    .vfl_ops_for(&format!("List<{}>", element.trim()))
+                    .map(|ops| ops.current)
+            },
             packed_sequences: &|name| packed_sequence_helpers.ops_for(name),
         },
         &mut types,
@@ -6610,6 +6616,35 @@ fn emit_user_types(
                 element_type: wasm_encoder::StorageType::Val(elem_val),
                 mutable: true,
             }),
+        ));
+        // A `Vector<T>` value: a version over that array (`vectors.rs`),
+        // and what one cell held in an older version.
+        let slots = registry.vector_versions[canonical];
+        let nullable = |heap: u32| {
+            wasm_encoder::StorageType::Val(ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(heap),
+            }))
+        };
+        let field = |element_type| wasm_encoder::FieldType {
+            element_type,
+            mutable: true,
+        };
+        entries.push((
+            slots.version,
+            mk_struct(vec![
+                field(nullable(slots.array)),
+                field(nullable(slots.diff)),
+                field(wasm_encoder::StorageType::Val(ValType::I32)),
+            ]),
+        ));
+        entries.push((
+            slots.diff,
+            mk_struct(vec![
+                field(nullable(slots.version)),
+                field(wasm_encoder::StorageType::Val(ValType::I32)),
+                field(wasm_encoder::StorageType::Val(elem_val)),
+            ]),
         ));
     }
 

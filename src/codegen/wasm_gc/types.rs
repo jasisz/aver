@@ -85,6 +85,10 @@ pub(super) struct TypeRegistry {
     /// Insertion order for `vector_types` — used by module emit so
     /// type-section entries land at the indices the registry recorded.
     pub(super) vector_order: Vec<String>,
+    /// The version and diff struct of every `Vector<T>` in
+    /// `vector_order`. A `Vector<T>` value is a version over the array in
+    /// `vector_types`; see `vectors.rs`.
+    pub(super) vector_versions: HashMap<String, VectorSlots>,
     /// Per-instantiation `Option<T>` slot. Same monomorphisation
     /// strategy as `vector_types`. Each `Option<T>` lowers to a
     /// `(struct (mut i32 tag) (mut T value))` — tag=0 None, tag=1
@@ -354,6 +358,20 @@ pub(super) struct MapSlots {
     /// `(struct (mut map_ref next) (mut i32 idx) (mut K key) (mut V value)
     ///          (mut i32 hash))` — what one bucket held in an older version
     /// of a map whose arrays a newer version has since written to.
+    pub(super) diff: u32,
+}
+
+/// The wasm types of one `Vector<T>` instantiation (see `vectors.rs`).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct VectorSlots {
+    /// `(array (mut T))` — the elements.
+    pub(super) array: u32,
+    /// `(struct (mut array_ref arr) (mut diff_ref diff) (mut i32 held))` —
+    /// a `Vector<T>` value. A null `diff` marks the version that owns the
+    /// array's current contents.
+    pub(super) version: u32,
+    /// `(struct (mut version_ref next) (mut i32 idx) (mut T value))` — what
+    /// one cell held in an older version.
     pub(super) diff: u32,
 }
 
@@ -1277,6 +1295,24 @@ impl TypeRegistry {
             next_idx += 1;
         }
 
+        // Every `Vector<T>` is known by now: give each its version and diff
+        // structs, above its array.
+        let mut vector_versions: HashMap<String, VectorSlots> = HashMap::new();
+        for canonical in &vector_order {
+            let array = vector_types[canonical];
+            let version = next_idx;
+            let diff = next_idx + 1;
+            next_idx += 2;
+            vector_versions.insert(
+                canonical.clone(),
+                VectorSlots {
+                    array,
+                    version,
+                    diff,
+                },
+            );
+        }
+
         // Discover unique String literals — each gets a passive data
         // segment idx assigned in encounter order. Walk fn bodies + any
         // string literals embedded in expressions; canonicalise on
@@ -1466,6 +1502,7 @@ impl TypeRegistry {
             record_fields,
             vector_types,
             vector_order,
+            vector_versions,
             option_types,
             option_order,
             list_types,
@@ -1789,6 +1826,21 @@ impl TypeRegistry {
         let bare = strip_inner_dotted_prefixes(&aliased);
         if bare != aliased {
             self.vector_types.get(&bare).copied()
+        } else {
+            None
+        }
+    }
+
+    /// The array, version and diff types of a registered `Vector<T>`.
+    pub(super) fn vector_slots(&self, canonical: &str) -> Option<VectorSlots> {
+        let normalized = normalize_compound(canonical);
+        let aliased = apply_type_name_aliases(&normalized, &self.type_name_aliases);
+        if let Some(slots) = self.vector_versions.get(&aliased).copied() {
+            return Some(slots);
+        }
+        let bare = strip_inner_dotted_prefixes(&aliased);
+        if bare != aliased {
+            self.vector_versions.get(&bare).copied()
         } else {
             None
         }
@@ -2877,19 +2929,19 @@ pub(super) fn aver_to_wasm(
             "String.Index reached wasm-gc without its hidden array slot".into(),
         ));
     }
-    // `Vector<T>` resolves to `(ref null $vector_T)`. The registry's
-    // `vector_types` map is keyed on whitespace-stripped canonical
-    // form so `Vector<Int>` and `Vector< Int >` collide on the same
-    // slot.
+    // `Vector<T>` resolves to `(ref null $vector_version_T)`, a version
+    // over the `(array (mut T))` (`vectors.rs`). The registry's maps are
+    // keyed on whitespace-stripped canonical form so `Vector<Int>` and
+    // `Vector< Int >` collide on the same slot.
     if trimmed.starts_with("Vector<")
         && trimmed.ends_with('>')
         && let Some(reg) = registry
     {
         let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
-        if let Some(idx) = reg.vector_type_idx(&canonical) {
+        if let Some(slots) = reg.vector_slots(&canonical) {
             return Ok(Some(ValType::Ref(RefType {
                 nullable: true,
-                heap_type: HeapType::Concrete(idx),
+                heap_type: HeapType::Concrete(slots.version),
             })));
         }
     }

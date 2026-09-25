@@ -575,12 +575,8 @@ pub(crate) fn emit_mir_option_with_default(
             let index = &inner.args[1];
             let vec_aver = aver_type_str_of(vector);
             let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
-            let vec_idx =
-                ctx.registry
-                    .vector_type_idx(&canonical)
-                    .ok_or(WasmGcError::Validation(format!(
-                        "Vector.get: vector arg of type `{vec_aver}` is not a registered Vector<T>"
-                    )))?;
+            let (vslots, vops) = vector_helpers(&canonical, ctx)?;
+            let vec_idx = vslots.array;
             let element =
                 TypeRegistry::vector_element_type(&canonical).ok_or(WasmGcError::Validation(
                     format!("Vector.get: cannot parse element type from `{canonical}`"),
@@ -609,11 +605,12 @@ pub(crate) fn emit_mir_option_with_default(
             idx_nonneg!();
             idx_i32!();
             e!(vector);
-            func.instruction(&Instruction::ArrayLen);
+            emit_vector_len(func, vslots);
             func.instruction(&Instruction::I32LtU);
             func.instruction(&Instruction::I32And);
             func.instruction(&Instruction::If(block_ty));
             e!(vector);
+            func.instruction(&Instruction::Call(vops.current));
             idx_i32!();
             func.instruction(&Instruction::ArrayGet(vec_idx));
             func.instruction(&Instruction::Else);
@@ -697,16 +694,46 @@ pub(crate) fn emit_mir_option_with_default(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
-/// Mirror of `emit_vector_set_or_default`: the fused
-/// `Option.withDefault(Vector.set(v, i, x), v)`. When
-/// `mir_arg_uniquely_owned` says `v` is a dead, non-aliased binding the
-/// engine array is mutated in place (`array.set` on the original handle,
-/// no allocation); otherwise the array is cloned (`array.new_default` +
-/// `array.copy`) and the copy mutated. The ownership verdict and the
-/// instruction sequence match the HIR oracle byte-for-byte —
-/// `mir_arg_uniquely_owned` reads the same `last_use` / `aliased_slots`
-/// the oracle's `arg_uniquely_owned` does, on the same `v` occurrence
-/// (`Vector.set`'s first arg).
+/// The version slots and the helpers of `canonical` (`Vector<T>`); see
+/// `vectors.rs`.
+fn vector_helpers(
+    canonical: &str,
+    ctx: &EmitCtx<'_>,
+) -> Result<
+    (
+        crate::codegen::wasm_gc::types::VectorSlots,
+        crate::codegen::wasm_gc::lists::VectorFromListOps,
+    ),
+    WasmGcError,
+> {
+    let slots = ctx
+        .registry
+        .vector_slots(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "`{canonical}` is not a registered Vector<T>"
+        )))?;
+    let element = TypeRegistry::vector_element_type(canonical).ok_or(WasmGcError::Validation(
+        format!("cannot parse element type from `{canonical}`"),
+    ))?;
+    let ops = ctx
+        .fn_map
+        .vfl_ops_lookup(&format!("List<{}>", element.trim()))
+        .copied()
+        .ok_or(WasmGcError::Validation(format!(
+            "the helpers of `{canonical}` were not registered"
+        )))?;
+    Ok((slots, ops))
+}
+
+/// With a vector on the stack, leave its array's length.
+fn emit_vector_len(func: &mut Function, slots: crate::codegen::wasm_gc::types::VectorSlots) {
+    crate::codegen::wasm_gc::vectors::emit_version_len(func, slots);
+}
+
+/// The fused `Option.withDefault(Vector.set(v, i, x), v)`: a new version
+/// with the cell written when `i` is in range, `v` itself otherwise.
+/// `mir_arg_uniquely_owned` (a dead, non-aliased binding) lets the `set`
+/// helper skip recording the old cell when no other version needs it.
 fn emit_mir_vector_set_or_default(
     func: &mut Function,
     vector: &Spanned<MirExpr>,
@@ -717,12 +744,11 @@ fn emit_mir_vector_set_or_default(
 ) -> Result<MirBuiltinEmit, WasmGcError> {
     let vec_aver = aver_type_str_of(vector);
     let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
-    let vec_idx = ctx
-        .registry
-        .vector_type_idx(&canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "Vector.set: vector arg of type `{vec_aver}` is not a registered Vector<T>"
-        )))?;
+    let (vslots, vops) = vector_helpers(&canonical, ctx)?;
+    let version_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(vslots.version),
+    });
 
     macro_rules! e {
         ($x:expr) => {
@@ -747,93 +773,28 @@ fn emit_mir_vector_set_or_default(
         };
     }
 
-    // Fast path: dead, non-aliased binding → mutate the engine array in
-    // place and return the same handle. No scratch, no allocation.
-    //
-    // Re-emitting `vector` three times is free HERE and nowhere else: the
-    // call-site guard above only reaches this emitter when the receiver and
+    // The call-site guard only reaches this emitter when the receiver and
     // the `withDefault` default are the same `MirExpr::Local`, so every
-    // emission is one `local.get` of one cell. (The boxed spelling,
-    // `emit_mir_vector_set_boxed`, has no such guard — its receiver can be a
-    // provably-fresh non-local, and re-emitting THAT builds another array.)
-    if mir_arg_uniquely_owned(vector, ctx) {
-        idx_nonneg!();
-        idx_i32!();
-        e!(vector);
-        func.instruction(&Instruction::ArrayLen);
-        func.instruction(&Instruction::I32LtU);
-        func.instruction(&Instruction::I32And);
-        func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-        e!(vector);
-        idx_i32!();
-        e!(value);
-        func.instruction(&Instruction::ArraySet(vec_idx));
-        func.instruction(&Instruction::End);
-        e!(vector);
-        return Ok(MirBuiltinEmit::Produced(true));
-    }
-
-    // Slow path (clone-on-write): the slot may share its engine array
-    // with another live binding. Allocate a fresh array, copy every
-    // cell, mutate the copy.
-    let scratch = slots
-        .vector_set_scratch
-        .get(&canonical)
-        .copied()
-        .ok_or_else(|| {
-            WasmGcError::Validation(format!(
-                "Vector.set: scratch local for `{canonical}` not reserved \
-                 (slot-pre-pass missed this site)"
-            ))
-        })?;
-    let vec_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(vec_idx),
-    });
-
-    // The bounds test runs BEFORE the copy, and the whole clone lives inside
-    // the taken branch. Out of bounds this fusion's answer is the default,
-    // which the call-site guard proved is the receiver itself, so the else
-    // branch hands back the original instead of an identical copy of it —
-    // the same value, and no allocation at all on the miss.
-    //
-    // Scratch discipline, the same one `emit_mir_vector_set_boxed` states in
-    // full: there is ONE scratch local per `Vector<T>` per fn and this
-    // emitter is re-entrant, so every read of `scratch` happens before any
-    // operand that could contain another `Vector.set` of the same type is
-    // re-emitted. Both reads — the result and the `array.set` target — are
-    // therefore pushed before the index is re-emitted and before `value` is.
-    // The index used to be emitted between the store and the reads, so an
-    // index like `Vector.len(Option.withDefault(Vector.set(…), …))` handed
-    // back the array the NESTED set had left in the local.
+    // emission of `vector` is one `local.get` of one cell. In range, the
+    // versioned `set` (`vectors.rs`) writes the cell and returns the new
+    // version; a dead, non-aliased receiver that no other version is
+    // described against is written with nothing recorded. Out of range the
+    // answer is the receiver itself.
+    let owned = mir_arg_uniquely_owned(vector, ctx);
     idx_nonneg!();
     idx_i32!();
     e!(vector);
-    func.instruction(&Instruction::ArrayLen);
+    emit_vector_len(func, vslots);
     func.instruction(&Instruction::I32LtU);
     func.instruction(&Instruction::I32And);
-    func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(vec_ref)));
-
+    func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        version_ref,
+    )));
     e!(vector);
-    func.instruction(&Instruction::ArrayLen);
-    func.instruction(&Instruction::ArrayNewDefault(vec_idx));
-    func.instruction(&Instruction::LocalSet(scratch));
-    func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::I32Const(0));
-    e!(vector);
-    func.instruction(&Instruction::I32Const(0));
-    e!(vector);
-    func.instruction(&Instruction::ArrayLen);
-    func.instruction(&Instruction::ArrayCopy {
-        array_type_index_dst: vec_idx,
-        array_type_index_src: vec_idx,
-    });
-    func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::LocalGet(scratch));
     idx_i32!();
     e!(value);
-    func.instruction(&Instruction::ArraySet(vec_idx));
-
+    func.instruction(&Instruction::I32Const(i32::from(owned)));
+    func.instruction(&Instruction::Call(vops.set));
     func.instruction(&Instruction::Else);
     e!(vector);
     func.instruction(&Instruction::End);
@@ -2392,10 +2353,15 @@ pub(crate) fn emit_mir_vector_builtin(
 ) -> Result<MirBuiltinEmit, WasmGcError> {
     match dotted {
         "Vector.len" if args.len() == 1 => {
+            let canonical: String = aver_type_str_of(&args[0])
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let (vslots, _) = vector_helpers(&canonical, ctx)?;
             if emit_mir_expr(func, &args[0], slots, ctx)?.is_none() {
                 return Ok(MirBuiltinEmit::Fallback);
             }
-            func.instruction(&Instruction::ArrayLen);
+            emit_vector_len(func, vslots);
             func.instruction(&Instruction::I64ExtendI32U);
             // `Vector.len` returns `Int` — lift the i64 length into the
             // `$AverInt` carrier.
@@ -2427,6 +2393,8 @@ pub(crate) fn emit_mir_vector_builtin(
                 return Ok(MirBuiltinEmit::Fallback);
             }
             func.instruction(&Instruction::ArrayNew(vec_idx));
+            let (vslots, _) = vector_helpers(&canonical, ctx)?;
+            crate::codegen::wasm_gc::vectors::emit_wrap_array(func, vslots);
         }
         "Vector.new" if args.len() == 2 => {
             let elem_aver = aver_type_str_of(&args[1]);
@@ -2490,6 +2458,8 @@ pub(crate) fn emit_mir_vector_builtin(
             emit_size_i64(func)?;
             func.instruction(&Instruction::I32WrapI64);
             func.instruction(&Instruction::ArrayNew(vec_idx));
+            let (vslots, _) = vector_helpers(&canonical, ctx)?;
+            crate::codegen::wasm_gc::vectors::emit_wrap_array(func, vslots);
             emit_default_value(func, "String", ctx.registry)?;
             func.instruction(&Instruction::StructNew(res_idx));
             func.instruction(&Instruction::Else);
@@ -2536,8 +2506,9 @@ pub(crate) fn emit_mir_vector_new_literal(
     emit_mir_vector_builtin(func, "__vector_new", args, slots, ctx)
 }
 
-/// Mirror of `emit_vector_get_boxed` (builtins.rs): bounds-checked
-/// `Option<T>` — `Some(arr[i])` in range, `None` otherwise.
+/// Bounds-checked `Vector.get` as an `Option<T>`: `Some(arr[i])` in range,
+/// `None` otherwise. The elements are read from the vector's current array
+/// (`vectors.rs`).
 pub(crate) fn emit_mir_vector_get_boxed(
     func: &mut Function,
     vector: &Spanned<MirExpr>,
@@ -2547,12 +2518,7 @@ pub(crate) fn emit_mir_vector_get_boxed(
 ) -> Result<MirBuiltinEmit, WasmGcError> {
     let vec_aver = aver_type_str_of(vector);
     let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
-    let vec_idx = ctx
-        .registry
-        .vector_type_idx(&canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "Vector.get: vector arg of type `{vec_aver}` is not a registered Vector<T>"
-        )))?;
+    let (vslots, vops) = vector_helpers(&canonical, ctx)?;
     let element = TypeRegistry::vector_element_type(&canonical).ok_or(WasmGcError::Validation(
         format!("Vector.get: cannot parse element type from `{canonical}`"),
     ))?;
@@ -2593,14 +2559,15 @@ pub(crate) fn emit_mir_vector_get_boxed(
     idx_nonneg!();
     idx_i32!();
     e!(vector);
-    func.instruction(&Instruction::ArrayLen);
+    emit_vector_len(func, vslots);
     func.instruction(&Instruction::I32LtU);
     func.instruction(&Instruction::I32And);
     func.instruction(&Instruction::If(block_ty));
     func.instruction(&Instruction::I32Const(1));
     e!(vector);
+    func.instruction(&Instruction::Call(vops.current));
     idx_i32!();
-    func.instruction(&Instruction::ArrayGet(vec_idx));
+    func.instruction(&Instruction::ArrayGet(vslots.array));
     func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::Else);
     func.instruction(&Instruction::I32Const(0));
@@ -2610,9 +2577,9 @@ pub(crate) fn emit_mir_vector_get_boxed(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
-/// Mirror of `emit_vector_set_boxed` (builtins.rs): `Option<Vector<T>>`.
-/// Fast path (uniquely-owned arg) mutates the engine array in place;
-/// slow path clone-on-writes through the per-`Vector<T>` scratch local.
+/// `Vector.set` as an `Option<Vector<T>>`: in range, `Some` of the new
+/// version the versioned `set` helper returns (`vectors.rs`); otherwise
+/// `None`.
 pub(crate) fn emit_mir_vector_set_boxed(
     func: &mut Function,
     vector: &Spanned<MirExpr>,
@@ -2623,12 +2590,7 @@ pub(crate) fn emit_mir_vector_set_boxed(
 ) -> Result<MirBuiltinEmit, WasmGcError> {
     let vec_aver = aver_type_str_of(vector);
     let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
-    let vec_idx = ctx
-        .registry
-        .vector_type_idx(&canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "Vector.set: vector arg of type `{vec_aver}` is not a registered Vector<T>"
-        )))?;
+    let (vslots, vops) = vector_helpers(&canonical, ctx)?;
     let opt_canonical = format!("Option<{canonical}>");
     let opt_idx = ctx
         .registry
@@ -2673,100 +2635,39 @@ pub(crate) fn emit_mir_vector_set_boxed(
                  (slot-pre-pass missed this site)"
             ))
         })?;
-    if mir_arg_uniquely_owned(vector, ctx) {
-        // The receiver is emitted ONCE, into the scratch local, and read back
-        // from there at all three sites. Re-emitting it is only free for a
-        // LOCAL; a non-local receiver is owned-eligible when it is a provably
-        // FRESH collection, and re-emitting a fresh collection BUILDS ANOTHER
-        // ONE. Three emissions then meant three different arrays: the bounds
-        // check measured the first, `array.set` wrote the second, and the
-        // `Some` wrapped the third — so
-        // `Vector.set(Vector.fromList([x, 9]), 0, x + 5000)` answered `x`
-        // where every other backend answered `x + 5000` (#953 round 3, probe
-        // h). Freshness earns the write, it does not make the value free.
-        //
-        // ## Scratch discipline: every read of it before any re-emission
-        //
-        // There is ONE scratch local per `Vector<T>` per fn, and the emitter
-        // is re-entrant: an operand re-emitted here can be another
-        // `Vector.set` of the same `Vector<T>`, which stores into that same
-        // local. So the whole body obeys one rule — emit everything that can
-        // re-enter, THEN store, THEN read, and let the tail re-emissions
-        // clobber a local nothing will read again:
-        //
-        // - the index goes first, before the store. It is emitted up to three
-        //   times (non-negative test, bounds test, `array.set` operand), and
-        //   a nested set inside it would otherwise overwrite the receiver
-        //   between the store and the first read;
-        // - the `Some` is built BEFORE the write, so both remaining reads of
-        //   `scratch` — the payload and the `array.set` target — happen
-        //   before the index is re-emitted and before `value` is. It still
-        //   observes the mutation: the struct holds the array by reference.
-        idx_nonneg!();
-        idx_i32!();
-        e!(vector);
-        func.instruction(&Instruction::LocalSet(scratch));
-        func.instruction(&Instruction::LocalGet(scratch));
-        func.instruction(&Instruction::ArrayLen);
-        func.instruction(&Instruction::I32LtU);
-        func.instruction(&Instruction::I32And);
-        func.instruction(&Instruction::If(block_ty));
-        func.instruction(&Instruction::I32Const(1));
-        func.instruction(&Instruction::LocalGet(scratch));
-        func.instruction(&Instruction::StructNew(opt_idx));
-        func.instruction(&Instruction::LocalGet(scratch));
-        idx_i32!();
-        e!(value);
-        func.instruction(&Instruction::ArraySet(vec_idx));
-        func.instruction(&Instruction::Else);
-        func.instruction(&Instruction::I32Const(0));
-        func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-            vec_idx,
-        )));
-        func.instruction(&Instruction::StructNew(opt_idx));
-        func.instruction(&Instruction::End);
-        return Ok(MirBuiltinEmit::Produced(true));
-    }
-
+    let owned = mir_arg_uniquely_owned(vector, ctx);
+    // The receiver is emitted ONCE, into the scratch local: a non-local
+    // receiver is owned-eligible when it is a provably FRESH collection, and
+    // re-emitting a fresh collection builds another one (#953 round 3).
+    //
+    // ## Scratch discipline
+    //
+    // There is ONE scratch local per `Vector<T>` per fn, and the emitter is
+    // re-entrant: an operand re-emitted here can be another `Vector.set` of
+    // the same `Vector<T>`, which stores into that same local. So the index
+    // goes first, before the store, and the only read of `scratch` after the
+    // bounds test (the `set` receiver) is pushed before the index is
+    // re-emitted and before `value` is.
     idx_nonneg!();
     idx_i32!();
     e!(vector);
-    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::LocalSet(scratch));
+    func.instruction(&Instruction::LocalGet(scratch));
+    emit_vector_len(func, vslots);
     func.instruction(&Instruction::I32LtU);
     func.instruction(&Instruction::I32And);
     func.instruction(&Instruction::If(block_ty));
-    e!(vector);
-    func.instruction(&Instruction::ArrayLen);
-    func.instruction(&Instruction::ArrayNewDefault(vec_idx));
-    func.instruction(&Instruction::LocalSet(scratch));
-    func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::I32Const(0));
-    e!(vector);
-    func.instruction(&Instruction::I32Const(0));
-    e!(vector);
-    func.instruction(&Instruction::ArrayLen);
-    func.instruction(&Instruction::ArrayCopy {
-        array_type_index_dst: vec_idx,
-        array_type_index_src: vec_idx,
-    });
-    // Same scratch discipline as the owned path above: the `Some` wraps the
-    // copy BEFORE the copy is written, so both reads of `scratch` are done
-    // before the index is re-emitted and before `value` is. Without it a
-    // nested `Vector.set` of the same `Vector<T>` in either operand — an
-    // index like `Vector.len(Option.withDefault(Vector.set(…), …))` is enough
-    // — left the payload pointing at the nested set's array while the write
-    // landed correctly on this one.
     func.instruction(&Instruction::I32Const(1));
-    func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::LocalGet(scratch));
     idx_i32!();
     e!(value);
-    func.instruction(&Instruction::ArraySet(vec_idx));
+    func.instruction(&Instruction::I32Const(i32::from(owned)));
+    func.instruction(&Instruction::Call(vops.set));
+    func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::Else);
     func.instruction(&Instruction::I32Const(0));
     func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        vec_idx,
+        vslots.version,
     )));
     func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::End);

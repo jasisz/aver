@@ -76,11 +76,28 @@ pub(super) struct VectorFromListOps {
     /// reverse. Slotted alongside `from_list` so any pair of
     /// `(List<T>, Vector<T>)` registers both helpers together.
     pub(super) to_list: u32,
+    /// `current : (Vector<T>) -> array`: the version made current, and
+    /// its array (`vectors.rs`). Every read of the elements goes through it.
+    pub(super) current: u32,
+    /// `set : (Vector<T>, i32, T, i32 owned) -> Vector<T>`: a new version
+    /// with one cell written, index already checked (`vectors.rs`).
+    pub(super) set: u32,
     /// `eq : (Vector<T>, Vector<T>) -> i32`. Length-match + per-T
     /// element eq. None when T isn't `list_eq_kind`-able.
     pub(super) eq: Option<u32>,
     /// `hash : (Vector<T>) -> i32`. DJB2 fold over array elements.
     pub(super) hash: Option<u32>,
+}
+
+/// Function type indices of one `(List<T>, Vector<T>)` pair's helpers.
+#[derive(Debug, Clone, Copy)]
+struct VflTypeIdx {
+    from_list: u32,
+    to_list: u32,
+    current: u32,
+    set: u32,
+    eq: Option<u32>,
+    hash: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -104,8 +121,8 @@ pub(super) struct ListHelperRegistry {
     /// registry).
     vfl_ops: HashMap<String, VectorFromListOps>,
     vfl_order: Vec<String>,
-    /// Per-pair: `(from_list_type_idx, to_list_type_idx)`.
-    vfl_type_indices: HashMap<String, (u32, u32, Option<u32>, Option<u32>)>,
+    /// Per-pair function type indices, in registration order.
+    vfl_type_indices: HashMap<String, VflTypeIdx>,
 
     /// `Tuple<A,B>` canonical → `List.zip` fn idx. Registered when
     /// the program has `List<A>`, `List<B>`, and `List<Tuple<A,B>>`
@@ -266,9 +283,17 @@ impl ListHelperRegistry {
             *next_type_idx += 1;
             let to_ty = *next_type_idx;
             *next_type_idx += 1;
+            let current_ty = *next_type_idx;
+            *next_type_idx += 1;
+            let set_ty = *next_type_idx;
+            *next_type_idx += 1;
             let from_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let to_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let current_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let set_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             // Vector<T> eq + hash slots match the list cap — same
             // resolvable kinds (primitive / String / nominal record-
@@ -292,12 +317,23 @@ impl ListHelperRegistry {
                 VectorFromListOps {
                     from_list: from_fn,
                     to_list: to_fn,
+                    current: current_fn,
+                    set: set_fn,
                     eq: vec_eq_fn,
                     hash: vec_hash_fn,
                 },
             );
-            self.vfl_type_indices
-                .insert(canonical.clone(), (from_ty, to_ty, vec_eq_ty, vec_hash_ty));
+            self.vfl_type_indices.insert(
+                canonical.clone(),
+                VflTypeIdx {
+                    from_list: from_ty,
+                    to_list: to_ty,
+                    current: current_ty,
+                    set: set_ty,
+                    eq: vec_eq_ty,
+                    hash: vec_hash_ty,
+                },
+            );
             self.vfl_order.push(canonical.clone());
         }
 
@@ -424,12 +460,12 @@ impl ListHelperRegistry {
                 )))?;
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
             let vec_canonical = format!("Vector<{}>", elem.trim());
-            let vec_idx =
-                registry
-                    .vector_type_idx(&vec_canonical)
-                    .ok_or(WasmGcError::Validation(format!(
-                        "vector `{vec_canonical}` not registered for from_list"
-                    )))?;
+            let vec_idx = registry
+                .vector_slots(&vec_canonical)
+                .ok_or(WasmGcError::Validation(format!(
+                    "vector `{vec_canonical}` not registered for from_list"
+                )))?
+                .version;
             let list_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(list_idx),
@@ -442,6 +478,10 @@ impl ListHelperRegistry {
             types.ty().function([list_ref], [vec_ref]);
             // to_list : (Vector<T>) -> List<T>
             types.ty().function([vec_ref], [list_ref]);
+            // current, set (`vectors.rs`)
+            for (params, results) in super::vectors::helper_types(&vec_canonical, registry)? {
+                types.ty().function(params, results);
+            }
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
             if list_eq_kind(elem.trim(), registry).is_some() {
                 // eq : (Vector<T>, Vector<T>) -> i32
@@ -534,13 +574,15 @@ impl ListHelperRegistry {
             }
         }
         for canonical in &self.vfl_order {
-            let (from_t, to_t, eq_t, hash_t) = self.vfl_type_indices[canonical];
-            funcs.function(from_t);
-            funcs.function(to_t);
-            if let Some(t) = eq_t {
+            let idx = self.vfl_type_indices[canonical];
+            funcs.function(idx.from_list);
+            funcs.function(idx.to_list);
+            funcs.function(idx.current);
+            funcs.function(idx.set);
+            if let Some(t) = idx.eq {
                 funcs.function(t);
             }
-            if let Some(t) = hash_t {
+            if let Some(t) = idx.hash {
                 funcs.function(t);
             }
         }
@@ -608,9 +650,22 @@ impl ListHelperRegistry {
             }
         }
         for canonical in &self.vfl_order {
-            codes.function(&emit_vec_from_list(canonical, registry)?);
-            codes.function(&emit_vec_to_list(canonical, registry)?);
             let ops = self.vfl_ops[canonical];
+            let vec_canonical = format!(
+                "Vector<{}>",
+                TypeRegistry::list_element_type(canonical).unwrap().trim()
+            );
+            codes.function(&emit_vec_from_list(canonical, registry)?);
+            codes.function(&emit_vec_to_list(canonical, registry, ops.current)?);
+            codes.function(&super::vectors::emit_vector_current(
+                &vec_canonical,
+                registry,
+            )?);
+            codes.function(&super::vectors::emit_vector_set(
+                &vec_canonical,
+                registry,
+                ops.current,
+            )?);
             if ops.eq.is_some() {
                 let elem = TypeRegistry::list_element_type(canonical).unwrap();
                 let kind = list_eq_kind(elem.trim(), registry).unwrap();
@@ -621,6 +676,7 @@ impl ListHelperRegistry {
                     string_eq_fn_idx,
                     eq_helper_fn_idx,
                     aint_eq_fn_idx,
+                    ops.current,
                 )?);
                 codes.function(&emit_vec_hash(
                     canonical,
@@ -628,6 +684,7 @@ impl ListHelperRegistry {
                     kind,
                     string_eq_fn_idx,
                     hash_helper_fn_idx,
+                    ops.current,
                 )?);
             }
         }
@@ -1120,6 +1177,20 @@ fn vec_idx_of_pair(
     Ok((vec_idx, elem_val))
 }
 
+/// The version slots of the `Vector<T>` paired with `List<T>`.
+fn vector_slots_of_pair(
+    list_canonical: &str,
+    registry: &TypeRegistry,
+) -> Result<super::types::VectorSlots, WasmGcError> {
+    let elem = TypeRegistry::list_element_type(list_canonical).unwrap();
+    let vec_canonical = format!("Vector<{}>", elem.trim());
+    registry
+        .vector_slots(&vec_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "vector `{vec_canonical}` not registered"
+        )))
+}
+
 /// `len : (List<T>) -> i64`.
 fn emit_list_len(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
@@ -1286,6 +1357,7 @@ fn emit_vec_from_list(canonical: &str, registry: &TypeRegistry) -> Result<Functi
     f.instruction(&Instruction::End);
 
     f.instruction(&Instruction::LocalGet(3));
+    super::vectors::emit_wrap_array(&mut f, vector_slots_of_pair(canonical, registry)?);
     f.instruction(&Instruction::End);
     Ok(f)
 }
@@ -2315,20 +2387,31 @@ fn emit_list_cons(canonical: &str, registry: &TypeRegistry) -> Result<Function, 
 /// prepending each element onto a cons-list accumulator. Single
 /// pass, O(len). Per-(`Vector<T>`, `List<T>`) pair — `T` reads off
 /// the registered list canonical.
-fn emit_vec_to_list(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+fn emit_vec_to_list(
+    canonical: &str,
+    registry: &TypeRegistry,
+    current_fn: u32,
+) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(list_idx),
     });
-    // params: 0=vec. locals: 1=acc, 2=i.
-    let mut f = Function::new([(1, list_ref), (1, ValType::I32)]);
+    let array_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(vec_idx),
+    });
+    // params: 0=vector. locals: 1=acc, 2=i, 3=its current array.
+    let mut f = Function::new([(1, list_ref), (1, ValType::I32), (1, array_ref)]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(current_fn));
+    f.instruction(&Instruction::LocalSet(3));
     // acc = null
     f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
     f.instruction(&Instruction::LocalSet(1));
     // i = vec.len - 1
-    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayLen);
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
@@ -2341,7 +2424,7 @@ fn emit_vec_to_list(canonical: &str, registry: &TypeRegistry) -> Result<Function
     f.instruction(&Instruction::I32LtS);
     f.instruction(&Instruction::BrIf(1));
     // acc = cons(vec[i], acc)
-    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArrayGet(vec_idx));
     f.instruction(&Instruction::LocalGet(1));
@@ -2947,6 +3030,48 @@ fn emit_record_inline_hash(
     Ok(())
 }
 
+/// Leave the arrays of the vectors in params 0 and 1 in locals 4 and 5.
+/// Two versions of one lineage cannot both be current, so when both share
+/// an array the first one's contents are copied out first.
+fn emit_both_arrays(f: &mut Function, vec_idx: u32, current_fn: u32) {
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(current_fn));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(current_fn));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::RefEq);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefEq);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // locals 2 and 3 are free here: 2 = length.
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayNewDefault(vec_idx));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(current_fn));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: vec_idx,
+        array_type_index_src: vec_idx,
+    });
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(current_fn));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::End);
+}
+
 /// `eq : (Vector<T>, Vector<T>) -> i32`. Length check + element-
 /// wise eq via per-T instruction. Same `T must be eq-able` rule as
 /// list_eq.
@@ -2957,20 +3082,31 @@ fn emit_vec_eq(
     string_eq_fn_idx: Option<u32>,
     eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
     aint_eq_fn_idx: Option<u32>,
+    current_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
-    // params: 0=va, 1=vb. locals: 2=len, 3=i.
-    let mut f = Function::new([(1, ValType::I32), (1, ValType::I32)]);
-    f.instruction(&Instruction::LocalGet(0));
+    let array_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(vec_idx),
+    });
+    // params: 0=va, 1=vb. locals: 2=len, 3=i, 4/5=their arrays.
+    let mut f = Function::new([
+        (1, ValType::I32),
+        (1, ValType::I32),
+        (1, array_ref),
+        (1, array_ref),
+    ]);
+    emit_both_arrays(&mut f, vec_idx, current_fn);
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::ArrayLen);
-    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::ArrayLen);
     f.instruction(&Instruction::I32Ne);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::ArrayLen);
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::I32Const(0));
@@ -2981,10 +3117,10 @@ fn emit_vec_eq(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(vec_idx));
-    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(vec_idx));
     match &kind {
@@ -3043,6 +3179,7 @@ fn emit_vec_hash(
     kind: ListEqKind,
     _string_eq_fn_idx: Option<u32>,
     hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
+    current_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
     let elem = TypeRegistry::list_element_type(canonical).unwrap();
@@ -3080,10 +3217,22 @@ fn emit_vec_hash(
         }
         _ => {}
     }
+    // The vector's current array, after every other local.
+    let array_local = 1 + locals.iter().map(|(n, _)| n).sum::<u32>();
+    locals.push((
+        1,
+        ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(vec_idx),
+        }),
+    ));
     let mut f = Function::new(locals);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(current_fn));
+    f.instruction(&Instruction::LocalSet(array_local));
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(1));
-    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(array_local));
     f.instruction(&Instruction::ArrayLen);
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::I32Const(0));
@@ -3100,7 +3249,7 @@ fn emit_vec_hash(
     f.instruction(&Instruction::I32Shl);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(array_local));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(vec_idx));
     let _ = elem;
