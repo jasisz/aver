@@ -254,6 +254,44 @@ fn step(window: Window, left: Int) -> Window
     assert!(found[0].contains("still held by `window`"), "{}", found[0]);
 }
 
+/// A field one record down, set inside an update of the inner record inside
+/// an update of the outer one: the VM takes it out first.
+#[test]
+fn an_update_of_an_update_that_consumes_the_record_does_not_warn() {
+    let found = warnings(&program(
+        r#"
+fn step(setting: Setting, left: Int) -> Setting
+    ? "One key per step."
+    match left <= 0
+        true -> setting
+        false -> step(Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, left, 1)), height = setting.height + 1), left - 1)
+
+fn stepNew(setting: Setting, left: Int) -> Setting
+    ? "The same, building a new window."
+    match left <= 0
+        true -> setting
+        false -> stepNew(Setting(window = Window(created = Map.set(setting.window.created, left, 1), held = setting.window.held), height = setting.height + 1), left - 1)
+"#,
+    ));
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// The same with the inner Map read a second time is a copy.
+#[test]
+fn an_update_of_an_update_that_reads_the_map_twice_warns() {
+    let found = warnings(&program(
+        r#"
+fn step(setting: Setting, left: Int) -> Setting
+    ? "One key per step."
+    match left <= 0
+        true -> setting
+        false -> step(Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, left, Map.len(setting.window.created))), height = setting.height + 1), left - 1)
+"#,
+    ));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("still held by `setting`"), "{}", found[0]);
+}
+
 /// The callee lives in a dependency: the check reads its source to see that
 /// it updates the Map and hands it back.
 #[test]

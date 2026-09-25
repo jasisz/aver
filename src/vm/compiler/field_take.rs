@@ -1,121 +1,89 @@
 //! Taking a field out of a local record that a record literal or update
-//! consumes.
+//! consumes, on the VM.
 //!
-//! `T.update(state, counts = Map.set(state.counts, k, v), served = state.served + 1)`
-//! reads `state` three times: as the base, for `counts` and for `served`. The
-//! read of `counts` is not the last one, so the local still holds the record
-//! when `Map.set` runs, the base sits on the operand stack below it, and the
-//! record holds the Map. Every one of those is a holder, so the write copies
-//! the whole Map, on every call.
-//!
-//! None of those holders can observe the field once it is gone. The base is
-//! written over at exactly that field by the update, and the local is read
-//! afterwards only for other fields of the record, and then never again. A
-//! field projected under those conditions is compiled to `RECORD_TAKE_NAMED`
-//! carrying the number of operand-stack cells the compiler knows hold the
-//! record: the base cell of the update, and the local's own cell while a
-//! later read still needs it. The runtime removes the field only when the
-//! record is held by nothing off the stack and by exactly that many cells on
-//! it. Anything else holding it (a caller that kept its handle, a pending
-//! argument, another record) makes the count differ, and the read stays an
-//! ordinary copy-free read of a field that is still there.
-//!
-//! The static conditions, over the field values of one record literal or
-//! update (the base of an update is read before them):
-//!
-//! - every read of the local in those values is a direct projection
-//!   `local.field`, never the bare local, a pattern subject or a callee;
-//! - each field is projected at most once, so no read after the take can see
-//!   the emptied field;
-//! - one of those reads is the local's last use, so nothing after the literal
-//!   or update reads the local at all;
-//! - for an update whose base is this local, the field is one the update
-//!   writes, so the new record never copies the emptied slot.
+//! What may be taken is planned in `ir::field_take`, from the reads this
+//! module collects out of MIR. A projection the plan names compiles to
+//! `RECORD_TAKE_NAMED` (one field) or `RECORD_TAKE_PATH` (a path of fields),
+//! which carry the operand-stack cells the compiler knows hold each record on
+//! the way down; the runtime takes the field only when exactly those hold it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use crate::ir::field_take::ReadLog;
+pub(super) use crate::ir::field_take::{FieldTakePlan, PathLevel};
 use crate::ir::mir::{MirCallee, MirExpr};
 
-/// Fields of one local that a record literal or update may take.
-#[derive(Debug, Clone)]
-pub(super) struct FieldTakePlan {
-    pub(super) slot: u32,
-    pub(super) fields: HashSet<String>,
-    /// The local is the base of the update, so one operand-stack cell below
-    /// the field values holds the record.
-    pub(super) base_cell: bool,
-}
-
-#[derive(Default)]
-struct SlotReads {
-    bare: bool,
-    projected: HashMap<String, usize>,
-    last_use: bool,
-}
-
-fn collect_reads(expr: &MirExpr, reads: &mut HashMap<u32, SlotReads>) {
+/// `local.f1.….fn` as `(slot, last_use, [f1, …, fn])`; a bare local has no
+/// fields.
+pub(super) fn local_path(expr: &MirExpr) -> Option<(u32, bool, Vec<String>)> {
     match expr {
+        MirExpr::Local(local) => Some((local.node.slot.0, local.node.last_use, Vec::new())),
         MirExpr::Project(p) => {
-            if let MirExpr::Local(local) = &p.node.base.node {
-                let entry = reads.entry(local.node.slot.0).or_default();
-                *entry.projected.entry(p.node.field.clone()).or_default() += 1;
-                entry.last_use |= local.node.last_use;
-                return;
-            }
-            collect_reads(&p.node.base.node, reads);
+            let (slot, last_use, mut fields) = local_path(&p.node.base.node)?;
+            fields.push(p.node.field.clone());
+            Some((slot, last_use, fields))
         }
-        MirExpr::Local(local) => {
-            let entry = reads.entry(local.node.slot.0).or_default();
-            entry.bare = true;
-            entry.last_use |= local.node.last_use;
+        _ => None,
+    }
+}
+
+/// The path read of `expr` if it is a projection chain rooted at a local.
+pub(super) fn projected_path(expr: &MirExpr) -> Option<(u32, bool, Vec<String>)> {
+    local_path(expr).filter(|(_, _, fields)| !fields.is_empty())
+}
+
+fn collect(log: &mut ReadLog, expr: &MirExpr) {
+    match expr {
+        MirExpr::Project(_) | MirExpr::Local(_) if local_path(expr).is_some() => {
+            let (slot, last_use, fields) = local_path(expr).expect("checked above");
+            log.read(slot, last_use, fields);
+        }
+        MirExpr::RecordUpdate(update) if local_path(&update.node.base.node).is_some() => {
+            let (slot, last_use, fields) =
+                local_path(&update.node.base.node).expect("checked above");
+            let written = update
+                .node
+                .updates
+                .iter()
+                .map(|field| field.name.clone())
+                .collect();
+            log.enter_base(slot, last_use, fields, written);
+            for field in &update.node.updates {
+                collect(log, &field.value.node);
+            }
+            log.leave_base();
         }
         MirExpr::Call(call) => {
             if let MirCallee::LocalSlot { slot, .. } = &call.node.callee {
-                reads.entry(u32::from(*slot)).or_default().bare = true;
+                log.opaque(u32::from(*slot));
             }
             for arg in &call.node.args {
-                collect_reads(&arg.node, reads);
+                collect(log, &arg.node);
             }
         }
-        other => {
-            crate::ir::mir::expr::walk_children(other, &mut |child| collect_reads(child, reads))
-        }
+        other => crate::ir::mir::expr::walk_children(other, &mut |child| collect(log, child)),
     }
 }
 
-/// The takes one record literal (`base_slot == None`) or one update of a
-/// local base (`base_slot == Some(slot)`) allows. `written` is the set of
-/// fields the update writes; a literal writes every field.
+/// The takes one record literal (`base == None`) or one update
+/// (`base == Some(..)`, when the update's base is a local or a path of one)
+/// allows. `written` is the set of fields the update writes; a literal writes
+/// every field.
 pub(super) fn plan_field_takes<'e>(
-    base_slot: Option<u32>,
+    base: Option<(u32, Vec<String>)>,
     written: &HashSet<&str>,
     values: impl IntoIterator<Item = &'e MirExpr>,
 ) -> Vec<FieldTakePlan> {
-    let mut reads: HashMap<u32, SlotReads> = HashMap::new();
+    let mut log = ReadLog::default();
+    if let Some((slot, fields)) = base {
+        let written = written.iter().map(|field| field.to_string()).collect();
+        // The base was read before the values; whether that read was the
+        // local's last use does not matter, since then the values read
+        // nothing of it.
+        log.enter_base(slot, false, fields, written);
+    }
     for value in values {
-        collect_reads(value, &mut reads);
+        collect(&mut log, value);
     }
-    let mut plans = Vec::new();
-    for (slot, slot_reads) in reads {
-        if slot_reads.bare || !slot_reads.last_use {
-            continue;
-        }
-        let base_cell = base_slot == Some(slot);
-        let fields: HashSet<String> = slot_reads
-            .projected
-            .into_iter()
-            .filter(|(field, count)| {
-                *count == 1 && (!base_cell || written.contains(field.as_str()))
-            })
-            .map(|(field, _)| field)
-            .collect();
-        if !fields.is_empty() {
-            plans.push(FieldTakePlan {
-                slot,
-                fields,
-                base_cell,
-            });
-        }
-    }
-    plans
+    log.plans()
 }

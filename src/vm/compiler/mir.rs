@@ -468,6 +468,12 @@ pub(super) fn compile_mir_expr(
         // ── Phase 4c: record field access ───────────────────────
         MirExpr::Project(spanned_proj) => {
             let p = &spanned_proj.node;
+            // A path two or more fields below a local may take its last field
+            // under the same conditions, checked at every record on the way
+            // down (`field_take`).
+            if compile_path_take(fc, expr)? {
+                return Ok(());
+            }
             // A direct last read moves the record local onto the operand stack.
             // RECORD_TAKE_NAMED can then remove the field when runtime alias
             // checks confirm that the moved handle was unique. A field a record
@@ -482,11 +488,9 @@ pub(super) fn compile_mir_expr(
                         .field_takes
                         .iter()
                         .find(|plan| plan.slot == slot)
-                        .filter(|plan| plan.fields.contains(&p.field));
+                        .and_then(|plan| plan.path(&[p.field.as_str()]));
                     match planned {
-                        Some(plan) => {
-                            Some(u8::from(plan.base_cell) + u8::from(!local.node.last_use))
-                        }
+                        Some(path) => path.root_bases.checked_add(u8::from(!local.node.last_use)),
                         None if local.node.last_use => Some(0),
                         None => None,
                     }
@@ -740,13 +744,11 @@ pub(super) fn compile_mir_expr(
                 .iter()
                 .map(|(_, field)| field.name.as_str())
                 .collect();
-            let base_slot = match &ru.base.node {
-                MirExpr::Local(local) => Some(local.node.slot.0),
-                _ => None,
-            };
+            let base = super::field_take::local_path(&ru.base.node)
+                .map(|(slot, _, fields)| (slot, fields));
             let pushed = push_field_takes(
                 fc,
-                base_slot,
+                base,
                 &written,
                 evaluated.iter().map(|(_, field)| &field.value.node),
             );
@@ -1735,6 +1737,66 @@ where
     Ok(vec![outer_fail])
 }
 
+/// Compile `local.f1.….fn`, `n >= 2`, as one `RECORD_TAKE_PATH` when a record
+/// literal or update being compiled plans to take it, or when the read is the
+/// local's last use. Returns `false`, having emitted nothing, for any other
+/// projection.
+fn compile_path_take(
+    fc: &mut FnCompiler<'_>,
+    expr: &Spanned<MirExpr>,
+) -> Result<bool, MirVmUnsupported> {
+    let Some((slot, last_use, fields)) = super::field_take::projected_path(&expr.node) else {
+        return Ok(false);
+    };
+    if fields.len() < 2 {
+        return Ok(false);
+    }
+    let names: Vec<&str> = fields.iter().map(String::as_str).collect();
+    let planned = fc
+        .field_takes
+        .iter()
+        .find(|plan| plan.slot == slot)
+        .and_then(|plan| plan.path(&names))
+        .and_then(|path| {
+            let root_holders = path.root_bases.checked_add(u8::from(!last_use))?;
+            Some((root_holders, path.levels.clone()))
+        });
+    let (root_holders, levels) = match planned {
+        Some(take) => take,
+        // The last read of the local: nothing the compiler knows of holds any
+        // record on the way down, so each is taken out of its parent.
+        None if last_use => (
+            0,
+            vec![
+                super::field_take::PathLevel {
+                    detach: true,
+                    holders: 0,
+                };
+                fields.len() - 1
+            ],
+        ),
+        None => return Ok(false),
+    };
+    let depth = operand_u8(fields.len(), "record field path depth")?;
+    let mut root = expr;
+    while let MirExpr::Project(p) = &root.node {
+        root = &p.node.base;
+    }
+    compile_mir_expr(fc, root)?;
+    fc.emit_op(RECORD_TAKE_PATH);
+    fc.emit_u8(depth);
+    fc.emit_u8(root_holders);
+    let first = fc.symbols.intern_name(&fields[0]);
+    fc.emit_u32(first);
+    for (level, field) in levels.iter().zip(&fields[1..]) {
+        fc.emit_u8(u8::from(level.detach));
+        fc.emit_u8(level.holders);
+        let symbol = fc.symbols.intern_name(field);
+        fc.emit_u32(symbol);
+    }
+    Ok(true)
+}
+
 /// Make the field takes one record literal or update allows visible to the
 /// projections inside its field values, and return how many were pushed so
 /// the caller can drop them afterwards. A local that an enclosing literal or
@@ -1742,11 +1804,11 @@ where
 /// the larger expression, which contains this one.
 fn push_field_takes<'e>(
     fc: &mut FnCompiler<'_>,
-    base_slot: Option<u32>,
+    base: Option<(u32, Vec<String>)>,
     written: &std::collections::HashSet<&str>,
     values: impl IntoIterator<Item = &'e MirExpr>,
 ) -> usize {
-    let plans = super::field_take::plan_field_takes(base_slot, written, values);
+    let plans = super::field_take::plan_field_takes(base, written, values);
     let mut pushed = 0;
     for plan in plans {
         if fc.field_takes.iter().any(|active| active.slot == plan.slot) {

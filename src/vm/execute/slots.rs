@@ -192,6 +192,7 @@ use std::sync::OnceLock;
 use super::VM;
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
+use crate::vm::types::VmError;
 
 /// How many operand-stack cells the decision will walk over and above the
 /// number of map entries a copy would move.
@@ -662,6 +663,44 @@ impl VM {
         if self.destructured_is_unheld(tuple, worth) {
             self.arena.release_tuple_items(tuple);
         }
+    /// Whether exactly `holders` operand-stack cells hold `record`, which has
+    /// just been popped or read out of another record. Zero asks the cheaper
+    /// question [`VM::slot_is_unheld`] answers.
+    pub(super) fn record_stack_holders_are(&self, record: NanValue, holders: u8) -> bool {
+        match (holders, record.heap_index()) {
+            (0, _) => self.slot_is_unheld(record),
+            (_, Some(index)) => self.stack_holders_excluding(index, None) == u32::from(holders),
+            (_, None) => false,
+        }
+    }
+
+    /// The slot of the field `field_symbol_id` names in `record`, or the
+    /// runtime error a projection of a field the record does not have raises.
+    pub(super) fn record_field_index(
+        &self,
+        record: NanValue,
+        field_symbol_id: u32,
+    ) -> Result<usize, VmError> {
+        if record.is_record() {
+            let (type_id, _) = self.arena.get_record(record.arena_index());
+            if let Some(&field_idx) = self
+                .code
+                .record_field_slots
+                .get(&(type_id, field_symbol_id))
+            {
+                return Ok(field_idx as usize);
+            }
+        }
+        let field_name = self
+            .code
+            .symbols
+            .get(field_symbol_id)
+            .map(|info| info.name.as_str())
+            .unwrap_or("<unknown>");
+        Err(VmError::runtime(format!(
+            "record has no field '{}'",
+            field_name
+        )))
     }
 
     /// Whether a record update may move the fields of `base`, whose operand

@@ -1192,6 +1192,31 @@ impl<T: ArenaTypes> Arena<T> {
         }
     }
 
+    /// How many roots and arena entries have registered a reference to this
+    /// record. Saturates, and a saturated count never comes back down.
+    pub fn record_holder_count(&self, record: NanValue) -> u32 {
+        match self.get(record.arena_index()) {
+            ArenaEntry::Record { holder_count, .. } => *holder_count,
+            _ => u32::MAX,
+        }
+    }
+
+    /// [`Arena::take_record_field`] from a record that its parent record still
+    /// holds. The caller has established that the parent is the only holder
+    /// off the operand stack, that the parent itself is held only where the
+    /// caller accounted for, and that none of those holders reads this field
+    /// again.
+    pub fn take_nested_record_field(&mut self, record: NanValue, field_idx: usize) -> NanValue {
+        let value = match self.get_mut(record.arena_index()) {
+            ArenaEntry::Record { fields, .. } => {
+                std::mem::replace(&mut fields[field_idx], NanValue::UNIT)
+            }
+            _ => panic!("Arena: expected Record at {}", record.arena_index()),
+        };
+        self.release_held_elsewhere(value);
+        value
+    }
+
     /// Remove and return one field from a record whose uniqueness the caller
     /// has already established. Removing the direct reference releases exactly
     /// one registered holder on a nested map, vector, or record. The hot path

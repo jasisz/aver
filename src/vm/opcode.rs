@@ -242,6 +242,17 @@ pub const PROPAGATE_ERR_CONSUMED: u8 = 0xB2;
 /// Set in `MATCH_UNWRAP`'s kind byte when the match consumes its subject:
 /// a box nothing else holds then gives up the value it unwraps.
 pub const MATCH_UNWRAP_CONSUMES: u8 = 0x80;
+/// Pop a record and push the field at the end of a path of named fields
+/// below it, `local.f1.….fn` with `n = depth >= 2`
+/// (`vm::compiler::field_take`). `root_holders` counts the operand-stack cells
+/// the compiler knows hold the record, as for `RECORD_TAKE_NAMED`. Each record
+/// below it carries `detach` (take it out of its parent on the way down) and
+/// `holders` (the stack cells known to hold it). The last field is taken when
+/// the record at every level is held by exactly those cells on the stack and,
+/// off it, by nothing (the root, or a record taken out of its parent) or only
+/// by its parent; a record is taken out of its parent under the same check of
+/// every level above it. Otherwise the path is read without taking anything.
+pub const RECORD_TAKE_PATH: u8 = 0xB0; // depth:u8, root_holders:u8, field:u32, (depth-1) × (detach:u8, holders:u8, field:u32)
 
 /// Pop `count` field values, push a new variant.
 pub const VARIANT_NEW: u8 = 0x65; // type_id:u16, variant_id:u16, count:u8
@@ -664,6 +675,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         STORE_GLOBAL => "STORE_GLOBAL",
         RECORD_GET_NAMED => "RECORD_GET_NAMED",
         RECORD_TAKE_NAMED => "RECORD_TAKE_NAMED",
+        RECORD_TAKE_PATH => "RECORD_TAKE_PATH",
         VARIANT_NEW => "VARIANT_NEW",
         WRAP => "WRAP",
         TUPLE_NEW => "TUPLE_NEW",
@@ -864,6 +876,8 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
             }
         }
         RECORD_UPDATE | RECORD_NEW_INDEXED if ip + 2 < code.len() => 3 + code[ip + 2] as usize,
+        // depth:u8 root_holders:u8 field:u32, then six bytes per level below.
+        RECORD_TAKE_PATH if ip < code.len() => 6 * code[ip] as usize,
         // CALL_PAR count:u8 unwrap:u8 [argc:u8 × count]
         CALL_PAR if ip < code.len() => {
             let count = code[ip] as usize;
