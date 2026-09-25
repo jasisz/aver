@@ -411,6 +411,13 @@ impl<'a> ResolverState<'a> {
                 slots
             }
             Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => Vec::new(),
+            // Compiled away by the front door before a program is
+            // resolved; slots in binder order keep the walk total.
+            Pattern::ConstructorNested(..) | Pattern::List { .. } => pattern
+                .binder_names()
+                .into_iter()
+                .map(|name| self.declare(name, Type::Invalid))
+                .collect(),
         }
     }
 }
@@ -613,6 +620,9 @@ impl ShadowWalker<'_> {
                 for item in items {
                     Self::pattern_binders(item, out);
                 }
+            }
+            Pattern::ConstructorNested(..) | Pattern::List { .. } => {
+                out.extend(pattern.binder_names().into_iter().map(str::to_string))
             }
         }
     }

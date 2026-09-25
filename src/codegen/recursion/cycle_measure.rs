@@ -374,7 +374,14 @@ fn arm_scope(
                     );
                 }
             }
-            Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+            // Compiled into flat matches before any proof pass reads
+            // the program; binding nothing as a strict part here is the
+            // conservative reading if one ever arrives.
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::EmptyList
+            | Pattern::ConstructorNested(..)
+            | Pattern::List { .. } => {}
         }
     }
     match pattern {

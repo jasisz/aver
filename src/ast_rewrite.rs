@@ -46,6 +46,9 @@ fn collect_pattern_bindings(pattern: &Pattern, out: &mut Vec<String>) {
             }
         }
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => {
+            out.extend(pattern.binder_names().into_iter().map(str::to_string))
+        }
     }
 }
 

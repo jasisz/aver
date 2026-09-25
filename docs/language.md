@@ -100,17 +100,59 @@ match value
     x -> "bound to {x}"                    // identifier binding
     [] -> "empty list"                     // empty list
     [h, ..t] -> "head {h}, {List.len(t)} more"  // list cons
+    [a, b] -> "exactly two"                // fixed-length list
+    [a, b, ..rest] -> "at least two"       // leading elements + rest
     Result.Ok(v) -> "success: {v}"         // constructor
     Result.Err(e) -> "error: {e}"
     Shape.Circle(r) -> "circle r={r}"
     Shape.Point -> "point"
     (a, b) -> "pair: {a}, {b}"             // tuple destructuring
     ((x, y), z) -> "nested: {x}"           // nested tuple
+    Option.Some(0) -> "zero"               // literal inside a constructor
+    Result.Ok(Option.Some(v)) -> "{v}"     // constructor inside a constructor
 ```
 
 Constructor patterns are always qualified (`Result.Ok`, `Option.None`, `Shape.Circle`). Records cannot be destructured positionally in a pattern. Bind the whole record and use field access (`user.name`, `user.age`).
 
 A match may nest inside a match arm. The arm body must follow `->` on the same line, so move a complex expression into a named function.
+
+### Nested patterns
+
+Every field of a constructor pattern and every element of a list or tuple pattern is itself a pattern, at any depth. A literal, a constructor, a tuple or a list pattern may stand where a name may:
+
+```aver
+fn describe(o: Option<Int>) -> String
+    ? "Zero and one get words; other values are printed."
+    match o
+        Option.Some(0) -> "zero"
+        Option.Some(1) -> "one"
+        Option.Some(n) -> "{n}"
+        Option.None -> "nothing"
+
+fn area(s: Shape) -> Int
+    ? "A rectangle with a zero side is empty."
+    match s
+        Shape.Rect(0, _) -> 0
+        Shape.Rect(_, 0) -> 0
+        Shape.Rect(w, h) -> w * h
+        Shape.Circle(r) -> 3 * r * r
+        Shape.Point -> 0
+```
+
+List patterns match by length. `[]` is the empty list, `[a]` and `[a, b]` are lists of exactly one and two elements, and `[a, b, ..rest]` is a list of at least two, binding the remaining list to `rest` (`..rest` comes last; `.._` ignores it). `[..all]` matches any list. The elements are patterns too:
+
+```aver
+fn firstPresent(xs: List<Option<Int>>) -> Int
+    ? "The first present value, or zero."
+    match xs
+        [Option.Some(x), ..rest] -> x
+        [Option.None, ..rest] -> firstPresent(rest)
+        [] -> 0
+```
+
+Arms are still tried top to bottom. Exhaustiveness counts every case: a literal never covers its constructor, so `Option.Some(0)` needs an `Option.Some(n)` or `Option.Some(_)` arm after it, and the checker names the missing case (`Non-exhaustive match: missing pattern Option.Some(_)`, `missing pattern [_, _, _, .._]` when a list of three or more has no arm). An arm that no value can reach is an error, also when it is covered only by several earlier arms together, as `Option.Some(_)` is after `Option.Some(true)` and `Option.Some(false)`.
+
+The compiler turns a match with nested patterns into nested ordinary matches right after checking it, so every backend and the Lean export read the same program. Such a match inside a `yield` function is not supported yet; move it into a helper function.
 
 ### Literal patterns
 

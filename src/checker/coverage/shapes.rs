@@ -198,6 +198,11 @@ fn forget_pattern_bindings(pattern: &Pattern, bindings: &mut HashMap<String, Sha
             }
         }
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => {
+            for name in pattern.binder_names() {
+                bindings.remove(name);
+            }
+        }
     }
 }
 

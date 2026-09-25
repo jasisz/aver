@@ -17,6 +17,7 @@ mod matches;
 /// epic) is doc-only; see `src/ir/mir/mod.rs` for the overview and
 /// `src/ir/mir/RFC.md` for the full design.
 pub mod mir;
+pub mod nested_patterns;
 mod pass_diag;
 pub mod pipeline;
 pub mod proof_ir;

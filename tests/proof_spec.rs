@@ -416,6 +416,19 @@ const FUEL_PROBE_AV: &str = "module FuelProbe\n\
 ///
 /// The fixture puts five such builtins behind a compound receiver. With the
 /// old test in place it reports twelve build errors.
+/// Laws over functions whose matches use nested literal and list patterns
+/// (`Option.Some(0)`, `[0, ..rest]`). The front door compiles those matches
+/// into nested ordinary matches before the exporter reads the program, so
+/// the Lean definitions are ordinary nested `match`es and the laws close
+/// with no `sorry`.
+#[test]
+fn laws_over_nested_literal_and_list_patterns_build() {
+    assert_proof_builds(
+        "tests/fixtures/nested_patterns_law.av",
+        "aver-proof-nested-patterns",
+    );
+}
+
 #[test]
 fn a_method_application_in_argument_position_is_emitted_atomically() {
     assert_proof_builds(
