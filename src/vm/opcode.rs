@@ -218,10 +218,15 @@ pub const RECORD_NEW_INDEXED: u8 = 0x87; // type_id:u16, count:u8, field_idx[cou
 /// Pop record, lookup field by interned field symbol, push value.
 pub const RECORD_GET_NAMED: u8 = 0x67; // field_symbol_id:u32
 
-/// Pop record and push its named field. When the record has no stack or
-/// off-stack aliases, remove the field from the record and release that
-/// holder; otherwise behave exactly like `RECORD_GET_NAMED`.
-pub const RECORD_TAKE_NAMED: u8 = 0x6C; // field_symbol_id:u32
+/// Pop record and push its named field. `holders` is the number of
+/// operand-stack cells the compiler knows still hold the record: 0 for the
+/// last read of a local, or the base of a record update and the local's own
+/// cell when a record literal or update consumes the field before the local's
+/// last read (`vm::compiler::field_take`). When nothing off the stack holds
+/// the record and exactly `holders` cells on it do, remove the field from the
+/// record and release that holder; otherwise behave exactly like
+/// `RECORD_GET_NAMED`.
+pub const RECORD_TAKE_NAMED: u8 = 0x6C; // field_symbol_id:u32, holders:u8
 
 /// Pop `count` field values, push a new variant.
 pub const VARIANT_NEW: u8 = 0x65; // type_id:u16, variant_id:u16, count:u8
@@ -811,10 +816,10 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         CALL_KNOWN_OWNED | TAIL_CALL_KNOWN => 4, // fn_id:u16 + argc:u8 + owned:u8
 
         // 4-byte
-        RECORD_GET_NAMED | RECORD_TAKE_NAMED | LIST_NEW | TUPLE_NEW => 4,
+        RECORD_GET_NAMED | LIST_NEW | TUPLE_NEW => 4,
 
         // 5-byte
-        CALL_BUILTIN | VARIANT_NEW => 5,
+        CALL_BUILTIN | VARIANT_NEW | RECORD_TAKE_NAMED => 5,
 
         // u8 + fail_offset:i32
         MATCH_UNWRAP | MATCH_TUPLE => 5,

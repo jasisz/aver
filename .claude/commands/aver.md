@@ -88,7 +88,8 @@ Rules:
 - **arm bodies must start on the same line as `->`.** A multi-line body is a parse error; extract a helper function instead
 - no colon after the subject
 - no guards
-- list patterns: `[]` and `[head, ..tail]` (the `..` rest must be named)
+- list patterns: `[]`, `[head, ..tail]`, `[a, b]` (exactly two), `[a, b, ..rest]` (at least two), `[..all]`; the `..` rest comes last and must be named (or `_`)
+- patterns nest: constructor fields and list or tuple elements are patterns, so `Option.Some(0)`, `Result.Ok("x")`, `Shape.Rect(0, h)`, `Option.Some(Option.None)` and `[Option.Some(x), ..rest]` all work. A literal never covers its constructor: after `Option.Some(0)` you still need `Option.Some(n)` or `Option.Some(_)`
 - tuple patterns: `(a, b)`
 - constructor patterns are always qualified: `Result.Ok`, `Option.None`, `Shape.Circle`
 - literal patterns: `253 -> …` (`Int`), `"verack" -> …` (`String`), `1.5 -> …` (`Float`), `true` / `false` (`Bool`). An `Int` / `String` / `Float` match still needs a trailing `_ ->` or identifier arm. `-1 ->` is a parse error (there are no negative literal patterns), and so is an integer beyond 64 bits

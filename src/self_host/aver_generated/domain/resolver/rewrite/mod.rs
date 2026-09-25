@@ -436,7 +436,7 @@ pub fn rewriteInternalArms(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(&arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&arm.body), bindingSlots: arm.bindingSlots.clone() }, &acc);
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(&arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&arm.body), bindingSlots: arm.bindingSlots }, &acc);
             arms = __tco0;
             acc = __tco1;
             continue;
@@ -1271,7 +1271,7 @@ pub fn rewriteInternalArms__collected(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(&arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&arm.body), bindingSlots: arm.bindingSlots.clone() });
+            let __tco1 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(&arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&arm.body), bindingSlots: arm.bindingSlots });
             arms = __tco0;
             acc = __tco1;
             continue;
