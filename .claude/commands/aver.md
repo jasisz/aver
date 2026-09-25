@@ -155,7 +155,7 @@ Rules:
 - law verify expands the cartesian product of the `given` domains (capped at 10,000 cases)
 - `given x: T = [...]` describes the world or domain to test (values, or stubs for classified effects). `aver proof` quantifies universally over every value and stub, so `given <Effect>` does **not** pin the law to one stub
 - `when <pred>` is an explicit precondition on the law. Cases where it is false are skipped (in runtime, proof, and `--hostile`). Use it to scope a law to assumed worlds (`when clock(BranchPath.Root, 1) > clock(BranchPath.Root, 0)`)
-- `aver check` requires pure, non-trivial, non-`main` functions to carry a `verify` block. `error[missing-verify]` fails the check; a law block counts
+- `aver check` requires pure, non-trivial, non-`main` functions to carry a `verify` block. `error[missing-verify]` fails the check; a law block counts. A function with a parameter no case can write (a capability resource such as `Tcp.Connection` or `Work.Job`, or a same-module type that always carries one) is exempt
 - `<expr> holds` is a case whose `Bool` value must be `true`, so a law may state `a != b holds`
 - plain `verify fn` on a fn with a generative effect (Random, Http, Time.now, etc.) warns, because the case RHS is compared against a freshly produced value and flaps. Use `verify fn law …` with `given` stubs or `verify fn trace` instead
 - unclassified ambient state, persistent protocols, terminal modes, and server callbacks should use record/replay
