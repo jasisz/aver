@@ -1174,7 +1174,12 @@ pub(super) fn emit_aver_http_handle(
     }
 
     // Walk response headers map → fields.append.
-    super::maps::emit_reroot_local(&mut f, indices.headers_map_reroot_fn, l_resp_headers_map);
+    super::maps::emit_reroot_local(
+        &mut f,
+        map_idx,
+        indices.headers_map_reroot_fn,
+        l_resp_headers_map,
+    );
     f.instruction(&Instruction::LocalGet(l_resp_headers_map));
     f.instruction(&Instruction::StructGet {
         struct_type_index: map_idx,

@@ -1596,7 +1596,7 @@ fn emit_map_set(
         (1, map_ref),                                 // 17: next version
     ]);
 
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     emit_insert_prologue(&mut f, slots);
 
     // query_hash = hash(k); idx = query_hash & mask; home = idx
@@ -2047,7 +2047,7 @@ fn emit_map_get(
     ]);
     let _ = k_val;
     // cap, mask, keys, values
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -2193,7 +2193,7 @@ fn emit_map_get_or_default(
     ]);
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -2336,7 +2336,7 @@ fn emit_map_get_pair(
         (1, ValType::I32), // 10: query_hash
     ]);
 
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -2838,7 +2838,7 @@ fn emit_map_order_slots(
     // params: 0=map. locals: 1=keys, 2=indices, 3=count, 4=cap,
     // 5=slot, 6=used, 7=start, 8=end, 9=tmp.
     let mut f = Function::new([(1, keys_ref), (1, order_ref), (7, ValType::I32)]);
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3036,7 +3036,7 @@ fn emit_map_walk_keys_to_list(
         (1, list_ref),
     ]);
     // keys = map.keys
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3122,7 +3122,7 @@ fn emit_map_walk_values_to_list(
         (1, ValType::I32),
         (1, list_ref),
     ]);
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3249,7 +3249,7 @@ fn emit_map_eq(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
     // cap = a.cap; keys_a = a.keys; values_a = a.values; i = 0
-    emit_reroot_local(&mut f, reroot_fn, 2);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 2);
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3475,7 +3475,7 @@ fn emit_map_hash(
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::RefCastNonNull(map_heap));
     f.instruction(&Instruction::LocalSet(1));
-    emit_reroot_local(&mut f, reroot_fn, 1);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 1);
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(7));
     f.instruction(&Instruction::LocalGet(1));
@@ -3641,7 +3641,7 @@ fn emit_map_remove(
     };
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3935,7 +3935,7 @@ fn emit_map_entries(
         (1, ValType::I32),
         (1, lt_ref),
     ]);
-    emit_reroot_local(&mut f, reroot_fn, 0);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,

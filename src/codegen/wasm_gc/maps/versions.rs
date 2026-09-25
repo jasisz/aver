@@ -61,16 +61,27 @@ pub(in crate::codegen::wasm_gc) fn emit_no_diff(f: &mut Function, slots: MapSlot
     f.instruction(&Instruction::RefNull(HeapType::Concrete(slots.diff)));
 }
 
-/// `local.get map; call reroot; local.set map`: make the version in
-/// `map_local` the current one before its arrays are read.
+/// Make the version in `map_local` the current one before its arrays are
+/// read. The null-diff test is inline, so a map that is already current,
+/// which is nearly every map, pays a field read and no call.
 pub(in crate::codegen::wasm_gc) fn emit_reroot_local(
     f: &mut Function,
+    map_type: u32,
     reroot_fn: u32,
     map_local: u32,
 ) {
     f.instruction(&Instruction::LocalGet(map_local));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: map_type,
+        field_index: DIFF_FIELD,
+    });
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(map_local));
     f.instruction(&Instruction::Call(reroot_fn));
     f.instruction(&Instruction::LocalSet(map_local));
+    f.instruction(&Instruction::End);
 }
 
 /// `reroot(map) -> map`: make `map` the version that owns its arrays'

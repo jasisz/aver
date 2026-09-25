@@ -10970,7 +10970,7 @@ fn emit_handler_wrapper(
             "aver_http_handle wrapper requires the Map<String,List<String>> helpers".into(),
         ))?
         .reroot;
-    super::maps::emit_reroot_local(&mut f, headers_reroot, 9);
+    super::maps::emit_reroot_local(&mut f, map_slots.map, headers_reroot, 9);
 
     // Read map cap + arrays into iteration slots.
     f.instruction(&Instruction::LocalGet(9));

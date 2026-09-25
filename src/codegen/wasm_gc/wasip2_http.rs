@@ -777,7 +777,12 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     //   but the dispatcher passes an empty map, so it's a no-op
     //   beyond the cap-iter (~16k iterations of "is keys[i] null?
     //   yes, skip"). Acceptable for v1 PoC.
-    super::maps::emit_reroot_local(&mut f, indices.headers_map_reroot_fn, p_headers);
+    super::maps::emit_reroot_local(
+        &mut f,
+        indices.headers_map_type_idx,
+        indices.headers_map_reroot_fn,
+        p_headers,
+    );
     f.instruction(&Instruction::LocalGet(p_headers));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.headers_map_type_idx,
