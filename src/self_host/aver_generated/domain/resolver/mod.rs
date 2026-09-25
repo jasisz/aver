@@ -7,7 +7,7 @@ pub fn resolveProgram(
 ) -> crate::aver_generated::domain::ast::Program {
     crate::cancel_checkpoint();
     let resolvedFns @ _ = crate::aver_generated::domain::resolver::core::resolveFns(
-        prog.fns.clone(),
+        prog.fns,
         aver_rt::AverList::empty(),
     );
     let fnMap @ _ = crate::aver_generated::domain::resolver::calls::buildFnMap(
@@ -26,13 +26,13 @@ pub fn resolveProgram(
         aver_rt::AverList::empty(),
     );
     crate::aver_generated::domain::ast::Program {
-        deps: prog.deps.clone(),
+        deps: prog.deps,
         fns: crate::aver_generated::domain::resolver::rewrite::rewriteInternalFns(
             annotatedFns,
             aver_rt::AverList::empty(),
         ),
         stmts: crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmts(
-            prog.stmts.clone(),
+            prog.stmts,
             aver_rt::AverList::empty(),
         ),
     }

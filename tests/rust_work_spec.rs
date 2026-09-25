@@ -469,6 +469,54 @@ fn an_answer_modules_state_reaches_its_answer_function_uniquely_owned() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A field read at its record's last use moves the field instead of cloning
+/// it, and an update at the record's last use drops the replaced field at
+/// once.
+///
+/// `step` hands both Maps of `setting.window` to `absorbed`, which updates
+/// them in place only if it holds their sole reference; a clone would leave
+/// the record's copy alive and make each update copy the whole Map. `restarts`
+/// empties the window of a record it is done with; spelled `..setting`, the
+/// old window would stay in the partially moved local until the function
+/// returned.
+#[test]
+fn a_record_gives_up_its_fields_at_its_last_use() {
+    let name = "rust_record_field_moves";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["1000", "10", "2"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for moved in [
+            "pub fn absorbed(mut created @ _: aver_rt::AverMap<",
+            "pub fn step(mut setting @ _: Setting,",
+            "absorbed(setting.window.created, setting.window.spent, key)",
+            "step(setting, left.clone())",
+            "{ let mut __updated = setting; __updated.window = Window {",
+        ] {
+            if !entry.contains(moved) {
+                return Err(format!(
+                    "{name}: the record no longer gives up its fields at its last use; missing `{moved}` in:\n{entry}"
+                ));
+            }
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// Runs one backend against a loopback peer, on a port nobody else holds.
 fn with_peer(run: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
     let port = free_port();

@@ -138,11 +138,24 @@ fn is_target_consuming_builtin(name: &str) -> bool {
     )
 }
 
+/// Facts that let a generated-Rust call site supply an owned carrier.
+#[derive(Default)]
+struct RustOwned {
+    /// Locals bound by a match pattern; see `own_param_refine_for_model`.
+    pattern_slots: HashMap<FnId, HashSet<u32>>,
+    /// Field reads that move their field out of a record local, by node
+    /// address (`field_moves::movable_projections`).
+    movable_projections: HashMap<FnId, HashSet<usize>>,
+    /// Map/Vector params each fn updates in place
+    /// (`field_moves::in_place_collection_params`).
+    in_place_params: HashMap<FnId, Vec<bool>>,
+}
+
 /// A single visible call edge: `target(args…)` made from `caller`.
-struct CallSite {
+struct CallSite<'a> {
     target: FnId,
     caller: FnId,
-    args: Vec<Spanned<MirExpr>>,
+    args: &'a [Spanned<MirExpr>],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -230,13 +243,13 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
     // movable into an owned callee parameter without manufacturing the extra
     // handle that today's borrowed ABI creates. Arena backends cannot use this
     // fact: their destructured wrapper/tuple entries remain observable holders.
-    let mut rust_owned_pattern_slots: HashMap<FnId, HashSet<u32>> = HashMap::new();
+    let mut rust_owned = RustOwned::default();
     if model.owned_carriers_are_cow_protected() {
         for (id, f) in program.iter() {
             let mut slots = HashSet::new();
             collect_pattern_bound_slots(&f.body.node, &mut slots);
             if !slots.is_empty() {
-                rust_owned_pattern_slots.insert(*id, slots);
+                rust_owned.pattern_slots.insert(*id, slots);
             }
         }
     }
@@ -361,6 +374,25 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
         collect_call_sites(*caller, &f.body.node, &mut call_sites);
     }
 
+    // Generated Rust moves a field out of a record local where no later or
+    // still-borrowed read overlaps it (`field_moves`), so such a field read
+    // supplies an owned carrier just like a last-use local. Its root may be
+    // a record param the backend still borrows; the read then clones, which
+    // costs what the borrowed ABI cost before and stays correct under COW.
+    // Moving a field into a param that only reads it saves nothing and
+    // makes every caller whose record is borrowed clone the field, so a
+    // field read counts only for a param updated in place.
+    if model.owned_carriers_are_cow_protected() {
+        for (id, f) in program.iter() {
+            let movable = crate::ir::mir::field_moves::movable_projections(&f.body.node);
+            if !movable.is_empty() {
+                rust_owned.movable_projections.insert(*id, movable);
+            }
+        }
+        rust_owned.in_place_params =
+            crate::ir::mir::field_moves::in_place_collection_params(&program);
+    }
+
     // Per-fn set of let-bound slots that have a still-live RENAME alias
     // of another slot — used by `uniquely_owned` to reject a call-site
     // arg whose slot the CALLER still observes through a live alias (the
@@ -445,13 +477,20 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
                     &program,
                     &owned,
                     &provenance,
-                    &rust_owned_pattern_slots,
+                    &rust_owned,
                     &return_aliases,
                     model,
                     &builtins,
                     0,
                 );
-                let ok = !dup && !caller_aliased && argument_owned;
+                let read_only_field = matches!(&arg.node, MirExpr::Project(_))
+                    && !rust_owned
+                        .in_place_params
+                        .get(&cs.target)
+                        .and_then(|params| params.get(i))
+                        .copied()
+                        .unwrap_or(false);
+                let ok = !dup && !caller_aliased && argument_owned && !read_only_field;
                 if !ok && owned.insert(key, false) != Some(false) {
                     changed = true;
                 }
@@ -490,7 +529,7 @@ fn uniquely_owned(
     program: &MirProgram,
     owned: &HashMap<(FnId, usize), bool>,
     provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
-    rust_owned_pattern_slots: &HashMap<FnId, HashSet<u32>>,
+    rust_owned: &RustOwned,
     return_aliases: &ReturnAliasSummary,
     model: OwnershipModel,
     builtins: &[String],
@@ -543,7 +582,7 @@ fn uniquely_owned(
                                 program,
                                 owned,
                                 provenance,
-                                rust_owned_pattern_slots,
+                                rust_owned,
                                 return_aliases,
                                 model,
                                 builtins,
@@ -582,7 +621,7 @@ fn uniquely_owned(
                                     program,
                                     owned,
                                     provenance,
-                                    rust_owned_pattern_slots,
+                                    rust_owned,
                                     return_aliases,
                                     model,
                                     builtins,
@@ -597,7 +636,7 @@ fn uniquely_owned(
                             program,
                             owned,
                             provenance,
-                            rust_owned_pattern_slots,
+                            rust_owned,
                             return_aliases,
                             model,
                             builtins,
@@ -608,7 +647,7 @@ fn uniquely_owned(
                             program,
                             owned,
                             provenance,
-                            rust_owned_pattern_slots,
+                            rust_owned,
                             return_aliases,
                             model,
                             builtins,
@@ -634,7 +673,7 @@ fn uniquely_owned(
                             program,
                             owned,
                             provenance,
-                            rust_owned_pattern_slots,
+                            rust_owned,
                             return_aliases,
                             model,
                             builtins,
@@ -665,20 +704,25 @@ fn uniquely_owned(
                     program,
                     owned,
                     provenance,
-                    rust_owned_pattern_slots,
+                    rust_owned,
                     return_aliases,
                     model,
                     builtins,
                     depth + 1,
                 )
         }
+        // A field read generated Rust moves out of its record local.
+        MirExpr::Project(_) if model.owned_carriers_are_cow_protected() => rust_owned
+            .movable_projections
+            .get(&caller)
+            .is_some_and(|movable| movable.contains(&(e as *const MirExpr as usize))),
         MirExpr::Try(inner) if model.returned_aggregates_are_consumed() => uniquely_owned(
             &inner.node,
             caller,
             program,
             owned,
             provenance,
-            rust_owned_pattern_slots,
+            rust_owned,
             return_aliases,
             model,
             builtins,
@@ -699,7 +743,7 @@ fn slot_owned(
     program: &MirProgram,
     owned: &HashMap<(FnId, usize), bool>,
     provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
-    rust_owned_pattern_slots: &HashMap<FnId, HashSet<u32>>,
+    rust_owned: &RustOwned,
     return_aliases: &ReturnAliasSummary,
     model: OwnershipModel,
     builtins: &[String],
@@ -715,7 +759,8 @@ fn slot_owned(
     let is_param = (slot as usize) < caller_fn.params.len();
     if !is_param
         && model.owned_carriers_are_cow_protected()
-        && rust_owned_pattern_slots
+        && rust_owned
+            .pattern_slots
             .get(&caller)
             .is_some_and(|slots| slots.contains(&slot))
     {
@@ -752,7 +797,7 @@ fn slot_owned(
             program,
             owned,
             provenance,
-            rust_owned_pattern_slots,
+            rust_owned,
             return_aliases,
             model,
             builtins,
@@ -1534,27 +1579,32 @@ fn compute_capture_summary(
 }
 
 /// Collect visible `Call(Fn)` / `TailCall` edges made from `caller`.
-fn collect_call_sites(caller: FnId, e: &MirExpr, out: &mut Vec<CallSite>) {
+fn collect_call_sites<'a>(caller: FnId, e: &'a MirExpr, out: &mut Vec<CallSite<'a>>) {
     match e {
         MirExpr::Call(c) => {
             if let MirCallee::Fn(target) = c.node.callee {
                 out.push(CallSite {
                     target,
                     caller,
-                    args: c.node.args.clone(),
+                    args: &c.node.args,
                 });
+            }
+            for arg in &c.node.args {
+                collect_call_sites(caller, &arg.node, out);
             }
         }
         MirExpr::TailCall(tc) => {
             out.push(CallSite {
                 target: tc.node.target,
                 caller,
-                args: tc.node.args.clone(),
+                args: &tc.node.args,
             });
+            for arg in &tc.node.args {
+                collect_call_sites(caller, &arg.node, out);
+            }
         }
-        _ => {}
+        _ => walk_children(e, &mut |c| collect_call_sites(caller, c, out)),
     }
-    walk_children(e, &mut |c| collect_call_sites(caller, c, out));
 }
 
 #[cfg(test)]

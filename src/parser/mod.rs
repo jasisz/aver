@@ -58,4 +58,5 @@ mod expr;
 mod functions;
 mod module;
 mod patterns;
+pub use patterns::parse_match_arm_head;
 mod types;

@@ -324,14 +324,14 @@ pub fn shiftFnIdsInProgram(
 ) -> crate::aver_generated::domain::ast::Program {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::ast::Program {
-        deps: prog.deps.clone(),
+        deps: prog.deps,
         fns: shiftFnIdsInFns__collected(
-            prog.fns.clone(),
+            prog.fns,
             offset.clone(),
             aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         ),
         stmts: shiftFnIdsInStmts__collected(
-            prog.stmts.clone(),
+            prog.stmts,
             offset,
             aver_rt::list_builder_new((aver_rt::AverInt::from_i64(0)).to_usize().unwrap_or(0)),
         ),
@@ -733,7 +733,7 @@ pub fn shiftFnIdsInArms(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset.clone()), bindingSlots: arm.bindingSlots.clone() }, &acc);
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(&arm.body, offset.clone()), bindingSlots: arm.bindingSlots }, &acc);
             arms = __tco0;
             acc = __tco2;
             continue;
@@ -1211,7 +1211,7 @@ pub fn loadOneModule__indexed(
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
     let moduleFns @ _ = resolveQualifiedModuleFns__indexed(&prog, dep.clone(), __str_index);
     let loaded2 @ _ = loaded.clone().insert_owned(dep, true);
-    let innerResult @ _ = loadModules(prog.deps.clone(), moduleRoot.clone(), acc.clone(), loaded2)?;
+    let innerResult @ _ = loadModules(prog.deps, moduleRoot.clone(), acc.clone(), loaded2)?;
     {
         let (accWithInner, loaded3) = innerResult;
         loadModules(
@@ -1447,7 +1447,7 @@ pub fn shiftFnIdsInArms__collected(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset.clone()), bindingSlots: arm.bindingSlots.clone() });
+            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: shiftFnIdsInExpr(&arm.body, offset.clone()), bindingSlots: arm.bindingSlots });
             arms = __tco0;
             acc = __tco2;
             continue;

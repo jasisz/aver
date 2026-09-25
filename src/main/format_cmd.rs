@@ -477,6 +477,61 @@ fn normalize_function_header_effects_tracked(
         .collect()
 }
 
+/// Per-line formatter for match-arm patterns: an arm line
+/// `<indent><pattern> -> <body>` gets its pattern in the canonical
+/// spelling (`[a, b, ..rest]`, `Option.Some(0)`, `(x, _)`). Only
+/// whitespace inside the pattern ever changes: a rewrite whose text
+/// differs from the original in anything but whitespace is dropped.
+fn normalize_match_arm_patterns_tracked(
+    lines: Vec<String>,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+    line_offset: Option<&[usize]>,
+) -> Vec<String> {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(idx, line)| {
+            let rewritten = normalize_match_arm_pattern_line(&line);
+            if rewritten != line {
+                let source_line = line_offset
+                    .and_then(|off| off.get(idx))
+                    .copied()
+                    .unwrap_or(idx + 1);
+                violations.push(aver::diagnostics::model::FormatViolation {
+                    line: source_line,
+                    col: 1,
+                    rule: "bad-match-pattern",
+                    message: "match pattern spacing differs from canonical form".to_string(),
+                    before: Some(line.clone()),
+                    after: Some(rewritten.clone()),
+                });
+            }
+            rewritten
+        })
+        .collect()
+}
+
+fn normalize_match_arm_pattern_line(line: &str) -> String {
+    let body = line.trim_start_matches(' ');
+    let indent = &line[..line.len() - body.len()];
+    if indent.is_empty() {
+        return line.to_string();
+    }
+    let Some((pattern, arrow_col)) = aver::parser::parse_match_arm_head(body) else {
+        return line.to_string();
+    };
+    let Some(arrow_byte) = body.char_indices().nth(arrow_col).map(|(byte, _)| byte) else {
+        return line.to_string();
+    };
+    let written = &body[..arrow_byte];
+    let canonical = aver::ast::unparse::pattern_to_source(&pattern);
+    let squeeze = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    if squeeze(written) != squeeze(&canonical) || written.trim_end() == canonical {
+        return line.to_string();
+    }
+    format!("{indent}{canonical} {}", &body[arrow_byte..])
+}
+
 fn normalize_effect_declaration_blocks_tracked(
     lines: Vec<String>,
     violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
@@ -899,6 +954,7 @@ fn normalize_source_lines_tracked(
 
     let lines = normalize_effect_declaration_blocks_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_function_header_effects_tracked(lines, violations, Some(&line_offset));
+    let lines = normalize_match_arm_patterns_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_module_intent_blocks_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_module_effects_blocks_tracked(lines, violations, Some(&line_offset));
     normalize_inline_decision_fields_tracked(lines, violations, Some(&line_offset))
@@ -1384,6 +1440,35 @@ pub fn format_source(source: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{format_source, try_format_source};
+
+    #[test]
+    fn prints_match_patterns_in_canonical_spelling() {
+        let src = "fn f(xs: List<Option<Int>>) -> Int\n    ? \"t\"\n    match xs\n        [ ] -> 0\n        [Option.Some( 0 ),..rest] -> 1\n        [a,b] -> 2\n        [ .. all ] -> 3\n";
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            "fn f(xs: List<Option<Int>>) -> Int\n    ? \"t\"\n    match xs\n        [] -> 0\n        [Option.Some(0), ..rest] -> 1\n        [a, b] -> 2\n        [..all] -> 3\n"
+        );
+        assert_eq!(
+            format_source(&got),
+            got,
+            "canonical output is a fixed point"
+        );
+        let (_, violations) = try_format_source(src).expect("format");
+        assert_eq!(
+            violations
+                .iter()
+                .filter(|v| v.rule == "bad-match-pattern")
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn match_pattern_rule_leaves_string_literals_alone() {
+        let src = "fn f(s: String) -> Int\n    ? \"t\"\n    match s\n        \"a  b\" -> 0\n        _ -> 1\n";
+        assert_eq!(format_source(src), src);
+    }
 
     #[test]
     fn normalizes_line_endings_and_trailing_ws() {

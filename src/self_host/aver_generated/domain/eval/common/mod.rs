@@ -22,9 +22,7 @@ pub fn evalVarFallbackNamed(
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
-        Some(fd @ _) => Ok(crate::aver_generated::domain::value::Val::ValFnRef(
-            fd.name.clone(),
-        )),
+        Some(fd @ _) => Ok(crate::aver_generated::domain::value::Val::ValFnRef(fd.name)),
         None => match crate::aver_generated::domain::builtins::splitDotted(name.clone()) {
             Some(_) => Ok(crate::aver_generated::domain::value::Val::ValVariant(
                 crate::aver_generated::domain::ast::ctorNameToTag(name.clone()),
