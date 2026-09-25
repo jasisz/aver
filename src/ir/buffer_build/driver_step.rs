@@ -595,6 +595,11 @@ fn collect_binders_of_pattern(pattern: &Pattern, out: &mut HashSet<String>) {
                 insert_binder(b, out);
             }
         }
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => {
+            for b in pattern.binder_names() {
+                insert_binder(b, out);
+            }
+        }
     }
 }
 
@@ -894,6 +899,17 @@ fn rename_pattern(pattern: &mut Pattern, rename: &HashMap<String, String>) {
                 if let Some(fresh) = rename.get(b) {
                     *b = fresh.clone();
                 }
+            }
+        }
+        Pattern::ConstructorNested(_, fields) => {
+            fields.iter_mut().for_each(|p| rename_pattern(p, rename))
+        }
+        Pattern::List { items, rest } => {
+            items.iter_mut().for_each(|p| rename_pattern(p, rename));
+            if let Some(rest) = rest
+                && let Some(fresh) = rename.get(rest)
+            {
+                *rest = fresh.clone();
             }
         }
     }

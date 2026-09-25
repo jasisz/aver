@@ -622,7 +622,17 @@ fn walk_pattern_for_exposes(
                 .collect::<Vec<_>>();
             mark_path_use(&parts, dep_targets, unique_type_owner, used_by_target);
         }
-        Pattern::Tuple(items) => {
+        Pattern::ConstructorNested(path, fields) => {
+            let parts = path
+                .split('.')
+                .map(|part| part.to_string())
+                .collect::<Vec<_>>();
+            mark_path_use(&parts, dep_targets, unique_type_owner, used_by_target);
+            for field in fields {
+                walk_pattern_for_exposes(field, dep_targets, unique_type_owner, used_by_target);
+            }
+        }
+        Pattern::Tuple(items) | Pattern::List { items, .. } => {
             for item in items {
                 walk_pattern_for_exposes(item, dep_targets, unique_type_owner, used_by_target);
             }
@@ -4888,6 +4898,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "mir" => Some(PipelineStage::NameResolve),
         "tco" => Some(PipelineStage::Tco),
         "yield_lower" => Some(PipelineStage::YieldLower),
+        "pattern_lower" => Some(PipelineStage::PatternLower),
         "typecheck" => Some(PipelineStage::Typecheck),
         "interp_lower" => Some(PipelineStage::InterpLower),
         "buffer_build" => Some(PipelineStage::BufferBuild),

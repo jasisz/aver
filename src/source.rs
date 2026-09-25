@@ -587,7 +587,10 @@ fn compute_lowering_memo(
     let yielding: Vec<usize> = dependencies
         .iter()
         .enumerate()
-        .filter(|(_, module)| crate::yield_lowering::has_yield_fns(&module.items))
+        .filter(|(_, module)| {
+            crate::yield_lowering::has_yield_fns(&module.items)
+                || crate::ir::nested_patterns::has_nested_patterns(&module.items)
+        })
         .map(|(index, _)| index)
         .collect();
     if yielding.is_empty() {
@@ -601,7 +604,9 @@ fn compute_lowering_memo(
         // A module that still has `yield` functions failed to lower;
         // leave it out so the next caller retries it (and hits the same
         // errors) instead of memoizing a broken half-state.
-        if !crate::yield_lowering::has_yield_fns(&entry.items) {
+        if !crate::yield_lowering::has_yield_fns(&entry.items)
+            && !crate::ir::nested_patterns::has_nested_patterns(&entry.items)
+        {
             memo.insert(entry.path.clone(), entry.clone());
         }
     }

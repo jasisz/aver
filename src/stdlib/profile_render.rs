@@ -134,6 +134,23 @@ fn pattern(pattern: &Pattern) -> Result<String, String> {
         }
         Pattern::Constructor(name, bindings) if bindings.is_empty() => name.clone(),
         Pattern::Constructor(name, bindings) => format!("{name}({})", bindings.join(", ")),
+        Pattern::ConstructorNested(name, fields) => {
+            let rendered = fields
+                .iter()
+                .map(self::pattern)
+                .collect::<Result<Vec<_>, _>>()?;
+            format!("{name}({})", rendered.join(", "))
+        }
+        Pattern::List { items, rest } => {
+            let mut rendered = items
+                .iter()
+                .map(self::pattern)
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(rest) = rest {
+                rendered.push(format!("..{rest}"));
+            }
+            format!("[{}]", rendered.join(", "))
+        }
     })
 }
 

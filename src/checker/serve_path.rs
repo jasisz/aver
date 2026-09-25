@@ -392,6 +392,7 @@ fn pattern_bindings<'a>(pattern: &'a Pattern, out: &mut Vec<&'a str>) {
         Pattern::Tuple(items) => items.iter().for_each(|item| pattern_bindings(item, out)),
         Pattern::Constructor(_, names) => out.extend(names.iter().map(String::as_str)),
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => out.extend(pattern.binder_names()),
     }
 }
 

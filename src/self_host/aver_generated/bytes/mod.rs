@@ -208,7 +208,7 @@ pub fn concat(mut left @ _: Bytes, right @ _: &Bytes) -> Bytes {
     crate::cancel_checkpoint();
     crate::aver_generated::bytes::Bytes {
         values: aver_rt::into_packed_u8(aver_rt::AverIntList::concat(
-            &(left.values).to_int_list().clone(),
+            &(left.values).to_int_list(),
             &(right.values).to_int_list().clone(),
         ))
         .expect("proof-packed U8 construction escaped its refinement gate"),

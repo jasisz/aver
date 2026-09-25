@@ -595,6 +595,39 @@ impl VM {
         true
     }
 
+    /// Whether a record update may move the fields of `base`, whose operand
+    /// has just been popped, into the record it builds.
+    ///
+    /// Moving is sound once nothing can reach `base` again: no arena entry or
+    /// registered root holds it and no operand-stack cell does. It is worth
+    /// asking only when a field the update keeps is a map, vector or record,
+    /// the values a later write takes in place and a second holder makes it
+    /// copy, and the walk is bounded the way the map grant's is, by what the
+    /// copy it saves would cost. A nested record counts as [`WALK_SLACK`].
+    pub(super) fn record_update_may_move_fields(&self, base: NanValue, written: &[bool]) -> bool {
+        let (_, fields) = self.arena.get_record(base.arena_index());
+        let saved: usize = fields
+            .iter()
+            .zip(written)
+            .filter(|(_, written)| !**written)
+            .map(|(field, _)| {
+                if let Some(map) = self.arena.map_slot(*field) {
+                    map.entries
+                } else if let Some(vector) = self.arena.vector_slot(*field) {
+                    vector.len
+                } else if field.is_record() {
+                    WALK_SLACK
+                } else {
+                    0
+                }
+            })
+            .sum();
+        saved != 0
+            && self.stack.len() <= saved + WALK_SLACK
+            && !self.arena.record_is_held_elsewhere(base)
+            && self.slot_is_unheld(base)
+    }
+
     /// Whether the owned path may KEEP `target`, at a `Vector.set` the
     /// compiler granted statically and whose arguments have just been popped.
     ///

@@ -436,6 +436,18 @@ fn tuple_match_with_list_literal_and_option_elements_matches_between_rust_and_vm
     assert_plain_parity(FIXTURE, None).unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Nested literal / constructor patterns and list patterns (`Option.Some(0)`,
+/// `Shape.Rect(0, _)`, `[a, b, ..rest]`, `[Option.Some(x), ..rest]`). The
+/// front door compiles them into nested flat matches over fresh binders
+/// before any backend runs; only a build proves the Rust those matches
+/// render borrows and moves the bound sub-values correctly, and only a run
+/// proves the compiled decision tree takes the arm the VM takes.
+#[test]
+fn nested_literal_and_list_patterns_match_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/nested_patterns.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A one-arm wildcard match over an effectful call: `match say(x)` with a
 /// single `_ ->` arm is how a process performs something in place before it
 /// goes on, and the Rust backend used to render the arm's body alone, so the

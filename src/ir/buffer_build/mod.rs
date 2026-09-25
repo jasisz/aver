@@ -644,6 +644,9 @@ fn pattern_binds_name(pattern: &Pattern, name: &str) -> bool {
         Pattern::Cons(head, tail) => head == name || tail == name,
         Pattern::Tuple(items) => items.iter().any(|p| pattern_binds_name(p, name)),
         Pattern::Constructor(_, bindings) => bindings.iter().any(|b| b == name),
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => {
+            pattern.binder_names().contains(&name)
+        }
     }
 }
 

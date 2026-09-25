@@ -106,9 +106,21 @@ impl<'a> Compiler<'a> {
                     bind(field);
                 }
             }
-            Pattern::Tuple(fields) => {
+            Pattern::Tuple(fields) | Pattern::ConstructorNested(_, fields) => {
                 for field in fields {
                     self.rename_pattern(field, names);
+                }
+            }
+            Pattern::List { items, rest } => {
+                for item in items {
+                    self.rename_pattern(item, names);
+                }
+                if let Some(rest) = rest
+                    && rest != "_"
+                {
+                    let fresh = self.name();
+                    names.insert(rest.clone(), fresh.clone());
+                    *rest = fresh;
                 }
             }
             Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}

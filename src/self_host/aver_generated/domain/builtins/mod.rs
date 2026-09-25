@@ -1067,11 +1067,11 @@ pub fn builtinTerminalSize(
                 aver_rt::AverList::from_vec(vec![
                     (
                         AverStr::from("width"),
-                        crate::aver_generated::domain::value::Val::ValInt(sz.width.clone()),
+                        crate::aver_generated::domain::value::Val::ValInt(sz.width),
                     ),
                     (
                         AverStr::from("height"),
-                        crate::aver_generated::domain::value::Val::ValInt(sz.height.clone()),
+                        crate::aver_generated::domain::value::Val::ValInt(sz.height),
                     ),
                 ]),
             )),
@@ -2091,11 +2091,11 @@ pub fn httpResponseToVal(
                 aver_rt::AverList::from_vec(vec![
                     (
                         AverStr::from("status"),
-                        crate::aver_generated::domain::value::Val::ValInt(resp.status.clone()),
+                        crate::aver_generated::domain::value::Val::ValInt(resp.status),
                     ),
                     (
                         AverStr::from("body"),
-                        crate::aver_generated::domain::value::Val::ValStr(resp.body.clone()),
+                        crate::aver_generated::domain::value::Val::ValStr(resp.body),
                     ),
                     (
                         AverStr::from("headers"),

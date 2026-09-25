@@ -2006,3 +2006,166 @@ fn well_formed_effect_lists_still_parse() {
         assert_eq!(items.len(), 1, "expected one item from: {shape}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Nested literal / constructor patterns and general list patterns
+// ---------------------------------------------------------------------------
+
+fn arm_patterns(src: &str) -> Vec<Pattern> {
+    let items = parse(src);
+    let TopLevel::FnDef(fd) = &items[0] else {
+        panic!("expected FnDef");
+    };
+    let Expr::Match { arms, .. } = single_expr_body(fd) else {
+        panic!("expected match");
+    };
+    arms.iter().map(|arm| arm.pattern.clone()).collect()
+}
+
+#[test]
+fn constructor_with_literal_field_is_a_nested_pattern() {
+    let pats = arm_patterns(
+        "fn f(o: Option<Int>) -> Int\n    match o\n        Option.Some(0) -> 1\n        Option.Some(n) -> n\n        Option.None -> 0\n",
+    );
+    assert_eq!(
+        pats[0],
+        Pattern::ConstructorNested(
+            "Option.Some".to_string(),
+            vec![Pattern::Literal(Literal::Int(0))]
+        )
+    );
+    // All-binder fields keep the flat form every backend reads.
+    assert_eq!(
+        pats[1],
+        Pattern::Constructor("Option.Some".to_string(), vec!["n".to_string()])
+    );
+    assert_eq!(
+        pats[2],
+        Pattern::Constructor("Option.None".to_string(), vec![])
+    );
+}
+
+#[test]
+fn nested_constructor_string_bool_and_tuple_fields() {
+    let pats = arm_patterns(
+        "fn f(x: Int) -> Int\n    match x\n        Result.Ok(\"x\") -> 1\n        Pair.Of(1, y) -> 2\n        Option.Some(Option.Some(true)) -> 3\n        Option.Some((0, _)) -> 4\n        _ -> 5\n",
+    );
+    assert_eq!(
+        pats[0],
+        Pattern::ConstructorNested(
+            "Result.Ok".to_string(),
+            vec![Pattern::Literal(Literal::Str("x".to_string()))]
+        )
+    );
+    assert_eq!(
+        pats[1],
+        Pattern::ConstructorNested(
+            "Pair.Of".to_string(),
+            vec![
+                Pattern::Literal(Literal::Int(1)),
+                Pattern::Ident("y".to_string())
+            ]
+        )
+    );
+    assert_eq!(
+        pats[2],
+        Pattern::ConstructorNested(
+            "Option.Some".to_string(),
+            vec![Pattern::ConstructorNested(
+                "Option.Some".to_string(),
+                vec![Pattern::Literal(Literal::Bool(true))]
+            )]
+        )
+    );
+    assert_eq!(
+        pats[3],
+        Pattern::ConstructorNested(
+            "Option.Some".to_string(),
+            vec![Pattern::Tuple(vec![
+                Pattern::Literal(Literal::Int(0)),
+                Pattern::Wildcard
+            ])]
+        )
+    );
+}
+
+#[test]
+fn list_patterns_with_and_without_rest() {
+    let pats = arm_patterns(
+        "fn f(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [a] -> 1\n        [a, b] -> 2\n        [0, ..rest] -> 3\n        [a, b, ..rest] -> 4\n        [Option.Some(x), ..rest] -> 5\n        [h, ..t] -> 6\n        [..all] -> 7\n",
+    );
+    let ident = |name: &str| Pattern::Ident(name.to_string());
+    assert_eq!(pats[0], Pattern::EmptyList);
+    assert_eq!(
+        pats[1],
+        Pattern::List {
+            items: vec![ident("a")],
+            rest: None
+        }
+    );
+    assert_eq!(
+        pats[2],
+        Pattern::List {
+            items: vec![ident("a"), ident("b")],
+            rest: None
+        }
+    );
+    assert_eq!(
+        pats[3],
+        Pattern::List {
+            items: vec![Pattern::Literal(Literal::Int(0))],
+            rest: Some("rest".to_string())
+        }
+    );
+    assert_eq!(
+        pats[4],
+        Pattern::List {
+            items: vec![ident("a"), ident("b")],
+            rest: Some("rest".to_string())
+        }
+    );
+    assert_eq!(
+        pats[5],
+        Pattern::List {
+            items: vec![Pattern::Constructor(
+                "Option.Some".to_string(),
+                vec!["x".to_string()]
+            )],
+            rest: Some("rest".to_string())
+        }
+    );
+    // `[head, ..tail]` with two binders keeps the flat cons form.
+    assert_eq!(pats[6], Pattern::Cons("h".to_string(), "t".to_string()));
+    assert_eq!(
+        pats[7],
+        Pattern::List {
+            items: vec![],
+            rest: Some("all".to_string())
+        }
+    );
+}
+
+#[test]
+fn list_rest_must_be_last_and_a_binder() {
+    assert!(parse_fails(
+        "fn f(xs: List<Int>) -> Int\n    match xs\n        [..rest, a] -> 0\n        _ -> 1\n"
+    ));
+    assert!(parse_fails(
+        "fn f(xs: List<Int>) -> Int\n    match xs\n        [a, ..0] -> 0\n        _ -> 1\n"
+    ));
+    assert!(parse_fails(
+        "fn f(xs: List<Int>) -> Int\n    match xs\n        [a, ..__rest] -> 0\n        _ -> 1\n"
+    ));
+}
+
+#[test]
+fn nested_patterns_round_trip_through_unparse() {
+    let src = "fn f(xs: List<Option<Int>>) -> Int\n    match xs\n        [Option.Some(0), ..rest] -> 0\n        [a, b] -> 1\n        _ -> 2\n";
+    let items = parse(src);
+    let printed = aver::ast::unparse::unparse(&items).expect("unparse");
+    assert!(
+        printed.contains("[Option.Some(0), ..rest] -> 0") && printed.contains("[a, b] -> 1"),
+        "{printed}"
+    );
+    assert_eq!(parse(&printed), items);
+}

@@ -192,6 +192,7 @@ pub(crate) fn pattern_bound_names(pattern: &Pattern) -> Vec<&str> {
         Pattern::Cons(head, tail) => vec![head.as_str(), tail.as_str()],
         Pattern::Constructor(_, binders) => binders.iter().map(String::as_str).collect(),
         Pattern::Tuple(items) => items.iter().flat_map(pattern_bound_names).collect(),
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => pattern.binder_names(),
     }
 }
 
