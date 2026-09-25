@@ -446,7 +446,7 @@ fn an_answer_modules_state_reaches_its_answer_function_uniquely_owned() {
             "pub fn __serve(mut run @ _: __Run,",
             "pub fn __serveTicker(mut run @ _: __Run,",
             "pub fn __takeOwner(mut run @ _: __Run)",
-            "let (__rest, __held) = __takeOwner(run);",
+            "let (__held, __rest) = __takeOwner(run);",
             "crate::aver_generated::owner::bump(__taken, __a0)",
         ] {
             if !entry.contains(by_value) {
