@@ -12,12 +12,16 @@ name: Rust codegen
 # fn signatures, wrong trait bounds, generic drift. The
 # `tests/compile_spec.rs` cancel-mode end-to-end probe runs in
 # `Check & Test`; this suite is the breadth check across the core
-# example corpus, run nightly so the per-example `cargo check`
-# (~30-60 s each) doesn't burden every PR.
+# example corpus, run only where Rust codegen can change so the
+# per-example `cargo check` (~30-60 s each) doesn't burden every PR.
 #
-# Sister workflow to `proof.yml`. Both consolidate heavy toolchain
-# / build work into one nightly run instead of adding latency to
-# every compiler-touching PR.
+# Sister workflow to `proof.yml`. It runs nightly against main and on
+# pull requests that touch the Rust backend or what feeds it: the Rust
+# emitter, shared codegen, MIR and its ownership passes, the native
+# providers and capability contracts, the Aver runtime crate, yield
+# lowering, and the self-hosted sources. Other PRs skip it, so ordinary
+# compiler changes do not pay for the per-example `cargo check`. Neither
+# job is a required check; their names are distinct from every `CI` job.
 
 on:
   schedule:
@@ -25,7 +29,31 @@ on:
     # as fuzz nightly + proof nightly. Three independent workflows
     # each reading main, no cross-artefact deps.
     - cron: '0 3 * * *'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/rust-codegen.yml'
+      - 'src/codegen/rust/**'
+      - 'src/codegen/common.rs'
+      - 'src/codegen/mod.rs'
+      - 'src/codegen/builtin*.rs'
+      - 'src/ir/mir/**'
+      - 'src/ir/alias.rs'
+      - 'src/ir/escape.rs'
+      - 'src/ir/last_use.rs'
+      - 'src/yield_lowering/**'
+      - 'src/provider/**'
+      - 'stdlib/capabilities/**'
+      - 'aver-rt/**'
+      - 'self_hosted/**'
+      - 'tests/rust_codegen_regression.rs'
   workflow_dispatch:
+
+concurrency:
+  # A new push to the same PR supersedes the running canary; nightly and
+  # dispatched runs keep their own group and are never cancelled.
+  group: rust-codegen-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
