@@ -2198,6 +2198,15 @@ pub(super) fn emit_module_with(
             headers_values_array_type_idx: map_slots.values_array,
             headers_hashes_array_type_idx: map_slots.hashes_array,
             headers_map_type_idx: map_slots.map,
+            headers_map_diff_type_idx: map_slots.diff,
+            headers_map_reroot_fn: map_helpers
+                .kv_helpers("Map<String,List<String>>")
+                .ok_or_else(|| {
+                    WasmGcError::Validation(
+                        "Http headers need the Map<String,List<String>> helpers".into(),
+                    )
+                })?
+                .reroot,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
             aint_from_i64_fn_idx: registry.aint_from_i64_fn_idx,
@@ -3645,6 +3654,15 @@ pub(super) fn emit_module_with(
             headers_values_array_type_idx: map_slots.values_array,
             headers_hashes_array_type_idx: map_slots.hashes_array,
             headers_map_type_idx: map_slots.map,
+            headers_map_diff_type_idx: map_slots.diff,
+            headers_map_reroot_fn: map_helpers
+                .kv_helpers("Map<String,List<String>>")
+                .ok_or_else(|| {
+                    WasmGcError::Validation(
+                        "Http headers need the Map<String,List<String>> helpers".into(),
+                    )
+                })?
+                .reroot,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
             aint_to_i64_checked_fn_idx: registry.aint_to_i64_checked_fn_idx,
@@ -6857,6 +6875,48 @@ fn emit_user_types(
                 },
                 wasm_encoder::FieldType {
                     element_type: wasm_encoder::StorageType::Val(hashes_ref),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Concrete(slots.diff),
+                        },
+                    )),
+                    mutable: true,
+                },
+            ]),
+        ));
+        // One bucket of an older version: the version it leads to, the
+        // bucket, and the key, value and hash that bucket held before the
+        // newer version wrote over it (see `maps.rs`).
+        entries.push((
+            slots.diff,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Concrete(slots.map),
+                        },
+                    )),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(key_storage_val),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(v_val),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
                     mutable: true,
                 },
             ]),
@@ -10701,6 +10761,7 @@ fn emit_factory_map_string_list_string_empty(
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         slots.hashes_array,
     )));
+    super::maps::emit_no_diff(&mut f, slots);
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -10952,6 +11013,13 @@ fn emit_handler_wrapper(
         field_index: 2,
     });
     f.instruction(&Instruction::LocalSet(9));
+    let headers_reroot = fn_map
+        .map_helpers_lookup("Map<String,List<String>>")
+        .ok_or(WasmGcError::Validation(
+            "aver_http_handle wrapper requires the Map<String,List<String>> helpers".into(),
+        ))?
+        .reroot;
+    super::maps::emit_reroot_local(&mut f, map_slots.map, headers_reroot, 9);
 
     // Read map cap + arrays into iteration slots.
     f.instruction(&Instruction::LocalGet(9));

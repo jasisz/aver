@@ -1004,6 +1004,9 @@ fn emit_poll_wasip2(
         WasmGcError::Validation(format!("{operation} on wasip2: helper fn idx missing"))
     })?;
     emit_mir_expr(func, &args[0], slots, ctx)?;
+    // The poll helper walks the map's buckets directly: hand it the
+    // current version.
+    super::from_mir::emit_map_arg_current(func, &args[0], ctx)?;
     emit_mir_expr(func, &args[1], slots, ctx)?;
     func.instruction(&Instruction::Call(helper));
     Ok(())
@@ -1750,6 +1753,7 @@ fn emit_http_simple_method_wasip2(
     func.instruction(&Instruction::ArrayNewDefault(map_slots.values_array));
     func.instruction(&Instruction::I32Const(INITIAL_CAP));
     func.instruction(&Instruction::ArrayNewDefault(map_slots.hashes_array));
+    crate::codegen::wasm_gc::maps::emit_no_diff(func, map_slots);
     func.instruction(&Instruction::StructNew(map_slots.map));
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
