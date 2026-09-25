@@ -66,7 +66,7 @@ embedded runner lifts these values directly into transport-neutral
 | `Result`, `Option`, tuple, record | typed GC struct reference |
 | sum type | nominal root reference carrying a typed variant struct |
 | `List` | nullable typed cons reference |
-| `Vector` | typed mutable GC array reference |
+| `Vector` | typed GC struct reference to one version over a mutable array; read and fill it through the `Vector` helpers below |
 | `Map` | Aver's typed deterministic map reference |
 | proof-packed `List<Int>` refinement | typed GC array reference; record factories/projectors bridge its declared carrier |
 

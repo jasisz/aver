@@ -77,6 +77,7 @@ mod run_fail;
 mod tests;
 mod types;
 mod types_discovery;
+mod vectors;
 mod view;
 mod wasip2_capability_imports;
 mod wasip2_disk_bytes;

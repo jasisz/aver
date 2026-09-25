@@ -1363,8 +1363,8 @@ fn key_storage_null_heap(k_aver: &str, registry: &TypeRegistry) -> HeapType {
     if let Some(l) = registry.list_type_idx(k_aver) {
         return HeapType::Concrete(l);
     }
-    if let Some(v) = registry.vector_type_idx(k_aver) {
-        return HeapType::Concrete(v);
+    if let Some(v) = registry.vector_slots(k_aver) {
+        return HeapType::Concrete(v.version);
     }
     if let Some(slots) = registry.map_slots(k_aver) {
         return HeapType::Concrete(slots.map);
