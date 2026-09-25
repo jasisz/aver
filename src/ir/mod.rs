@@ -4,6 +4,7 @@ mod analyze;
 mod body;
 mod buffer_build;
 mod calls;
+pub mod cert_shape;
 mod chars_fusion;
 pub mod dump;
 pub mod escape;
@@ -30,6 +31,7 @@ pub use analyze::{AnalysisResult, FnAnalysis, NeutralAllocPolicy, analyze};
 pub(crate) use buffer_build::{
     INTERNAL_BUFFER_TYPE, INTERNAL_BYTE_BUILDER_TYPE, INTERNAL_BYTE_PAYLOAD_TYPE,
 };
+pub(crate) use chars_fusion::collect_bound_names;
 pub use identity::{BuiltinId, CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
 pub use interval::{
     Bound, Interval, IntervalAnalysisResult, OpClass, RefinedTypeInterval,
@@ -45,7 +47,10 @@ pub use proof_ir::{
     PreservationProof, ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract,
     RefinedTypeDecl, SmartGuard, StringEscapeRoundtripPin, UnclassifiedFn, WrapperDriver,
 };
-pub use string_index::{StringIndexPassReport, has_string_index_shape, run_string_index_pass};
+pub use string_index::{
+    StringIndexPassReport, has_string_index_shape, run_string_index_pass,
+    run_string_index_pass_keeping,
+};
 pub use symbol_table::{CtorEntry, FnEntry, ModuleEntry, SymbolTable, TypeEntry};
 
 pub use alloc_info::{
@@ -56,13 +61,15 @@ pub use buffer_build::{
     BufferBuildPassReport, BufferBuildShape, ByteSinkDecline, ConsumerKind, FusionSite,
     ListBuildDecline, ListBuildKind, ListBuildPassReport, ListBuildShape,
     compute_buffer_build_sinks, find_fusion_sites, has_list_build_shape, rewrite_fusion_sites,
-    run_buffer_build_pass, run_byte_sink_pass, run_list_build_pass, synthesize_buffered_variants,
+    run_buffer_build_pass, run_buffer_build_pass_keeping, run_byte_sink_pass,
+    run_byte_sink_pass_keeping, run_list_build_pass, synthesize_buffered_variants,
 };
 pub use calls::{
     CallPlan, SemanticConstructor, WrapperKind, expr_to_dotted_name, is_builtin_namespace,
 };
 pub use chars_fusion::{
     CharsFusionDecline, CharsFusionPassReport, has_fusable_shape, run_chars_fusion_pass,
+    run_chars_fusion_pass_keeping,
 };
 pub use interp_lower::lower_interpolation_pass;
 pub use matches::{

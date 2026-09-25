@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::VecDeque;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleExportFact {
@@ -205,12 +205,12 @@ mod module_envelope_tests {
             ("WASIP2_CAPABILITY_REGISTRY", crate::format::WASIP2_CAPABILITIES),
         ] {
             let marker = format!("def {name} : List (String × String) := [");
-            let body = super::CERT_SCHEMA_CORE
+            let body = super::CERT_SCHEMA_BASE
                 .split_once(&marker)
-                .unwrap_or_else(|| panic!("SchemaCore is missing {name}"))
+                .unwrap_or_else(|| panic!("SchemaBase is missing {name}"))
                 .1
                 .split_once("\n]")
-                .unwrap_or_else(|| panic!("SchemaCore.{name} is not a closed list"))
+                .unwrap_or_else(|| panic!("SchemaBase.{name} is not a closed list"))
                 .0;
             let lean_pairs = body
                 .lines()
@@ -221,10 +221,10 @@ mod module_envelope_tests {
                     let pair = row
                         .strip_prefix("(\"")
                         .and_then(|line| line.strip_suffix("\")"))
-                        .unwrap_or_else(|| panic!("invalid SchemaCore.{name} row `{line}`"));
+                        .unwrap_or_else(|| panic!("invalid SchemaBase.{name} row `{line}`"));
                     let (module, field) = pair
                         .split_once("\", \"")
-                        .unwrap_or_else(|| panic!("invalid SchemaCore.{name} pair `{pair}`"));
+                        .unwrap_or_else(|| panic!("invalid SchemaBase.{name} pair `{pair}`"));
                     (
                         module.to_string(),
                         field.to_string(),
@@ -237,7 +237,7 @@ mod module_envelope_tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 lean_pairs, rust_pairs,
-                "SchemaCore.{name} must exactly match the Rust registry"
+                "SchemaBase.{name} must exactly match the Rust registry"
             );
         }
     }
@@ -247,6 +247,42 @@ mod module_envelope_tests {
             "(module (import \"{module}\" \"{field}\" (func)))"
         ))
         .expect("valid imported module")
+    }
+
+    #[test]
+    fn work_v1_imports_are_admitted_exactly_and_only_on_wasm_gc() {
+        for field in ["submit", "take", "task", "complete"] {
+            let bytes = module_with_import("aver:work/v1", field);
+            let facts = super::collect_module_envelope_facts(
+                &bytes,
+                &[],
+                crate::format::TARGET_WASM_GC,
+            )
+            .expect("the aver:work/v1 import is admitted on wasm-gc");
+            assert_eq!(facts.capabilities, [("aver:work/v1".into(), field.into())]);
+            let error = super::collect_module_envelope_facts(
+                &bytes,
+                &[],
+                crate::format::TARGET_WASIP2,
+            )
+            .expect_err("wasip2 has no aver:work/v1 imports");
+            assert!(error.contains("target `wasip2`"));
+        }
+        for (module, field) in [
+            ("aver:work/v2", "submit"),
+            ("aver:work/v1", "cancel"),
+            ("aver:work", "submit"),
+            ("aver", "submit"),
+        ] {
+            let bytes = module_with_import(module, field);
+            let error = super::collect_module_envelope_facts(
+                &bytes,
+                &[],
+                crate::format::TARGET_WASM_GC,
+            )
+            .expect_err("a near-miss job import must fail closed");
+            assert!(error.contains("target `wasm-gc`"));
+        }
     }
 
     #[test]

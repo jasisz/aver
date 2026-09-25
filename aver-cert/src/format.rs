@@ -149,7 +149,18 @@ impl Wasip2ComponentEnvelopeDeclaration {
 /// A law-claim listing bridges carries a second corollary conjoining them,
 /// pinned apart from its own so an unfinished bridge cannot cost the law its
 /// credit.
-pub const CERT_SCHEMA_VERSION: u32 = 8;
+///
+/// Schema 9 states every obligation over the one plan grammar: the manifest
+/// carries one `fnPlans` list (each planned function's optimized MIR body,
+/// printed 1:1), the declared type layout, and obligations the wall derives
+/// from the plans. Every certified export reports the one class
+/// [`PLAN_CLASS`] with facets derived in the wall. Schema 9 declares no
+/// law-claims and no source bridges yet; a package declaring either is
+/// refused.
+pub const CERT_SCHEMA_VERSION: u32 = 9;
+
+/// The one report class of a certified export (schema 9).
+pub const PLAN_CLASS: &str = "source-plan-v1";
 
 /// Longest a transported display string may be. Every declared-only candidate
 /// the manifest carries — export names, class and domain labels, runtime
@@ -163,31 +174,19 @@ pub const MAX_CANDIDATE_LEN: usize = 200;
 /// Named theorem audited by the checker-owned witness.
 pub const ARTIFACT_CERTIFICATE_ROOT: &str = "AverCert.Artifact.certificate";
 
-/// Discharge theorem the producer names for the record projection-compute
-/// face. Like every `theorem` field it is manifest-declared and informational
-/// (section 4.2) — acceptance consumes the single artifact root, not per-export
-/// theorem names — but it is the one signal on the render side that tells which
-/// certified exports carry that face's NARROWER certified domain, so producer
-/// and verifier share the literal here rather than spelling it twice.
-pub const RECORD_COMPUTE_DISCHARGE_THEOREM: &str =
-    "AcceptanceSoundness.recordCompute_claim_discharges";
-
-/// The domain disclosure `aver-cert explain` prints under a record
-/// projection-compute export. Its content is section 4.3(ii): that face's
-/// `StandardFace.recordComputeDomRepr` requires every Int carrier it is handed
-/// — arguments and record fields alike — to be in the runtime's normal form.
-pub const RECORD_COMPUTE_DOMAIN_LINE: &str =
-    "domain: Int leaves assumed in the runtime's normal form (canonical carriers)";
+/// The discharge theorem every certified export names (informational; the
+/// acceptance consumes the single artifact root).
+pub const FN_CLAIM_DISCHARGE_THEOREM: &str = "AcceptanceSoundness.fn_claim_discharges";
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:a3c0e76722eee7a09f0fb85eab10d94657be52ffe059e541645c0a9c80167dd5";
+    "sha256:ed89b143414bdff0bfadb49a49bc1e7d8c537365b69549c65f7e82fbccf73cef";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
-/// This list is verifier-owned. `aver-lang` tests its `EffectName` lowering
-/// against it, so adding a compiler import cannot silently broaden what the
-/// independent verifier accepts.
+/// This list is verifier-owned. `aver-lang` tests its `EffectName` lowering and
+/// its `aver:work/v1` job-scheduling imports against it, so adding a compiler
+/// import cannot silently broaden what the independent verifier accepts.
 pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "console_print"),
     ("aver", "console_error"),
@@ -277,6 +276,10 @@ pub const WASM_GC_CAPABILITIES: &[(&str, &str)] = &[
     ("aver", "work_cancel"),
     ("aver", "work_begin"),
     ("aver", "work_take"),
+    ("aver:work/v1", "submit"),
+    ("aver:work/v1", "take"),
+    ("aver:work/v1", "task"),
+    ("aver:work/v1", "complete"),
 ];
 
 /// Complete standard host-import surface admitted for a wasip2 embedded core.
@@ -513,7 +516,7 @@ mod tests {
         );
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_SUFFIX_LEN_FIELD, "suffix_len");
         assert_eq!(WASIP2_COMPONENT_ENVELOPE_KIND, "prefix-core-suffix/v1");
-        assert_eq!(CERT_SCHEMA_VERSION, 8);
+        assert_eq!(CERT_SCHEMA_VERSION, 9);
     }
 
     #[test]

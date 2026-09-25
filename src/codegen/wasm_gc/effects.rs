@@ -940,7 +940,8 @@ impl EffectName {
 }
 
 /// The certification capability registry is minted from the same exhaustive
-/// effect-name list and `import_pair` mapping used by wasm-gc emission.  This
+/// effect-name list and `import_pair` mapping used by wasm-gc emission, plus
+/// the `aver:work/v1` imports a module with job kinds carries.  This
 /// keeps certificate interface accounting synchronized with the actual host
 /// import ABI instead of maintaining a second Rust-side registry.
 ///
@@ -954,6 +955,11 @@ fn capability_registry() -> Vec<(&'static str, &'static str)> {
         .iter()
         .filter(|effect| !matches!(effect, EffectName::RunFail | EffectName::RunFailure))
         .map(|effect| effect.import_pair())
+        .chain(
+            super::work_abi::IMPORTS
+                .iter()
+                .map(|name| (super::work_abi::MODULE, *name)),
+        )
         .collect()
 }
 

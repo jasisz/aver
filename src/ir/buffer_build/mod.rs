@@ -849,6 +849,16 @@ fn finalize_intrinsic_call(line: usize, args: Vec<Spanned<Expr>>) -> Spanned<Exp
 /// Returns a [`BufferBuildPassReport`] describing what fired, for
 /// diagnostic / bench reporting and `--explain-passes`.
 pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> BufferBuildPassReport {
+    run_buffer_build_pass_keeping(items, &std::collections::HashSet::new())
+}
+
+/// [`run_buffer_build_pass`] that rewrites no call site inside a function
+/// named in `kept` (see [`crate::ir::cert_shape`]). A sink whose only sites
+/// are kept grows no buffered variant.
+pub fn run_buffer_build_pass_keeping(
+    items: &mut Vec<crate::ast::TopLevel>,
+    kept: &std::collections::HashSet<String>,
+) -> BufferBuildPassReport {
     let fn_refs: Vec<&FnDef> = items
         .iter()
         .filter_map(|it| match it {
@@ -868,6 +878,7 @@ pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> BufferBui
     let sites: Vec<FusionSite> = find_fusion_sites(&fn_refs, &all_sinks)
         .into_iter()
         .filter(|site| !taken.contains(&format!("{}__buffered", site.sink_fn)))
+        .filter(|site| !kept.contains(&site.enclosing_fn))
         .collect();
 
     // Synthesize a buffered variant only for sinks that actually have
@@ -898,7 +909,9 @@ pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> BufferBui
     // mutable view across owned slots. We can't pass &mut [&mut FnDef]
     // directly — instead, walk and rewrite each fn body individually.
     for fd in fn_defs_owned.iter_mut() {
-        rewrite_one_fn(fd, &sinks);
+        if !kept.contains(&fd.name) {
+            rewrite_one_fn(fd, &sinks);
+        }
     }
 
     items.reserve(synthesized.len());
@@ -1359,5 +1372,5 @@ mod tests;
 
 pub use list_build::{
     ByteSinkDecline, ListBuildDecline, ListBuildKind, ListBuildPassReport, ListBuildShape,
-    has_list_build_shape, run_byte_sink_pass, run_list_build_pass,
+    has_list_build_shape, run_byte_sink_pass, run_byte_sink_pass_keeping, run_list_build_pass,
 };

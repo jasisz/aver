@@ -1,0 +1,14 @@
+module Node
+    intent = "The pure function one validation job runs, written in the certified subset so the job body certifies like any other function."
+    exposes [validate]
+    effects []
+
+fn validate(task: String) -> Int
+    ? "Scores the one task name it knows higher than any other."
+    match task
+        "alpha" -> 5
+        _ -> 8
+
+verify validate
+    validate("alpha") => 5
+    validate("beta-two") => 8

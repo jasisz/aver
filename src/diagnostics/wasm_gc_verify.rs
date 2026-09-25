@@ -243,6 +243,7 @@ pub fn run_verify_for_items_wasm_gc_with_marks(
             run_string_index: true,
             run_list_build: false,
             run_byte_sink: true,
+            keep_printable_unfused: true,
             ..Default::default()
         },
     );

@@ -1549,6 +1549,10 @@ fn emit_verify_law_block(
         // the law-class marker is written here — so the claim and the theorem
         // it cites are assembled from one set of pieces and cannot drift.
         if let Some(statement) = claim_statement {
+            // The certificate's law gate refuses `:=` in a statement, so a
+            // record literal `{ f := v : T }` is handed over as the
+            // constructor application it elaborates to, `(T.mk v …)`.
+            let statement = record_literals_as_constructors(&statement, ctx).unwrap_or(statement);
             ctx.universal_law_claims
                 .borrow_mut()
                 .push(crate::codegen::UniversalLawClaim {
@@ -2373,4 +2377,165 @@ pub fn emit_decision(db: &DecisionBlock) -> String {
     }
     lines.push("-/".to_string());
     lines.join("\n")
+}
+
+/// Rewrite every structure instance `{ f1 := e1, …, fn := en : T }` of a law
+/// statement into `(T.mk (e1') … (en'))`, the arguments in `T`'s declared
+/// field order: the term the structure instance elaborates to, spelled
+/// without `:=`. `None` when some instance does not have exactly that shape
+/// or `T` is not a record whose fields are exactly the ones written (the
+/// statement is then left as it is).
+fn record_literals_as_constructors(statement: &str, ctx: &CodegenContext) -> Option<String> {
+    if !statement.contains(":=") {
+        return Some(statement.to_string());
+    }
+    let chars: Vec<char> = statement.chars().collect();
+    rewrite_record_literals(&chars, ctx)
+}
+
+/// The index just past the bracket group opening at `start`, skipping string
+/// literals.
+fn group_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut depth: Vec<char> = Vec::new();
+    let mut i = start;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '"' => {
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            '(' | '[' | '{' | '⟨' => depth.push(c),
+            ')' | ']' | '}' | '⟩' => {
+                let open = depth.pop()?;
+                let want = match c {
+                    ')' => '(',
+                    ']' => '[',
+                    '}' => '{',
+                    _ => '⟨',
+                };
+                if open != want {
+                    return None;
+                }
+                if depth.is_empty() {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Split `chars` at top-level occurrences of `sep`.
+fn split_top(chars: &[char], sep: &[char]) -> Option<Vec<Vec<char>>> {
+    let mut parts = Vec::new();
+    let mut cur = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if matches!(chars[i], '(' | '[' | '{' | '⟨' | '"') {
+            let end = if chars[i] == '"' {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j] != '"' {
+                    if chars[j] == '\\' {
+                        j += 1;
+                    }
+                    j += 1;
+                }
+                j + 1
+            } else {
+                group_end(chars, i)?
+            };
+            cur.extend_from_slice(chars.get(i..end)?);
+            i = end;
+            continue;
+        }
+        if chars[i..].starts_with(sep) {
+            parts.push(std::mem::take(&mut cur));
+            i += sep.len();
+            continue;
+        }
+        cur.push(chars[i]);
+        i += 1;
+    }
+    parts.push(cur);
+    Some(parts)
+}
+
+fn rewrite_record_literals(chars: &[char], ctx: &CodegenContext) -> Option<String> {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '"' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] != '"' {
+                if chars[j] == '\\' {
+                    j += 1;
+                }
+                j += 1;
+            }
+            out.extend(chars.get(i..=j)?);
+            i = j + 1;
+            continue;
+        }
+        if chars[i] != '{' {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let end = group_end(chars, i)?;
+        let inner: String = chars[i + 1..end - 1].iter().collect();
+        let inner = inner.trim();
+        if !inner.contains(":=") {
+            // Not a structure instance: rewrite inside it and keep the braces.
+            out.push('{');
+            out.push_str(&rewrite_record_literals(&chars[i + 1..end - 1], ctx)?);
+            out.push('}');
+            i = end;
+            continue;
+        }
+        let inner_chars: Vec<char> = inner.chars().collect();
+        let fields_and_ty = split_top(&inner_chars, &[' ', ':', ' '])?;
+        let [fields, ty] = fields_and_ty.as_slice() else {
+            return None;
+        };
+        let ty: String = ty.iter().collect();
+        let ty = ty.trim();
+        if ty.is_empty()
+            || !ty
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
+        {
+            return None;
+        }
+        let mut written: Vec<(String, String)> = Vec::new();
+        for part in split_top(fields, &[','])? {
+            let field = split_top(&part, &[':', '='])?;
+            let [name, value] = field.as_slice() else {
+                return None;
+            };
+            let name: String = name.iter().collect();
+            let value = rewrite_record_literals(value, ctx)?;
+            written.push((name.trim().to_string(), value.trim().to_string()));
+        }
+        let declared = crate::codegen::common::record_field_order(ctx, ty)?;
+        if declared.len() != written.len() {
+            return None;
+        }
+        let mut args = Vec::with_capacity(declared.len());
+        for field in &declared {
+            let lean_name = aver_name_to_lean(field);
+            let (_, value) = written.iter().find(|(n, _)| *n == lean_name)?;
+            args.push(format!("({value})"));
+        }
+        out.push_str(&format!("({ty}.mk {})", args.join(" ")));
+        i = end;
+    }
+    Some(out)
 }

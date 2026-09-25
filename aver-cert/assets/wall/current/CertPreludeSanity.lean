@@ -6,7 +6,7 @@
     pattern from the kill-fast probe survives the generalization to
     `structv`-based carriers, and stays kernel-clean under `#print axioms`
     ([propext, Classical.choice, Quot.sound]; no `sorryAx`);
-  * executable `example`s via `native_decide` (OUTSIDE the proof budget) that
+  * executable `example`s via `decide +kernel` (OUTSIDE the proof budget) that
     force the interpreter to actually COMPUTE a decoded result on concrete
     inputs across every value family (Int, Bool, f64, ADT, String, List, tail
     recursion). A vacuous semantics — e.g. one that fails `localGet` on
@@ -92,15 +92,15 @@ def cSumTo : CodeTbl := fun fn =>
 
 example :
     ((wFuncN cSumTo gHost 20 1 [carrierSmall 5 3]).bind carrierToInt) = some 6 := by
-  native_decide
+  decide +kernel
 
 example :
     ((wFuncN cSumTo gHost 20 1 [carrierSmall 5 0]).bind carrierToInt) = some 0 := by
-  native_decide
+  decide +kernel
 
 example :
     ((wFuncN cSumTo gHost 20 1 [carrierSmall 5 (-4)]).bind carrierToInt) = some 0 := by
-  native_decide
+  decide +kernel
 
 -- 2) Tail recursion via return_call (countDown-style accumulator): tick(3,0)=6.
 def cTick : CodeTbl := fun fn =>
@@ -115,7 +115,7 @@ def cTick : CodeTbl := fun fn =>
 
 example :
     ((wFuncN cTick gHost 20 1 [carrierSmall 5 3, carrierSmall 5 0]).bind carrierToInt)
-      = some 6 := by native_decide
+      = some 6 := by decide +kernel
 
 -- 3) ADT match via ref.test / ref.cast / struct.get: classify(Circle)=1, Point=3.
 --    Shape types: Circle = 0 (one f64 field), Rect = 1 (two), Point = 2 (empty).
@@ -132,11 +132,11 @@ def cClassify : CodeTbl := fun fn =>
 
 example :
     ((wFuncN cClassify gHost 8 1 [WVal.structv 0 [.f64v (1.5 : Float).toBits]]).bind carrierToInt)
-      = some 1 := by native_decide
+      = some 1 := by decide +kernel
 
 example :
     ((wFuncN cClassify gHost 8 1 [WVal.structv 2 []]).bind carrierToInt)
-      = some 3 := by native_decide
+      = some 3 := by decide +kernel
 
 -- 4) String literal via array.new_data: describe(Point) = "point" (bytes).
 def cDescribe : CodeTbl := fun fn =>
@@ -149,7 +149,7 @@ def cDescribe : CodeTbl := fun fn =>
 
 example :
     ((wFuncN cDescribe gHost 8 1 [WVal.structv 2 []]).bind asBytes)
-      = some [112, 111, 105, 110, 116] := by native_decide
+      = some [112, 111, 105, 110, 116] := by decide +kernel
 
 -- 5) f64 arithmetic + comparison, Bool result: (a < a*a) style through opcodes.
 def cFcmp : CodeTbl := fun fn =>
@@ -159,15 +159,15 @@ def cFcmp : CodeTbl := fun fn =>
 
 example :
     ((wFuncN cFcmp gHost 4 1 [WVal.f64v (1.0 : Float).toBits, WVal.f64v (2.0 : Float).toBits]).bind asBool)
-      = some true := by native_decide
+      = some true := by decide +kernel
 
 example :
     ((wFuncN cFcmp gHost 4 1 [WVal.f64v (2.0 : Float).toBits, WVal.f64v (2.0 : Float).toBits]).bind asBool)
-      = some true := by native_decide
+      = some true := by decide +kernel
 
 example :
     ((wFuncN cFcmp gHost 4 1 [WVal.f64v (3.0 : Float).toBits, WVal.f64v (2.0 : Float).toBits]).bind asBool)
-      = some false := by native_decide
+      = some false := by decide +kernel
 
 -- 6) f64 arithmetic value: 8.0 / 2.0 - 1.0 = 3.0 (bit-exact through the opcodes).
 def cFarith : CodeTbl := fun fn =>
@@ -177,16 +177,16 @@ def cFarith : CodeTbl := fun fn =>
 
 example :
     ((wFuncN cFarith gHost 4 1 [WVal.f64v (2.0 : Float).toBits, WVal.f64v (8.0 : Float).toBits]).bind asF64)
-      = some (3.0 : Float).toBits := by native_decide
+      = some (3.0 : Float).toBits := by decide +kernel
 
 -- 7) Bool logic via i32.eq / i32.and and list head via structGet on a cons cell.
 def cAnd : CodeTbl := fun fn =>
   if fn = 1 then some ⟨2, 0, [.localGet 0, .localGet 1, .i32And]⟩ else none
 
 example :
-    ((wFuncN cAnd gHost 4 1 [WVal.i32v 1, WVal.i32v 1]).bind asBool) = some true := by native_decide
+    ((wFuncN cAnd gHost 4 1 [WVal.i32v 1, WVal.i32v 1]).bind asBool) = some true := by decide +kernel
 example :
-    ((wFuncN cAnd gHost 4 1 [WVal.i32v 1, WVal.i32v 0]).bind asBool) = some false := by native_decide
+    ((wFuncN cAnd gHost 4 1 [WVal.i32v 1, WVal.i32v 0]).bind asBool) = some false := by decide +kernel
 
 /-! ## Residue guards — opcodes the differential harness cannot drive
 end-to-end without string / Result / list-builder runtime contracts (kept
@@ -203,64 +203,64 @@ def cArrFixed : CodeTbl := fun fn =>
   if fn = 1 then some ⟨0, 0,
     [.i64Const 10, .call 6, .i64Const 20, .call 6, .arrayNewFixed 7 2]⟩ else none
 example :
-    ((wFuncN cArrFixed gHost 4 1 []).bind asIntList) = some [10, 20] := by native_decide
+    ((wFuncN cArrFixed gHost 4 1 []).bind asIntList) = some [10, 20] := by decide +kernel
 
 -- i32.eq
 def cI32Eq : CodeTbl := fun fn =>
   if fn = 1 then some ⟨2, 0, [.localGet 0, .localGet 1, .i32Eq]⟩ else none
 example : ((wFuncN cI32Eq gHost 4 1 [WVal.i32v 5, WVal.i32v 5]).bind asBool) = some true := by
-  native_decide
+  decide +kernel
 example : ((wFuncN cI32Eq gHost 4 1 [WVal.i32v 5, WVal.i32v 4]).bind asBool) = some false := by
-  native_decide
+  decide +kernel
 
 -- i64.eqz
 def cI64Eqz : CodeTbl := fun fn =>
   if fn = 1 then some ⟨1, 0, [.localGet 0, .i64Eqz]⟩ else none
-example : ((wFuncN cI64Eqz gHost 4 1 [WVal.i64v 0]).bind asBool) = some true := by native_decide
-example : ((wFuncN cI64Eqz gHost 4 1 [WVal.i64v 3]).bind asBool) = some false := by native_decide
+example : ((wFuncN cI64Eqz gHost 4 1 [WVal.i64v 0]).bind asBool) = some true := by decide +kernel
+example : ((wFuncN cI64Eqz gHost 4 1 [WVal.i64v 3]).bind asBool) = some false := by decide +kernel
 
 -- ref.null (+ ref.is_null)
 def cRefNull : CodeTbl := fun fn =>
   if fn = 1 then some ⟨0, 0, [.refNull, .refIsNull]⟩ else none
-example : ((wFuncN cRefNull gHost 4 1 []).bind asBool) = some true := by native_decide
+example : ((wFuncN cRefNull gHost 4 1 []).bind asBool) = some true := by decide +kernel
 
 -- return (plain): box the argument then early-return it.
 def cRet : CodeTbl := fun fn =>
   if fn = 1 then some ⟨1, 0, [.localGet 0, .structGet 5 0, .call 6, .ret, .i64Const 999, .call 6]⟩
   else none
 example :
-    ((wFuncN cRet gHost 4 1 [carrierSmall 5 42]).bind carrierToInt) = some 42 := by native_decide
+    ((wFuncN cRet gHost 4 1 [carrierSmall 5 42]).bind carrierToInt) = some 42 := by decide +kernel
 
 -- remaining i32 / i64 / f64 comparison + arithmetic opcodes, each executed once.
 def cMisc (ops : List WInstr) : CodeTbl := fun fn =>
   if fn = 1 then some ⟨2, 0, ops⟩ else none
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .i32GtS]) gHost 4 1
-    [WVal.i32v 7, WVal.i32v 3]).bind asBool) = some true := by native_decide
+    [WVal.i32v 7, WVal.i32v 3]).bind asBool) = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .i32LeS]) gHost 4 1
-    [WVal.i32v 3, WVal.i32v 3]).bind asBool) = some true := by native_decide
+    [WVal.i32v 3, WVal.i32v 3]).bind asBool) = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .i64Eq]) gHost 4 1
-    [WVal.i64v 9, WVal.i64v 9]).bind asBool) = some true := by native_decide
+    [WVal.i64v 9, WVal.i64v 9]).bind asBool) = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .i64GeS]) gHost 4 1
-    [WVal.i64v 9, WVal.i64v 8]).bind asBool) = some true := by native_decide
+    [WVal.i64v 9, WVal.i64v 8]).bind asBool) = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .i64GtS]) gHost 4 1
-    [WVal.i64v 9, WVal.i64v 8]).bind asBool) = some true := by native_decide
+    [WVal.i64v 9, WVal.i64v 8]).bind asBool) = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .i64LtS]) gHost 4 1
-    [WVal.i64v 8, WVal.i64v 9]).bind asBool) = some true := by native_decide
+    [WVal.i64v 8, WVal.i64v 9]).bind asBool) = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .f64Add]) gHost 4 1
     [WVal.f64v (1.5 : Float).toBits, WVal.f64v (2.5 : Float).toBits]).bind asF64)
-    = some (4.0 : Float).toBits := by native_decide
+    = some (4.0 : Float).toBits := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .f64Mul]) gHost 4 1
     [WVal.f64v (3.0 : Float).toBits, WVal.f64v (2.0 : Float).toBits]).bind asF64)
-    = some (6.0 : Float).toBits := by native_decide
+    = some (6.0 : Float).toBits := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .f64Le]) gHost 4 1
     [WVal.f64v (2.0 : Float).toBits, WVal.f64v (2.0 : Float).toBits]).bind asBool)
-    = some true := by native_decide
+    = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .f64Ge]) gHost 4 1
     [WVal.f64v (2.0 : Float).toBits, WVal.f64v (2.0 : Float).toBits]).bind asBool)
-    = some true := by native_decide
+    = some true := by decide +kernel
 example : ((wFuncN (cMisc [.localGet 0, .localGet 1, .f64Gt]) gHost 4 1
     [WVal.f64v (3.0 : Float).toBits, WVal.f64v (2.0 : Float).toBits]).bind asBool)
-    = some true := by native_decide
+    = some true := by decide +kernel
 
 /-! ## LEB128 index encoders
 
@@ -287,5 +287,41 @@ example : s33Bytes 127 = [0xff, 0x00] := by decide
 example : s33Bytes 128 = [0x80, 0x01] := by decide
 example : s33Bytes 8192 = [0x80, 0xc0, 0x00] := by decide
 example : s33Bytes 4294967295 = [0xff, 0xff, 0xff, 0xff, 0x0f] := by decide
+
+/-! ## One-grammar opcodes: `i64.ne`, `i32.eqz`, `i32.ne`, `i32.or`
+
+Edge values for each new instruction, proved on the interpreter directly. The
+stack is written top first. `i32.or` is exact on 0/1 and STUCK on any other
+operand, so it never yields a value the bitwise wasm instruction would not. -/
+
+section OneGrammarOps
+variable (h : HostTbl) (a : Nat → Option Nat) (c : Callee) (l : List WVal)
+
+example : wRunF h a c [.i64Ne] l [.i64v 7, .i64v 7] = some (.ok l [.i32v 0]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i64Ne] l [.i64v 7, .i64v (-7)] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i64Ne] l [.i32v 7, .i32v 7] = none := by simp [wRunF]
+example : wRunF h a c [.i32Eqz] l [.i32v 0] = some (.ok l [.i32v 1]) := by simp [wRunF, b32]
+example : wRunF h a c [.i32Eqz] l [.i32v 5] = some (.ok l [.i32v 0]) := by simp [wRunF, b32]
+example : wRunF h a c [.i32Eqz] l [.i32v (-1)] = some (.ok l [.i32v 0]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Eqz] l [.i64v 0] = none := by simp [wRunF]
+example : wRunF h a c [.i32Ne] l [.i32v 1, .i32v 0] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Ne] l [.i32v 1, .i32v 1] = some (.ok l [.i32v 0]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 0, .i32v 0] = some (.ok l [.i32v 0]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 1, .i32v 0] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 0, .i32v 1] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 1, .i32v 1] = some (.ok l [.i32v 1]) := by
+  simp [wRunF, b32]
+example : wRunF h a c [.i32Or] l [.i32v 2, .i32v 0] = none := by simp [wRunF]
+example : wRunF h a c [.i32Or] l [.i32v 0, .i32v (-1)] = none := by simp [wRunF]
+
+end OneGrammarOps
 
 end CertPrelude

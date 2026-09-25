@@ -1746,8 +1746,25 @@ pub(super) fn generate_toolchain() -> String {
     "leanprover/lean4:v4.34.0\n".to_string()
 }
 
+/// The checker-owned wall module a certificate model imports for the prelude
+/// pieces the certificate token gate refuses in package text: `AverBits`
+/// (whose equations are `@[simp]`) and the `aver_int_order` tactic (a
+/// `syntax`/`macro_rules` pair). The module's text is these same two
+/// constants, byte for byte (`aver-cert/assets/wall/current/ModelPrelude.lean`).
+pub(crate) const CERT_MODEL_PRELUDE_MODULE: &str = "ModelPrelude";
+
 pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
-    let mut parts = vec![LEAN_PRELUDE_HEADER.to_string()];
+    let needs_order_kit = union_body.contains("aver_int_order");
+    let needs_bits = crate::codegen::builtin_helpers::needed_helpers(union_body, false)
+        .iter()
+        .any(|helper| helper.key == "AverBits");
+    let mut parts = Vec::new();
+    // A certificate model takes both pieces from the checker's wall: the gate
+    // would refuse the attribute and the macro in the model's own text.
+    if cert_model && (needs_order_kit || needs_bits) {
+        parts.push(format!("import {CERT_MODEL_PRELUDE_MODULE}"));
+    }
+    parts.push(LEAN_PRELUDE_HEADER.to_string());
     for record in crate::codegen::builtin_records::needed_records(union_body, false) {
         parts.push(crate::codegen::builtin_records::render_lean(record));
     }
@@ -1760,6 +1777,7 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
             )),
             "NumericParse" => parts.push(generate_numeric_parse_prelude(union_body, false)),
             "StringCodePoint" => parts.push(LEAN_PRELUDE_STRING_CODE_POINT.to_string()),
+            "AverBits" if cert_model => {}
             "AverBits" => parts.push(LEAN_PRELUDE_AVER_BITS.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(union_body, false)),
@@ -1792,8 +1810,27 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
     // stay byte-identical. Not a `BUILTIN_HELPERS` key: it is Lean-only
     // proof infrastructure, keyed on emitted tactic text rather than a
     // builtin call.
-    if union_body.contains("aver_int_order") {
+    if needs_order_kit && !cert_model {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
     parts.join("\n\n")
+}
+
+#[cfg(all(test, feature = "certify"))]
+mod cert_wall_prelude_tests {
+    /// The certificate model imports `AverBits` and `aver_int_order` from the
+    /// checker's wall instead of carrying them; the wall text must be these
+    /// constants byte for byte, or a certificate model and a proof export
+    /// would prove things about two different `Bits` models.
+    #[test]
+    fn the_wall_model_prelude_is_the_proof_prelude_text() {
+        let wall = aver_cert::wall::SOURCES
+            .iter()
+            .find(|source| {
+                source.name.strip_suffix(".lean") == Some(super::CERT_MODEL_PRELUDE_MODULE)
+            })
+            .expect("the wall carries the model prelude");
+        assert!(wall.contents.contains(super::LEAN_PRELUDE_AVER_BITS));
+        assert!(wall.contents.contains(super::LEAN_PRELUDE_NONLINEAR_NONNEG));
+    }
 }

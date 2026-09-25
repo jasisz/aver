@@ -32,8 +32,9 @@ pub(crate) struct ArtifactBuildCache {
 }
 
 impl ArtifactBuildCache {
-    pub(crate) fn prepare(build_dir: &Path, material: &KeyMaterial<'_>) -> Self {
-        let Some(store) = cache_store() else {
+    /// `enabled` is false for `verify`, which never reads or writes a cache.
+    pub(crate) fn prepare(build_dir: &Path, material: &KeyMaterial<'_>, enabled: bool) -> Self {
+        let Some(store) = cache_store().filter(|_| enabled) else {
             return Self {
                 entry: None,
                 hit: false,
@@ -76,6 +77,11 @@ impl ArtifactBuildCache {
         };
         let _ = try_publish(entry, build_dir);
     }
+}
+
+/// Whether either build cache is configured in the environment.
+pub(crate) fn any_cache_configured() -> bool {
+    cache_store().is_some() || crate::prelude_cache::cache_configured()
 }
 
 /// Any explicit value except `0|off|false` opts into a trusted cache directory.
@@ -124,6 +130,237 @@ fn artifact_cache_key(build_dir: &Path, material: &KeyMaterial<'_>) -> Result<St
         hash_part(&mut hasher, name.as_bytes(), &bytes);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Per-module build outputs inside the same explicitly configured cache.
+///
+/// A whole-package entry is reused only when every staged source is
+/// identical, so one changed function rebuilt every module. On such a miss
+/// each staged package module (wall sources excluded: the pristine wall cache
+/// holds them) is looked up under a key over its own path and source text
+/// and the keys of the staged modules it imports; the wall and toolchain are
+/// fixed by the key material. Hits are restored into the fresh build
+/// directory before `lake build`, and after a successful build every
+/// module's outputs are published. Lake still recomputes each module's input
+/// trace and rebuilds any module whose restored trace disagrees, so a key
+/// that misses an input costs a rebuild, never a stale module. Entries carry
+/// the same integrity manifest as the whole-package entries.
+pub(crate) struct ModuleOutputCache {
+    store: Option<PathBuf>,
+    modules: Vec<(String, String)>,
+    restored: usize,
+}
+
+/// A module's build products, relative to the build directory, for a module
+/// whose source path (without `.lean`) is `stem`.
+fn module_output_files(stem: &str) -> Vec<String> {
+    [".olean", ".olean.hash", ".ilean", ".ilean.hash", ".trace"]
+        .iter()
+        .map(|ext| format!(".lake/build/lib/lean/{stem}{ext}"))
+        .chain(
+            [".c", ".c.hash", ".setup.json"]
+                .iter()
+                .map(|ext| format!(".lake/build/ir/{stem}{ext}")),
+        )
+        .collect()
+}
+
+/// The module names a Lean source imports, read from its `import` lines
+/// (optionally after `public`, `private` or `meta`). Only a key input: Lake
+/// validates every restored module against its own trace.
+fn import_names(source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in source.lines() {
+        let mut words = line.split_whitespace().peekable();
+        while matches!(words.peek(), Some(&("public" | "private" | "meta"))) {
+            words.next();
+        }
+        if words.next() == Some("import") {
+            names.extend(words.filter(|word| *word != "all").map(str::to_string));
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Keys of every staged module that is not a wall source, by module name.
+fn module_keys(
+    build_dir: &Path,
+    material: &[(&str, &str)],
+    wall_sources: &[&str],
+) -> Result<Vec<(String, String)>, ()> {
+    let sources: std::collections::BTreeMap<String, (String, Vec<u8>)> =
+        staged_source_files(build_dir)?
+            .into_iter()
+            .filter_map(|(path, bytes)| {
+                let stem = path.strip_suffix(".lean")?.to_string();
+                if stem == "lakefile" || wall_sources.contains(&path.as_str()) {
+                    return None;
+                }
+                Some((stem.replace('/', "."), (stem, bytes)))
+            })
+            .collect();
+    fn key_of(
+        name: &str,
+        sources: &std::collections::BTreeMap<String, (String, Vec<u8>)>,
+        material: &[(&str, &str)],
+        memo: &mut std::collections::BTreeMap<String, Option<String>>,
+        depth: usize,
+    ) -> Option<String> {
+        if let Some(key) = memo.get(name) {
+            return key.clone();
+        }
+        let (stem, bytes) = sources.get(name)?;
+        if depth > sources.len() {
+            return None;
+        }
+        let mut hasher = Sha256::new();
+        hash_part(&mut hasher, b"layout", MODULE_LAYOUT_VERSION.as_bytes());
+        for (name, value) in material {
+            hash_part(&mut hasher, name.as_bytes(), value.as_bytes());
+        }
+        hash_part(&mut hasher, b"module", stem.as_bytes());
+        hash_part(&mut hasher, b"source", bytes);
+        for import in import_names(&String::from_utf8_lossy(bytes)) {
+            let import_key = if sources.contains_key(&import) {
+                key_of(&import, sources, material, memo, depth + 1)?
+            } else {
+                String::new()
+            };
+            hash_part(&mut hasher, import.as_bytes(), import_key.as_bytes());
+        }
+        let key = format!("{:x}", hasher.finalize());
+        memo.insert(name.to_string(), Some(key.clone()));
+        Some(key)
+    }
+    let mut memo = std::collections::BTreeMap::new();
+    Ok(sources
+        .iter()
+        .filter_map(|(name, (stem, _))| {
+            key_of(name, &sources, material, &mut memo, 0).map(|key| (stem.clone(), key))
+        })
+        .collect())
+}
+
+const MODULE_LAYOUT_VERSION: &str = "v1-modules";
+
+impl ModuleOutputCache {
+    pub(crate) fn disabled() -> Self {
+        Self {
+            store: None,
+            modules: Vec::new(),
+            restored: 0,
+        }
+    }
+
+    pub(crate) fn prepare(
+        build_dir: &Path,
+        material: &[(&str, &str)],
+        wall_sources: &[&str],
+    ) -> Self {
+        let Some(store) = cache_store() else {
+            return Self::disabled();
+        };
+        let store = store.join(CACHE_LAYOUT_VERSION).join(MODULE_LAYOUT_VERSION);
+        let Ok(modules) = module_keys(build_dir, material, wall_sources) else {
+            return Self::disabled();
+        };
+        let restored = modules
+            .iter()
+            .filter(|(stem, key)| restore_module(&store.join(key), build_dir, stem).is_ok())
+            .count();
+        Self {
+            store: Some(store),
+            modules,
+            restored,
+        }
+    }
+
+    /// How many modules were restored from the cache.
+    pub(crate) fn restored(&self) -> usize {
+        self.restored
+    }
+
+    pub(crate) fn publish(&self, build_dir: &Path) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        for (stem, key) in &self.modules {
+            let entry = store.join(key);
+            if !entry.join("manifest.sha256").is_file() {
+                let _ = publish_module(&entry, build_dir, stem);
+            }
+        }
+    }
+}
+
+fn restore_module(entry: &Path, build_dir: &Path, stem: &str) -> Result<(), ()> {
+    if !entry.join("manifest.sha256").is_file() {
+        return Err(());
+    }
+    let files = entry.join("files");
+    if verify_integrity(entry, &files).is_err() {
+        let _ = std::fs::remove_dir_all(entry);
+        return Err(());
+    }
+    let mut copied = Vec::new();
+    let result = (|| {
+        for relative in module_output_files(stem) {
+            let source = files.join(&relative);
+            if !source.is_file() {
+                continue;
+            }
+            let destination = build_dir.join(&relative);
+            std::fs::create_dir_all(destination.parent().ok_or(())?).map_err(|_| ())?;
+            std::fs::copy(&source, &destination).map_err(|_| ())?;
+            copied.push(destination);
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        for file in copied {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+    result
+}
+
+fn publish_module(entry: &Path, build_dir: &Path, stem: &str) -> Result<(), ()> {
+    let outputs = module_output_files(stem);
+    if !outputs
+        .iter()
+        .take(5)
+        .all(|relative| build_dir.join(relative).is_file())
+    {
+        return Err(());
+    }
+    let parent = entry.parent().ok_or(())?;
+    std::fs::create_dir_all(parent).map_err(|_| ())?;
+    let temp = parent.join(format!("tmp-{}-{}", std::process::id(), unique_nanos()));
+    let result = (|| {
+        for relative in &outputs {
+            let source = build_dir.join(relative);
+            if !source.is_file() {
+                continue;
+            }
+            let destination = temp.join("files").join(relative);
+            std::fs::create_dir_all(destination.parent().ok_or(())?).map_err(|_| ())?;
+            std::fs::copy(&source, &destination).map_err(|_| ())?;
+        }
+        let manifest = lake_tree_hashes(&temp.join("files"))?
+            .into_iter()
+            .map(|(path, hash)| format!("{hash}  {path}\n"))
+            .collect::<String>();
+        std::fs::write(temp.join("manifest.sha256"), manifest).map_err(|_| ())?;
+        match std::fs::rename(&temp, entry) {
+            Ok(()) => Ok(()),
+            Err(_) if entry.join("manifest.sha256").is_file() => Ok(()),
+            Err(_) => Err(()),
+        }
+    })();
+    let _ = std::fs::remove_dir_all(temp);
+    result
 }
 
 fn hash_part(hasher: &mut Sha256, name: &[u8], bytes: &[u8]) {
@@ -430,5 +667,122 @@ mod tests {
         assert_eq!(with_dot_dir, artifact_cache_key(&dir, &material).unwrap());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn import_names_read_every_import_form() {
+        let source = "-- header\nimport A\npublic import B.C D\nmeta import all E\nimports F\n\ndef x := 1\n";
+        assert_eq!(import_names(source), vec!["A", "B.C", "D", "E"]);
+    }
+
+    fn module_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "aver-cert-module-cache-{label}-{}-{}",
+            std::process::id(),
+            unique_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn key_of(dir: &Path, material: &[(&str, &str)], module: &str) -> String {
+        module_keys(dir, material, &["Wall.lean"])
+            .unwrap()
+            .into_iter()
+            .find(|(stem, _)| stem == module)
+            .map(|(_, key)| key)
+            .unwrap()
+    }
+
+    #[test]
+    fn module_key_follows_source_imports_and_material_but_not_the_wall() {
+        let dir = module_dir("keys");
+        std::fs::write(dir.join("Wall.lean"), "def w := 0\n").unwrap();
+        std::fs::write(dir.join("Base.lean"), "import Wall\ndef b := 1\n").unwrap();
+        std::fs::write(
+            dir.join("Top.lean"),
+            "import Base\nimport Wall\ndef t := 1\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("Other.lean"), "import Wall\ndef o := 1\n").unwrap();
+        let material = [("wall_id", "w1"), ("toolchain_version", "t")];
+        let top = key_of(&dir, &material, "Top");
+        let other = key_of(&dir, &material, "Other");
+        assert!(
+            module_keys(&dir, &material, &["Wall.lean"])
+                .unwrap()
+                .iter()
+                .all(|(stem, _)| stem != "Wall" && stem != "lakefile"),
+            "wall sources are never package modules"
+        );
+
+        // An imported package module's source is part of the key.
+        std::fs::write(dir.join("Base.lean"), "import Wall\ndef b := 2\n").unwrap();
+        assert_ne!(top, key_of(&dir, &material, "Top"));
+        assert_eq!(other, key_of(&dir, &material, "Other"));
+        let top = key_of(&dir, &material, "Top");
+
+        // So is the module's own source and the key material.
+        std::fs::write(
+            dir.join("Top.lean"),
+            "import Base\nimport Wall\ndef t := 2\n",
+        )
+        .unwrap();
+        assert_ne!(top, key_of(&dir, &material, "Top"));
+        let top = key_of(&dir, &material, "Top");
+        assert_ne!(
+            top,
+            key_of(
+                &dir,
+                &[("wall_id", "w2"), ("toolchain_version", "t")],
+                "Top"
+            )
+        );
+
+        // A wall source is fixed by the material, not read.
+        std::fs::write(dir.join("Wall.lean"), "def w := 1\n").unwrap();
+        assert_eq!(top, key_of(&dir, &material, "Top"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn module_outputs_round_trip_and_a_corrupted_entry_is_dropped() {
+        let build = module_dir("build");
+        let store = module_dir("store");
+        let outputs = module_output_files("Nested/Mod");
+        for relative in &outputs {
+            let path = build.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, relative.as_bytes()).unwrap();
+        }
+        let entry = store.join("key");
+        publish_module(&entry, &build, "Nested/Mod").unwrap();
+
+        let fresh = module_dir("fresh");
+        restore_module(&entry, &fresh, "Nested/Mod").unwrap();
+        for relative in &outputs {
+            assert_eq!(
+                std::fs::read(fresh.join(relative)).unwrap(),
+                relative.as_bytes()
+            );
+        }
+
+        // A module without its olean and trace is never published.
+        let partial = module_dir("partial");
+        let olean = partial.join(&outputs[0]);
+        std::fs::create_dir_all(olean.parent().unwrap()).unwrap();
+        std::fs::write(&olean, b"olean").unwrap();
+        assert!(publish_module(&store.join("partial"), &partial, "Nested/Mod").is_err());
+
+        // A changed file fails the integrity manifest: nothing is restored
+        // and the entry is removed.
+        std::fs::write(entry.join("files").join(&outputs[0]), b"tampered").unwrap();
+        let again = module_dir("again");
+        assert!(restore_module(&entry, &again, "Nested/Mod").is_err());
+        assert!(!again.join(&outputs[0]).exists());
+        assert!(!entry.exists());
+        for dir in [build, store, fresh, partial, again] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }

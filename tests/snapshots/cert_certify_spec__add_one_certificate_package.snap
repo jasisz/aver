@@ -4,8 +4,8 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 8,
-  "format": {"version": 1, "wall_id": "sha256:a3c0e76722eee7a09f0fb85eab10d94657be52ffe059e541645c0a9c80167dd5"},
+  "schema_version": 9,
+  "format": {"version": 1, "wall_id": "sha256:ed89b143414bdff0bfadb49a49bc1e7d8c537365b69549c65f7e82fbccf73cef"},
   "wasm": "add_one.wasm",
   "wasm_sha256": "4b86ac5e745a7f0aeef0d24178a3f47ed09b4f98ffc36216aedf252c9cb20583",
   "target": "wasm-gc",
@@ -21,7 +21,7 @@ expression: golden
   ],
   "laws": [],
   "sourceBridges": [
-    {"export": "addOne", "theorem": "AverCert.Bridge.addOne", "corollary": "AverCert.Bridge.addOne_certified", "model": "CertificateHello.addOne", "params": [{"kind": "int"}], "result": {"kind": "int"}}
+    {"export": "addOne", "theorem": "AverCert.Bridge.addOne", "corollary": "AverCert.Bridge.addOne_certified", "model": "CertificateHello.addOne", "kind": "exact", "params": [{"kind": "int"}], "result": {"kind": "int"}}
   ],
   "sourceBridgesDeclined": [],
   "declaredUncertified": [
@@ -39,101 +39,68 @@ expression: golden
   ],
   "capabilities": [],
   "start": {"present": false, "function_index": null},
-  "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": null, "eq": null},
+  "hostRoleTable": {"box": 6, "add": 7, "mul": 9, "sub": 8, "toIndex": 18, "cmp": null, "eq": null, "divmod": 12},
   "stringHostRoles": [],
   "certified": [
-    {"name": "addOne", "class": "expr-fragment-v1", "policy": "simulatesModel", "level": "L1", "dom": "Int", "cod": "Int", "theorem": "AcceptanceSoundness.recordCompute_claim_discharges"}
+    {"name": "addOne", "class": "source-plan-v1", "facets": [], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"}
   ],
   "source_level_only": []
 }
 
 == Manifest.lean ==
-import Schema
-import Module
-import PlanCheck
-import PlanLower
-import PlanBytes
-import WasmSlice
-import ExprFragmentAccepted
-import ArtifactBytes
+-- The certificate's manifest: the subject (artifact identity, exports,
+-- helper indices and the contracts it is conditional on), the plans and
+-- the obligations, which are exactly the ones the wall derives.
+import SchemaCore
+import AcceptedArtifactCore
 import Plans
-import ConstructVerbatimSoundness
-import StandardFace
-import CertificateHello
-import AverCommon
-
-set_option linter.unusedVariables false
 
 namespace AverCert
-open AverCert.Schema CertPrelude
+open AverCert.Schema
 
-abbrev addOneOb : Schema.Obligation :=
-  { export_ := "addOne", policy := .simulatesModel, carrier := 2,
-    code := CertModule.addOneCode, host := AverCert.StandardFace.recordComputeHost 2 [(.box, 6), (.add, 7), (.mul, 9), (.sub, 8), (.toIndex, 18)], self := 1,
-    Dom := List RecordComputeBridge.SVal, Cod := Option RecordComputeBridge.SVal,
-    domRepr := AverCert.StandardFace.recordComputeDomRepr 2 0 Plans.addOnePlan.params,
-    codRepr := AverCert.StandardFace.recordComputeCodRepr 2 0,
-    model := AverCert.StandardFace.recordComputeModel Plans.addOnePlan.body }
+def subject : Subject :=
+  { artifactHash := "4b86ac5e745a7f0aeef0d24178a3f47ed09b4f98ffc36216aedf252c9cb20583"
+    target := "wasm-gc", profile := "AverUserProfile/v1", abi := "aver-wasm-gc/0"
+    artifactRoot := "AverCert.Artifact.certificate"
+    exports := ["addOne"]
+    declaredUncertified := [("_start", "module export is outside the claimed certification obligations"), ("__rt_string_from_lm", "module export is outside the claimed certification obligations"), ("__rt_string_to_lm", "module export is outside the claimed certification obligations"), ("__rt_memory_pages", "module export is outside the claimed certification obligations"), ("__rt_memory_grow", "module export is outside the claimed certification obligations"), ("__rt_aint_from_i64", "module export is outside the claimed certification obligations"), ("__rt_aint_to_i64_checked", "module export is outside the claimed certification obligations"), ("__aint_to_index", "module export is outside the claimed certification obligations"), ("memory", "module export is outside the claimed certification obligations"), ("__caller_fn_count", "module export is outside the claimed certification obligations"), ("__caller_fn_name", "module export is outside the claimed certification obligations")]
+    capabilities := []
+    start := none
+    hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18, cmp := none, eq := none, divmod := some 12 } : CertDecode.AddSub.Roles)
+    arithParams := some ({ carrier := 2, limb := 1, decompose := 2, normalize := 3, strip := 4, umagCmp := 5 } : ArithTemplateDerisk.ArithHostParams)
+    stringHostRoles := []
+    contracts := ["__rt_aint_from_i64 (box i64 -> carrier)", "Int.add (carrier add = exact integer addition on represented values; result canonical)"] }
 
-def manifest : Schema.Manifest :=
-  { subject :=
-      { artifactHash := "4b86ac5e745a7f0aeef0d24178a3f47ed09b4f98ffc36216aedf252c9cb20583",
-        target := "wasm-gc",
-        profile := "AverUserProfile/v1",
-        abi := "aver-wasm-gc/0",
-        artifactRoot := "AverCert.Artifact.certificate",
-        exports := ["addOne"],
-        declaredUncertified := [("_start", "module export is outside the claimed certification obligations"), ("__rt_string_from_lm", "module export is outside the claimed certification obligations"), ("__rt_string_to_lm", "module export is outside the claimed certification obligations"), ("__rt_memory_pages", "module export is outside the claimed certification obligations"), ("__rt_memory_grow", "module export is outside the claimed certification obligations"), ("__rt_aint_from_i64", "module export is outside the claimed certification obligations"), ("__rt_aint_to_i64_checked", "module export is outside the claimed certification obligations"), ("__aint_to_index", "module export is outside the claimed certification obligations"), ("memory", "module export is outside the claimed certification obligations"), ("__caller_fn_count", "module export is outside the claimed certification obligations"), ("__caller_fn_name", "module export is outside the claimed certification obligations")],
-        capabilities := [],
-        start := none,
-        hostRoleTable := some ({ box := some 6, add := some 7, mul := some 9, sub := some 8, toIndex := some 18, cmp := none, eq := none } : CertDecode.AddSub.Roles),
-        arithParams := some ({ carrier := 2, limb := 1, decompose := 2, normalize := 3, strip := 4, umagCmp := 5 } : ArithTemplateDerisk.ArithHostParams),
-        stringHostRoles := [],
-        contracts := ["__rt_aint_from_i64 (box i64 -> carrier)", "Int.add (carrier add = exact integer addition on represented values; result canonical)"] },
-    symFragmentPlans := [("addOne", Plans.addOneSymPlan)],
-    stringEqPlans := [],
-    stringConcatPlans := [],
-    constructPlans := [],
-    exprFragmentPlans := [("addOne", Plans.addOnePlan)],
-    recursionPlans := [],
-    mutualPlans := [],
-    compositionPlans := [],
-    verbatimPlans := [],
-    intDispatchPlans := [],
-    fieldProjectionPlans := [],
-    obligations := [addOneOb] }
+def manifest : Manifest :=
+  { subject := subject, types := Plans.types, fnPlans := Plans.fnPlans,
+    obligations := AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans }
 
 end AverCert
 
 == Plans.lean ==
--- Compiler-emitted source/fragment plans as Lean data.
--- This is the package's sole authoritative plan representation. The
--- checker-owned wall validates and lowers it against the actual artifact.
-import Schema
-import PlanCheck
-
-import PlanLower
-import PlanBytes
-import WasmSlice
-import ExprFragmentAccepted
-import ArtifactBytes
-import Module
-import DeclaredEnvelopeAcceptTransport
-
-set_option maxRecDepth 200000
+-- The certificate's plans: every planned function's optimized MIR body,
+-- printed 1:1 into the one plan grammar, and the declared type layout.
+-- Producer data: the wall lowers each plan and pins the result to the
+-- function's code entry, and confirms the layout against the bytes.
+import SchemaCore
 
 namespace AverCert.Plans
-open AverCert.Schema
+open AverCert.Schema AverCert.Grammar
 
-/-- Raw `expr-fragment-v1` plan for `addOne`. -/
-def addOnePlan : ExprFragmentRawPlan := { profile := "expr-fragment-v1", params := [.intCarrier], result := .intCarrier, body := ({ nodes := [{ id := 0, ty := .intCarrier, kind := .local 0 }, { id := 1, ty := .i64, kind := .constI64 (1 : Int) }, { id := 2, ty := .intCarrier, kind := .hostCall .box 6 [1] }, { id := 3, ty := .intCarrier, kind := .hostCall .add 7 [0, 2] }], result := 3 } : FragBlock) }
+def types : TypeTable :=
+  { carrier := some 2, mag := some 1, str := some 0, strVec := none,
+    records := [],
+    sums := [],
+    options := [], results := [],
+    vecs := [], lists := [], opaques := [],
+    strSegs := [] }
 
-/-- Source-level `SymPlan` projection for `addOne`. Artifact-level
-acceptance prefers this claim when the fragment has a direct
-Aver-level meaning; the encoder below still binds it to `addOnePlan`. -/
-def addOneSymPlan : SymRawPlan := { profile := "sym-fragment-v1", params := [.int], result := .int, body := ({ nodes := [{ id := 0, ty := .int, kind := .param 0 }, { id := 1, ty := .int, kind := .constInt (1 : Int) }, { id := 2, ty := .int, kind := .prim .intAdd [0, 1] }], result := 2 } : SymBlock) }
+/-- `addOne` (function 1). -/
+def fn1 : FnPlan :=
+  { sig := ⟨[.int], .int⟩, nslots := 1, locals := [.int],
+    body := (.binOp .add (.local 0) (.literal (.int 1))) }
 
-/-- `addOne` names no record; the declared face's declaration slot is empty. -/
-def addOneRecordFields : List TypeDecl := []
+def fnPlans : List FnEntry :=
+  [⟨"addOne", true, 1, 0, fn1⟩]
 
 end AverCert.Plans

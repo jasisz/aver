@@ -7,13 +7,15 @@
 //! termination witness, host table, and runtime contracts.
 
 use crate::bridge_statement::{
-    self, MAX_BRIDGE_STATEMENT_LEN, SourceEncoder, render_bridge_statement,
+    self, BridgeKind, MAX_BRIDGE_STATEMENT_LEN, SourceEncoder, render_bridge_statement,
     statement_is_root_qualified,
 };
-use crate::cache::{ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial};
+use crate::cache::{
+    ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial, ModuleOutputCache,
+};
 use crate::lean_process::LeanRunner;
 use crate::prelude_cache::PristineWallCache;
-use crate::{format, wall};
+use crate::{format, lean_gate, wall};
 use colored::Colorize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -38,6 +40,10 @@ const LAW_BRIDGE_AUDIT_MARKER: &str = "AVER_LAW_BRIDGE_AUDIT";
 const LAW_BRIDGED_COROLLARY_SUFFIX: &str = "_bridged";
 /// Checker-owned name of the pin for manifest `sourceBridges[i]`.
 const BRIDGE_PIN_PREFIX: &str = "AverCertChecker.bridge_pin_";
+/// The checker's definitions of each pinned statement, elaborated alone
+/// before a pin conjoins them.
+const LAW_STATEMENT_PREFIX: &str = "AverCertChecker.law_statement_";
+const BRIDGE_STATEMENT_PREFIX: &str = "AverCertChecker.bridge_statement_";
 /// Marker of the per-bridge axiom-audit line, read back exactly like the
 /// law one.
 const BRIDGE_AUDIT_MARKER: &str = "AVER_BRIDGE_AUDIT";
@@ -47,7 +53,19 @@ const BRIDGE_AUDIT_MARKER: &str = "AVER_BRIDGE_AUDIT";
 const BRIDGE_NAMESPACE: &str = "AverCert.Bridge";
 const BRIDGE_COROLLARY_SUFFIX: &str = "_certified";
 const TOOLCHAIN_ROOTS: [&str; 4] = ["Init", "Lake", "Lean", "Std"];
-const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", "ArtifactCertificate"];
+/// The final replay: every constant of the checker's witness module AND of
+/// everything it imports — the wall, the artifact certificate, the model, the
+/// law and bridge modules — re-checked by the kernel in a fresh environment.
+/// A package module elaborated with the kernel check skipped therefore cannot
+/// hand any credited claim an unchecked lemma.
+const FRESH_REPLAY_ARGS: [&str; 4] = ["env", "leanchecker", "--fresh", WITNESS_MODULE];
+/// The checker-authored witness module (pins, the accepted root).
+const WITNESS_MODULE: &str = "CheckerWitness";
+/// Report pins, `AverCertChecker.report_pin_<k>`.
+const REPORT_PIN_PREFIX: &str = "AverCertChecker.report_pin_";
+/// The audit program's decline line, and its success line.
+const AUDIT_DECLINE_MARKER: &str = "AVER_AUDIT_DECLINE";
+const AUDIT_OK_MARKER: &str = "AVER_AUDIT_OK";
 /// User-facing name of the `lake build` step in timeout and failure messages.
 const PROOF_BUILD_PHASE: &str = "certificate proof build";
 
@@ -56,29 +74,6 @@ const PROOF_BUILD_PHASE: &str = "certificate proof build";
 /// reconstruction.
 pub const ARTIFACT_DECODE_LINE: &str =
     "artifact-check: exact bytes and manifest accepted by the checker-owned Lean predicate";
-
-const CODE_EXEC_TOKENS: [&str; 20] = [
-    "#eval",
-    "run_cmd",
-    "run_elab",
-    "run_tac",
-    "initialize",
-    "builtin_initialize",
-    "macro",
-    "macro_rules",
-    "elab",
-    "elab_rules",
-    "syntax",
-    "notation",
-    "unsafe",
-    "implemented_by",
-    "extern",
-    "deriving",
-    "attribute",
-    "@[",
-    "«",
-    "open Lean",
-];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Verdict {
@@ -134,15 +129,10 @@ struct CertifiedExport {
     name: String,
     policy: String,
     face: String,
-    /// Domain disclosure, present only for the faces whose certified domain is
-    /// narrower than "any represented value" (today: record projection-compute).
-    domain: Option<String>,
-    manifest_face: String,
-    /// What the certified model IS, for the one face whose obligation model is
-    /// the PLAN rather than a source function: `plan`, or `plan ≡ <fn>` once a
-    /// credited source-bridge identifies the two. `None` for every other face,
-    /// whose obligation already names the source model.
-    certified_model: Option<String>,
+    /// What the certified model IS: under schema 9 always the export's plan
+    /// (its optimized MIR body), until a credited source bridge identifies
+    /// the plan with the transpiled source function.
+    certified_model: String,
 }
 
 /// The outcome of one declared law-claim. A claim whose pin elaborated but
@@ -169,6 +159,8 @@ struct BridgeOutcome {
     export: String,
     /// Source function the bridge identifies the plan with.
     model: String,
+    /// Which of the two statement kinds the bridge claims.
+    kind: BridgeKind,
     /// The statement the CHECKER rendered from the declared structure and
     /// pinned the package's corollary at. `explain` prints this, never text the
     /// package supplied.
@@ -195,16 +187,12 @@ struct TrustedReport {
 struct CertifiedCandidate {
     name: String,
     class: String,
+    /// Facets derived in the wall from the plan (`ClaimAxes.reportFacets`),
+    /// pinned by the witness.
+    facets: Vec<String>,
     policy: String,
     policy_lean: &'static str,
     termination_lean: String,
-    dom: String,
-    cod: String,
-    /// The manifest's declared discharge theorem, read for ONE purpose: to
-    /// tell which exports carry the record projection-compute face, whose
-    /// certified domain is narrower than the other faces'. Declared-only, like
-    /// `dom`/`cod`, so it never reaches the CERTIFIED/CHECKED verdict line.
-    theorem: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -213,9 +201,10 @@ enum StringHostRole {
     Concat,
 }
 
-/// The declared role indices in fixed `(box, add, mul, sub, toIndex, cmp, eq)`
-/// order — the same order the producer's `FragHostRoleIndices` uses.
+/// The declared role indices in fixed
+/// `(box, add, mul, sub, toIndex, cmp, eq, divmod)` order.
 type HostRoleTable = (
+    Option<u32>,
     Option<u32>,
     Option<u32>,
     Option<u32>,
@@ -263,8 +252,10 @@ struct LawCandidate {
     statement: String,
     /// Corollary name inside `AverCert.Laws`.
     corollary: String,
-    /// Namespace to `open` so the statement elaborates (`theorem` minus its
-    /// last segment).
+    /// The model theorem's namespace (`theorem` minus its last segment). The
+    /// witness does NOT elaborate the statement in it; every statement is read
+    /// at the root. The audit refuses a package constant that this namespace,
+    /// or one of its prefixes, would make a bridged model's name resolve to.
     prefix: String,
     /// Indices into the declared `sourceBridges` whose statements the corollary
     /// conjoins — every model function this law mentions, when all of them are
@@ -289,11 +280,17 @@ struct SourceBridgeCandidate {
     corollary: String,
     /// Fully qualified source function the bridge identifies the plan with.
     model: String,
+    /// Which of the two statement kinds the bridge claims.
+    kind: BridgeKind,
     /// The statement the checker RENDERED from the declared `(export, model,
     /// params, result)`. Nothing in the manifest contributes to it beyond
     /// those; the declared `theorem` name is checked and then discarded,
     /// because the pin cites the corollary.
     statement: String,
+    /// The declared encoders; the audit checks the records and sums they
+    /// read against the elaborated types.
+    params: Vec<SourceEncoder>,
+    result: SourceEncoder,
 }
 
 struct Candidates {
@@ -506,8 +503,8 @@ fn replay_args_for(mode: ReplayMode, override_binary: Option<&str>) -> Option<Ve
             Some(binary) if !binary.trim().is_empty() => vec![
                 "env".to_string(),
                 binary.to_string(),
-                "ArtifactCertificate".to_string(),
-                "AverCert.Artifact.certificate".to_string(),
+                WITNESS_MODULE.to_string(),
+                CHECKED_ROOT.to_string(),
                 "replay".to_string(),
                 "8".to_string(),
                 "32".to_string(),
@@ -582,13 +579,24 @@ fn trusted_check(
 
     let candidates = read_candidates(&manifest, identity, target_envelope.map(|env| env.inner))?;
     let lean = LeanRunner::new(selected_wall.toolchain)?;
+    let stage_started = std::time::Instant::now();
     let build = assemble_build(
         cert_dir,
+        &actual_hash,
         core_module_bytes,
         target_artifact_bytes,
         selected_wall,
         lean.memory_limit_mb(),
     )?;
+    // `verify` builds from the staged sources alone: a configured build cache
+    // is trusted local state, and the strict verdict does not rest on it.
+    let caches_allowed = replay_mode == ReplayMode::TrustBuiltOleans;
+    if !caches_allowed && crate::cache::any_cache_configured() {
+        eprintln!(
+            "note: aver-cert verify ignores AVER_CERT_DATA_CACHE and AVER_CERT_PRELUDE_CACHE; \
+             only `check` uses a build cache"
+        );
+    }
     let cache_pins = [("wasm_sha256", pinned_hash), ("wall_id", wall_id)];
     let mut cache = ArtifactBuildCache::prepare(
         &build.path,
@@ -597,16 +605,44 @@ fn trusted_check(
             pinned_sha256: &cache_pins,
             toolchain_version: selected_wall.toolchain.trim(),
         },
+        caches_allowed,
     );
     let data_cache_hit = cache.was_hit();
-    let mut wall_cache = if data_cache_hit {
+    report_step_timing("staging and data cache", stage_started.elapsed(), &[]);
+    let wall_cache_started = std::time::Instant::now();
+    let mut wall_cache = if data_cache_hit || !caches_allowed {
         PristineWallCache::disabled()
     } else {
         PristineWallCache::prepare(&build.path, selected_wall, &lean)
     };
+    report_step_timing("wall cache restore", wall_cache_started.elapsed(), &[]);
+    // On a whole-package miss, restore the modules whose sources (and
+    // imported package modules) are unchanged; Lake revalidates each one.
+    let module_cache_started = std::time::Instant::now();
+    let module_cache = if data_cache_hit || !caches_allowed {
+        ModuleOutputCache::disabled()
+    } else {
+        let wall_sources: Vec<&str> = selected_wall.sources.iter().map(|s| s.name).collect();
+        ModuleOutputCache::prepare(
+            &build.path,
+            &[
+                ("wall_id", wall_id),
+                ("toolchain_version", selected_wall.toolchain.trim()),
+                ("schema_version", &schema_version.to_string()),
+            ],
+            &wall_sources,
+        )
+    };
+    report_step_timing(
+        &format!("module cache restore ({} modules)", module_cache.restored()),
+        module_cache_started.elapsed(),
+        &[],
+    );
 
     let mut data_build = run_lake(&lean, &build.path, PROOF_BUILD_PHASE, &["build"])?;
-    if !data_build.status.success() && (data_cache_hit || wall_cache.was_seeded()) {
+    if !data_build.status.success()
+        && (data_cache_hit || wall_cache.was_seeded() || module_cache.restored() > 0)
+    {
         if data_cache_hit {
             cache.invalidate(&build.path);
         } else {
@@ -624,6 +660,7 @@ fn trusted_check(
         ));
     }
     cache.publish(&build.path);
+    module_cache.publish(&build.path);
 
     let witness = checker_witness(&actual_hash, &candidates);
     std::fs::write(build.path.join("CheckerWitness.lean"), witness)
@@ -647,11 +684,46 @@ fn trusted_check(
         ));
     }
     // Every pin ELABORATED, so every declared statement is exactly what the
-    // package proves. What remains is per-pin credit, read from the witness's
-    // own audit trace: a missing or malformed line is a decline, never credit.
-    let laws = parse_law_audits(&elaborated.combined, &candidates.laws)?;
-    let bridged_laws = parse_bridged_law_audits(&elaborated.combined, &candidates.laws)?;
-    let source_bridges = parse_bridge_audits(&elaborated.combined, &candidates.source_bridges)?;
+    // package proves. The axiom audit and the audit of what the package
+    // declared run in the checker's own program, elaborated without the
+    // package; a decline there declines the package, and per-pin credit is
+    // read from its audit lines: a missing or malformed line is a decline,
+    // never credit.
+    std::fs::write(
+        build.path.join("CheckerAudit.lean"),
+        checker_audit(&candidates, &build.package_roots),
+    )
+    .map_err(|error| format!("cannot write checker audit: {error}"))?;
+    let audited = run_lake(
+        &lean,
+        &build.path,
+        "artifact audit",
+        &["env", "lean", "--run", "CheckerAudit.lean"],
+    )?;
+    if let Some(reason) = audited
+        .combined
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(AUDIT_DECLINE_MARKER))
+    {
+        return Err(format!(
+            "certificate declined by the checker audit:{}",
+            display_safe(reason)
+        ));
+    }
+    if !audited.status.success()
+        || !audited
+            .combined
+            .lines()
+            .any(|line| line.trim() == AUDIT_OK_MARKER)
+    {
+        return Err(format!(
+            "the checker audit did not complete:\n{}",
+            tail(&audited.combined, 30)
+        ));
+    }
+    let laws = parse_law_audits(&audited.combined, &candidates.laws)?;
+    let bridged_laws = parse_bridged_law_audits(&audited.combined, &candidates.laws)?;
+    let source_bridges = parse_bridge_audits(&audited.combined, &candidates.source_bridges)?;
     if let Some(replay_args) = kernel_replay_args(replay_mode) {
         let replay_args: Vec<&str> = replay_args.iter().map(String::as_str).collect();
         let replayed = run_lake(&lean, &build.path, "final kernel replay", &replay_args)?;
@@ -670,8 +742,6 @@ fn trusted_check(
             name: candidate.name.clone(),
             policy: candidate.policy.clone(),
             face: report_face(candidate),
-            domain: record_compute_domain(candidate).map(str::to_string),
-            manifest_face: manifest_face(candidate),
             certified_model: certified_model_line(candidate, &source_bridges),
         })
         .collect();
@@ -689,88 +759,42 @@ fn trusted_check(
 }
 
 /// The per-export line printed under a CERTIFIED/CHECKED verdict. Everything
-/// on it must be kernel-pinned: the class is rfl-bound to
-/// `StandardFace.reportEntries` by the checker witness (like the name, policy,
-/// and termination). The manifest's `dom`/`cod` strings are NOT pinned by any
-/// witness line, so they must never appear here — `explain` shows them,
-/// explicitly labeled as manifest-declared.
+/// on it is kernel-pinned: the class and the facets are bound to
+/// `ClaimAxes.reportEntries` / `ClaimAxes.reportFacets` by the checker
+/// witness (like the name, policy and termination).
 fn report_face(candidate: &CertifiedCandidate) -> String {
-    let label = match candidate.class.as_str() {
-        "expr-fragment-v1" => "expression fragment",
-        "verbatim-string-eq" => "String.eq leaf",
-        "verbatim-string-concat" => "String.concat leaf",
-        "adt-constructor" => "ADT constructor",
-        "self-recursive" => "integer recursion",
-        "multi-argument self-recursive" => "integer accumulator recursion",
-        "mutual-recursive" => "mutual integer recursion",
-        "verbatim-dispatch" => "verbatim dispatch",
-        "int-dispatch" => "integer ADT dispatch",
-        "field-projection" => "field projection",
-        "cross-function-composition" => "cross-function composition",
-        other => other,
-    };
-    format!("class: {label}")
+    if candidate.facets.is_empty() {
+        format!("class: {}", candidate.class)
+    } else {
+        format!(
+            "class: {} ({})",
+            candidate.class,
+            candidate.facets.join(", ")
+        )
+    }
 }
 
-/// What the export's certified model IS, for the one face whose obligation
-/// model is the plan rather than a source function.
-///
-/// `plan` on its own is the disclosure this face has always owed a reader: the
-/// theorem is about the evaluation of the declared plan. `plan ≡ <fn>` is what
-/// a CREDITED source-bridge adds — a kernel-checked theorem that the plan's
-/// model is the transpiled source function at the face's own encoders. An
-/// uncredited bridge says `plan` exactly like no bridge at all; credit is never
-/// granted on a declaration.
-///
-/// The line points at SOURCE-BRIDGES rather than calling itself kernel-checked
-/// on its own. What the credit means is that the rendered statement printed
-/// there is proven without foreign axioms, and that statement — its encoders
-/// included — is what a reader has to read. A name plus a tick is not the
-/// claim.
-fn certified_model_line(
-    candidate: &CertifiedCandidate,
-    bridges: &[BridgeOutcome],
-) -> Option<String> {
-    record_compute_domain(candidate)?;
+/// What the export's certified model IS. Schema 9 states every obligation
+/// over the plan, so the line says `plan`; a credited source bridge (not
+/// carried by schema 9 yet) would say `plan ≡ <fn>`. Credit is never granted
+/// on a declaration.
+fn certified_model_line(candidate: &CertifiedCandidate, bridges: &[BridgeOutcome]) -> String {
     let credited = bridges
         .iter()
         .find(|bridge| bridge.export == candidate.name && bridge.offending.is_empty());
-    Some(match credited {
-        Some(bridge) => format!(
-            "model: plan ≡ {} (credited source-bridge; see SOURCE-BRIDGES)",
-            display_safe(&bridge.model)
-        ),
-        None => "model: plan".to_string(),
-    })
-}
-
-fn manifest_face(candidate: &CertifiedCandidate) -> String {
-    format!(
-        "manifest face (declared, not kernel-pinned): Dom {}, Cod {}",
-        display_safe(&candidate.dom),
-        display_safe(&candidate.cod)
-    )
-}
-
-/// The domain disclosure for the record projection-compute face, or `None` for
-/// every other face.
-///
-/// That face is the one place where canonicity — the runtime's normal form —
-/// is a premise about the INPUTS and not only about the helpers: its
-/// `StandardFace.recordComputeDomRepr` is built from `SReprAll`, and `SRepr` on
-/// an Int carrier is "represented AND canonical", record fields included. A
-/// reader of a verdict has to be told, so `explain` says it on the export's own
-/// line (section 4.3 of the format spec carries the long form).
-///
-/// The face is selected by the manifest's declared discharge theorem. That
-/// field is informational, so a producer could in principle mislabel it; the
-/// failure mode is a missing or a spurious disclosure line in `explain`, never
-/// a weaker accepted claim — acceptance reads the single artifact root, and the
-/// face itself is pinned in-kernel by `StandardFace.checkedFaces`.
-fn record_compute_domain(candidate: &CertifiedCandidate) -> Option<&'static str> {
-    match candidate.theorem.as_deref() {
-        Some(format::RECORD_COMPUTE_DISCHARGE_THEOREM) => Some(format::RECORD_COMPUTE_DOMAIN_LINE),
-        _ => None,
+    match credited {
+        Some(bridge) => match bridge.kind {
+            BridgeKind::Exact => format!(
+                "model: plan ≡ {} (credited source-bridge; see SOURCE-BRIDGES)",
+                display_safe(&bridge.model)
+            ),
+            BridgeKind::Adequate => format!(
+                "model: plan ≡ {} wherever the plan returns (credited adequate \
+                 source-bridge, not a totality claim; see SOURCE-BRIDGES)",
+                display_safe(&bridge.model)
+            ),
+        },
+        None => "model: plan (the export's optimized MIR body)".to_string(),
     }
 }
 
@@ -787,6 +811,35 @@ fn bridged_law_indices(laws: &[LawCandidate]) -> Vec<usize> {
         .collect()
 }
 
+/// `nat_lit n`: a raw natural-number literal. A pinned statement spells its
+/// numerals this way so no `OfNat` instance takes part in what it means.
+fn lean_nat(value: impl std::fmt::Display) -> String {
+    format!("(nat_lit {value})")
+}
+
+/// An `Int` literal built from its constructors, instance-free.
+fn lean_int(value: i64) -> String {
+    if value >= 0 {
+        format!("(_root_.Int.ofNat {})", lean_nat(value))
+    } else {
+        format!(
+            "(_root_.Int.negSucc {})",
+            lean_nat(value.unsigned_abs() - 1)
+        )
+    }
+}
+
+/// The checker-owned witness module.
+///
+/// It is PURE DATA for the kernel: theorems pinning each declared fact at a
+/// checker-written statement, no `import Lean`, no command that runs code.
+/// Everything it names is `_root_`-qualified — a package cannot place a
+/// declaration where an unqualified name would resolve first — and every
+/// numeral is a `nat_lit`, so neither a namespace nor an instance the package
+/// declares takes part in what a pin says. The axiom audit of these pins runs
+/// in a separate checker-owned program ([`checker_audit`]) elaborated without
+/// the package, and the final fresh-environment replay replays this module and
+/// everything it imports.
 fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let bridged_law_indices = bridged_law_indices(&candidates.laws);
     let names = lean_str_list(
@@ -802,6 +855,19 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             .iter()
             .map(|candidate| (candidate.name.clone(), candidate.class.clone()))
             .collect::<Vec<_>>(),
+    );
+    let report_facets = format!(
+        "[{}]",
+        candidates
+            .certified
+            .iter()
+            .map(|candidate| format!(
+                "(\"{}\", {})",
+                candidate.name,
+                lean_str_list(&candidate.facets)
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     let policies = format!(
         "[{}]",
@@ -826,11 +892,20 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     let capabilities = lean_string_pair_list(&candidates.capabilities);
     let start = lean_option_nat(candidates.start);
     let roles = match candidates.host_role_table {
-        Some((box_role, add_role, mul_role, sub_role, to_index_role, cmp_role, eq_role)) => {
+        Some((
+            box_role,
+            add_role,
+            mul_role,
+            sub_role,
+            to_index_role,
+            cmp_role,
+            eq_role,
+            divmod_role,
+        )) => {
             format!(
-                "some ({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, \
-             cmp := {}, eq := {} }} : \
-             CertDecode.AddSub.Roles)",
+                "_root_.Option.some ({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, \
+             cmp := {}, eq := {}, divmod := {} }} : \
+             _root_.CertDecode.AddSub.Roles)",
                 lean_option_nat(box_role),
                 lean_option_nat(add_role),
                 lean_option_nat(mul_role),
@@ -838,9 +913,10 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
                 lean_option_nat(to_index_role),
                 lean_option_nat(cmp_role),
                 lean_option_nat(eq_role),
+                lean_option_nat(divmod_role),
             )
         }
-        None => "(none : Option CertDecode.AddSub.Roles)".to_string(),
+        None => "(_root_.Option.none : _root_.Option _root_.CertDecode.AddSub.Roles)".to_string(),
     };
     let string_roles = format!(
         "[{}]",
@@ -852,32 +928,33 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
                     StringHostRole::Eq => ".eq",
                     StringHostRole::Concat => ".concat",
                 };
-                format!("({index}, {role})")
+                format!("({}, {role})", lean_nat(index))
             })
             .collect::<Vec<_>>()
             .join(", ")
     );
     let wasip2_component_envelope =
         lean_wasip2_component_envelope(candidates.wasip2_component_envelope);
-    let allowed = AXIOM_WHITELIST
-        .iter()
-        .map(|name| format!("`{name}"))
-        .collect::<Vec<_>>()
-        .join(", ");
     // Law-claim surface: one type-pinning theorem per claim (built by
     // concatenation, never `format!`, so statement braces stay inert), the
-    // conditional `Laws` import, and the corollary roots the axiom audit
-    // walks. All fields were validated by `validate_law_candidate`.
+    // conditional `Laws` import, and the corollary roots the audit walks. All
+    // fields were validated by `validate_law_candidate`.
     //
-    // The statement is re-elaborated inside the model theorem's OWN namespace
-    // — the same context the package's `Laws.lean` uses — because `open
-    // <prefix> in` at root does not reproduce it: inside `namespace Json` the
-    // text `Json.jsonInt` reaches the constructor `Json.Json.jsonInt`, while
-    // at root it reaches the accessor `Json.jsonInt` that `open` only adds an
-    // alias beside. The pins therefore sit OUTSIDE `namespace AverCertChecker`
-    // and name themselves `_root_.AverCertChecker.law_pin_<i>`: nested inside
-    // it the current namespace would be `AverCertChecker.<prefix>`, whose
-    // resolution is not the model's either.
+    // Every statement is elaborated at the ROOT namespace, never inside the
+    // model theorem's namespace. That namespace is the package's choice (the
+    // manifest's `theorem` minus its last segment), and Lean resolves a name
+    // in the innermost enclosing namespace first: inside `namespace Evil` the
+    // text `Tiny.addTwo` means a package constant `Evil.Tiny.addTwo` when one
+    // is declared, so a law whose text names the bridged `Tiny.addTwo` could
+    // be about a function the package slipped in. At the root, with no
+    // `open`, a dotted name means the root constant it spells or a field read
+    // of a binder the statement itself introduces. The producer writes every
+    // model name in a statement `_root_.`-qualified, and a law that lists
+    // bridges must name each bridged model exactly as `_root_.<model>`, which
+    // no binder can capture. A law statement means what the MODEL's names and
+    // instances make it mean; the instances a package may declare at all are
+    // audited by `checker_audit`, which also checks that each bridged law's
+    // elaborated statement uses the bridged constants.
     let law_import = if candidates.laws.is_empty() {
         String::new()
     } else {
@@ -897,16 +974,21 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     // function, and removed the credit of a claim about the source model that
     // the bridge plays no part in proving.
     let mut law_pins = String::new();
-    let mut bridged_law_root_names = String::new();
     for (index, law) in candidates.laws.iter().enumerate() {
-        if !law.prefix.is_empty() {
-            law_pins.push_str("namespace ");
-            law_pins.push_str(&law.prefix);
-            law_pins.push_str("\n\n");
-        }
-        law_pins.push_str(&format!("theorem _root_.{LAW_PIN_PREFIX}{index} :\n    ("));
+        // The statement is elaborated ALONE, as a definition of its own, and
+        // the pins conjoin that definition. However its text is spelled, it
+        // is one proposition, so it cannot re-associate the conjunction with
+        // `Holds` and the bridges that follow it.
+        law_pins.push_str(&format!(
+            "def _root_.{LAW_STATEMENT_PREFIX}{index} : Prop :=\n  ("
+        ));
         law_pins.push_str(&law.statement);
-        law_pins.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
+        law_pins.push_str(")\n\n");
+        law_pins.push_str(&format!(
+            "theorem _root_.{LAW_PIN_PREFIX}{index} :\n    \
+             _root_.{LAW_STATEMENT_PREFIX}{index} ∧ \
+             (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)"
+        ));
         law_pins.push_str(" :=\n  _root_.AverCert.Laws.");
         law_pins.push_str(&law.corollary);
         law_pins.push_str("\n\n");
@@ -916,68 +998,170 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
                 .position(|at| *at == index)
                 .expect("every bridged law is enumerated");
             law_pins.push_str(&format!(
-                "theorem _root_.{BRIDGED_LAW_PIN_PREFIX}{bridged_index} :\n    ("
+                "theorem _root_.{BRIDGED_LAW_PIN_PREFIX}{bridged_index} :\n    \
+                 _root_.{LAW_STATEMENT_PREFIX}{index} ∧ \
+                 (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)"
             ));
-            law_pins.push_str(&law.statement);
-            law_pins.push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest)");
             // The declared bridges, in the manifest's order. The pin's TYPE
             // forces the package's `_bridged` corollary to prove all of them,
             // and the audit that follows walks that whole closure.
             for bridge in &law.bridges {
-                law_pins.push_str(" ∧\n      (");
-                law_pins.push_str(&candidates.source_bridges[*bridge].statement);
-                law_pins.push(')');
+                law_pins.push_str(&format!(
+                    " ∧\n      _root_.{BRIDGE_STATEMENT_PREFIX}{bridge}"
+                ));
             }
             law_pins.push_str(" :=\n  _root_.AverCert.Laws.");
             law_pins.push_str(&law.corollary);
             law_pins.push_str(LAW_BRIDGED_COROLLARY_SUFFIX);
             law_pins.push_str("\n\n");
-            bridged_law_root_names.push_str(&format!("`{BRIDGED_LAW_PIN_PREFIX}{bridged_index}, "));
-        }
-        if !law.prefix.is_empty() {
-            law_pins.push_str("end ");
-            law_pins.push_str(&law.prefix);
-            law_pins.push_str("\n\n");
         }
     }
-    let bridged_law_roots = bridged_law_root_names.trim_end_matches(", ").to_string();
-    // Bridge pins need no namespace context: a bridge statement is rendered
-    // fully `_root_`-qualified by the producer and validated to be so here, so
-    // it means the same at the root as it does in the package's `Bridge.lean`.
+    // Bridge pins are at the root too: a bridge statement is rendered by the
+    // checker, fully `_root_`-qualified, so it means the same at the root as
+    // it does in the package's `Bridge.lean`.
     let mut bridge_pins = String::new();
     for (index, bridge) in candidates.source_bridges.iter().enumerate() {
         bridge_pins.push_str(&format!(
-            "theorem _root_.{BRIDGE_PIN_PREFIX}{index} :\n    ("
+            "def _root_.{BRIDGE_STATEMENT_PREFIX}{index} : Prop :=\n  ("
         ));
         bridge_pins.push_str(&bridge.statement);
-        bridge_pins
-            .push_str(") ∧ (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  _root_.");
+        bridge_pins.push_str(")\n\n");
+        bridge_pins.push_str(&format!(
+            "theorem _root_.{BRIDGE_PIN_PREFIX}{index} :\n    \
+             _root_.{BRIDGE_STATEMENT_PREFIX}{index} ∧ \
+             (_root_.AverCert.Schema.Holds _root_.AverCert.manifest) :=\n  _root_."
+        ));
         bridge_pins.push_str(&bridge.corollary);
         bridge_pins.push_str("\n\n");
     }
-    // The audit walks the CHECKER-NAMED pins, never the package's bare
-    // corollary names: the pin's term cites `_root_.AverCert.Laws.<c>` (so an
-    // `open <prefix>`-shadowed decoy cannot be substituted), and auditing
-    // `AverCertChecker.law_pin_<i>` covers exactly the closure the pin proved.
-    let law_roots = (0..candidates.laws.len())
-        .map(|index| format!("`{LAW_PIN_PREFIX}{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let bridge_roots = (0..candidates.source_bridges.len())
-        .map(|index| format!("`{BRIDGE_PIN_PREFIX}{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    // The two audits are deliberately asymmetric. The accepted-artifact root
-    // THROWS: a non-whitelisted axiom under an export closure is a rejected
-    // certificate. A law pin instead LOGS its result, because a law that fails
-    // only its axiom audit loses its own credit and must not take the exports
-    // down with it — the pin still had to elaborate at the declared statement
-    // to get here, which is the integrity half of the claim. Rust reads the
-    // logged lines back; a pin with no line is a decline, so a parse miss can
-    // never become credit.
+    // The report pins bind every JSON report field to the Lean manifest and
+    // the artifact data. Each is a THEOREM the audit walks with the accepted
+    // root: a pin closed by `decide +kernel` through a package-declared
+    // decision procedure carries that procedure's axioms into the audit.
+    //
+    // Every field is read through the wall structure's own projection
+    // function, applied to a package constant named in full, never as a
+    // dotted path past a package constant. Lean resolves `A.b.c` to the
+    // longest prefix that is a declared constant, so
+    // `_root_.AverCert.manifest.subject.contracts` meant a package constant
+    // `AverCert.manifest.subject`, when one was declared, instead of the real
+    // manifest's field. A projection such as
+    // `_root_.AverCert.Schema.Subject.contracts` is a wall constant under a
+    // wall namespace, where the audit refuses every package constant except
+    // two kinds no reference can resolve to by a name the witness writes: a
+    // private constant, and an auxiliary Lean itself declares beside a
+    // constant (`leanAuxiliary` in `checker_audit.lean`: a reserved name,
+    // such as an equation lemma, realized for a constant the package does
+    // not declare, and, beside a package constant, an internal `_`-prefixed
+    // compiler constant or a numbered `proof_<k>`, `match_<k>` or `eq_<k>`).
+    // None of those is a field name of a wall structure.
+    let data = "_root_.AverCert.Artifact.data";
+    let manifest = "_root_.AverCert.manifest";
+    let datum =
+        |field: &str| format!("(_root_.AverCert.AcceptedArtifact.ArtifactData.{field} {data})");
+    let subject = |field: &str| {
+        format!(
+            "(_root_.AverCert.Schema.Subject.{field} \
+             (_root_.AverCert.Schema.Manifest.subject {manifest}))"
+        )
+    };
+    let obligations = |field: &str| {
+        format!(
+            "_root_.List.map _root_.AverCert.Schema.Obligation.{field} \
+             (_root_.AverCert.Schema.Manifest.obligations {manifest})"
+        )
+    };
+    let report_pins: Vec<(String, &str)> = vec![
+        (
+            format!(
+                "{} = _root_.AverCert.ArtifactBytes.modBytes",
+                datum("modBytes")
+            ),
+            "rfl",
+        ),
+        (
+            format!("{} = _root_.AverCert.ArtifactBytes.modLen", datum("modLen")),
+            "rfl",
+        ),
+        (format!("{} = {manifest}", datum("manifest")), "rfl"),
+        (
+            format!(
+                "{} = {wasip2_component_envelope}",
+                datum("wasip2ComponentEnvelope")
+            ),
+            "rfl",
+        ),
+        (format!("{} = \"{sha}\"", subject("artifactHash")), "rfl"),
+        (
+            format!(
+                "{} = \"{}\"",
+                subject("artifactRoot"),
+                format::ARTIFACT_CERTIFICATE_ROOT
+            ),
+            "rfl",
+        ),
+        (format!("{} = {names}", obligations("export_")), "rfl"),
+        (format!("{} = {names}", subject("exports")), "rfl"),
+        (
+            format!("_root_.AverCert.ClaimAxes.reportEntries {data} = {report_entries}"),
+            KERNEL_REPORT_PROOF,
+        ),
+        (
+            format!("_root_.AverCert.ClaimAxes.reportFacets {data} = {report_facets}"),
+            KERNEL_REPORT_PROOF,
+        ),
+        (
+            format!("{} = {policies}", obligations("policy")),
+            KERNEL_REPORT_PROOF,
+        ),
+        (
+            format!("{} = {terminations}", obligations("termination?")),
+            KERNEL_REPORT_PROOF,
+        ),
+        (format!("{} = {contracts}", subject("contracts")), "rfl"),
+        (
+            format!("{} = {declared}", subject("declaredUncertified")),
+            "rfl",
+        ),
+        (
+            format!("{} = {capabilities}", subject("capabilities")),
+            "rfl",
+        ),
+        (format!("{} = {start}", subject("start")), "rfl"),
+        (format!("{} = {roles}", subject("hostRoleTable")), "rfl"),
+        (
+            format!("{} = {string_roles}", subject("stringHostRoles")),
+            "rfl",
+        ),
+        (
+            format!("{} = \"{}\"", subject("target"), candidates.target),
+            "rfl",
+        ),
+        (
+            format!("{} = \"{}\"", subject("profile"), candidates.profile),
+            "rfl",
+        ),
+        (
+            format!("{} = \"{}\"", subject("abi"), candidates.abi),
+            "rfl",
+        ),
+    ];
+    assert_eq!(
+        report_pins.len(),
+        REPORT_PIN_COUNT,
+        "the audit walks exactly the report pins the witness writes"
+    );
+    let mut report = String::new();
+    for (index, (statement, proof)) in report_pins.iter().enumerate() {
+        if *proof == KERNEL_REPORT_PROOF {
+            report.push_str("set_option maxHeartbeats 4000000 in\n");
+        }
+        report.push_str(&format!(
+            "theorem _root_.{REPORT_PIN_PREFIX}{index} :\n    {statement} :=\n  {proof}\n\n"
+        ));
+    }
     format!(
         "-- Authored by aver-cert; never accepted from the certificate.\n\
-         import Lean\n\
          import AcceptedArtifact\n\
          import ArtifactBytes\n\
          import Manifest\n\
@@ -989,70 +1173,254 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
          set_option autoImplicit false\n\n\
          {bridge_pins}\
          {law_pins}\
-         namespace AverCertChecker\n\n\
-         example : AverCert.Artifact.data.modBytes = AverCert.ArtifactBytes.modBytes := rfl\n\
-         example : AverCert.Artifact.data.modLen = AverCert.ArtifactBytes.modLen := rfl\n\
-         example : AverCert.Artifact.data.manifest = AverCert.manifest := rfl\n\
-         example : AverCert.Artifact.data.wasip2ComponentEnvelope = {wasip2_component_envelope} := rfl\n\n\
-         example : AverCert.manifest.subject.artifactHash = \"{sha}\" := rfl\n\
-         example : AverCert.manifest.subject.artifactRoot = \"{}\" := rfl\n\
-         example : AverCert.manifest.obligations.map (fun o => o.export_) = {names} := rfl\n\
-         example : AverCert.manifest.subject.exports = {names} := rfl\n\
-         example : AverCert.StandardFace.reportEntries AverCert.Artifact.data = some {report_entries} := rfl\n\
-         example : AverCert.manifest.obligations.map (fun o => o.policy) = {policies} := rfl\n\
-         example : AverCert.manifest.obligations.map (fun o => o.termination?) = {terminations} := rfl\n\
-         example : AverCert.manifest.subject.contracts = {contracts} := rfl\n\
-         example : AverCert.manifest.subject.declaredUncertified = {declared} := rfl\n\
-         example : AverCert.manifest.subject.capabilities = {capabilities} := rfl\n\
-         example : AverCert.manifest.subject.start = {start} := rfl\n\
-         example : AverCert.manifest.subject.hostRoleTable = {roles} := rfl\n\
-         example : AverCert.manifest.subject.stringHostRoles = {string_roles} := rfl\n\
-         example : AverCert.manifest.subject.target = \"{}\" := rfl\n\
-         example : AverCert.manifest.subject.profile = \"{}\" := rfl\n\
-         example : AverCert.manifest.subject.abi = \"{}\" := rfl\n\n\
-         theorem checked : AverCert.AcceptedArtifact.accepted AverCert.Artifact.data :=\n\
-           AverCert.Artifact.certificate\n\n\
-         end AverCertChecker\n\n\
-         open Lean in\n\
-         run_cmd do\n  \
-           let allowed : List Lean.Name := [{allowed}]\n  \
-           let axioms ← Lean.collectAxioms `{CHECKED_ROOT}\n  \
-           for usedAxiom in axioms do\n    \
-             unless allowed.contains usedAxiom do\n      \
-               throwError s!\"non-whitelisted axiom: {{usedAxiom}}\"\n  \
-           let lawRoots : List Lean.Name := [{law_roots}]\n  \
-           for lawRoot in lawRoots do\n    \
-             let lawAxioms ← Lean.collectAxioms lawRoot\n    \
-             let offending := lawAxioms.filter (fun used => not (allowed.contains used))\n    \
-             if offending.isEmpty then\n      \
-               logInfo s!\"{LAW_AUDIT_MARKER} {{lawRoot}} ok\"\n    \
-             else\n      \
-               let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
-               logInfo s!\"{LAW_AUDIT_MARKER} {{lawRoot}} axioms {{names}}\"\n  \
-           let bridgedLawRoots : List Lean.Name := [{bridged_law_roots}]\n  \
-           for bridgedLawRoot in bridgedLawRoots do\n    \
-             let bridgedLawAxioms ← Lean.collectAxioms bridgedLawRoot\n    \
-             let offending := bridgedLawAxioms.filter (fun used => not (allowed.contains used))\n    \
-             if offending.isEmpty then\n      \
-               logInfo s!\"{LAW_BRIDGE_AUDIT_MARKER} {{bridgedLawRoot}} ok\"\n    \
-             else\n      \
-               let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
-               logInfo s!\"{LAW_BRIDGE_AUDIT_MARKER} {{bridgedLawRoot}} axioms {{names}}\"\n  \
-           let bridgeRoots : List Lean.Name := [{bridge_roots}]\n  \
-           for bridgeRoot in bridgeRoots do\n    \
-             let bridgeAxioms ← Lean.collectAxioms bridgeRoot\n    \
-             let offending := bridgeAxioms.filter (fun used => not (allowed.contains used))\n    \
-             if offending.isEmpty then\n      \
-               logInfo s!\"{BRIDGE_AUDIT_MARKER} {{bridgeRoot}} ok\"\n    \
-             else\n      \
-               let names := String.intercalate \",\" (offending.toList.map (fun used => used.toString))\n      \
-               logInfo s!\"{BRIDGE_AUDIT_MARKER} {{bridgeRoot}} axioms {{names}}\"\n",
-        format::ARTIFACT_CERTIFICATE_ROOT,
-        candidates.target,
-        candidates.profile,
-        candidates.abi,
+         {report}\
+         theorem _root_.{CHECKED_ROOT} :\n    \
+           _root_.AverCert.AcceptedArtifact.accepted _root_.AverCert.Artifact.data :=\n  \
+           _root_.AverCert.Artifact.certificate\n"
     )
 }
+
+/// The proof of a report pin whose left side the wall computes from every
+/// plan (report entries and facets, policies, termination witnesses). The
+/// kernel decides it; the elaborator's defeq check on a large module runs past
+/// its default budget before it reaches the kernel, so the budget is raised
+/// for the pin's declaration alone. It moves a resource limit only: the kernel still checks
+/// the equation, and a runaway is stopped by the step's time limit.
+const KERNEL_REPORT_PROOF: &str = "by first | decide +kernel | rfl";
+
+/// Number of report pins [`checker_witness`] writes (they are numbered
+/// `report_pin_0 ..`); the audit walks every one of them.
+const REPORT_PIN_COUNT: usize = 21;
+
+/// A Lean `Name` literal list: `` [`A.b, `C] ``. Every name is checker-chosen
+/// or a validated package module root.
+fn lean_name_list(names: &[String]) -> String {
+    format!(
+        "[{}]",
+        names
+            .iter()
+            .map(|name| format!("`{name}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// The checker-owned audit program, run as `lake env lean --run
+/// CheckerAudit.lean` after the witness is built.
+///
+/// It is elaborated with ONLY the Lean toolchain in scope — no package module
+/// is imported while its code is elaborated — so no instance, notation or
+/// declaration a package ships can change what it computes. At run time it
+/// loads the built witness environment and:
+///
+/// 1. walks the axioms of the accepted root and of every report pin; any name
+///    outside the whitelist declines the package;
+/// 2. refuses a package that declares anything under the reserved
+///    `AverCertChecker` prefix or a wall namespace, a name under `AverCert`
+///    outside the producer's exact shapes or extending another declared
+///    constant's name, any scoped instance, any parser extension
+///    entry (notation, syntax, mixfix operators), or an instance outside the
+///    admitted forms (see [`AUDIT_INSTANCE_RULES`]);
+/// 3. logs one line per law, bridged-law and bridge pin with its own axiom
+///    audit, which Rust reads back for per-claim credit.
+///
+/// A decline is a line `AVER_AUDIT_DECLINE <reason>` and a nonzero exit.
+fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String {
+    let strict_roots: Vec<String> = std::iter::once(CHECKED_ROOT.to_string())
+        .chain((0..REPORT_PIN_COUNT).map(|index| format!("{REPORT_PIN_PREFIX}{index}")))
+        .collect();
+    let law_roots: Vec<String> = (0..candidates.laws.len())
+        .map(|index| format!("{LAW_PIN_PREFIX}{index}"))
+        .collect();
+    let bridged_law_roots: Vec<String> = (0..bridged_law_indices(&candidates.laws).len())
+        .map(|index| format!("{BRIDGED_LAW_PIN_PREFIX}{index}"))
+        .collect();
+    let bridge_roots: Vec<String> = (0..candidates.source_bridges.len())
+        .map(|index| format!("{BRIDGE_PIN_PREFIX}{index}"))
+        .collect();
+    let law_model_uses = law_model_uses(candidates);
+    let allowed: Vec<String> = AXIOM_WHITELIST
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    let mut records: Vec<(String, Vec<String>)> = Vec::new();
+    let mut sums: Vec<(String, Vec<(String, usize)>)> = Vec::new();
+    for bridge in &candidates.source_bridges {
+        for encoder in bridge.params.iter().chain(std::iter::once(&bridge.result)) {
+            collect_encoder_shapes(encoder, &mut records, &mut sums);
+        }
+    }
+    let records = format!(
+        "[{}]",
+        records
+            .iter()
+            .map(|(ty, fields)| format!("(`{ty}, {})", lean_name_list(fields)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let sums = format!(
+        "[{}]",
+        sums.iter()
+            .map(|(ty, ctors)| format!(
+                "(`{ty}, [{}])",
+                ctors
+                    .iter()
+                    .map(|(ctor, fields)| format!("(`{ctor}, {})", lean_nat(fields)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    AUDIT_TEMPLATE
+        .replace("@RECORDS@", &records)
+        .replace("@SUMS@", &sums)
+        .replace("@PACKAGE_MODULES@", &lean_name_list(package_modules))
+        .replace(
+            "@WALL_ROOTS@",
+            &lean_name_list(&WALL_NAMESPACE_ROOTS.map(str::to_string)),
+        )
+        .replace(
+            "@PACKAGE_AVERCERT_CHILDREN@",
+            &lean_name_list(&PACKAGE_AVERCERT_CHILDREN.map(str::to_string)),
+        )
+        .replace(
+            "@PACKAGE_AVERCERT_LEAVES@",
+            &lean_name_list(&PACKAGE_AVERCERT_LEAVES.map(str::to_string)),
+        )
+        .replace("@ALLOWED@", &lean_name_list(&allowed))
+        .replace("@STRICT_ROOTS@", &lean_name_list(&strict_roots))
+        .replace("@LAW_MODEL_USES@", &law_model_uses)
+        .replace("@LAW_ROOTS@", &lean_name_list(&law_roots))
+        .replace("@BRIDGED_LAW_ROOTS@", &lean_name_list(&bridged_law_roots))
+        .replace("@BRIDGE_ROOTS@", &lean_name_list(&bridge_roots))
+        .replace("@LAW_MARKER@", LAW_AUDIT_MARKER)
+        .replace("@BRIDGED_LAW_MARKER@", LAW_BRIDGE_AUDIT_MARKER)
+        .replace("@BRIDGE_MARKER@", BRIDGE_AUDIT_MARKER)
+        .replace("@DECLINE_MARKER@", AUDIT_DECLINE_MARKER)
+        .replace("@OK_MARKER@", AUDIT_OK_MARKER)
+}
+
+/// Per bridged law, `(law_statement_<i>, [models of its bridges])` as a Lean
+/// literal: the audit refuses a bridged law whose elaborated statement does
+/// not use each of those constants.
+fn law_model_uses(candidates: &Candidates) -> String {
+    let uses = candidates
+        .laws
+        .iter()
+        .enumerate()
+        .filter(|(_, law)| !law.bridges.is_empty())
+        .map(|(index, law)| {
+            let models: Vec<String> = law
+                .bridges
+                .iter()
+                .map(|bridge| candidates.source_bridges[*bridge].model.clone())
+                .collect();
+            format!(
+                "(`{LAW_STATEMENT_PREFIX}{index}, {})",
+                lean_name_list(&models)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{uses}]")
+}
+
+/// Every record and sum a bridge encoder reads, with the members it lists
+/// (names without `_root_.`; a record's fields by their last segment). Each
+/// type is listed once, at its first encoder.
+fn collect_encoder_shapes(
+    encoder: &SourceEncoder,
+    records: &mut Vec<(String, Vec<String>)>,
+    sums: &mut Vec<(String, Vec<(String, usize)>)>,
+) {
+    let bare = |name: &str| {
+        name.strip_prefix(bridge_statement::ROOT_PREFIX)
+            .unwrap_or(name)
+            .to_string()
+    };
+    match encoder {
+        SourceEncoder::Int | SourceEncoder::Bool | SourceEncoder::Float | SourceEncoder::Str => {}
+        SourceEncoder::Record {
+            lean_type, fields, ..
+        } => {
+            let ty = bare(lean_type);
+            let listed: Vec<String> = fields
+                .iter()
+                .map(|(accessor, _)| {
+                    accessor
+                        .rsplit_once('.')
+                        .map_or(accessor.clone(), |(_, field)| field.to_string())
+                })
+                .collect();
+            if !records.iter().any(|(seen, _)| *seen == ty) {
+                records.push((ty, listed));
+            }
+            for (_, field) in fields {
+                collect_encoder_shapes(field, records, sums);
+            }
+        }
+        SourceEncoder::Sum {
+            lean_type, ctors, ..
+        } => {
+            let ty = bare(lean_type);
+            if !sums.iter().any(|(seen, _)| *seen == ty) {
+                sums.push((
+                    ty,
+                    ctors
+                        .iter()
+                        .map(|(ctor, fields)| (bare(ctor), fields.len()))
+                        .collect(),
+                ));
+            }
+            for field in ctors.iter().flat_map(|(_, fields)| fields) {
+                collect_encoder_shapes(field, records, sums);
+            }
+        }
+        SourceEncoder::Option(inner)
+        | SourceEncoder::List(inner)
+        | SourceEncoder::Vector(inner) => collect_encoder_shapes(inner, records, sums),
+        SourceEncoder::Result { ok, err } => {
+            collect_encoder_shapes(ok, records, sums);
+            collect_encoder_shapes(err, records, sums);
+        }
+        SourceEncoder::Tuple { elems, .. } => {
+            for elem in elems {
+                collect_encoder_shapes(elem, records, sums);
+            }
+        }
+    }
+}
+
+/// Every namespace root the wall, the checker-rendered modules and the
+/// witness declare in, apart from `AverCert` itself. The audit program
+/// declines a package constant under any of them.
+const WALL_NAMESPACE_ROOTS: [&str; 9] = [
+    "AcceptanceSoundness",
+    "ArithTemplateDerisk",
+    "AverBits",
+    "AverCertChecker",
+    "CertDecode",
+    "CertModule",
+    "CertPrelude",
+    "InterpreterSequencing",
+    "AverCertAudit",
+];
+
+/// The namespaces under `AverCert` that the producer declares in (`Plans`,
+/// the `Artifact*` byte facts, `Final`, `Bridge*`, `Laws`). A package name
+/// under one of them is at least one component deeper; every other
+/// `AverCert.*` name belongs to the wall.
+const PACKAGE_AVERCERT_CHILDREN: [&str; 5] = ["Artifact", "Bridge", "Final", "Laws", "Plans"];
+
+/// The manifest's two definitions, the only package constants directly under
+/// `AverCert`. Nothing is declared under them: the audit refuses a package
+/// name that extends a declared constant.
+const PACKAGE_AVERCERT_LEAVES: [&str; 2] = ["manifest", "subject"];
+
+/// The audit program's source; `@…@` placeholders are filled by
+/// [`checker_audit`].
+const AUDIT_TEMPLATE: &str = include_str!("checker_audit.lean");
 
 fn read_manifest(cert_dir: &Path) -> Result<Value, String> {
     let path = cert_dir.join("cert-manifest.json");
@@ -1312,18 +1680,38 @@ fn read_candidates(
             }
             _ => unreachable!(),
         }
+        if class != format::PLAN_CLASS {
+            return Err(format!(
+                "certified export `{}` reports class `{}`; schema {} has the one class `{}`",
+                display_safe(&name),
+                display_safe(&class),
+                format::CERT_SCHEMA_VERSION,
+                format::PLAN_CLASS
+            ));
+        }
+        let facets = entry
+            .get("facets")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!(
+                    "certified export `{}` is missing `facets`",
+                    display_safe(&name)
+                )
+            })?
+            .iter()
+            .map(|facet| {
+                facet.as_str().map(str::to_string).ok_or_else(|| {
+                    "cert-manifest.json `certified[].facets[]` is not a string".to_string()
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         certified.push(CertifiedCandidate {
             name,
             class,
+            facets,
             policy,
             policy_lean,
             termination_lean,
-            dom: required_string(entry, "dom", "certified[]")?,
-            cod: required_string(entry, "cod", "certified[]")?,
-            theorem: entry
-                .get("theorem")
-                .and_then(Value::as_str)
-                .map(str::to_string),
         });
     }
 
@@ -1349,10 +1737,18 @@ fn read_candidates(
                 "theorem",
                 "corollary",
                 "model",
+                "kind",
                 "params",
                 "result",
             ],
         )?;
+        let kind_tag = required_string(entry, "kind", &context)?;
+        let kind = BridgeKind::from_tag(&kind_tag).ok_or_else(|| {
+            format!(
+                "cert-manifest.json `{context}.kind` is not a bridge statement kind: `{}`",
+                display_safe(&kind_tag)
+            )
+        })?;
         let declared_params = entry["params"]
             .as_array()
             .ok_or_else(|| format!("cert-manifest.json `{context}.params` is not an array"))?;
@@ -1368,6 +1764,7 @@ fn read_candidates(
             theorem: required_string(entry, "theorem", &context)?,
             corollary: required_string(entry, "corollary", &context)?,
             model: required_string(entry, "model", &context)?,
+            kind,
             params,
             result: read_source_encoder(&entry["result"], &format!("{context}.result"))?,
         };
@@ -1438,6 +1835,34 @@ fn read_candidates(
             }
             law.bridges.push(at);
         }
+        // The bridges a law conjoins are those of the functions its statement
+        // names — all of them, in first-appearance order — and nothing else.
+        // A law that lists bridges names each model `_root_.`-qualified and in
+        // no other spelling, so the text the bridges are matched on is the
+        // text that elaborates to the bridged constants.
+        if !law.bridges.is_empty() {
+            let models: Vec<&str> = source_bridges
+                .iter()
+                .map(|bridge| bridge.model.as_str())
+                .collect();
+            if let Some(model) =
+                bridge_statement::law_names_model_unqualified(&law.statement, &models)
+            {
+                return Err(format!(
+                    "law-claim `{}` names the bridged model `{}` without `_root_.`",
+                    display_safe(&law.label),
+                    display_safe(model)
+                ));
+            }
+            let mentioned = bridge_statement::law_mentioned_bridges(&law.statement, &models);
+            if law.bridges != mentioned {
+                return Err(format!(
+                    "law-claim `{}` cites bridges that are not exactly those of the functions \
+                     its statement names",
+                    display_safe(&law.label)
+                ));
+            }
+        }
         laws.push(law);
     }
     // The label→corollary underscore flattening is not injective; a duplicate
@@ -1487,7 +1912,7 @@ fn read_candidates(
         exact_object_fields(
             host_roles,
             "hostRoleTable",
-            &["box", "add", "mul", "sub", "toIndex", "cmp", "eq"],
+            &["box", "add", "mul", "sub", "toIndex", "cmp", "eq", "divmod"],
         )?;
         let optional_index = |key: &str| -> Result<Option<u32>, String> {
             match &host_roles[key] {
@@ -1503,6 +1928,7 @@ fn read_candidates(
             optional_index("toIndex")?,
             optional_index("cmp")?,
             optional_index("eq")?,
+            optional_index("divmod")?,
         ))
     };
 
@@ -1555,30 +1981,19 @@ fn read_candidates(
 /// Validate one manifest law-claim before any of its fields reach the
 /// checker-authored Lean witness. The names must be plain dotted Lean
 /// identifiers, the corollary must be exactly the label's underscore
-/// flattening, and the statement — which the witness re-elaborates verbatim
-/// inside one `example` type — must stay a single term-position line: no
-/// newline, no `:=`, no comment openers, so a crafted statement cannot
-/// terminate the pin early or smuggle in a further declaration.
+/// flattening, and the statement — which the witness re-elaborates verbatim,
+/// at the root, as the body of its own `def law_statement_<i> : Prop` — must
+/// stay a single term-position line: no newline, no `:=`, no comment openers,
+/// no `set_option` or `open`, so a crafted statement cannot terminate the
+/// definition early, smuggle in a further declaration, or change the options
+/// and names it is elaborated with.
 fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String> {
-    let plain_dotted = |value: &str, field: &str| -> Result<(), String> {
-        let ok =
-            !value.is_empty() && value.len() <= 200 && value.split('.').all(|segment| {
-                let mut chars = segment.chars();
-                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
-                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-            });
-        if ok {
-            Ok(())
-        } else {
-            Err(format!(
-                "law-claim `{}` field `{field}` is not a plain dotted Lean identifier",
-                law.label
-            ))
-        }
-    };
-    plain_dotted(&law.label, "label")?;
-    plain_dotted(&law.theorem, "theorem")?;
-    plain_dotted(&law.corollary, "corollary")?;
+    if let Err(field) = lean_gate::law_claim_identifiers(&law.label, &law.theorem, &law.corollary) {
+        return Err(format!(
+            "law-claim `{}` field `{field}` is not a plain dotted Lean identifier",
+            law.label
+        ));
+    }
     if law.corollary != law.label.replace('.', "_") {
         return Err(format!(
             "law-claim `{}` corollary `{}` is not the label's flattening",
@@ -1605,7 +2020,7 @@ const MAX_STATEMENT_LEN: usize = MAX_BRIDGE_STATEMENT_LEN;
 
 /// The statement gate every pinned claim surface applies: one plain
 /// term-position line — no newline or other control character, no `:=`, no
-/// comment opener — with balanced `()[]{}⟨⟩` whose depth never goes negative.
+/// comment opener, no `set_option` or `open` — with balanced `()[]{}⟨⟩` whose depth never goes negative.
 ///
 /// Balance is load-bearing, not cosmetic: the witness wraps the statement in
 /// one `(...)`, so a statement whose delimiters close more than they open could
@@ -1621,6 +2036,7 @@ struct RawSourceBridge {
     theorem: String,
     corollary: String,
     model: String,
+    kind: BridgeKind,
     params: Vec<SourceEncoder>,
     result: SourceEncoder,
 }
@@ -1640,22 +2056,17 @@ struct RawSourceBridge {
 fn validate_source_bridge_candidate(
     bridge: RawSourceBridge,
 ) -> Result<SourceBridgeCandidate, String> {
-    let plain = |value: &str| {
-        !value.is_empty()
-            && value.len() <= crate::format::MAX_CANDIDATE_LEN
-            && value.split('.').all(|segment| {
-                let mut chars = segment.chars();
-                matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
-                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-    };
-    if !plain(&bridge.export) || bridge.export.contains('.') {
+    // The same two identifier rules the producer applies before it declares a
+    // bridge (`bridge_statement`), so a model name the producer writes — the
+    // transpiler's trailing-prime escape of a reserved word included — is
+    // never one this gate refuses for the whole package.
+    if !bridge_statement::is_plain_export_name(&bridge.export) {
         return Err(format!(
             "source-bridge export `{}` is not a plain Lean identifier",
             display_safe(&bridge.export)
         ));
     }
-    if !plain(&bridge.model) {
+    if !bridge_statement::is_plain_dotted_name(&bridge.model) {
         return Err(format!(
             "source-bridge `{}` model `{}` is not a plain dotted Lean identifier",
             display_safe(&bridge.export),
@@ -1688,7 +2099,7 @@ fn validate_source_bridge_candidate(
             };
             return Err(format!(
                 "source-bridge `{}` {what} encoder does not name a `_root_`-qualified type \
-                 and its own accessors",
+                 and its own accessors and constructors, or exceeds the encoder caps",
                 display_safe(&bridge.export)
             ));
         }
@@ -1696,6 +2107,7 @@ fn validate_source_bridge_candidate(
     let statement = render_bridge_statement(
         &bridge.export,
         &bridge.model,
+        bridge.kind,
         &bridge.params,
         &bridge.result,
     );
@@ -1717,51 +2129,146 @@ fn validate_source_bridge_candidate(
         export: bridge.export,
         corollary: bridge.corollary,
         model: bridge.model,
+        kind: bridge.kind,
         statement,
+        params: bridge.params,
+        result: bridge.result,
     })
 }
 
 /// Read one declared encoder. The kind set is CLOSED and matched exactly, so an
-/// unknown kind — or a record entry missing its type or accessors — declines the
-/// package instead of being rendered into some default shape.
+/// unknown kind — or an entry missing a key, or carrying an extra one —
+/// declines the package instead of being rendered into some default shape.
+/// Nesting is bounded before recursion, so a hostile manifest cannot exhaust
+/// the stack.
 fn read_source_encoder(value: &Value, context: &str) -> Result<SourceEncoder, String> {
+    read_source_encoder_at(value, context, 0)
+}
+
+fn read_source_encoder_at(
+    value: &Value,
+    context: &str,
+    depth: usize,
+) -> Result<SourceEncoder, String> {
+    if depth >= bridge_statement::MAX_ENCODER_DEPTH {
+        return Err(format!(
+            "cert-manifest.json `{context}` nests encoders deeper than {}",
+            bridge_statement::MAX_ENCODER_DEPTH
+        ));
+    }
     let kind = value
         .get(bridge_statement::ENCODER_KIND_KEY)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("cert-manifest.json `{context}.kind` is not a string"))?;
+    let tid = |value: &Value| -> Result<u32, String> {
+        value
+            .get("tid")
+            .and_then(Value::as_u64)
+            .and_then(|t| u32::try_from(t).ok())
+            .ok_or_else(|| format!("cert-manifest.json `{context}.tid` is not a type id"))
+    };
+    let child = |key: &str| -> Result<Box<SourceEncoder>, String> {
+        Ok(Box::new(read_source_encoder_at(
+            &value[key],
+            &format!("{context}.{key}"),
+            depth + 1,
+        )?))
+    };
+    let array = |key: &str| -> Result<&Vec<Value>, String> {
+        value[key]
+            .as_array()
+            .ok_or_else(|| format!("cert-manifest.json `{context}.{key}` is not an array"))
+    };
     match kind {
-        bridge_statement::ENCODER_KIND_INT => {
+        bridge_statement::ENCODER_KIND_INT
+        | bridge_statement::ENCODER_KIND_BOOL
+        | bridge_statement::ENCODER_KIND_FLOAT
+        | bridge_statement::ENCODER_KIND_STRING => {
             exact_object_fields(value, context, &[bridge_statement::ENCODER_KIND_KEY])?;
-            Ok(SourceEncoder::Int)
-        }
-        bridge_statement::ENCODER_KIND_BOOL => {
-            exact_object_fields(value, context, &[bridge_statement::ENCODER_KIND_KEY])?;
-            Ok(SourceEncoder::Bool)
+            Ok(match kind {
+                bridge_statement::ENCODER_KIND_INT => SourceEncoder::Int,
+                bridge_statement::ENCODER_KIND_BOOL => SourceEncoder::Bool,
+                bridge_statement::ENCODER_KIND_FLOAT => SourceEncoder::Float,
+                _ => SourceEncoder::Str,
+            })
         }
         bridge_statement::ENCODER_KIND_RECORD => {
-            exact_object_fields(
-                value,
-                context,
-                &[
-                    bridge_statement::ENCODER_KIND_KEY,
-                    bridge_statement::ENCODER_TYPE_KEY,
-                    bridge_statement::ENCODER_FIELDS_KEY,
-                ],
-            )?;
-            let lean_type = required_string(value, bridge_statement::ENCODER_TYPE_KEY, context)?;
-            let declared = value[bridge_statement::ENCODER_FIELDS_KEY]
-                .as_array()
-                .ok_or_else(|| format!("cert-manifest.json `{context}.fields` is not an array"))?;
-            let mut accessors = Vec::with_capacity(declared.len());
-            for field in declared {
-                accessors.push(field.as_str().map(str::to_string).ok_or_else(|| {
-                    format!("cert-manifest.json `{context}.fields[]` is not a string")
-                })?);
+            exact_object_fields(value, context, &["kind", "tid", "type", "fields"])?;
+            let mut fields = Vec::new();
+            for (index, field) in array("fields")?.iter().enumerate() {
+                let at = format!("{context}.fields[{index}]");
+                exact_object_fields(field, &at, &["accessor", "encoder"])?;
+                fields.push((
+                    required_string(field, "accessor", &at)?,
+                    read_source_encoder_at(&field["encoder"], &format!("{at}.encoder"), depth + 1)?,
+                ));
             }
             Ok(SourceEncoder::Record {
-                lean_type,
-                accessors,
+                tid: tid(value)?,
+                lean_type: required_string(value, "type", context)?,
+                fields,
             })
+        }
+        bridge_statement::ENCODER_KIND_SUM => {
+            exact_object_fields(value, context, &["kind", "tid", "type", "ctors"])?;
+            let mut ctors = Vec::new();
+            for (index, ctor) in array("ctors")?.iter().enumerate() {
+                let at = format!("{context}.ctors[{index}]");
+                exact_object_fields(ctor, &at, &["ctor", "fields"])?;
+                let mut fields = Vec::new();
+                for (position, field) in ctor["fields"]
+                    .as_array()
+                    .ok_or_else(|| format!("cert-manifest.json `{at}.fields` is not an array"))?
+                    .iter()
+                    .enumerate()
+                {
+                    fields.push(read_source_encoder_at(
+                        field,
+                        &format!("{at}.fields[{position}]"),
+                        depth + 1,
+                    )?);
+                }
+                ctors.push((required_string(ctor, "ctor", &at)?, fields));
+            }
+            Ok(SourceEncoder::Sum {
+                tid: tid(value)?,
+                lean_type: required_string(value, "type", context)?,
+                ctors,
+            })
+        }
+        bridge_statement::ENCODER_KIND_OPTION => {
+            exact_object_fields(value, context, &["kind", "elem"])?;
+            Ok(SourceEncoder::Option(child("elem")?))
+        }
+        bridge_statement::ENCODER_KIND_RESULT => {
+            exact_object_fields(value, context, &["kind", "ok", "err"])?;
+            Ok(SourceEncoder::Result {
+                ok: child("ok")?,
+                err: child("err")?,
+            })
+        }
+        bridge_statement::ENCODER_KIND_TUPLE => {
+            exact_object_fields(value, context, &["kind", "tid", "elems"])?;
+            let mut elems = Vec::new();
+            for (index, elem) in array("elems")?.iter().enumerate() {
+                elems.push(read_source_encoder_at(
+                    elem,
+                    &format!("{context}.elems[{index}]"),
+                    depth + 1,
+                )?);
+            }
+            Ok(SourceEncoder::Tuple {
+                tid: tid(value)?,
+                elems,
+            })
+        }
+        bridge_statement::ENCODER_KIND_LIST => {
+            exact_object_fields(value, context, &["kind", "elem"])?;
+            Ok(SourceEncoder::List(child("elem")?))
+        }
+        bridge_statement::ENCODER_KIND_VECTOR => {
+            exact_object_fields(value, context, &["kind", "elem"])?;
+            Ok(SourceEncoder::Vector(child("elem")?))
         }
         other => Err(format!(
             "cert-manifest.json `{context}` declares unknown source-bridge encoder kind `{}`",
@@ -1874,6 +2381,7 @@ fn parse_bridge_audits(
         outcomes.push(BridgeOutcome {
             export: bridge.export.clone(),
             model: bridge.model.clone(),
+            kind: bridge.kind,
             statement: bridge.statement.clone(),
             offending,
         });
@@ -1935,7 +2443,7 @@ fn parse_pin_audits(
 
 fn parse_termination(value: Option<&Value>, export: &str) -> Result<String, String> {
     let Some(value) = value else {
-        return Ok("none".to_string());
+        return Ok("_root_.Option.none".to_string());
     };
     let measure = value
         .get("measure")
@@ -1956,7 +2464,9 @@ fn parse_termination(value: Option<&Value>, export: &str) -> Result<String, Stri
         .and_then(Value::as_i64)
         .ok_or_else(|| format!("export `{export}` has invalid termination descent"))?;
     Ok(format!(
-        "some ({{ measure := .intNatAbs {parameter}, descent := ({descent} : Int) }} : AverCert.Schema.TerminationWitness)"
+        "_root_.Option.some ({{ measure := .intNatAbs {}, descent := {} }} : _root_.AverCert.Schema.TerminationWitness)",
+        lean_nat(parameter),
+        lean_int(descent)
     ))
 }
 
@@ -2029,8 +2539,9 @@ fn gate_candidates(candidates: &Candidates) -> Result<(), String> {
     for candidate in &candidates.certified {
         gate_candidate("certified export name", &candidate.name)?;
         gate_candidate("certified class", &candidate.class)?;
-        gate_candidate("source domain", &candidate.dom)?;
-        gate_candidate("source codomain", &candidate.cod)?;
+        for facet in &candidate.facets {
+            gate_candidate("certified facet", facet)?;
+        }
     }
     for contract in &candidates.contracts {
         gate_candidate("runtime contract", contract)?;
@@ -2071,19 +2582,22 @@ fn is_checker_owned(name: &str, selected_wall: &wall::Wall) -> bool {
             name,
             "ArtifactBytes.lean"
                 | "ArtifactComponentBytes.lean"
+                | "Module.lean"
                 | "lakefile.lean"
                 | "CheckerWitness.lean"
+                | "CheckerAudit.lean"
         )
 }
 
 fn assemble_build(
     cert_dir: &Path,
+    artifact_hash: &str,
     core_module_bytes: &[u8],
     target_artifact_bytes: &[u8],
     selected_wall: &wall::Wall,
     memory_limit_mb: u64,
 ) -> Result<BuildDir, String> {
-    let build = BuildDir::new()?;
+    let mut build = BuildDir::new()?;
     let mut roots = Vec::new();
     let mut flat_files: Vec<(String, PathBuf)> = Vec::new();
     let mut subdirectories: Vec<(String, PathBuf)> = Vec::new();
@@ -2128,7 +2642,10 @@ fn assemble_build(
         let contents = std::fs::read(path)
             .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
         scan_for_code_exec(name, &contents)?;
-        if name == "Manifest.lean" || name == "Certificate.lean" {
+        if matches!(
+            name.as_str(),
+            "Manifest.lean" | "Certificate.lean" | "Bridge.lean" | "Laws.lean"
+        ) {
             collect_import_lines(&String::from_utf8_lossy(&contents), &mut admitted);
         }
         std::fs::write(build.path.join(name), contents)
@@ -2176,6 +2693,7 @@ fn assemble_build(
             .map_err(|error| format!("cannot stage {relative}: {error}"))?;
         roots.push(root);
     }
+    build.package_roots = roots.clone();
     for source in selected_wall.sources {
         std::fs::write(build.path.join(source.name), source.contents)
             .map_err(|error| format!("cannot stage {}: {error}", source.name))?;
@@ -2199,6 +2717,15 @@ fn assemble_build(
     )
     .map_err(|error| format!("cannot stage ArtifactComponentBytes.lean: {error}"))?;
     roots.push("ArtifactComponentBytes".to_string());
+    // The wall's `Schema` imports `Module`, so it is rendered here from the
+    // hash of the bytes read, never staged from the package: no package
+    // module may sit inside the wall's own import closure.
+    std::fs::write(
+        build.path.join("Module.lean"),
+        wall::render_module(artifact_hash),
+    )
+    .map_err(|error| format!("cannot stage Module.lean: {error}"))?;
+    roots.push("Module".to_string());
     roots.sort();
     roots.dedup();
     std::fs::write(
@@ -2221,22 +2748,7 @@ fn assemble_build(
 /// the returned root is interpolated unescaped into the checker-authored
 /// lakefile, so only validated segments may become roots.
 fn lean_module_root(name: &str) -> Result<String, String> {
-    let stem = name
-        .strip_suffix(".lean")
-        .ok_or_else(|| format!("cert file `{name}` is not a Lean file"))?;
-    let segments: Vec<&str> = stem.split('/').collect();
-    let valid = segments.iter().all(|segment| {
-        let mut chars = segment.chars();
-        matches!(chars.next(), Some(first) if first.is_ascii_alphabetic())
-            && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
-    });
-    if valid {
-        Ok(segments.join("."))
-    } else {
-        Err(format!(
-            "cert file name `{name}` must match ^[A-Za-z][A-Za-z0-9_]*\\.lean$ in every path segment"
-        ))
-    }
+    lean_gate::lean_module_root(name)
 }
 
 /// Reject a package module root that would shadow a checker-owned or
@@ -2259,7 +2771,9 @@ fn reject_shadowed_root(root: &str, selected_wall: &wall::Wall) -> Result<(), St
         }) || [
             "ArtifactBytes",
             "ArtifactComponentBytes",
+            "Module",
             "CheckerWitness",
+            "CheckerAudit",
             "lakefile",
         ]
         .iter()
@@ -2359,217 +2873,18 @@ fn collect_nested_lean_files(
 }
 
 /// Reject a cert data file that carries an elaboration-executing token in
-/// *code* position. This is a fail-closed trust-boundary defense: the scanner's
-/// notion of "this span is an inert string or comment" is a deliberate SOUND
-/// OVER-APPROXIMATION of code — on any lexical ambiguity it defaults to code and
-/// scans, so a token Lean would elaborate is never skipped as inert. It may
-/// over-reject (treat inert bytes as code) but must never under-reject.
-///
-/// Inert spans recognized (and only these): normal string literals `"..."` with
-/// `\` escapes, line comments `-- ... \n`, and nested block comments
-/// `/- ... -/` (which also covers the `/--`/`/-!` doc-comment openers). Char
-/// literals are consumed as code just far enough that a `"` inside `'"'` / `'\"'`
-/// cannot open a phantom string. Raw / interpolated string prefixes (`r"`,
-/// `r#"`, `s!"`) and unterminated strings/comments fall back to scanning the
-/// remainder as pure code.
+/// *code* position. The lexer and the token list live in
+/// [`crate::lean_gate`], which the producer runs over its own model files
+/// with the very same code, so a package the producer ships never fails this
+/// gate on a file it could have left out.
 fn scan_for_code_exec(name: &str, contents: &[u8]) -> Result<(), String> {
     let text = String::from_utf8_lossy(contents);
-    let chars: Vec<char> = text.chars().collect();
-    if let Some(token) = find_code_exec_token(&chars) {
+    if let Some(token) = lean_gate::code_exec_token(&text) {
         return Err(format!(
-            "cert data file `{name}` contains elaboration-executing token `{token}`"
+            "cert data file `{name}` contains refused construct `{token}`"
         ));
     }
     Ok(())
-}
-
-/// A Lean identifier-continuation character, narrowed to ASCII alphanumerics and
-/// `_`. This is intentionally an UNDER-approximation of Lean's identifier
-/// alphabet: it is used only for the word-boundary check, and treating fewer
-/// characters as identifier-continuation makes the scanner *more* likely to
-/// reject (fail-closed), never less.
-fn is_ident_continuation(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// A forbidden token is treated as a whole *word* (boundary-checked so `elab`
-/// does not fire inside `relabel`) exactly when every one of its bytes is an
-/// ASCII identifier-continuation character. Tokens carrying punctuation, spaces,
-/// or non-ASCII bytes (`#eval`, `@[`, `«`, `open Lean`) are matched as raw
-/// substrings in code position, where a word boundary has no meaning.
-fn token_is_word(token: &str) -> bool {
-    token
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-}
-
-/// Returns the offending token if one starts, in code position, at `chars[i]`.
-fn token_at(
-    tokens: &[(&'static str, Vec<char>, bool)],
-    chars: &[char],
-    i: usize,
-) -> Option<&'static str> {
-    for (token, needle, is_word) in tokens {
-        let len = needle.len();
-        if i + len > chars.len() || &chars[i..i + len] != needle.as_slice() {
-            continue;
-        }
-        if *is_word {
-            let left_boundary = i == 0 || !is_ident_continuation(chars[i - 1]);
-            let right_boundary = i + len == chars.len() || !is_ident_continuation(chars[i + len]);
-            if left_boundary && right_boundary {
-                return Some(token);
-            }
-        } else {
-            return Some(token);
-        }
-    }
-    None
-}
-
-/// Index just past the closing `"` of the normal string literal opening at
-/// `chars[open]`, or `None` if the string never closes before EOF (an
-/// unterminated string is a lexer error in Lean; the caller then defaults to
-/// scanning the region as code).
-fn string_literal_end(chars: &[char], open: usize) -> Option<usize> {
-    let mut j = open + 1;
-    while j < chars.len() {
-        match chars[j] {
-            '\\' => j += 2, // the escaped character cannot close the string
-            '"' => return Some(j + 1),
-            _ => j += 1,
-        }
-    }
-    None
-}
-
-/// Index just past the matching `-/` of the (nesting) block comment opening at
-/// `chars[open]` (`/-`), or `None` if it never closes before EOF.
-fn block_comment_end(chars: &[char], open: usize) -> Option<usize> {
-    let mut depth = 1usize;
-    let mut j = open + 2;
-    while j < chars.len() {
-        if chars[j] == '/' && j + 1 < chars.len() && chars[j + 1] == '-' {
-            depth += 1;
-            j += 2;
-        } else if chars[j] == '-' && j + 1 < chars.len() && chars[j + 1] == '/' {
-            depth -= 1;
-            j += 2;
-            if depth == 0 {
-                return Some(j);
-            }
-        } else {
-            j += 1;
-        }
-    }
-    None
-}
-
-/// Index just past a char literal opening at `chars[open]` (`'`), or `None` if
-/// `chars[open]` is not the start of a char literal we recognize. Recognition is
-/// deliberately minimal: its only soundness duty is to consume the `"` inside
-/// `'"'` and `'\"'` so it cannot open a phantom string. Every char literal that
-/// can contain a raw `"` byte matches one of those two shapes; other char
-/// literals (`'\n'`, `'\u{22}'`, identifier primes) may go unrecognized, which
-/// is harmless because they carry no `"`.
-fn char_literal_end(chars: &[char], open: usize) -> Option<usize> {
-    if chars.get(open + 1) == Some(&'\\') {
-        // '\X'  (escaped single char, e.g. '\"', '\n', '\\', '\'')
-        if chars.get(open + 2).is_some() && chars.get(open + 3) == Some(&'\'') {
-            return Some(open + 4);
-        }
-        return None;
-    }
-    match chars.get(open + 1) {
-        Some('\'') | None => None, // "''" is not a char literal; nor is a trailing '
-        Some(_) => {
-            // 'X'  (single unescaped char, including 'X' == '"')
-            if chars.get(open + 2) == Some(&'\'') {
-                Some(open + 3)
-            } else {
-                None
-            }
-        }
-    }
-}
-
-/// Scan `chars[start..]` as pure code (no string/comment skipping) and return
-/// the first forbidden token. Used as the default-to-code fallback for
-/// unterminated strings/comments and raw/interpolated string prefixes.
-fn scan_remainder_as_code(
-    tokens: &[(&'static str, Vec<char>, bool)],
-    chars: &[char],
-    start: usize,
-) -> Option<&'static str> {
-    for i in start..chars.len() {
-        if let Some(token) = token_at(tokens, chars, i) {
-            return Some(token);
-        }
-    }
-    None
-}
-
-/// The context-aware core of [`scan_for_code_exec`]: a mini Lean lexer that
-/// walks the file, skips inert string/comment spans, and reports the first
-/// forbidden token that appears in code position.
-fn find_code_exec_token(chars: &[char]) -> Option<&'static str> {
-    let tokens: Vec<(&'static str, Vec<char>, bool)> = CODE_EXEC_TOKENS
-        .iter()
-        .map(|token| (*token, token.chars().collect(), token_is_word(token)))
-        .collect();
-    let n = chars.len();
-    let mut i = 0;
-    while i < n {
-        let c = chars[i];
-        // Inert-span openers take priority. None of them is a token start, so
-        // handling them here never skips over a forbidden token.
-        if c == '"' {
-            // A `"` preceded by a raw/interpolated string prefix (`r"`, `r#"`,
-            // `s!"`) is lexically ambiguous for a normal-string scan; default to
-            // code and scan the remainder rather than risk a desynced skip.
-            if i > 0 && matches!(chars[i - 1], 'r' | '#' | '!') {
-                return scan_remainder_as_code(&tokens, chars, i);
-            }
-            match string_literal_end(chars, i) {
-                Some(end) => {
-                    i = end;
-                    continue;
-                }
-                None => return scan_remainder_as_code(&tokens, chars, i),
-            }
-        }
-        if c == '-' && chars.get(i + 1) == Some(&'-') {
-            // Line comment through end of line (or EOF).
-            let mut j = i + 2;
-            while j < n && chars[j] != '\n' {
-                j += 1;
-            }
-            i = j;
-            continue;
-        }
-        if c == '/' && chars.get(i + 1) == Some(&'-') {
-            match block_comment_end(chars, i) {
-                Some(end) => {
-                    i = end;
-                    continue;
-                }
-                None => return scan_remainder_as_code(&tokens, chars, i),
-            }
-        }
-        // A `'` that opens a char literal is consumed; otherwise it is an
-        // identifier prime and falls through as ordinary code.
-        if c == '\''
-            && let Some(end) = char_literal_end(chars, i)
-        {
-            i = end;
-            continue;
-        }
-        if let Some(token) = token_at(&tokens, chars, i) {
-            return Some(token);
-        }
-        i += 1;
-    }
-    None
 }
 
 /// The generated lakefile carries the checker's Lean heap ceiling into every
@@ -2609,18 +2924,24 @@ fn lean_string_pair_list(items: &[(String, String)]) -> String {
 }
 
 fn lean_option_nat(value: Option<u32>) -> String {
-    value.map_or_else(|| "none".to_string(), |value| format!("some {value}"))
+    value.map_or_else(
+        || "_root_.Option.none".to_string(),
+        |value| format!("(_root_.Option.some {})", lean_nat(value)),
+    )
 }
 
 fn lean_wasip2_component_envelope(
     value: Option<format::Wasip2ComponentEnvelopeDeclaration>,
 ) -> String {
     value.map_or_else(
-        || "(none : Option AverCert.Wasip2Envelope.ComponentEnvelope)".to_string(),
+        || "(_root_.Option.none : _root_.Option _root_.AverCert.Wasip2Envelope.ComponentEnvelope)"
+            .to_string(),
         |value| {
             format!(
-                "some ({{ prefixLen := {}, embeddedCoreModuleLen := {}, suffixLen := {} }} : AverCert.Wasip2Envelope.ComponentEnvelope)",
-                value.prefix_len, value.embedded_core_module_len, value.suffix_len
+                "_root_.Option.some ({{ prefixLen := {}, embeddedCoreModuleLen := {}, suffixLen := {} }} : _root_.AverCert.Wasip2Envelope.ComponentEnvelope)",
+                lean_nat(value.prefix_len),
+                lean_nat(value.embedded_core_module_len),
+                lean_nat(value.suffix_len)
             )
         },
     )
@@ -2632,6 +2953,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 struct BuildDir {
     path: PathBuf,
+    /// Module roots of the staged certificate package (never wall or
+    /// checker-authored modules).
+    package_roots: Vec<String>,
 }
 
 impl BuildDir {
@@ -2650,7 +2974,10 @@ impl BuildDir {
         builder
             .create(&path)
             .map_err(|error| format!("cannot create checker build dir: {error}"))?;
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            package_roots: Vec::new(),
+        })
     }
 }
 
@@ -2711,9 +3038,11 @@ fn run_lake(
 ) -> Result<LakeOut, String> {
     // Any step failure — including a timeout — fails the whole verify/check
     // closed; only the opt-in prelude cache may downgrade a step error.
+    let started = std::time::Instant::now();
     let output = lean
         .run_lake(build_dir, phase, arguments)
         .map_err(|error| error.to_string())?;
+    report_step_timing(phase, started.elapsed(), &output.stdout);
     Ok(LakeOut {
         status: output.status,
         combined: format!(
@@ -2722,6 +3051,21 @@ fn run_lake(
             String::from_utf8_lossy(&output.stderr)
         ),
     })
+}
+
+/// Opt-in developer timing trace (`AVER_CERT_TIMINGS=1`): one stderr line per
+/// Lean step, plus Lake's own per-module build lines. Diagnostic only; it
+/// reads nothing the verdict depends on.
+fn report_step_timing(phase: &str, elapsed: std::time::Duration, stdout: &[u8]) {
+    if std::env::var_os("AVER_CERT_TIMINGS").is_none_or(|value| value.is_empty() || value == "0") {
+        return;
+    }
+    for line in String::from_utf8_lossy(stdout).lines() {
+        if line.contains("Built ") || line.contains("Replayed ") {
+            eprintln!("aver-cert timing:   {}", line.trim());
+        }
+    }
+    eprintln!("aver-cert timing: {phase}: {:.1}s", elapsed.as_secs_f64());
 }
 
 fn tail(text: &str, lines: usize) -> String {
@@ -2799,6 +3143,12 @@ fn display_safe(value: &str) -> String {
         .collect()
 }
 
+/// Printed by `explain` under every certificate with a certified export.
+const INT_INPUT_DOMAIN_LINE: &str = "domain: every Int input (an argument, or a field, \
+     element or payload inside one) is assumed to be a canonical carrier word, the \
+     runtime's normal form; a non-canonical word is outside the certified domain. Every \
+     Int result is proved canonical.";
+
 pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> {
     let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
     println!("{}", "Artifact certificate".bold());
@@ -2817,14 +3167,15 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
         println!("  {}", export.name.bold());
         println!("    policy: {}", export.policy);
         println!("    {}", export.face);
-        if let Some(domain) = export.domain.as_deref() {
-            println!("    {domain}");
-        }
-        if let Some(model) = export.certified_model.as_deref() {
-            println!("    {model}");
-        }
-        println!("    {}", export.manifest_face);
+        println!("    {}", export.certified_model);
     }
+    // The one assumption every certified theorem makes about its INPUTS rather
+    // than about a helper: the wall's value relation reads an Int through
+    // `CanonRepr`, so an Int carrier word the host passes in is taken to be in
+    // the runtime's normal form. It is the same for every export, so it is
+    // stated once.
+    println!("\n{}", "Certified domain".yellow().bold());
+    println!("  {INT_INPUT_DOMAIN_LINE}");
     if !report.contracts.is_empty() {
         println!("\n{}", "Runtime contracts".yellow().bold());
         for contract in report.contracts {
@@ -2871,9 +3222,10 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                 )
             };
             println!(
-                "  {}  ≡ {}  [{credit}]",
+                "  {}  ≡ {}  ({})  [{credit}]",
                 display_safe(&bridge.export).bold(),
-                display_safe(&bridge.model)
+                display_safe(&bridge.model),
+                bridge.kind.tag()
             );
             println!("    {}", display_safe(&bridge.statement));
         }
@@ -3043,19 +3395,28 @@ mod tests {
             theorem: format!("{BRIDGE_NAMESPACE}.{export}"),
             corollary: format!("{BRIDGE_NAMESPACE}.{export}{BRIDGE_COROLLARY_SUFFIX}"),
             model: format!("Domain.{export}"),
+            kind: BridgeKind::Exact,
             params: vec![SourceEncoder::Int],
             result: SourceEncoder::Int,
         }
     }
 
-    fn fraction_encoder() -> SourceEncoder {
+    fn record_encoder(accessors: &[&str]) -> SourceEncoder {
         SourceEncoder::Record {
+            tid: 0,
             lean_type: "_root_.Domain.Fraction".to_string(),
-            accessors: vec![
-                "_root_.Domain.Fraction.top".to_string(),
-                "_root_.Domain.Fraction.bottom".to_string(),
-            ],
+            fields: accessors
+                .iter()
+                .map(|accessor| (accessor.to_string(), SourceEncoder::Int))
+                .collect(),
         }
+    }
+
+    fn fraction_encoder() -> SourceEncoder {
+        record_encoder(&[
+            "_root_.Domain.Fraction.top",
+            "_root_.Domain.Fraction.bottom",
+        ])
     }
 
     fn bridge_candidates(exports: &[&str]) -> Vec<SourceBridgeCandidate> {
@@ -3158,18 +3519,60 @@ mod tests {
         // against whatever namespaces the package declares.
         let mut bare_names = raw_bridge("one");
         bare_names.result = SourceEncoder::Record {
+            tid: 0,
             lean_type: "Domain.Fraction".to_string(),
-            accessors: vec!["Domain.Fraction.top".to_string()],
+            fields: vec![("Domain.Fraction.top".to_string(), SourceEncoder::Int)],
         };
         assert!(validate_source_bridge_candidate(bare_names).is_err());
 
         // An accessor of some other type is not a field of the declared one.
         let mut foreign_accessor = raw_bridge("one");
-        foreign_accessor.result = SourceEncoder::Record {
-            lean_type: "_root_.Domain.Fraction".to_string(),
-            accessors: vec!["_root_.Other.Record.top".to_string()],
-        };
+        foreign_accessor.result = record_encoder(&["_root_.Other.Record.top"]);
         assert!(validate_source_bridge_candidate(foreign_accessor).is_err());
+
+        // So is a constructor of some other sum.
+        let mut foreign_ctor = raw_bridge("one");
+        foreign_ctor.params = vec![SourceEncoder::Sum {
+            tid: 1,
+            lean_type: "_root_.Domain.Op".to_string(),
+            ctors: vec![("_root_.Domain.Tag.a".to_string(), Vec::new())],
+        }];
+        assert!(validate_source_bridge_candidate(foreign_ctor).is_err());
+    }
+
+    /// The transpiler escapes a source function named after a Lean keyword
+    /// with a trailing prime (`none` becomes `none'`), and the producer names
+    /// that model in its bridge entry. The checker used to refuse the primed
+    /// name as "not a plain dotted identifier" — for the whole package, since a
+    /// refused entry fails candidate parsing. Producer and checker now apply
+    /// the one rule of `bridge_statement`, which admits the escape in every
+    /// segment and nothing else.
+    #[test]
+    fn a_keyword_escaped_model_name_passes_the_bridge_gate() {
+        let mut escaped = raw_bridge("Domain_Policy_none");
+        escaped.model = "Domain.Policy.none'".to_string();
+        let candidate =
+            validate_source_bridge_candidate(escaped).expect("the escaped model name is admitted");
+        assert!(
+            candidate.statement.contains("_root_.Domain.Policy.none'"),
+            "{}",
+            candidate.statement
+        );
+        for refused in [
+            "Domain.Policy.'none",
+            "Domain.Policy..none",
+            "Domain.Policy.none\u{ab}",
+        ] {
+            let mut entry = raw_bridge("Domain_Policy_none");
+            entry.model = refused.to_string();
+            assert!(
+                validate_source_bridge_candidate(entry).is_err(),
+                "{refused}"
+            );
+        }
+        let mut primed_export = raw_bridge("Domain_Policy_none'");
+        primed_export.model = "Domain.Policy.none'".to_string();
+        assert!(validate_source_bridge_candidate(primed_export).is_err());
     }
 
     /// The defect this surface was reshaped to close: a package used to declare
@@ -3190,20 +3593,28 @@ mod tests {
             render_bridge_statement(
                 "Domain_Rational_plus",
                 "Domain.Rational.plus",
+                BridgeKind::Exact,
                 &[fraction_encoder(), fraction_encoder()],
                 &fraction_encoder(),
             ),
             "the pinned statement is the renderer's output and nothing else"
         );
         assert!(
-            candidate.statement.starts_with('∀')
-                && candidate.statement.contains(
-                    "_root_.AverCert.StandardFace.recordComputeModel \
-                     _root_.AverCert.Plans.Domain_Rational_plusPlan.body"
-                ),
-            "the claim's left-hand side is the export's own plan: {}",
+            candidate.statement.starts_with(
+                "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \
+                 \"Domain_Rational_plus\""
+            ),
+            "the claim's left-hand side is the export's own obligation model: {}",
             candidate.statement
         );
+        // The weaker kind renders a different claim too.
+        let mut adequate = raw_bridge("Domain_Rational_plus");
+        adequate.model = "Domain.Rational.plus".to_string();
+        adequate.kind = BridgeKind::Adequate;
+        adequate.params = vec![fraction_encoder(), fraction_encoder()];
+        adequate.result = fraction_encoder();
+        let adequate = validate_source_bridge_candidate(adequate).expect("it still validates");
+        assert_ne!(adequate.statement, candidate.statement);
         // Naming a different export renders a different claim, so the pin no
         // longer has the package corollary's type — a decline, not a credit.
         let mut renamed = raw_bridge("Domain_Rational_minus");
@@ -3213,13 +3624,10 @@ mod tests {
         let renamed = validate_source_bridge_candidate(renamed).expect("it still validates");
         assert_ne!(renamed.statement, candidate.statement);
         // So does permuting a record's accessors.
-        let permuted = SourceEncoder::Record {
-            lean_type: "_root_.Domain.Fraction".to_string(),
-            accessors: vec![
-                "_root_.Domain.Fraction.bottom".to_string(),
-                "_root_.Domain.Fraction.top".to_string(),
-            ],
-        };
+        let permuted = record_encoder(&[
+            "_root_.Domain.Fraction.bottom",
+            "_root_.Domain.Fraction.top",
+        ]);
         let mut swapped = raw_bridge("Domain_Rational_plus");
         swapped.model = "Domain.Rational.plus".to_string();
         swapped.params = vec![permuted, fraction_encoder()];
@@ -3244,25 +3652,59 @@ mod tests {
             read_source_encoder(
                 &serde_json::json!({
                     "kind": "record",
+                    "tid": 0,
                     "type": "_root_.Domain.Fraction",
-                    "fields": ["_root_.Domain.Fraction.top"],
+                    "fields": [{"accessor": "_root_.Domain.Fraction.top", "encoder": {"kind": "int"}}],
                 }),
                 "e"
             )
             .unwrap(),
-            SourceEncoder::Record {
-                lean_type: "_root_.Domain.Fraction".to_string(),
-                accessors: vec!["_root_.Domain.Fraction.top".to_string()],
-            }
+            record_encoder(&["_root_.Domain.Fraction.top"])
         );
+        // Every encoder the producer writes reads back to itself.
+        let op = SourceEncoder::Sum {
+            tid: 1,
+            lean_type: "_root_.Domain.Op".to_string(),
+            ctors: vec![
+                ("_root_.Domain.Op.add".to_string(), vec![SourceEncoder::Int]),
+                ("_root_.Domain.Op.zero".to_string(), Vec::new()),
+            ],
+        };
+        for encoder in [
+            SourceEncoder::Float,
+            SourceEncoder::Str,
+            fraction_encoder(),
+            op.clone(),
+            SourceEncoder::Option(Box::new(op.clone())),
+            SourceEncoder::Result {
+                ok: Box::new(SourceEncoder::Int),
+                err: Box::new(SourceEncoder::Str),
+            },
+            SourceEncoder::Tuple {
+                tid: 2,
+                elems: vec![SourceEncoder::Int, fraction_encoder()],
+            },
+            SourceEncoder::List(Box::new(SourceEncoder::Bool)),
+            SourceEncoder::Vector(Box::new(SourceEncoder::Int)),
+        ] {
+            let json: Value = serde_json::from_str(&encoder.to_json()).expect("valid JSON");
+            assert_eq!(read_source_encoder(&json, "e").unwrap(), encoder);
+        }
+        let mut deep = serde_json::json!({"kind": "int"});
+        for _ in 0..bridge_statement::MAX_ENCODER_DEPTH {
+            deep = serde_json::json!({"kind": "option", "elem": deep});
+        }
         for bad in [
-            serde_json::json!({"kind": "float"}),
-            serde_json::json!({"kind": "string"}),
+            serde_json::json!({"kind": "decimal"}),
             serde_json::json!({}),
             serde_json::json!({"kind": "int", "type": "_root_.Domain.Fraction"}),
-            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction"}),
-            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction", "fields": "top"}),
-            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction", "fields": [7]}),
+            serde_json::json!({"kind": "record", "tid": 0, "type": "_root_.Domain.Fraction"}),
+            serde_json::json!({"kind": "record", "tid": 0, "type": "_root_.Domain.Fraction", "fields": "top"}),
+            serde_json::json!({"kind": "record", "tid": 0, "type": "_root_.Domain.Fraction", "fields": [7]}),
+            serde_json::json!({"kind": "record", "type": "_root_.Domain.Fraction", "fields": []}),
+            serde_json::json!({"kind": "option"}),
+            serde_json::json!({"kind": "sum", "tid": 1, "type": "_root_.Domain.Op", "ctors": [{"ctor": "_root_.Domain.Op.a"}]}),
+            deep,
         ] {
             assert!(
                 read_source_encoder(&bad, "e").is_err(),
@@ -3280,6 +3722,7 @@ mod tests {
             "theorem",
             "corollary",
             "model",
+            "kind",
             "params",
             "result",
         ];
@@ -3288,6 +3731,7 @@ mod tests {
             "theorem": "AverCert.Bridge.one",
             "corollary": "AverCert.Bridge.one_certified",
             "model": "Domain.one",
+            "kind": "exact",
             "params": [],
             "result": {"kind": "int"},
         });
@@ -3309,12 +3753,14 @@ mod tests {
                     BridgeOutcome {
                         export: "one".to_string(),
                         model: "Domain.one".to_string(),
+                        kind: BridgeKind::Exact,
                         statement: "_root_.One".to_string(),
                         offending: Vec::new(),
                     },
                     BridgeOutcome {
                         export: "two".to_string(),
                         model: "Domain.two".to_string(),
+                        kind: BridgeKind::Adequate,
                         statement: "_root_.Two".to_string(),
                         offending: vec!["sorryAx".to_string()],
                     },
@@ -3478,46 +3924,26 @@ mod tests {
     #[test]
     fn report_face_prints_only_kernel_pinned_facts() {
         let candidate = CertifiedCandidate {
-            name: "addOne".to_string(),
-            class: "expr-fragment-v1".to_string(),
-            policy: "simulatesModel".to_string(),
-            policy_lean: ".simulatesModel",
+            name: "sumTo".to_string(),
+            class: format::PLAN_CLASS.to_string(),
+            facets: vec!["recursive".to_string(), "calls".to_string()],
+            policy: "simulatesModelTotally".to_string(),
+            policy_lean: ".simulatesModelTotally",
             termination_lean: "none".to_string(),
-            dom: "List Int".to_string(),
-            cod: "Int".to_string(),
-            theorem: Some("AcceptanceSoundness.exprFragment_claim_discharges".to_string()),
-        };
-        assert_eq!(report_face(&candidate), "class: expression fragment");
-        assert_eq!(
-            manifest_face(&candidate),
-            "manifest face (declared, not kernel-pinned): Dom List Int, Cod Int"
-        );
-        // The generic face is unconditional over represented carriers, so it
-        // carries no domain restriction line.
-        assert_eq!(record_compute_domain(&candidate), None);
-    }
-
-    /// The record projection-compute face is the one whose certified domain is
-    /// narrower — its inputs AND its record fields are assumed canonical — so
-    /// `explain` must say so on that export's line and only on that one.
-    #[test]
-    fn only_the_record_compute_face_discloses_a_narrower_domain() {
-        let mut candidate = CertifiedCandidate {
-            name: "Domain_Rational_plus".to_string(),
-            class: "expr-fragment-v1".to_string(),
-            policy: "simulatesModel".to_string(),
-            policy_lean: ".simulatesModel",
-            termination_lean: "none".to_string(),
-            dom: "Rational x Rational".to_string(),
-            cod: "Rational".to_string(),
-            theorem: Some(format::RECORD_COMPUTE_DISCHARGE_THEOREM.to_string()),
         };
         assert_eq!(
-            record_compute_domain(&candidate),
-            Some(format::RECORD_COMPUTE_DOMAIN_LINE)
+            report_face(&candidate),
+            "class: source-plan-v1 (recursive, calls)"
         );
-        candidate.theorem = None;
-        assert_eq!(record_compute_domain(&candidate), None);
+        assert_eq!(
+            certified_model_line(&candidate, &[]),
+            "model: plan (the export's optimized MIR body)"
+        );
+        let bare = CertifiedCandidate {
+            facets: Vec::new(),
+            ..candidate
+        };
+        assert_eq!(report_face(&bare), "class: source-plan-v1");
     }
 
     #[test]
@@ -3597,6 +4023,43 @@ mod tests {
         assert_eq!(admitted.len(), 3);
     }
 
+    /// The audit's namespace rule is only as good as its list of wall roots:
+    /// every namespace a wall file opens at the top level is on it.
+    #[test]
+    fn audit_namespace_roots_cover_every_wall_namespace() {
+        let wall = wall::resolve(wall::current_id()).expect("embedded wall resolves");
+        for source in wall.sources {
+            // Blocks closed by a bare or named `end`: namespaces, sections and
+            // `mutual` groups. Only a namespace opened outside all of them
+            // names a root.
+            let mut depth = 0usize;
+            for line in source.contents.lines() {
+                let words: Vec<&str> = line.split_whitespace().collect();
+                match words.as_slice() {
+                    ["namespace", name, ..] => {
+                        if depth == 0 {
+                            let root = name.split('.').next().unwrap();
+                            assert!(
+                                root == "AverCert" || WALL_NAMESPACE_ROOTS.contains(&root),
+                                "{} opens namespace {name}, whose root the audit does not reserve",
+                                source.name
+                            );
+                        }
+                        depth += 1;
+                    }
+                    ["section", ..] | ["noncomputable", "section", ..] | ["mutual", ..] => {
+                        depth += 1
+                    }
+                    ["end", ..] => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
+        let rendered = wall::render_module(&"0".repeat(64));
+        assert!(rendered.contains("namespace CertModule"));
+        assert!(WALL_NAMESPACE_ROOTS.contains(&"CertModule"));
+    }
+
     #[test]
     fn nested_roots_shadowing_reserved_prefixes_are_rejected() {
         let wall = wall::resolve(wall::current_id()).expect("embedded wall resolves");
@@ -3608,6 +4071,8 @@ mod tests {
         assert!(reject_shadowed_root("Schema.Sub", wall).is_err());
         assert!(reject_shadowed_root("ArtifactBytes.Decoy", wall).is_err());
         assert!(reject_shadowed_root("ArtifactComponentBytes.Decoy", wall).is_err());
+        assert!(reject_shadowed_root("Module", wall).is_err());
+        assert!(reject_shadowed_root("Module.Decoy", wall).is_err());
         assert!(reject_shadowed_root("CheckerWitness.X.Y", wall).is_err());
         // A reserved name in non-prefix position does not shadow the import.
         assert!(reject_shadowed_root("Apps.Schema", wall).is_ok());
@@ -3858,8 +4323,16 @@ mod tests {
     #[test]
     fn artifact_bytes_are_little_endian_nat() {
         let rendered = wall::render_artifact_bytes(&[0x00, 0x61, 0x73, 0x6d]);
-        assert!(rendered.contains("def modBytes : Nat := 0x6d736100"));
+        assert!(rendered.contains("noncomputable def modBytes : Nat :=\n  0x6d736100\n"));
         assert!(rendered.contains("def modLen : Nat := 4"));
+        // Past one numeral chunk, each chunk sits at its byte offset.
+        let mut long = vec![0u8; 1025];
+        long[0] = 0x01;
+        long[1024] = 0xab;
+        let rendered = wall::render_artifact_bytes(&long);
+        assert!(rendered.contains("noncomputable def modBytes : Nat :=\n  0x"));
+        assert!(rendered.contains("01 |||\n  (0xab <<< 8192)\n"));
+        assert!(rendered.contains("def modLen : Nat := 1025"));
     }
 
     #[test]
@@ -3957,5 +4430,215 @@ mod tests {
         // prefix failing its right boundary.
         let err = scan("elab_rules foo").unwrap_err();
         assert!(err.contains("elab_rules"), "{err}");
+    }
+
+    fn witness_candidates() -> Candidates {
+        let mut laws = law_candidates(&["Domain.plus.comm"]);
+        laws[0].bridges = vec![0];
+        let mut bridge = raw_bridge("Domain_plus");
+        bridge.model = "Domain.plus".to_string();
+        bridge.params = vec![fraction_encoder(), fraction_encoder()];
+        bridge.result = fraction_encoder();
+        Candidates {
+            certified: vec![CertifiedCandidate {
+                name: "Domain_plus".to_string(),
+                class: format::PLAN_CLASS.to_string(),
+                facets: vec!["recursive".to_string()],
+                policy: "simulatesModelTotally".to_string(),
+                policy_lean: ".simulatesModelTotally",
+                termination_lean: parse_termination(
+                    Some(&serde_json::json!({
+                        "measure": {"kind": "intNatAbs", "param_index": 1},
+                        "descent": -3
+                    })),
+                    "Domain_plus",
+                )
+                .unwrap(),
+            }],
+            laws,
+            source_bridges: vec![validate_source_bridge_candidate(bridge).unwrap()],
+            contracts: vec!["c".to_string()],
+            declared_uncertified: Vec::new(),
+            capabilities: Vec::new(),
+            start: Some(7),
+            host_role_table: Some((Some(7), Some(8), None, None, None, None, None, Some(13))),
+            string_host_roles: vec![(21, StringHostRole::Eq)],
+            target: "wasm-gc".to_string(),
+            profile: "AverUserProfile/v1".to_string(),
+            abi: "aver-wasm-gc/0".to_string(),
+            wasip2_component_envelope: None,
+        }
+    }
+
+    /// The witness is pure pins: no `Lean` import, no command that runs code,
+    /// every wall or package name `_root_`-qualified (so a declaration under
+    /// `AverCertChecker.AverCert.…` is never reached), and no numeral an
+    /// `OfNat` instance could reinterpret.
+    #[test]
+    fn the_witness_names_everything_from_the_root() {
+        let witness = checker_witness("ab12", &witness_candidates());
+        assert!(!witness.contains("import Lean"), "{witness}");
+        assert!(!witness.contains("run_cmd") && !witness.contains("#eval"));
+        assert!(!witness.contains("namespace AverCertChecker"));
+        // No statement is read inside a namespace the package chose: the
+        // law's model namespace (`Domain`) is never opened.
+        assert!(!witness.contains("namespace "), "{witness}");
+        for (at, _) in witness.match_indices("AverCert") {
+            let before = &witness[..at];
+            assert!(
+                // A name, or the root's name inside a string literal.
+                before.ends_with("_root_.") || before.ends_with('"'),
+                "unqualified name at {at}: {}",
+                &witness[at.saturating_sub(40)..(at + 40).min(witness.len())]
+            );
+        }
+        assert!(witness.contains(&format!(
+            "theorem _root_.{CHECKED_ROOT} :\n    \
+             _root_.AverCert.AcceptedArtifact.accepted _root_.AverCert.Artifact.data :=\n  \
+             _root_.AverCert.Artifact.certificate"
+        )));
+        for index in 0..REPORT_PIN_COUNT {
+            assert!(witness.contains(&format!("theorem _root_.{REPORT_PIN_PREFIX}{index} :")));
+        }
+        // No name continues past a package constant: a package constant
+        // `AverCert.manifest.subject` would be what such a path resolves to.
+        // Fields are read through the wall structures' projection functions.
+        for package_constant in [
+            "_root_.AverCert.manifest.",
+            "_root_.AverCert.subject.",
+            "_root_.AverCert.Artifact.data.",
+            "_root_.AverCert.Artifact.certificate.",
+        ] {
+            assert!(
+                !witness.contains(package_constant),
+                "a dotted path past {package_constant}: {witness}"
+            );
+        }
+        assert!(witness.contains(
+            "(_root_.AverCert.Schema.Subject.contracts \
+             (_root_.AverCert.Schema.Manifest.subject _root_.AverCert.manifest)) = [\"c\"]"
+        ));
+        assert!(witness.contains(
+            "(_root_.AverCert.AcceptedArtifact.ArtifactData.manifest \
+             _root_.AverCert.Artifact.data) = _root_.AverCert.manifest"
+        ));
+        assert!(witness.contains("(_root_.Option.some (nat_lit 7))"));
+        assert!(witness.contains("(_root_.Int.negSucc (nat_lit 2))"));
+        assert!(witness.contains("((nat_lit 21), .eq)"));
+        assert!(!witness.contains("some 7") && !witness.contains("≤"));
+    }
+
+    /// Every pinned statement is elaborated alone, as a checker definition,
+    /// and the pins conjoin the definitions: no statement text sits beside the
+    /// `∧` that joins it to `Holds` or to a bridge, so no text can change how
+    /// the conjunction associates.
+    #[test]
+    fn the_witness_conjoins_statement_definitions_not_statement_text() {
+        let candidates = witness_candidates();
+        let witness = checker_witness("ab12", &candidates);
+        let holds = "(_root_.AverCert.Schema.Holds _root_.AverCert.manifest)";
+        assert!(witness.contains(&format!(
+            "def _root_.{LAW_STATEMENT_PREFIX}0 : Prop :=\n  ({})\n",
+            candidates.laws[0].statement
+        )));
+        assert!(witness.contains(&format!(
+            "def _root_.{BRIDGE_STATEMENT_PREFIX}0 : Prop :=\n  ({})\n",
+            candidates.source_bridges[0].statement
+        )));
+        assert!(witness.contains(&format!(
+            "theorem _root_.{LAW_PIN_PREFIX}0 :\n    _root_.{LAW_STATEMENT_PREFIX}0 ∧ {holds} :="
+        )));
+        assert!(witness.contains(&format!(
+            "theorem _root_.{BRIDGED_LAW_PIN_PREFIX}0 :\n    \
+             _root_.{LAW_STATEMENT_PREFIX}0 ∧ {holds} ∧\n      \
+             _root_.{BRIDGE_STATEMENT_PREFIX}0 :="
+        )));
+        assert!(witness.contains(&format!(
+            "theorem _root_.{BRIDGE_PIN_PREFIX}0 :\n    _root_.{BRIDGE_STATEMENT_PREFIX}0 ∧ {holds} :="
+        )));
+        // The statement text appears once per statement: in its definition.
+        assert_eq!(
+            witness
+                .matches(candidates.laws[0].statement.as_str())
+                .count(),
+            1
+        );
+    }
+
+    /// The audit program is fully instantiated, walks the pins the witness
+    /// writes, and reads the encoder shapes the bridges declare.
+    #[test]
+    fn the_audit_program_walks_every_pin() {
+        let candidates = witness_candidates();
+        let audit = checker_audit(&candidates, &["Manifest".to_string(), "Laws".to_string()]);
+        assert!(!audit.contains('@'), "an unfilled placeholder: {audit}");
+        assert!(audit.contains("def packageModules : List Name := [`Manifest, `Laws]"));
+        assert!(audit.contains(&format!("`{CHECKED_ROOT}, `{REPORT_PIN_PREFIX}0,")));
+        assert!(audit.contains(&format!("`{REPORT_PIN_PREFIX}{}]", REPORT_PIN_COUNT - 1)));
+        assert!(audit.contains(&format!("[`{LAW_PIN_PREFIX}0]")));
+        assert!(audit.contains(&format!("[`{BRIDGED_LAW_PIN_PREFIX}0]")));
+        assert!(audit.contains(&format!("[`{BRIDGE_PIN_PREFIX}0]")));
+        assert!(
+            audit.contains("[(`Domain.Fraction, [`top, `bottom])]"),
+            "{audit}"
+        );
+    }
+
+    /// The final replay covers the witness module, so every module it imports
+    /// — laws, bridges and model included — is replayed.
+    #[test]
+    fn the_fresh_replay_replays_the_witness_closure() {
+        assert_eq!(FRESH_REPLAY_ARGS[3], "CheckerWitness");
+        assert_eq!(
+            replay_args_for(ReplayMode::Fresh, None).unwrap(),
+            vec!["env", "leanchecker", "--fresh", "CheckerWitness"]
+        );
+    }
+
+    /// A law-claim's bridge list is exactly the bridges of the functions its
+    /// statement names.
+    #[test]
+    fn a_law_lists_exactly_the_bridges_its_statement_names() {
+        let models = ["Domain.plus", "Domain.times"];
+        let qualified = "∀ (a : Int), _root_.Domain.times (_root_.Domain.plus a a) a = \
+                         _root_.Domain.plus a a";
+        assert_eq!(
+            bridge_statement::law_mentioned_bridges(qualified, &models),
+            vec![1, 0]
+        );
+        assert_eq!(
+            bridge_statement::law_names_model_unqualified(qualified, &models),
+            None
+        );
+        assert!(bridge_statement::law_mentioned_bridges("∀ (a : Int), a = a", &models).is_empty());
+        // A model spelled any other way is no mention, and is refused: bare,
+        // it could be a binder's field; under a prefix, a slipped-in constant.
+        for spelling in [
+            "∀ (a : Int), Domain.plus a a = a",
+            "∀ (a : Int), Evil.Domain.plus a a = a",
+        ] {
+            assert!(bridge_statement::law_mentioned_bridges(spelling, &models).is_empty());
+            assert_eq!(
+                bridge_statement::law_names_model_unqualified(spelling, &models),
+                Some("Domain.plus")
+            );
+        }
+    }
+
+    /// The audit is handed, per bridged law, the model constants its
+    /// elaborated statement must use. Nothing depends on the law's namespace:
+    /// the witness reads the statement at the root.
+    #[test]
+    fn the_audit_checks_what_each_law_statement_uses() {
+        let mut candidates = witness_candidates();
+        candidates.laws[0].statement = "∀ (a : Int), _root_.Domain.plus a a = a".to_string();
+        candidates.laws[0].prefix = "Evil.Inner".to_string();
+        assert_eq!(
+            law_model_uses(&candidates),
+            format!("[(`{LAW_STATEMENT_PREFIX}0, [`Domain.plus])]")
+        );
+        let audit = checker_audit(&candidates, &["Laws".to_string()]);
+        assert!(!audit.contains("Evil.Domain.plus"), "{audit}");
+        assert!(!audit.contains("Evil.Inner.Domain.plus"), "{audit}");
     }
 }

@@ -483,7 +483,8 @@ aver = { path = "..", version = "=0.26.0", package = "aver-lang" }
         # The whole ladder from the slim plan surface up to the producer is
         # pinned exactly: a new edge anywhere in aver-cert's feature graph must
         # show up here before it can widen what any downstream build compiles.
-        self.assertEqual(cert["features"]["plans"], ["dep:wasm-encoder"])
+        # The plan surface is pure data types and pulls no dependency at all.
+        self.assertEqual(cert["features"]["plans"], [])
         self.assertEqual(
             cert["features"]["engine"], ["plans", "dep:sha2", "dep:wasmparser"]
         )

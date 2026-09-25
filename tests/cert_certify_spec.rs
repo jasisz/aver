@@ -11,6 +11,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::aver_command;
 
@@ -56,13 +58,16 @@ fn check_certificate(wasm: &std::path::Path, cert_dir: &std::path::Path) -> (boo
     )
 }
 
+/// `lake build` the package's acceptance root (`ArtifactCertificate`: the
+/// artifact data, every byte fact and the final theorem) in isolation, and
+/// assert it succeeds with both roots on the core axiom whitelist.
 fn assert_certificate_target_builds(cert_dir: &std::path::Path, case: &str) {
     materialize_wall(cert_dir);
     let output = Command::new("lake")
         .current_dir(cert_dir)
-        .args(["build", "Certificate"])
+        .args(["build", "ArtifactCertificate"])
         .output()
-        .expect("lake builds the isolated Certificate target");
+        .expect("lake builds the isolated ArtifactCertificate target");
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -70,7 +75,19 @@ fn assert_certificate_target_builds(cert_dir: &std::path::Path, case: &str) {
     );
     assert!(
         output.status.success(),
-        "honest Certificate target must build before the hostile edit ({case}):\n{combined}"
+        "honest ArtifactCertificate target must build ({case}):\n{combined}"
+    );
+    for root in ["AverCert.Final.cert", "AverCert.Artifact.certificate"] {
+        assert!(
+            combined.contains(&format!(
+                "'{root}' depends on axioms: [propext, Classical.choice, Quot.sound]"
+            )),
+            "{root} must stay on the core axiom whitelist ({case}):\n{combined}"
+        );
+    }
+    assert!(
+        !combined.contains("sorryAx"),
+        "the acceptance root leaked sorryAx ({case}):\n{combined}"
     );
     trim_lean_build_tree(cert_dir);
 }
@@ -87,39 +104,6 @@ fn assert_certificate_target_builds(cert_dir: &std::path::Path, case: &str) {
 /// `copy_dir_all` from duplicating the build tree into each tampered copy.
 fn trim_lean_build_tree(cert_dir: &std::path::Path) {
     let _ = std::fs::remove_dir_all(cert_dir.join(".lake"));
-}
-
-/// Runs `lake build` in an emitted certificate package, asserts it succeeded,
-/// and hands back the combined build output for the caller's kernel-audit
-/// assertions. The successful build's `.lake` tree is trimmed straight away;
-/// see `trim_lean_build_tree`.
-fn lake_build_package(cert_dir: &std::path::Path, case: &str) -> String {
-    let build = Command::new("lake")
-        .current_dir(cert_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    assert!(
-        build.status.success(),
-        "lake build of {case} failed:\n{combined}"
-    );
-    trim_lean_build_tree(cert_dir);
-    combined
-}
-
-fn lean_obligation_def<'a>(manifest_lean: &'a str, name: &str) -> &'a str {
-    let marker = format!("abbrev {name}Ob : Schema.Obligation :=");
-    let start = manifest_lean
-        .find(&marker)
-        .unwrap_or_else(|| panic!("missing {name} obligation in emitted Manifest.lean"));
-    manifest_lean[start..]
-        .split_once("\n\n")
-        .map_or(&manifest_lean[start..], |(definition, _)| definition)
 }
 
 fn assert_plans_lean_is_the_only_public_plan_data(
@@ -173,16 +157,159 @@ fn assert_plans_lean_is_the_only_public_plan_data(
                 field.as_str(),
                 "name"
                     | "class"
+                    | "facets"
                     | "policy"
                     | "level"
-                    | "dom"
-                    | "cod"
                     | "theorem"
                     | "termination_witness"
             )),
             "{name} manifest entry must remain envelope/report metadata only: {fields:?}"
         );
     }
+}
+
+/// The function index `wasmparser` reads for the function export `name`.
+fn wasm_export_index(bytes: &[u8], name: &str) -> Option<u32> {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let Ok(wasmparser::Payload::ExportSection(reader)) = payload {
+            for export in reader {
+                let export = export.expect("export parses");
+                if export.name == name && export.kind == wasmparser::ExternalKind::Func {
+                    return Some(export.index);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Compile `fixture` (a path under the repository root, with any extra
+/// compiler arguments) with `--certify` and return the scratch directory and
+/// the parsed public manifest.
+fn certify_fixture(fixture: &str, extra: &[&str], prefix: &str) -> (ScratchDir, serde_json::Value) {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir(prefix);
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(fixture)
+        .args(extra)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile --certify` to run");
+    assert!(
+        compile.status.success(),
+        "compile --certify {fixture} failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let manifest = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
+            .expect("cert-manifest.json exists"),
+    )
+    .expect("manifest is valid JSON");
+    (out_dir, manifest)
+}
+
+/// The certified entry named `name` in a public manifest.
+fn certified_entry<'m>(manifest: &'m serde_json::Value, name: &str) -> &'m serde_json::Value {
+    manifest["certified"]
+        .as_array()
+        .expect("certified report is an array")
+        .iter()
+        .find(|entry| entry["name"] == name)
+        .unwrap_or_else(|| panic!("`{name}` must be certified: {manifest:#}"))
+}
+
+/// Assert `name` is certified with the one plan class, the given facets and
+/// the given policy (`true` for the total, L3 policy with the canonical
+/// termination witness).
+fn assert_certified_as(manifest: &serde_json::Value, name: &str, facets: &[&str], total: bool) {
+    let entry = certified_entry(manifest, name);
+    assert_eq!(entry["class"], "source-plan-v1", "{name}: {entry}");
+    assert_eq!(
+        entry["theorem"], "AcceptanceSoundness.fn_claim_discharges",
+        "{name}: {entry}"
+    );
+    assert_eq!(
+        entry["facets"],
+        serde_json::json!(facets),
+        "{name}: {entry}"
+    );
+    if total {
+        assert_eq!(entry["policy"], "simulatesModelTotally", "{name}: {entry}");
+        assert_eq!(entry["level"], "L3", "{name}: {entry}");
+        assert_eq!(entry["termination_witness"]["measure"]["kind"], "intNatAbs");
+        assert_eq!(entry["termination_witness"]["measure"]["param_index"], 0);
+        assert_eq!(entry["termination_witness"]["descent"], -1);
+    } else {
+        assert_eq!(entry["policy"], "simulatesModel", "{name}: {entry}");
+        assert_eq!(entry["level"], "L1", "{name}: {entry}");
+        assert!(
+            entry.get("termination_witness").is_none(),
+            "{name}: {entry}"
+        );
+    }
+}
+
+/// The plan block `def fnN : FnPlan := …` of export `name` in `Plans.lean`.
+fn export_plan_block(plans_lean: &str, name: &str) -> String {
+    let head = format!("⟨\"{name}\", ");
+    let at = plans_lean
+        .find(&head)
+        .unwrap_or_else(|| panic!("Plans.lean has no fnPlans entry for `{name}`"));
+    let entry_end = plans_lean[at..].find('⟩').unwrap() + at;
+    let def = plans_lean[at..entry_end]
+        .rsplit(',')
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    let def_head = format!("def {def} : FnPlan :=");
+    let start = plans_lean
+        .find(&def_head)
+        .unwrap_or_else(|| panic!("Plans.lean has no `{def_head}`"));
+    let end = plans_lean[start..].find("\n\n").unwrap() + start;
+    plans_lean[start..end].to_string()
+}
+
+/// Build the package's acceptance root, then elaborate `probe` (a Lean
+/// source importing `ArtifactCertificate`) against it with `lake env lean`,
+/// and assert it elaborates. The probe states facts about the package as
+/// `example`s the kernel decides, so a wrong fact is an elaboration error.
+fn assert_kernel_probe_holds(cert_dir: &std::path::Path, probe: &str, case: &str) {
+    materialize_wall(cert_dir);
+    let build = Command::new("lake")
+        .current_dir(cert_dir)
+        .args(["build", "ArtifactCertificate"])
+        .output()
+        .expect("lake builds the acceptance root");
+    assert!(
+        build.status.success(),
+        "the acceptance root must build before the {case} probe:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    std::fs::write(cert_dir.join("KernelProbe.lean"), probe).unwrap();
+    let check = Command::new("lake")
+        .current_dir(cert_dir)
+        .args(["env", "lean", "KernelProbe.lean"])
+        .output()
+        .expect("lake env lean runs the probe");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        check.status.success() && !combined.contains("error"),
+        "the {case} kernel probe must elaborate:\n{combined}"
+    );
+    trim_lean_build_tree(cert_dir);
 }
 
 fn instantiate_float_probe(
@@ -364,8 +491,8 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     );
     assert_eq!(
         manifest["schema_version"].as_u64(),
-        Some(8),
-        "schema 8 adds the plan-equals-source bridge surface on top of the law-claims one"
+        Some(9),
+        "schema 9 is the one plan grammar with its plan-equals-source and law-claim surfaces"
     );
     assert_eq!(
         manifest["target"].as_str(),
@@ -382,20 +509,15 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         Some(aver::codegen::cert::RUNTIME_ABI),
         "the wasm-gc runtime ABI is pinned exactly"
     );
-    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 8);
-    // Every export certified through the projection-compute face — the one
-    // face whose obligation model is the PLAN — carries a plan-equals-source
-    // bridge, in obligation order. Move this numerator deliberately: an export
-    // that lands on that face without a bridge is one whose certified model
-    // stays the plan.
-    let compute_face: Vec<&str> = manifest["certified"]
+    assert_eq!(aver::codegen::cert::CERT_SCHEMA_VERSION, 9);
+    // Every certified export carries a plan-equals-source bridge, in obligation
+    // order, unless one of its parameters has no decoder in this version — in
+    // which case it is listed, with that reason, under `sourceBridgesDeclined`.
+    // The two lists partition the certified exports exactly.
+    let certified_names: Vec<&str> = manifest["certified"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|entry| {
-            entry["theorem"].as_str()
-                == Some(aver::codegen::cert::format::RECORD_COMPUTE_DISCHARGE_THEOREM)
-        })
         .map(|entry| entry["name"].as_str().unwrap())
         .collect();
     let bridges = manifest["sourceBridges"].as_array().unwrap();
@@ -403,25 +525,104 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .iter()
         .map(|entry| entry["export"].as_str().unwrap())
         .collect();
+    let bridge_declined: BTreeMap<&str, &str> = manifest["sourceBridgesDeclined"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["export"].as_str().unwrap(),
+                entry["reason"].as_str().unwrap(),
+            )
+        })
+        .collect();
     assert_eq!(
-        compute_face.len(),
-        2,
-        "the goals fixture pins how many exports land on the projection-compute face"
+        bridged,
+        certified_names
+            .iter()
+            .copied()
+            .filter(|name| !bridge_declined.contains_key(name))
+            .collect::<Vec<_>>(),
+        "every certified export without a declined bridge must carry one, in obligation order"
     );
     assert_eq!(
-        bridged, compute_face,
-        "every projection-compute export must carry a bridge, in obligation order"
+        bridge_declined,
+        BTreeMap::from([
+            (
+                "wrapItems",
+                "a `list` argument has no decoder in this version"
+            ),
+            (
+                "floatLeGoal",
+                "a `float` argument has no decoder in this version"
+            ),
+            (
+                "floatGeGoal",
+                "a `float` argument has no decoder in this version"
+            ),
+            (
+                "floatLtGoal",
+                "a `float` argument has no decoder in this version"
+            ),
+            (
+                "floatGtGoal",
+                "a `float` argument has no decoder in this version"
+            ),
+            (
+                "floatEqGoal",
+                "a `float` argument has no decoder in this version"
+            ),
+        ]),
+        "the declined bridges pin the decoder boundary; move them deliberately"
     );
     // The entry carries STRUCTURE, never statement text: the checker renders
     // the statement from it. A `statement` key here would be a claim the
     // package chose its own wording for, which is exactly what this surface
-    // stopped transporting — the exact-object gate below is what enforces it.
+    // stopped transporting — the exact-object gate is what enforces it.
+    fn assert_closed_encoder(encoder: &serde_json::Value) {
+        let kind = encoder["kind"].as_str().unwrap();
+        assert!(
+            matches!(
+                kind,
+                "int" | "bool" | "float" | "string" | "record" | "sum" | "option" | "list"
+            ),
+            "the encoder kind set is closed: {kind}"
+        );
+        if kind == "record" {
+            let lean_type = encoder["type"].as_str().unwrap();
+            assert!(lean_type.starts_with("_root_."));
+            for field in encoder["fields"].as_array().unwrap() {
+                let accessor = field["accessor"].as_str().unwrap();
+                assert!(
+                    accessor.starts_with(&format!("{lean_type}.")),
+                    "an accessor must be a field of the declared type: {accessor}"
+                );
+                assert_closed_encoder(&field["encoder"]);
+            }
+        }
+        if kind == "sum" {
+            let lean_type = encoder["type"].as_str().unwrap();
+            assert!(lean_type.starts_with("_root_."));
+            for ctor in encoder["ctors"].as_array().unwrap() {
+                let name = ctor["ctor"].as_str().unwrap();
+                assert!(
+                    name.starts_with(&format!("{lean_type}.")),
+                    "a constructor must belong to the declared type: {name}"
+                );
+                for field in ctor["fields"].as_array().unwrap() {
+                    assert_closed_encoder(field);
+                }
+            }
+        }
+    }
+    let bridge_proof = std::fs::read_to_string(out_dir.join("cert").join("BridgeProof.lean"))
+        .expect("a bridged package emits BridgeProof.lean");
     for entry in bridges {
         let export = entry["export"].as_str().unwrap();
         let object = entry.as_object().unwrap();
         assert_eq!(
             object.len(),
-            6,
+            7,
             "a source-bridge entry is matched exactly: {object:?}"
         );
         assert!(
@@ -436,46 +637,30 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             entry["corollary"].as_str(),
             Some(format!("AverCert.Bridge.{export}_certified").as_str())
         );
-        // Every encoder is one of the three closed kinds, and a record names a
-        // `_root_.`-qualified type together with its own accessors.
-        let encoders: Vec<&serde_json::Value> = entry["params"]
+        assert!(
+            matches!(entry["kind"].as_str(), Some("exact" | "adequate")),
+            "the statement kind set is closed: {object:?}"
+        );
+        for encoder in entry["params"]
             .as_array()
             .unwrap()
             .iter()
             .chain(std::iter::once(&entry["result"]))
-            .collect();
-        for encoder in encoders {
-            let kind = encoder["kind"].as_str().unwrap();
-            assert!(
-                matches!(kind, "int" | "bool" | "record"),
-                "the encoder kind set is closed: {kind}"
-            );
-            if kind == "record" {
-                let lean_type = encoder["type"].as_str().unwrap();
-                assert!(lean_type.starts_with("_root_."));
-                for field in encoder["fields"].as_array().unwrap() {
-                    let accessor = field.as_str().unwrap();
-                    assert!(
-                        accessor.starts_with(&format!("{lean_type}.")),
-                        "an accessor must be a field of the declared type: {accessor}"
-                    );
-                }
-            }
+        {
+            assert_closed_encoder(encoder);
         }
-        // The statement the package's own `Bridge.lean` carries is the one the
+        // The statement the package's own bridge proofs carry is the one the
         // checker renders from the entry above — the producer writes it through
         // the same function the verifier pins with.
-        let bridge_lean = std::fs::read_to_string(out_dir.join("cert").join("Bridge.lean"))
-            .expect("a bridged package emits Bridge.lean");
         assert!(
-            bridge_lean.contains(&format!("_root_.AverCert.Plans.{export}Plan.body")),
-            "the emitted bridge names the export's own plan"
+            bridge_proof.contains(&format!("_root_.AverCert.Bridge.{export} :")),
+            "the emitted bridge proofs must state the bridge of `{export}`"
         );
     }
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        16,
+        15,
         "all 43 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
@@ -648,250 +833,151 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             }
         }
     }
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    assert_eq!(
-        manifest["hostRoleTable"],
-        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx, "toIndex": to_index_idx, "cmp": cmp_idx, "eq": eq_idx}),
-        "manifest hostRoleTable must come from the Rust classifier over the emitted bytes"
-    );
-    let string_roles = aver::codegen::cert::byte_derived_string_host_roles(&wasm).unwrap();
-    let string_roles_json = string_roles
+    // The name-bound helper roles follow the export section; the wall pins
+    // them there (and every role to its template) in `decodedHostRoleTable`.
+    for (role, export) in [
+        ("box", "__rt_aint_from_i64"),
+        ("toIndex", "__aint_to_index"),
+        ("cmp", "__aint_cmp"),
+    ] {
+        assert_eq!(
+            manifest["hostRoleTable"][role].as_u64(),
+            wasm_export_index(&wasm, export).map(u64::from),
+            "the declared `{role}` role must be the `{export}` export"
+        );
+    }
+    for role in ["add", "sub", "mul", "divmod"] {
+        assert!(
+            manifest["hostRoleTable"][role].is_u64(),
+            "the goals module carries the `{role}` helper, so the role must be declared"
+        );
+    }
+    // Both String helpers are classified, in function order.
+    let string_roles: Vec<&str> = manifest["stringHostRoles"]
+        .as_array()
+        .unwrap()
         .iter()
-        .map(|(function_index, role)| {
-            let role = match role {
-                aver::codegen::cert::StringHostRole::Eq => "stringEq",
-                aver::codegen::cert::StringHostRole::Concat => "stringConcat",
-            };
-            serde_json::json!({"function_index": function_index, "role": role})
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        manifest["stringHostRoles"],
-        serde_json::json!(string_roles_json),
-        "manifest stringHostRoles must preserve the Rust classifier's full ordered list"
-    );
+        .map(|entry| entry["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(string_roles, ["stringEq", "stringConcat"]);
 
-    let actual: BTreeMap<String, String> = manifest["certified"]
+    // Every certified export has the one plan class; the facets say which
+    // grammar features its call closure uses, and the wall derives them
+    // (`ClaimAxes.reportFacets`), so the checker witness pins every one.
+    let actual: BTreeMap<String, Vec<String>> = manifest["certified"]
         .as_array()
         .unwrap()
         .iter()
         .map(|c| {
+            assert_eq!(c["class"], "source-plan-v1", "one plan class for {c}");
+            assert_eq!(
+                c["theorem"], "AcceptanceSoundness.fn_claim_discharges",
+                "one discharge theorem for {c}"
+            );
             (
                 c["name"].as_str().unwrap().to_string(),
-                c["class"].as_str().unwrap().to_string(),
+                c["facets"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|facet| facet.as_str().unwrap().to_string())
+                    .collect(),
             )
         })
         .collect();
-    let expected: BTreeMap<String, String> = [
-        ("addTwo", "expr-fragment-v1"),
-        ("sumFrom", "self-recursive"),
-        ("countDown", "multi-argument self-recursive"),
-        ("quad", "cross-function-composition"),
-        ("hex16", "cross-function-composition"),
-        ("isEven", "mutual-recursive"),
-        ("isOdd", "mutual-recursive"),
-        ("mkOp", "adt-constructor"),
-        ("evalOp", "int-dispatch"),
-        ("userName", "expr-fragment-v1"),
-        ("boxInt", "int-dispatch"),
-        ("wrapItems", "verbatim-dispatch"),
-        ("tagName", "verbatim-dispatch"),
-        ("gauge", "int-dispatch"),
-        ("inAsciiDigit", "expr-fragment-v1"),
-        ("quoteOrSelf", "verbatim-string-eq"),
-        ("shout", "verbatim-string-concat"),
-        ("intLessZero", "expr-fragment-v1"),
-        ("intEqZero", "expr-fragment-v1"),
-        ("boolAndGoal", "expr-fragment-v1"),
-        // Eager `Bool.and` over two integer bounds: the `i32.and` fragment
-        // primitive over encoded comparisons (numerator moved deliberately).
-        ("inWindowGoal", "expr-fragment-v1"),
-        ("floatLeGoal", "expr-fragment-v1"),
-        ("floatGeGoal", "expr-fragment-v1"),
-        ("floatLtGoal", "expr-fragment-v1"),
-        ("floatGtGoal", "expr-fragment-v1"),
-        ("floatEqGoal", "expr-fragment-v1"),
-        // `double(n) = n * 2`: plain arithmetic on an Int argument, which the
-        // record projection-compute face absorbed when it gained scalar
-        // parameters (numerator moved deliberately).
-        ("double", "expr-fragment-v1"),
+    let facets = |list: &[&str]| list.iter().map(|f| f.to_string()).collect::<Vec<_>>();
+    let expected: BTreeMap<String, Vec<String>> = [
+        ("addTwo", facets(&[])),
+        ("sumFrom", facets(&["recursive", "calls"])),
+        ("countDown", facets(&["recursive", "calls"])),
+        ("double", facets(&[])),
+        ("quad", facets(&["calls"])),
+        ("hex16", facets(&["calls"])),
+        ("isEven", facets(&["recursive", "mutual", "calls"])),
+        ("isOdd", facets(&["recursive", "mutual", "calls"])),
+        ("mkOp", facets(&["variants"])),
+        ("evalOp", facets(&["variants"])),
+        ("userName", facets(&["records"])),
+        ("boxInt", facets(&["variants"])),
+        ("wrapItems", facets(&["variants"])),
+        ("tagName", facets(&["variants", "strings"])),
+        ("gauge", facets(&["variants"])),
+        ("inAsciiDigit", facets(&[])),
+        ("quoteOrSelf", facets(&["strings"])),
+        ("shout", facets(&["strings"])),
+        ("intLessZero", facets(&[])),
+        ("intEqZero", facets(&[])),
+        ("boolAndGoal", facets(&[])),
+        ("inWindowGoal", facets(&[])),
+        ("floatLeGoal", facets(&[])),
+        ("floatGeGoal", facets(&[])),
+        ("floatLtGoal", facets(&[])),
+        ("floatGtGoal", facets(&[])),
+        ("floatEqGoal", facets(&[])),
+        // `idGoal` (the identity) became certifiable when the one grammar
+        // replaced the families: a bare parameter read is a plan like any
+        // other (numerator moved deliberately).
+        ("idGoal", facets(&[])),
     ]
     .into_iter()
-    .map(|(name, class)| (name.to_string(), class.to_string()))
+    .map(|(name, facets)| (name.to_string(), facets))
     .collect();
     assert_eq!(
         actual, expected,
         "certified goal matrix changed; update the numerator deliberately"
     );
-    let expr_entries = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|c| c["class"].as_str() == Some("expr-fragment-v1"))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        expr_entries.len(),
-        13,
-        "expr-fragment report count changed; update this deliberately"
-    );
-    let expr_names = expr_entries
-        .into_iter()
-        .map(|entry| entry["name"].as_str().unwrap().to_string())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        expr_names,
-        [
-            "addTwo",
-            "double",
-            "userName",
-            "inAsciiDigit",
-            "intLessZero",
-            "intEqZero",
-            "boolAndGoal",
-            "inWindowGoal",
-            "floatLeGoal",
-            "floatGeGoal",
-            "floatLtGoal",
-            "floatGtGoal",
-            "floatEqGoal",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect(),
-        "expr-fragment report membership changed"
-    );
+    // The plan of every certified export is in `Plans.lean`, keyed by its
+    // function index in `fnPlans`, and Float arithmetic has no plan at all.
     let plans_lean = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
         .expect("Plans.lean exists");
-    for name in [
-        "addTwo",
-        "double",
-        "userName",
-        "inAsciiDigit",
-        "intLessZero",
-        "intEqZero",
-        "boolAndGoal",
-        "inWindowGoal",
-        "floatLeGoal",
-        "floatGeGoal",
-        "floatLtGoal",
-        "floatGtGoal",
-        "floatEqGoal",
+    for name in actual.keys() {
+        assert!(
+            plans_lean.contains(&format!("⟨\"{name}\", true, ")),
+            "{name} must have its entry in the authoritative fnPlans:\n{plans_lean}"
+        );
+    }
+    for (shape, what) in [
+        (
+            "(.binOp .add (.local 0) (.literal (.int 2)))",
+            "addTwo adds two",
+        ),
+        (
+            "(.binOp .gte (.local 0) (.literal (.int 48))) (.binOp .lte (.local 0) (.literal (.int 57)))",
+            "inAsciiDigit keeps both bounds",
+        ),
+        (
+            "(.binOp .eq (.local 0) (.literal (.int 0)))",
+            "intEqZero compares with zero",
+        ),
+        (
+            "(.ifThenElse (.local 0) (.local 1) (.literal (.bool false)))",
+            "boolAndGoal short-circuits",
+        ),
+        (
+            "(.call (.builtin .boolAnd) [",
+            "inWindowGoal is the eager Bool.and",
+        ),
+        (
+            "(.binOp .lte (.local 0) (.local 1))",
+            "floatLeGoal compares two floats",
+        ),
+        (
+            "(.project 1 0 (.local 0))",
+            "userName projects the name field",
+        ),
+        (
+            "(.construct (.user 0 0) (.sum 0) [(.local 0)])",
+            "mkOp builds the first constructor",
+        ),
     ] {
         assert!(
-            plans_lean.contains(&format!("def {name}SymPlan : SymRawPlan"))
-                && plans_lean.contains(&format!("def {name}Plan : ExprFragmentRawPlan")),
-            "{name} must keep source and byte-bound plans in authoritative Plans.lean:\n{plans_lean}"
+            plans_lean.contains(shape),
+            "{what}: `{shape}` missing:\n{plans_lean}"
         );
     }
     assert!(
-        plans_lean.contains(".constInt (2 : Int)") && plans_lean.contains(".prim .intAdd [0, 1]"),
-        "addTwo SymPlan should expose source-level addition by two:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(".intConstCmp .ge 0 (48 : Int)")
-            && plans_lean.contains(".intConstCmp .le 0 (57 : Int)"),
-        "inAsciiDigit SymPlan should preserve both source-level bounds:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(".intConstCmp .eq 0 (0 : Int)"),
-        "intEqZero SymPlan should preserve equality with zero:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("def boolAndGoalSymPlan : SymRawPlan")
-            && plans_lean.contains("kind := .ifElse 0"),
-        "boolAndGoal SymPlan should preserve source-level short-circuiting:\n{plans_lean}"
-    );
-    // Each param use gets its own node (the `.le` bound reads node 2, a second
-    // `.param 0`), mirroring the emitter's per-use `local.get`.
-    assert!(
-        plans_lean.contains(".prim .boolAnd [1, 3]")
-            && plans_lean.contains(".intConstCmp .ge 0 (-100 : Int)")
-            && plans_lean.contains(".intConstCmp .le 2 (100 : Int)"),
-        "inWindowGoal SymPlan should expose the eager source-level conjunction over both bounds:\n{plans_lean}"
-    );
-    assert!(
-        !plans_lean.contains("floatAddGoalPlan")
-            && !plans_lean.contains("floatMulAddGoalPlan")
-            && plans_lean.contains("def floatLeGoalSymPlan : SymRawPlan")
-            && plans_lean.contains(".prim .floatLe [0, 1]"),
-        "only the payload-independent Float comparison should render a certificate plan:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("def intLessZeroSymPlan : SymRawPlan"),
-        "intLessZero should render a source-level SymPlan:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(".intConstCmp .lt 0 (0 : Int)"),
-        "intLessZero SymPlan should expose a source-level Int comparison:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("def userNameSymPlan : SymRawPlan"),
-        "userName should render a source-level SymPlan:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(".projectField \"User\" 0 .string 0"),
-        "userName SymPlan should expose the source-level field projection:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("def userNamePlan : ExprFragmentRawPlan"),
-        "userName SymPlan should sit beside the byte-bound ExprFragment plan the \
-         encoder maps it to:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains("def mkOpConstructSymPlan : SymRawPlan"),
-        "legacy ADT constructors should render source-level construct SymPlans:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(".construct \"Op\" \"add\" [0]"),
-        "mkOp construct SymPlan should expose source-level ADT construction:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(
-            "def mkOpConstructPlan : ConstructRawPlan := ({ profile := \"construct-v1\", arity := 1, fields := [.local 0] } : ConstructRawPlan)"
-        ),
-        "mkOp should render its concrete target-bound constructor DATA in Plans.lean:\n{plans_lean}"
-    );
-    // The four facts this used to grep out of `Plans.lean` — that the construct
-    // plan passes the Lean-side checker, matches its SymPlan, stays outside the
-    // expr-fragment encoder, and lowers to those exact code-entry bytes — are
-    // no longer restated there. They are what acceptance itself proves, and the
-    // `check_certificate` call below is what makes them load-bearing.
-    let mkop_entry = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"].as_str() == Some("mkOp"))
-        .expect("mkOp manifest entry");
-    assert_eq!(mkop_entry["class"], "adt-constructor");
-    assert_eq!(
-        mkop_entry["theorem"], "AcceptanceSoundness.construct_canonical_discharges",
-        "the JSON envelope reports mkOp's checked claim but carries no plan DATA"
-    );
-    let artifact_lean = std::fs::read_to_string(out_dir.join("cert").join("Artifact.lean"))
-        .expect("Artifact.lean exists");
-    assert!(
-        artifact_lean
-            .contains("def symFragmentClaims : List AverCert.AcceptedArtifact.SymFragmentClaim"),
-        "artifact should carry source-level fragment claims:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("plan := AverCert.Plans.floatLeGoalSymPlan")
-            && !artifact_lean.contains("floatAddGoalSymPlan")
-            && !artifact_lean.contains("floatMulAddGoalSymPlan"),
-        "only the NaN-payload-independent Float comparison should reach artifact claims:\n{artifact_lean}"
-    );
-    assert!(
-        !artifact_lean.contains("ExprFragmentClaim"),
-        "artifact-level expr fragments should be source-first, with no raw ExprFragmentClaim fallback:\n{artifact_lean}"
-    );
-    assert!(
-        !artifact_lean.contains("exprFragmentClaims"),
-        "artifact-level expr fragments should not expose a raw exprFragmentClaims list:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("plan := AverCert.Plans.intLessZeroSymPlan"),
-        "source-level int fragment should be claimed through SymPlan:\n{artifact_lean}"
+        !plans_lean.contains("floatAddGoal") && !plans_lean.contains("floatMulAddGoal"),
+        "Float arithmetic must carry no plan:\n{plans_lean}"
     );
     let artifact_certificate =
         std::fs::read_to_string(out_dir.join("cert").join("ArtifactCertificate.lean"))
@@ -900,19 +986,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         artifact_certificate
             .contains("theorem certificate : AverCert.AcceptedArtifact.accepted data :="),
         "artifact root should be a theorem with the exact AcceptedArtifact target:\n{artifact_certificate}"
-    );
-    assert!(
-        !artifact_lean.contains("plan := AverCert.Plans.intLessZeroPlan"),
-        "source-level int fragment should not carry a duplicate ExprFragmentClaim:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean
-            .contains("def constructClaims : List AverCert.AcceptedArtifact.ConstructClaim"),
-        "artifact should carry constructor claims:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("symPlan := AverCert.Plans.mkOpConstructSymPlan"),
-        "mkOp construct SymPlan should now be an AcceptedArtifact claim:\n{artifact_lean}"
     );
 
     let planned_goal_names: BTreeSet<String> = [
@@ -955,7 +1028,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let expected_backlog: BTreeSet<String> = [
         "floatAddGoal",
         "floatMulAddGoal",
-        "idGoal",
         "listHeadGoal",
         "sumListGoal",
     ]
@@ -963,7 +1035,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     .map(str::to_string)
     .collect();
     assert_eq!(planned_goal_names.len(), 32, "goal denominator changed");
-    assert_eq!(actual.len(), 27, "goal numerator changed");
+    assert_eq!(actual.len(), 28, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
@@ -991,13 +1063,14 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             && manifest_lean.contains("profile := \"AverUserProfile/v1\""),
         "Lean manifest must pin the same public target/profile identity as JSON"
     );
-    for name in ["sumFrom", "countDown", "isEven", "isOdd"] {
-        let obligation = lean_obligation_def(&manifest_lean, name);
-        assert!(
-            !obligation.contains("totalityRole := .mul") && !obligation.contains("Int.mul"),
-            "non-multiplicative L3 obligation {name} gained mul totality:\n{obligation}"
-        );
-    }
+    // The obligations, and with them every policy axis, are the wall's
+    // derivation from the plans; the manifest carries no obligation data.
+    assert!(
+        manifest_lean.contains(
+            "obligations := AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans"
+        ),
+        "the obligations must be the ones the wall derives:\n{manifest_lean}"
+    );
 
     let declined_names: BTreeSet<String> = manifest["source_level_only"]
         .as_array()
@@ -1013,7 +1086,16 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         planned_declined, expected_backlog,
         "goal backlog changed; update the denominator/numerator deliberately"
     );
-    for name in ["floatAddGoal", "floatMulAddGoal"] {
+    // Float-producing arithmetic has no plan: the grammar types a Float
+    // comparison (a Bool, independent of NaN payloads) but no Float result,
+    // since general Wasm allows several NaN sign/payload results where the
+    // model would name one.
+    for (name, expected) in [
+        ("floatAddGoal", "plan does not type in the one grammar"),
+        ("floatMulAddGoal", "plan does not type in the one grammar"),
+        ("listHeadGoal", "Match pattern EmptyList"),
+        ("sumListGoal", "Match pattern EmptyList"),
+    ] {
         let reason = manifest["source_level_only"]
             .as_array()
             .unwrap()
@@ -1021,23 +1103,13 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             .find(|entry| entry["name"].as_str() == Some(name))
             .and_then(|entry| entry["reason"].as_str())
             .unwrap_or_else(|| panic!("{name} should carry a source-level-only reason"));
-        assert!(
-            reason.contains("general Wasm allows multiple NaN sign/payload")
-                && reason.contains("exact-bit Float output needs a relational result model"),
-            "{name} should expose the exact semantic boundary: {reason}"
-        );
+        assert_eq!(reason, expected, "{name} must name its blocker");
     }
-    assert!(
-        !declined_names.contains("double"),
-        "the composition helper `double` is plain arithmetic on an Int \
-         argument and is now certified through the record projection-compute \
-         face: {declined_names:?}"
-    );
 }
 
 #[test]
 fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify test: `lake` not available");
         return;
     }
@@ -1107,434 +1179,105 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         "one aggregate identity replaces the audited module hash fields"
     );
 
+    // One final theorem, proved by the ONE soundness theorem from the
+    // acceptance's byte facts — no per-export proof of any kind is emitted.
     let final_lean =
         std::fs::read_to_string(cert_dir.join("Final.lean")).expect("Final.lean exists");
     assert!(
-        final_lean.contains("import ArtifactSoundness")
-            && final_lean.contains("AverCert.ArtifactSoundness.accept_sound_holds")
-            && final_lean.contains("AverCert.Artifact.dischargeSideConditions"),
-        "Final.cert must be the single accept-sound capstone application:\n{final_lean}"
+        final_lean.contains("theorem AverCert.Final.cert : AverCert.Schema.Holds manifest :=")
+            && final_lean.contains("AcceptanceSoundness.accept_sound")
+            && final_lean.contains("AverCert.Artifact.plans_ok"),
+        "Final.cert must be the single accept-sound application:\n{final_lean}"
     );
-    assert!(
-        !final_lean.contains("all_goals")
-            && !final_lean.contains("first |")
-            && !final_lean.contains("_claim_discharges")
-            && !final_lean.contains("_canonical_discharges")
-            && !final_lean.contains("CertProofs."),
-        "Final.cert must not retain generated per-obligation coexistence routing:\n{final_lean}"
-    );
-    let artifact_lean =
-        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
-    for side_condition in [
-        "exprFragmentSideConditions",
-        "stringEqSideConditions",
-        "constructSideConditions",
-        "recursionSideConditions",
-        "mutualSideConditions",
-        "verbatimSideConditions",
-        "fieldProjectionSideConditions",
-        "compositionSideConditions",
-    ] {
+    for file in ["Final.lean", "Artifact.lean", "Manifest.lean", "Plans.lean"] {
+        let text = std::fs::read_to_string(cert_dir.join(file)).unwrap();
         assert!(
-            artifact_lean.contains(side_condition),
-            "accept-sound side condition missing from Artifact.lean: {side_condition}\n{artifact_lean}"
+            !text.contains("_claim_discharges")
+                && !text.contains("_canonical_discharges")
+                && !text.contains("CertProofs.")
+                && !text.contains("_simulates"),
+            "{file} must not carry per-export proofs of the retired families:\n{text}"
         );
     }
     assert!(
-        artifact_lean.contains(
-            "AcceptanceSoundness.fieldProjection_direct_canonical_discharges \"userName\""
-        ),
-        "field-projection-faced expr claim must use its audited generic:\n{artifact_lean}"
+        !cert_dir.join("Certificate.lean").exists() && !cert_dir.join("Contracts.lean").exists(),
+        "the retired per-family proof modules must not be emitted"
     );
-    // `addTwo` and `double` are absent by design: a scalar-parameter compute
-    // plan routes through the wall's record projection-compute face, which
-    // carries no producer semantic bridge at all.
-    for (name, bridge_kind) in [
-        ("inAsciiDigit", "exprFragmentSemanticBridge"),
-        ("intLessZero", "exprFragmentSemanticBridge"),
-        ("intEqZero", "exprFragmentSemanticBridge"),
-        ("boolAndGoal", "exprFragmentSemanticBridge"),
-        ("sumFrom", "recursionSemanticBridge"),
-        ("countDown", "recursionSemanticBridge"),
-        ("isEven", "mutualSemanticBridge"),
-        ("isOdd", "mutualSemanticBridge"),
-        ("quad", "compositionSemanticBridge"),
-        ("hex16", "compositionSemanticBridge"),
-    ] {
-        assert!(
-            artifact_lean.contains(&format!("CertProofs.{name}_{bridge_kind}")),
-            "migrated family bridge must feed accept_sound: {name}\n{artifact_lean}"
-        );
-    }
-    for face in [
-        "theorem constructClaim0Face",
-        "theorem intDispatchClaim0Face",
-        "theorem intDispatchClaim1Face",
-        "theorem intDispatchClaim2Face",
-        "theorem stringConcatClaim0Face",
-    ] {
-        assert!(
-            artifact_lean.contains(face),
-            "declared-envelope face theorem missing from Artifact.lean: {face}\n{artifact_lean}"
-        );
-    }
-    for float_name in [
-        "floatLeGoal",
-        "floatGeGoal",
-        "floatLtGoal",
-        "floatGtGoal",
-        "floatEqGoal",
-    ] {
-        // The float arm sits at position five of six in
-        // `exprFragmentSideCondition` (the record-parameter arm follows it),
-        // so its payload carries one `Or.inl` inside the four `Or.inr`s.
-        assert!(
-            artifact_lean.contains(&format!(
-                "Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, CertProofs.{float_name}_simulates⟩))))"
-            )),
-            "certified Float comparison must use the bespoke accept-sound residual: {float_name}\n{artifact_lean}"
-        );
-    }
-    assert!(
-        !artifact_lean.contains("floatAddGoal_simulates")
-            && !artifact_lean.contains("floatMulAddGoal_simulates"),
-        "NaN-nondeterministic Float results must not reach artifact side conditions:\n{artifact_lean}"
-    );
+    // The artifact root states exactly the accepted-artifact proposition over
+    // the package data, and prints its axioms for the checker to audit.
     let artifact_certificate = std::fs::read_to_string(cert_dir.join("ArtifactCertificate.lean"))
         .expect("ArtifactCertificate.lean exists");
     assert!(
-        artifact_certificate.contains("acceptedWithFinal AverCert.Final.cert")
+        artifact_certificate
+            .contains("theorem certificate : AverCert.AcceptedArtifact.accepted data :=")
+            && artifact_certificate.contains("AverCert.Final.cert")
             && artifact_certificate.contains("#print axioms AverCert.Artifact.certificate"),
-        "accepted-artifact wrapper must remain outside the acyclic Artifact -> ArtifactSoundness -> Final path:\n{artifact_certificate}"
+        "the artifact root must package the final theorem and the byte facts:\n{artifact_certificate}"
     );
-    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
-        .expect("Certificate.lean exists");
-    assert!(
-        !certificate.contains("userName_wasm_certified")
-            && !certificate.contains("userName_simulates")
-            && !certificate.contains("wrapItems_wasm_certified")
-            && !certificate.contains("wrapItems_simulates")
-            && !certificate.contains("tagName_wasm_certified")
-            && !certificate.contains("tagName_simulates")
-            && !certificate.contains("quoteOrSelf_wasm_certified")
-            && !certificate.contains("quoteOrSelf_simulates")
-            && !certificate.contains("shout_wasm_certified")
-            && !certificate.contains("shout_simulates")
-            && !certificate.contains("evalOp_wasm_certified")
-            && !certificate.contains("evalOp_simulates")
-            && !certificate.contains("boxInt_wasm_certified")
-            && !certificate.contains("boxInt_simulates")
-            && !certificate.contains("gauge_wasm_certified")
-            && !certificate.contains("gauge_simulates")
-            && !certificate.contains("mkOp_wasm_certified")
-            && !certificate.contains("mkOp_simulates")
-            && !certificate.contains("sumFrom_wasm_certified")
-            && !certificate.contains("sumFrom_wasm_total")
-            && !certificate.contains("sumFrom_simulates")
-            && !certificate.contains("sumFromHostRef")
-            && !certificate.contains("countDown_wasm_certified")
-            && !certificate.contains("countDown_wasm_total")
-            && !certificate.contains("countDown_simulates")
-            && !certificate.contains("countDownHostRef")
-            && !certificate.contains("addTwo_wasm_certified")
-            && !certificate.contains("addTwo_simulates")
-            && !certificate.contains("addTwoHostRef")
-            && !certificate.contains("quad_wasm_certified")
-            && !certificate.contains("quad_simulates")
-            && !certificate.contains("quadHostRef")
-            && !certificate.contains("hex16_wasm_certified")
-            && !certificate.contains("hex16_simulates")
-            && !certificate.contains("hex16HostRef")
-            && !certificate.contains("inAsciiDigit_wasm_certified")
-            && !certificate.contains("inAsciiDigit_simulates")
-            && !certificate.contains("inAsciiDigitHostRef")
-            && !certificate.contains("intLessZero_wasm_certified")
-            && !certificate.contains("intLessZero_simulates")
-            && !certificate.contains("intLessZeroHostRef")
-            && !certificate.contains("intEqZero_wasm_certified")
-            && !certificate.contains("intEqZero_simulates")
-            && !certificate.contains("intEqZeroHostRef")
-            && !certificate.contains("boolAndGoal_wasm_certified")
-            && !certificate.contains("boolAndGoal_simulates")
-            && !certificate.contains("boolAndGoalHostRef")
-            && !certificate.contains("isEven_simulates")
-            && !certificate.contains("isOdd_simulates")
-            && !certificate.contains("isEven_wasm")
-            && !certificate.contains("isOdd_wasm")
-            && !certificate.contains("isEven_mutual_sim")
-            && !certificate.contains("isEven_mutual_total")
-            && !certificate.contains("isEvenHostRef"),
-        "migrated leaf/dispatch/construct/recursion/expr-fragment/composition/mutual families must not emit bespoke simulations or tripwires:\n{certificate}"
-    );
-    // `addTwo` and `double` are absent: a scalar-parameter compute claim
-    // carries claim acceptance but no producer semantic bridge at all.
-    for expr_fragment_name in ["inAsciiDigit", "intLessZero", "intEqZero", "boolAndGoal"] {
-        assert!(
-            certificate.contains(&format!(
-                "theorem {expr_fragment_name}_exprFragmentClaimAccepted"
-            )) && certificate.contains(&format!(
-                "theorem {expr_fragment_name}_exprFragmentSemanticBridge"
-            )),
-            "integer/Bool expr-fragment must emit claim acceptance plus its small semantic bridge: {expr_fragment_name}\n{certificate}"
-        );
-    }
-    for composition_name in ["quad", "hex16"] {
-        assert!(
-            certificate.contains(&format!(
-                "theorem {composition_name}_compositionClaimAccepted"
-            )) && certificate.contains(&format!(
-                "theorem {composition_name}_compositionSemanticBridge"
-            )),
-            "integer composition must emit claim acceptance plus its small semantic bridge: {composition_name}\n{certificate}"
-        );
-    }
-    for float_name in [
-        "floatLeGoal",
-        "floatGeGoal",
-        "floatLtGoal",
-        "floatGtGoal",
-        "floatEqGoal",
+    // Every byte fact is decided by the kernel against the checker-staged
+    // bytes, one declaration each.
+    let artifact_lean =
+        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
+    for fact in [
+        "theorem plans_ok",
+        "theorem roles_ok",
+        "theorem axes_ok",
+        "theorem strings_ok",
+        "theorem framing_ok",
+        "theorem exports_ok",
+        "theorem imports_ok",
+        "theorem start_ok",
+        "theorem closure_ok",
+        "theorem envelope_ok",
     ] {
         assert!(
-            certificate.contains(&format!("theorem {float_name}_wasm_certified"))
-                && certificate.contains(&format!("theorem {float_name}_simulates")),
-            "Float comparison proof must remain on the bespoke surface: {float_name}\n{certificate}"
+            artifact_lean.contains(fact),
+            "Artifact.lean must carry `{fact}`:\n{artifact_lean}"
         );
     }
     assert!(
-        !certificate.contains("floatAddGoal_wasm_certified")
-            && !certificate.contains("floatMulAddGoal_wasm_certified"),
-        "exact-bit Float arithmetic proofs must not be emitted:\n{certificate}"
+        artifact_lean.contains("modBytes := AverCert.ArtifactBytes.modBytes"),
+        "the artifact data must read the checker-staged bytes:\n{artifact_lean}"
     );
-    for dispatch_name in ["evalOp", "boxInt", "gauge"] {
-        assert!(
-            !certificate.contains(&format!(
-                "theorem {dispatch_name}_intDispatchSemanticBridge"
-            )),
-            "dispatch bridges are derived from the declared-envelope face; no bespoke bridge: {dispatch_name}\n{certificate}"
-        );
-    }
-    assert!(
-        !certificate.contains("theorem mkOp_constructSemanticBridge"),
-        "named constructor bridges are derived from the declared-envelope face:\n{certificate}"
-    );
-    assert!(
-        certificate.contains("theorem sumFrom_recursionSemanticBridge")
-            && certificate.contains("have hModelFuel")
-            && certificate.contains("RecursionSoundness.evalRecUFuel")
-            && certificate.contains("⟨n, _, rfl, hv")
-            && !certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
-        "recursion must emit only the used option-(b) model direction and no evaluator proof:\n{certificate}"
-    );
-    assert!(
-        certificate.contains("theorem countDown_recursionSemanticBridge")
-            && certificate.contains("RecursionSoundness.evalRecAFuel")
-            && certificate.contains("refine Or.inr")
-            && certificate.contains("⟨n, acc, vn, vacc, rfl, hvn, hvacc")
-            && !certificate.contains("⟨[n, acc],")
-            && !certificate.contains("ReprAll.cons hvn (ReprAll.cons hvacc ReprAll.nil)"),
-        "accumulator recursion must emit only the used arity-two model direction:\n{certificate}"
-    );
-    for mutual_name in ["isEven", "isOdd"] {
-        assert!(
-            certificate.contains(&format!("theorem {mutual_name}_mutualSemanticBridge"))
-                && certificate.contains("MutualRecursionSoundness.evalMutualUFuel")
-                && certificate.contains("have hModelFuel")
-                && certificate.contains("refine ⟨n, v, rfl, hv")
-                && !certificate.contains("⟨[n], ⟨ReprAll.cons hv ReprAll.nil, rfl⟩"),
-            "mutual export must emit only the used option-(b) model direction: {mutual_name}\n{certificate}"
-        );
-    }
-    let user_name = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "userName")
-        .unwrap();
-    assert_eq!(
-        user_name["theorem"],
-        "AcceptanceSoundness.fieldProjection_direct_canonical_discharges"
-    );
-    let mk_op = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "mkOp")
-        .unwrap();
-    assert_eq!(
-        mk_op["theorem"],
-        "AcceptanceSoundness.construct_canonical_discharges"
-    );
-    let sum_from = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "sumFrom")
-        .unwrap();
-    assert_eq!(
-        sum_from["theorem"],
-        "AcceptanceSoundness.recursion_claim_discharges"
-    );
-    let count_down = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "countDown")
-        .unwrap();
-    assert_eq!(
-        count_down["theorem"],
-        "AcceptanceSoundness.recursion_claim_discharges"
-    );
-    for name in ["inAsciiDigit", "intLessZero", "intEqZero", "boolAndGoal"] {
-        let entry = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["name"] == name)
-            .unwrap();
-        assert_eq!(
-            entry["theorem"],
-            "AcceptanceSoundness.exprFragment_claim_discharges"
-        );
-    }
-    // Scalar-parameter arithmetic routes through the declared compute face.
-    for name in ["addTwo", "double"] {
-        let entry = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["name"] == name)
-            .unwrap();
-        assert_eq!(
-            entry["theorem"],
-            "AcceptanceSoundness.recordCompute_claim_discharges"
-        );
-    }
-    for name in ["quad", "hex16"] {
-        let entry = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["name"] == name)
-            .unwrap();
-        assert_eq!(
-            entry["theorem"],
-            "AcceptanceSoundness.composition_claim_discharges_with_bridge"
-        );
-    }
-    for name in ["isEven", "isOdd"] {
-        let entry = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["name"] == name)
-            .unwrap();
-        assert_eq!(
-            entry["theorem"],
-            "AcceptanceSoundness.mutual_claim_discharges"
-        );
-    }
-    for (name, theorem) in [
-        (
-            "wrapItems",
-            "AcceptanceSoundness.verbatim_canonical_discharges",
-        ),
-        (
-            "tagName",
-            "AcceptanceSoundness.verbatim_canonical_discharges",
-        ),
-        (
-            "quoteOrSelf",
-            "AcceptanceSoundness.stringEq_canonical_discharges",
-        ),
-        (
-            "shout",
-            "AcceptanceSoundness.stringConcat_canonical_discharges",
-        ),
-    ] {
-        let entry = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["name"] == name)
-            .unwrap();
-        assert_eq!(entry["theorem"], theorem);
-    }
-    for name in ["evalOp", "boxInt", "gauge"] {
-        let entry = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["name"] == name)
-            .unwrap();
-        assert_eq!(
-            entry["theorem"],
-            "AcceptanceSoundness.intDispatch_canonical_discharges"
-        );
-    }
-
-    // This test used to `lake build` the package here, plus a second `lake
-    // env lean` typecheck of a standalone `ArtifactSoundnessTypecheck.lean`,
-    // and assert the exact `#print axioms` line for `AverCert.Final.cert`,
-    // every recursion/expr-fragment/composition/mutual bridge and discharge
-    // theorem above, and `ArtifactSoundness.accept_sound_holds` (whitelist
-    // only, no `sorryAx`, for both builds).
-    //
-    // `AverCert.Final.cert := AverCert.ArtifactSoundness.accept_sound_holds
-    // AverCert.Artifact.dischargeSideConditions`
-    // (aver-cert/src/engine/render_project.rs `render_final`), so
-    // `accept_sound_holds`'s own axioms are already a subset of
-    // `Final.cert`'s — the second build was redundant with the first even
-    // before either was redundant with verify. And `dischargeSideConditions`
-    // composes every credited discharge, so `#print axioms Final.cert` is
-    // transitively the union of every bridge's axioms named above. All of
-    // that is exactly what `aver cert check`/`verify`'s checker-witness root
-    // audits fail-closed (aver-cert/src/verifier.rs `trusted_check`/
-    // `checker_witness`: THROWS on any axiom outside `[propext,
-    // Classical.choice, Quot.sound]`, which also rules out `sorryAx`). Every
-    // name checked above is confirmed `certified`/present in this same
-    // manifest, so all of it is in that closure. A green run on this exact
-    // fixture is already pinned by
-    // `cert_plans_authority_accepts_clean_certificate_and_pins_public_plan_data`'s
-    // honest-baseline check (tests/cert_verify_spec.rs), so re-paying the two
-    // builds here (the ~12.5-minute majority of this test's cost) bought no
-    // additional coverage.
+    // The goals package builds its acceptance root kernel-clean.
+    assert_certificate_target_builds(&cert_dir, "cert goals acceptance wall");
 }
 
 // Hostile-model soundness gates.
 //
 // These tests all share one baseline artifact and differ only in which single
-// tamper they apply before demanding a DECLINE. They used to be one test that
+// tamper they apply before demanding a verdict. They used to be one test that
 // ran every verification sequentially: each `check_certificate` call is a full
-// kernel-checked certificate verification (~95s locally, minutes on CI) while
-// the baseline `aver compile --certify` costs a fraction of a second. Splitting
-// the tamper vectors into separate tests — each redoing the cheap setup — lets
-// CI run the expensive verifications in parallel lanes.
+// kernel-checked certificate verification while the baseline `aver compile
+// --certify` costs a fraction of a second. Splitting the tamper vectors into
+// separate tests — each redoing the cheap setup — lets CI run the expensive
+// verifications in parallel lanes.
+//
+// A certificate's obligations are DERIVED by the wall from the plans
+// (`AcceptedArtifact.obligationsOf`): the model of every export is its plan's
+// meaning, never producer data. So there are two kinds of hostile model:
+//
+// * a hostile OBLIGATION model — the manifest's obligation list replaced by a
+//   rewritten one. The acceptance requires the obligations to be exactly the
+//   derived ones (`obligationsDerived`), so the package is DECLINED;
+// * a hostile SOURCE model — the generated Lean definition of the Aver source
+//   function rewritten. The export's certified claim does not mention it, so
+//   the export stays certified; what the source definition feeds is the
+//   plan-equals-source bridge, and that bridge must then NOT be credited.
 
-/// Hostile obligation-model rewrites applied to the emitted `cert/Manifest.lean`,
-/// as `(label, honest, hostile)`.
+/// Hostile obligation models, as `(label, export whose model is replaced,
+/// export whose plan meaning replaces it)`. `None` for the second export
+/// replaces the model with the everywhere-undefined one.
 ///
-/// This list is the single source of truth for which manifest obligation models
-/// the gate covers, and it deliberately stays a list. The shard tests below
-/// select entries by `idx % HOSTILE_MANIFEST_MODEL_SHARDS`, never by name, so an
-/// entry appended here is automatically exercised by exactly one existing shard:
-/// no new test function to write, no CI filter to update, nothing to forget.
-const HOSTILE_MANIFEST_MODELS: &[(&str, &str, &str)] = &[
-    (
-        "verbatim",
-        "model := tagNameModel }",
-        "model := wrapItemsModel }",
-    ),
-    (
-        "string",
-        "model := quoteOrSelfModel }",
-        "model := shoutModel }",
-    ),
-    (
-        "dispatch",
-        "model := AverCert.DeclaredIndexEnvelope.dEnvStructModel Plans.gaugeDeclaredEnvelope Plans.gaugeIntDispatchPlan.body }",
-        "model := fun _ => 0 }",
-    ),
+/// This list is the single source of truth for which obligation models the
+/// gate covers, and it deliberately stays a list. The shard tests below select
+/// entries by `idx % HOSTILE_MANIFEST_MODEL_SHARDS`, never by name, so an
+/// entry appended here is automatically exercised by exactly one existing
+/// shard: no new test function to write, no CI filter to update.
+const HOSTILE_MANIFEST_MODELS: &[(&str, &str, Option<&str>)] = &[
+    ("variant tag", "tagName", Some("wrapItems")),
+    ("string", "quoteOrSelf", Some("shout")),
+    ("dispatch", "gauge", None),
 ];
 
 /// How many parallel shards `HOSTILE_MANIFEST_MODELS` is spread over: one test
@@ -1542,10 +1285,9 @@ const HOSTILE_MANIFEST_MODELS: &[(&str, &str, &str)] = &[
 /// (an empty shard would pass vacuously); the shard runner asserts that.
 const HOSTILE_MANIFEST_MODEL_SHARDS: usize = 3;
 
-/// Hostile rewrites of the generated mutual-recursion model definitions in
-/// `cert/CertGoals.lean`, as `(name, honest, hostile)`. Index-sharded for the
-/// same reason as `HOSTILE_MANIFEST_MODELS`: adding a member of the mutual SCC
-/// here is enough to get it covered.
+/// Hostile rewrites of the generated mutual-recursion source definitions in
+/// `cert/AverModel/CertGoals.lean`, as `(name, honest, hostile)`.
+/// Index-sharded for the same reason as `HOSTILE_MANIFEST_MODELS`.
 const HOSTILE_MUTUAL_MODELS: &[(&str, &str, &str)] = &[
     (
         "isEven",
@@ -1563,17 +1305,17 @@ const HOSTILE_MUTUAL_MODELS: &[(&str, &str, &str)] = &[
 const HOSTILE_MUTUAL_MODEL_SHARDS: usize = 2;
 
 /// Compiles the shared hostile-model baseline and asserts the untampered
-/// certificate still passes the developer preflight.
+/// certificate still passes the developer preflight with every bridge the
+/// goals fixture carries credited.
 ///
 /// Every hostile-model test runs this itself rather than trusting a baseline
 /// established in some other test (and therefore some other CI lane), so each
-/// one can fail honestly on its own. The compile is ~0.26s, so duplicating the
-/// setup per shard is nearly free.
+/// one can fail honestly on its own.
 ///
 /// Returns `None` when `lake` is unavailable; the caller then skips, as before.
 fn hostile_models_baseline(prefix: &str) -> Option<ScratchDir> {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping hostile leaf-model test: `lake` not available");
+    if !lean_required::lake_available() {
+        eprintln!("skipping hostile-model test: `lake` not available");
         return None;
     }
 
@@ -1608,8 +1350,28 @@ fn hostile_models_baseline(prefix: &str) -> Option<ScratchDir> {
         clean_report.contains("CHECKED") && !clean_report.contains("CERTIFIED"),
         "developer preflight must never emit the certification verdict:\n{clean_report}"
     );
+    assert!(
+        clean_report.contains("source-bridges: 22 of 22 credited"),
+        "the honest baseline credits every goals bridge:\n{clean_report}"
+    );
 
     Some(out_dir)
+}
+
+/// The `fnPlans` function index of export `name` in `Plans.lean`.
+fn planned_function_index(plans_lean: &str, name: &str) -> u32 {
+    let head = format!("⟨\"{name}\", true, ");
+    let at = plans_lean
+        .find(&head)
+        .unwrap_or_else(|| panic!("Plans.lean has no entry for `{name}`"))
+        + head.len();
+    plans_lean[at..]
+        .split(',')
+        .next()
+        .unwrap()
+        .trim()
+        .parse()
+        .expect("fnPlans function index")
 }
 
 /// Runs the `HOSTILE_MANIFEST_MODELS` entries that belong to `shard`.
@@ -1627,19 +1389,35 @@ fn assert_hostile_manifest_model_shard_is_declined(shard: usize) {
 
     // Index-sharded rather than name-selected: every entry of the list lands in
     // exactly one shard by construction, including entries added later.
-    for (idx, &(label, honest, hostile)) in HOSTILE_MANIFEST_MODELS.iter().enumerate() {
+    for (idx, &(label, victim, donor)) in HOSTILE_MANIFEST_MODELS.iter().enumerate() {
         if idx % HOSTILE_MANIFEST_MODEL_SHARDS != shard {
             continue;
         }
 
-        let tampered = temp_dir(&format!("certify-hostile-{label}-model"));
+        let tampered = temp_dir(&format!(
+            "certify-hostile-{}-model",
+            label.replace(' ', "-")
+        ));
         copy_dir_all(&out_dir, &tampered);
+        let plans = std::fs::read_to_string(tampered.join("cert/Plans.lean")).unwrap();
+        let hostile_model = match donor {
+            Some(donor) => format!(
+                "fun fuel => AverCert.AcceptedArtifact.modelOf Plans.fnPlans fuel {}",
+                planned_function_index(&plans, donor)
+            ),
+            None => "fun _ _ => none".to_string(),
+        };
         let manifest = tampered.join("cert/Manifest.lean");
         let source = std::fs::read_to_string(&manifest).unwrap();
-        let edited = source.replacen(honest, hostile, 1);
+        let honest = "obligations := AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans";
+        let hostile = format!(
+            "obligations := (AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans).map \
+             (fun o => if o.export_ = \"{victim}\" then {{ o with model := {hostile_model} }} else o)"
+        );
+        let edited = source.replacen(honest, &hostile, 1);
         assert_ne!(
             source, edited,
-            "{label} obligation model shape changed; update the hostile-model regression"
+            "{label} obligation shape changed; update the hostile-model regression"
         );
         std::fs::write(&manifest, edited).unwrap();
 
@@ -1647,57 +1425,61 @@ fn assert_hostile_manifest_model_shard_is_declined(shard: usize) {
             check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
         assert!(
             !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-            "wrong {label} model must make its emitted bridge fail and be DECLINED:\n{report}"
+            "a wrong {label} obligation model must be DECLINED:\n{report}"
         );
     }
 }
 
-/// Runs the `HOSTILE_MUTUAL_MODELS` entries that belong to `shard`.
-fn assert_hostile_mutual_model_shard_is_declined(shard: usize) {
-    assert!(
-        shard < HOSTILE_MUTUAL_MODEL_SHARDS
-            && HOSTILE_MUTUAL_MODEL_SHARDS <= HOSTILE_MUTUAL_MODELS.len(),
-        "shard {shard} of {HOSTILE_MUTUAL_MODEL_SHARDS} covers no hostile mutual model: keep the shard count at most the list length, one test function per shard"
-    );
-    let Some(out_dir) = hostile_models_baseline(&format!("certify-hostile-mutual-models-{shard}"))
-    else {
+/// Rewrite one generated source definition of the goals model and check the
+/// package: every export stays certified, and exactly the bridges in
+/// `lost` lose their credit, each named with the axiom that sank it.
+fn assert_hostile_source_model_loses_bridges(prefix: &str, edits: &[(&str, &str)], lost: &[&str]) {
+    let Some(out_dir) = hostile_models_baseline(prefix) else {
         return;
     };
-
-    // Index-sharded rather than name-selected: see the note on the manifest
-    // shard runner above.
-    for (idx, &(name, honest, hostile)) in HOSTILE_MUTUAL_MODELS.iter().enumerate() {
-        if idx % HOSTILE_MUTUAL_MODEL_SHARDS != shard {
-            continue;
-        }
-
-        let tampered = temp_dir(&format!("certify-hostile-{name}-model-definition"));
-        copy_dir_all(&out_dir, &tampered);
-        let model = tampered.join("cert/CertGoals.lean");
-        let source = std::fs::read_to_string(&model).unwrap();
+    let tampered = temp_dir(&format!("{prefix}-tampered"));
+    copy_dir_all(&out_dir, &tampered);
+    let model = tampered.join("cert/AverModel/CertGoals.lean");
+    let mut source = std::fs::read_to_string(&model).unwrap();
+    for (honest, hostile) in edits {
         let edited = source.replacen(honest, hostile, 1);
         assert_ne!(
             source, edited,
-            "{name} model definition changed; update the hostile-model regression"
+            "the source definition `{honest}` changed; update the hostile-model regression"
         );
-        std::fs::write(&model, edited).unwrap();
-        let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
-        assert!(
-            manifest.contains(&format!("model := fun ns => CertGoals.{name} (ns.headD 0)")),
-            "{name} hostile regression must leave the manifest model reference untouched"
-        );
+        source = edited;
+    }
+    std::fs::write(&model, source).unwrap();
+    assert_eq!(
+        std::fs::read(tampered.join("cert_goals.wasm")).unwrap(),
+        std::fs::read(out_dir.join("cert_goals.wasm")).unwrap(),
+        "the hostile model check must isolate the mutation to generated source data"
+    );
 
-        let (ok, report) =
-            check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
+    assert!(
+        ok && report.contains("28 checked exports"),
+        "a wrong source definition must not touch the export verdict:\n{report}"
+    );
+    assert!(
+        report.contains(&format!(
+            "source-bridges: {} of 22 credited",
+            22 - lost.len()
+        )),
+        "exactly the bridges through the wrong definition must lose their credit:\n{report}"
+    );
+    for name in lost {
         assert!(
-            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-            "wrong generated {name} definition must fail the mutual semantic bridge and be DECLINED:\n{report}"
+            report.contains(&format!(
+                "source-bridge not credited: {name} (proof depends on sorryAx)"
+            )),
+            "the bridge of `{name}` must not be credited:\n{report}"
         );
     }
 }
 
 /// The untampered hostile-model baseline is preflight-clean and its isolated
-/// `Certificate` target builds, so a DECLINE in any hostile-model test below is
+/// acceptance root builds, so a verdict in any hostile-model test below is
 /// the tamper's doing and not a broken fixture.
 #[test]
 fn cert_hostile_model_baseline_is_preflight_clean_and_lake_builds() {
@@ -1705,138 +1487,111 @@ fn cert_hostile_model_baseline_is_preflight_clean_and_lake_builds() {
         return;
     };
 
-    let build_green = temp_dir("certify-hostile-mutual-build-green");
+    let build_green = temp_dir("certify-hostile-build-green");
     copy_dir_all(&out_dir, &build_green);
-    assert_certificate_target_builds(&build_green.join("cert"), "mutual hostile-model baseline");
+    assert_certificate_target_builds(&build_green.join("cert"), "hostile-model baseline");
 }
 
-/// Hostile model: the generated expression-fragment leaf definition
-/// `inAsciiDigit` in `cert/CertGoals.lean` accepts one code point too many
-/// (`c <= 58` instead of `c <= 57`), with the wasm bytes and the manifest's
-/// model reference left untouched.
-///
-/// The vector used to target `addTwo`. Folding the straight-line integer face
-/// into the declared compute face moved that obligation's model off the leaf
-/// definition and onto the emitted plan
-/// (`AverCert.StandardFace.recordComputeModel Plans.addTwoPlan.body`), so
-/// `CertGoals.addTwo` is no longer cited by anything in the package and
-/// rewriting it proves nothing. `inAsciiDigit` is the closest remaining
-/// export: same `expr-fragment-v1` class, and its obligation still names the
-/// generated leaf (`model := CertGoals.inAsciiDigit`).
+/// Hostile source model: the generated leaf definition `inAsciiDigit` accepts
+/// one code point too many (`c <= 58` instead of `c <= 57`). The export's
+/// certified model is its plan, so it stays certified; its plan-equals-source
+/// bridge, which would identify the plan with this definition, is not credited.
 #[test]
-fn cert_hostile_model_expr_fragment_leaf_definition_is_declined() {
-    let Some(out_dir) = hostile_models_baseline("certify-hostile-expr-fragment-baseline") else {
-        return;
-    };
-    let wasm = out_dir.join("cert_goals.wasm");
-
-    let tampered = temp_dir("certify-hostile-expr-fragment-model-definition");
-    copy_dir_all(&out_dir, &tampered);
-    let model = tampered.join("cert/CertGoals.lean");
-    let source = std::fs::read_to_string(&model).unwrap();
-    let honest = "def inAsciiDigit (c : Int) : Bool :=\n  (if (c >= 48) then (c <= 57)";
-    let hostile = "def inAsciiDigit (c : Int) : Bool :=\n  (if (c >= 48) then (c <= 58)";
-    let edited = source.replacen(honest, hostile, 1);
-    assert_ne!(
-        source, edited,
-        "expr-fragment model definition changed; update the hostile-model regression"
-    );
-    std::fs::write(&model, edited).unwrap();
-    assert_eq!(
-        std::fs::read(tampered.join("cert_goals.wasm")).unwrap(),
-        std::fs::read(&wasm).unwrap(),
-        "hostile expr-fragment check must isolate the mutation to generated source data"
-    );
-    let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
-    assert!(
-        manifest.contains("model := CertGoals.inAsciiDigit"),
-        "expr-fragment hostile regression must leave the manifest model reference untouched"
-    );
-
-    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
-    assert!(
-        !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-        "wrong generated expr-fragment model definition must fail its emitted bridge and be DECLINED:\n{report}"
+fn cert_hostile_model_source_leaf_definition_loses_its_bridge() {
+    assert_hostile_source_model_loses_bridges(
+        "certify-hostile-expr-fragment",
+        &[(
+            "def inAsciiDigit (c : Int) : Bool :=\n  (if (c >= 48) then (c <= 57)",
+            "def inAsciiDigit (c : Int) : Bool :=\n  (if (c >= 48) then (c <= 58)",
+        )],
+        &["inAsciiDigit"],
     );
 }
 
-/// Hostile manifest obligation models, shard 0: `HOSTILE_MANIFEST_MODELS`
-/// entries 0, 3, 6, ... — today the `verbatim` variant-tag model.
+/// Hostile obligation models, shard 0: `HOSTILE_MANIFEST_MODELS` entries
+/// 0, 3, 6, ... — today `tagName` given `wrapItems`' plan meaning.
 #[test]
 fn cert_hostile_model_manifest_obligation_shard_0_of_3_is_declined() {
     assert_hostile_manifest_model_shard_is_declined(0);
 }
 
-/// Hostile manifest obligation models, shard 1: `HOSTILE_MANIFEST_MODELS`
-/// entries 1, 4, 7, ... — today the `string` host-contract model.
+/// Hostile obligation models, shard 1: `HOSTILE_MANIFEST_MODELS` entries
+/// 1, 4, 7, ... — today `quoteOrSelf` given `shout`'s plan meaning.
 #[test]
 fn cert_hostile_model_manifest_obligation_shard_1_of_3_is_declined() {
     assert_hostile_manifest_model_shard_is_declined(1);
 }
 
-/// Hostile manifest obligation models, shard 2: `HOSTILE_MANIFEST_MODELS`
-/// entries 2, 5, 8, ... — today the `dispatch` declared-envelope model.
+/// Hostile obligation models, shard 2: `HOSTILE_MANIFEST_MODELS` entries
+/// 2, 5, 8, ... — today `gauge` given the everywhere-undefined model.
 #[test]
 fn cert_hostile_model_manifest_obligation_shard_2_of_3_is_declined() {
     assert_hostile_manifest_model_shard_is_declined(2);
 }
 
-/// Hostile model: the declared constructor index for `mkOp`.
-///
-/// The declared-envelope wiring derives the constructor obligation model from
-/// the emitted plan (`dEnvCtorModel Plans.mkOpDeclaredEnvelope 1`), so the
-/// generated `def mkOp` source definition is no longer load-bearing for the
-/// obligation. The hostile vector moves with the model: declare the WRONG hit
-/// constructor index, so the still well-typed model claims `mkOp` builds the
-/// second constructor while the accepted claim and module bytes pin the first.
+/// Hostile model: `mkOp`'s plan builds the SECOND constructor of `Op` while
+/// the bytes build the first. The plan still types, but its lowering is not
+/// the code entry, so the package is DECLINED.
 #[test]
 fn cert_hostile_model_declared_construct_index_is_declined() {
     let Some(out_dir) = hostile_models_baseline("certify-hostile-construct-baseline") else {
         return;
     };
 
-    let tampered = temp_dir("certify-hostile-construct-model-definition");
+    let tampered = temp_dir("certify-hostile-construct-plan");
     copy_dir_all(&out_dir, &tampered);
-    let manifest_path = tampered.join("cert/Manifest.lean");
-    let source = std::fs::read_to_string(&manifest_path).unwrap();
-    let honest = "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 1 (by decide) }";
-    let hostile = "model := AverCert.DeclaredIndexEnvelope.dEnvCtorModel Plans.mkOpDeclaredEnvelope 2 (by decide) }";
-    let edited = source.replacen(honest, hostile, 1);
-    assert_ne!(
-        source, edited,
-        "construct obligation model shape changed; update the hostile-model regression"
-    );
-    std::fs::write(&manifest_path, edited).unwrap();
-    let artifact = std::fs::read_to_string(tampered.join("cert/Artifact.lean")).unwrap();
+    let plans_path = tampered.join("cert/Plans.lean");
+    let source = std::fs::read_to_string(&plans_path).unwrap();
+    let honest = "(.construct (.user 0 0) (.sum 0) [(.local 0)])";
+    let hostile = "(.construct (.user 0 1) (.sum 0) [(.local 0)])";
     assert!(
-        artifact.contains("exportName := \"mkOp\", carrier := 23, structIdx := 1"),
-        "construct hostile regression must leave the accepted claim pinned at the honest constructor index"
+        export_plan_block(&source, "mkOp").contains(honest),
+        "construct plan shape changed; update the hostile-model regression"
     );
-    let envelope = std::fs::read_to_string(tampered.join("cert/Plans.lean")).unwrap();
-    assert!(
-        envelope.contains("def mkOpDeclaredEnvelope : AverCert.DeclaredIndexEnvelope.DIdxEnvelope :=\n  ⟨0, 23, [⟨1, .hit, 23⟩, ⟨2, .hit, 23⟩, ⟨3, .unit, 0⟩]⟩"),
-        "construct hostile regression needs a second declared hit constructor for the wrong-index vector"
-    );
+    std::fs::write(&plans_path, source.replacen(honest, hostile, 1)).unwrap();
 
     let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
         !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-        "wrong declared constructor index must fail its emitted bridge and be DECLINED:\n{report}"
+        "a wrong constructor must be DECLINED:\n{report}"
     );
 }
 
-/// Hostile mutual-recursion model definitions, shard 0: `HOSTILE_MUTUAL_MODELS`
-/// entries 0, 2, 4, ... — today `isEven` recursing on `n - 2`.
-#[test]
-fn cert_hostile_model_mutual_recursion_shard_0_of_2_is_declined() {
-    assert_hostile_mutual_model_shard_is_declined(0);
+/// Runs the `HOSTILE_MUTUAL_MODELS` entries that belong to `shard`. A mutual
+/// source definition feeds both members' bridges (each member's bridge is
+/// proved through the whole call group), so both lose their credit.
+fn assert_hostile_mutual_model_shard_loses_bridges(shard: usize) {
+    assert!(
+        shard < HOSTILE_MUTUAL_MODEL_SHARDS
+            && HOSTILE_MUTUAL_MODEL_SHARDS <= HOSTILE_MUTUAL_MODELS.len(),
+        "shard {shard} of {HOSTILE_MUTUAL_MODEL_SHARDS} covers no hostile mutual model: keep the shard count at most the list length, one test function per shard"
+    );
+    for (idx, &(name, honest, hostile)) in HOSTILE_MUTUAL_MODELS.iter().enumerate() {
+        if idx % HOSTILE_MUTUAL_MODEL_SHARDS != shard {
+            continue;
+        }
+        assert_hostile_source_model_loses_bridges(
+            &format!("certify-hostile-{name}-model-definition"),
+            &[(honest, hostile)],
+            &["isEven", "isOdd"],
+        );
+    }
 }
 
-/// Hostile mutual-recursion model definitions, shard 1: `HOSTILE_MUTUAL_MODELS`
-/// entries 1, 3, 5, ... — today `isOdd` recursing on `n - 2`.
+/// Hostile mutual-recursion source definitions, shard 0:
+/// `HOSTILE_MUTUAL_MODELS` entries 0, 2, 4, ... — today `isEven` recursing
+/// on `n - 2`.
 #[test]
-fn cert_hostile_model_mutual_recursion_shard_1_of_2_is_declined() {
-    assert_hostile_mutual_model_shard_is_declined(1);
+fn cert_hostile_model_mutual_recursion_shard_0_of_2_loses_its_bridges() {
+    assert_hostile_mutual_model_shard_loses_bridges(0);
+}
+
+/// Hostile mutual-recursion source definitions, shard 1:
+/// `HOSTILE_MUTUAL_MODELS` entries 1, 3, 5, ... — today `isOdd` recursing on
+/// `n - 2`.
+#[test]
+fn cert_hostile_model_mutual_recursion_shard_1_of_2_loses_its_bridges() {
+    assert_hostile_mutual_model_shard_loses_bridges(1);
 }
 
 /// Guard the shard counts against drifting away from the test functions.
@@ -1853,13 +1608,21 @@ fn cert_hostile_model_mutual_recursion_shard_1_of_2_is_declined() {
 #[test]
 fn certify_hostile_model_shards_all_have_test_functions() {
     let source = include_str!("cert_certify_spec.rs");
-    for (family, shards) in [
-        ("manifest_obligation", HOSTILE_MANIFEST_MODEL_SHARDS),
-        ("mutual_recursion", HOSTILE_MUTUAL_MODEL_SHARDS),
+    for (family, shards, verdict) in [
+        (
+            "manifest_obligation",
+            HOSTILE_MANIFEST_MODEL_SHARDS,
+            "is_declined",
+        ),
+        (
+            "mutual_recursion",
+            HOSTILE_MUTUAL_MODEL_SHARDS,
+            "loses_its_bridges",
+        ),
     ] {
         for shard in 0..shards {
             let expected =
-                format!("fn cert_hostile_model_{family}_shard_{shard}_of_{shards}_is_declined");
+                format!("fn cert_hostile_model_{family}_shard_{shard}_of_{shards}_{verdict}");
             assert!(
                 source.contains(&expected),
                 "hostile {family} shard {shard} of {shards} has no test function, so entries with \
@@ -1869,326 +1632,153 @@ fn certify_hostile_model_shards_all_have_test_functions() {
     }
 }
 
-/// Hostile model: the generated fueled self-recursion `sumFrom` accumulates the
-/// constant `2` instead of `n`.
+/// Hostile source model: the generated fueled self-recursion `sumFrom`
+/// accumulates the constant `2` instead of `n`. `sumFrom`'s bridge is the one
+/// proved through that definition, so it alone loses its credit.
 #[test]
-fn cert_hostile_model_fueled_recursion_definition_is_declined() {
-    let Some(out_dir) = hostile_models_baseline("certify-hostile-recursion-baseline") else {
-        return;
-    };
-
-    let tampered = temp_dir("certify-hostile-recursion-model-definition");
-    copy_dir_all(&out_dir, &tampered);
-    let model = tampered.join("cert/CertGoals.lean");
-    let source = std::fs::read_to_string(&model).unwrap();
-    let honest = "else (n + sumFrom__fuel fuel' (n - 1)))";
-    let hostile = "else (2 + sumFrom__fuel fuel' (n - 1)))";
-    let edited = source.replacen(honest, hostile, 1);
-    assert_ne!(
-        source, edited,
-        "recursion model definition changed; update the hostile-model regression"
-    );
-    std::fs::write(&model, edited).unwrap();
-    let manifest = std::fs::read_to_string(tampered.join("cert/Manifest.lean")).unwrap();
-    assert!(
-        manifest.contains("model := fun ns => CertGoals.sumFrom (ns.headD 0)"),
-        "recursion hostile regression must leave the manifest model reference untouched"
-    );
-
-    let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
-    assert!(
-        !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-        "wrong generated recursion model definition must fail its emitted bridge and be DECLINED:\n{report}"
+fn cert_hostile_model_fueled_recursion_definition_loses_its_bridge() {
+    assert_hostile_source_model_loses_bridges(
+        "certify-hostile-recursion",
+        &[("else (n + sumFrom (n - 1)))", "else (2 + sumFrom (n - 1)))")],
+        &["sumFrom"],
     );
 }
 
 #[test]
 fn certify_straight_line_fixture_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/certprobe.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
-    let cert_dir = out_dir.join("cert");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
-    let certified: Vec<&str> = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
-    assert!(
-        certified.contains(&"addTwo"),
-        "expected addTwo certified, got {certified:?}"
-    );
-
-    // This test used to `lake build` this same package here and assert
-    // `AverCert.Final.cert` prints only the core axiom whitelist with no
-    // `sorryAx`. That is exactly what `aver cert check`/`verify` audits on
-    // every run (aver-cert/src/verifier.rs: `trusted_check` builds the
-    // package, elaborates the checker witness, and its `checked` root THROWS
-    // on any axiom outside `[propext, Classical.choice, Quot.sound]`, which
-    // also rules out `sorryAx`). A green run on this exact fixture is already
-    // pinned by `unpinned_manifest_dom_cod_never_reach_the_trusted_report`
-    // (tests/cert_verify_spec.rs), so re-paying the ~192s build here bought no
-    // additional coverage.
+    let (out_dir, manifest) =
+        certify_fixture("tools/certkit/fixtures/certprobe.av", &[], "certify");
+    assert_certified_as(&manifest, "addTwo", &[], false);
+    // The package's acceptance root builds on the core axiom whitelist, with
+    // no `sorryAx` anywhere in it.
+    assert_certificate_target_builds(&out_dir.join("cert"), "straight-line certprobe");
 }
 
+/// A recursion multiplying by a large constant is certified at L3 with the
+/// `.mul` totality role (its multiplier fits the i64 band, so the plan types
+/// and lowers like any other literal); a multiplier outside the i64 band has
+/// no plan at all (`Literal BigInt`), and the producer declines it by name
+/// instead of aborting.
 #[test]
 fn certify_declines_overflowing_multiplication_recursion() {
     // No `lake` needed: this is a pure emitter fail-closed check.
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-recdecline");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/recdecline.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    // Must NOT panic / crash — a large multiplier makes the guard overflow, and
-    // the classifier declines rather than aborting the emitter.
+    let (_out_dir, manifest) = certify_fixture(
+        "tools/certkit/fixtures/recdecline.av",
+        &[],
+        "certify-recdecline",
+    );
+    // Deliberate change: `wild` (multiplier 10^13) used to be declined by the
+    // retired recursion family's overflow guard. The one grammar certifies it
+    // totally, conditional on the multiplication contract.
+    assert_certified_as(&manifest, "wild", &["recursive", "calls"], true);
+    let contracts: Vec<&str> = manifest["runtime_contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
     assert!(
-        compile.status.success(),
-        "compile --certify must not crash on an overflowing multiplier:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
+        contracts.contains(&aver::codegen::cert::INT_MUL_TOTAL_CONTRACT),
+        "a multiplying L3 recursion must be conditional on Int.mul totality: {contracts:?}"
     );
 
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
+    // The decline-without-panic case: a multiplier outside the i64 band.
+    let out_dir = temp_dir("certify-bigmul");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let source = out_dir.join("bigmul.av");
+    std::fs::write(
+        &source,
+        "module BigMul\n    intent =\n        \"A multiplier outside the i64 band.\"\n    exposes [huge]\n\n\
+         fn huge(n: Int) -> Int\n    ? \"Multiplier 10^20.\"\n    match n <= 0\n        true -> 1\n        \
+         false -> 100000000000000000000 * huge(n - 1)\n\nverify huge\n    huge(0) => 1\n",
     )
-    .expect("manifest is valid JSON");
-    let certified: Vec<&str> = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
-    let declined: Vec<&str> = manifest["source_level_only"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
+    .unwrap();
+    let (_big_dir, big) = certify_fixture(source.to_str().unwrap(), &[], "certify-bigmul-out");
     assert!(
-        !certified.contains(&"wild"),
-        "out-of-range multiplier must NOT be certified, got {certified:?}"
+        big["certified"].as_array().unwrap().is_empty(),
+        "a multiplier outside the i64 band must NOT be certified: {big:#}"
     );
-    assert!(
-        declined.contains(&"wild"),
-        "out-of-range multiplier must be declined, got {declined:?}"
+    assert_eq!(
+        big["source_level_only"],
+        serde_json::json!([{"name": "huge", "reason": "Literal BigInt"}]),
+        "the out-of-band multiplier must be declined by its MIR node"
     );
 }
 
 #[test]
 fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify recursion test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-recgen");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/recgen.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
+    let (out_dir, manifest) =
+        certify_fixture("tools/certkit/fixtures/recgen.av", &[], "certify-recgen");
     let cert_dir = out_dir.join("cert");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
-    let certified: Vec<&str> = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
-    // The audited recursion generics cover unary addition/multiplication and
-    // the exact two-argument tail-accumulator shape.
+    // Additive, constant-step, trailing-addition, multiplicative and
+    // two-argument accumulator recursions are all total plans.
     for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
-        assert!(
-            certified.contains(&name),
-            "expected {name} certified, got {certified:?}"
-        );
-    }
-    let certified_entries = manifest["certified"].as_array().unwrap();
-    for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
-        let entry = certified_entries
-            .iter()
-            .find(|entry| entry["name"] == name)
-            .unwrap();
-        assert_eq!(entry["policy"], "simulatesModelTotally");
-        assert_eq!(entry["level"], "L3");
-        assert_eq!(
-            entry["theorem"],
-            "AcceptanceSoundness.recursion_claim_discharges"
-        );
-        assert_eq!(entry["termination_witness"]["measure"]["kind"], "intNatAbs");
-        assert_eq!(entry["termination_witness"]["measure"]["param_index"], 0);
-        assert_eq!(entry["termination_witness"]["descent"], -1);
+        assert_certified_as(&manifest, name, &["recursive", "calls"], true);
     }
     let contracts = manifest["runtime_contracts"].as_array().unwrap();
-    assert!(
-        contracts
-            .iter()
-            .any(|c| { c == aver::codegen::cert::INT_ADD_TOTAL_CONTRACT })
-    );
-    assert!(
-        contracts
-            .iter()
-            .any(|c| { c == aver::codegen::cert::INT_SUB_TOTAL_CONTRACT })
-    );
-    assert!(
-        contracts
-            .iter()
-            .any(|c| { c == aver::codegen::cert::INT_MUL_CONTRACT })
-    );
-    assert!(
-        contracts
-            .iter()
-            .any(|c| { c == aver::codegen::cert::INT_MUL_TOTAL_CONTRACT })
-    );
-
-    // Load-bearing contract check: the emitted obligation selects the extra
-    // premise only for the byte-pinned multiplicative recursion.  The schema's
-    // add/sub branch itself contains no multiplication-totality binder.
-    let manifest_lean = std::fs::read_to_string(cert_dir.join("Manifest.lean")).unwrap();
-    for name in ["sumFrom", "constPlus", "backward", "countDown"] {
-        let obligation = lean_obligation_def(&manifest_lean, name);
+    for contract in [
+        aver::codegen::cert::INT_ADD_TOTAL_CONTRACT,
+        aver::codegen::cert::INT_SUB_TOTAL_CONTRACT,
+        aver::codegen::cert::INT_MUL_CONTRACT,
+        aver::codegen::cert::INT_MUL_TOTAL_CONTRACT,
+    ] {
         assert!(
-            !obligation.contains("totalityRole := .mul") && !obligation.contains("Int.mul"),
-            "{name} must retain the add/sub-only total premise surface:\n{obligation}"
+            contracts.iter().any(|c| c == contract),
+            "recgen must be conditional on `{contract}`: {contracts:?}"
         );
     }
-    let factorial_obligation = lean_obligation_def(&manifest_lean, "factorial");
-    assert!(
-        factorial_obligation.contains("totalityRole := .mul"),
-        "factorial must select the byte-checked mul-totality role:\n{factorial_obligation}"
-    );
+
+    // Load-bearing contract check: the derived totality role selects the
+    // multiplication premise only for the multiplying recursion, and the
+    // schema guards that premise by the role.
     materialize_wall(&cert_dir);
     let schema_core = std::fs::read_to_string(cert_dir.join("SchemaCore.lean")).unwrap();
-    let totality = schema_core
-        .split_once("def Obligation.holdsTotal")
-        .expect("holdsTotal definition")
-        .1;
-    let (add_sub_branch, mul_and_rest) = totality
-        .split_once("| .mul =>")
-        .expect("role-sensitive mul branch");
     assert!(
-        add_sub_branch.contains("| .addSub =>") && !add_sub_branch.contains("_hMulTot"),
-        "add/sub holdsTotal branch must have no mul-totality premise:\n{add_sub_branch}"
+        schema_core.contains("mul : role = .mul →"),
+        "HostTotal must require multiplication totality only under the `.mul` role"
     );
-    assert!(
-        mul_and_rest.contains("_hMulTot"),
-        "mul holdsTotal branch must carry the premise it consumes"
+    assert_kernel_probe_holds(
+        &cert_dir,
+        "import ArtifactCertificate\n\
+         set_option maxRecDepth 200000\n\
+         open AverCert\n\n\
+         example : AverCert.manifest.obligations.map (·.export_) =\n    \
+         [\"sumFrom\", \"constPlus\", \"backward\", \"factorial\", \"countDown\"] := by decide +kernel\n\
+         example : AverCert.manifest.obligations.map (·.totalityRole) =\n    \
+         [.addSub, .addSub, .addSub, .mul, .addSub] := by decide +kernel\n\
+         example : AverCert.manifest.obligations.map (·.policy) =\n    \
+         [.simulatesModelTotally, .simulatesModelTotally, .simulatesModelTotally,\n     \
+         .simulatesModelTotally, .simulatesModelTotally] := by decide +kernel\n",
+        "recgen totality roles",
     );
 
-    // Every supported recursion family emits only its small source-model
-    // bridge. The evaluator, lowering, and totality proofs stay in the audited
-    // wall.
-    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean")).unwrap();
-    let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean")).unwrap();
-    for name in ["sumFrom", "constPlus", "backward", "factorial", "countDown"] {
-        assert!(
-            certificate.contains(&format!("theorem {name}_recursionSemanticBridge"))
-                && !certificate.contains(&format!("{name}_wasm_certified"))
-                && !certificate.contains(&format!("{name}_wasm_total"))
-                && !certificate.contains(&format!("{name}_simulates"))
-                && !certificate.contains(&format!("{name}HostRef"))
-                && artifact_lean.contains("AcceptanceSoundness.recursionSemanticBridges data")
-                && artifact_lean.contains(&format!("CertProofs.{name}_recursionSemanticBridge")),
-            "migrated recursion emitted a bespoke proof/tripwire or missed the accept-sound side condition for {name}:\n{certificate}\n{artifact_lean}"
-        );
-    }
-    assert!(
-        !certificate.contains("factorial_wasm_certified")
-            && !certificate.contains("factorial_wasm_total")
-            && !certificate.contains("factorial_simulates")
-            && !certificate.contains("factorialHostRef")
-            && !certificate.contains("countDown_wasm_certified")
-            && !certificate.contains("countDown_wasm_total")
-            && !certificate.contains("countDown_simulates")
-            && !certificate.contains("countDownHostRef"),
-        "migrated multiplication/accumulator recursions retained bespoke proof emission:\n{certificate}"
-    );
-    // This test used to `lake build` the package here and assert the exact
-    // `#print axioms` line for each recursion bridge, `recursion_claim_
-    // discharges`, and `AverCert.Final.cert` (whitelist only, no `sorryAx`).
-    // `AverCert.Final.cert` is proved by composing every credited discharge
-    // (aver-cert/src/engine/render_project.rs `render_final`/
-    // `render_artifact_soundness`), so `#print axioms` on it is transitively
-    // the union of every bridge's axioms — exactly what `aver cert check`/
-    // `verify`'s checker-witness root audits fail-closed
-    // (aver-cert/src/verifier.rs `trusted_check`/`checker_witness`: THROWS on
-    // any axiom outside `[propext, Classical.choice, Quot.sound]`, which also
-    // rules out `sorryAx`). `sumFrom`/`constPlus`/`backward`/`factorial`/
-    // `countDown` are all confirmed `certified` above, so they are all in that
-    // closure. A green run on this exact fixture is already pinned by
-    // `cert_verify_declines_tampered_recursion_plan`'s honest-baseline check
-    // (tests/cert_verify_spec.rs), so re-paying the ~22-minute build here
-    // bought no additional coverage.
-
+    // A wrong generated SOURCE definition leaves the export certified (its
+    // model is its plan) but costs exactly its plan-equals-source bridge.
     for (name, honest, hostile) in [
         (
             "factorial",
-            "else (n * factorial__fuel fuel' (n - 1)))",
-            "else (2 * factorial__fuel fuel' (n - 1)))",
+            "else (n * factorial (n - 1)))",
+            "else (2 * factorial (n - 1)))",
         ),
         (
             "countDown",
-            "else countDown__fuel fuel' (n - 1) (acc + n))",
-            "else countDown__fuel fuel' (n - 1) (acc + 2))",
+            "else countDown (n - 1) (acc + n))",
+            "else countDown (n - 1) (acc + 2))",
         ),
     ] {
         let tampered = temp_dir(&format!("certify-hostile-{name}-definition"));
         copy_dir_all(&out_dir, &tampered);
-        let model = tampered.join("cert/RecGen.lean");
+        let model = tampered.join("cert/AverModel/RecGen.lean");
         let source = std::fs::read_to_string(&model).unwrap();
         let edited = source.replacen(honest, hostile, 1);
         assert_ne!(
@@ -2199,53 +1789,26 @@ fn certify_fueled_recursion_generality_lake_builds_kernel_clean() {
 
         let (ok, report) = check_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
         assert!(
-            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-            "wrong generated {name} definition must be caught by its semantic bridge:\n{report}"
-        );
-    }
-
-    // GuardIso: the bridges are not decorative. A unary bridge claiming the
-    // wrong parsed base and an accumulator bridge claiming the unary family
-    // must each stop the certificate from building.
-    for (name, honest, hostile) in [
-        (
-            "factorial-shape",
-            "({ base := 1, step := .inputSecond } : RecursionSoundness.RecShapeU)",
-            "({ base := 2, step := .inputSecond } : RecursionSoundness.RecShapeU)",
-        ),
-        ("countDown-shape", "refine Or.inr ?_", "refine Or.inl ?_"),
-    ] {
-        let tampered = temp_dir(&format!("certify-guardiso-{name}"));
-        copy_dir_all(&out_dir, &tampered);
-        let certificate = tampered.join("cert/Certificate.lean");
-        let source = std::fs::read_to_string(&certificate).unwrap();
-        let edited = source.replace(honest, hostile);
-        assert_ne!(
-            source, edited,
-            "{name} bridge shape changed; update the GuardIso regression"
-        );
-        std::fs::write(&certificate, edited).unwrap();
-
-        let (ok, report) = check_certificate(&tampered.join("recgen.wasm"), &tampered.join("cert"));
-        assert!(
-            !ok && report.contains("CHECK FAILED") && !report.contains("CERTIFIED"),
-            "wrong {name} must be constrained by the bridge/parsed byte shape:\n{report}"
+            ok && report.contains("5 checked exports")
+                && report.contains("source-bridges: 4 of 5 credited")
+                && report.contains(&format!(
+                    "source-bridge not credited: {name} (proof depends on sorryAx)"
+                )),
+            "a wrong {name} source definition must cost exactly its bridge:\n{report}"
         );
     }
 }
 
 #[test]
 fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify mutual-recursion test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
     // A two-member SCC (`isEven`/`isOdd`) and a three-member cycle
-    // (`rotA -> rotB -> rotC -> rotA`) exercise the plan-derived `AdmittedScc`
-    // and simultaneous source-fuel bridge at k = 2 and k = 3.
+    // (`rotA -> rotB -> rotC -> rotA`): every member is certified totally,
+    // and all members of the cycle share ONE call group in `fnPlans`.
     let cases: [(&str, &[&str]); 2] = [
         ("tools/certkit/fixtures/mutual.av", &["isEven", "isOdd"]),
         (
@@ -2255,214 +1818,69 @@ fn certify_mutual_recursion_scc_lake_builds_kernel_clean() {
     ];
 
     for (fixture, exports) in cases {
-        let out_dir = temp_dir("certify-mutual");
-        let compile = aver_command()
-            .current_dir(&repo_root)
-            .arg("compile")
-            .arg(fixture)
-            .arg("--target")
-            .arg("wasm-gc")
-            .arg("--certify")
-            .arg("-o")
-            .arg(&out_dir)
-            .output()
-            .expect("expected `aver compile --certify` to run");
-        assert!(
-            compile.status.success(),
-            "compile --certify {fixture} failed:\n{}",
-            String::from_utf8_lossy(&compile.stderr)
-        );
-
+        let (out_dir, manifest) = certify_fixture(fixture, &[], "certify-mutual");
         let cert_dir = out_dir.join("cert");
-        let manifest: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-                .expect("cert-manifest.json exists"),
-        )
-        .expect("manifest is valid JSON");
-        let certified: Vec<&str> = manifest["certified"]
-            .as_array()
-            .unwrap()
+        for name in exports {
+            assert_certified_as(&manifest, name, &["recursive", "mutual", "calls"], true);
+        }
+        let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).unwrap();
+        let groups: BTreeSet<String> = exports
             .iter()
-            .map(|c| c["name"].as_str().unwrap())
+            .map(|name| {
+                let head = format!("⟨\"{name}\", true, ");
+                let at = plans.find(&head).unwrap() + head.len();
+                plans[at..].split(',').nth(1).unwrap().trim().to_string()
+            })
             .collect();
-        // Every member of the SCC is a certified export using the same audited
-        // SCC package and its own source-model bridge.
-        for name in exports {
-            assert!(
-                certified.contains(name),
-                "expected {name} certified for {fixture}, got {certified:?}"
-            );
-        }
-        for entry in manifest["certified"].as_array().unwrap() {
-            if exports.contains(&entry["name"].as_str().unwrap()) {
-                assert_eq!(entry["policy"], "simulatesModelTotally");
-                assert_eq!(entry["level"], "L3");
-                assert_eq!(entry["termination_witness"]["measure"]["kind"], "intNatAbs");
-                assert_eq!(entry["termination_witness"]["descent"], -1);
-                assert_eq!(
-                    entry["theorem"],
-                    "AcceptanceSoundness.mutual_claim_discharges"
-                );
-            }
-        }
-
-        let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean")).unwrap();
-        let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean")).unwrap();
-        for name in exports {
-            assert!(
-                certificate.contains(&format!("theorem {name}_mutualSemanticBridge"))
-                    && !certificate.contains(&format!("{name}_simulates"))
-                    && !certificate.contains(&format!("{name}_wasm"))
-                    && artifact_lean.contains("AcceptanceSoundness.mutualSemanticBridges data")
-                    && artifact_lean.contains(&format!("CertProofs.{name}_mutualSemanticBridge")),
-                "migrated mutual export retained bespoke proof/tripwire emission or missed the accept-sound side condition: {name}\n{certificate}\n{artifact_lean}"
-            );
-        }
-        assert!(
-            !certificate.contains("native_decide"),
-            "generic mutual discharge must not emit a native-decide tripwire:\n{certificate}"
+        assert_eq!(
+            groups.len(),
+            1,
+            "all members of the cycle must share one call group in {fixture}:\n{plans}"
         );
-        // This test used to `lake build` the package here and assert the exact
-        // `#print axioms` line for each mutual bridge and `AverCert.Final.cert`
-        // (whitelist only, no `sorryAx`). Every `exports` name is confirmed
-        // `certified` above, so its bridge composes into `Final.cert`
-        // (aver-cert/src/engine/render_project.rs `render_final`), whose axiom
-        // closure is exactly what `aver cert check`/`verify`'s checker-witness
-        // root audits fail-closed (aver-cert/src/verifier.rs `trusted_check`/
-        // `checker_witness`: THROWS on any axiom outside `[propext,
-        // Classical.choice, Quot.sound]`, which also rules out `sorryAx`). A
-        // green run on this exact fixture is already pinned by
-        // `cert_verify_declines_tampered_mutual_plan`'s honest-baseline check
-        // (tests/cert_verify_spec.rs), so re-paying the build here for both
-        // `mutual.av` and `mutual3.av` bought no additional coverage.
+        assert_certificate_target_builds(&cert_dir, fixture);
     }
 }
 
 #[test]
 fn certify_verbatim_variant_dispatch_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify verbatim-variant-dispatch test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-strdispatch");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/strdispatch.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
+    // A match whose every arm is a distinct String literal: each arm reads its
+    // literal from a passive data segment the type table declares, and the
+    // wall confirms every declared segment against the data section.
+    let (out_dir, manifest) = certify_fixture(
+        "tools/certkit/fixtures/strdispatch.av",
+        &[],
+        "certify-strdispatch",
     );
-
     let cert_dir = out_dir.join("cert");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
-    let certified: Vec<&str> = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
-    // A match whose every arm is a distinct String literal is certified as a
-    // verbatim variant dispatch (`Cod := WVal`, `verbatimRepr`) over the
-    // byte-exact data-segment constants — no new representation, no schema change.
+    assert_certified_as(&manifest, "tagName", &["variants", "strings"], false);
+    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).unwrap();
+    let block = export_plan_block(&plans, "tagName");
     assert!(
-        certified.contains(&"tagName"),
-        "expected tagName certified, got {certified:?}"
-    );
-    let tag_name = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "tagName")
-        .unwrap();
-    assert_eq!(
-        tag_name["theorem"],
-        "AcceptanceSoundness.verbatim_canonical_discharges"
-    );
-    let artifact_lean =
-        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
-    assert!(
-        artifact_lean.contains("theorem verbatimSideConditions")
-            && artifact_lean.contains("AcceptanceSoundness.verbatimSemanticBridges data"),
-        "verbatim bridge must feed the accept-sound aggregate:\n{artifact_lean}"
-    );
-    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
-        .expect("Certificate.lean exists");
-    assert!(
-        !certificate.contains("tagName_wasm_certified")
-            && !certificate.contains("tagName_simulates"),
-        "verbatim dispatch must not emit bespoke proofs:\n{certificate}"
-    );
-
-    materialize_wall(&cert_dir);
-    let combined = lake_build_package(&cert_dir, "emitted verbatim-variant-dispatch cert");
-    assert!(
-        combined.contains(
-            "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
-        ),
-        "generic verbatim certificate not kernel-clean:\n{combined}"
+        block.contains(".match_") && block.contains("(.literal (.str ["),
+        "tagName's plan must dispatch to String literals:\n{block}"
     );
     assert!(
-        !combined.contains("sorryAx"),
-        "verbatim variant dispatch certificate leaked sorryAx:\n{combined}"
+        plans.contains("strSegs := [(["),
+        "the type table must declare the literal data segments:\n{plans}"
     );
+    assert_certificate_target_builds(&cert_dir, "verbatim variant dispatch");
 }
 
 #[test]
 fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-stringeq");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/stringeq.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "compile --certify failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+    let (out_dir, manifest) = certify_fixture(
+        "tools/certkit/fixtures/stringeq.av",
+        &[],
+        "certify-stringeq",
     );
-
     let cert_dir = out_dir.join("cert");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
     assert_plans_lean_is_the_only_public_plan_data(&cert_dir, &manifest);
-    let certified: Vec<&str> = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
-    assert!(
-        certified.contains(&"quoteOrSelf"),
-        "expected quoteOrSelf certified, got {certified:?}"
-    );
+    assert_certified_as(&manifest, "quoteOrSelf", &["strings"], false);
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
         .unwrap()
@@ -2473,150 +1891,54 @@ fn certify_string_eq_host_contract_lake_builds_kernel_clean() {
         contracts.contains(&aver::codegen::cert::STRING_EQ_CONTRACT),
         "String.eq host contract missing from manifest, got {contracts:?}"
     );
-    let quote_class = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"].as_str() == Some("quoteOrSelf"))
-        .and_then(|c| c["class"].as_str())
-        .unwrap_or("<missing>");
+    // The String.eq helper is classified and declared in the subject.
+    let string_roles = manifest["stringHostRoles"].as_array().unwrap();
     assert_eq!(
-        quote_class, "verbatim-string-eq",
-        "quoteOrSelf should render its inner class, got {quote_class}"
+        string_roles.len(),
+        1,
+        "one String.eq helper: {string_roles:?}"
     );
-    let quote_entry = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"].as_str() == Some("quoteOrSelf"))
-        .expect("quoteOrSelf manifest entry exists");
-    assert_eq!(
-        quote_entry["theorem"],
-        "AcceptanceSoundness.stringEq_canonical_discharges"
-    );
-    let plans_lean =
-        std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    assert_eq!(string_roles[0]["role"], "stringEq");
+    let helper = string_roles[0]["function_index"].as_u64().unwrap();
+    let manifest_lean = std::fs::read_to_string(cert_dir.join("Manifest.lean")).unwrap();
     assert!(
-        plans_lean.contains("def quoteOrSelfStringEqSymPlan : SymRawPlan"),
-        "String.eq cert should render a source-level SymPlan:\n{plans_lean}"
+        manifest_lean.contains(&format!("stringHostRoles := [({helper}, .eq)]")),
+        "the Lean subject must declare the same String.eq helper:\n{manifest_lean}"
     );
+    // The plan keeps the needle, the hit literal and the default input.
+    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).unwrap();
+    let block = export_plan_block(&plans, "quoteOrSelf");
     assert!(
-        plans_lean.contains("def quoteOrSelfStringEqPlan : StringEqRawPlan"),
-        "String.eq cert should render a Lean-data StringEqRawPlan:\n{plans_lean}"
+        block.contains("(.litStr [34])")
+            && block.contains("(.literal (.str [92, 34]))")
+            && block.contains("(.cons .wild (.local 0) .nil)"),
+        "String.eq plan must preserve the needle, the hit literal and the default:\n{block}"
     );
     assert!(
-        plans_lean.contains(".constStringBytes [34]")
-            && plans_lean.contains(".prim .stringEq [0, 1]")
-            && plans_lean.contains(".constStringBytes [92, 34]"),
-        "String.eq source plan DATA should preserve the needle, comparison and hit literal:\n{plans_lean}"
+        plans.contains("strSegs := [([34], 0), ([92, 34], 1)]"),
+        "both literals must be declared against their data segments:\n{plans}"
     );
-    assert!(
-        plans_lean.contains("needle := ({ dataIdx := 0, bytes := [34] } : StringEqChunk)")
-            && plans_lean
-                .contains("hit := .literal ({ dataIdx := 1, bytes := [92, 34] } : StringEqChunk)")
-            && plans_lean.contains("default := .input"),
-        "String.eq target plan DATA should preserve its byte/data-segment bindings:\n{plans_lean}"
-    );
-    // That the SymPlan matches the byte-bound equality plan and that the plan
-    // passes the Lean-side structural checker are no longer restated in
-    // `Plans.lean`; the acceptance predicates state them, so the manifest pins
-    // below plus `check_certificate` are what carry those facts.
-    let manifest_lean =
-        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
-    assert!(
-        manifest_lean.contains("(\"quoteOrSelf\", Plans.quoteOrSelfStringEqSymPlan)"),
-        "manifest should pin the String.eq source SymPlan list:\n{manifest_lean}"
-    );
-    assert!(
-        manifest_lean
-            .contains("stringEqPlans := [(\"quoteOrSelf\", Plans.quoteOrSelfStringEqPlan)]"),
-        "manifest should pin the String.eq plan list:\n{manifest_lean}"
-    );
-    let artifact_lean =
-        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
-    assert!(
-        artifact_lean.contains("def stringEqClaims : List AverCert.AcceptedArtifact.StringEqClaim"),
-        "artifact should carry source-level String.eq claims:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("symPlan := AverCert.Plans.quoteOrSelfStringEqSymPlan"),
-        "String.eq artifact claim should carry the source-level SymPlan:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("stringEqFuncIdx :=") && artifact_lean.contains("stringTy :="),
-        "String.eq artifact claim should carry lowering indices:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("theorem stringEqSideConditions")
-            && artifact_lean.contains("AcceptanceSoundness.stringEqSemanticBridges data"),
-        "String.eq bridge must feed the accept-sound aggregate:\n{artifact_lean}"
-    );
-    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
-        .expect("Certificate.lean exists");
-    assert!(
-        !certificate.contains("quoteOrSelf_wasm_certified")
-            && !certificate.contains("quoteOrSelf_simulates"),
-        "String.eq must not emit bespoke proofs:\n{certificate}"
-    );
-
-    // This test used to `lake build` this same package here and assert
-    // `AverCert.Final.cert` prints only the core axiom whitelist with no
-    // `sorryAx`. That is exactly what
-    // `aver cert check`/`verify` audits fail-closed on every run
-    // (aver-cert/src/verifier.rs: `trusted_check` builds the package,
-    // elaborates the checker witness, and its `checked` root THROWS on any
-    // axiom outside `[propext, Classical.choice, Quot.sound]`, which also
-    // rules out `sorryAx`). A green run on this exact fixture is already
-    // pinned by `cert_verify_declines_tampered_string_eq_helper_shape`'s
-    // honest-baseline check (tests/cert_verify_spec.rs), so re-paying the
-    // build here bought no additional coverage.
+    // That the plan types, lowers to exactly the code entry and reads its
+    // literals from the declared segments is what acceptance proves; a green
+    // run on this fixture is pinned by
+    // `cert_verify_declines_tampered_string_eq_helper_shape`'s honest baseline.
 }
 
 #[test]
 fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify String.concat host-contract test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-stringconcat");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/stringconcat.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "compile --certify failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+    let (out_dir, manifest) = certify_fixture(
+        "tools/certkit/fixtures/stringconcat.av",
+        &[],
+        "certify-stringconcat",
     );
-
     let cert_dir = out_dir.join("cert");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
     assert_plans_lean_is_the_only_public_plan_data(&cert_dir, &manifest);
-    let certified: Vec<&str> = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
-    assert!(
-        certified.contains(&"shout"),
-        "expected shout certified, got {certified:?}"
-    );
+    assert_certified_as(&manifest, "shout", &["strings"], false);
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
         .unwrap()
@@ -2627,239 +1949,122 @@ fn certify_string_concat_host_contract_lake_builds_kernel_clean() {
         contracts.contains(&aver::codegen::cert::STRING_CONCAT_CONTRACT),
         "String.concat host contract missing from manifest, got {contracts:?}"
     );
-    let shout_entry = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"].as_str() == Some("shout"))
-        .expect("shout manifest entry");
+    let string_roles = manifest["stringHostRoles"].as_array().unwrap();
     assert_eq!(
-        shout_entry["theorem"],
-        "AcceptanceSoundness.stringConcat_canonical_discharges"
+        string_roles
+            .iter()
+            .filter(|entry| entry["role"] == "stringConcat")
+            .count(),
+        1,
+        "one String.concat helper: {string_roles:?}"
     );
-    let shout_class = shout_entry["class"].as_str().unwrap_or("<missing>");
-    assert_eq!(
-        shout_class, "verbatim-string-concat",
-        "shout should render its concat class, got {shout_class}"
-    );
-    let plans_lean =
-        std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).unwrap();
+    let block = export_plan_block(&plans, "shout");
     assert!(
-        plans_lean.contains("def shoutStringConcatSymPlan : SymRawPlan"),
-        "String.concat cert should render a source-level SymPlan:\n{plans_lean}"
-    );
-    assert!(
-        plans_lean.contains(".constStringBytes [33]")
-            && plans_lean.contains(".prim .stringConcat [0, 1]"),
-        "String.concat SymPlan should expose source-level string concat:\n{plans_lean}"
-    );
-    // The source checker's verdict on the SymPlan and its match to the
-    // byte-bound concat plan are no longer restated in `Plans.lean` — the
-    // acceptance predicates state them, and `check_certificate` is what makes
-    // them load-bearing.
-    assert!(
-        plans_lean.contains("def shoutStringConcatPlan : StringConcatRawPlan"),
-        "String.concat cert should render a Lean-data StringConcatRawPlan:\n{plans_lean}"
+        block.contains("(.binOp .add (.local 0) (.literal (.str [33])))"),
+        "shout's plan must concatenate the literal suffix:\n{block}"
     );
     assert!(
-        plans_lean.contains("suffixes := [({ dataIdx := 0, bytes := [33] } : StringConcatChunk)]"),
-        "String.concat Lean plan should expose the literal suffix bytes and data segment binding:\n{plans_lean}"
+        plans.contains("strSegs := [([33], 0)]") && plans.contains("strVec := some "),
+        "the suffix literal and the concatenation container must be declared:\n{plans}"
     );
-    let manifest_lean =
-        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
-    assert!(
-        manifest_lean.contains("(\"shout\", Plans.shoutStringConcatSymPlan)"),
-        "manifest should pin the String.concat source SymPlan list:\n{manifest_lean}"
-    );
-    assert!(
-        manifest_lean.contains("stringConcatPlans := [(\"shout\", Plans.shoutStringConcatPlan)]"),
-        "manifest should pin the String.concat plan list:\n{manifest_lean}"
-    );
-    let artifact_lean =
-        std::fs::read_to_string(cert_dir.join("Artifact.lean")).expect("Artifact.lean exists");
-    assert!(
-        artifact_lean
-            .contains("def stringConcatClaims : List AverCert.AcceptedArtifact.StringConcatClaim"),
-        "artifact should carry source-level String.concat claims:\n{artifact_lean}"
-    );
-    assert!(
-        !artifact_lean.contains("plan := AverCert.Plans.shoutStringConcatPlan"),
-        "String.concat artifact claim should not duplicate the target StringConcatRawPlan:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("symPlan := AverCert.Plans.shoutStringConcatSymPlan"),
-        "String.concat artifact claim should carry the source-level SymPlan:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("concatFuncIdx :=") && artifact_lean.contains("resultTy :="),
-        "String.concat artifact claim should carry lowering indices:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("theorem stringConcatClaim0ExportFuncType")
-            && artifact_lean.contains("theorem stringConcatClaim0HelperFuncType"),
-        "String.concat must carry export/helper function-type proof leaves:\n{artifact_lean}"
-    );
-    assert!(
-        artifact_lean.contains("theorem stringConcatClaim0Face")
-            && artifact_lean.contains("AverCert.StandardFace.stringConcatDeclaredFace"),
-        "String.concat must carry its semantic standard face:\n{artifact_lean}"
-    );
-    let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
-        .expect("Certificate.lean exists");
-    assert!(
-        !certificate.contains("shout_wasm_certified") && !certificate.contains("shout_simulates"),
-        "String.concat must not emit bespoke proofs:\n{certificate}"
-    );
-
-    // This test used to `lake build` this same package here and assert
-    // `AverCert.Final.cert` prints only the core axiom whitelist with no
-    // `sorryAx`. That is exactly what `aver cert check`/`verify` audits
-    // fail-closed on every run (aver-cert/src/verifier.rs: `trusted_check`
-    // builds the package, elaborates the checker witness, and its `checked`
-    // root THROWS on any axiom outside `[propext, Classical.choice,
-    // Quot.sound]`, which also rules out `sorryAx`). A green run on this
-    // exact fixture is already pinned by
-    // `cert_verify_declines_tampered_string_concat_helper_shape`'s
-    // honest-baseline check (tests/cert_verify_spec.rs), so re-paying the
-    // build here bought no additional coverage.
+    assert_certificate_target_builds(&cert_dir, "String.concat host contract");
 }
 
 #[test]
 fn certify_composition_fixture_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify composition test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-compose");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/compose.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
+    let (out_dir, manifest) =
+        certify_fixture("tools/certkit/fixtures/compose.av", &[], "certify-compose");
     let cert_dir = out_dir.join("cert");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
-    // `quad` calls `double` twice: the cross-function composition class carries
-    // the whole call closure in one shared code table and cites the callee.
-    let certified: Vec<&str> = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
+    // `quad` calls `double` twice, and `hex16` calls `quad` twice: a chain
+    // calling a chain. Every call reaches a planned function of an EARLIER
+    // call group, and every callee is itself byte-checked.
+    assert_certified_as(&manifest, "double", &[], false);
+    assert_certified_as(&manifest, "quad", &["calls"], false);
+    assert_certified_as(&manifest, "hex16", &["calls"], false);
+    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).unwrap();
     assert!(
-        certified.contains(&"quad"),
-        "expected quad certified (composition), got {certified:?}"
+        export_plan_block(&plans, "quad")
+            .contains("(.call (.fn 1) [(.call (.fn 1) [(.local 0)])])")
+            && export_plan_block(&plans, "hex16")
+                .contains("(.call (.fn 2) [(.call (.fn 2) [(.local 0)])])"),
+        "the composition plans must call their callees by function index:\n{plans}"
     );
-    // A chain calling a chain (hex16 -> quad -> double) must certify through
-    // the same shared table — this is the nested-composition coverage the
-    // review asked to lock in.
-    assert!(
-        certified.contains(&"hex16"),
-        "expected hex16 certified (nested composition), got {certified:?}"
-    );
-    let class = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"] == "quad")
-        .and_then(|c| c["class"].as_str())
-        .unwrap_or("");
-    assert_eq!(class, "cross-function-composition", "wrong class for quad");
-    materialize_wall(&cert_dir);
-    let combined = lake_build_package(&cert_dir, "emitted composition cert");
-    // Kernel-clean: the caller theorem cites its callee's simulation lemma and
-    // stays on the core whitelist; no `sorryAx` leaks through the composition.
-    assert!(
-        combined.contains(
-            "quad_compositionSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
-        ),
-        "composition certificate theorem not kernel-clean:\n{combined}"
-    );
-    assert!(
-        !combined.contains("sorryAx"),
-        "composition certificate leaked sorryAx:\n{combined}"
-    );
+    assert_certificate_target_builds(&cert_dir, "composition");
 }
 
-/// Non-recursive ADT witness fixtures, as `(source, prefix, expected exports)`.
+/// Non-recursive ADT witness fixtures, as `(source, prefix, expected exports
+/// with their facets)`.
 ///
-/// Each entry compiles its own certificate package and `lake build`s it, so the
-/// list used to be ten full Lean builds run back to back inside a single test —
-/// the longest serial chain in the certify suite and the reason its `rest` lane
-/// was the slowest one left after the hostile-model split.
+/// Each entry compiles its own certificate package and `lake build`s its
+/// acceptance root, so the list used to be ten full Lean builds run back to
+/// back inside a single test — the longest serial chain in the certify suite.
 ///
 /// This list is the single source of truth for which fixtures the gate covers,
 /// and it deliberately stays a list. The shard tests below select entries by
 /// `idx % NONRECURSIVE_ADT_WITNESS_SHARDS`, never by name, so a fixture
 /// appended here is automatically exercised by exactly one existing shard: no
 /// new test function to write, no CI filter to update, nothing to forget.
-const NONRECURSIVE_ADT_WITNESS_CASES: &[(&str, &str, &[&str])] = &[
+const NONRECURSIVE_ADT_WITNESS_CASES: &[(&str, &str, &[(&str, &[&str])])] = &[
     (
         "tools/certkit/fixtures/opteval.av",
         "opteval",
-        &["mk", "eval"],
+        &[("mk", &["variants"]), ("eval", &["variants"])],
     ),
-    ("examples/core/user_record.av", "user-record", &["greet"]),
+    (
+        "examples/core/user_record.av",
+        "user-record",
+        &[("greet", &["records"]), ("isAdult", &["records"])],
+    ),
     (
         "tools/certkit/fixtures/tupleproj.av",
         "tuple-proj",
-        &["pairFst", "pairSnd"],
+        &[("pairFst", &["records"]), ("pairSnd", &["records"])],
     ),
     (
         "tools/certkit/fixtures/widenedmatch.av",
         "widened-match",
-        &["boxInt"],
+        &[("boxInt", &["variants"])],
     ),
     (
         "tools/certkit/fixtures/rangepred.av",
         "range-pred",
-        &["inAsciiDigit"],
+        &[("inAsciiDigit", &[])],
     ),
     (
         "tools/certkit/fixtures/verbatimwiden.av",
         "verbatim-widen",
-        &["wrapItems"],
+        &[("wrapItems", &["variants"])],
     ),
     (
         "tools/certkit/fixtures/f64verbatim.av",
         "f64-verbatim",
-        &["floatOrZero"],
+        &[("floatOrZero", &["variants", "floats"])],
     ),
-    // Out-of-template variant dispatch: four constructors, mixed arm
-    // semantics (negation, offset addition, identity, non-zero default) —
-    // provable only through the structural walker, not a shape template.
+    // Four constructors, mixed arm semantics (negation, offset addition,
+    // identity, non-zero default).
     (
         "tools/certkit/fixtures/signalgauge.av",
         "signal-gauge",
-        &["gauge"],
+        &[("gauge", &["variants"])],
     ),
     (
         "tools/certkit/fixtures/intdispatchgen.av",
         "int-dispatch-gen",
-        &["boxInt", "gauge"],
+        &[("boxInt", &["variants"]), ("gauge", &["variants"])],
     ),
     // Payload-first subtraction, constant-first addition, and payload
     // variants elided into the wildcard default.
-    ("tools/certkit/fixtures/meter.av", "meter", &["readout"]),
+    (
+        "tools/certkit/fixtures/meter.av",
+        "meter",
+        &[("readout", &["variants"])],
+    ),
 ];
 
 /// How many parallel shards `NONRECURSIVE_ADT_WITNESS_CASES` is spread over:
@@ -2874,12 +2079,10 @@ fn assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(shard: usize) 
             && NONRECURSIVE_ADT_WITNESS_SHARDS <= NONRECURSIVE_ADT_WITNESS_CASES.len(),
         "shard {shard} of {NONRECURSIVE_ADT_WITNESS_SHARDS} covers no ADT witness fixture: keep the shard count at most the list length, one test function per shard"
     );
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify ADT test: `lake` not available");
         return;
     }
-
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     // Index-sharded rather than name-selected: every entry of the list lands in
     // exactly one shard by construction, including entries added later.
@@ -2887,161 +2090,11 @@ fn assert_nonrecursive_adt_witness_shard_lake_builds_kernel_clean(shard: usize) 
         if idx % NONRECURSIVE_ADT_WITNESS_SHARDS != shard {
             continue;
         }
-
-        let out_dir = temp_dir(prefix);
-        let compile = aver_command()
-            .current_dir(&repo_root)
-            .arg("compile")
-            .arg(input)
-            .arg("--target")
-            .arg("wasm-gc")
-            .arg("--certify")
-            .arg("-o")
-            .arg(&out_dir)
-            .output()
-            .expect("expected `aver compile --certify` to run");
-        assert!(
-            compile.status.success(),
-            "compile --certify failed for {input}:\n{}",
-            String::from_utf8_lossy(&compile.stderr)
-        );
-
-        let cert_dir = out_dir.join("cert");
-        let manifest: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-                .expect("cert-manifest.json exists"),
-        )
-        .expect("manifest is valid JSON");
-        let certified: Vec<&str> = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|c| c["name"].as_str().unwrap())
-            .collect();
-        for &name in expected {
-            assert!(
-                certified.contains(&name),
-                "expected {name} certified for {input}, got {certified:?}"
-            );
+        let (out_dir, manifest) = certify_fixture(input, &[], prefix);
+        for &(name, facets) in expected {
+            assert_certified_as(&manifest, name, facets, false);
         }
-        let dispatch_entries = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry["class"].as_str(),
-                    Some("variant-dispatch" | "widened-int-match")
-                )
-            })
-            .collect::<Vec<_>>();
-        let model_construct_entries = manifest["certified"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|entry| {
-                entry["class"] == "adt-constructor"
-                    && entry["theorem"] == "AcceptanceSoundness.construct_canonical_discharges"
-            })
-            .collect::<Vec<_>>();
-        if !model_construct_entries.is_empty() {
-            let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean"))
-                .expect("Artifact.lean exists");
-            let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
-                .expect("Certificate.lean exists");
-            for entry in &model_construct_entries {
-                let name = entry["name"].as_str().unwrap();
-                assert!(
-                    artifact_lean.contains("AverCert.StandardFace.constructNamedFace")
-                        && artifact_lean.contains(&format!("exportName := \"{name}\"")),
-                    "construct-with-model must carry its declared-envelope face for {name}:\n{artifact_lean}"
-                );
-                assert!(
-                    !certificate.contains(&format!("theorem {name}_constructSemanticBridge"))
-                        && !certificate.contains(&format!("{name}_wasm_certified"))
-                        && !certificate.contains(&format!("{name}_simulates")),
-                    "construct-with-model must not emit a bespoke bridge for {name}:\n{certificate}"
-                );
-            }
-        }
-        if !dispatch_entries.is_empty() {
-            let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean"))
-                .expect("Artifact.lean exists");
-            let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
-                .expect("Certificate.lean exists");
-            for entry in &dispatch_entries {
-                let name = entry["name"].as_str().unwrap();
-                assert_eq!(
-                    entry["theorem"],
-                    "AcceptanceSoundness.intDispatch_canonical_discharges"
-                );
-                assert!(
-                    artifact_lean.contains("AverCert.StandardFace.intDispatchDeclaredFace")
-                        && artifact_lean.contains(&format!("exportName := \"{name}\"")),
-                    "dispatch must carry its declared-envelope face for {name}:\n{artifact_lean}"
-                );
-                assert!(
-                    !certificate.contains(&format!("theorem {name}_intDispatchSemanticBridge"))
-                        && !certificate.contains(&format!("{name}_wasm_certified"))
-                        && !certificate.contains(&format!("{name}_simulates")),
-                    "dispatch must not emit a bespoke bridge for {name}:\n{certificate}"
-                );
-            }
-        }
-        if prefix == "tuple-proj" {
-            let entries = manifest["certified"].as_array().unwrap();
-            for name in ["pairFst", "pairSnd"] {
-                let entry = entries.iter().find(|entry| entry["name"] == name).unwrap();
-                assert_eq!(
-                    entry["theorem"], "AcceptanceSoundness.fieldProjection_canonical_discharges",
-                    "projection metadata must name the audited generic leaf theorem"
-                );
-            }
-            let certificate = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
-                .expect("Certificate.lean exists");
-            assert!(
-                !certificate.contains("pairFst_wasm_certified")
-                    && !certificate.contains("pairFst_simulates")
-                    && !certificate.contains("pairSnd_wasm_certified")
-                    && !certificate.contains("pairSnd_simulates"),
-                "field projections must not emit bespoke proofs:\n{certificate}"
-            );
-            let artifact_lean = std::fs::read_to_string(cert_dir.join("Artifact.lean"))
-                .expect("Artifact.lean exists");
-            for name in ["pairFst", "pairSnd"] {
-                assert!(
-                    artifact_lean
-                        .contains("AcceptanceSoundness.fieldProjectionSemanticBridges data")
-                        && artifact_lean.contains(&format!("exportName := \"{name}\"")),
-                    "field projection must feed the audited accept-sound side condition for {name}:\n{artifact_lean}"
-                );
-            }
-        }
-        materialize_wall(&cert_dir);
-        let combined = lake_build_package(&cert_dir, &format!("emitted ADT cert for {input}"));
-        assert!(
-            !combined.contains("sorryAx"),
-            "ADT certificate leaked sorryAx for {input}:\n{combined}"
-        );
-        if !model_construct_entries.is_empty() {
-            assert!(
-                combined.contains(
-                    "'AcceptanceSoundness.construct_canonical_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
-                ),
-                "audited construct discharge changed axiom surface:\n{combined}"
-            );
-        }
-        if prefix == "tuple-proj"
-            || !dispatch_entries.is_empty()
-            || !model_construct_entries.is_empty()
-        {
-            assert!(
-                combined.contains(
-                    "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
-                ),
-                "generic field-projection/dispatch/construct holds proofs changed axiom surface:\n{combined}"
-            );
-        }
+        assert_certificate_target_builds(&out_dir.join("cert"), &format!("ADT cert for {input}"));
     }
 }
 
@@ -3104,55 +2157,18 @@ fn certify_adt_witness_shards_all_have_test_functions() {
 /// Single-use let-renamed certificate shapes: a let-renamed Option match
 /// (`named`), a let-named integer increment (`addTwoNamed`), and a let-named
 /// comparison feeding the branch (`inRangeNamed`). The MIR optimizer performs
-/// no copy propagation, so each keeps its `Let` node; the plan producer
-/// inlines the proven single-use binding at its use site. All three must
-/// certify as expression fragments and the emitted package must close under
-/// lake.
+/// no copy propagation, so each keeps its `Let` node; all three must certify
+/// and the emitted package must close under lake.
 #[test]
 fn certify_let_named_shapes_certify_and_lake_build() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-letnamed");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/letnamed.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "compile --certify letnamed failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+    let (out_dir, manifest) = certify_fixture(
+        "tools/certkit/fixtures/letnamed.av",
+        &[],
+        "certify-letnamed",
     );
-
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
-    let classes: BTreeMap<String, String> = manifest["certified"]
-        .as_array()
-        .expect("certified report is an array")
-        .iter()
-        .map(|entry| {
-            (
-                entry["name"].as_str().unwrap().to_string(),
-                entry["class"].as_str().unwrap().to_string(),
-            )
-        })
-        .collect();
-    for name in ["named", "addTwoNamed", "inRangeNamed"] {
-        assert_eq!(
-            classes.get(name).map(String::as_str),
-            Some("expr-fragment-v1"),
-            "{name} must certify through the plan path; manifest classes: {classes:?}"
-        );
-    }
+    assert_certified_as(&manifest, "named", &["variants"], false);
+    assert_certified_as(&manifest, "addTwoNamed", &[], false);
+    assert_certified_as(&manifest, "inRangeNamed", &[], false);
     assert!(
         manifest["source_level_only"]
             .as_array()
@@ -3160,148 +2176,73 @@ fn certify_let_named_shapes_certify_and_lake_build() {
         "no let-named shape may decline to source-level-only: {manifest:#}"
     );
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping letnamed lake build: `lake` not available");
         return;
     }
     assert_certificate_target_builds(&out_dir.join("cert"), "let-named shapes");
 }
 
-/// Arity-3 integer/Bool expression fragment through the audited generic
-/// bridge: three Int params, a branch on the first and a constant comparison
-/// of the second or third (three comparisons total — each adds a `by_cases`,
-/// so goal count stays at 2^3). The Lean wall is n-ary throughout
-/// (`FragParams.denote` right-nested products); this pins the renderer's
-/// generalized source model (`fun p => f p.1 p.2.1 p.2.2`) and product
-/// unpacking, and the package must close under lake.
+/// Arity-3 Int/Bool plan: three Int params, a branch on the first and a
+/// constant comparison of the second or third. The plan grammar is n-ary
+/// throughout; this pins the three-parameter signature, the three-argument
+/// source bridge, and that the package closes under lake.
 #[test]
 fn certify_arity_three_fragment_certifies_and_lake_builds() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-arity3");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/arity3.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
+    let (out_dir, manifest) =
+        certify_fixture("tools/certkit/fixtures/arity3.av", &[], "certify-arity3");
+    assert_certified_as(&manifest, "tripleCheck", &[], false);
+    let plans = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean"))
+        .expect("Plans.lean exists");
     assert!(
-        compile.status.success(),
-        "compile --certify arity3 failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+        export_plan_block(&plans, "tripleCheck").contains("sig := ⟨[.int, .int, .int], .bool⟩"),
+        "tripleCheck's plan must take three Int parameters:\n{plans}"
     );
-
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
-    let triple = manifest["certified"]
+    let bridge = manifest["sourceBridges"]
         .as_array()
-        .expect("certified report is an array")
+        .unwrap()
         .iter()
-        .find(|entry| entry["name"] == "tripleCheck")
-        .unwrap_or_else(|| panic!("tripleCheck must certify: {manifest:#}"));
-    assert_eq!(triple["class"], "expr-fragment-v1");
-    let manifest_lean = std::fs::read_to_string(out_dir.join("cert").join("Manifest.lean"))
-        .expect("Manifest.lean exists");
-    assert!(
-        manifest_lean.contains("model := fun p => Arity3Probe.tripleCheck p.1 p.2.1 p.2.2"),
-        "arity-3 obligation must uncurry over the right-nested product:\n{manifest_lean}"
-    );
-    let certificate = std::fs::read_to_string(out_dir.join("cert").join("Certificate.lean"))
-        .expect("Certificate.lean exists");
-    assert!(
-        certificate.contains("rcases p with ⟨a0, a1, a2⟩"),
-        "arity-3 bridge must unpack the right-nested product domain:\n{certificate}"
+        .find(|entry| entry["export"] == "tripleCheck")
+        .unwrap_or_else(|| panic!("tripleCheck must carry a source bridge: {manifest:#}"));
+    assert_eq!(
+        bridge["params"],
+        serde_json::json!([{"kind": "int"}, {"kind": "int"}, {"kind": "int"}]),
+        "the bridge must decode all three parameters"
     );
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping arity3 lake build: `lake` not available");
         return;
     }
-    assert_certificate_target_builds(&out_dir.join("cert"), "arity-3 fragment");
+    assert_certificate_target_builds(&out_dir.join("cert"), "arity-3 plan");
 }
 
 /// The s33 heap-type boundary: 16 nominal sum roots plus 46 user variant
 /// structs push the Int carrier to wasm type index 64, the first index whose
-/// signed s33 encoding (`c0 00`)
-/// differs from unsigned LEB (`40`). The recursion plan claim binds the
-/// carrier index inside local declarations, the value-if block type and the
-/// declared function type, so a lowerer that emitted unsigned LEB would fail
-/// its own byte-equality examples here.
+/// signed s33 encoding (`c0 00`) differs from unsigned LEB (`40`). The plan's
+/// lowering writes the carrier index inside local declarations, block types
+/// and the declared function type, so a lowerer that emitted unsigned LEB
+/// would fail its own byte equality here.
 #[test]
 fn certify_carrier_at_type_index_64_lake_builds_kernel_clean() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping s33 boundary test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-manytypes");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/manytypes.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
+    let (out_dir, manifest) = certify_fixture(
+        "tools/certkit/fixtures/manytypes.av",
+        &[],
+        "certify-manytypes",
     );
-
-    let cert_dir = out_dir.join("cert");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
     assert_eq!(
         manifest["carrier_type_index"].as_u64(),
         Some(64),
         "fixture must pin the carrier exactly at the s33 boundary index 64; \
          adjust the fixture's variant count if the emitter's type layout changed"
     );
-    let sum_big = manifest["certified"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "sumBig")
-        .unwrap();
-    assert_eq!(sum_big["policy"], "simulatesModelTotally");
-    assert_eq!(sum_big["level"], "L3");
-    assert_eq!(
-        sum_big["theorem"],
-        "AcceptanceSoundness.recursion_claim_discharges"
-    );
-    materialize_wall(&cert_dir);
-    let combined = lake_build_package(&cert_dir, "the s33 boundary cert");
-    assert!(
-        combined.contains(
-            "'CertProofs.sumBig_recursionSemanticBridge' depends on axioms: [propext, Classical.choice, Quot.sound]"
-        ) && combined.contains(
-            "'AcceptanceSoundness.recursion_claim_discharges' depends on axioms: [propext, Classical.choice, Quot.sound]"
-        ) && combined.contains(
-            "'AverCert.Final.cert' depends on axioms: [propext, Classical.choice, Quot.sound]"
-        ),
-        "boundary certificate not kernel-clean:\n{combined}"
-    );
-    assert!(
-        !combined.contains("sorryAx"),
-        "boundary certificate leaked sorryAx:\n{combined}"
-    );
+    assert_certified_as(&manifest, "sumBig", &["recursive", "calls"], true);
+    assert_certificate_target_builds(&out_dir.join("cert"), "the s33 boundary cert");
 }
 
 /// A module with no Int carrier certifies exactly its carrier-free classes and
@@ -3427,49 +2368,30 @@ fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
     assert!(
-        manifest_lean.contains("hostRoleTable := none,"),
+        manifest_lean.contains("hostRoleTable := (none : Option CertDecode.AddSub.Roles)"),
         "the Lean manifest must declare the absent host-role table as `none`"
     );
+    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
+    assert!(
+        plans.contains("carrier := none, mag := none"),
+        "the type table must declare the absent carrier:\n{plans}"
+    );
 
-    // The reviewed new fact: both String concatenations certify, in the exact
-    // carrier-free class. `string-concat-v1` reads no carrier and cites no arith
-    // role, so it is the one family that lowers in this state.
-    let classes: BTreeMap<String, String> = manifest["certified"]
-        .as_array()
-        .expect("certified report is an array")
-        .iter()
-        .map(|c| {
-            (
-                c["name"].as_str().expect("entry has a name").to_string(),
-                c["class"].as_str().expect("entry has a class").to_string(),
-            )
-        })
-        .collect();
+    // Both String concatenations certify: their plans read no carrier and
+    // lower to no arithmetic helper call.
     for export in ["greet", "shout"] {
-        assert_eq!(
-            classes.get(export).map(String::as_str),
-            Some("verbatim-string-concat"),
-            "`{export}` must certify as the carrier-free String.concat class, got \
-             certified={classes:?} declared={declared:?}"
-        );
+        assert_certified_as(&manifest, export, &["strings"], false);
     }
-
-    // The original tripwire's intent, preserved: every class that cites an
-    // arith host role stays impossible here. An admitted arith table requires
-    // `carrierState` to name a carrier struct, and this module's type section
-    // names none, so none of these can appear however the classifier changes.
-    const INTEGER_FAMILY_CLASSES: &[&str] = &[
-        "self-recursive",
-        "multi-argument self-recursive",
-        "mutual-recursive",
-        "int-dispatch",
-        "cross-function-composition",
-    ];
-    for (name, class) in &classes {
+    // The original tripwire's intent, preserved: no plan in a carrierless
+    // module may use Int arithmetic, since the absent role table lowers every
+    // arithmetic call to an index no code entry encodes.
+    for export in ["greet", "shout"] {
+        let block = export_plan_block(&plans, export);
         assert!(
-            !INTEGER_FAMILY_CLASSES.contains(&class.as_str()),
-            "`{name}` certified as `{class}` in a module with no Int carrier; \
-             an integer-family class here is a false positive until reviewed"
+            [".int ", ".int]", ".int,", ".int)"]
+                .iter()
+                .all(|int| !block.contains(int)),
+            "`{export}` must not mention an Int in a carrierless module:\n{block}"
         );
     }
 
@@ -3477,54 +2399,29 @@ fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
         !certified.contains("main"),
         "`main` is an effectful zero-argument export and must not certify"
     );
-    // `main` prints. That is what stops it being a pure simulation of the
-    // source model, and it is what the report must say: the parameter count it
-    // used to blame was never the blocker, since a zero-argument export with no
-    // effects declines for its arity only when nothing else applies.
+    // `main` prints. That is what stops it being a pure plan, and it is what
+    // the report must say.
     assert_eq!(
         declared.get("main").map(String::as_str),
-        Some(
-            "calls the host capability `aver.console_print`; \
-             certified templates simulate pure bodies, never effects"
-        ),
+        Some("fn declares effects"),
         "`main` must decline for the effect it performs, not for its parameter \
          count and not for the missing Int helper"
     );
 }
 
-/// Each declined export must be told what is actually stopping it. The Fibonacci
-/// example carries one export per blocker the classifier can distinguish, so it
-/// pins the whole vocabulary at once — and in particular pins that a parameter
-/// count is reported for `fibTR`, whose body really is a pure three-argument
-/// recursion, and for nothing else here.
+/// Each declined export must be told what is actually stopping it. The plan
+/// printer declines by naming the MIR node it has no grammar for (a builtin,
+/// a pattern, an operator, an interpolation part), the producer declines a
+/// plan that does not type or a call to an unplanned function by saying so,
+/// and an effectful function by its effects. The Fibonacci example carries
+/// one export per blocker, so it pins the vocabulary at once.
 #[test]
 fn certify_declines_name_the_blocker_that_actually_applies() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("certify-decline-blockers");
-
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("examples/data/fibonacci.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("expected `aver compile --certify` to run");
-    assert!(
-        compile.status.success(),
-        "fibonacci --certify failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+    let (_out_dir, manifest) = certify_fixture(
+        "examples/data/fibonacci.av",
+        &[],
+        "certify-decline-blockers",
     );
-
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
     let declared: BTreeMap<String, String> = manifest["declaredUncertified"]
         .as_array()
         .expect("declaredUncertified report is an array")
@@ -3544,41 +2441,21 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
         .collect();
 
     for (export, reason) in [
-        // A pure three-argument tail recursion: nothing but the accumulator
-        // template's two-argument limit stands in its way, so the report says
-        // which family it missed instead of calling the signature unsupported.
-        (
-            "fibTR",
-            "takes 3 parameters; the arity-free templates did not match this body, \
-             and the recursion, ADT-construction, variant-dispatch, String and \
-             composition templates take one or two arguments",
-        ),
-        (
-            "main",
-            "calls the host capability `aver.console_print`; \
-             certified templates simulate pure bodies, never effects",
-        ),
-        (
-            "absF",
-            "body uses the wasm instruction `F64Sub`, which is outside the certified fragment",
-        ),
-        (
-            "finalizeFibStats",
-            "parameter 1 is a user record, variant or list value; a value of that shape \
-             is certified only by the projection, variant-dispatch and String templates, \
-             and this body matches none of them",
-        ),
+        // The printer names the MIR node it has no grammar for.
+        ("finalizeFibStats", "Call Builtin(List.reverse)"),
+        ("nthOrZero", "Match pattern EmptyList"),
+        ("goldenApprox", "BinOp Div"),
+        ("showGolden", "InterpolatedStr (a part is not a String)"),
+        // A printed plan the one grammar does not type.
+        ("absF", "plan does not type in the one grammar"),
+        // A call to a function without a certified plan.
         (
             "buildFibStats",
-            "returns a user record, variant or list value; a value of that shape is built \
-             only by the constructor, projection, variant-dispatch and String templates, \
-             and this body matches none of them",
+            "calls function 8, which has no certified plan",
         ),
-        (
-            "fib",
-            "calls the user function `fibTR`; only the composition and mutual-recursion \
-             templates cross function boundaries, and this body fits neither",
-        ),
+        // An effectful function has no pure plan at all.
+        ("main", "fn declares effects"),
+        ("printStats", "fn declares effects"),
     ] {
         assert_eq!(
             declared.get(export).map(String::as_str),
@@ -3586,18 +2463,26 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
             "`{export}` must decline with the blocker that actually applies to it"
         );
     }
+    // The pure recursions that used to decline on the retired families'
+    // arity limits are certified plans now.
+    for name in ["fibTR", "fib", "fibSpec", "bigger"] {
+        assert!(
+            !declared.contains_key(name),
+            "`{name}` must be certified, not declined: {declared:?}"
+        );
+    }
 }
 
 /// This test used to duplicate, line for line, `aver cert verify` on the same
-/// carrierless `hello.av` compile: the same `byte_derived_frag_host_role_indices`
-/// check with the identical "hello.av must stay carrierless for this test to
-/// mean anything" message, the same `aver cert verify` invocation, the same
+/// carrierless `hello.av` compile: the same carrierless check with the
+/// identical "hello.av must stay carrierless for this test to mean anything"
+/// message, the same `aver cert verify` invocation, the same
 /// CERTIFIED/2-exports/greet+shout/no-DECLINED assertions.
 /// `cert_verify_certifies_string_concat_in_a_carrierless_module`
 /// (`tests/cert_verify_spec.rs`) is that same pipeline with the identical
-/// carrierless check plus strictly more: it also pins `Artifact.lean`'s
+/// carrierless check plus strictly more: it also pins the type table's
 /// `carrier := none`, the manifest's null `hostRoleTable`/`carrier_type_index`,
-/// and the `verbatim-string-concat` class for both exports. Restating it here
+/// the one plan class for both exports, and two carrier-claim tampers. Restating it here
 /// paid for a second full Lean verification in CI for no additional guarantee,
 /// so this comment stands in for the test: if that one is ever deleted or
 /// repointed at a module that is no longer carrierless, the carrierless
@@ -3609,10 +2494,9 @@ const _CARRIERLESS_ACCEPTANCE_PIN_COVERAGE_NOTE: () = ();
 /// to live in this file. `empty_cert_is_admission_only_and_exits_nonzero`
 /// (`tests/cert_verify_spec.rs`) runs the same `compile --certify` then
 /// `cert verify` pipeline on `tools/certkit/fixtures/certempty.av`, whose only
-/// export measures a `String` through `String.len` — a parameter shape only the
-/// projection, variant-dispatch and String templates admit, over a body none of
-/// them match — and pins the same banner, the same nonzero exit, and the absence
-/// of the green path. Restating it here would duplicate a full Lean verification
+/// export measures a `String` through `String.len` — a builtin the plan grammar
+/// has no node for (`Call Builtin(String.len)`) — and pins the same banner, the
+/// same nonzero exit, and the absence of the green path. Restating it here would duplicate a full Lean verification
 /// in a second CI lane for no additional guarantee, so this comment stands in
 /// for the test: if that one is ever deleted or repointed at a module that
 /// certifies something, the admission-only verdict loses its only coverage.
@@ -3694,8 +2578,9 @@ fn comparison_helper_exports_follow_the_emitted_calls() {
             String::from_utf8_lossy(&compile.stderr)
         );
         let wasm = std::fs::read(build.join(format!("{name}.wasm"))).unwrap();
-        let (box_idx, _, _, _, _, cmp_idx, eq_idx) =
-            aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
+        let box_idx = wasm_export_index(&wasm, "__rt_aint_from_i64");
+        let cmp_idx = wasm_export_index(&wasm, "__aint_cmp");
+        let eq_idx = wasm_export_index(&wasm, "__aint_eq");
         assert!(
             box_idx.is_some(),
             "{name} touches Int, so the carrier box helper must stay exported"
@@ -3710,9 +2595,11 @@ fn comparison_helper_exports_follow_the_emitted_calls() {
             wants_eq,
             "{name}: `__aint_eq` export must follow whether the emitted code calls it"
         );
-        // The certificate's declared table is byte-derived, so it says exactly
-        // the same thing — an unexported helper is an honestly absent role,
-        // never a role bound to a function nothing names.
+        // The certificate's declared table says exactly the same thing: an
+        // unexported helper is an honestly absent role, never a role bound to
+        // a function nothing names (`cmp` is pinned to its export name by the
+        // wall; `eq` to its template, and the producer declares it only at
+        // the helper the emitted code calls).
         let manifest: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(build.join("cert").join("cert-manifest.json")).unwrap(),
         )
@@ -3773,21 +2660,18 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
     )
     .expect("manifest is valid JSON");
 
-    // The certified entry. `dom`/`theorem` moved deliberately when the
-    // straight-line integer face retired into the record projection-compute
-    // face: `addOne` is a scalar-parameter compute claim, its model IS the
-    // checked plan, and its domain is one canonical carrier rather than a
-    // represented `List Int`.
+    // The certified entry, in the one plan class (deliberately moved from the
+    // retired `expr-fragment-v1` class and its compute-face theorem; the
+    // manifest no longer carries the declared-only `dom`/`cod` strings).
     assert_eq!(
         manifest["certified"],
         serde_json::json!([{
             "name": "addOne",
-            "class": "expr-fragment-v1",
+            "class": "source-plan-v1",
+            "facets": [],
             "policy": "simulatesModel",
             "level": "L1",
-            "dom": "Int",
-            "cod": "Int",
-            "theorem": "AcceptanceSoundness.recordCompute_claim_discharges",
+            "theorem": "AcceptanceSoundness.fn_claim_discharges",
         }]),
         "the add_one certification must be unchanged by the optional-helper handling"
     );
@@ -3800,58 +2684,47 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         "add_one's runtime contracts must be unchanged"
     );
 
-    // The host-role table stays the exact byte-derived OBJECT — never `null`
-    // — and every arithmetic role is bound for the full Int runtime.
+    // The host-role table stays a concrete OBJECT — never `null` — and every
+    // arithmetic role is bound for the full Int runtime, the name-bound ones
+    // at their exports.
     let wasm = std::fs::read(out_dir.join("add_one.wasm")).expect("wasm artifact exists");
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    assert!(
-        box_idx.is_some()
-            && add_idx.is_some()
-            && mul_idx.is_some()
-            && sub_idx.is_some()
-            && to_index_idx.is_some(),
-        "add_one carries the full Int arithmetic runtime; every arithmetic role must bind"
+    let table = &manifest["hostRoleTable"];
+    for role in ["box", "add", "mul", "sub", "toIndex", "divmod"] {
+        assert!(
+            table[role].is_u64(),
+            "add_one carries the full Int arithmetic runtime; `{role}` must bind: {table}"
+        );
+    }
+    assert_eq!(
+        table["box"].as_u64(),
+        wasm_export_index(&wasm, "__rt_aint_from_i64").map(u64::from)
+    );
+    assert_eq!(
+        table["toIndex"].as_u64(),
+        wasm_export_index(&wasm, "__aint_to_index").map(u64::from)
     );
     // `addOne` compares nothing, so the module never calls either comparison
     // helper and therefore does not export one. Both roles are declared absent
-    // — truthfully, against bytes that really lack the export — which is the
-    // only reading the wall accepts.
+    // — truthfully, against bytes that really lack the export.
     assert!(
-        cmp_idx.is_none() && eq_idx.is_none(),
-        "add_one has no Int comparison; both comparison roles must be absent"
+        table["cmp"].is_null() && table["eq"].is_null(),
+        "add_one has no Int comparison; both comparison roles must be absent: {table}"
     );
     assert!(
         manifest["carrier_type_index"].is_u64(),
         "add_one must declare its Int carrier type index"
     );
-    assert_eq!(
-        manifest["hostRoleTable"],
-        serde_json::json!({"box": box_idx, "add": add_idx, "mul": mul_idx, "sub": sub_idx, "toIndex": to_index_idx, "cmp": cmp_idx, "eq": eq_idx}),
-        "a module with the Int helper must keep the concrete host-role table"
-    );
 
-    // And the Lean manifest binds the same table as `some` — the acceptance
-    // equality for carriered modules is exactly as strong as before.
+    // And the Lean subject binds the same table as `some`.
     let manifest_lean =
         std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
-    let optional = |idx: Option<u32>| match idx {
-        Some(index) => format!("some {index}"),
-        None => "none".to_string(),
-    };
     let expected_roles = format!(
-        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {}, toIndex := some {}, cmp := {}, eq := {} }} : CertDecode.AddSub.Roles),",
-        box_idx.unwrap(),
-        add_idx.unwrap(),
-        mul_idx.unwrap(),
-        sub_idx.unwrap(),
-        to_index_idx.unwrap(),
-        optional(cmp_idx),
-        optional(eq_idx),
+        "hostRoleTable := some ({{ box := some {}, add := some {}, mul := some {}, sub := some {}, toIndex := some {}, cmp := none, eq := none, divmod := some {} }} : CertDecode.AddSub.Roles)",
+        table["box"], table["add"], table["mul"], table["sub"], table["toIndex"], table["divmod"],
     );
     assert!(
         manifest_lean.contains(&expected_roles),
-        "Manifest.lean must pin the byte-derived table, got:\n{manifest_lean}"
+        "Manifest.lean must pin the declared table, got:\n{manifest_lean}"
     );
 
     // Golden comparison, independent of the production path that derived the
@@ -3912,11 +2785,12 @@ fn certify_wasip2_component_package_snapshot() {
 
 #[test]
 fn certify_nested_module_models_close_end_to_end() {
-    // A project with a dotted module dependency emits its dependency model at
-    // a nested path (`Nested/Deep/Util.lean`). The certificate must import it
-    // by its dotted module name (`import Nested.Deep.Util`, never the
-    // path-shaped `import Nested/Deep/Util`) and the package must build.
-    if Command::new("lake").arg("--version").output().is_err() {
+    // A project with a dotted module dependency emits its dependency's source
+    // model at a nested path (`AverModel/Nested/Deep/Util.lean`). The bridge
+    // modules must import it by its dotted module name (never the
+    // path-shaped `import AverModel/Nested/Deep/Util`) and name its functions
+    // by the QUALIFIED name the model declares, and the package must build.
+    if !lean_required::lake_available() {
         eprintln!("skipping nested-module certify test: `lake` not available");
         return;
     }
@@ -3946,8 +2820,8 @@ fn certify_nested_module_models_close_end_to_end() {
         "nestedmods --certify failed:\n{report}"
     );
     assert!(
-        report.contains("4 certified"),
-        "nestedmods must certify the entry export and all three nested-module exports:\n{report}"
+        report.contains("6 certified"),
+        "nestedmods must certify the entry exports and all three nested-module exports:\n{report}"
     );
     assert!(
         report.contains("Nested_Deep_Util_combine")
@@ -3959,145 +2833,81 @@ fn certify_nested_module_models_close_end_to_end() {
     let cert_dir = out_dir.join("cert");
     assert!(
         cert_dir
+            .join("AverModel")
             .join("Nested")
             .join("Deep")
             .join("Util.lean")
             .is_file(),
         "the nested dependency model must be emitted at its nested path"
     );
-    for file in ["Manifest.lean", "Certificate.lean"] {
+    for file in ["Bridge.lean", "BridgeDefs.lean"] {
         let contents = std::fs::read_to_string(cert_dir.join(file))
             .unwrap_or_else(|_| panic!("{file} exists"));
         assert!(
-            contents.contains("import Nested.Deep.Util"),
+            contents.contains("import AverModel.Nested.Deep.Util"),
             "{file} must import the nested model by its dotted module name:\n{contents}"
         );
         assert!(
-            !contents.contains("import Nested/Deep/Util"),
+            !contents.contains("import AverModel/Nested"),
             "{file} must not emit a path-shaped import line:\n{contents}"
         );
     }
-    // A nested-module export whose obligation names a model LEAF must name it
-    // by the QUALIFIED name the model file declares (inside `namespace
-    // Nested.Deep.Util`), never by the flattened wasm export name — the
-    // flattened form is not a Lean identifier in the model and fails the
-    // package build. `tally` is the export that still carries this: `combine`
-    // and `bump` certify through the declared compute face, whose model is the
-    // emitted plan and names no model leaf at all, so their side of the rule is
-    // that the plan is keyed by the flattened name the plan file declares.
-    let manifest_lean =
-        std::fs::read_to_string(cert_dir.join("Manifest.lean")).expect("Manifest.lean exists");
+    // The flattened wasm export name keys the PLAN; the bridge names the
+    // source function by the qualified name the model file declares.
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cert_dir.join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let tally = manifest["sourceBridges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["export"] == "Nested_Deep_Util_tally")
+        .expect("the nested recursion carries a bridge");
+    assert_eq!(tally["model"], "Nested.Deep.Util.tally");
+    let bridge = std::fs::read_to_string(cert_dir.join("Bridge.lean")).unwrap();
     assert!(
-        manifest_lean.contains("model := fun ns => Nested.Deep.Util.tally (ns.headD 0)"),
-        "the nested export that names a model leaf must cite the qualified name:\n{manifest_lean}"
-    );
-    assert!(
-        !manifest_lean.contains("model := fun ns => Nested_Deep_Util_tally"),
-        "the obligation must never cite the flattened export name as the model:\n{manifest_lean}"
-    );
-    assert!(
-        manifest_lean.contains(
-            "model := AverCert.StandardFace.recordComputeModel Plans.Nested_Deep_Util_bumpPlan.body"
-        ),
-        "the nested compute-face export must cite its emitted plan:\n{manifest_lean}"
-    );
-    // The nested recursion bridge must also cite the model's qualified fuel
-    // form (`Nested.Deep.Util.tally__fuel`), never a flattened one.
-    let certificate_lean = std::fs::read_to_string(cert_dir.join("Certificate.lean"))
-        .expect("Certificate.lean exists");
-    assert!(
-        certificate_lean.contains("Nested.Deep.Util.tally__fuel"),
-        "the recursion bridge must cite the qualified fuel model:\n{certificate_lean}"
-    );
-    assert!(
-        !certificate_lean.contains("Nested_Deep_Util_tally__fuel"),
-        "the recursion bridge must never cite a flattened fuel model:\n{certificate_lean}"
+        bridge.contains("_root_.Nested.Deep.Util.tally x)")
+            && !bridge.contains("Nested_Deep_Util_tally x"),
+        "the bridge must cite the qualified source function, never the flattened name:\n{bridge}"
     );
 
     assert_certificate_target_builds(&cert_dir, "nested module models");
 }
 
-/// The producer's face gate must refuse a host-call-bearing plan that lands on
-/// no admitted face, exactly as the verifier sidecar does.
-///
+/// The producer offers a plan only when its own twin of the wall's checks
+/// accepts it, so no plan it ships is one the verifier then rejects.
 /// `validClockValue` (`match value >= 0 { false -> false; true -> value < limit }`)
-/// becomes `if a >= 0 { a < b } else { false }` after the MIR `bool_match_to_if`
-/// rewrite: TWO `__aint_cmp` calls nested inside a conditional. Neither Int
-/// comparison face covers that node list, and the wall's generic
-/// expression-fragment gate rejects every `.hostCall` node outright, so a plan
-/// here can only ever decline.
-///
-/// The observable difference is the DECLINE REASON, and it is the whole point:
-/// with the gate the export falls back to the legacy byte-classifier and
-/// declines with its template message; without the gate the producer ships a
-/// plan claim that the verifier then rejects ("producer fragment plan
-/// rejected"). The emitted module bytes are the same either way — the plan's
-/// canonical lowering reproduces the emitter's bytes for this shape — so bytes
-/// alone cannot witness the gate; the certificate surface can.
+/// becomes `if a >= 0 { a < b } else { false }` after the MIR
+/// `bool_match_to_if` rewrite: two Int comparisons nested inside a
+/// conditional, the shape the retired families could not place on any face
+/// (it used to decline on the legacy byte-classifier route). The one grammar
+/// types and lowers it, so it is certified, and the package the producer
+/// emits for it checks.
 #[test]
 fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-clockrange-gate");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/clockrange.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
+    let (out_dir, manifest) = certify_fixture(
+        "tools/certkit/fixtures/clockrange.av",
+        &[],
+        "cert-clockrange-gate",
+    );
+    assert_certified_as(&manifest, "validClockValue", &[], false);
+    let plans = std::fs::read_to_string(out_dir.join("cert").join("Plans.lean")).unwrap();
+    let block = export_plan_block(&plans, "validClockValue");
     assert!(
-        compile.status.success(),
-        "compile --certify clockrange failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+        block.contains(".ifThenElse (.binOp .gte (.local 0) (.literal (.int 0)))")
+            && block.contains("(.binOp .lt (.local 0) (.local 1))"),
+        "the nested comparison shape must be the plan:\n{block}"
     );
 
-    let cert_dir = out_dir.join("cert");
-    let manifest: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(cert_dir.join("cert-manifest.json"))
-            .expect("cert-manifest.json exists"),
-    )
-    .expect("manifest is valid JSON");
-
-    let certified: BTreeSet<String> = manifest["certified"]
-        .as_array()
-        .expect("certified report is an array")
-        .iter()
-        .map(|c| c["name"].as_str().unwrap().to_string())
-        .collect();
+    if !lean_required::lake_available() {
+        eprintln!("skipping clockrange check: `lake` not available");
+        return;
+    }
+    let (ok, report) = check_certificate(&out_dir.join("clockrange.wasm"), &out_dir.join("cert"));
     assert!(
-        !certified.contains("validClockValue"),
-        "a faceless host-call shape must not be certified: {certified:?}"
-    );
-
-    let reason = manifest["declaredUncertified"]
-        .as_array()
-        .expect("declaredUncertified report is an array")
-        .iter()
-        .find(|entry| entry["name"].as_str() == Some("validClockValue"))
-        .and_then(|entry| entry["reason"].as_str())
-        .expect("validClockValue is declared uncertified with a reason")
-        .to_string();
-    assert!(
-        reason.contains("does not match a certified template"),
-        "the export must decline on the legacy byte-classifier route, \
-         meaning the producer never selected a plan for it; got: {reason}"
-    );
-    assert!(
-        !reason.contains("producer fragment plan rejected"),
-        "the producer emitted a plan the verifier then refused — the face gate \
-         is not mirroring the sidecar; got: {reason}"
-    );
-
-    // No plan claim reached the certificate at all.
-    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
-    assert!(
-        !plans.contains("validClockValue"),
-        "an unplanned export must carry no plan in the certificate:\n{plans}"
+        ok && report.contains("1 checked export"),
+        "the producer's offer must be accepted by the wall:\n{report}"
     );
 }
 
@@ -4109,7 +2919,7 @@ fn certify_leaves_a_faceless_host_call_shape_on_the_legacy_route() {
 /// recursion under an `if` inside a match arm.
 #[test]
 fn cert_projects_payment_ops_package_checks() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping certify projects test: `lake` not available");
         return;
     }
@@ -4146,12 +2956,12 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("5 checked exports"),
-        "payment_ops must keep the five exports it certifies:\n{report}"
+        report.contains("59 checked exports"),
+        "payment_ops must keep the fifty-nine exports it certifies:\n{report}"
     );
     // The project's single `verify … law` is universal by design but its
     // emitted proof ladder has no `String.replace` theory and lands on its
-    // `sorry` floor. That law is not credited — and the five exports beside it
+    // `sorry` floor. That law is not credited — and the exports beside it
     // still are. An uncredited law never sinks a package.
     assert!(
         report.contains("law-claims: 0 of 1 credited"),
@@ -4164,4 +2974,111 @@ fn cert_projects_payment_ops_package_checks() {
         ),
         "the uncredited law must be named with the axiom that sank it:\n{report}"
     );
+}
+
+/// A program with a job kind imports the four `aver:work/v1` scheduling
+/// functions. The certificate admits them like any other host import:
+/// declared in the manifest in import order, accounted, never claimed. The
+/// job body is an ordinary pure function and certifies like one, and the
+/// generated `__work_v1_*` exports are declared uncertified with a reason.
+#[test]
+fn certify_accounts_the_work_imports_and_certifies_the_job_body() {
+    let (out_dir, manifest) = certify_fixture(
+        "tests/fixtures/cert_work_job/main.av",
+        &["--module-root", "tests/fixtures/cert_work_job"],
+        "certify-work-job",
+    );
+    let capabilities: Vec<(String, String)> = manifest["capabilities"]
+        .as_array()
+        .expect("capabilities is an array")
+        .iter()
+        .map(|c| {
+            (
+                c["module"].as_str().unwrap().to_string(),
+                c["name"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let work: Vec<&str> = capabilities
+        .iter()
+        .filter(|(module, _)| module == "aver:work/v1")
+        .map(|(_, name)| name.as_str())
+        .collect();
+    assert_eq!(work, ["submit", "take", "task", "complete"], "{manifest:#}");
+    certified_entry(&manifest, "Node_validate");
+    let declared: BTreeSet<&str> = manifest["declaredUncertified"]
+        .as_array()
+        .expect("declaredUncertified report is an array")
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    for export in ["__work_v1_started", "__work_v1_refused", "__work_v1_job_id"] {
+        assert!(
+            declared.contains(export),
+            "`{export}` must be accounted: {manifest:#}"
+        );
+    }
+
+    // The exact signatures the host runner binds (`work_abi.rs`); the wall
+    // pins names only, because a certified closure reaches no import.
+    let bytes = std::fs::read(out_dir.join("main.wasm")).expect("main.wasm");
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(&bytes)
+        .expect("valid module");
+    // Every type in the module, flattened across rec groups, and the type
+    // index each `aver:work/v1` import names.
+    let mut types: Vec<wasmparser::SubType> = Vec::new();
+    let mut work_funcs: Vec<(String, u32)> = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        match payload.expect("parses") {
+            wasmparser::Payload::TypeSection(reader) => {
+                for group in reader {
+                    types.extend(group.expect("rec group").into_types());
+                }
+            }
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group") {
+                        let (_, import) = import.expect("import");
+                        if let wasmparser::TypeRef::Func(ty) = import.ty
+                            && import.module == "aver:work/v1"
+                        {
+                            work_funcs.push((import.name.to_string(), ty));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    use wasmparser::{FuncType, RefType, ValType};
+    let any = ValType::Ref(RefType::ANYREF);
+    let expected = [
+        (
+            "submit",
+            FuncType::new([ValType::I32, any, ValType::I32], [any]),
+        ),
+        (
+            "take",
+            FuncType::new([ValType::I32, any, ValType::I32], [any]),
+        ),
+        ("task", FuncType::new([ValType::I32], [any])),
+        ("complete", FuncType::new([ValType::I32, any], [])),
+    ];
+    assert_eq!(work_funcs.len(), expected.len(), "{work_funcs:?}");
+    for ((name, ty), (want_name, want)) in work_funcs.iter().zip(expected) {
+        assert_eq!(name, want_name);
+        assert_eq!(
+            types[*ty as usize].unwrap_func(),
+            &want,
+            "aver:work/v1.{name}"
+        );
+    }
+
+    if !lean_required::lake_available() {
+        eprintln!("skipping the work-import package check: `lake` not available");
+        return;
+    }
+    let (ok, report) = check_certificate(&out_dir.join("main.wasm"), &out_dir.join("cert"));
+    assert!(ok && report.contains("CHECKED"), "{report}");
 }

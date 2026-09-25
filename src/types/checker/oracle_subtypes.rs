@@ -79,7 +79,12 @@ pub fn has_oracle_subtype(effect: &str) -> bool {
 
 /// Lean 4 helper type definitions for every classified effect declared
 /// in the program. Empty when the program declares no relevant effects.
-pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {
+///
+/// A certificate model (`cert_model`) carries no `@[simp]`: the checker's
+/// token gate refuses every attribute in package text, so the lemma is
+/// emitted plain there and a proof that needs it names it.
+pub(crate) fn lean_subtypes(declared: &DeclaredEffects, cert_model: bool) -> String {
+    let simp_attribute = if cert_model { "" } else { "@[simp] " };
     let mut out = String::new();
     let mut emitted_any = false;
 
@@ -100,16 +105,16 @@ pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {
     };
 
     if declared.includes("Random.int") {
-        push_block(
+        push_block(&format!(
             "abbrev RandomIntOracle := BranchPath → Int → Int → Int → Except String Int\n\
              \n\
              def RandomIntInBounds : Type :=\n  \
-               { f : RandomIntOracle //\n    \
+               {{ f : RandomIntOracle //\n    \
                  ∀ (path : BranchPath) (n min max : Int),\n      \
                  (-9223372036854775808 : Int) ≤ min ∧\n      \
                  max ≤ (9223372036854775807 : Int) ∧ min ≤ max →\n      \
                  ∃ value : Int, f path n min max = Except.ok value ∧\n        \
-                   min ≤ value ∧ value ≤ max }\n\
+                   min ≤ value ∧ value ≤ max }}\n\
              \n\
              noncomputable def RandomIntInBounds.valueAt\n    \
                  (rnd : RandomIntInBounds) (path : BranchPath) (n min max : Int)\n    \
@@ -117,14 +122,14 @@ pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {
                    max ≤ (9223372036854775807 : Int) ∧ min ≤ max) : Int :=\n  \
                Classical.choose (rnd.property path n min max valid)\n\
              \n\
-             @[simp] theorem RandomIntInBounds.result_eq\n    \
+             {simp_attribute}theorem RandomIntInBounds.result_eq\n    \
                  (rnd : RandomIntInBounds) (path : BranchPath) (n min max : Int)\n    \
                  (valid : (-9223372036854775808 : Int) ≤ min ∧\n      \
                    max ≤ (9223372036854775807 : Int) ∧ min ≤ max) :\n    \
                  rnd.val path n min max =\n      \
                    Except.ok (rnd.valueAt path n min max valid) := by\n  \
-               exact (Classical.choose_spec (rnd.property path n min max valid)).1\n",
-        );
+               exact (Classical.choose_spec (rnd.property path n min max valid)).1\n"
+        ));
     }
     if declared.includes("Random.float") {
         push_block(
@@ -173,7 +178,7 @@ mod tests {
     #[test]
     fn lean_emits_no_axiom_declaration() {
         let d = declared(&["Random.int", "Random.float", "Time.unixMs"]);
-        let out = lean_subtypes(&d);
+        let out = lean_subtypes(&d, false);
         // The whole point of this module is no axioms. Any axiom slip
         // would re-introduce the 0.13-pre soundness hole. Match a
         // line-start `axiom ` declaration, not the literal word in
@@ -191,22 +196,34 @@ mod tests {
     #[test]
     fn lean_emits_subtype_for_random_int() {
         let d = declared(&["Random.int"]);
-        let out = lean_subtypes(&d);
+        let out = lean_subtypes(&d, false);
         assert!(out.contains("RandomIntInBounds"));
         assert!(out.contains("Except String Int"));
         assert!(out.contains("f path n min max = Except.ok value"));
     }
 
     #[test]
+    fn cert_model_random_int_lemma_carries_no_attribute() {
+        let d = declared(&["Random.int"]);
+        assert!(lean_subtypes(&d, false).contains("@[simp] theorem RandomIntInBounds.result_eq"));
+        let cert = lean_subtypes(&d, true);
+        assert!(
+            cert.contains("\ntheorem RandomIntInBounds.result_eq"),
+            "{cert}"
+        );
+        assert!(!cert.contains("@["), "{cert}");
+    }
+
+    #[test]
     fn lean_empty_when_no_relevant_effects() {
         let d = declared(&["Args.get"]); // Args.get has no bound to encode.
-        assert!(lean_subtypes(&d).is_empty());
+        assert!(lean_subtypes(&d, false).is_empty());
     }
 
     #[test]
     fn process_uses_a_cross_call_monotonicity_carrier() {
         let d = declared(&["Process.stopRequested"]);
-        let lean = lean_subtypes(&d);
+        let lean = lean_subtypes(&d, false);
         assert!(lean.contains("ProcessStopRequestedMonotonic"));
         assert!(lean.contains("i ≤ j → f path i = true → f path j = true"));
 

@@ -969,13 +969,6 @@ def cmpIdx (n len : Nat) : Option Nat :=
   | none => none
   | some es => (es.find? (fun e => e.1 == "__aint_cmp")).map Prod.snd
 
-/-- The `__aint_eq` helper role, bound by its named runtime export; see
-    `cmpIdx`. -/
-def eqIdx (n len : Nat) : Option Nat :=
-  match decodeExports n len with
-  | none => none
-  | some es => (es.find? (fun e => e.1 == "__aint_eq")).map Prod.snd
-
 structure Roles where
   box : Option Nat
   add : Option Nat
@@ -984,6 +977,8 @@ structure Roles where
   toIndex : Option Nat
   cmp : Option Nat
   eq : Option Nat
+  /-- `__aint_divmod`, pinned by its template only (it is not exported). -/
+  divmod : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- Byte-derived proof that the module carries no Int-carrier box helper: the

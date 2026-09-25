@@ -527,7 +527,13 @@ fn emit_type_sections(
     measure_sig_type_refs: &[String],
 ) -> Vec<String> {
     ctx.with_module_scope(scope, || {
-        let mut sections = vec![toplevel::emit_type_def_in_scope(td, ctx, scope)];
+        let type_def = toplevel::emit_type_def_in_scope(td, ctx, scope);
+        let type_def = if cert_model {
+            toplevel::cert_model_deriving(&type_def, td, ctx, scope)
+        } else {
+            type_def
+        };
+        let mut sections = vec![type_def];
         if scope == Some("Bytes") && crate::codegen::common::type_def_name(td) == "Bytes" {
             sections.push(
                 "instance : Nonempty Bytes := ⟨⟨[], by simp [Bytes.allInRange]⟩⟩".to_string(),
@@ -559,10 +565,6 @@ def stringFromUtf8 (bytes : Bytes) : Except String String :=
             let inst = toplevel::emit_inhabited_instance(td, ctx, scope);
             if !inst.is_empty() {
                 sections.push(inst);
-            }
-            let beq = toplevel::emit_beq_instance(td);
-            if !beq.is_empty() {
-                sections.push(beq);
             }
         }
         if toplevel::is_recursive_type_def(td)
@@ -1383,7 +1385,8 @@ pub(super) fn transpile_unified(
             ),
         );
     }
-    let subtype_block = crate::types::checker::oracle_subtypes::lean_subtypes(&declared);
+    let subtype_block =
+        crate::types::checker::oracle_subtypes::lean_subtypes(&declared, cert_model);
     if !subtype_block.is_empty() {
         // Fold subtype block into the union body BEFORE computing
         // `needed_helpers` — the Oracle subtype block is what

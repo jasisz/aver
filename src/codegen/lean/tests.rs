@@ -112,6 +112,7 @@ fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
             run_string_index: false,
             run_list_build: false,
             run_byte_sink: false,
+            keep_printable_unfused: false,
             run_resolve: false,
             run_last_use: false,
             run_analyze: true,
@@ -5038,6 +5039,45 @@ verify nonNeg law nonNegOfPositive
     );
 }
 
+/// The k5 Table 3 rows: a `when`-guarded `holds` law whose subject is a
+/// `Bool.and` of two comparisons. The Boolean connectives are operators in the
+/// Lean model (`&&`, `||`, `!`), not calls, so the cone stays transparent and
+/// the law exports as the true universal — instead of the bounded
+/// sampled-domain statement the certificate model leaves out.
+#[test]
+fn cert_model_admits_boolean_connectives_in_a_when_linear_cone() {
+    let mut ctx = ctx_from_source(
+        r#"
+module TableRow
+    intent = "a table row as an order window"
+
+fn window(e: Int, f: Int) -> Bool
+    ? "f equals e, stated as a two-sided window."
+    Bool.and(e <= f, Bool.not(f < e))
+
+verify window law row
+    given e: Int = [0]
+    given f: Int = [0]
+    when Bool.or(f == e, false)
+    window(e, f) holds
+"#,
+        "table_row",
+    );
+    let lean = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    assert!(
+        lean.contains("-- aver:law-class window_law_row universal window.row"),
+        "{lean}"
+    );
+    assert!(
+        lean.contains("theorem window_law_row : ∀ (e : Int) (f : Int), "),
+        "{lean}"
+    );
+    assert!(
+        lean.contains("Bool.or_eq_true, Bool.not_eq_true'"),
+        "{lean}"
+    );
+}
+
 /// CORE when-linear consequence, NEGATIVE gate: the SAME law shape, but one
 /// cone body calls the builtin `Int.abs`. The cone-name collector resolves
 /// user definitions only, so that call leaves no name behind — the older
@@ -5368,7 +5408,7 @@ verify digits law emptyMeansSmall
 }
 
 #[test]
-fn certificate_countdown_model_keeps_the_wall_contract_and_restores_proof_context() {
+fn certificate_countdown_model_uses_the_native_equations() {
     let mut ctx = ctx_from_source(
         r#"module CountdownModel
     exposes [count]
@@ -5385,9 +5425,11 @@ fn count(n: Int, acc: Int) -> Int
         VerifyEmitMode::NativeDecide,
     ));
     assert!(before.contains("termination_by n.toNat"), "{before}");
+    // A certificate bridge unfolds `count` one step through its equation
+    // lemma, so the model keeps the native recursion, not a fuel wrapper.
     let model = generated_lean_file(&transpile_for_cert_model(&mut ctx));
-    assert!(model.contains("def count__fuel"), "{model}");
-    assert!(!model.contains("termination_by n.toNat"), "{model}");
+    assert!(model.contains("termination_by n.toNat"), "{model}");
+    assert!(!model.contains("def count__fuel"), "{model}");
     let after = generated_lean_file(&transpile_for_proof_mode(
         &mut ctx,
         VerifyEmitMode::NativeDecide,
@@ -5398,9 +5440,185 @@ fn count(n: Int, acc: Int) -> Int
     );
 }
 
+/// The two prelude pieces the certificate token gate refuses in package text
+/// — `AverBits` with its `@[simp]` equations and the `syntax`/`macro_rules`
+/// tactic `aver_int_order` — come from the checker-owned wall module in a
+/// certificate model, never from the model's own `AverCommon.lean`. Proof
+/// export keeps them inline.
+#[test]
+fn cert_model_takes_bits_and_the_order_kit_from_the_wall() {
+    let body = "def f (x : Int) : Int := AverBits.not x\ntheorem t : True := by aver_int_order";
+    let cert = super::prelude::build_common_lean(body, true);
+    assert!(
+        cert.starts_with(&format!(
+            "import {}\n",
+            super::prelude::CERT_MODEL_PRELUDE_MODULE
+        )),
+        "{cert}"
+    );
+    for refused in [
+        "syntax",
+        "macro_rules",
+        "@[",
+        "namespace AverBits",
+        "aver_sq_nonneg",
+    ] {
+        assert!(
+            !cert.contains(refused),
+            "`{refused}` in the certificate prelude:\n{cert}"
+        );
+    }
+    let proof = super::prelude::build_common_lean(body, false);
+    assert!(!proof.contains("import "), "{proof}");
+    assert!(
+        proof.contains("macro_rules") && proof.contains("@[simp] theorem not_eq"),
+        "{proof}"
+    );
+    // A model that needs neither imports nothing.
+    let plain = super::prelude::build_common_lean("def g (x : Int) : Int := x", true);
+    assert!(!plain.contains("import "), "{plain}");
+}
+
+/// A certificate model keeps the derived `BEq` (so `==` on a record has its
+/// instance) and derived `DecidableEq` where the type reflects equality, and
+/// nothing the checker's `deriving` gate refuses. A record with a `Float`
+/// inside keeps `BEq` only: its `DecidableEq` would need the proof export's
+/// `implemented_by` shim.
+#[test]
+fn cert_model_keeps_the_admitted_deriving_classes() {
+    let mut ctx = ctx_from_source(
+        r#"module Eqs
+    exposes [same, near]
+    effects []
+record Pair
+    a: Int
+    b: Int
+record Reading
+    value: Float
+fn same(x: Pair, y: Pair) -> Bool
+    x == y
+fn near(x: Reading, y: Reading) -> Bool
+    x == y
+"#,
+        "Eqs",
+    );
+    let model = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    let clauses: Vec<&str> = model
+        .lines()
+        .filter(|line| line.trim_start().starts_with("deriving"))
+        .collect();
+    assert!(clauses.contains(&"  deriving BEq, DecidableEq"), "{model}");
+    assert!(clauses.contains(&"  deriving BEq"), "{model}");
+    for clause in &clauses {
+        assert!(
+            !clause.contains("Repr") && !clause.contains("Inhabited"),
+            "{clause}"
+        );
+    }
+    assert!(
+        model.contains("deriving instance ReflBEq, LawfulBEq for Pair"),
+        "{model}"
+    );
+    // The explicit `Inhabited` stays; no hand-written `BEq` competes with the
+    // derived one the `LawfulBEq` line is about.
+    assert!(model.contains("instance : Inhabited Pair"), "{model}");
+    assert!(!model.contains("instance : BEq"), "{model}");
+}
+
+/// A user function named `sizeOf` lives in its module's namespace, where a
+/// bare `sizeOf` in a termination measure would resolve to it (btc-listener's
+/// `Infra.Resolver.sizeOf` took a `List Int` and broke a `List String`
+/// measure). The measure then names the class method `SizeOf.sizeOf`.
+#[test]
+fn a_user_size_of_does_not_capture_the_termination_measure() {
+    let source = include_str!("../../../tests/fixtures/mutual_measure_forwarded.av").replace(
+        "verify itemAt",
+        "fn sizeOf(xs: List<Int>) -> Int\n    ? \"Shadow.\"\n    List.len(xs)\n\nverify itemAt",
+    );
+    let mut ctx = ctx_from_source(&source, "mutual_measure_forwarded");
+    ctx.refresh_facts();
+    let lean = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    let measures: Vec<&str> = lean
+        .lines()
+        .filter(|line| line.trim_start().starts_with("termination_by"))
+        .collect();
+    assert_eq!(
+        measures,
+        vec![
+            "  termination_by (SizeOf.sizeOf tail, 2)",
+            "  termination_by (SizeOf.sizeOf items, 1)"
+        ],
+        "{lean}"
+    );
+}
+
+/// A record with a field that has no `default` (a capability handle) states
+/// no `Inhabited` in the certificate model: `default` for the handle does not
+/// elaborate, and one failing instance fails the build of the whole module.
+#[test]
+fn cert_model_states_no_inhabited_for_a_record_holding_a_handle() {
+    let mut ctx = ctx_from_source(
+        r#"module Holder
+    exposes [portOf]
+    effects []
+record Reader
+    connection: Tcp.Connection
+    port: Int
+record Plain
+    port: Int
+fn portOf(r: Reader, p: Plain) -> Int
+    r.port + p.port
+"#,
+        "Holder",
+    );
+    let model = generated_lean_file(&transpile_for_cert_model(&mut ctx));
+    assert!(!model.contains("instance : Inhabited Reader"), "{model}");
+    assert!(model.contains("instance : Inhabited Plain"), "{model}");
+}
+
 mod untranslate_context;
 
 mod citation_probe;
 
 mod decidable_normalization;
 mod waterfall;
+
+/// `Wait.poll<K>` has an oracle generic over its key type. Lifting an
+/// effectful function that uses it has no single oracle parameter type to
+/// prepend: the lift declines with `GenericOracle`, and proof export drops
+/// that function instead of panicking on the unresolved type variable (the
+/// whole export of a program with such a function used to abort on it).
+#[test]
+fn generic_oracle_effect_declines_the_lift() {
+    let source = r#"
+module WaitProbe
+    depends [Wait]
+    intent = "An effectful helper over the generic Wait.poll oracle."
+    exposes [pollOnce]
+    effects [Wait.poll]
+
+fn pollOnce(items: Map<Int, Wait.Item>) -> Result<List<Int>, String>
+    ? "Polls the wait set once."
+    ! [Wait.poll]
+    Wait.poll(items, 0)
+"#;
+    let ctx = ctx_from_source(source, "WaitProbe");
+    let fd = ctx
+        .fn_defs
+        .iter()
+        .find(|fd| fd.name == "pollOnce")
+        .expect("pollOnce is parsed");
+    let lifted = crate::types::checker::effect_lifting::lift_fn_def_with_helpers_and_registry(
+        fd,
+        &HashMap::new(),
+        &ctx.capabilities,
+    );
+    assert!(
+        matches!(
+            lifted,
+            Err(crate::types::checker::effect_lifting::LiftError::GenericOracle { ref method })
+                if method == "Wait.poll"
+        ),
+        "{lifted:?}"
+    );
+}

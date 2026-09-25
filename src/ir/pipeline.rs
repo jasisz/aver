@@ -246,6 +246,12 @@ pub struct PipelineConfig<'a> {
     /// gate never admits an ordinary `__lst_*` collector. wasm-gc/wasip2 use
     /// this independently of `run_list_build`.
     pub run_byte_sink: bool,
+    /// Leave every function the certificate plan printer could print in its
+    /// unfused form out of the fabricating passes above (see
+    /// [`crate::ir::cert_shape`]). Set by every wasm-gc/wasip2 caller, with or
+    /// without `--certify`, so a certified build is byte-identical to the
+    /// plain one. VM and Rust leave it off.
+    pub keep_printable_unfused: bool,
     pub run_resolve: bool,
     /// Whether to run the last-use ownership annotation pass after
     /// `resolve`. Annotates each `Expr::Resolved` slot reference with
@@ -346,6 +352,7 @@ impl<'a> Default for PipelineConfig<'a> {
             // independent gate off by default so a caller that disables
             // `run_list_build` does not opt into fabrication accidentally.
             run_byte_sink: false,
+            keep_printable_unfused: false,
             run_resolve: true,
             run_last_use: true,
             run_analyze: true,
@@ -1266,6 +1273,16 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     // cannot simply be a point in this stage order.
     let proof_snapshot: Option<Vec<TopLevel>> = proof_stages.then(|| items.clone());
 
+    // Read before the first fabricating pass, so every pass sees the verdict
+    // on the source form (`cert_shape`). Empty unless a wasm-gc caller asks.
+    let kept: std::collections::HashSet<String> = if cfg.keep_printable_unfused
+        && (cfg.run_buffer_build || cfg.run_chars_fusion || cfg.run_byte_sink)
+    {
+        crate::ir::cert_shape::kept_unfused(items)
+    } else {
+        Default::default()
+    };
+
     if cfg.run_interp_lower {
         let pre = pass_diag::collect(items);
         interp_lower(items);
@@ -1277,21 +1294,27 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     }
 
     if cfg.run_buffer_build {
-        let report = buffer_build(items);
+        let report = crate::ir::run_buffer_build_pass_keeping(items, &kept);
         result.pass_diagnostics.push(diag_for_buffer_build(&report));
         result.buffer_build = Some(report);
         fire(&mut cfg, PipelineStage::BufferBuild, items);
     }
 
     if cfg.run_chars_fusion {
-        let report = chars_fusion(items);
+        let report = crate::ir::run_chars_fusion_pass_keeping(items, &kept);
         result.pass_diagnostics.push(diag_for_chars_fusion(&report));
         result.chars_fusion = Some(report);
         fire(&mut cfg, PipelineStage::CharsFusion, items);
     }
 
     if cfg.run_string_index {
-        let report = string_index(items);
+        // A kept classifier still grows the `__code` variant chars fusion
+        // would have given it; without chars fusion there is none to match.
+        let report = if cfg.run_chars_fusion {
+            crate::ir::run_string_index_pass_keeping(items, &kept)
+        } else {
+            string_index(items)
+        };
         result.pass_diagnostics.push(diag_for_string_index(&report));
         result.string_index = Some(report);
         fire(&mut cfg, PipelineStage::StringIndex, items);
@@ -1307,7 +1330,10 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         let (stage, report) = if cfg.run_list_build {
             (PipelineStage::ListBuild, list_build(items))
         } else {
-            (PipelineStage::ByteSink, byte_sink(items))
+            (
+                PipelineStage::ByteSink,
+                crate::ir::run_byte_sink_pass_keeping(items, &kept),
+            )
         };
         result
             .pass_diagnostics

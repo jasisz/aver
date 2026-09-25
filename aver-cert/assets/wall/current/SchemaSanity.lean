@@ -3,7 +3,10 @@
 
   `CertPreludeSanity` deliberately imports only `CertPrelude` — the decoder
   differential stages it as a standalone three-file package — so anything that
-  needs `Schema` lives here instead. Like that file, this one is a repo-side
+  needs `Schema` lives here instead: the carrier-specification witness, a
+  witness that the named host contracts are jointly satisfiable, and S-6
+  negatives (ill-typed plans are rejected by the typing the whole statement
+  rests on). Like that file, this one is a repo-side
   gate: it is a root of the wall's own lakefile and is NOT in `wall.rs`'s
   `SOURCES` or `PRISTINE_ROOTS`, so it is built by `lake build` in this
   directory and never shipped inside a certificate package.
@@ -149,5 +152,66 @@ example (C lty : Nat) (les : List WVal) (s : Int) :
     obtain ⟨-, -, -, hsgEq, -⟩ := h
     subst hsgEq
     rcases hsg with h | h <;> simp at h
+
+/-! ## The named host contracts are jointly satisfiable
+
+Trap-only helpers satisfy every contract of `HostContracts` (a helper that
+returns nothing makes its premise vacuous), so the premise surface of
+`Obligation.holds` is never contradictory: the obligation is not vacuously
+true through its contracts. -/
+
+def trapHost : HostFns :=
+  { add := fun _ => none, sub := fun _ => none, mul := fun _ => none, cmp := fun _ => none,
+    eq := fun _ => none, stringEq := fun _ => none, stringConcat := fun _ _ => none,
+    toIndex := fun _ => none, divmod := fun _ => none }
+
+example (C : Nat) : HostContracts (sanityCarrierSpec C) trapHost where
+  add := by intro _ _ _ _ _ _ _ h; cases h
+  sub := by intro _ _ _ _ _ _ _ h; cases h
+  mul := by intro _ _ _ _ _ _ _ h; cases h
+  cmp := by intro _ _ _ _ _ _ _ _ _ h; cases h
+  eq := by intro _ _ _ _ _ _ _ _ _ h; cases h
+  stringEq := by intro _ _ _ h; cases h
+  stringConcat := by intro _ _ _ h; cases h
+  divmod := by intro _ _ _ _ _ _ _ _ _ _ _ _ h; cases h
+  toIndex := by intro _ _ _ _ h; cases h
+
+/-! ## S-6: typing is load-bearing, and ill-typed plans decline -/
+
+open AverCert.Grammar in
+def sanityM : MCtx :=
+  { carrier := 2, box := 7, add := 8, sub := 9, mul := 10, neg := 11, cmp := 12, eq := 13,
+    structOf := fun _ => 0, recFields := fun _ => none, sigs := fun _ => none }
+
+open AverCert.Grammar in
+/-- A well-typed plan: `n + 1` at `Int -> Int`. -/
+example : planTyped sanityM
+    { sig := ⟨[.int], .int⟩, nslots := 1, locals := [.int],
+      body := .binOp .add (.local 0) (.literal (.int 1)) } = true := by decide
+
+open AverCert.Grammar in
+/-- `if n then 1 else 0` over an Int condition declines. -/
+example : planTyped sanityM
+    { sig := ⟨[.int], .int⟩, nslots := 1, locals := [.int],
+      body := .ifThenElse (.local 0) (.literal (.int 1)) (.literal (.int 0)) } = false := by
+  decide
+
+open AverCert.Grammar in
+/-- A declared result type the body does not have declines. -/
+example : planTyped sanityM
+    { sig := ⟨[.int], .bool⟩, nslots := 1, locals := [.int],
+      body := .binOp .add (.local 0) (.literal (.int 1)) } = false := by decide
+
+open AverCert.Grammar in
+/-- A call to a function with no plan (no signature) declines. -/
+example : planTyped sanityM
+    { sig := ⟨[.int], .int⟩, nslots := 1, locals := [.int],
+      body := .call (.fn 3) [.local 0] } = false := by decide
+
+open AverCert.Grammar in
+/-- An Int literal outside the i64 band declines. -/
+example : planTyped sanityM
+    { sig := ⟨[], .int⟩, nslots := 0, locals := [.int],
+      body := .literal (.int (2 ^ 63)) } = false := by decide
 
 end AverCert.Schema

@@ -150,7 +150,6 @@ dependencies = [
  "colored",
  "serde_json",
  "sha2",
- "wasm-encoder 0.248.0",
  "wasmparser 0.248.0",
  "wat",
 ]

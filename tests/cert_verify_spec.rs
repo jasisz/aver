@@ -4,7 +4,7 @@
 //! end to end, then confirms it fails closed on each tampering class. Each class
 //! is one `cert_tripwire_` test carrying the letter tag used below:
 //!   (a) one flipped wasm byte           → artifact hash mismatch
-//!   (b) a corrupted `Module.lean` body  → lake build failure
+//!   (b) a package `Module.lean` is ignored (checker-owned)
 //!   (c) a trivialized final theorem     → kernel witness rejects the type
 //!   (d) a swapped `Schema.lean`         → IGNORED: the checker builds against
 //!       its own embedded audited schema, so a cert-supplied schema (weakened
@@ -33,32 +33,26 @@
 //!   (n) A7 filename gate: a cert file whose name is not a Lean module
 //!       identifier → DECLINED (no lakefile-root injection)
 //!   (o) A8 token scan: a data file carrying `#eval` → DECLINED (brittle wall)
-//!   (p) bytes-vs-data, body divergence: a `Module.lean` `sumToCode` whose
-//!       locals count is bumped 1→2. It still builds green AND passes the old
-//!       report bindings, but the checker pins `manifest.obligations.map (·.code)`
-//!       to the bytes-derived lambda with `rfl`, so the diverging body fails the
-//!       kernel witness → DECLINED ("does not bind"), never CERTIFIED
-//!   (q) shadow decoy: the active `sumToCode` mutated (locals 1→2) PLUS a full
-//!       honest body re-planted in a `namespace Shadow`. The decoy text does not
-//!       change `o.code`, so the code `rfl` still fails → DECLINED
-//!   (r) comment decoy: the active `sumToCode` mutated PLUS a full honest body in
-//!       a `/- … -/` block comment. Dead text; the code `rfl` fails → DECLINED
-//!   (s) migrated-recursion code decouple: `sumTo`'s obligation points at a
-//!       decoy `wrongCode`; the generic `recursionClaimAccepted` byte binding
-//!       rejects it without any bespoke simulation-proof swap → DECLINED
-//!   (t) migrated-recursion self decouple: `sumTo`'s obligation uses a wrong
-//!       function index; the generic recursion claim binds it to the byte index
-//!       and fails closed without a bespoke proof → DECLINED
-//!   (u) String.eq helper shape: a byte-level mutation inside the exact
-//!       compiler-generated helper, with the wasm hash rebound, breaks the
-//!       Lean byte-origin/host binding → DECLINED
-//!   (v) String.eq contract drift: deleting the plan-required contract from
-//!       both `Manifest.lean` and `cert-manifest.json` fails `ClaimAxes` → DECLINED
-//!   (w) String.concat helper shape / contract/type drift: same fail-closed checks
-//!       for the concat helper's byte-exact host-contract recognition plus
-//!       exported/helper declared function type pins
-//!   (x) plan DATA drift: mutating `Plans.lean` fails its structural,
-//!       canonical-lowering, or exact-byte binding inside Lean
+//!   (p) bytes-vs-data, plan divergence: a `Plans.lean` plan of `sumTo` that
+//!       still types but lowers to a different body than the function's code
+//!       entry → the per-plan acceptance fails → DECLINED, never CERTIFIED
+//!   (q) shadow decoy: the active plan mutated PLUS its byte-honest text
+//!       re-planted in a `namespace Shadow`. `fnPlans` names the active plan,
+//!       so the decoy changes nothing → DECLINED
+//!   (r) comment decoy: the active plan mutated PLUS its honest text in a
+//!       `/- … -/` block comment. Dead text → DECLINED
+//!   (s) plan decouple: `sumTo`'s `fnPlans` entry names a decoy plan that
+//!       types at its signature; the wall lowers whatever plan the entry names
+//!       and pins it to the export's code entry → DECLINED
+//!   (t) self decouple: `sumTo`'s entry declares a wrong function index; the
+//!       export binding compares it with the bound function's → DECLINED
+//!   (u) export-name relabel of an honest plan to a duplicate name → DECLINED
+//!   (v) plan decouple on the two-argument accumulator `countDown` → DECLINED
+//!   (w) rebound single-byte tampers of the bytes the wall pins beyond the
+//!       plans — the divmod helper template, a string literal's data segment,
+//!       a constructor struct's finality — each DECLINED inside Lean
+//!   (x) plan DATA drift: mutating `Plans.lean` fails its typing, lowering,
+//!       or exact-byte binding inside Lean
 //!   (y) package-format drift: an unknown `format.version` is rejected rather
 //!       than reinterpreted under the current parser
 //!   (z) wall drift: an unknown aggregate `wall_id` is rejected before Lean
@@ -68,8 +62,8 @@
 //!       from the artifact
 //!   (ab) artifact-data decoy: cert-supplied `Artifact.data` must bind its
 //!       byte/manifest fields and satisfy the checker-owned Lean predicate
-//!   (ac) artifact-root axiom: the artifact-carried bridge proof is the axiom
-//!       audit root, so a smuggled axiom there is rejected
+//!   (ac) artifact-root axiom: an acceptance fact proved from a carried axiom
+//!       is rejected by the axiom audit of the artifact root
 //! plus a separate empty-cert test: zero certified exports must NOT print the
 //! green path and must exit nonzero, and the A5 report-line injection payload
 //! (in the manifest and/or JSON) is rejected by the charset gate.
@@ -80,6 +74,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::aver_command;
 
@@ -163,12 +159,13 @@ fn rebind_cert_wasm_hash(dir: &Path, bytes: &[u8]) {
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
     let old_hash = m["wasm_sha256"].as_str().unwrap().to_string();
     let new_hash = aver::codegen::cert::sha256_hex(bytes);
-    for file in ["Module.lean", "Manifest.lean"] {
-        let path = dir.join("cert").join(file);
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(src.contains(&old_hash), "{file} should pin the old hash");
-        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
-    }
+    let path = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        src.contains(&old_hash),
+        "Manifest.lean should pin the old hash"
+    );
+    std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
     m["wasm_sha256"] = serde_json::Value::String(new_hash);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 }
@@ -200,7 +197,7 @@ fn find_named_file(root: &Path, name: &str) -> Option<PathBuf> {
 
 #[test]
 fn cert_verify_rebuilds_after_cached_olean_corruption() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cert DATA-cache corruption test: `lake` not available");
         return;
     }
@@ -275,34 +272,122 @@ fn cert_verify_rebuilds_after_cached_olean_corruption() {
     );
 }
 
-fn set_named_code_nlocals_to_zero(
-    module: &Path,
-    export_name: &str,
-    arity: u32,
-    canonical_nlocals: u32,
-) {
-    let src = std::fs::read_to_string(module).unwrap();
-    let def_marker = format!("def {export_name}Code : CodeTbl");
-    let start = src
-        .find(&def_marker)
-        .unwrap_or_else(|| panic!("{export_name} code table should exist"));
-    let end = start
-        + src[start..]
-            .find("\n\n/-- Runtime host wiring")
-            .unwrap_or_else(|| panic!("{export_name} code table should have a bounded definition"));
-    let header = format!("some ⟨{arity}, {canonical_nlocals},");
-    let zero_header = format!("some ⟨{arity}, 0,");
-    let code_def = &src[start..end];
+/// The `fnPlans` entry of export `name` in an emitted `Plans.lean`:
+/// `⟨"name", exported, funcIdx, group, planDef⟩`.
+fn plan_entry(plans: &str, name: &str) -> String {
+    let head = format!("⟨\"{name}\", ");
+    let at = plans
+        .find(&head)
+        .unwrap_or_else(|| panic!("Plans.lean has no fnPlans entry for `{name}`"));
+    let end = plans[at..].find('⟩').expect("the entry closes") + at + '⟩'.len_utf8();
+    plans[at..end].to_string()
+}
+
+/// The fields of a `fnPlans` entry: `(exported, funcIdx, group, planDef)`.
+fn plan_entry_fields(plans: &str, name: &str) -> (bool, u32, u32, String) {
+    let entry = plan_entry(plans, name);
+    let inner = entry
+        .trim_start_matches('⟨')
+        .trim_end_matches('⟩')
+        .to_string();
+    let fields: Vec<&str> = inner.split(',').map(str::trim).collect();
+    assert_eq!(fields.len(), 5, "fnPlans entry shape changed: {entry}");
+    (
+        fields[1] == "true",
+        fields[2].parse().expect("function index"),
+        fields[3].parse().expect("call group"),
+        fields[4].to_string(),
+    )
+}
+
+/// The full `def {def} : FnPlan := …` block of an emitted `Plans.lean` (doc
+/// comment excluded), up to the blank line that ends it.
+fn plan_def_block(plans: &str, def: &str) -> String {
+    let head = format!("def {def} : FnPlan :=");
+    let at = plans
+        .find(&head)
+        .unwrap_or_else(|| panic!("Plans.lean has no `{head}`"));
+    let end = plans[at..].find("\n\n").expect("the plan block ends") + at;
+    plans[at..end].to_string()
+}
+
+/// Rewrite, inside the plan block of export `name` only, the first `from` to
+/// `to`. Panics when the block does not contain `from`, so a changed plan
+/// shape fails here and not as a vacuous decline.
+fn tamper_export_plan(plans_path: &Path, name: &str, from: &str, to: &str) {
+    let plans = std::fs::read_to_string(plans_path).unwrap();
+    let (_, _, _, def) = plan_entry_fields(&plans, name);
+    let block = plan_def_block(&plans, &def);
     assert!(
-        code_def.contains(&header),
-        "{export_name} canonical locals-count header changed; update the test"
+        block.contains(from),
+        "the plan of `{name}` no longer contains `{from}`:\n{block}"
     );
-    let zeroed = code_def.replacen(&header, &zero_header, 1);
-    let mut tampered = String::with_capacity(src.len());
-    tampered.push_str(&src[..start]);
-    tampered.push_str(&zeroed);
-    tampered.push_str(&src[end..]);
-    std::fs::write(module, tampered).unwrap();
+    let tampered = block.replacen(from, to, 1);
+    std::fs::write(plans_path, plans.replacen(&block, &tampered, 1)).unwrap();
+}
+
+/// Compile `fixture` (a path under the repository root) with `--certify` into
+/// a scratch directory, and assert the honest package passes the developer
+/// preflight. Returns the directory; the artifact is `{stem}.wasm` in it.
+fn compile_checked_fixture(fixture: &str, prefix: &str) -> ScratchDir {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir(prefix);
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(fixture)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "{fixture} compile --certify failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let stem = Path::new(fixture).file_stem().unwrap().to_string_lossy();
+    let (ok, report) = aver_check(&out_dir.join(format!("{stem}.wasm")), &out_dir.join("cert"));
+    assert!(ok, "the honest {fixture} package must check:\n{report}");
+    out_dir
+}
+
+/// One tamper of an emitted package: `(label, file, from, to)`, where `file`
+/// is a package file name and `from` must occur in it. The special file name
+/// `plan:<export>` edits only the plan block of that export in `Plans.lean`.
+type PackageTamper<'a> = (&'a str, &'a str, &'a str, &'a str);
+
+/// Apply each tamper to a fresh copy of `out_dir` and assert the developer
+/// preflight DECLINES it, never crediting an export. Every tamper here edits
+/// Lean data the acceptance reads, so the decline is a failed build of the
+/// package or a failed checker-witness pin.
+fn assert_package_tampers_decline(out_dir: &Path, wasm_name: &str, tampers: &[PackageTamper]) {
+    for &(label, file, from, to) in tampers {
+        let dir = temp_dir("cert-package-tamper");
+        copy_dir(out_dir, &dir);
+        let cert = dir.join("cert");
+        if let Some(export) = file.strip_prefix("plan:") {
+            tamper_export_plan(&cert.join("Plans.lean"), export, from, to);
+        } else {
+            replace_once(&cert.join(file), from, to);
+        }
+        let (ok, out) = aver_check(&dir.join(wasm_name), &cert);
+        assert!(
+            !ok,
+            "{label}: the tampered package must be DECLINED:\n{out}"
+        );
+        assert!(
+            out.contains("did not build") || out.contains("does not bind"),
+            "{label}: wrong decline reason:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "{label}: the tampered package credited an export:\n{out}"
+        );
+    }
 }
 
 fn compile_cert_goals(prefix: &str) -> (ScratchDir, PathBuf, PathBuf) {
@@ -376,7 +461,7 @@ structure Manifest where\n  subject : Subject\n  obligations : List Obligation\n
 def Holds (_m : Manifest) : Prop := True\n\
 end AverCert.Schema\n";
 
-const WEAK_FINAL: &str = "import Certificate\nimport Manifest\nimport Schema\n\n\
+const WEAK_FINAL: &str = "import Artifact\nimport AcceptanceSoundness\n\n\
 theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := trivial\n\n\
 #print axioms AverCert.Final.cert\n";
 
@@ -412,7 +497,7 @@ theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := trivial\n\n\
 /// `true` when `lake` is on PATH. Prints the skip note otherwise, exactly as
 /// the single tripwire test did before the split.
 fn tripwire_lake_available() -> bool {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cert verify test: `lake` not available");
         return false;
     }
@@ -560,8 +645,8 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
 
 /// Emits the nested-module fixture baseline: a project whose dotted module
 /// dependency (`Nested.Deep.Util`) makes the certificate carry a nested model
-/// file (`Nested/Deep/Util.lean`) that `Manifest.lean` and `Certificate.lean`
-/// import by its dotted module name. Returns `None` when `lake` is
+/// file (`AverModel/Nested/Deep/Util.lean`) that the bridge modules import by
+/// its dotted module name. Returns `None` when `lake` is
 /// unavailable, mirroring `tripwire_baseline`.
 fn nested_module_baseline(prefix: &str) -> Option<ScratchDir> {
     if !tripwire_lake_available() {
@@ -593,8 +678,8 @@ fn nested_module_baseline(prefix: &str) -> Option<ScratchDir> {
 
 /// A certificate whose model tree carries a nested module file stages, builds,
 /// and verifies CERTIFIED end to end. Before nested staging existed the
-/// checker silently skipped `Nested/Deep/Util.lean` and the build failed on
-/// the unresolvable `import Nested.Deep.Util`.
+/// checker silently skipped a nested model file and the build failed on the
+/// unresolvable `import AverModel.Nested.Deep.Util`.
 #[test]
 fn cert_verify_accepts_nested_module_certificate() {
     let Some(out_dir) = nested_module_baseline("certverify-nested-clean") else {
@@ -604,7 +689,11 @@ fn cert_verify_accepts_nested_module_certificate() {
     let wasm = out_dir.join("app.wasm");
     let cert = out_dir.join("cert");
     assert!(
-        cert.join("Nested").join("Deep").join("Util.lean").is_file(),
+        cert.join("AverModel")
+            .join("Nested")
+            .join("Deep")
+            .join("Util.lean")
+            .is_file(),
         "fixture must emit its dependency model at a nested path"
     );
     let (ok, report) = aver_verify_clean_cache(&wasm, &cert);
@@ -614,8 +703,8 @@ fn cert_verify_accepts_nested_module_certificate() {
     );
     assert!(report.contains("CERTIFIED"), "missing CERTIFIED:\n{report}");
     assert!(
-        report.contains("4 certified exports"),
-        "expected the entry export and all three nested-module exports:\n{report}"
+        report.contains("6 certified exports"),
+        "expected the entry exports and all three nested-module exports:\n{report}"
     );
     assert!(
         report.contains("Nested_Deep_Util_combine")
@@ -628,7 +717,7 @@ fn cert_verify_accepts_nested_module_certificate() {
 /// A module carrying records verifies end to end.
 ///
 /// The model has to state each record's default value itself, because the
-/// checker wall strips `deriving` from the staged model. Stating that value as
+/// certificate model does not derive `Inhabited`. Stating that value as
 /// the record's own default made the instance its own premise, so a model
 /// carrying a one-field record never built and its certificate was DECLINED.
 /// The fixture pairs a one-field record with a record whose field is that
@@ -672,8 +761,8 @@ fn cert_verify_accepts_record_carrying_model() {
 /// A model carrying a recursive sum type with no nullary constructor builds
 /// and its certificate verifies end to end.
 ///
-/// The model states each sum type's `Inhabited` witness itself (the checker
-/// wall strips `deriving`). The witness used to default the FIRST
+/// The model states each sum type's `Inhabited` witness itself (the
+/// certificate model does not derive it). The witness used to default the FIRST
 /// constructor's arguments whenever no nullary constructor existed — for
 /// `Chain = More(Chain) | Stop(Int)` that stated `⟨Chain.more default⟩`,
 /// whose `default` asks for the very instance being stated, so the model
@@ -1136,8 +1225,12 @@ fn cert_tripwire_declines_lean_artifact_root_drift() {
     std::fs::write(&manifest, poisoned).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "wrong Lean artifact root must be rejected:\n{out}");
+    // The artifact root proves `subjectMatchesArtifactRoot` by `rfl`, so the
+    // drifted root fails the package's own acceptance root; the checker
+    // witness pins the same field as its backstop.
     assert!(
-        out.contains("manifest.subject.artifactRoot"),
+        (out.contains("did not build") && out.contains("ArtifactCertificate.lean"))
+            || out.contains("manifest.subject.artifactRoot"),
         "wrong reason for Lean artifact root drift:\n{out}"
     );
 }
@@ -1249,25 +1342,27 @@ fn cert_tripwire_declines_flipped_countdown_body_byte() {
     );
 }
 
-/// (b) A corrupted `Module.lean` instruction fails the certificate's own lake
-/// build.
+/// (b) `Module.lean` (the artifact hash `Schema.Holds` compares against) is
+/// checker-owned: the wall imports it, so the verifier renders it from the
+/// bytes it read. A package file of that name, even one pinning a wrong hash,
+/// is ignored, and the certificate still checks.
 #[test]
-fn cert_tripwire_declines_corrupted_module_body() {
+fn cert_tripwire_ignores_a_package_module_file() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-b") else {
         return;
     };
 
-    // (b) A corrupted Module.lean instruction → lake build failure.
     let dir = temp_dir("neg-b");
     copy_dir(&out_dir, &dir);
     let m = dir.join("cert").join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let corrupted = src.replacen(".i64Const 0, .i64LeS", ".i64Const 999, .i64LeS", 1);
-    assert_ne!(src, corrupted, "fixture body shape changed");
-    std::fs::write(&m, corrupted).unwrap();
+    assert!(!m.exists(), "the producer must not write Module.lean");
+    std::fs::write(
+        &m,
+        "namespace CertModule\ndef wasmSha256 : String := \"0000\"\nend CertModule\n",
+    )
+    .unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-    assert!(!ok, "corrupted Module.lean must fail:\n{out}");
-    assert!(out.contains("did not build"), "wrong reason (b):\n{out}");
+    assert!(ok, "a package Module.lean must be ignored:\n{out}");
 }
 
 /// (c) A trivialized final theorem — same name, `: True := trivial` — fails
@@ -1285,7 +1380,7 @@ fn cert_tripwire_declines_trivialized_final_theorem() {
     let dir = temp_dir("neg-c");
     copy_dir(&out_dir, &dir);
     let f = dir.join("cert").join("Final.lean");
-    let trivial = "import Certificate\nimport Manifest\nimport Schema\n\n\
+    let trivial = "import Artifact\nimport AcceptanceSoundness\n\n\
          theorem AverCert.Final.cert : True := trivial\n\n\
          #print axioms AverCert.Final.cert\n";
     std::fs::write(&f, trivial).unwrap();
@@ -1367,9 +1462,9 @@ fn cert_tripwire_declines_hash_rebind_to_foreign_module() {
     );
 }
 
-/// (e2) A1 hash rebind against a CLAIM-FREE certificate, whose Lean data
-/// builds green over any staged bytes: only the kernel witness's hash faces
-/// can catch this swap, so this gate keeps them exercised.
+/// (e2) A1 hash rebind against a CLAIM-FREE certificate: no plan claim can
+/// catch this swap, only the artifact-hash pin can, so this gate keeps it
+/// exercised.
 ///
 /// Compiles its own `certempty` fixture and never touches the shared
 /// `certprobe2` baseline, so it takes the lake check alone.
@@ -1384,10 +1479,13 @@ fn cert_tripwire_declines_hash_rebind_on_claim_free_cert() {
     //      obligations and ships no plan claims, so its Lean data builds green
     //      over any staged bytes. Appending an inert custom section changes the
     //      artifact hash without perturbing any byte-derived fact, and the JSON
-    //      pin is rebound to match — so ONLY the kernel witness's hash faces can
-    //      catch the swap: the theorems (and the manifest artifact-hash face) talk about
-    //      the ORIGINAL hash, not the checker-computed one. This keeps the
-    //      witness hash face exercised now that claim-covered certs die earlier.
+    //      pin is rebound to match — so ONLY the artifact-hash pin can catch the
+    //      swap: the package's Lean data still carries the ORIGINAL hash, and
+    //      the checker computes the new one from the staged bytes. Since the
+    //      checker renders `Module.lean` itself, the kernel meets that mismatch
+    //      as soon as the acceptance theorem is applied to the package data
+    //      (`artifactHash = CertModule.wasmSha256` fails `rfl`); before, it
+    //      surfaced in the witness's hash face. Either way it is the hash face.
     let empty_out = temp_dir("neg-e2-empty");
     let ec = aver_command()
         .current_dir(&repo_root)
@@ -1414,11 +1512,18 @@ fn cert_tripwire_declines_hash_rebind_on_claim_free_cert() {
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&w, &empty_out.join("cert"));
     assert!(!ok, "A1 hash rebind on claim-free cert must fail:\n{out}");
-    assert!(out.contains("does not bind"), "wrong reason (e2):\n{out}");
-    // The witness names the exact face the kernel rejected.
     assert!(
-        out.contains("AverCert.manifest.subject.artifactHash"),
-        "witness not exercised (e2):\n{out}"
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason (e2):\n{out}"
+    );
+    // The kernel names the exact face it rejected: the artifact hash.
+    assert!(
+        out.contains("manifest.subject.artifactHash"),
+        "hash face not exercised (e2):\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "hash rebind credited (e2):\n{out}"
     );
 }
 
@@ -1437,7 +1542,7 @@ fn cert_tripwire_declines_comment_smuggled_final_theorem() {
     let dir = temp_dir("neg-f");
     copy_dir(&out_dir, &dir);
     let f = dir.join("cert").join("Final.lean");
-    let smuggled = "import Certificate\nimport Manifest\nimport Schema\n\n\
+    let smuggled = "import Artifact\nimport AcceptanceSoundness\n\n\
          -- theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := by trivial\n\
          theorem AverCert.Final.cert : True := trivial\n\n\
          #print axioms AverCert.Final.cert\n";
@@ -1529,12 +1634,11 @@ fn cert_tripwire_declines_forged_report_json() {
         .unwrap()
         .push(serde_json::json!({
             "name": "withdrawAll",
-            "class": "straight-line",
+            "class": "source-plan-v1",
+            "facets": [],
             "policy": "simulatesModel",
             "level": "L1",
-            "theorem": "CertProofs.withdrawAll_wasm_certified",
-            "dom": "List Int",
-            "cod": "Int"
+            "theorem": "AcceptanceSoundness.fn_claim_discharges"
         }));
     m["runtime_contracts"]
         .as_array_mut()
@@ -1553,17 +1657,32 @@ fn cert_tripwire_declines_forged_report_json() {
     );
 }
 
-/// Class labels are paired with exports by Lean, not compared as two bags, so
-/// swapping two distinct labels while preserving names and order is declined.
+/// Report labels are paired with exports by Lean, not compared as two bags:
+/// every export carries the one plan class, so the per-export label is its
+/// facet list, and swapping two distinct facet lists while preserving names
+/// and order is declined.
 #[test]
 fn cert_tripwire_declines_swapped_report_class_pairs() {
-    let Some(out_dir) = tripwire_baseline("certverify-neg-i-pair-swap") else {
+    if !tripwire_lake_available() {
         return;
-    };
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-neg-i-pair-swap-base");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/compose.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(compile.status.success(), "compose fixture compile failed");
 
-    // Class labels are paired with exports by Lean, not compared as two bags.
-    // Swapping the two distinct recursion labels while preserving names and
-    // order must therefore fail the atomic `reportEntries` binding.
+    // `double` reports no facet and `quad` reports `calls`: the wall derives
+    // both (`ClaimAxes.reportFacets`) and the witness pins each pair.
     let dir = temp_dir("neg-i-report-pair-swap");
     copy_dir(&out_dir, &dir);
     let mf = dir.join("cert/cert-manifest.json");
@@ -1571,22 +1690,25 @@ fn cert_tripwire_declines_swapped_report_class_pairs() {
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
     let certified = m["certified"].as_array_mut().unwrap();
     assert!(certified.len() >= 2);
-    let first = certified[0]["class"].as_str().unwrap().to_string();
-    let second = certified[1]["class"].as_str().unwrap().to_string();
-    assert_ne!(first, second, "fixture needs two distinct report classes");
-    certified[0]["class"] = serde_json::Value::String(second);
-    certified[1]["class"] = serde_json::Value::String(first);
+    let first = certified[0]["facets"].clone();
+    let second = certified[1]["facets"].clone();
+    assert_ne!(
+        first, second,
+        "fixture needs two distinct report facet lists"
+    );
+    certified[0]["facets"] = second;
+    certified[1]["facets"] = first;
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
-    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
-    assert!(!ok, "swapped export/class pairs must be DECLINED:\n{out}");
+    let (ok, out) = aver_check(&dir.join("compose.wasm"), &dir.join("cert"));
+    assert!(!ok, "swapped export/facet pairs must be DECLINED:\n{out}");
     assert!(
         out.contains("does not bind"),
         "wrong report-pair decline:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "swapped classes were credited:\n{out}"
+        "swapped facets were credited:\n{out}"
     );
 }
 
@@ -1611,11 +1733,11 @@ fn cert_tripwire_declines_json_claiming_an_extra_export() {
         .unwrap()
         .push(serde_json::json!({
             "name": "phantom",
-            "class": "straight-line",
+            "class": "source-plan-v1",
+            "facets": [],
             "policy": "simulatesModel",
             "level": "L1",
-            "dom": "List Int",
-            "cod": "Int"
+            "theorem": "AcceptanceSoundness.fn_claim_discharges"
         }));
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
@@ -1642,7 +1764,10 @@ fn cert_tripwire_declines_json_dropping_a_real_export() {
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    // The bridge surface names certified exports only, so a JSON that drops
+    // them drops their bridges too; the Lean data is untouched.
     m["certified"] = serde_json::Value::Array(vec![]);
+    m["sourceBridges"] = serde_json::Value::Array(vec![]);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "JSON dropping a real export must fail (k):\n{out}");
@@ -1665,7 +1790,10 @@ fn cert_tripwire_declines_control_char_in_candidate_name() {
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    // The bridge surface is optional transport; dropping it keeps the
+    // certified name the first candidate the gate reads.
     m["certified"][0]["name"] = serde_json::Value::String("sumTo\nevil := by rfl".into());
+    m["sourceBridges"] = serde_json::Value::Array(vec![]);
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "control char in a candidate must fail (l):\n{out}");
@@ -1686,7 +1814,7 @@ fn cert_tripwire_declines_axiom_backed_final_theorem() {
     let dir = temp_dir("neg-m");
     copy_dir(&out_dir, &dir);
     let f = dir.join("cert").join("Final.lean");
-    let evil = "import Certificate\nimport Manifest\nimport Schema\n\n\
+    let evil = "import Artifact\nimport AcceptanceSoundness\n\n\
          open AverCert AverCert.Schema\n\n\
          axiom evil : AverCert.Schema.Holds AverCert.manifest\n\
          theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := evil\n";
@@ -1738,7 +1866,7 @@ fn cert_tripwire_declines_code_executing_token_in_cert_data() {
     //     token is rejected before it is staged (deliberately brittle wall).
     let dir = temp_dir("neg-o");
     copy_dir(&out_dir, &dir);
-    let c = dir.join("cert").join("Contracts.lean");
+    let c = dir.join("cert").join("Manifest.lean");
     let mut src = std::fs::read_to_string(&c).unwrap();
     src.push_str("\n#eval IO.println \"pwned\"\n");
     std::fs::write(&c, src).unwrap();
@@ -1748,88 +1876,80 @@ fn cert_tripwire_declines_code_executing_token_in_cert_data() {
         "code-executing token in a data file must fail (o):\n{out}"
     );
     assert!(
-        out.contains("elaboration-executing") && out.contains("#eval"),
+        out.contains("contains refused construct `#eval`"),
         "wrong reason (o):\n{out}"
     );
 }
 
-/// (p) Bytes-vs-data divergence: a `Module.lean` body that still builds green
-/// and still passes the report bindings, but does not decode from the real
-/// bytes. The wasm is untouched, so the mismatch is purely in the Lean data.
+/// (p) Bytes-vs-data divergence: a `Plans.lean` plan that still elaborates
+/// but whose lowering is not the real code entry. The wasm is untouched, so
+/// the mismatch is purely in the Lean data.
 #[test]
 fn cert_tripwire_declines_diverging_module_body() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-p") else {
         return;
     };
 
-    // (p) bytes-vs-data divergence: a Module.lean whose `sumToCode` body does NOT
-    //     decode from the real bytes. The locals count in the CodeTbl entry is
-    //     bumped 1 -> 2 (an extra, unused local), which the recursive proof
-    //     tolerates: the cert still `lake build`s AND passes the old report
-    //     bindings (hash, count, names). The checker now splices the bytes-derived
-    //     code lambda into the witness and pins `manifest.obligations.map (·.code)`
-    //     to it with `rfl`; the bumped body (locals 2) is not the byte-derived one
-    //     (locals 1), so the kernel witness fails: DECLINED, never CERTIFIED. The
-    //     wasm bytes are untouched, so the hash stays consistent — the mismatch is
-    //     purely in the attacker-editable Lean data.
+    // (p) bytes-vs-data divergence: `sumTo`'s base case returns 1 instead of 0
+    //     in Plans.lean. The plan still types, but its lowering boxes a
+    //     different constant, so it is not the function's code entry: the
+    //     per-plan acceptance fails. The wasm bytes are untouched, so the hash
+    //     stays consistent — the mismatch is purely in the attacker-editable
+    //     Lean data.
     let dir = temp_dir("neg-p");
     copy_dir(&out_dir, &dir);
-    let m = dir.join("cert").join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let corrupted = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
-    assert_ne!(src, corrupted, "fixture recursive body shape changed");
-    std::fs::write(&m, corrupted).unwrap();
-    // wasm bytes are untouched: the hash still matches the pinned value.
+    tamper_export_plan(
+        &dir.join("cert").join("Plans.lean"),
+        "sumTo",
+        "(.literal (.int 0))) (.literal (.int 0))",
+        "(.literal (.int 0))) (.literal (.int 1))",
+    );
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(
         !ok,
-        "a body that does not bind to the artifact bytes must be DECLINED:\n{out}"
+        "a plan that does not bind to the artifact bytes must be DECLINED:\n{out}"
     );
-    // The acceptance predicate now pins the locals count exactly, so this
-    // mutation can trip either the shipped artifact's own acceptance `rfl`
-    // during the lake build ("did not build") or the later checker-witness
-    // code binding ("does not bind"). Both are the same fail-closed
-    // decline; the earlier stage is the stronger constraint.
     assert!(
         out.contains("does not bind") || out.contains("did not build"),
         "wrong reason (p):\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "a diverging body must never be credited (p):\n{out}"
+        "a diverging plan must never be credited (p):\n{out}"
     );
 }
 
-/// (q) Shadow decoy — the reproduced bypass: the ACTIVE body mutated plus a
+/// (q) Shadow decoy — the reproduced bypass: the ACTIVE plan mutated plus a
 /// byte-honest copy re-planted in a `namespace Shadow`. The decoy text does
-/// not change `o.code`.
+/// not change what `fnPlans` names.
 #[test]
 fn cert_tripwire_declines_shadow_namespace_decoy() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-q") else {
         return;
     };
 
-    // (q) Shadow decoy (the reproduced bypass): mutate the ACTIVE `sumToCode`
-    //     (locals 1→2) and re-plant a byte-identical honest body in a
-    //     `namespace Shadow`. The old substring check matched the honest text in
-    //     `Shadow` and passed; the code `rfl` pins `o.code` — which is the active,
-    //     mutated `CertModule.sumToCode`, not the shadow — so it fails: DECLINED.
+    // (q) Shadow decoy: mutate the ACTIVE `sumTo` plan and re-plant its
+    //     byte-honest text in a `namespace Shadow`. `fnPlans` names the active,
+    //     mutated definition, not the shadow, so the plan check fails: DECLINED.
     let dir = temp_dir("neg-q");
     copy_dir(&out_dir, &dir);
-    let m = dir.join("cert").join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
-    assert_ne!(src, mutated, "fixture recursive body shape changed");
-    let shadow = format!("namespace Shadow\n{HONEST_SUMTO_CODE}\nend Shadow\n\nend CertModule");
-    let planted = mutated.replacen("end CertModule", &shadow, 1);
+    let plans_path = dir.join("cert").join("Plans.lean");
+    let honest_plans = std::fs::read_to_string(&plans_path).unwrap();
+    let (_, _, _, def) = plan_entry_fields(&honest_plans, "sumTo");
+    let honest_block = plan_def_block(&honest_plans, &def);
+    tamper_export_plan(
+        &plans_path,
+        "sumTo",
+        "(.literal (.int 0))) (.literal (.int 0))",
+        "(.literal (.int 0))) (.literal (.int 1))",
+    );
+    let mutated = std::fs::read_to_string(&plans_path).unwrap();
+    let shadow = format!("namespace Shadow\n{honest_block}\nend Shadow\n\nend AverCert.Plans");
+    let planted = mutated.replacen("end AverCert.Plans", &shadow, 1);
     assert_ne!(mutated, planted, "shadow decoy not planted");
-    std::fs::write(&m, planted).unwrap();
+    std::fs::write(&plans_path, planted).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "shadow decoy must be DECLINED:\n{out}");
-    // The locals-count mutation can trip the shipped artifact's own
-    // acceptance `rfl` at lake build ("did not build") or the later
-    // checker-witness code binding ("does not bind") — the shadow decoy
-    // fools neither stage.
     assert!(
         out.contains("does not bind") || out.contains("did not build"),
         "wrong reason (q):\n{out}"
@@ -1840,7 +1960,7 @@ fn cert_tripwire_declines_shadow_namespace_decoy() {
     );
 }
 
-/// (r) Comment decoy: the active body mutated plus a byte-honest copy inside a
+/// (r) Comment decoy: the active plan mutated plus a byte-honest copy inside a
 /// block comment. Dead text.
 #[test]
 fn cert_tripwire_declines_block_comment_decoy() {
@@ -1848,22 +1968,28 @@ fn cert_tripwire_declines_block_comment_decoy() {
         return;
     };
 
-    // (r) Comment decoy: mutate the active `sumToCode` and re-plant a byte-honest
-    //     body inside a `/- … -/` block comment. Dead text; `o.code` is still the
-    //     mutated active def, so the code `rfl` fails: DECLINED.
+    // (r) Comment decoy: mutate the active `sumTo` plan and re-plant its
+    //     byte-honest text inside a `/- … -/` block comment. Dead text; the
+    //     plan `fnPlans` names is still the mutated one: DECLINED.
     let dir = temp_dir("neg-r");
     copy_dir(&out_dir, &dir);
-    let m = dir.join("cert").join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
-    assert_ne!(src, mutated, "fixture recursive body shape changed");
-    let comment = format!("/- honest decoy:\n{HONEST_SUMTO_CODE}\n-/\n\nend CertModule");
-    let planted = mutated.replacen("end CertModule", &comment, 1);
-    std::fs::write(&m, planted).unwrap();
+    let plans_path = dir.join("cert").join("Plans.lean");
+    let honest_plans = std::fs::read_to_string(&plans_path).unwrap();
+    let (_, _, _, def) = plan_entry_fields(&honest_plans, "sumTo");
+    let honest_block = plan_def_block(&honest_plans, &def);
+    tamper_export_plan(
+        &plans_path,
+        "sumTo",
+        "(.literal (.int 0))) (.literal (.int 0))",
+        "(.literal (.int 0))) (.literal (.int 1))",
+    );
+    let mutated = std::fs::read_to_string(&plans_path).unwrap();
+    let comment = format!("/- honest decoy:\n{honest_block}\n-/\n\nend AverCert.Plans");
+    let planted = mutated.replacen("end AverCert.Plans", &comment, 1);
+    assert_ne!(mutated, planted, "comment decoy not planted");
+    std::fs::write(&plans_path, planted).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "comment decoy must be DECLINED:\n{out}");
-    // Same stage-agnostic decline as (q): the locals-count pin can trip at
-    // the artifact's own lake build or at the checker witness.
     assert!(
         out.contains("does not bind") || out.contains("did not build"),
         "wrong reason (r):\n{out}"
@@ -1874,73 +2000,74 @@ fn cert_tripwire_declines_block_comment_decoy() {
     );
 }
 
-/// (s) Migrated-recursion code decouple: `sumTo`'s obligation points at a decoy
-/// code table. The generic recursion claim must bind the obligation's code to
-/// the byte-derived plan with no bespoke simulation proof to swap.
+/// (s) Plan decouple: `sumTo`'s `fnPlans` entry points at a decoy plan
+/// that still types at the export's signature but is not its code. There is
+/// no bespoke simulation proof to swap: the wall lowers whatever plan the
+/// entry names and pins that lowering to the export's code entry.
 #[test]
 fn cert_tripwire_declines_recursion_code_decouple() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-s") else {
         return;
     };
 
-    // (s) Migrated-recursion code decouple: point `sumTo`'s obligation at a
-    //     decoy `wrongCode`, leaving the byte-honest `sumToCode` dead. `sumTo`
-    //     deliberately has no bespoke `sumTo_simulates` proof now: the generic
-    //     recursion bridge's `recursionClaimAccepted` must bind the obligation's
-    //     code directly to the byte-derived plan and fail closed.
-    let dir = temp_dir("neg-s");
+    let dir = temp_dir("certverify-neg-s-dir");
     copy_dir(&out_dir, &dir);
     let cert = dir.join("cert");
-    let m = cert.join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let with_decoy = src.replacen(
-        "end CertModule",
-        "/-- decoy: always traps, so `holds` is vacuous. -/\n\
-         def wrongCode : CodeTbl := fun _ => none\nend CertModule",
-        1,
-    );
-    std::fs::write(&m, with_decoy).unwrap();
-    let man = cert.join("Manifest.lean");
-    let msrc = std::fs::read_to_string(&man).unwrap();
-    let decoupled = msrc.replacen(
-        "code := CertModule.sumToCode",
-        "code := CertModule.wrongCode",
-        1,
-    );
-    assert_ne!(msrc, decoupled, "manifest code field shape changed");
-    std::fs::write(&man, decoupled).unwrap();
+    let plans_path = cert.join("Plans.lean");
+    let plans = std::fs::read_to_string(&plans_path).unwrap();
+    let (_, _, _, def) = plan_entry_fields(&plans, "sumTo");
+    let honest_entry = plan_entry(&plans, "sumTo");
+    let decoy_entry = honest_entry.replacen(&format!(", {def}⟩"), ", fnDecoy⟩", 1);
+    assert_ne!(honest_entry, decoy_entry, "fnPlans entry shape changed");
+    let decoy = "/-- decoy: a constant, so an unbound simulation would be vacuous. -/\n\
+                 def fnDecoy : FnPlan :=\n  \
+                 { sig := ⟨[.int], .int⟩, nslots := 1, locals := [.int],\n    \
+                 body := (.literal (.int 0)) }\n\ndef fnPlans";
+    let tampered = plans
+        .replacen("def fnPlans", decoy, 1)
+        .replacen(&honest_entry, &decoy_entry, 1);
+    std::fs::write(&plans_path, tampered).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
-    assert!(!ok, "code decouple must be DECLINED:\n{out}");
+    assert!(!ok, "plan decouple must be DECLINED (s):\n{out}");
     assert!(
         out.contains("did not build") || out.contains("does not bind"),
         "wrong reason (s):\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "code decouple credited (s):\n{out}"
+        "plan decouple credited (s):\n{out}"
     );
 }
 
-/// (t) Migrated-recursion self decouple: `sumTo`'s obligation uses a wrong
-/// function index; the generic claim binds it to the byte-derived index.
+/// (t) Self decouple: `sumTo`'s `fnPlans` entry declares a wrong function
+/// index; the wall binds the entry to the export's byte-derived index.
 #[test]
 fn cert_tripwire_declines_recursion_self_decouple() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-t") else {
         return;
     };
 
-    // (t) Migrated-recursion self decouple: set `sumTo`'s obligation `self` to a
-    //     wrong index. The generic recursion bridge's `recursionClaimAccepted`
-    //     binds `obligation.self` to the byte-derived function index, so this
-    //     must fail closed without any bespoke simulation-proof replacement.
+    // (t) Self decouple: set `sumTo`'s declared function index to 999. The
+    //     export binding compares the bound function's index with the entry's,
+    //     and the plan's own self-call now targets an unplanned index, so this
+    //     fails closed without any bespoke simulation-proof replacement.
     let dir = temp_dir("neg-t");
     copy_dir(&out_dir, &dir);
     let cert = dir.join("cert");
-    let man = cert.join("Manifest.lean");
-    let msrc = std::fs::read_to_string(&man).unwrap();
-    let decoupled = msrc.replacen("self := 1,", "self := 999,", 1);
-    assert_ne!(msrc, decoupled, "manifest self field shape changed");
-    std::fs::write(&man, decoupled).unwrap();
+    let plans_path = cert.join("Plans.lean");
+    let plans = std::fs::read_to_string(&plans_path).unwrap();
+    let (_, func_idx, _, _) = plan_entry_fields(&plans, "sumTo");
+    let honest_entry = plan_entry(&plans, "sumTo");
+    let hostile_entry = honest_entry.replacen(&format!(", {func_idx}, "), ", 999, ", 1);
+    assert_ne!(
+        honest_entry, hostile_entry,
+        "fnPlans entry index shape changed"
+    );
+    std::fs::write(
+        &plans_path,
+        plans.replacen(&honest_entry, &hostile_entry, 1),
+    )
+    .unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
     assert!(!ok, "self decouple must be DECLINED:\n{out}");
     assert!(
@@ -1953,28 +2080,30 @@ fn cert_tripwire_declines_recursion_self_decouple() {
     );
 }
 
-/// (u) Export-name relabel: an honest body relabelled to a duplicate export
-/// name in both the Lean manifest and the JSON.
+/// (u) Export-name relabel: an honest plan relabelled to a duplicate export
+/// name in the plans, the Lean subject and the JSON.
 #[test]
 fn cert_tripwire_declines_export_name_relabel() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-u") else {
         return;
     };
 
-    // (u) Export-name relabel: keep the byte-bound honest body/self/carrier, but
-    //     relabel the first obligation (and the JSON) to a duplicate export name
-    //     (`countDown`). The artifact-carried recursion claim pins
-    //     `obligation.export_` to the claimed export name, so the relabel now
-    //     fails the cert's OWN build; the checker witness's manifest export
-    //     list `rfl` remains the backstop for claim-free certs → DECLINED.
+    // (u) Export-name relabel: keep the byte-bound honest plan and index, but
+    //     relabel the first entry (and the subject and the JSON) to a
+    //     duplicate export name (`countDown`). The entry is bound to its code
+    //     through its export NAME, so the relabelled entry binds the other
+    //     function and its plan no longer lowers to that code entry; the
+    //     whole-module export accounting also refuses the duplicate → DECLINED.
     let dir = temp_dir("neg-u");
     copy_dir(&out_dir, &dir);
+    let plans = dir.join("cert").join("Plans.lean");
+    replace_once(&plans, "⟨\"sumTo\", ", "⟨\"countDown\", ");
     let man = dir.join("cert").join("Manifest.lean");
-    let mt = std::fs::read_to_string(&man)
-        .unwrap()
-        .replace("export_ := \"sumTo\"", "export_ := \"countDown\"")
-        .replace("exports := [\"sumTo\"]", "exports := [\"countDown\"]");
-    std::fs::write(&man, mt).unwrap();
+    replace_once(
+        &man,
+        "exports := [\"sumTo\", \"countDown\"]",
+        "exports := [\"countDown\", \"countDown\"]",
+    );
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
@@ -1983,6 +2112,12 @@ fn cert_tripwire_declines_export_name_relabel() {
             c["name"] = serde_json::json!("countDown");
         }
     }
+    // The relabelled export's bridge goes with it: the bridge surface names
+    // certified exports only.
+    m["sourceBridges"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|b| b["export"] != serde_json::json!("sumTo"));
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "export-name relabel must be DECLINED (u):\n{out}");
@@ -1993,51 +2128,291 @@ fn cert_tripwire_declines_export_name_relabel() {
     assert!(!out.contains("CERTIFIED"), "relabel credited (u):\n{out}");
 }
 
-/// (v) Migrated accumulator-recursion code decouple: `countDown` pointed at an
-/// always-trapping code table, with no bespoke simulation theorem to swap.
+/// (v) Plan decouple: `countDown`'s `fnPlans` entry points at a decoy plan
+/// that still types at the export's signature but is not its code. There is
+/// no bespoke simulation proof to swap: the wall lowers whatever plan the
+/// entry names and pins that lowering to the export's code entry.
 #[test]
 fn cert_tripwire_declines_accumulator_code_decouple() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-v") else {
         return;
     };
 
-    // (v) Migrated accumulator-recursion code decouple: point `countDown` at an
-    //     always-trapping code table. There is no bespoke simulation theorem to
-    //     swap after the migration; the audited generic claim/bridge must bind
-    //     the arity-two obligation directly to the byte-derived plan.
-    let dir = temp_dir("neg-v-countdown-code");
+    let dir = temp_dir("certverify-neg-v-dir");
     copy_dir(&out_dir, &dir);
     let cert = dir.join("cert");
-    let module = cert.join("Module.lean");
-    let src = std::fs::read_to_string(&module).unwrap();
-    let with_decoy = src.replacen(
-        "end CertModule",
-        "/-- decoy: always traps, so `holds` is vacuous. -/\n\
-         def wrongCode : CodeTbl := fun _ => none\nend CertModule",
-        1,
-    );
-    assert_ne!(src, with_decoy, "module end marker shape changed");
-    std::fs::write(&module, with_decoy).unwrap();
-
-    let manifest = cert.join("Manifest.lean");
-    let msrc = std::fs::read_to_string(&manifest).unwrap();
-    let decoupled = msrc.replacen(
-        "code := CertModule.countDownCode",
-        "code := CertModule.wrongCode",
-        1,
-    );
-    assert_ne!(msrc, decoupled, "countDown code field shape changed");
-    std::fs::write(&manifest, decoupled).unwrap();
-
+    let plans_path = cert.join("Plans.lean");
+    let plans = std::fs::read_to_string(&plans_path).unwrap();
+    let (_, _, _, def) = plan_entry_fields(&plans, "countDown");
+    let honest_entry = plan_entry(&plans, "countDown");
+    let decoy_entry = honest_entry.replacen(&format!(", {def}⟩"), ", fnDecoy⟩", 1);
+    assert_ne!(honest_entry, decoy_entry, "fnPlans entry shape changed");
+    let decoy = "/-- decoy: a constant, so an unbound simulation would be vacuous. -/\n\
+                 def fnDecoy : FnPlan :=\n  \
+                 { sig := ⟨[.int, .int], .int⟩, nslots := 2, locals := [.int],\n    \
+                 body := (.literal (.int 0)) }\n\ndef fnPlans";
+    let tampered = plans
+        .replacen("def fnPlans", decoy, 1)
+        .replacen(&honest_entry, &decoy_entry, 1);
+    std::fs::write(&plans_path, tampered).unwrap();
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &cert);
-    assert!(!ok, "countDown code decouple must be DECLINED (v):\n{out}");
+    assert!(!ok, "plan decouple must be DECLINED (v):\n{out}");
     assert!(
         out.contains("did not build") || out.contains("does not bind"),
         "wrong reason (v):\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "countDown code decouple credited (v):\n{out}"
+        "plan decouple credited (v):\n{out}"
+    );
+}
+
+/// Apply `mutate` to a fresh copy of the package's artifact, re-bind the
+/// package's hash pins to the mutated bytes (the attacker controls the whole
+/// package, hash included), and assert the developer preflight declines it
+/// inside Lean, never crediting an export.
+fn assert_rebound_byte_tamper_declines(
+    out_dir: &Path,
+    wasm_name: &str,
+    label: &str,
+    mutate: &dyn Fn(&mut Vec<u8>),
+) {
+    let dir = temp_dir("cert-rebound-byte-tamper");
+    copy_dir(out_dir, &dir);
+    let w = dir.join(wasm_name);
+    let mut bytes = std::fs::read(&w).unwrap();
+    let honest = bytes.clone();
+    mutate(&mut bytes);
+    assert_ne!(
+        bytes, honest,
+        "{label}: the mutation must change the artifact"
+    );
+    wasmparser::Validator::new()
+        .validate_all(&bytes)
+        .unwrap_or_else(|error| panic!("{label}: the mutant must stay valid wasm: {error}"));
+    std::fs::write(&w, &bytes).unwrap();
+    rebind_cert_wasm_hash(&dir, &bytes);
+    let (ok, out) = aver_check(&w, &dir.join("cert"));
+    assert!(
+        !ok,
+        "{label}: the rebound byte tamper must be DECLINED:\n{out}"
+    );
+    assert!(
+        out.contains("did not build") || out.contains("does not bind"),
+        "{label}: wrong decline reason:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "{label}: the rebound byte tamper credited an export:\n{out}"
+    );
+}
+
+/// Offsets of every instruction start equal to `opcode` in the body of the
+/// function at absolute index `func_idx`.
+fn function_opcode_offsets(bytes: &[u8], func_idx: u32, opcode: u8) -> Vec<usize> {
+    let mut imported = 0u32;
+    let mut ordinal = 0u32;
+    let mut hits = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.expect("compiler-produced wasm must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                if imported + ordinal == func_idx {
+                    let mut operators = body.get_operators_reader().unwrap();
+                    while !operators.eof() {
+                        let at = operators.original_position();
+                        operators.read().expect("operator must parse");
+                        if bytes[at] == opcode {
+                            hits.push(at);
+                        }
+                    }
+                }
+                ordinal += 1;
+            }
+            _ => {}
+        }
+    }
+    hits
+}
+
+/// The Euclidean division helper is pinned by its template: one byte of the
+/// `__aint_divmod` body changed (`i64.div_s` -> `i64.div_u`, a valid module
+/// with every export, index and type unchanged) declines the package even
+/// though no plan of this fixture divides — a declared helper is pinned
+/// whether or not a plan calls it.
+#[test]
+fn cert_tripwire_declines_flipped_divmod_helper_byte() {
+    let Some(out_dir) = tripwire_baseline("certverify-divmod-template") else {
+        return;
+    };
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert/cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let divmod_idx = manifest["hostRoleTable"]["divmod"]
+        .as_u64()
+        .expect("certprobe2 declares the divmod helper") as u32;
+    let wasm = std::fs::read(out_dir.join("certprobe2.wasm")).unwrap();
+    let hits = function_opcode_offsets(&wasm, divmod_idx, 0x7f);
+    assert_eq!(hits.len(), 1, "the divmod template carries one i64.div_s");
+    assert_rebound_byte_tamper_declines(&out_dir, "certprobe2.wasm", "divmod body", &|bytes| {
+        bytes[hits[0]] = 0x80;
+    });
+}
+
+/// Every declared string literal is pinned to the passive data segment it
+/// names: one byte of the `!` segment `shout` appends changed to `?` (a valid
+/// module, the plan and its lowering untouched) declines the package.
+#[test]
+fn cert_tripwire_declines_tampered_data_segment_byte() {
+    if !tripwire_lake_available() {
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-data-segment");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/stringconcat.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(compile.status.success(), "stringconcat compile failed");
+    let plans = std::fs::read_to_string(out_dir.join("cert/Plans.lean")).unwrap();
+    assert!(
+        plans.contains("strSegs := [([33], 0)]"),
+        "shout's literal must be declared at data segment 0:\n{plans}"
+    );
+    let wasm = std::fs::read(out_dir.join("stringconcat.wasm")).unwrap();
+    let data_range = wasmparser::Parser::new(0)
+        .parse_all(&wasm)
+        .find_map(|payload| match payload.expect("stringconcat parses") {
+            wasmparser::Payload::DataSection(reader) => Some(reader.range()),
+            _ => None,
+        })
+        .expect("stringconcat has a data section");
+    // A passive segment: `01 <len> <bytes>`; segment 0 holds the one byte `!`.
+    let at = wasm[data_range.clone()]
+        .windows(3)
+        .position(|window| window == [0x01, 0x01, b'!'])
+        .map(|offset| data_range.start + offset + 2)
+        .expect("segment 0 is the passive one-byte `!`");
+    assert_rebound_byte_tamper_declines(&out_dir, "stringconcat.wasm", "data segment", &|bytes| {
+        bytes[at] = b'?';
+    });
+}
+
+/// A constructor struct must stay FINAL: `ref.test` on a non-final struct
+/// would also accept a subtype the program never built. Declaring `gauge`'s
+/// nullary constructor struct `sub` instead of `sub final` (a valid module)
+/// declines the package at the type-table pin.
+#[test]
+fn cert_tripwire_declines_non_final_constructor_struct() {
+    if !tripwire_lake_available() {
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-ctor-finality");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tools/certkit/fixtures/signalgauge.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(compile.status.success(), "signalgauge compile failed");
+    let wasm = std::fs::read(out_dir.join("signalgauge.wasm")).unwrap();
+    let type_range = wasmparser::Parser::new(0)
+        .parse_all(&wasm)
+        .find_map(|payload| match payload.expect("signalgauge parses") {
+            wasmparser::Payload::TypeSection(reader) => Some(reader.range()),
+            _ => None,
+        })
+        .expect("signalgauge has a type section");
+    // `sub final (root 0) (struct)`: the nullary constructor.
+    let header = [0x4f, 0x01, 0x00, 0x5f, 0x00];
+    let hits: Vec<usize> = wasm[type_range.clone()]
+        .windows(header.len())
+        .enumerate()
+        .filter_map(|(offset, window)| (window == header).then_some(type_range.start + offset))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "exactly one final empty constructor struct expected"
+    );
+    assert_rebound_byte_tamper_declines(&out_dir, "signalgauge.wasm", "non-final ctor", &|bytes| {
+        bytes[hits[0]] = 0x50;
+    });
+}
+
+/// The declared type table is confirmed against the module's type section:
+/// a record's field types, a sum's constructor struct indices, the Int
+/// carrier and the String array are all byte-pinned, so rewriting any of them
+/// in `Plans.lean` declines the package.
+#[test]
+fn cert_verify_declines_tampered_type_table() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping type-table tamper test: `lake` not available");
+        return;
+    }
+    let (out_dir, _wasm, _cert) = compile_cert_goals("cert-type-table-tamper");
+    let plans = std::fs::read_to_string(out_dir.join("cert/Plans.lean")).unwrap();
+    let carrier_at = plans.find("carrier := some ").unwrap() + "carrier := some ".len();
+    let carrier: u32 = plans[carrier_at..]
+        .split(',')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let carrier_from = format!("carrier := some {carrier},");
+    let carrier_to = format!("carrier := some {},", carrier + 1);
+    assert_package_tampers_decline(
+        &out_dir,
+        "cert_goals.wasm",
+        &[
+            (
+                "record field types swapped",
+                "Plans.lean",
+                "records := [⟨1, 20, [.string, .int]⟩]",
+                "records := [⟨1, 20, [.int, .string]⟩]",
+            ),
+            (
+                "constructor struct indices swapped",
+                "Plans.lean",
+                "⟨0, 0, [(1, [.int]), (2, [.int]), (3, [])]⟩",
+                "⟨0, 0, [(2, [.int]), (1, [.int]), (3, [])]⟩",
+            ),
+            (
+                "carrier index moved",
+                "Plans.lean",
+                carrier_from.as_str(),
+                carrier_to.as_str(),
+            ),
+            (
+                "string array index moved",
+                "Plans.lean",
+                "str := some 21,",
+                "str := some 20,",
+            ),
+        ],
     );
 }
 
@@ -2046,7 +2421,7 @@ fn cert_tripwire_declines_accumulator_code_decouple() {
 /// pin must close, while a one-byte-flipped expected entry must fail `rfl`.
 #[test]
 fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping big-Nat scale regression: `lake` not available");
         return;
     }
@@ -2180,11 +2555,11 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
     }
     assert!(!code_entry.is_empty());
 
-    let artifact_defs = aver::codegen::cert::render_artifact_bytes_lean(&padded)
+    let artifact_defs = aver::codegen::cert::wall::render_artifact_bytes(&padded)
         .replace("AverCert.ArtifactBytes", "LargeBytes");
     let positive = format!(
         "{artifact_defs}\n\
-         theorem largePin : AverCert.WasmSlice.codeEntryForExport LargeBytes.modBytes LargeBytes.modLen [97, 100, 100, 84, 119, 111] = some {} := rfl\n\
+         theorem largePin : (AverCert.WasmSlice.funcBindingForExport LargeBytes.modBytes LargeBytes.modLen [97, 100, 100, 84, 119, 111]).map (·.codeEntry) = some {} := rfl\n\
          #print axioms largePin\n",
         render_list(&code_entry)
     );
@@ -2226,7 +2601,7 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
     let negative = format!(
         "import LargePin\n\
          set_option maxRecDepth 200000\n\
-         example : AverCert.WasmSlice.codeEntryForExport LargeBytes.modBytes LargeBytes.modLen [97, 100, 100, 84, 119, 111] = some {} := rfl\n",
+         example : (AverCert.WasmSlice.funcBindingForExport LargeBytes.modBytes LargeBytes.modLen [97, 100, 100, 84, 119, 111]).map (·.codeEntry) = some {} := rfl\n",
         render_list(&flipped)
     );
     std::fs::write(cert.join("LargePinBad.lean"), negative).unwrap();
@@ -2246,21 +2621,9 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
     );
 }
 
-/// The byte-honest `sumToCode` body for certprobe2, used verbatim as a decoy in
-/// the shadow/comment cases (planting the honest TEXT must not change `o.code`).
-const HONEST_SUMTO_CODE: &str = "/-- Verbatim emitted body of `sumTo` (self-recursive). -/\n\
-    def sumToCode : CodeTbl := fun fn =>\n  \
-    if fn = 1 then some ⟨1, 1,\n    \
-    [ .localGet 0, .structGet 2 1, .refIsNull,\n      \
-    .ifElse [.localGet 0, .structGet 2 0, .i64Const 0, .i64LeS]\n              \
-    [.localGet 0, .structGet 2 2, .i32Const 0, .i32LtS],\n      \
-    .ifElse [.i64Const 0, .call 7]\n              \
-    [.localGet 0, .localGet 0, .i64Const 1, .call 7, .call 9, .call 1, .call 8] ]⟩\n  \
-    else none";
-
 #[test]
 fn cert_verify_declines_tampered_array_new_data_operands() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping array.new_data tamper test: `lake` not available");
         return;
     }
@@ -2298,9 +2661,13 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // of those nine functions carries an artifact claim, so the denominator is
     // now 141: `combineSurrogates` moved from the denominator into the
     // numerator (13) when the record projection-compute face gained scalar
-    // parameters and absorbed the retired straight-line integer face.
+    // parameters and absorbed the retired straight-line integer face. The one
+    // plan grammar certifies five more: 18 of 154. Since `--certify` compiles
+    // the same module as a plain build, the String cursor, builder and
+    // codepoint variants the plain build synthesizes are in it too, eight more
+    // functions that carry no claim: 18 of 162.
     assert!(
-        compile_report.contains("(13 certified, 141 source-level-only)"),
+        compile_report.contains("(18 certified, 144 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
@@ -2319,11 +2686,11 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("13 checked exports"),
+        report.contains("18 checked exports"),
         "json should certify the widened data-segment functions:\n{report}"
     );
     assert!(
-        report.contains("law-claims: 10 of 10 credited"),
+        report.contains("law-claims: 11 of 11 credited"),
         "every json law-claim must pass its per-pin axiom audit:\n{report}"
     );
 
@@ -2380,12 +2747,13 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
         m["wasm_sha256"].as_str().unwrap().to_string()
     };
     let new_hash = aver::codegen::cert::sha256_hex(&bytes);
-    for file in ["Module.lean", "Manifest.lean"] {
-        let path = dir.join("cert").join(file);
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(src.contains(&old_hash), "{file} should pin the old hash");
-        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
-    }
+    let path = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        src.contains(&old_hash),
+        "Manifest.lean should pin the old hash"
+    );
+    std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
@@ -2445,7 +2813,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
 ///
 /// Returns `None` when `lake` is unavailable; the caller then skips, as before.
 fn plans_authority_baseline(prefix: &str) -> Option<ScratchDir> {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Plans.lean authority test: `lake` not available");
         return None;
     }
@@ -2543,42 +2911,36 @@ fn cert_plans_authority_ignores_cert_supplied_artifact_bytes_decoy() {
     );
 }
 
-/// The expr-fragment acceptance path pins the carrier scratch local declared by
-/// the canonical byte lowering, so a code table claiming zero locals is
-/// DECLINED even with honest bytes and an honest plan.
+/// A plan's declared locals are part of its code entry: `addTwo`'s plan
+/// declaring no locals is DECLINED even with honest bytes and an honest body,
+/// because the lowering's locals vector is no longer the code entry's.
 #[test]
 fn cert_plans_authority_declines_zero_locals_expr_fragment_code() {
     let Some(out_dir) = plans_authority_baseline("cert-plans-authority-zero-locals") else {
         return;
     };
 
-    // Honest bytes and plan, but the standalone obligation code table claims
-    // zero locals. The expr-fragment acceptance path must pin the one carrier
-    // scratch local declared by the canonical byte lowering.
-    {
-        let dir = temp_dir("cert-expr-zero-locals");
-        copy_dir(&out_dir, &dir);
-        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "addTwo", 1, 1);
-        let (ok, report) = aver_check(&dir.join("cert_goals.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "expr-fragment zero-locals code must be DECLINED:\n{report}"
-        );
-        // Pin WHY it declined, like every sibling gate here. On its own lane a
-        // bare `!ok` would also be satisfied by a fixture that stopped building
-        // for an unrelated reason, which would retire this gate silently while
-        // the test still passed. In the monolith the shared clean check ahead
-        // of this block ruled that out; standing alone, it has to say so itself.
-        assert!(
-            !report.contains("CERTIFIED"),
-            "zero-locals tamper must not report any certified export:\n{report}"
-        );
-    }
+    let dir = temp_dir("cert-expr-zero-locals");
+    copy_dir(&out_dir, &dir);
+    tamper_export_plan(
+        &dir.join("cert/Plans.lean"),
+        "addTwo",
+        "locals := [.int]",
+        "locals := []",
+    );
+    let (ok, report) = aver_check(&dir.join("cert_goals.wasm"), &dir.join("cert"));
+    assert!(!ok, "zero-locals plan must be DECLINED:\n{report}");
+    // Pin WHY it declined: on its own lane a bare `!ok` would also be
+    // satisfied by a fixture that stopped building for an unrelated reason.
+    assert!(
+        report.contains("did not build") && !report.contains("CERTIFIED"),
+        "zero-locals tamper must fail the plan acceptance:\n{report}"
+    );
 }
 
-/// An expr-fragment claim whose obligation is not carried by the manifest must
-/// be DECLINED: emptying the manifest obligation list and re-proving the
-/// weakened `Final.cert` must not buy acceptance.
+/// The obligations are derived from the plans, never producer data: emptying
+/// the manifest's obligation list and re-proving the weakened `Final.cert`
+/// over it must not buy acceptance.
 #[test]
 fn cert_plans_authority_declines_claim_without_manifest_obligation() {
     let Some(out_dir) = plans_authority_baseline("cert-plans-authority-claim-without-obligation")
@@ -2586,72 +2948,47 @@ fn cert_plans_authority_declines_claim_without_manifest_obligation() {
         return;
     };
 
-    let claim_without_manifest_ob_dir = temp_dir("cert-expr-claim-without-obligation");
-    copy_dir(&out_dir, &claim_without_manifest_ob_dir);
-    let claim_without_manifest_ob_wasm = claim_without_manifest_ob_dir.join("cert_goals.wasm");
-    let claim_without_manifest_ob_cert = claim_without_manifest_ob_dir.join("cert");
-    let manifest_lean = claim_without_manifest_ob_cert.join("Manifest.lean");
-    let manifest_text = std::fs::read_to_string(&manifest_lean).unwrap();
-    let marker = "obligations := [";
-    let start = manifest_text
-        .find(marker)
-        .expect("Manifest.lean should render obligations")
-        + marker.len();
-    let end = start
-        + manifest_text[start..]
-            .find("] }")
-            .expect("Manifest.lean obligations list should close");
-    let mut weakened_manifest = String::new();
-    weakened_manifest.push_str(&manifest_text[..start]);
-    weakened_manifest.push_str(&manifest_text[end..]);
-    assert_ne!(
-        manifest_text, weakened_manifest,
-        "Manifest.lean obligations shape changed"
+    let dir = temp_dir("cert-expr-claim-without-obligation");
+    copy_dir(&out_dir, &dir);
+    let wasm = dir.join("cert_goals.wasm");
+    let cert = dir.join("cert");
+    replace_once(
+        &cert.join("Manifest.lean"),
+        "obligations := AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans",
+        "obligations := []",
     );
-    std::fs::write(&manifest_lean, weakened_manifest).unwrap();
     std::fs::write(
-        claim_without_manifest_ob_cert.join("Final.lean"),
+        cert.join("Final.lean"),
         concat!(
-            "import Certificate\n",
-            "import Manifest\n",
-            "import Schema\n\n",
-            "set_option maxRecDepth 1000000\n",
-            "set_option linter.unusedSimpArgs false\n\n",
+            "import Artifact\n",
+            "import AcceptanceSoundness\n\n",
             "open AverCert AverCert.Schema\n\n",
             "theorem AverCert.Final.cert : AverCert.Schema.Holds manifest := by\n",
-            "  refine ⟨rfl, ?_⟩\n",
+            "  refine ⟨rfl, rfl, rfl, ?_⟩\n",
             "  intro o ho\n",
-            "  simp only [manifest, List.mem_nil_iff, List.not_mem_nil] at ho\n",
+            "  simp [manifest] at ho\n",
             "\n",
             "#print axioms AverCert.Final.cert\n",
         ),
     )
     .unwrap();
-    let (ok, out) = aver_check(
-        &claim_without_manifest_ob_wasm,
-        &claim_without_manifest_ob_cert,
-    );
+    let (ok, out) = aver_check(&wasm, &cert);
     assert!(
         !ok,
-        "expr-fragment claim without manifest obligation must be DECLINED:\n{out}"
+        "a manifest without the derived obligations must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("fragmentClaimObligationsInManifest")
-            || out.contains("manifest.obligations).contains")
-            || out.contains("closureIsolation")
-            || out.contains("closureClaim")
-            || out.contains("AverCert.Artifact.certificate")
-            || out.contains("Artifact.lean"),
-        "wrong reason for missing manifest obligation:\n{out}"
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason for missing manifest obligations:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "expr-fragment claim without manifest obligation credited:\n{out}"
+        "a manifest without the derived obligations credited:\n{out}"
     );
 }
 
-/// A claim obligation that is no longer structurally the manifest's obligation
-/// — same name, host table wrapped so it differs — must be DECLINED.
+/// An obligation that is no longer structurally the one the wall derives —
+/// same export, host table wrapped so it differs — must be DECLINED.
 #[test]
 fn cert_plans_authority_declines_artifact_claim_obligation_tamper() {
     let Some(out_dir) = plans_authority_baseline("cert-plans-authority-artifact-obligation-tamper")
@@ -2659,58 +2996,33 @@ fn cert_plans_authority_declines_artifact_claim_obligation_tamper() {
         return;
     };
 
-    let artifact_obligation_tamper_dir = temp_dir("cert-expr-artifact-obligation-tamper");
-    copy_dir(&out_dir, &artifact_obligation_tamper_dir);
-    let artifact_obligation_tamper_wasm = artifact_obligation_tamper_dir.join("cert_goals.wasm");
-    let artifact_obligation_tamper_cert = artifact_obligation_tamper_dir.join("cert");
-    let artifact_lean = artifact_obligation_tamper_cert.join("Artifact.lean");
-    let artifact_text = std::fs::read_to_string(&artifact_lean).unwrap();
-    let needle = "obligation := AverCert.";
-    let start = artifact_text
-        .find(needle)
-        .expect("Artifact.lean should render at least one claim obligation")
-        + needle.len();
-    let ob_end = start
-        + artifact_text[start..]
-            .find("Ob")
-            .expect("claim obligation should reference a generated obligation")
-        + "Ob".len();
-    let ob_ref = &artifact_text[start..ob_end];
-    let base = format!("AverCert.{ob_ref}");
-    let original = format!("obligation := {base}");
-    let tampered = format!(
-        "obligation := {{ {base} with host := fun add sub mul stringEq stringConcat toIndex fn => if fn = {base}.self + 999999 then none else {base}.host add sub mul stringEq stringConcat toIndex fn }}"
+    let dir = temp_dir("cert-expr-artifact-obligation-tamper");
+    copy_dir(&out_dir, &dir);
+    let wasm = dir.join("cert_goals.wasm");
+    let cert = dir.join("cert");
+    replace_once(
+        &cert.join("Manifest.lean"),
+        "obligations := AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans",
+        "obligations := (AverCert.AcceptedArtifact.obligationsOf subject Plans.types Plans.fnPlans).map \
+         (fun o => { o with host := fun h f => if f = o.self + 999999 then none else o.host h f })",
     );
-    let tampered_artifact = artifact_text.replacen(&original, &tampered, 1);
-    assert_ne!(
-        artifact_text, tampered_artifact,
-        "Artifact.lean claim obligation shape changed"
-    );
-    std::fs::write(&artifact_lean, tampered_artifact).unwrap();
-    let (ok, out) = aver_check(
-        &artifact_obligation_tamper_wasm,
-        &artifact_obligation_tamper_cert,
-    );
+    let (ok, out) = aver_check(&wasm, &cert);
     assert!(
         !ok,
-        "artifact claim obligation not structurally bound to manifest must be DECLINED:\n{out}"
+        "an obligation not structurally the derived one must be DECLINED:\n{out}"
     );
     assert!(
-        out.contains("fragmentClaimObligationsInManifest")
-            || out.contains("List.find?")
-            || out.contains("AverCert.Artifact.data")
-            || out.contains("Artifact.lean")
-            || out.contains("does not bind"),
-        "wrong reason for artifact claim obligation tamper:\n{out}"
+        out.contains("did not build") || out.contains("does not bind"),
+        "wrong reason for the obligation tamper:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "artifact claim obligation tamper credited:\n{out}"
+        "the obligation tamper credited:\n{out}"
     );
 }
 
-/// A package that bridges its acceptance with a carried `axiom` must be
-/// DECLINED by the axiom whitelist, naming the offending axiom.
+/// A package that proves one of its acceptance facts from a carried `axiom`
+/// must be DECLINED by the axiom whitelist, naming the offending axiom.
 #[test]
 fn cert_plans_authority_declines_artifact_carried_axiom_bridge() {
     let Some(out_dir) = plans_authority_baseline("cert-plans-authority-artifact-axiom-tamper")
@@ -2718,33 +3030,17 @@ fn cert_plans_authority_declines_artifact_carried_axiom_bridge() {
         return;
     };
 
-    let artifact_axiom_tamper_dir = temp_dir("cert-expr-artifact-axiom-tamper");
-    copy_dir(&out_dir, &artifact_axiom_tamper_dir);
-    let artifact_axiom_tamper_wasm = artifact_axiom_tamper_dir.join("cert_goals.wasm");
-    let artifact_axiom_tamper_cert = artifact_axiom_tamper_dir.join("cert");
-    let artifact_lean = artifact_axiom_tamper_cert.join("Artifact.lean");
-    let artifact_text = std::fs::read_to_string(&artifact_lean).unwrap();
-    let def_start = artifact_text
-        .find("theorem acceptedWithFinal")
-        .or_else(|| artifact_text.find("def acceptedWithFinal"))
-        .expect("Artifact.lean should declare acceptedWithFinal");
-    let end_marker = "\n\n/-! ### Artifact semantic side conditions consumed by AcceptanceSoundness.accept_sound -/";
-    let def_end = artifact_text
-        .find(end_marker)
-        .expect("Artifact.lean should render accept-sound side conditions after acceptedWithFinal");
-    let evil_bridge = concat!(
-        "axiom artifactEvil : ∀ (finalCert : AverCert.Schema.Holds AverCert.manifest), ",
-        "AverCert.AcceptedArtifact.accepted data\n\n",
-        "theorem acceptedWithFinal\n",
-        "    (finalCert : AverCert.Schema.Holds AverCert.manifest) :\n",
-        "    AverCert.AcceptedArtifact.accepted data := artifactEvil finalCert\n\n",
+    let dir = temp_dir("cert-expr-artifact-axiom-tamper");
+    copy_dir(&out_dir, &dir);
+    let wasm = dir.join("cert_goals.wasm");
+    let cert = dir.join("cert");
+    replace_once(
+        &cert.join("Artifact.lean"),
+        "theorem axes_ok : AverCert.ClaimAxes.checked data = true := by decide +kernel",
+        "axiom artifactEvil : AverCert.ClaimAxes.checked data = true\n\n\
+         theorem axes_ok : AverCert.ClaimAxes.checked data = true := artifactEvil",
     );
-    let mut tampered_artifact = String::new();
-    tampered_artifact.push_str(&artifact_text[..def_start]);
-    tampered_artifact.push_str(evil_bridge);
-    tampered_artifact.push_str(&artifact_text[def_end..]);
-    std::fs::write(&artifact_lean, tampered_artifact).unwrap();
-    let (ok, out) = aver_check(&artifact_axiom_tamper_wasm, &artifact_axiom_tamper_cert);
+    let (ok, out) = aver_check(&wasm, &cert);
     assert!(
         !ok,
         "artifact-carried axiom bridge must be DECLINED:\n{out}"
@@ -2759,260 +3055,116 @@ fn cert_plans_authority_declines_artifact_carried_axiom_bridge() {
     );
 }
 
-/// `Plans.lean` is the authoritative plan DATA, so reordering a raw plan's
-/// operands there must be DECLINED against the module bytes.
+/// `Plans.lean` is the authoritative plan DATA, so swapping a plan's operands
+/// there must be DECLINED against the module bytes.
 #[test]
 fn cert_plans_authority_declines_tampered_lean_raw_plan() {
     let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-plan-tamper") else {
         return;
     };
 
-    let lean_plan_tamper_dir = temp_dir("cert-expr-lean-plan-tamper");
-    copy_dir(&out_dir, &lean_plan_tamper_dir);
-    let lean_plan_tamper_wasm = lean_plan_tamper_dir.join("cert_goals.wasm");
-    let lean_plan_tamper_cert = lean_plan_tamper_dir.join("cert");
-    let plans_lean = lean_plan_tamper_cert.join("Plans.lean");
-    let plans_text = std::fs::read_to_string(&plans_lean).unwrap();
-    let tampered_plans_text = plans_text.replacen(".f64Le [0, 1]", ".f64Le [1, 0]", 1);
-    assert_ne!(
-        plans_text, tampered_plans_text,
-        "Plans.lean floatLeGoal shape changed"
+    let dir = temp_dir("cert-expr-lean-plan-tamper");
+    copy_dir(&out_dir, &dir);
+    tamper_export_plan(
+        &dir.join("cert/Plans.lean"),
+        "floatLeGoal",
+        "(.binOp .lte (.local 0) (.local 1))",
+        "(.binOp .lte (.local 1) (.local 0))",
     );
-    std::fs::write(&plans_lean, tampered_plans_text).unwrap();
-
-    let (ok, out) = aver_check(&lean_plan_tamper_wasm, &lean_plan_tamper_cert);
-    assert!(!ok, "tampered Lean RawPlan data must be DECLINED:\n{out}");
-    let old_body_pin_failed =
-        out.contains("PlanLower.lowerExprFragmentBody") && out.contains("floatLeGoalCode");
-    let plan_byte_or_aggregate_pin_failed = out.contains("PlanBytes.lowerExprFragmentCodeEntry")
-        || out.contains("ExprFragmentAccepted.accepted");
+    let (ok, out) = aver_check(&dir.join("cert_goals.wasm"), &dir.join("cert"));
+    assert!(!ok, "tampered Lean plan data must be DECLINED:\n{out}");
     assert!(
-        old_body_pin_failed || plan_byte_or_aggregate_pin_failed,
-        "wrong reason for Lean RawPlan tamper:\n{out}"
+        out.contains("did not build"),
+        "wrong reason for the Lean plan tamper:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "tampered Lean RawPlan data credited:\n{out}"
+        "tampered Lean plan data credited:\n{out}"
     );
 }
 
-/// The pinned code-entry bytes of a plan are checked against the module, so a
-/// single flipped opcode byte in that pin must be DECLINED. The pin is a named
-/// `ByteSeq` constant in `Artifact.lean` — `Plans.lean` no longer restates it
-/// (format spec section 2.2) — so the tamper looks for the bytes wherever the
-/// package carries them.
-#[test]
-fn cert_plans_authority_declines_tampered_code_entry_byte_pin() {
-    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-bytes-tamper") else {
-        return;
-    };
-
-    let lean_bytes_tamper_dir = temp_dir("cert-expr-lean-bytes-tamper");
-    copy_dir(&out_dir, &lean_bytes_tamper_dir);
-    let lean_bytes_tamper_wasm = lean_bytes_tamper_dir.join("cert_goals.wasm");
-    let lean_bytes_tamper_cert = lean_bytes_tamper_dir.join("cert");
-    let honest_bytes = "[18, 1, 1, 99, 23, 32, 0, 32, 1, 101, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
-    let tampered_bytes = "[18, 1, 1, 99, 23, 32, 0, 32, 1, 102, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
-    assert!(
-        package_lean_text(&lean_bytes_tamper_cert).contains(honest_bytes),
-        "floatLeGoal byte pin changed"
-    );
-    tamper_cert_lean_files(&lean_bytes_tamper_cert, "code-entry byte pin", &|text| {
-        text.replacen(honest_bytes, tampered_bytes, 1)
-    });
-
-    let (ok, out) = aver_check(&lean_bytes_tamper_wasm, &lean_bytes_tamper_cert);
-    assert!(
-        !ok,
-        "tampered Lean code-entry byte pin must be DECLINED:\n{out}"
-    );
-    assert!(
-        out.contains("PlanBytes.lowerExprFragmentCodeEntry") && out.contains("floatLeGoalPlan"),
-        "wrong reason for Lean code-entry byte pin tamper:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "tampered Lean code-entry byte pin credited:\n{out}"
-    );
-}
-
-/// The `WasmSlice` byte-origin pin ties the plan's bytes to their position in
-/// the module, so flipping a byte in that exact-slice argument must be
-/// DECLINED. The argument is the package's named code-entry constant, so the
-/// tamper inlines a one-byte-off literal in its place on the
-/// `exactFuncBindingForExport` leaf alone; the lowering pin beside it keeps
-/// the honest constant and stays green, which is what isolates this pin.
-#[test]
-fn cert_plans_authority_declines_tampered_wasm_slice_byte_origin_pin() {
-    let Some(out_dir) = plans_authority_baseline("cert-plans-authority-lean-slice-tamper") else {
-        return;
-    };
-
-    let lean_slice_tamper_dir = temp_dir("cert-expr-lean-slice-tamper");
-    copy_dir(&out_dir, &lean_slice_tamper_dir);
-    let lean_slice_tamper_wasm = lean_slice_tamper_dir.join("cert_goals.wasm");
-    let lean_slice_tamper_cert = lean_slice_tamper_dir.join("cert");
-    let honest_bytes = "[18, 1, 1, 99, 23, 32, 0, 32, 1, 101, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
-    let slice_tampered_bytes =
-        "[18, 1, 1, 99, 23, 32, 0, 32, 1, 102, 4, 127, 65, 1, 5, 65, 0, 11, 11]";
-    let package = package_lean_text(&lean_slice_tamper_cert);
-    let pin_def = package
-        .lines()
-        .find(|line| line.starts_with("def ") && line.ends_with(&format!(":= {honest_bytes}")))
-        .expect("the package pins floatLeGoal's exact code-entry bytes as a named constant");
-    let pin_name = pin_def["def ".len()..]
-        .split_whitespace()
-        .next()
-        .expect("the byte pin has a name");
-    let honest_exact_arg = format!("] {pin_name} = some ");
-    let slice_tampered_exact_arg = format!("] {slice_tampered_bytes} = some ");
-    assert!(
-        package.lines().any(|line| {
-            line.contains("WasmSlice.exactFuncBindingForExport") && line.contains(&honest_exact_arg)
-        }) && package.matches(&honest_exact_arg).count() == 1,
-        "the package should feed the floatLeGoal byte pin to exactly one WasmSlice byte-origin pin"
-    );
-    tamper_cert_lean_files(&lean_slice_tamper_cert, "wasm-slice byte origin", &|text| {
-        text.replacen(&honest_exact_arg, &slice_tampered_exact_arg, 1)
-    });
-
-    let (ok, out) = aver_check(&lean_slice_tamper_wasm, &lean_slice_tamper_cert);
-    assert!(
-        !ok,
-        "tampered Lean WasmSlice byte-origin pin must be DECLINED:\n{out}"
-    );
-    // A false `rfl` over the full `ArtifactBytes.modBytes` numeral can fail
-    // either as a normal `WasmSlice.exactFuncBindingForExport` type mismatch or as a
-    // Lean stack overflow while reducing the huge byte list. Both are
-    // fail-closed build failures for this untrusted emitted leaf.
-    assert!(
-        out.contains("WasmSlice.exactFuncBindingForExport")
-            || (out.contains("Artifact") && out.contains("Stack overflow")),
-        "wrong reason for Lean WasmSlice byte-origin pin tamper:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "tampered Lean WasmSlice byte-origin pin credited:\n{out}"
-    );
-}
-
-/// Byte-derived host-role indices for the goals module, read from the emitted
-/// `addTwoPlan` in `Plans.lean` (`.hostCall .box N`,
-/// `.hostCall .add M`). Used to compose host-call tamper plans without
-/// hardcoding module layout.
-fn add_two_host_indices(cert_dir: &Path) -> (u32, u32) {
-    let plans = std::fs::read_to_string(cert_dir.join("Plans.lean")).expect("Plans.lean exists");
-    let extract = |tag: &str| -> u32 {
-        let at = plans
-            .find(tag)
-            .unwrap_or_else(|| panic!("Plans.lean should contain `{tag}`"));
-        plans[at + tag.len()..]
-            .split_whitespace()
-            .next()
-            .and_then(|tok| tok.parse::<u32>().ok())
-            .unwrap_or_else(|| panic!("`{tag}` should be followed by a function index"))
-    };
-    (extract(".hostCall .box "), extract(".hostCall .add "))
-}
-
+/// The helper indices live in the subject's host-role table, not in the plans:
+/// swapping the declared `add` and `sub` indices (in the Lean subject and the
+/// JSON alike) must be DECLINED — each role is pinned to its helper template.
 #[test]
 fn cert_verify_declines_host_role_relabel_in_plans_lean() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping Plans.lean host-role relabel test: `lake` not available");
+    if !lean_required::lake_available() {
+        eprintln!("skipping host-role relabel test: `lake` not available");
         return;
     }
 
     let (_out_dir, wasm, cert) = compile_cert_goals("cert-expr-host-role-swap");
-    let (box_idx, add_idx) = add_two_host_indices(&cert);
+    let mf = cert.join("cert-manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+    let add_idx = m["hostRoleTable"]["add"].as_u64().expect("goals add role");
+    let sub_idx = m["hostRoleTable"]["sub"].as_u64().expect("goals sub role");
     assert_ne!(
-        box_idx, add_idx,
+        add_idx, sub_idx,
         "goals module should have distinct host roles"
     );
-    let plans = cert.join("Plans.lean");
-    let text = std::fs::read_to_string(&plans).unwrap();
-    let honest = format!(".hostCall .add {add_idx} [0, 2]");
-    let relabeled = format!(".hostCall .box {add_idx} [0, 2]");
-    assert!(text.contains(&honest), "addTwo raw plan shape changed");
-    std::fs::write(&plans, text.replacen(&honest, &relabeled, 1)).unwrap();
+    let man = cert.join("Manifest.lean");
+    let honest = format!("add := some {add_idx}, mul := ");
+    let text = std::fs::read_to_string(&man).unwrap();
+    assert!(
+        text.contains(&honest),
+        "Manifest.lean role table shape changed"
+    );
+    let swapped = text
+        .replacen(&honest, &format!("add := some {sub_idx}, mul := "), 1)
+        .replacen(
+            &format!("sub := some {sub_idx},"),
+            &format!("sub := some {add_idx},"),
+            1,
+        );
+    std::fs::write(&man, swapped).unwrap();
+    m["hostRoleTable"]["add"] = serde_json::json!(sub_idx);
+    m["hostRoleTable"]["sub"] = serde_json::json!(add_idx);
+    std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
 
     let (ok, out) = aver_check(&wasm, &cert);
-    assert!(
-        !ok,
-        "host-role-relabeled Plans.lean must be DECLINED:\n{out}"
-    );
+    assert!(!ok, "a swapped host-role table must be DECLINED:\n{out}");
     assert!(
         out.contains("did not build") || out.contains("does not bind"),
-        "wrong reason for addTwo role relabel:\n{out}"
+        "wrong reason for the add/sub role swap:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "host-role-relabeled expr-fragment plan credited:\n{out}"
+        "a swapped host-role table credited:\n{out}"
     );
 }
 
+/// An ill-typed plan node is refused by the wall's plan typing: an Int
+/// literal where `intLessZero`'s `Bool` result stands must be DECLINED.
 #[test]
 fn cert_verify_declines_expr_fragment_bad_bool01_raw_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping expr-fragment bad Bool01 raw-plan test: `lake` not available");
+    if !lean_required::lake_available() {
+        eprintln!("skipping ill-typed plan test: `lake` not available");
         return;
     }
 
     let (_out_dir, wasm, cert) = compile_cert_goals("cert-expr-bad-bool01");
-    let plans = cert.join("Plans.lean");
-    let plans_text = std::fs::read_to_string(&plans).unwrap();
-    let def_start = plans_text
-        .find("def floatLeGoalPlan : ExprFragmentRawPlan :=")
-        .expect("Plans.lean should define floatLeGoalPlan");
-    let def_end = def_start
-        + plans_text[def_start..]
-            .find(
-                "
-
-/-- Source-level `SymPlan` projection for `floatLeGoal`",
-            )
-            .expect("floatLeGoalPlan should be followed by its SymPlan");
-    let target = "{ id := 0, ty := .boolI32, kind := .constBool true }";
-    let replacement = "{ id := 0, ty := .boolI32, kind := .constI32 (2 : Int) }";
-    let plan_def = &plans_text[def_start..def_end];
-    assert!(
-        plan_def.contains(target),
-        "floatLeGoalPlan Bool01 constant shape changed"
+    tamper_export_plan(
+        &cert.join("Plans.lean"),
+        "intLessZero",
+        "(.literal (.bool true))",
+        "(.literal (.int 2))",
     );
-    let tampered_plan_def = plan_def.replacen(target, replacement, 1);
-    let mut tampered = String::new();
-    tampered.push_str(&plans_text[..def_start]);
-    tampered.push_str(&tampered_plan_def);
-    tampered.push_str(&plans_text[def_end..]);
-    std::fs::write(&plans, tampered).unwrap();
-
     let (ok, out) = aver_check(&wasm, &cert);
+    assert!(!ok, "an ill-typed plan must be DECLINED:\n{out}");
     assert!(
-        !ok,
-        "bad Bool01 raw plan must be DECLINED:
-{out}"
-    );
-    // PlanCheck rejects the ill-typed Bool01 node (`constI32` is inferred
-    // `rawI32`; `sameTy` fails against the declared `boolI32`), so the
-    // `Artifact.lean` leaves that check and lower `AverCert.Plans.floatLeGoalPlan`
-    // fail to elaborate. Which error of that cascade names
-    // `checkExprFragmentRawPlan` outright is Lean's choice, so accept either
-    // attribution of the same fail-closed build failure on the plan data.
-    assert!(
-        out.contains("did not build")
-            && (out.contains("checkExprFragmentRawPlan") || out.contains("Plans")),
-        "bad Bool01 raw plan should fail the plan-data checks:
-{out}"
+        out.contains("did not build"),
+        "an ill-typed plan should fail the plan-data checks:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "bad Bool01 raw plan credited:
-{out}"
+        "an ill-typed plan credited:\n{out}"
     );
 }
 
 #[test]
 fn cert_verify_declines_tampered_string_eq_helper_shape() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping String.eq helper tamper test: `lake` not available");
         return;
     }
@@ -3050,8 +3202,8 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         "stringeq should certify quoteOrSelf plus bump:\n{report}"
     );
     assert!(
-        report.contains("quoteOrSelf  policy: simulatesModel  class: String.eq leaf"),
-        "quoteOrSelf should report the byte-derived String.eq class:\n{report}"
+        report.contains("quoteOrSelf  policy: simulatesModel  class: source-plan-v1 (strings)"),
+        "quoteOrSelf should report the one plan class with its strings facet:\n{report}"
     );
     let manifest: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(cert.join("cert-manifest.json"))
@@ -3076,8 +3228,8 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         .and_then(|c| c["class"].as_str())
         .unwrap_or("<missing>");
     assert_eq!(
-        quote_class, "verbatim-string-eq",
-        "quoteOrSelf should render the String.eq class, got {quote_class}"
+        quote_class, "source-plan-v1",
+        "quoteOrSelf should render the one plan class, got {quote_class}"
     );
 
     {
@@ -3148,12 +3300,13 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
         m["wasm_sha256"].as_str().unwrap().to_string()
     };
     let new_hash = aver::codegen::cert::sha256_hex(&bytes);
-    for file in ["Module.lean", "Manifest.lean"] {
-        let path = dir.join("cert").join(file);
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(src.contains(&old_hash), "{file} should pin the old hash");
-        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
-    }
+    let path = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        src.contains(&old_hash),
+        "Manifest.lean should pin the old hash"
+    );
+    std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
@@ -3177,7 +3330,7 @@ fn cert_verify_declines_tampered_string_eq_helper_shape() {
 
 #[test]
 fn cert_verify_declines_tampered_string_concat_helper_shape() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping String.concat helper tamper test: `lake` not available");
         return;
     }
@@ -3211,15 +3364,19 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         "expected clean stringconcat certificate to verify:\n{report}"
     );
 
-    // Honest bytes and plan, zero locals in the obligation only. This fixture
+    // Honest bytes and body, zero locals in the plan only. This fixture
     // touches `Int`, so its module carries the Int carrier struct and the
-    // emitted concatenation reserves one carrier scratch local; the canonical
-    // locals count for THIS carrier state is therefore one, and a zero declared
-    // here contradicts both the byte template and the decoded code entry.
+    // emitted concatenation reserves one carrier scratch local; a plan
+    // declaring none lowers to a different locals vector than the code entry.
     {
         let dir = temp_dir("cert-stringconcat-zero-locals");
         copy_dir(&out_dir, &dir);
-        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "shout", 1, 1);
+        tamper_export_plan(
+            &dir.join("cert/Plans.lean"),
+            "shout",
+            "locals := [.int]",
+            "locals := []",
+        );
         let (ok, report) = aver_check(&dir.join("stringconcat.wasm"), &dir.join("cert"));
         assert!(
             !ok,
@@ -3253,8 +3410,8 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         .expect("shout manifest entry");
     let shout_class = shout_entry["class"].as_str().unwrap_or("<missing>");
     assert_eq!(
-        shout_class, "verbatim-string-concat",
-        "shout should render its concat class, got {shout_class}"
+        shout_class, "source-plan-v1",
+        "shout should render the one plan class, got {shout_class}"
     );
     assert!(shout_entry.get("fragment").is_none());
     assert!(shout_entry.get("source_fragment").is_none());
@@ -3269,19 +3426,24 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
             },
         )
         .expect("stringconcat wasm must carry a type section");
-    let artifact_text = std::fs::read_to_string(cert.join("Artifact.lean")).unwrap();
-    let lower_tail = artifact_text
-        .split("AverCert.PlanLower.lowerStringConcatBody ")
-        .nth(1)
-        .expect("Artifact.lean should render a String.concat lowering theorem");
-    let lower_args: Vec<usize> = lower_tail
-        .split_whitespace()
-        .take(3)
-        .map(|arg| arg.parse::<usize>().unwrap())
-        .collect();
-    assert_eq!(lower_args.len(), 3);
-    let result_ty = lower_args[0];
-    let container_ty = lower_args[1];
+    // The `$string` and `Vector<String>` array types, read from the type
+    // table the package declares (and the wall confirms against the bytes).
+    let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let declared_index = |field: &str| -> usize {
+        let head = format!("{field} := some ");
+        let at = plans_text
+            .find(&head)
+            .unwrap_or_else(|| panic!("Plans.lean declares no `{field}`"))
+            + head.len();
+        plans_text[at..]
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let result_ty = declared_index("str");
+    let container_ty = declared_index("strVec");
     assert!(
         result_ty < 128 && container_ty < 128,
         "fixture type indices should have one-byte LEB encodings"
@@ -3383,10 +3545,10 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         let plans = dir.join("cert/Plans.lean");
         let plan_text = std::fs::read_to_string(&plans).unwrap();
         let tampered_plan =
-            plan_text.replacen(".constStringBytes [33]", ".constStringBytes [63]", 1);
+            plan_text.replacen("(.literal (.str [33]))", "(.literal (.str [63]))", 1);
         assert_ne!(
             plan_text, tampered_plan,
-            "String.concat SymPlan DATA shape changed"
+            "String.concat plan literal shape changed"
         );
         std::fs::write(&plans, &tampered_plan).unwrap();
 
@@ -3410,10 +3572,13 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         copy_dir(&out_dir, &dir);
         let plans = dir.join("cert/Plans.lean");
         let plan_text = std::fs::read_to_string(&plans).unwrap();
-        let tampered_plan = plan_text.replacen("bytes := [33]", "bytes := [63]", 1);
+        // The declared literal-to-segment table: the wall confirms each
+        // entry against the passive data segment it names.
+        let tampered_plan =
+            plan_text.replacen("strSegs := [([33], 0)]", "strSegs := [([63], 0)]", 1);
         assert_ne!(
             plan_text, tampered_plan,
-            "String.concat target plan DATA shape changed"
+            "String.concat data-segment table shape changed"
         );
         std::fs::write(&plans, &tampered_plan).unwrap();
 
@@ -3503,12 +3668,13 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
         m["wasm_sha256"].as_str().unwrap().to_string()
     };
     let new_hash = aver::codegen::cert::sha256_hex(&bytes);
-    for file in ["Module.lean", "Manifest.lean"] {
-        let path = dir.join("cert").join(file);
-        let src = std::fs::read_to_string(&path).unwrap();
-        assert!(src.contains(&old_hash), "{file} should pin the old hash");
-        std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
-    }
+    let path = dir.join("cert").join("Manifest.lean");
+    let src = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        src.contains(&old_hash),
+        "Manifest.lean should pin the old hash"
+    );
+    std::fs::write(&path, src.replace(&old_hash, &new_hash)).unwrap();
     let mf = dir.join("cert").join("cert-manifest.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
@@ -3538,7 +3704,7 @@ fn cert_verify_declines_tampered_string_concat_helper_shape() {
 /// carried as a free field.
 #[test]
 fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping carrierless String.concat test: `lake` not available");
         return;
     }
@@ -3570,19 +3736,18 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
     // The module really is in the carrierless state: no Int carrier helper is
     // exported, so no claim in it may cite a box/add/mul/sub role either.
     let bytes = std::fs::read(&wasm).unwrap();
-    let (box_idx, ..) = aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
-        .expect("hello.wasm classifies");
-    assert_eq!(
-        box_idx, None,
+    assert!(
+        !bytes
+            .windows(b"__rt_aint_from_i64".len())
+            .any(|window| window == b"__rt_aint_from_i64"),
         "hello.av must stay carrierless for this test to mean anything"
     );
 
-    // The claims declare that state as `none`, and the obligations declare the
-    // reserved carrier index the wall forces in it.
-    let artifact = std::fs::read_to_string(cert.join("Artifact.lean")).unwrap();
+    // The type table declares that state as `none`.
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     assert!(
-        artifact.contains("carrier := none"),
-        "carrierless String.concat claims should declare `carrier := none`:\n{artifact}"
+        plans.contains("carrier := none, mag := none"),
+        "a carrierless type table should declare `carrier := none`:\n{plans}"
     );
 
     let (ok, report) = aver_verify(&wasm, &cert);
@@ -3625,21 +3790,24 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
             .unwrap_or_else(|| panic!("{export} manifest entry"));
         assert_eq!(
             entry["class"].as_str(),
-            Some("verbatim-string-concat"),
-            "{export} should render its concat class"
+            Some("source-plan-v1"),
+            "{export} should render the one plan class"
         );
     }
 
-    // The claim cannot buy itself the carriered template: declaring a carrier
-    // index in a module whose type section holds no carrier struct contradicts
-    // `CertDecode.carrierState`, and the synthesized prelude stops matching the
-    // module's own code entry as well.
+    // The type table cannot buy itself a carrier: declaring a carrier index in
+    // a module whose type section holds no carrier struct contradicts
+    // `CertDecode.carrierState`, which `TypeTable.carrierConfirmed` pins.
     {
         let dir = temp_dir("cert-hello-carrier-claim");
         copy_dir(&out_dir, &dir);
-        let path = dir.join("cert/Artifact.lean");
+        let path = dir.join("cert/Plans.lean");
         let src = std::fs::read_to_string(&path).unwrap();
-        let tampered = src.replacen("carrier := none", "carrier := some 2", 1);
+        let tampered = src.replacen(
+            "carrier := none, mag := none",
+            "carrier := some 2, mag := none",
+            1,
+        );
         assert_ne!(src, tampered, "carrierless claim shape changed");
         std::fs::write(&path, &tampered).unwrap();
         let (ok, out) = aver_check(&dir.join("hello.wasm"), &dir.join("cert"));
@@ -3653,25 +3821,34 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
         );
     }
 
-    // The obligation's carrier index is pinned too: the carrierless arm of
-    // `decodedCarrierIndex` forces the reserved `0` in this state, so any other
-    // declaration fails that byte-derived equality.
+    // Nor can the subject declare a helper-role table: a carrierless module
+    // (no `__rt_aint_from_i64` export) admits only the absent table, which
+    // `arithTableCheck` proves from the export section.
     {
-        let dir = temp_dir("cert-hello-obligation-carrier");
+        let dir = temp_dir("cert-hello-role-table-claim");
         copy_dir(&out_dir, &dir);
-        let path = dir.join("cert/Manifest.lean");
-        let src = std::fs::read_to_string(&path).unwrap();
-        let tampered = src.replacen("carrier := 0", "carrier := 1", 1);
-        assert_ne!(src, tampered, "carrierless obligation shape changed");
-        std::fs::write(&path, &tampered).unwrap();
+        replace_once(
+            &dir.join("cert/Manifest.lean"),
+            "hostRoleTable := (none : Option CertDecode.AddSub.Roles)",
+            "hostRoleTable := some ({ box := none, add := none, mul := none, sub := none, \
+             toIndex := none, cmp := none, eq := none } : CertDecode.AddSub.Roles)",
+        );
+        let mf = dir.join("cert/cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["hostRoleTable"] = serde_json::json!({
+            "box": null, "add": null, "mul": null, "sub": null,
+            "toIndex": null, "cmp": null, "eq": null, "divmod": null
+        });
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_check(&dir.join("hello.wasm"), &dir.join("cert"));
         assert!(
             !ok,
-            "a free obligation carrier index must be DECLINED:\n{out}"
+            "a carrierless module declaring a role table must be DECLINED:\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
-            "free obligation carrier index credited:\n{out}"
+            "a carrierless role-table declaration credited:\n{out}"
         );
     }
 }
@@ -3680,7 +3857,7 @@ fn cert_verify_certifies_string_concat_in_a_carrierless_module() {
 /// must NOT print the green CERTIFIED path and must exit nonzero (fail-closed).
 #[test]
 fn empty_cert_is_admission_only_and_exits_nonzero() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping empty-cert test: `lake` not available");
         return;
     }
@@ -3805,11 +3982,11 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
         .unwrap()
         .push(serde_json::json!({
             "name": "withdrawAll",
-            "class": "straight-line",
+            "class": "source-plan-v1",
+            "facets": [],
             "policy": "simulatesModel",
             "level": "L1",
-            "dom": "List Int",
-            "cod": "Int"
+            "theorem": "AcceptanceSoundness.fn_claim_discharges"
         }));
     std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
     let (ok, out) = aver_check(&out_dir.join("certempty.wasm"), &out_dir.join("cert"));
@@ -3824,12 +4001,11 @@ fn empty_cert_is_admission_only_and_exits_nonzero() {
 /// checker-witness line pins them, so editing them cannot fail verification.
 /// Precisely because they are unpinned, the trusted CHECKED/CERTIFIED report
 /// must never echo them. Sentinels planted in `cert-manifest.json` must leave
-/// the trusted check green, stay out of the complete trusted report output,
-/// and surface in `explain` only on the line explicitly labeled as
-/// manifest-declared and not kernel-pinned.
+/// the trusted check green and stay out of the complete trusted report output
+/// and out of `explain`.
 #[test]
 fn unpinned_manifest_dom_cod_never_reach_the_trusted_report() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping unpinned manifest-face report test: `lake` not available");
         return;
     }
@@ -3893,36 +4069,26 @@ fn unpinned_manifest_dom_cod_never_reach_the_trusted_report() {
         "trusted report echoed an unpinned manifest dom/cod string:\n{report}"
     );
 
-    // `explain` shows the declared face, but only under the explicit
-    // manifest-declared label; the sentinels must never leak anywhere else.
+    // Schema 9 reports no declared manifest face at all (the certified entry
+    // has no `dom`/`cod`), so `explain` must not echo the sentinels either.
     let (ok, explain) = aver_cert(&["explain"], &wasm, &cert);
     assert!(
         ok,
-        "explain must accept the certificate with edited dom/cod:\n{explain}"
+        "explain must accept the certificate with extra dom/cod strings:\n{explain}"
     );
     assert!(
-        explain.contains(DOM_SENTINEL) && explain.contains(COD_SENTINEL),
-        "explain must still show the declared manifest face:\n{explain}"
+        !explain.contains(DOM_SENTINEL) && !explain.contains(COD_SENTINEL),
+        "explain echoed an unpinned manifest dom/cod string:\n{explain}"
     );
-    for line in explain.lines() {
-        if line.contains(DOM_SENTINEL) || line.contains(COD_SENTINEL) {
-            assert!(
-                line.contains("manifest face (declared, not kernel-pinned)"),
-                "dom/cod escaped the labeled manifest-face line:\n{line}\n\nfull explain output:\n{explain}"
-            );
-        }
-    }
 }
 
-/// An ADT class carries its witness body in `Module.lean` exactly like the
-/// integer classes: mutating the emitted `greetCode` (field-projection witness)
-/// so it no longer decodes from the bytes still builds green, but the checker
-/// pins `manifest.obligations.map (·.code)` to the byte-derived lambda by `rfl`,
-/// so the diverging body fails the kernel witness → DECLINED, never CERTIFIED.
+/// A record projection's plan is bound to the bytes like every other plan:
+/// projecting the OTHER field of `User` in `greet`'s plan still types (both
+/// fields are read somewhere), but it is not the emitted code → DECLINED.
 #[test]
 fn adt_witness_body_mutation_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping ADT witness-mutation test: `lake` not available");
+    if !lean_required::lake_available() {
+        eprintln!("skipping ADT plan-mutation test: `lake` not available");
         return;
     }
 
@@ -3946,37 +4112,41 @@ fn adt_witness_body_mutation_is_declined() {
         String::from_utf8_lossy(&compile.stderr)
     );
 
-    // Bump the field-projection witness body's local count 1 -> 2 (an extra,
-    // unused local): the projection proof tolerates it, so the cert builds AND
-    // passes the report bindings, but the mutated body is not the byte-derived
-    // one, so the code `rfl` fails.
-    let m = out_dir.join("cert").join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let mutated = src.replacen("some ⟨1, 1,", "some ⟨1, 2,", 1);
-    assert_ne!(src, mutated, "emitted greetCode header shape changed");
-    std::fs::write(&m, mutated).unwrap();
-
-    let (ok, out) = aver_check(&out_dir.join("user_record.wasm"), &out_dir.join("cert"));
-    assert!(!ok, "mutated ADT witness body must be DECLINED:\n{out}");
-    // The acceptance predicate now pins the locals count exactly, so this
-    // mutation can trip either the shipped artifact's own acceptance `rfl`
-    // during the lake build ("did not build") or the later checker-witness
-    // code binding ("does not bind"). Both are the same fail-closed decline;
-    // the earlier stage is the stronger constraint.
-    assert!(
-        out.contains("does not bind") || out.contains("did not build"),
-        "wrong reason:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "mutated ADT witness credited:\n{out}"
-    );
+    // `greet` projects field 0 (the name); field 1 is the Int age, so the
+    // mutated plan no longer even has the export's String result type.
+    // Mutating the LOCALS instead keeps the typing and changes only the code
+    // entry's locals vector; both must be declined, so run both.
+    for (label, from, to) in [
+        (
+            "other field",
+            "(.project 0 0 (.local 0))",
+            "(.project 0 1 (.local 0))",
+        ),
+        ("extra local", "locals := [.int]", "locals := [.int, .int]"),
+    ] {
+        let dir = temp_dir("cert-adt-mut-case");
+        copy_dir(&out_dir, &dir);
+        tamper_export_plan(&dir.join("cert").join("Plans.lean"), "greet", from, to);
+        let (ok, out) = aver_check(&dir.join("user_record.wasm"), &dir.join("cert"));
+        assert!(!ok, "{label}: mutated record plan must be DECLINED:\n{out}");
+        assert!(
+            out.contains("does not bind") || out.contains("did not build"),
+            "{label}: wrong reason:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "{label}: mutated record plan credited:\n{out}"
+        );
+    }
 }
 
+/// A `match` over a sum is bound arm by arm: swapping two constructor arms'
+/// bodies in `gauge`'s plan still types, but its lowering tests the tags in a
+/// different order than the emitted code → DECLINED.
 #[test]
 fn variant_dispatch_body_mutation_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping variant-dispatch witness-mutation test: `lake` not available");
+    if !lean_required::lake_available() {
+        eprintln!("skipping variant-dispatch plan-mutation test: `lake` not available");
         return;
     }
 
@@ -4000,48 +4170,47 @@ fn variant_dispatch_body_mutation_is_declined() {
         String::from_utf8_lossy(&compile.stderr)
     );
 
-    // Bump the dispatch witness body's local count (an extra, unused local):
-    // the walker proof tolerates it, so the cert builds green, but the mutated
-    // body is not the byte-derived one, so the code `rfl` fails.
-    let m = out_dir.join("cert").join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let start = src.find("some ⟨1, ").expect("a unary code-table header") + "some ⟨1, ".len();
-    let len = src[start..].find(',').expect("locals count terminator");
-    let nlocals: u32 = src[start..start + len]
-        .trim()
-        .parse()
-        .expect("locals count");
-    let header = format!("some ⟨1, {nlocals},");
-    let bumped = format!("some ⟨1, {},", nlocals + 1);
-    let mutated = src.replacen(&header, &bumped, 1);
-    assert_ne!(src, mutated, "emitted gaugeCode header shape changed");
-    std::fs::write(&m, mutated).unwrap();
-
-    let (ok, out) = aver_check(&out_dir.join("signalgauge.wasm"), &out_dir.join("cert"));
-    assert!(
-        !ok,
-        "mutated dispatch witness body must be DECLINED:\n{out}"
-    );
-    // `gauge` now carries an `int-dispatch-v1` claim whose acceptance pins the
-    // code table's locals count to the canonical byte-derived value, so the
-    // mutation is caught one stage earlier — the shipped `Artifact.lean`
-    // acceptance `rfl` fails during the checker's `lake build` ("did not
-    // build") rather than at the later kernel-witness code binding ("does not
-    // bind"). Either is a fail-closed decline; accept both so the assertion
-    // tracks the tamper being rejected, not which in-kernel gate rejects it.
-    assert!(
-        out.contains("does not bind") || out.contains("did not build"),
-        "wrong reason:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "mutated dispatch witness credited:\n{out}"
-    );
+    // (a) the constant of the nullary arm (7 -> 8); (b) the first two
+    // constructor patterns' tags exchanged (`user 0 0` <-> `user 0 1`).
+    for (label, from, to) in [
+        (
+            "nullary arm constant",
+            "(.literal (.int 7))",
+            "(.literal (.int 8))",
+        ),
+        (
+            "constructor tags exchanged",
+            "(.cons (.ctor (.user 0 0) [1]) (.binOp .sub (.literal (.int 0)) (.local 1)) (.cons (.ctor (.user 0 1) [2])",
+            "(.cons (.ctor (.user 0 1) [1]) (.binOp .sub (.literal (.int 0)) (.local 1)) (.cons (.ctor (.user 0 0) [2])",
+        ),
+    ] {
+        let dir = temp_dir("cert-vd-mut-case");
+        copy_dir(&out_dir, &dir);
+        tamper_export_plan(&dir.join("cert").join("Plans.lean"), "gauge", from, to);
+        let (ok, out) = aver_check(&dir.join("signalgauge.wasm"), &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: mutated dispatch plan must be DECLINED:\n{out}"
+        );
+        assert!(
+            out.contains("does not bind") || out.contains("did not build"),
+            "{label}: wrong reason:\n{out}"
+        );
+        assert!(
+            !out.contains("CERTIFIED"),
+            "{label}: mutated dispatch plan credited:\n{out}"
+        );
+    }
 }
 
+/// Cross-function composition: the CALLEE `double`'s plan is bound to its own
+/// code entry, so mutating it declines the package even though the callers'
+/// plans are untouched. This is the load-bearing tripwire for composition:
+/// a caller's model runs the callee's plan, so an unbound callee would make
+/// every caller's claim unfounded.
 #[test]
 fn composition_callee_mutation_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping composition-mutation test: `lake` not available");
         return;
     }
@@ -4066,28 +4235,17 @@ fn composition_callee_mutation_is_declined() {
         String::from_utf8_lossy(&compile.stderr)
     );
 
-    // Bump the CALLEE (double) entry's local count in the caller's shared
-    // multi-entry table: the extra unused local keeps the cert's own build
-    // green, so the Lean whole-table code binding to actual bytes catches the
-    // decoupling. This is
-    // the load-bearing tripwire for cross-function composition.
-    let m = out_dir.join("cert").join("Module.lean");
-    let src = std::fs::read_to_string(&m).unwrap();
-    let mutated = src.replacen(
-        "if fn = 1 then some ⟨1, 1,",
-        "if fn = 1 then some ⟨1, 2,",
-        1,
+    tamper_export_plan(
+        &out_dir.join("cert").join("Plans.lean"),
+        "double",
+        "(.binOp .add (.local 0) (.local 0))",
+        "(.binOp .mul (.local 0) (.literal (.int 2)))",
     );
-    assert_ne!(
-        src, mutated,
-        "emitted shared-table callee header shape changed"
-    );
-    std::fs::write(&m, mutated).unwrap();
 
     let (ok, out) = aver_check(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
     assert!(
         !ok,
-        "mutated composition callee entry must be DECLINED:\n{out}"
+        "mutated composition callee plan must be DECLINED:\n{out}"
     );
     assert!(
         out.contains("does not bind") || out.contains("did not build"),
@@ -4099,16 +4257,14 @@ fn composition_callee_mutation_is_declined() {
     );
 }
 
-/// Orphan-member coverage tamper: drop the `hex16` composition CLAIM from the
-/// emitted certificate while leaving `hex16` in `compositionMembers` (and thus
-/// in `manifest.compositionPlans`). `hex16` is then a member reachable from no
-/// claimed root — an unconstrained entry that `compositionNamedMembersAccepted`
-/// never byte-checks. The `compositionMembersCovered` coverage conjunct in
-/// `acceptedCompositionFragments` requires every member to be named by some
-/// root, so the cert's own `acceptedWithFinal` proof fails to build; DECLINED.
+/// Every `fnPlans` entry is byte-checked, including an unexported one no
+/// certified export reaches: an extra internal entry whose plan is not its
+/// function's code declines the package (there is no "unchecked member" of a
+/// composition any more), and so does a caller retargeted at it, since a call
+/// must reach a planned function of the same or an earlier group.
 #[test]
 fn composition_orphan_member_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping composition orphan-member test: `lake` not available");
         return;
     }
@@ -4133,1353 +4289,176 @@ fn composition_orphan_member_is_declined() {
         String::from_utf8_lossy(&compile.stderr)
     );
 
-    // Drop only the `hex16` composition claim; `hex16` remains an orphan member
-    // of `compositionMembers`. Every other artifact surface is untouched, so
-    // the ONLY failing conjunct is member coverage.
-    let a = out_dir.join("cert").join("Artifact.lean");
-    let src = std::fs::read_to_string(&a).unwrap();
-    let hex16_claim = ",\n  ({ exportName := \"hex16\", carrier := 2, hostTable := [(.add, 9)], memberNames := [\"double\", \"quad\", \"hex16\"], obligation := AverCert.hex16Ob } : AverCert.AcceptedArtifact.CompositionClaim)";
-    assert!(
-        src.contains(hex16_claim),
-        "emitted compositionClaims shape changed; update the orphan test"
+    // An internal entry with `double`'s plan at the index of `_start` — a
+    // function that is neither planned nor a helper role. The entry is not
+    // exported, so it names no obligation, but it is checked all the same:
+    // its plan must be the code entry of the function at its index.
+    let wasm = std::fs::read(out_dir.join("compose.wasm")).unwrap();
+    let start_idx = wasmparser::Parser::new(0)
+        .parse_all(&wasm)
+        .find_map(|payload| match payload.expect("compose wasm parses") {
+            wasmparser::Payload::ExportSection(reader) => reader
+                .into_iter()
+                .map(|export| export.expect("export parses"))
+                .find(|export| export.name == "_start")
+                .map(|export| export.index),
+            _ => None,
+        })
+        .expect("compose exports `_start`");
+    let plans_path = out_dir.join("cert").join("Plans.lean");
+    let plans = std::fs::read_to_string(&plans_path).unwrap();
+    let (_, _, hex16_group, _) = plan_entry_fields(&plans, "hex16");
+    let (_, _, _, double_def) = plan_entry_fields(&plans, "double");
+    let last_entry = plan_entry(&plans, "hex16");
+    let orphan = format!(
+        "{last_entry},\n   ⟨\"#{start_idx}\", false, {start_idx}, {}, {double_def}⟩",
+        hex16_group + 1
     );
-    std::fs::write(&a, src.replacen(hex16_claim, "", 1)).unwrap();
+    std::fs::write(&plans_path, plans.replacen(&last_entry, &orphan, 1)).unwrap();
 
     let (ok, out) = aver_check(&out_dir.join("compose.wasm"), &out_dir.join("cert"));
-    assert!(!ok, "orphan composition member must be DECLINED:\n{out}");
+    assert!(
+        !ok,
+        "an unchecked extra plan entry must be DECLINED:\n{out}"
+    );
     assert!(
         out.contains("does not bind") || out.contains("did not build"),
         "wrong reason:\n{out}"
     );
     assert!(
         !out.contains("CERTIFIED"),
-        "orphan-member composition cert must not verify:\n{out}"
+        "an extra plan entry credited:\n{out}"
     );
 }
 
-/// Module layout indices of the `cert_goals.av` artifact, read back out of the
-/// bytes the test just compiled. None of these may be written down as a literal
-/// anywhere: every one of them shifts as soon as the fixture gains or loses a
-/// function, and a stale literal surfaces as an unreadable Lean "not
-/// definitionally equal" error instead of a failure anyone can act on.
-struct CertGoalsLayout {
-    carrier: u32,
-    box_idx: u32,
-    add_idx: u32,
-    mul_idx: u32,
-    sub_idx: u32,
-    add_constant: i64,
-    add_two_type_idx: u32,
-    projection_type_idx: u32,
-    struct_idx: u32,
-    field_idx: u32,
-}
-
-/// Recover every layout index the standard-face GuardIso template needs from
-/// the freshly compiled `cert_goals` artifact. The host-role indices come from
-/// the same byte-derived classifier the certificate itself runs against, and
-/// are cross-checked against the call targets actually present in `addTwo`'s
-/// body, so a disagreement fails here with a readable message rather than deep
-/// inside Lean.
-fn cert_goals_layout(out_dir: &Path) -> CertGoalsLayout {
-    const FIXTURE: &str = "tools/certkit/fixtures/cert_goals.av";
-    let wasm = std::fs::read(out_dir.join("cert_goals.wasm"))
-        .expect("cert_goals.wasm must exist after `aver compile --certify`");
-
-    let mut imported_funcs = 0u32;
-    let mut func_type_indices: Vec<u32> = Vec::new();
-    let mut add_two_func = None;
-    let mut user_name_func = None;
-    let mut code_ordinal = 0u32;
-    let mut add_two_body: Option<(i64, Vec<u32>)> = None;
-    let mut projection: Option<(u32, u32)> = None;
-    for payload in wasmparser::Parser::new(0).parse_all(&wasm) {
-        match payload.expect("compiler-produced cert_goals wasm must parse") {
-            wasmparser::Payload::ImportSection(reader) => {
-                for group in reader {
-                    for import in group.expect("import group must parse") {
-                        let (_, import) = import.expect("import must parse");
-                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                            imported_funcs += 1;
-                        }
-                    }
-                }
-            }
-            wasmparser::Payload::FunctionSection(reader) => {
-                for type_idx in reader {
-                    func_type_indices.push(type_idx.expect("function type index must parse"));
-                }
-            }
-            wasmparser::Payload::ExportSection(reader) => {
-                for export in reader {
-                    let export = export.expect("export must parse");
-                    if export.kind != wasmparser::ExternalKind::Func {
-                        continue;
-                    }
-                    match export.name {
-                        "addTwo" => add_two_func = Some(export.index),
-                        "userName" => user_name_func = Some(export.index),
-                        _ => {}
-                    }
-                }
-            }
-            wasmparser::Payload::CodeSectionEntry(body) => {
-                let func_idx = imported_funcs + code_ordinal;
-                code_ordinal += 1;
-                if Some(func_idx) != add_two_func && Some(func_idx) != user_name_func {
-                    continue;
-                }
-                let mut operators = body
-                    .get_operators_reader()
-                    .expect("function body must expose operators");
-                let mut constant = None;
-                let mut calls = Vec::new();
-                let mut struct_get = None;
-                while !operators.eof() {
-                    match operators.read().expect("operator must parse") {
-                        wasmparser::Operator::I64Const { value } => constant = Some(value),
-                        wasmparser::Operator::Call { function_index } => calls.push(function_index),
-                        wasmparser::Operator::StructGet {
-                            struct_type_index,
-                            field_index,
-                        } => struct_get = Some((struct_type_index, field_index)),
-                        _ => {}
-                    }
-                }
-                if Some(func_idx) == add_two_func {
-                    add_two_body = Some((
-                        constant.unwrap_or_else(|| {
-                            panic!("`addTwo` in {FIXTURE} must box an i64 constant")
-                        }),
-                        calls,
-                    ));
-                } else {
-                    projection = struct_get;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let add_two_func =
-        add_two_func.unwrap_or_else(|| panic!("{FIXTURE} must export a function `addTwo`"));
-    let user_name_func =
-        user_name_func.unwrap_or_else(|| panic!("{FIXTURE} must export a function `userName`"));
-    let type_idx_of = |func_idx: u32, name: &str| -> u32 {
-        let ordinal = func_idx
-            .checked_sub(imported_funcs)
-            .unwrap_or_else(|| panic!("`{name}` in {FIXTURE} must be a defined function"));
-        *func_type_indices
-            .get(ordinal as usize)
-            .unwrap_or_else(|| panic!("`{name}` in {FIXTURE} must have a function-section entry"))
-    };
-
-    let (add_constant, calls) =
-        add_two_body.expect("`addTwo` body must appear in the code section");
-    assert_eq!(
-        calls.len(),
-        2,
-        "`addTwo` in {FIXTURE} must still be the `add(param0, box(k))` shape the \
-         record projection-compute face classifies over a scalar Int \
-         parameter; it now calls {calls:?}"
-    );
-    let (body_box_idx, body_add_idx) = (calls[0], calls[1]);
-
-    let (box_idx, add_idx, mul_idx, sub_idx, _to_index_idx, _cmp_idx, _eq_idx) =
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm)
-            .expect("cert_goals module must expose a byte-derived host-role table");
-    let box_idx = box_idx.expect("cert_goals box role");
-    let add_idx = add_idx.expect("cert_goals add role");
-    let mul_idx = mul_idx.expect("cert_goals mul role");
-    let sub_idx = sub_idx.expect("cert_goals sub role");
-    assert_eq!(
-        (box_idx, add_idx),
-        (body_box_idx, body_add_idx),
-        "the byte-derived host-role table disagrees with the calls in `addTwo`'s \
-         own body; the standard face this GuardIso probes would not be the one \
-         the certificate builds"
-    );
-
-    let (struct_idx, field_idx) = projection.unwrap_or_else(|| {
-        panic!("`userName` in {FIXTURE} must be a single `struct.get` projection")
-    });
-    assert!(
-        field_idx <= 1,
-        "the projection face requires a two-field struct; `userName` in {FIXTURE} \
-         reads field {field_idx}"
-    );
-
-    let report: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
-            .expect("cert-manifest.json must exist after `aver compile --certify`"),
-    )
-    .expect("cert-manifest.json must parse");
-    let carrier = report["carrier_type_index"]
-        .as_u64()
-        .expect("cert-manifest.json must report `carrier_type_index`") as u32;
-    assert_ne!(
-        carrier, struct_idx,
-        "the projection face is only nominal when the struct is not the carrier"
-    );
-
-    CertGoalsLayout {
-        carrier,
-        box_idx,
-        add_idx,
-        mul_idx,
-        sub_idx,
-        add_constant,
-        add_two_type_idx: type_idx_of(add_two_func, "addTwo"),
-        projection_type_idx: type_idx_of(user_name_func, "userName"),
-        struct_idx,
-        field_idx,
-    }
-}
-
-/// Render `tests/fixtures/cert_standard_face_guard_iso.lean` against the layout
-/// of the artifact under test. The template carries no layout literals, so the
-/// only way this can go stale is if a placeholder loses its substitution — and
-/// that is caught below with a message, not by Lean.
-fn cert_goals_standard_face_guard_iso_lean(out_dir: &Path) -> String {
-    let layout = cert_goals_layout(out_dir);
-    let rendered = include_str!("fixtures/cert_standard_face_guard_iso.lean")
-        .replace("%carrier%", &layout.carrier.to_string())
-        .replace("%box%", &layout.box_idx.to_string())
-        .replace("%add%", &layout.add_idx.to_string())
-        .replace("%mul%", &layout.mul_idx.to_string())
-        .replace("%sub%", &layout.sub_idx.to_string())
-        .replace("%addConstant%", &layout.add_constant.to_string())
-        .replace("%addTwoTypeIdx%", &layout.add_two_type_idx.to_string())
-        .replace(
-            "%projectionTypeIdx%",
-            &layout.projection_type_idx.to_string(),
-        )
-        .replace("%structIdx%", &layout.struct_idx.to_string())
-        .replace("%otherFieldIdx%", &(1 - layout.field_idx).to_string())
-        .replace("%fieldIdx%", &layout.field_idx.to_string());
-    assert!(
-        !rendered.contains('%'),
-        "tests/fixtures/cert_standard_face_guard_iso.lean still holds an \
-         unsubstituted placeholder after rendering. Every module layout index in \
-         that template must be derived from the compiled artifact in \
-         `cert_goals_layout`; never replace a placeholder with a literal."
-    );
-    rendered
-}
-
-fn run_manifest_obligation_guard_iso(prefix: &str, lean: impl FnOnce(&Path) -> String) {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping manifest-obligation GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir(prefix);
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/cert_goals.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile cert_goals fixture for manifest-obligation GuardIso");
-    assert!(
-        compile.status.success(),
-        "cert_goals compile failed for manifest-obligation GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    // Rendered against the artifact that was just built, never against baked-in
-    // module layout indices.
-    let lean = lean(&out_dir);
-    let cert = out_dir.join("cert");
-    let build = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build cert_goals certificate before manifest-obligation GuardIso");
-    assert!(
-        build.status.success(),
-        "cert_goals certificate failed before manifest-obligation GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let check = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .output()
-        .expect("run manifest-obligation GuardIso");
-    assert!(
-        check.status.success(),
-        "manifest-obligation GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// The old acceptance surface did not constrain the whole host builder. An
-/// obligation could therefore trap at its first host call and satisfy partial
-/// correctness vacuously. The standard face must be the single guard that
-/// rejects that otherwise accepted artifact.
-#[test]
-fn standard_face_host_guard_is_isolating() {
-    run_manifest_obligation_guard_iso(
-        "cert-standard-face-host-guard-iso",
-        cert_goals_standard_face_guard_iso_lean,
-    );
-}
-
-/// An otherwise valid artifact with one extra manifest obligation is rejected
-/// only by `manifestObligationsClaimed`; the literal one-conjunct-weakened copy
-/// accepts it, while every byte-derived binding and code entry stays identical.
-#[test]
-fn manifest_unclaimed_obligation_guard_is_isolating() {
-    let lean = r#"import ArtifactCertificate
-
-open CertPrelude AverCert AverCert.Schema
-set_option maxRecDepth 300000
-
-theorem claimObligationsInManifest_append
-    (manifestObligations extras claims : List Obligation)
-    (h : AcceptedArtifact.claimObligationsInManifest manifestObligations claims) :
-    AcceptedArtifact.claimObligationsInManifest
-      (manifestObligations ++ extras) claims := by
-  induction claims with
-  | nil => trivial
-  | cons obligation rest ih =>
-      rcases h with ⟨hfind, hrest⟩
-      constructor
-      · simpa [List.find?_append, hfind]
-      · exact ih hrest
-
-def acceptedCompositionWithoutClaimCoverage
-    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.compositionClaimsAccepted artifact.modBytes artifact.modLen
-      artifact.compositionMembers artifact.compositionClaims ∧
-    AcceptedArtifact.compositionMembersCovered artifact.compositionMembers
-      artifact.compositionClaims = true ∧
-    AcceptedArtifact.manifestObligationExportsUnique artifact = true
-
-def acceptedFragmentsWithoutClaimCoverage
-    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.acceptedSymFragments artifact ∧
-  AcceptedArtifact.acceptedStringEqFragments artifact ∧
-  AcceptedArtifact.acceptedStringConcatFragments artifact ∧
-  AcceptedArtifact.acceptedConstructFragments artifact ∧
-  AcceptedArtifact.acceptedRecursionFragments artifact ∧
-  AcceptedArtifact.acceptedMutualRecursionFragments artifact ∧
-  AcceptedArtifact.acceptedVerbatimFragments artifact ∧
-  AcceptedArtifact.acceptedIntDispatchFragments artifact ∧
-  AcceptedArtifact.acceptedFieldProjectionFragments artifact ∧
-  acceptedCompositionWithoutClaimCoverage artifact
-
-def acceptedWithoutClaimCoverage
-    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  Schema.Holds artifact.manifest ∧
-  AcceptedArtifact.artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes
-    AverCert.ArtifactComponentBytes.componentLen artifact = true ∧
-  AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
-  AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
-  AcceptedArtifact.claimsMatchManifest artifact ∧
-  AverCert.StandardFace.checkedFaces artifact ∧
-  AverCert.ClaimAxes.checked artifact = true ∧
-  AcceptedArtifact.decodedNonExprFacts artifact ∧
-  acceptedFragmentsWithoutClaimCoverage artifact
-
-def unclaimedOb : Obligation :=
-  { AverCert.addTwoOb with export_ := "unclaimedAddTwo" }
-
-def unclaimedManifest : Manifest :=
-  { AverCert.manifest with
-      obligations := AverCert.manifest.obligations ++ [unclaimedOb] }
-
-def unclaimedArtifact : AcceptedArtifact.ArtifactData :=
-  { Artifact.data with manifest := unclaimedManifest }
-
-theorem unclaimedFinal : Schema.Holds unclaimedManifest := by
-  refine ⟨Final.cert.1, Final.cert.2.1, Final.cert.2.2.1, ?_⟩
-  intro o ho
-  have ho' : o ∈ AverCert.manifest.obligations ∨ o = unclaimedOb := by
-    simpa [unclaimedManifest] using ho
-  rcases ho' with ho | rfl
-  · exact Final.cert.2.2.2 o ho
-  · have hadd := Final.cert.2.2.2 AverCert.addTwoOb (by simp [AverCert.manifest])
-    simpa [unclaimedOb, Obligation.holds] using hadd
-
-example : AcceptedArtifact.manifestObligationsClaimed unclaimedArtifact = false := rfl
-example : AcceptedArtifact.manifestObligationExportsUnique unclaimedArtifact = true := rfl
-
-example : ∀ nameBytes,
-    WasmSlice.funcBindingForExport unclaimedArtifact.modBytes unclaimedArtifact.modLen nameBytes =
-      WasmSlice.funcBindingForExport Artifact.data.modBytes Artifact.data.modLen nameBytes := by
-  intro nameBytes
-  rfl
-
-example : ∀ nameBytes,
-    WasmSlice.codeEntryForExport unclaimedArtifact.modBytes unclaimedArtifact.modLen nameBytes =
-      WasmSlice.codeEntryForExport Artifact.data.modBytes Artifact.data.modLen nameBytes := by
-  intro nameBytes
-  rfl
-
-example : ¬ AcceptedArtifact.accepted unclaimedArtifact := by
-  intro h
-  rcases h with ⟨_, _, _, _, _, _, _, _, hfragments⟩
-  rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
-  have hclaimed := hcomposition.2.2.1
-  change false = true at hclaimed
-  contradiction
-
-example : acceptedWithoutClaimCoverage unclaimedArtifact := by
-  rcases Artifact.certificate with
-    ⟨_, henvelope, hsubject, hobs, hmatch, hfaces, haxes, hdecoded, hsym, hstringEq, hstringConcat,
-      hconstruct, hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
-      hcompositionAccepted, _⟩
-  rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨unclaimedFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-  · exact henvelope
-  · exact hsubject
-  · simpa [unclaimedArtifact, unclaimedManifest,
-      AcceptedArtifact.fragmentClaimObligationsInManifest,
-      AcceptedArtifact.claimObligations] using
-      claimObligationsInManifest_append AverCert.manifest.obligations
-        [unclaimedOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
-  · exact hmatch
-  · change AverCert.StandardFace.checkedFaces Artifact.data
-    exact hfaces
-  · change AverCert.ClaimAxes.checked Artifact.data = true
-    exact haxes
-  · exact hdecoded
-  · exact hsym
-  · exact hstringEq
-  · exact hstringConcat
-  · exact hconstruct
-  · exact hrecursion
-  · exact hmutual
-  · exact hverbatim
-  · exact hintDispatch
-  · exact hfieldProjection
-  · exact hcomposition
-  · exact hmembersCovered
-  · rfl
-"#;
-    run_manifest_obligation_guard_iso("cert-manifest-unclaimed-guard-iso", |_| lean.to_string());
-}
-
-/// A second, mutated obligation behind the honest obligation with the same
-/// export name is rejected only by `manifestObligationExportsUnique`; removing
-/// just that conjunct accepts it without changing any byte-derived surface.
-#[test]
-fn manifest_duplicate_obligation_export_guard_is_isolating() {
-    let lean = r#"import ArtifactCertificate
-
-open CertPrelude AverCert AverCert.Schema
-set_option maxRecDepth 300000
-
-theorem claimObligationsInManifest_append
-    (manifestObligations extras claims : List Obligation)
-    (h : AcceptedArtifact.claimObligationsInManifest manifestObligations claims) :
-    AcceptedArtifact.claimObligationsInManifest
-      (manifestObligations ++ extras) claims := by
-  induction claims with
-  | nil => trivial
-  | cons obligation rest ih =>
-      rcases h with ⟨hfind, hrest⟩
-      constructor
-      · simpa [List.find?_append, hfind]
-      · exact ih hrest
-
-def inertCode : CodeTbl := fun _ => none
-
-def duplicateOb : Obligation :=
-  { AverCert.addTwoOb with code := inertCode, self := 999 }
-
-theorem duplicateObHolds : duplicateOb.holds := by
-  intro S add sub mul stringEq stringConcat toIndex cmp eq hadd hsub hmul hStringEq
-    hStringConcat _hToIndex _hCmp _hEq fuel x vs w hdom hrun
-  cases fuel <;> simp [duplicateOb, inertCode, wFuncN] at hrun
-
-def duplicateManifest : Manifest :=
-  { AverCert.manifest with
-      obligations := AverCert.manifest.obligations ++ [duplicateOb] }
-
-def duplicateArtifact : AcceptedArtifact.ArtifactData :=
-  { Artifact.data with manifest := duplicateManifest }
-
-theorem duplicateFinal : Schema.Holds duplicateManifest := by
-  refine ⟨Final.cert.1, Final.cert.2.1, Final.cert.2.2.1, ?_⟩
-  intro o ho
-  change o ∈ AverCert.manifest.obligations ++ [duplicateOb] at ho
-  rcases List.mem_append.mp ho with ho | ho
-  · exact Final.cert.2.2.2 o ho
-  · simp only [List.mem_singleton] at ho
-    subst o
-    exact duplicateObHolds
-
-def acceptedCompositionWithoutUniqueExports
-    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.compositionClaimsAccepted artifact.modBytes artifact.modLen
-      artifact.compositionMembers artifact.compositionClaims ∧
-    AcceptedArtifact.compositionMembersCovered artifact.compositionMembers
-      artifact.compositionClaims = true ∧
-    AcceptedArtifact.manifestObligationsClaimed artifact = true
-
-def acceptedFragmentsWithoutUniqueExports
-    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.acceptedSymFragments artifact ∧
-  AcceptedArtifact.acceptedStringEqFragments artifact ∧
-  AcceptedArtifact.acceptedStringConcatFragments artifact ∧
-  AcceptedArtifact.acceptedConstructFragments artifact ∧
-  AcceptedArtifact.acceptedRecursionFragments artifact ∧
-  AcceptedArtifact.acceptedMutualRecursionFragments artifact ∧
-  AcceptedArtifact.acceptedVerbatimFragments artifact ∧
-  AcceptedArtifact.acceptedIntDispatchFragments artifact ∧
-  AcceptedArtifact.acceptedFieldProjectionFragments artifact ∧
-  acceptedCompositionWithoutUniqueExports artifact
-
-def acceptedWithoutUniqueExports
-    (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  Schema.Holds artifact.manifest ∧
-  AcceptedArtifact.artifactEnvelopeAccepted AverCert.ArtifactComponentBytes.componentBytes
-    AverCert.ArtifactComponentBytes.componentLen artifact = true ∧
-  AcceptedArtifact.subjectMatchesArtifactRoot artifact ∧
-  AcceptedArtifact.fragmentClaimObligationsInManifest artifact ∧
-  AcceptedArtifact.claimsMatchManifest artifact ∧
-  AverCert.StandardFace.checkedFaces artifact ∧
-  AverCert.ClaimAxes.checked artifact = true ∧
-  AcceptedArtifact.decodedNonExprFacts artifact ∧
-  acceptedFragmentsWithoutUniqueExports artifact
-
-example : AcceptedArtifact.manifestObligationsClaimed duplicateArtifact = true := rfl
-example : AcceptedArtifact.manifestObligationExportsUnique duplicateArtifact = false := rfl
-
-example : ∀ nameBytes,
-    WasmSlice.funcBindingForExport duplicateArtifact.modBytes duplicateArtifact.modLen nameBytes =
-      WasmSlice.funcBindingForExport Artifact.data.modBytes Artifact.data.modLen nameBytes := by
-  intro nameBytes
-  rfl
-
-example : ∀ nameBytes,
-    WasmSlice.codeEntryForExport duplicateArtifact.modBytes duplicateArtifact.modLen nameBytes =
-      WasmSlice.codeEntryForExport Artifact.data.modBytes Artifact.data.modLen nameBytes := by
-  intro nameBytes
-  rfl
-
-example : ¬ AcceptedArtifact.accepted duplicateArtifact := by
-  intro h
-  rcases h with ⟨_, _, _, _, _, _, _, _, hfragments⟩
-  rcases hfragments with ⟨_, _, _, _, _, _, _, _, _, hcomposition, _⟩
-  have hunique := hcomposition.2.2.2
-  change false = true at hunique
-  contradiction
-
-example : acceptedWithoutUniqueExports duplicateArtifact := by
-  rcases Artifact.certificate with
-    ⟨_, henvelope, hsubject, hobs, hmatch, hfaces, haxes, hdecoded, hsym, hstringEq, hstringConcat,
-      hconstruct, hrecursion, hmutual, hverbatim, hintDispatch, hfieldProjection,
-      hcompositionAccepted, _⟩
-  rcases hcompositionAccepted with ⟨hcomposition, hmembersCovered, _, _⟩
-  refine ⟨duplicateFinal, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-  · exact henvelope
-  · exact hsubject
-  · simpa [duplicateArtifact, duplicateManifest,
-      AcceptedArtifact.fragmentClaimObligationsInManifest,
-      AcceptedArtifact.claimObligations] using
-      claimObligationsInManifest_append AverCert.manifest.obligations
-        [duplicateOb] (AcceptedArtifact.claimObligations Artifact.data) hobs
-  · exact hmatch
-  · change AverCert.StandardFace.checkedFaces Artifact.data
-    exact hfaces
-  · change AverCert.ClaimAxes.checked Artifact.data = true
-    exact haxes
-  · exact hdecoded
-  · exact hsym
-  · exact hstringEq
-  · exact hstringConcat
-  · exact hconstruct
-  · exact hrecursion
-  · exact hmutual
-  · exact hverbatim
-  · exact hintDispatch
-  · exact hfieldProjection
-  · exact hcomposition
-  · exact hmembersCovered
-  · rfl
-"#;
-    run_manifest_obligation_guard_iso("cert-manifest-duplicate-guard-iso", |_| lean.to_string());
-}
-
-/// S5 guard isolation, including executed weaken confirmations. Each negative
-/// is rejected by one named audited guard; the adjacent `weak*` definition is
-/// the throwaway one-guard-removed copy and accepts exactly that negative.
-#[test]
-fn composition_plan_guards_are_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping composition GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-compose-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/compose.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile composition fixture");
-    assert!(
-        compile.status.success(),
-        "composition fixture compile failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    let build = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build composition certificate before GuardIso");
-    assert!(
-        build.status.success(),
-        "composition certificate build failed before GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let lean = r#"import Artifact
-open CertPrelude AverCert.Schema
-set_option maxRecDepth 200000
-
-def funcs : List (String × Nat) := [("double", 1), ("hex16", 3), ("quad", 2)]
-def hosts : List (HostRole × Nat) := [(.add, 9)]
-def badProfile : CompositionRawPlan := { profile := "composition-plan-v2", shape := .selfSum }
-def missingTarget : CompositionRawPlan := { profile := "composition-plan-v1", shape := .chain ["missing"] }
-def wrongFuncs : List (String × Nat) := [("double", 8), ("hex16", 3), ("quad", 2)]
-
--- PlanCheck profile guard: fixed rejects; one-guard-weakened copy accepts.
-def weakRawCheck (_ : CompositionRawPlan) : Bool := true
-example : AverCert.PlanCheck.checkCompositionRawPlan badProfile = false := rfl
-example : weakRawCheck badProfile = true := rfl
-
--- Strict singleton-add host-table guard.
-def weakHostCheck (_ : List (HostRole × Nat)) : Bool := true
-example : AverCert.PlanCheck.checkCompositionHostTable [(.sub, 9)] = false := rfl
-example : weakHostCheck [(.sub, 9)] = true := rfl
-
--- Semantic lowerer target-resolution guard.
-def weakLower (_ : CompositionRawPlan) : Option (List WInstr) := some [.localGet 0]
-example : AverCert.PlanLower.lowerCompositionBody hosts funcs missingTarget = none := rfl
-example : weakLower missingTarget = some [.localGet 0] := rfl
-
--- Exact byte lowering: a wrong byte-derived name→index binding changes bytes;
--- the weakened copy deliberately returns the honest lowering.
-def weakBytes (p : CompositionRawPlan) :=
-  AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs p
-example : AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts wrongFuncs AverCert.Plans.quadCompositionPlan ≠
-  AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs AverCert.Plans.quadCompositionPlan := by decide
-example : weakBytes AverCert.Plans.quadCompositionPlan =
-  AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs AverCert.Plans.quadCompositionPlan := rfl
-
--- Wasm export binding, code-entry equality, and exact unary carrier signature.
-example : (AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen [113,117,97,100]).map
-    (fun b => (b.funcIdx, b.codeEntry)) = some (2,
-      (AverCert.PlanBytes.lowerCompositionCodeEntry 2 hosts funcs AverCert.Plans.quadCompositionPlan).get!) := rfl
-example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 5 1 2 = true := rfl
-example : AverCert.WasmSlice.funcTypeMatches AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 5 2 2 = false := rfl
-def weakSignature (_ _ _ : Nat) : Bool := true
-example : weakSignature 5 2 2 = true := rfl
-
--- Byte-derived transitive closure: omission, extra membership, and a cycle all
--- fail; weakening only this closure guard accepts each negative.
-def weakClosure (_ : String) (_ : List String)
-    (_ : List AverCert.AcceptedArtifact.CompositionMemberClaim)
-    (_ : List (String × Nat)) : Bool := true
-example : AverCert.AcceptedArtifact.compositionClosureBound "hex16" ["quad", "hex16"]
-    AverCert.Artifact.compositionMembers funcs = false := rfl
-example : AverCert.AcceptedArtifact.compositionClosureBound "quad" ["double", "quad", "hex16"]
-    AverCert.Artifact.compositionMembers funcs = false := rfl
-def cycleMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim := [
-  { exportNameBytes := [100,111,117,98,108,101], exportName := "double",
-    plan := { profile := "composition-plan-v1", shape := .chain ["quad"] } },
-  { exportNameBytes := [113,117,97,100], exportName := "quad", plan := AverCert.Plans.quadCompositionPlan }]
-example : AverCert.AcceptedArtifact.compositionClosureBound "quad" ["double", "quad"]
-    cycleMembers [("double", 1), ("quad", 2)] = false := rfl
-example : weakClosure "hex16" ["quad", "hex16"] AverCert.Artifact.compositionMembers funcs = true := rfl
-example : weakClosure "quad" ["double", "quad", "hex16"] AverCert.Artifact.compositionMembers funcs = true := rfl
-example : weakClosure "quad" ["double", "quad"] cycleMembers [("double", 1), ("quad", 2)] = true := rfl
-
--- Root binding and exact canonical locals count in the shared CodeTbl.
-example : AverCert.quadOb.self = 2 := rfl
-example : ¬ AverCert.quadOb.self = 99 := by decide
-def weakRoot (_ _ : Nat) : Bool := true
-example : weakRoot AverCert.quadOb.self 99 = true := rfl
-example : (AverCert.quadOb.code 1).map (fun c => c.nlocals) = some 1 := rfl
-example : ¬ (AverCert.quadOb.code 1).map (fun c => c.nlocals) = some 0 := by decide
-def weakLocals (_ : Option Nat) : Bool := true
-example : weakLocals ((AverCert.quadOb.code 1).map (fun c => c.nlocals)) = true := rfl
-
--- Extensional canonical-host guard: the honest builder is definitionally
--- equal; a nowhere-defined builder differs at the byte-derived add slot.
-example : AverCert.quadOb.host = AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts := rfl
-def badHost : (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (Nat → List WVal → Option WVal) →
-    (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (List WVal → Option WVal) → HostTbl := fun _ _ _ _ _ _ _ _ _ => none
-def addProbe : List WVal → Option WVal := fun _ => some .null
-example : (badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe
-      addProbe) 9 ≠
-    (AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
-      addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe addProbe) 9 := by
-  simp [badHost, addProbe, hosts, AverCert.AcceptedArtifact.intDispatchCanonicalHost,
-    AverCert.AcceptedArtifact.intDispatchCanonicalSlots]
-def weakHostEquality (_ _ : HostTbl) : Bool := true
-example : weakHostEquality
-    ((badHost addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe addProbe))
-    ((AverCert.AcceptedArtifact.intDispatchCanonicalHost 2 hosts
-      addProbe addProbe addProbe addProbe (fun _ _ => none) addProbe addProbe addProbe))
-      = true := rfl
-
--- Manifest/claim plan-pair equality guard.
-def relabeledMembers : List AverCert.AcceptedArtifact.CompositionMemberClaim :=
-  [{ exportNameBytes := [100,111,117,98,108,101], exportName := "alias",
-     plan := AverCert.Plans.doubleCompositionPlan }]
-example : AverCert.AcceptedArtifact.compositionMemberPlanPairs relabeledMembers =
-    [("alias", AverCert.Plans.doubleCompositionPlan)] := rfl
-example : AverCert.AcceptedArtifact.compositionMemberPlanPairs relabeledMembers ≠
-    [("double", AverCert.Plans.doubleCompositionPlan)] := by decide
-def weakManifest (_ : List (String × CompositionRawPlan)) : Bool := true
-example : weakManifest (AverCert.AcceptedArtifact.compositionMemberPlanPairs relabeledMembers) = true := rfl
-
--- Member-coverage guard: `compositionMembers` must be the union of the claimed
--- roots' reachable closures. Honest members are covered; dropping the `hex16`
--- claim leaves `hex16` an orphan member reachable from no root, so coverage
--- fails. Weakening only this guard accepts the orphan.
-def orphanClaims : List AverCert.AcceptedArtifact.CompositionClaim :=
-  [{ exportName := "quad", carrier := 2, hostTable := [(.add, 9)],
-     memberNames := ["double", "quad"], obligation := AverCert.quadOb }]
-example : AverCert.AcceptedArtifact.compositionMembersCovered
-    AverCert.Artifact.compositionMembers AverCert.Artifact.compositionClaims = true := rfl
-example : AverCert.AcceptedArtifact.compositionMembersCovered
-    AverCert.Artifact.compositionMembers orphanClaims = false := rfl
-def weakCoverage (_ : List AverCert.AcceptedArtifact.CompositionMemberClaim)
-    (_ : List AverCert.AcceptedArtifact.CompositionClaim) : Bool := true
-example : weakCoverage AverCert.Artifact.compositionMembers orphanClaims = true := rfl
-"#;
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let check = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .output()
-        .expect("run composition GuardIso");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-    assert!(
-        check.status.success(),
-        "composition GuardIso failed:\n{combined}"
-    );
-}
-
-/// `field-projection-v1` guard isolation with executed weaken confirmations.
-/// Every negative is rejected by the named fixed guard and accepted by the
-/// adjacent throwaway copy with exactly that guard removed.
-#[test]
-fn field_projection_plan_guards_are_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping field-projection GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-field-projection-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/tupleproj.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile tuple projection fixture");
-    assert!(
-        compile.status.success(),
-        "tuple projection fixture compile failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    let build = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build tuple projection certificate before GuardIso");
-    assert!(
-        build.status.success(),
-        "tuple projection certificate build failed before GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let lean = r#"import Artifact
-open CertPrelude AverCert.Schema AverCert.WasmSlice
-set_option maxRecDepth 400000
-
-def honest : FieldProjectionRawPlan := AverCert.Plans.pairFstFieldProjectionPlan
-def badProfile : FieldProjectionRawPlan := { profile := "field-projection-v2", fieldIdx := 0 }
-def badField : FieldProjectionRawPlan := { profile := "field-projection-v1", fieldIdx := 1 }
-def nameBytes : List Nat := [112,97,105,114,70,115,116]
-
--- === PREDICATE-LEVEL weakened copies of `fieldProjectionPlanAccepted` ===
--- Each drops EXACTLY one security-critical conjunct; the adversarial claim below
--- is ACCEPTED under the weakened copy but the shipped predicate rejects it at
--- exactly that conjunct. This replaces the earlier constant-`Bool` weakenings,
--- which never demonstrated acceptance against all remaining guards.
-
--- (d) BYTE-EQUALITY GATE dropped (the exact binding lookup is weakened to a
--- name-only `funcBindingForExport`).
-def fpAccept_dropBytes (modBytes modLen : Nat) (exportNameBytes : ByteSeq)
-    (exportName : String) (carrier structIdx fieldCount : Nat)
-    (resultTy : FieldProjectionResultTy)
-    (plan : FieldProjectionRawPlan) (obligation : Obligation) : Prop :=
-  obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
-  AverCert.PlanCheck.checkFieldProjectionRawPlan fieldCount plan = true ∧
-  ∃ body codeEntry binding,
-    AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
-    AverCert.PlanBytes.lowerFieldProjectionCodeEntry carrier structIdx fieldCount resultTy plan = some codeEntry ∧
-    funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
-    projectionStructTypeMatches modBytes modLen structIdx fieldCount plan.fieldIdx resultTy = true ∧
-    projectionFuncTypeMatches modBytes modLen binding.typeIdx structIdx resultTy = true ∧
-    obligation.self = binding.funcIdx ∧
-    obligation.code binding.funcIdx = some { arity := 1, nlocals := 3, body := body }
-
--- (e) STRUCT SELECTED-FIELD-TYPE dropped (`projectionStructTypeMatches`).
-def fpAccept_dropStruct (modBytes modLen : Nat) (exportNameBytes : ByteSeq)
-    (exportName : String) (carrier structIdx fieldCount : Nat)
-    (resultTy : FieldProjectionResultTy)
-    (plan : FieldProjectionRawPlan) (obligation : Obligation) : Prop :=
-  obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
-  AverCert.PlanCheck.checkFieldProjectionRawPlan fieldCount plan = true ∧
-  ∃ body codeEntry binding,
-    AverCert.PlanLower.lowerFieldProjectionBody structIdx fieldCount plan = some body ∧
-    AverCert.PlanBytes.lowerFieldProjectionCodeEntry carrier structIdx fieldCount resultTy plan = some codeEntry ∧
-    exactFuncBindingForExport modBytes modLen exportNameBytes codeEntry = some binding ∧
-    projectionFuncTypeMatches modBytes modLen binding.typeIdx structIdx resultTy = true ∧
-    obligation.self = binding.funcIdx ∧
-    obligation.code binding.funcIdx = some { arity := 1, nlocals := 3, body := body }
-
--- Complicit obligation whose code table returns the WRONG-field body, so the
--- code-table conjunct (h) is neutralized and the byte-equality gate (d) is the
--- SOLE remaining binder of the field index (the sole plan datum).
-def badBodyCode : CodeTbl := fun fn =>
-  if fn = 1 then some ⟨1, 3, [.localGet 0, .localSet 2, .localGet 2, .refCast 3, .structGet 3 1, .localSet 1, .localGet 1]⟩ else none
-def badBodyOb : Obligation := { AverCert.pairFstOb with code := badBodyCode }
-
--- Struct-mutated module: flip struct 3 field 0 nullable-ref (0x63) -> non-null
--- (0x64) at module offset 31. The code section and the func-type entry are
--- byte-unchanged, so (d) and (f) still pass; only (e) reads the mutated struct
--- field type.
-def structMut : Nat :=
-  AverCert.ArtifactBytes.modBytes + (1 <<< (8 * 31))
-
--- Obligation export-name and carrier binds.
-def weakExport (_ _ : String) : Bool := true
-example : AverCert.pairFstOb.export_ = "pairFst" := rfl
-example : ¬ AverCert.pairFstOb.export_ = "alias" := by decide
-example : weakExport AverCert.pairFstOb.export_ "alias" = true := rfl
-def weakCarrier (_ _ : Nat) : Bool := true
-example : AverCert.pairFstOb.carrier = 2 := rfl
-example : ¬ AverCert.pairFstOb.carrier = 3 := by decide
-example : weakCarrier AverCert.pairFstOb.carrier 3 = true := rfl
-
--- Profile guard.
-def weakProfile (_ : FieldProjectionRawPlan) : Bool := true
-example : AverCert.PlanCheck.checkFieldProjectionRawPlan 2 badProfile = false := rfl
-example : weakProfile badProfile = true := rfl
-
--- Byte-derived exact field-count guard.
-def weakFieldCount (_ : Nat) (_ : FieldProjectionRawPlan) : Bool := true
-example : AverCert.PlanCheck.checkFieldProjectionRawPlan 3 honest = false := rfl
-example : weakFieldCount 3 honest = true := rfl
-
--- Projected-field range guard.
-def outOfRange : FieldProjectionRawPlan := { profile := "field-projection-v1", fieldIdx := 2 }
-def weakFieldRange (_ : Nat) (_ : FieldProjectionRawPlan) : Bool := true
-example : AverCert.PlanCheck.checkFieldProjectionRawPlan 2 outOfRange = false := rfl
-example : weakFieldRange 2 outOfRange = true := rfl
-
--- Semantic lowerer inherits the structural guard.
-def weakLower (_ : FieldProjectionRawPlan) : Option (List WInstr) :=
-  AverCert.PlanLower.lowerFieldProjectionBody 3 2 honest
-example : AverCert.PlanLower.lowerFieldProjectionBody 3 2 badProfile = none := rfl
-example : weakLower badProfile = AverCert.PlanLower.lowerFieldProjectionBody 3 2 honest := rfl
-
--- CANONICAL BYTE LOWERING (d) / FIELD-INDEX BINDING — genuine predicate-level
--- isolation. The field index is the sole plan datum; it reaches the ULEB
--- immediate of the code entry, so the byte-equality gate binds it. With a
--- complicit obligation (`badBodyOb`) supplying the wrong-field body, the
--- code-table conjunct (h) is neutralized, leaving (d) as the sole guard on the
--- field index: the wrong-field claim is ACCEPTED once (d) is dropped...
-example : fpAccept_dropBytes AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes "pairFst"
-    2 3 2 (.nullableRef 2) badField badBodyOb :=
-  ⟨rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
--- ...and the shipped predicate rejects it at exactly (d): the honest module
--- code entry differs from the wrong-field canonical bytes.
-example : (funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes).map (fun b => b.codeEntry) ≠
-  AverCert.PlanBytes.lowerFieldProjectionCodeEntry 2 3 2 (.nullableRef 2) badField := by decide
-example : (exactFuncBindingForExport
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes
-    (AverCert.PlanBytes.lowerFieldProjectionCodeEntry
-      2 3 2 (.nullableRef 2) honest).get!).isSome = true := rfl
-example : exactFuncBindingForExport
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes
-    (AverCert.PlanBytes.lowerFieldProjectionCodeEntry
-      2 3 2 (.nullableRef 2) badField).get! = none := rfl
--- FIELD-INDEX defense-in-depth: (h) is a redundant-but-defensive sibling. When
--- the obligation is the HONEST byte-derived one, its code table pins the field-0
--- body (the honest lowering), so a wrong field index also fails (h) — the field
--- index is bound by both the byte gate (d) and the code-table body (h). The
--- honest obligation commits to the field-0 body:
-example : (AverCert.pairFstOb.code 1).map (fun c => c.body) =
-  some ((AverCert.PlanLower.lowerFieldProjectionBody 3 2 honest).getD []) := rfl
--- and the field index is a real byte-level datum (field 0 vs 1 diverges):
-example : AverCert.PlanBytes.lowerFieldProjectionCodeEntry 2 3 2 (.nullableRef 2) badField ≠
-  AverCert.PlanBytes.lowerFieldProjectionCodeEntry 2 3 2 (.nullableRef 2) honest := by decide
-
--- Export-name/function-binding guard.
-def weakBinding (_ : List Nat) :=
-  AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    [112,97,105,114,70,115,116]
-example : AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    [109,105,115,115,105,110,103] = none := rfl
-example : weakBinding [109,105,115,115,105,110,103] =
-  AverCert.WasmSlice.funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    [112,97,105,114,70,115,116] := rfl
-
--- STRUCT SELECTED-FIELD-TYPE (e) — genuine predicate-level isolation. This guard
--- cross-checks the module's actual struct field type against the claimed result
--- type; only a module whose struct field type diverges from its func signature
--- (an internally inconsistent module, unreachable via claim data alone) exhibits
--- it. `structMut` mutates struct 3 field 0 to a non-null ref, keeping the code
--- section and func-type entry byte-identical. The honest claim is ACCEPTED once
--- (e) is dropped (the byte gate (d) and signature (f) still pass over the
--- mutated module because neither reads the struct's field types)...
-example : fpAccept_dropStruct structMut AverCert.ArtifactBytes.modLen nameBytes "pairFst"
-    2 3 2 (.nullableRef 2) honest AverCert.pairFstOb :=
-  ⟨rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl⟩
--- ...and the shipped predicate rejects the mutated module at exactly (e):
-example : AverCert.WasmSlice.projectionStructTypeMatches structMut AverCert.ArtifactBytes.modLen 3 2 0 (.nullableRef 2) = false := rfl
--- The siblings (d) byte gate and (f) signature are provably BLIND to the struct
--- field-type mutation (they read the code and func-type sections):
-example : (funcBindingForExport structMut AverCert.ArtifactBytes.modLen nameBytes).map (fun b => b.codeEntry) =
-  (funcBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes).map (fun b => b.codeEntry) := rfl
-example : exactFuncBindingForExport structMut AverCert.ArtifactBytes.modLen nameBytes
-    (AverCert.PlanBytes.lowerFieldProjectionCodeEntry
-      2 3 2 (.nullableRef 2) honest).get! =
-  exactFuncBindingForExport AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen nameBytes
-    (AverCert.PlanBytes.lowerFieldProjectionCodeEntry
-      2 3 2 (.nullableRef 2) honest).get! := rfl
-example : AverCert.WasmSlice.projectionFuncTypeMatches structMut AverCert.ArtifactBytes.modLen 6 3 (.nullableRef 2) = true := rfl
--- The prior claim-data struct checks remain (structIdx / count / result ref) —
--- these are also caught by the byte gate / signature, so this is the guard's
--- redundant-but-defensive cross-check surface.
-example : AverCert.WasmSlice.projectionStructTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 3 2 0 (.nullableRef 2) = true := rfl
-example : AverCert.WasmSlice.projectionStructTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 4 2 0 (.nullableRef 2) = false := rfl
-example : AverCert.WasmSlice.projectionStructTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 3 3 0 (.nullableRef 2) = false := rfl
-example : AverCert.WasmSlice.projectionStructTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 3 2 0 (.nullableRef 1) = false := rfl
-
--- The exported function must be unary over the claimed struct and return the
--- selected byte-derived reference type.
-def weakSignature (_ _ : Nat) (_ : FieldProjectionResultTy) : Bool := true
-example : AverCert.WasmSlice.projectionFuncTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 6 3 (.nullableRef 2) = true := rfl
-example : AverCert.WasmSlice.projectionFuncTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 6 4 (.nullableRef 2) = false := rfl
-example : AverCert.WasmSlice.projectionFuncTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen 6 3 (.nullableRef 1) = false := rfl
-example : weakSignature 6 4 (.nullableRef 2) = true := rfl
-example : weakSignature 6 3 (.nullableRef 1) = true := rfl
-
--- Obligation self and exact canonical locals count.
-def weakSelf (_ _ : Nat) : Bool := true
-example : AverCert.pairFstOb.self = 1 := rfl
-example : ¬ AverCert.pairFstOb.self = 2 := by decide
-example : weakSelf AverCert.pairFstOb.self 2 = true := rfl
-def weakLocals (_ : Option Nat) : Bool := true
-example : (AverCert.pairFstOb.code 1).map (fun c => c.nlocals) = some 3 := rfl
-example : ¬ (AverCert.pairFstOb.code 1).map (fun c => c.nlocals) = some 0 := by decide
-example : weakLocals ((AverCert.pairFstOb.code 1).map (fun c => c.nlocals)) = true := rfl
-
--- Manifest/claim pairing guard.
-def relabeled : List AverCert.AcceptedArtifact.FieldProjectionClaim :=
-  [{ exportNameBytes := [112,97,105,114,70,115,116], exportName := "alias",
-     carrier := 2, structIdx := 3, fieldCount := 2, resultTy := .nullableRef 2,
-     obligation := AverCert.pairFstOb }]
-example : AverCert.AcceptedArtifact.fieldProjectionClaimExportNames relabeled = ["alias"] := rfl
-example : AverCert.AcceptedArtifact.fieldProjectionClaimExportNames relabeled ≠
-    AverCert.AcceptedArtifact.fieldProjectionManifestPlanNames AverCert.manifest := by decide
-def weakManifest (_ : List String) : Bool := true
-example : weakManifest (AverCert.AcceptedArtifact.fieldProjectionClaimExportNames relabeled) = true := rfl
-"#;
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let check = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .output()
-        .expect("run field-projection GuardIso");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-    assert!(
-        check.status.success(),
-        "field-projection GuardIso failed:\n{combined}"
-    );
-}
-
-/// The projection index is authoritative Lean plan DATA. Flipping it while
-/// leaving the artifact unchanged must fail the source/target and byte pins.
+/// A record projection's field index is plan data bound to the bytes:
+/// projecting the other field of `User` in `userName` must be DECLINED.
 #[test]
 fn cert_verify_declines_flipped_field_projection_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping field-projection plan tamper test: `lake` not available");
         return;
     }
 
-    let (_out_dir, wasm, cert) = compile_cert_goals("cert-proj-plan-flip");
-    let plans = cert.join("Plans.lean");
-    let text = std::fs::read_to_string(&plans).unwrap();
-    let tampered = text.replacen(".structGetUser 20 0 0", ".structGetUser 20 1 0", 1);
-    assert_ne!(text, tampered, "userName raw projection plan shape changed");
-    std::fs::write(&plans, tampered).unwrap();
-
-    let (ok, out) = aver_check(&wasm, &cert);
-    assert!(
-        !ok,
-        "flipped field-projection plan must be DECLINED:\n{out}"
-    );
-    assert!(
-        out.contains("did not build") || out.contains("does not bind"),
-        "wrong reason for flipped projection field:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "flipped field-projection plan credited:\n{out}"
+    let (out_dir, _wasm, _cert) = compile_cert_goals("cert-proj-plan-flip");
+    assert_package_tampers_decline(
+        &out_dir,
+        "cert_goals.wasm",
+        &[(
+            "projected field",
+            "plan:userName",
+            "(.project 1 0 (.local 0))",
+            "(.project 1 1 (.local 0))",
+        )],
     );
 }
 
-/// A partial source-type relabel inside authoritative `Plans.lean` must not
-/// change the byte-bound representation plan it purports to explain.
+/// A plan's source types decide its representation: relabelling
+/// `userName`'s record parameter as a sum type in its signature must not be
+/// able to explain the same bytes, so it is DECLINED.
 #[test]
 fn cert_verify_declines_relabeled_projection_source_types() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping projection relabel tamper test: `lake` not available");
         return;
     }
 
-    let (_out_dir, wasm, cert) = compile_cert_goals("cert-proj-relabel");
-    let plans = cert.join("Plans.lean");
-    let text = std::fs::read_to_string(&plans).unwrap();
-    let tampered = text
-        .replacen("(.named \"User\")", "(.named \"Other\")", 2)
-        .replacen(".projectField \"User\"", ".projectField \"Other\"", 1);
-    assert_ne!(text, tampered, "userName SymPlan type labels changed");
-    std::fs::write(&plans, tampered).unwrap();
-
-    let (ok, out) = aver_check(&wasm, &cert);
-    assert!(
-        !ok,
-        "partially relabeled projection source types must be DECLINED:\n{out}"
-    );
-    assert!(
-        out.contains("did not build") || out.contains("does not bind"),
-        "wrong reason for partial source-type relabel:\n{out}"
-    );
-    assert!(
-        !out.contains("CERTIFIED"),
-        "partially relabeled projection source types credited:\n{out}"
+    let (out_dir, _wasm, _cert) = compile_cert_goals("cert-proj-relabel");
+    assert_package_tampers_decline(
+        &out_dir,
+        "cert_goals.wasm",
+        &[(
+            "parameter type relabel",
+            "plan:userName",
+            "sig := ⟨[(.record 1)], .string⟩",
+            "sig := ⟨[(.sum 0)], .string⟩",
+        )],
     );
 }
 
-/// A tampered byte-first `recursion-plan-v1` plan is declined. The vectors
-/// exercise additive, multiplicative, and accumulator plans in the shipped
-/// `Plans.lean` while leaving the wasm untouched. The checker rebuilds the
-/// shipped plan (its `rfl` chain is pinned to the honest bytes) and its kernel
-/// witness proves `accepted` over `manifest.recursionPlans`, so either gate
-/// rejects the plan. The factorial vector deliberately preserves the lowered
-/// bytes: its multiply call is assigned the wrong role at the same index.
+/// A tampered self-recursive plan is declined. The vectors exercise additive,
+/// multiplicative and accumulator plans in the shipped `Plans.lean` while
+/// leaving the wasm untouched: each one changes the lowering, so the plan is
+/// no longer its function's code entry.
 #[test]
 fn cert_verify_declines_tampered_recursion_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping recursion-plan tamper test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-recursion-plan");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/recgen.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "recgen compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
-    let wasm = out_dir.join("recgen.wasm");
-    let cert = out_dir.join("cert");
-    let (ok, report) = aver_check(&wasm, &cert);
-    assert!(ok, "honest recursion certificate should verify:\n{report}");
-
-    // Honest bytes and plan, zero locals in the obligation only: recursion
-    // canonically declares one carrier scratch local.
-    {
-        let dir = temp_dir("cert-recursion-zero-locals");
-        copy_dir(&out_dir, &dir);
-        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "sumFrom", 1, 1);
-        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "recursion zero-locals code must be DECLINED:\n{report}"
-        );
-    }
-
-    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    // (a) descent role/target swap: `sub(n, box 1)` becomes `add(n, box 1)`, so
-    //     the descent computes `n + 1` instead of `n - 1` (byte `10 0c -> 10 0b`).
-    // (b) self-call retargeted at another user function (`backward`, `10 01 -> 10 03`).
-    // (c) base literal changed (`i64.const 7 -> 5`).
-    // (d) BYTE-IDENTICAL relabel: the descent's `sub` host call is relabelled as
-    //     a non-tail self-call at the sub helper's index. Lowering emits the
-    //     same `10 0c` either way, so every byte-equality face still holds; only
-    //     the in-kernel context-sensitive grammar (`checkRecursionPlanShape`,
-    //     which pins self-call targets to the export's own byte-derived index
-    //     and host calls to the role table) rejects it.
-    let tampers: [(&str, &str, &str); 6] = [
-        (
-            "descent role swap",
-            ".hostCall .sub 12 [1, 3]",
-            ".hostCall .add 11 [1, 3]",
-        ),
-        (
-            "self-call retarget",
-            ".selfCall false 1 [4]",
-            ".selfCall false 3 [4]",
-        ),
-        (
-            "base literal change",
-            ".constI64 (7 : Int)",
-            ".constI64 (5 : Int)",
-        ),
-        (
-            "byte-identical self-call mislabel",
-            ".hostCall .sub 12 [1, 3]",
-            ".selfCall false 12 [1, 3]",
-        ),
-        (
-            "byte-identical multiply role mislabel",
-            ".hostCall .mul 13 [0, 5]",
-            ".hostCall .add 13 [0, 5]",
-        ),
-        (
-            "accumulator threading swap",
-            ".selfCall true 5 [3, 6]",
-            ".selfCall true 5 [3, 4]",
-        ),
-    ];
-    for (label, from, to) in tampers {
-        assert!(
-            honest.contains(from),
-            "recgen Plans.lean recursion-plan shape changed ({label}); update the test"
-        );
-        let dir = temp_dir("cert-recursion-plan-tamper");
-        copy_dir(&out_dir, &dir);
-        let tampered_plans = dir.join("cert").join("Plans.lean");
-        let src = std::fs::read_to_string(&tampered_plans).unwrap();
-        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "{label}: tampered recursion plan must be declined:\n{report}"
-        );
-    }
-}
-
-/// GuardIso for the L3 witness: hostile measure/descent claims keep the honest
-/// bytes and obligation bindings, fail exactly at `checkTerm`, and are accepted
-/// by a literal one-conjunct-weakened copy. Total policy without a witness also
-/// fails closed.
-#[test]
-fn recursion_termination_witness_guard_is_isolating() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping termination-witness GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-recursion-termination-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/recgen.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile recgen fixture for termination-witness GuardIso");
-    assert!(
-        compile.status.success(),
-        "recgen compile failed for termination-witness GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    let build = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build recgen certificate before termination-witness GuardIso");
-    assert!(
-        build.status.success(),
-        "recgen certificate failed before termination-witness GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    std::fs::write(
-        cert.join("GuardIso.lean"),
-        include_str!("fixtures/cert_termination_guard_iso.lean"),
-    )
-    .unwrap();
-    let check = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .output()
-        .expect("run termination-witness GuardIso");
-    assert!(
-        check.status.success(),
-        "termination-witness GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// Mutual L3 GuardIso: changing the witness on only one SCC obligation reaches
-/// the mutual termination conjunct, and deleting just that conjunct accepts the
-/// otherwise byte-identical hostile claim.
-#[test]
-fn mutual_termination_witness_guard_is_isolating() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping mutual termination-witness GuardIso: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-mutual-termination-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/mutual.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile mutual fixture for termination GuardIso");
-    assert!(
-        compile.status.success(),
-        "mutual compile failed for termination GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    let build = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build mutual certificate before termination GuardIso");
-    assert!(
-        build.status.success(),
-        "honest mutual certificate must build"
-    );
-    std::fs::write(
-        cert.join("GuardIso.lean"),
-        include_str!("fixtures/cert_mutual_termination_guard_iso.lean"),
-    )
-    .unwrap();
-    let check = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .output()
-        .expect("run mutual termination GuardIso");
-    assert!(
-        check.status.success(),
-        "mutual termination GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
+    let out_dir =
+        compile_checked_fixture("tools/certkit/fixtures/recgen.av", "cert-recursion-plan");
+    assert_package_tampers_decline(
+        &out_dir,
+        "recgen.wasm",
+        &[
+            // The declared locals are part of the code entry.
+            (
+                "zero locals",
+                "plan:sumFrom",
+                "locals := [.int]",
+                "locals := []",
+            ),
+            // `sumFrom`'s descent `n - 1` becomes `n + 1`.
+            (
+                "descent operator",
+                "plan:sumFrom",
+                "(.call (.fn 1) [(.binOp .sub (.local 0)",
+                "(.call (.fn 1) [(.binOp .add (.local 0)",
+            ),
+            // The self-call retargeted at another user function (`backward`).
+            (
+                "self-call retarget",
+                "plan:sumFrom",
+                "(.call (.fn 1)",
+                "(.call (.fn 3)",
+            ),
+            // The base literal `7` becomes `5`.
+            (
+                "base literal",
+                "plan:sumFrom",
+                "(.literal (.int 7))",
+                "(.literal (.int 5))",
+            ),
+            // `factorial`'s multiplication relabelled as an addition.
+            (
+                "multiply relabel",
+                "plan:factorial",
+                "(.binOp .mul (.local 0)",
+                "(.binOp .add (.local 0)",
+            ),
+            // `countDown`'s accumulator threading swapped.
+            (
+                "accumulator threading",
+                "plan:countDown",
+                "(.binOp .add (.local 1) (.local 0))",
+                "(.local 1)",
+            ),
+        ],
     );
 }
 
 /// The JSON policy/witness is transport data. Unsupported shapes fail strict
-/// decoding; supported-but-wrong values fail the Lean bindings, and even a
-/// coordinated JSON + Manifest rewrite fails canonical `ClaimAxes`.
+/// decoding; supported-but-wrong values fail the checker witness, which pins
+/// every report entry to the policy axes the wall derives from the plans
+/// (`AcceptedArtifact.axesOf`) — so no manifest edit can move a policy.
 #[test]
 fn cert_verify_declines_tampered_termination_manifest() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping termination manifest round-trip test: `lake` not available");
         return;
     }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-termination-manifest-roundtrip");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/recgen.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile recgen fixture for termination manifest round-trip");
-    assert!(compile.status.success());
-    let wasm = out_dir.join("recgen.wasm");
-    let cert = out_dir.join("cert");
-    let (ok, report) = aver_check(&wasm, &cert);
-    assert!(ok, "honest totality manifest should verify:\n{report}");
+    let out_dir = compile_checked_fixture(
+        "tools/certkit/fixtures/recgen.av",
+        "cert-termination-manifest-roundtrip",
+    );
 
     for (label, mutate, expected) in [
         ("wrong descent", 0_u8, "does not bind"),
         ("unknown measure", 1_u8, "unsupported termination measure"),
         ("missing witness", 2_u8, "is missing `termination_witness`"),
+        ("partial policy", 3_u8, "does not bind"),
     ] {
         let dir = temp_dir("cert-termination-manifest-tamper");
         copy_dir(&out_dir, &dir);
@@ -5498,6 +4477,13 @@ fn cert_verify_declines_tampered_termination_manifest() {
             2 => {
                 entry.as_object_mut().unwrap().remove("termination_witness");
             }
+            3 => {
+                // A coordinated downgrade to the partial policy, with the
+                // witness dropped the way a partial entry carries none.
+                entry["policy"] = serde_json::json!("simulatesModel");
+                entry["level"] = serde_json::json!("L1");
+                entry.as_object_mut().unwrap().remove("termination_witness");
+            }
             _ => unreachable!(),
         }
         std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
@@ -5510,756 +4496,205 @@ fn cert_verify_declines_tampered_termination_manifest() {
             report.contains(expected),
             "{label}: wrong decline reason, expected `{expected}`:\n{report}"
         );
-        if label == "wrong descent" {
+        if expected == "does not bind" {
             assert!(
                 report.contains("checker-owned Lean witness"),
                 "witness decline must identify the Lean binding:\n{report}"
             );
         }
     }
-
-    // Coordinate the JSON envelope with the Lean manifest so the witness's
-    // transport bindings still agree. Canonical recursion axes must then reject
-    // the producer-selected policy/termination inside Lean.
-    {
-        let dir = temp_dir("cert-claim-axes-descent-tamper");
-        copy_dir(&out_dir, &dir);
-        let manifest_lean = dir.join("cert/Manifest.lean");
-        let text = std::fs::read_to_string(&manifest_lean).unwrap();
-        let tampered = text.replacen("descent := (-1)", "descent := (1)", 1);
-        assert_ne!(text, tampered, "sumFrom termination shape changed");
-        std::fs::write(&manifest_lean, tampered).unwrap();
-
-        let manifest_json = dir.join("cert/cert-manifest.json");
-        let mut json: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&manifest_json).unwrap()).unwrap();
-        let entry = json["certified"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|entry| entry["name"] == "sumFrom")
-            .unwrap();
-        entry["termination_witness"]["descent"] = serde_json::json!(1);
-        std::fs::write(&manifest_json, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
-
-        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
-        assert!(!ok, "noncanonical coordinated descent verified:\n{report}");
-        assert!(
-            report.contains("did not build") || report.contains("does not bind"),
-            "wrong ClaimAxes descent decline:\n{report}"
-        );
-    }
-
-    {
-        let dir = temp_dir("cert-claim-axes-policy-tamper");
-        copy_dir(&out_dir, &dir);
-        let manifest_lean = dir.join("cert/Manifest.lean");
-        let text = std::fs::read_to_string(&manifest_lean).unwrap();
-        let honest = "policy := .simulatesModelTotally, termination? := some ({ measure := .intNatAbs 0, descent := (-1) } : AverCert.Schema.TerminationWitness)";
-        let tampered = text.replacen(honest, "policy := .simulatesModel, termination? := none", 1);
-        assert_ne!(text, tampered, "sumFrom policy shape changed");
-        std::fs::write(&manifest_lean, tampered).unwrap();
-
-        let manifest_json = dir.join("cert/cert-manifest.json");
-        let mut json: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&manifest_json).unwrap()).unwrap();
-        let entry = json["certified"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|entry| entry["name"] == "sumFrom")
-            .unwrap();
-        entry["policy"] = serde_json::json!("simulatesModel");
-        entry.as_object_mut().unwrap().remove("termination_witness");
-        std::fs::write(&manifest_json, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
-
-        let (ok, report) = aver_check(&dir.join("recgen.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "coordinated partial-recursion policy verified:\n{report}"
-        );
-        assert!(
-            report.contains("did not build") || report.contains("does not bind"),
-            "wrong ClaimAxes policy decline:\n{report}"
-        );
-    }
 }
 
-/// A tampered byte-first `mutual-plan-v1` plan is declined. Each vector mutates
-/// the mutual-member plan for `isEven` in the shipped `Plans.lean` while leaving
-/// the wasm untouched, so the member plan no longer canonically lowers to
-/// `isEven`'s real code-entry bytes in the shared SCC code table. The checker
-/// rebuilds the shipped plan (its `rfl` chain is pinned to the honest bytes) and
-/// its kernel witness proves `accepted` over `manifest.mutualPlans`, so either
-/// gate rejects the plan. This is the S4 generalisation of the recursion tamper
-/// test: `isEven`'s step arm tail-calls a SIBLING SCC member (`isOdd`, index 2),
-/// not itself.
+/// A tampered mutually recursive plan is declined. Each vector mutates the
+/// plan of `isEven` (whose step tail-calls its SIBLING `isOdd`) in the shipped
+/// `Plans.lean` while leaving the wasm untouched, so the plan no longer lowers
+/// to `isEven`'s real code entry, or calls outside the planned functions.
 #[test]
 fn cert_verify_declines_tampered_mutual_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping mutual-plan tamper test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-mutual-plan");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/mutual.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "mutual compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
+    let out_dir = compile_checked_fixture("tools/certkit/fixtures/mutual.av", "cert-mutual-plan");
+    assert_package_tampers_decline(
+        &out_dir,
+        "mutual.wasm",
+        &[
+            (
+                "zero locals",
+                "plan:isEven",
+                "locals := [.int]",
+                "locals := []",
+            ),
+            // (a) the sibling call retargeted OUTSIDE the planned functions.
+            (
+                "call outside the plans",
+                "plan:isEven",
+                "(.tailCall 2 [",
+                "(.tailCall 5 [",
+            ),
+            // (b) the tail call made a plain call.
+            (
+                "tail flag flip",
+                "plan:isEven",
+                "(.tailCall 2 [(.binOp .sub (.local 0) (.literal (.int 1)))])",
+                "(.call (.fn 2) [(.binOp .sub (.local 0) (.literal (.int 1)))])",
+            ),
+            // (c) the base literal `1` becomes `5`.
+            (
+                "base literal",
+                "plan:isEven",
+                "(.literal (.int 1))",
+                "(.literal (.int 5))",
+            ),
+            // (d) the sibling call mislabelled as a self-call: index 1 IS
+            //     planned and in the same group, so only the byte binding of
+            //     `isEven`'s real code entry (which tail-calls index 2) sees it.
+            (
+                "sibling as self-call",
+                "plan:isEven",
+                "(.tailCall 2 [",
+                "(.tailCall 1 [",
+            ),
+        ],
     );
-
-    let wasm = out_dir.join("mutual.wasm");
-    let cert = out_dir.join("cert");
-    let (ok, report) = aver_check(&wasm, &cert);
-    assert!(ok, "honest mutual certificate should verify:\n{report}");
-    let certificate = std::fs::read_to_string(cert.join("Certificate.lean")).unwrap();
-    assert!(
-        certificate.contains("theorem isEven_mutualSemanticBridge")
-            && certificate.contains("theorem isOdd_mutualSemanticBridge")
-            && !certificate.contains("isEven_simulates")
-            && !certificate.contains("isOdd_simulates")
-            && !certificate.contains("isEven_wasm")
-            && !certificate.contains("isOdd_wasm"),
-        "migrated mutual family must expose only option-(b) bridges:\n{certificate}"
-    );
-
-    // Honest bytes and plan, zero locals in the obligation only: every mutual
-    // member canonically declares one carrier scratch local.
-    {
-        let dir = temp_dir("cert-mutual-zero-locals");
-        copy_dir(&out_dir, &dir);
-        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "isEven", 1, 1);
-        let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
-        assert!(!ok, "mutual zero-locals code must be DECLINED:\n{report}");
-    }
-
-    // The migrated family has no bespoke simulation theorem to replace with a
-    // vacuous proof. Pointing the obligation at a trapping decoy must now fail
-    // directly in the generic mutual claim's byte/plan acceptance.
-    {
-        let dir = temp_dir("cert-mutual-code-decouple");
-        copy_dir(&out_dir, &dir);
-        let module = dir.join("cert/Module.lean");
-        let source = std::fs::read_to_string(&module).unwrap();
-        let edited = source.replacen(
-            "end CertModule",
-            "/-- decoy: always traps, so an unbound simulation would be vacuous. -/\n\
-             def wrongCode : CodeTbl := fun _ => none\nend CertModule",
-            1,
-        );
-        assert_ne!(source, edited, "mutual Module.lean end marker changed");
-        std::fs::write(&module, edited).unwrap();
-
-        let manifest = dir.join("cert/Manifest.lean");
-        let source = std::fs::read_to_string(&manifest).unwrap();
-        let edited = source.replacen(
-            "code := CertModule.isEvenCode",
-            "code := CertModule.wrongCode",
-            1,
-        );
-        assert_ne!(source, edited, "isEven obligation code field changed");
-        std::fs::write(&manifest, edited).unwrap();
-
-        let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
-        assert!(
-            !ok && !report.contains("CERTIFIED"),
-            "mutual code decouple must be DECLINED by generic acceptance:\n{report}"
-        );
-    }
-
-    // Likewise the obligation's selected member is part of the generic claim;
-    // a wrong self index cannot be hidden behind a bespoke mutual proof.
-    {
-        let dir = temp_dir("cert-mutual-self-decouple");
-        copy_dir(&out_dir, &dir);
-        let manifest = dir.join("cert/Manifest.lean");
-        let source = std::fs::read_to_string(&manifest).unwrap();
-        let honest = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ _ _ _ => CertModule.isEvenHost sub, self := 1,";
-        let hostile = "code := CertModule.isEvenCode, host := fun _ sub _ _ _ _ _ _ => CertModule.isEvenHost sub, self := 5,";
-        let edited = source.replacen(honest, hostile, 1);
-        assert_ne!(source, edited, "isEven obligation self field changed");
-        std::fs::write(&manifest, edited).unwrap();
-
-        let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
-        assert!(
-            !ok && !report.contains("CERTIFIED"),
-            "mutual self decouple must be DECLINED by generic acceptance:\n{report}"
-        );
-    }
-
-    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    // (a) member-call retargeted OUTSIDE the byte-derived SCC set ({1, 2}): the
-    //     tail cross-call to `isOdd` (index 2) becomes a call to index 5, which
-    //     is neither a member nor `isEven` itself. The context-sensitive grammar
-    //     (`checkMutualPlanShape`, `5 ∉ [1, 2]`) AND the byte gate both reject.
-    // (b) tail/non-tail flag flipped (`return_call 12 -> call 10`): the grammar
-    //     requires a TAIL member-call, and the bytes change, so both gates reject.
-    // (c) base literal changed (`i64.const 1 -> 5`): the base arm boxes the wrong
-    //     literal, so the member's bytes diverge (byte gate rejects).
-    // (d) member-call MISLABELLED as a self-call: the cross-call to `isOdd`
-    //     (index 2) is retargeted at `isEven`'s OWN index (1). Index 1 IS in the
-    //     SCC set, so the grammar check alone would pass — but `isEven`'s real
-    //     bytes tail-call index 2, so the byte-equality gate rejects it. This is
-    //     the defence-in-depth case: the shape check accepts, the byte gate does
-    //     not.
-    // (The byte-IDENTICAL `.hostCall .sub` -> `.selfCall false` relabel — which
-    //  ONLY `checkMutualPlanShape` distinguishes — is NOT tested here: routed
-    //  through `aver cert verify` it is also caught by the manifest-plan
-    //  equality pin and the standalone shape example, so it would not isolate the
-    //  shape guard. It is a DIRECT Lean assertion in
-    //  `mutual_scc_kernel_guards_are_isolating` instead.)
-    let tampers: [(&str, &str, &str); 4] = [
-        (
-            "member-call outside SCC",
-            ".selfCall true 2 [3]",
-            ".selfCall true 5 [3]",
-        ),
-        (
-            "tail flag flip",
-            ".selfCall true 2 [3]",
-            ".selfCall false 2 [3]",
-        ),
-        (
-            "base literal change",
-            ".constI64 (1 : Int) }, { id := 1, ty := .intCarrier, kind := .hostCall .box 7 [0] }",
-            ".constI64 (5 : Int) }, { id := 1, ty := .intCarrier, kind := .hostCall .box 7 [0] }",
-        ),
-        (
-            "member-call mislabelled as self-call",
-            ".selfCall true 2 [3]",
-            ".selfCall true 1 [3]",
-        ),
-    ];
-    for (label, from, to) in tampers {
-        assert!(
-            honest.contains(from),
-            "mutual Plans.lean mutual-plan shape changed ({label}); update the test"
-        );
-        let dir = temp_dir("cert-mutual-plan-tamper");
-        copy_dir(&out_dir, &dir);
-        let tampered_plans = dir.join("cert").join("Plans.lean");
-        let src = std::fs::read_to_string(&tampered_plans).unwrap();
-        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_check(&dir.join("mutual.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "{label}: tampered mutual plan must be declined:\n{report}"
-        );
-    }
 }
 
-/// A mutual-recursion artifact whose per-member byte-origin claims are each
-/// individually honest but whose declared `memberSet` is wrong is declined by
-/// the REAL acceptance-proof closure conjunct (`mutualClaimsFormClosedSccs`,
-/// wired into `acceptedMutualRecursionFragments`) — not by byte equality and not
-/// by the per-claim shape check. Each vector mutates ONE claim's `memberSet` in
-/// the cert's own `Artifact.lean` while keeping the member's own call target in
-/// the set, so `checkMutualPlanShape` still ACCEPTS and every code-entry byte is
-/// untouched; only the closure's `memberSet == byte-derived cycle` check rejects.
-/// Building the cert's own `acceptedWithFinal` proof with `lake` (no checker data
-/// pin) isolates that conjunct. Graph-structural rejections that cannot be
-/// expressed as a `memberSet` edit (dangling / non-closing / rho-tail / one-node
-/// / disjoint-SCCs) are proven directly in
-/// `mutual_scc_kernel_guards_are_isolating`.
+/// Call groups are declared per `fnPlans` entry, and a call must reach a
+/// planned function of the SAME or an EARLIER group (`callsOrdered`), so two
+/// groups can never vouch for each other. Splitting a mutual SCC across two
+/// groups — in either order — leaves one member calling a later group, which
+/// the per-plan acceptance declines even though every plan and byte is honest.
 #[test]
 fn cert_verify_declines_broken_mutual_scc_membership() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping mutual-SCC closure test: `lake` not available");
+    if !lean_required::lake_available() {
+        eprintln!("skipping mutual-SCC group test: `lake` not available");
         return;
     }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    // (fixture, [(label, from, to)]). Each `from`/`to` mutates ONE claim's
-    // `memberSet` in `Artifact.lean` — checked by the acceptance-proof closure.
-    // The per-claim shape check still passes (the member's own call target stays
-    // in the set), so the closure conjunct is the sole rejector. No code-entry
-    // byte changes.
-    type Tamper = (&'static str, &'static str, &'static str);
-    let cases: [(&str, Vec<Tamper>); 2] = [
+    for (fixture, wasm, tampers) in [
         (
             "tools/certkit/fixtures/mutual.av",
+            "mutual.wasm",
             vec![
-                // memberSet gains a non-member (extra); closure length check.
                 (
-                    "extra member",
-                    "memberSet := [1, 2]",
-                    "memberSet := [1, 2, 3]",
+                    "sibling in a later group",
+                    "Plans.lean",
+                    "⟨\"isOdd\", true, 2, 0,",
+                    "⟨\"isOdd\", true, 2, 1,",
                 ),
-                // memberSet drops a member but keeps the call target (omission);
-                // shape check passes, closure cycle-set check fails.
-                ("omitted member", "memberSet := [1, 2]", "memberSet := [2]"),
-                // memberSet repeats a member (duplicate); closure length check.
                 (
-                    "duplicate member",
-                    "memberSet := [1, 2]",
-                    "memberSet := [1, 2, 2]",
-                ),
-                // one member declares a set inconsistent with the byte-derived
-                // cycle (keeps its own target so the shape check still passes).
-                (
-                    "inconsistent set",
-                    "memberSet := [1, 2]",
-                    "memberSet := [2, 4]",
+                    "self in a later group",
+                    "Plans.lean",
+                    "⟨\"isEven\", true, 1, 0,",
+                    "⟨\"isEven\", true, 1, 1,",
                 ),
             ],
         ),
         (
             "tools/certkit/fixtures/mutual3.av",
+            "mutual3.wasm",
             vec![
                 (
-                    "extra member",
-                    "memberSet := [1, 2, 3]",
-                    "memberSet := [1, 2, 3, 4]",
+                    "one member split off",
+                    "Plans.lean",
+                    "⟨\"rotC\", true, 3, 0,",
+                    "⟨\"rotC\", true, 3, 1,",
                 ),
                 (
-                    "inconsistent set",
-                    "memberSet := [1, 2, 3]",
-                    "memberSet := [2, 3, 5]",
+                    "first member split off",
+                    "Plans.lean",
+                    "⟨\"rotA\", true, 1, 0,",
+                    "⟨\"rotA\", true, 1, 1,",
                 ),
             ],
         ),
-    ];
-
-    let lake_ok = |cert: &Path| -> bool {
-        lake_for_cert(cert)
-            .arg("build")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    };
-
-    for (fixture, vectors) in cases {
-        let out_dir = temp_dir("cert-mutual-scc");
-        let compile = aver_command()
-            .current_dir(&repo_root)
-            .arg("compile")
-            .arg(fixture)
-            .arg("--target")
-            .arg("wasm-gc")
-            .arg("--certify")
-            .arg("-o")
-            .arg(&out_dir)
-            .output()
-            .expect("aver compile --certify runs");
-        assert!(
-            compile.status.success(),
-            "{fixture} compile --certify failed:\n{}",
-            String::from_utf8_lossy(&compile.stderr)
-        );
-        let cert = out_dir.join("cert");
-        // Honest cert must build (and populates the `.lake` cache so each tamper
-        // below only rebuilds the leaf `Artifact` module).
-        assert!(lake_ok(&cert), "honest {fixture} cert must lake-build");
-
-        let artifact = cert.join("Artifact.lean");
-        let honest = std::fs::read_to_string(&artifact).unwrap();
-        for (label, from, to) in vectors {
-            assert!(
-                honest.contains(from),
-                "{fixture} Artifact.lean SCC shape changed ({label}); update the test"
-            );
-            std::fs::write(&artifact, honest.replacen(from, to, 1)).unwrap();
-            let ok = lake_ok(&cert);
-            std::fs::write(&artifact, &honest).unwrap(); // restore before asserting
-            assert!(
-                !ok,
-                "{fixture} {label}: broken mutual-SCC membership must be declined in-kernel"
-            );
-        }
+    ] {
+        let out_dir = compile_checked_fixture(fixture, "cert-mutual-scc");
+        assert_package_tampers_decline(&out_dir, wasm, &tampers);
     }
 }
 
-/// The single-line value the producer wrote for `def {name} : {ty} := …` in an
-/// emitted Lean source. Reading the real definition back out of the certificate
-/// is what keeps a test's assertions tied to the emitter rather than to a
-/// hand-copied literal that can silently fall out of date.
-fn emitted_lean_def(src: &str, name: &str, ty: &str) -> String {
-    let head = format!("def {name} : {ty} := ");
-    let (_, rest) = src
-        .split_once(&head)
-        .unwrap_or_else(|| panic!("emitted Lean has no `{head}`; update the test"));
-    rest.lines()
-        .next()
-        .expect("emitted Lean definition has a value")
-        .trim()
-        .to_string()
-}
-
-/// The text the producer wrote between `head` and `tail` on one line of an
-/// emitted Lean source — used to read back the byte-derived arguments (carrier,
-/// member set, host-role table) it threads into its own acceptance leaves.
-fn emitted_lean_args(src: &str, head: &str, tail: &str) -> String {
-    let line = src
-        .lines()
-        .find(|l| l.contains(head) && l.contains(tail))
-        .unwrap_or_else(|| panic!("emitted Lean has no line `{head}…{tail}`; update the test"));
-    let start = line.find(head).expect("head present") + head.len();
-    let end = line.rfind(tail).expect("tail present");
-    assert!(
-        start <= end,
-        "emitted Lean line `{line}` has no arguments between `{head}` and `{tail}`"
-    );
-    line[start..end].trim().to_string()
-}
-
-/// GUARD-ISOLATING direct Lean assertions for the two mutual-recursion kernel
-/// guards, elaborated with `lake env lean` against the audited cert modules — no
-/// `aver cert verify`, no sibling defence in the path. Each assertion is
-/// constructed so it holds ONLY because its target guard fires (verified by
-/// weakening each guard in a throwaway copy: weakening `checkMutualPlanShape` to
-/// the generic checker breaks solely the relabel-rejection line; weakening
-/// `mutualMembersFormClosedSccs` to `true` breaks solely the closure
-/// reject/wrapper lines — nothing else moves).
-///
-/// The honest plan and its byte-derived binding context (carrier, member set,
-/// host-role table) are READ BACK OUT of the certificate this test just compiled
-/// from `tools/certkit/fixtures/mutual.av`, not restated as a literal. A
-/// producer-side change to the mutual plan shape therefore reaches these
-/// assertions instead of leaving a stale hand-written copy passing on its own.
-///
-/// FIX A (`checkMutualPlanShape`): the descent `.hostCall .sub` relabelled
-/// byte-identically as a non-tail `.selfCall false` at the SAME emitted index —
-/// the ONLY thing `checkMutualPlanShape` catches that the generic checker + byte
-/// lowering do not. Asserts (i) `checkMutualRawPlan` ACCEPTS it, (ii) its `WInstr` body and
-/// code-entry bytes are IDENTICAL to the honest plan, (iii) `checkMutualPlanShape`
-/// REJECTS it. Sibling rejectors avoided: the byte-equality face (ii proves it is
-/// blind here) and the generic typed-block checker (i proves it accepts).
-///
-/// FIX B (`mutualMembersFormClosedSccs` / `mutualClaimsFormClosedSccs`): a
-/// truth-table over synthetic `(self, target, memberSet)` groups where every
-/// rejected group keeps each member's target IN its `memberSet` (so the per-claim
-/// shape check would ACCEPT — the closure is the sole rejector): dangling /
-/// dropped-member, rho-tail, duplicate self, one-node cycle, disjoint SCCs
-/// claimed as one group. Plus a wrapper case against the REAL acceptance conjunct
-/// `mutualClaimsFormClosedSccs` (fed a minimal manifest + claim) proving it
-/// extracts the byte-pinned edge from `obligation.self` + `mutualPlanTarget` and
-/// refutes a dangling group while the per-claim shape check passes.
-#[test]
-fn mutual_scc_kernel_guards_are_isolating() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping mutual-guard isolation test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    let out_dir = temp_dir("cert-mutual-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/mutual.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "mutual compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    // Build the audited modules so `lake env lean` can resolve the imports.
-    let honest_build = lake_for_cert(&cert)
-        .arg("build")
-        .current_dir(&cert)
-        .output()
-        .expect("lake build runs");
-    assert!(honest_build.status.success(), "honest cert must lake-build");
-
-    // Everything the assertions below talk about is read back out of the cert
-    // the producer just wrote: `isEven`'s emitted mutual plan (`Plans.lean`),
-    // and the byte-derived binding context (carrier, SCC member set, box/sub
-    // role table) the producer threads into its own byte-lowering and shape
-    // leaves (`Artifact.lean` and `Certificate.lean` state the same pair, so
-    // the first line found is as good as any). Nothing is restated by hand, so
-    // a producer-side shape change lands here instead of sliding past a stale
-    // copy.
-    const PLAN: &str = "isEvenMutualPlan";
-    let package = package_lean_text(&cert);
-    let honest = emitted_lean_def(&package, PLAN, "MutualRawPlan");
-    let carrier = emitted_lean_args(
-        &package,
-        "AverCert.PlanBytes.lowerMutualCodeEntry ",
-        &format!(" AverCert.Plans.{PLAN} ="),
-    );
-    let context = emitted_lean_args(
-        &package,
-        "AverCert.PlanCheck.checkMutualPlanShape ",
-        &format!(" AverCert.Plans.{PLAN} = true"),
-    );
-    // `<memberSet> <hostTable>`; the member set is a flat `List Nat`, so its
-    // closing bracket is the first one in the pair.
-    let split = context
-        .find("] ")
-        .expect("emitted shape context is `<memberSet> <hostTable>`")
-        + 1;
-    let (member_set, host_table) = context.split_at(split);
-    let (member_set, host_table) = (member_set.trim(), host_table.trim());
-    let sub_idx: u32 = host_table
-        .split_once("(.sub, ")
-        .expect("emitted host-role table names the sub role")
-        .1
-        .split(')')
-        .next()
-        .expect("sub role index is parenthesised")
-        .trim()
-        .parse()
-        .expect("sub role index is a number");
-    // The synthetic FIX B claim below reuses the emitted member set, and its
-    // obligation takes the set's first member as `self` — so the edge
-    // `mutualClaimEdges` extracts is the emitter's own (self, target, memberSet).
-    let self_idx: u32 = member_set
-        .trim_matches(['[', ']'])
-        .split(',')
-        .next()
-        .expect("emitted member set is non-empty")
-        .trim()
-        .parse()
-        .expect("emitted member set holds indices");
-    let cross_idx: u32 = honest
-        .split_once(".selfCall true ")
-        .expect("emitted mutual plan tail-calls a sibling member")
-        .1
-        .split_whitespace()
-        .next()
-        .expect("member-call target follows the tail flag")
-        .parse()
-        .expect("member-call target is a number");
-
-    // Byte-identical relabel: the descent's `sub` host call becomes a non-tail
-    // self-call at the SAME index; both lower to `10 09` and the same `WInstr`.
-    let relabel_from = format!(".hostCall .sub {sub_idx} [0, 2]");
-    let relabeled = honest.replace(&relabel_from, &format!(".selfCall false {sub_idx} [0, 2]"));
-    assert_ne!(
-        relabeled, honest,
-        "emitted mutual plan no longer contains `{relabel_from}`; update the test"
-    );
-
-    let mut lean = String::new();
-    lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\nimport AcceptedArtifact\n\n");
-    lean.push_str("open AverCert.Schema\nopen AverCert.AcceptedArtifact\n\n");
-    lean.push_str("def honestPlan : MutualRawPlan := ");
-    lean.push_str(&honest);
-    lean.push_str("\ndef relabeledPlan : MutualRawPlan := ");
-    lean.push_str(&relabeled);
-    lean.push_str("\n\n");
-    // FIX A.
-    lean.push_str("example : AverCert.PlanCheck.checkMutualRawPlan relabeledPlan = true := rfl\n");
-    lean.push_str(&format!("example : AverCert.PlanLower.lowerMutualBody {carrier} relabeledPlan = AverCert.PlanLower.lowerMutualBody {carrier} honestPlan := rfl\n"));
-    lean.push_str(&format!("example : AverCert.PlanBytes.lowerMutualCodeEntry {carrier} relabeledPlan = AverCert.PlanBytes.lowerMutualCodeEntry {carrier} honestPlan := rfl\n"));
-    lean.push_str(&format!("example : AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} honestPlan = true := rfl\n"));
-    lean.push_str(&format!("example : AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} relabeledPlan = false := rfl\n\n"));
-    // FIX B: closure truth-table (each reject keeps target in memberSet). These
-    // groups are synthetic adversaries with no emitter counterpart.
-    lean.push_str(
-        "example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (2, 1, [1, 2])] = true := rfl\n",
-    );
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3]), (2, 3, [1, 2, 3]), (3, 1, [1, 2, 3])] = true := rfl\n");
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (2, 1, [1, 2]), (3, 4, [3, 4]), (4, 3, [3, 4])] = true := rfl\n");
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2])] = false := rfl\n");
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3]), (2, 3, [1, 2, 3]), (3, 2, [1, 2, 3])] = false := rfl\n");
-    lean.push_str(
-        "example : mutualMembersFormClosedSccs [(1, 2, [1, 2]), (1, 2, [1, 2])] = false := rfl\n",
-    );
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 1, [1])] = false := rfl\n");
-    lean.push_str("example : mutualMembersFormClosedSccs [(1, 2, [1, 2, 3, 4]), (2, 1, [1, 2, 3, 4]), (3, 4, [1, 2, 3, 4]), (4, 3, [1, 2, 3, 4])] = false := rfl\n\n");
-    // FIX B: the REAL acceptance conjunct rejects a dangling group; shape passes.
-    lean.push_str("def dummyOb (nm : String) (s : Nat) : Obligation :=\n  { export_ := nm, policy := .simulatesModel, carrier := ");
-    lean.push_str(&carrier);
-    lean.push_str(", code := fun _ => none,\n    host := fun _ _ _ _ _ _ _ _ => fun _ => none, self := s, Dom := Unit, Cod := Unit,\n    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True, model := fun _ => () }\n\n");
-    lean.push_str("def manifestS : Manifest :=\n  { subject := { artifactHash := \"\", target := \"\", profile := \"\", abi := \"\", artifactRoot := \"\", exports := [], declaredUncertified := [], capabilities := [], start := none, hostRoleTable := some { box := none, add := none, mul := none, sub := none, toIndex := none, cmp := none, eq := none }, arithParams := none, stringHostRoles := [], contracts := [] },\n    symFragmentPlans := [], stringEqPlans := [], stringConcatPlans := [], constructPlans := [],\n    exprFragmentPlans := [], recursionPlans := [], mutualPlans := [(\"a\", honestPlan)], compositionPlans := [], verbatimPlans := [], intDispatchPlans := [], fieldProjectionPlans := [], obligations := [] }\n\n");
-    lean.push_str(
-        "def claimsS : List MutualRecursionClaim :=\n  [ { exportNameBytes := [], exportName := \"a\", carrier := ",
-    );
-    lean.push_str(&carrier);
-    lean.push_str(&format!(", memberSet := {member_set},\n      hostTable := {host_table}, obligation := dummyOb \"a\" {self_idx} }} ]\n\n"));
-    lean.push_str(&format!("example : AverCert.PlanCheck.checkMutualPlanShape {member_set} {host_table} honestPlan = true := rfl\n"));
-    lean.push_str(&format!(
-        "example : mutualClaimEdges manifestS claimsS = some [({self_idx}, {cross_idx}, {member_set})] := rfl\n"
-    ));
-    lean.push_str(
-        "example : ¬ mutualClaimsFormClosedSccs manifestS claimsS := fun h => nomatch h\n",
-    );
-
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = lake_for_cert(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .current_dir(&cert)
-        .output()
-        .expect("lake env lean runs");
-    assert!(
-        elab.status.success(),
-        "guard-isolation assertions must all hold:\n{}\n{}",
-        String::from_utf8_lossy(&elab.stdout),
-        String::from_utf8_lossy(&elab.stderr)
-    );
-}
-
-/// A tampered byte-first `verbatim-plan-v1` plan is declined, and the four spike
-/// tamper vectors are shown to be guard-isolating. Each vector mutates the
-/// verbatim `ref.test`-dispatch plan for `wrapItems`/`tagName` in the shipped
-/// `Plans.lean` while leaving the wasm untouched, so the plan no longer
-/// canonically lowers to the export's real code-entry bytes. For verbatim
-/// `Cod := WVal` matches there are NO host/self calls to bind, so the
-/// byte-equality gate is the WHOLE soundness binding: both the shipped
-/// `Artifact.lean` `lowerVerbatimCodeEntry`/`exactFuncBindingForExport` `rfl` pins and the
-/// checker's `manifest.verbatimPlans` `rfl` pin reject the tampered plan. The
-/// `GuardIso.lean` block below isolates each vector by proving in-kernel
-/// (`by decide`) that its lowered code entry diverges from the honest one — the
-/// spike's four vectors lifted onto the real cert.
+/// A tampered sum/list/string plan is declined. `wrapItems` matches a sum
+/// and returns a list; `tagName` returns one of three string literals.
+/// Constructor tags, arm order, the declared type table and the
+/// literal-to-segment table are all bound to the bytes.
 #[test]
 fn cert_verify_declines_tampered_verbatim_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping verbatim-plan tamper test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-verbatim-plan");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/verbatimgen.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "verbatimgen compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
+    let out_dir = compile_checked_fixture(
+        "tools/certkit/fixtures/verbatimgen.av",
+        "cert-verbatim-plan",
     );
-
-    let wasm = out_dir.join("verbatimgen.wasm");
-    let cert = out_dir.join("cert");
-    let (ok, report) = aver_check(&wasm, &cert);
-    assert!(ok, "honest verbatim certificate should verify:\n{report}");
-
-    // Honest bytes and plan, zero locals in the obligation only. `wrapItems`
-    // projects a field, so its canonical verbatim layout has three locals.
-    {
-        let dir = temp_dir("cert-verbatim-zero-locals");
-        copy_dir(&out_dir, &dir);
-        set_named_code_nlocals_to_zero(&dir.join("cert/Module.lean"), "wrapItems", 1, 3);
-        let (ok, report) = aver_check(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
-        assert!(!ok, "verbatim zero-locals code must be DECLINED:\n{report}");
-    }
-
-    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    // (a) wrong `ref.test` type index: `wrapItems` tests struct type 1 -> 2.
-    // (b) swapped dispatch cascade: `tagName` tests tags 4 <-> 5.
-    // (c) wrong `array.new_data` data-segment index: `tagName`'s "alpha" 0 -> 9.
-    // (d) wrong `ref.null` result heap type: `wrapItems` 10 -> 18.
-    // (e) equal-length payload collision: `tagName`'s "alpha" -> "alphb" (same
-    //     length, same data index). The code-entry lowering pins only the payload
-    //     LENGTH, so every byte-equality pin stays green; ONLY the acceptance
-    //     predicate's `verbatimPayloadsBound` conjunct (payload bytes vs the
-    //     byte-pinned data segment) declines it. Deleting that conjunct makes this
-    //     verify — the regression this vector guards.
-    let tampers: [(&str, &str, &str); 5] = [
-        (
-            "ref.test type index",
-            ".test 1 (.project 1 0) (.leaf (.refNull))",
-            ".test 2 (.project 1 0) (.leaf (.refNull))",
-        ),
-        (
-            "swapped dispatch cascade",
-            ".test 4 (.arrayNewData 7 0 [97, 108, 112, 104, 97]) (.test 5",
-            ".test 5 (.arrayNewData 7 0 [97, 108, 112, 104, 97]) (.test 4",
-        ),
-        (
-            "array.new_data data index",
-            ".arrayNewData 7 0 [97, 108, 112, 104, 97]",
-            ".arrayNewData 7 9 [97, 108, 112, 104, 97]",
-        ),
-        (
-            "ref.null heap type",
-            "resultSig := .refNull 10",
-            "resultSig := .refNull 18",
-        ),
-        (
-            "equal-length payload collision",
-            ".arrayNewData 7 0 [97, 108, 112, 104, 97]",
-            ".arrayNewData 7 0 [97, 108, 112, 104, 98]",
-        ),
-    ];
-    for (label, from, to) in tampers {
-        assert!(
-            honest.contains(from),
-            "verbatimgen Plans.lean verbatim-plan shape changed ({label}); update the test"
-        );
-        let dir = temp_dir("cert-verbatim-plan-tamper");
-        copy_dir(&out_dir, &dir);
-        let tampered_plans = dir.join("cert").join("Plans.lean");
-        let src = std::fs::read_to_string(&tampered_plans).unwrap();
-        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_check(&dir.join("verbatimgen.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "{label}: tampered verbatim plan must be declined:\n{report}"
-        );
-    }
-
-    // Guard-isolation: prove in-kernel that each vector diverges the lowered
-    // code-entry bytes (so the byte-equality gate — the whole binding — catches
-    // it), mirroring the spike's four `by decide` vectors on the real plans.
-    // carrier 9; `wrapItems` result heap 10, `tagName` string-array type 7.
-    let mut lean = String::new();
-    lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\n\n");
-    lean.push_str("open AverCert.Schema\nopen AverCert.PlanBytes\n\n");
-    lean.push_str("def honestWrap : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultSig := .refNull 10, body := .test 1 (.project 1 0) (.leaf (.refNull)) }\n");
-    lean.push_str("def honestTag : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 7, body := .test 4 (.arrayNewData 7 0 [97, 108, 112, 104, 97]) (.test 5 (.arrayNewData 7 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 7 2 [103, 97, 109, 109, 97]))) }\n\n");
-    lean.push_str("example : AverCert.PlanCheck.checkVerbatimRawPlan honestWrap = true := rfl\n");
-    lean.push_str("example : AverCert.PlanCheck.checkVerbatimRawPlan honestTag = true := rfl\n\n");
-    lean.push_str("def tamper1 : VerbatimRawPlan := { honestWrap with body := .test 2 (.project 1 0) (.leaf (.refNull)) }\n");
-    lean.push_str("example : lowerVerbatimCodeEntry 9 tamper1 ≠ lowerVerbatimCodeEntry 9 honestWrap := by decide\n");
-    lean.push_str("def tamper2 : VerbatimRawPlan := { honestTag with body := .test 5 (.arrayNewData 7 0 [97, 108, 112, 104, 97]) (.test 4 (.arrayNewData 7 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 7 2 [103, 97, 109, 109, 97]))) }\n");
-    lean.push_str("example : lowerVerbatimCodeEntry 9 tamper2 ≠ lowerVerbatimCodeEntry 9 honestTag := by decide\n");
-    lean.push_str("def tamper3 : VerbatimRawPlan := { honestTag with body := .test 4 (.arrayNewData 7 9 [97, 108, 112, 104, 97]) (.test 5 (.arrayNewData 7 1 [98, 101, 116, 97]) (.leaf (.arrayNewData 7 2 [103, 97, 109, 109, 97]))) }\n");
-    lean.push_str("example : lowerVerbatimCodeEntry 9 tamper3 ≠ lowerVerbatimCodeEntry 9 honestTag := by decide\n");
-    lean.push_str(
-        "def tamper4 : VerbatimRawPlan := { honestWrap with resultSig := .refNull 18 }\n",
-    );
-    lean.push_str("example : lowerVerbatimCodeEntry 9 tamper4 ≠ lowerVerbatimCodeEntry 9 honestWrap := by decide\n");
-
-    let honest_build = lake_for_cert(&cert)
-        .arg("build")
-        .current_dir(&cert)
-        .output()
-        .expect("lake build runs");
-    assert!(honest_build.status.success(), "honest cert must lake-build");
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = lake_for_cert(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .current_dir(&cert)
-        .output()
-        .expect("lake env lean runs");
-    assert!(
-        elab.status.success(),
-        "verbatim guard-isolation assertions must all hold:\n{}\n{}",
-        String::from_utf8_lossy(&elab.stdout),
-        String::from_utf8_lossy(&elab.stderr)
+    assert_package_tampers_decline(
+        &out_dir,
+        "verbatimgen.wasm",
+        &[
+            (
+                "zero locals",
+                "plan:wrapItems",
+                "locals := [(.list .int), .eqref, .int]",
+                "locals := []",
+            ),
+            // (a) the tested constructor: `Items` (user 0 0) -> `Empty` (user 0 1).
+            (
+                "ref.test constructor",
+                "plan:wrapItems",
+                "(.ctor (.user 0 0) [1])",
+                "(.ctor (.user 0 1) [1])",
+            ),
+            // (b) the dispatch cascade: the first two arms exchanged.
+            (
+                "swapped dispatch cascade",
+                "plan:tagName",
+                "(.cons (.ctor (.user 1 0) []) (.literal (.str [97, 108, 112, 104, 97])) (.cons (.ctor (.user 1 1) []) (.literal (.str [98, 101, 116, 97]))",
+                "(.cons (.ctor (.user 1 1) []) (.literal (.str [97, 108, 112, 104, 97])) (.cons (.ctor (.user 1 0) []) (.literal (.str [98, 101, 116, 97]))",
+            ),
+            // (c) the data-segment index a literal is read from.
+            (
+                "data-segment index",
+                "Plans.lean",
+                "([97, 108, 112, 104, 97], 0)",
+                "([97, 108, 112, 104, 97], 9)",
+            ),
+            // (d) the declared List<Int> struct index of the default `[]`.
+            (
+                "list struct index",
+                "Plans.lean",
+                "lists := [(.int, 10)]",
+                "lists := [(.int, 18)]",
+            ),
+            // (e) an equal-length payload substitution in the PLAN only: the
+            //     lowering reads the same segment index and length, so only the
+            //     literal-to-segment pin (`DataPin`) sees the changed bytes.
+            (
+                "equal-length payload collision (plan)",
+                "plan:tagName",
+                "(.literal (.str [97, 108, 112, 104, 97]))",
+                "(.literal (.str [97, 108, 112, 104, 98]))",
+            ),
+            // (f) the same substitution in the declared segment table only:
+            //     the table no longer holds the segment's bytes
+            //     (`dataConfirmed`).
+            (
+                "equal-length payload collision (segment table)",
+                "Plans.lean",
+                "([97, 108, 112, 104, 97], 0)",
+                "([97, 108, 112, 104, 98], 0)",
+            ),
+            // (g) the element type of the default list literal.
+            (
+                "list element type",
+                "plan:wrapItems",
+                "(.list .int [])",
+                "(.list .bool [])",
+            ),
+        ],
     );
 }
 
@@ -6268,7 +4703,7 @@ fn cert_verify_declines_tampered_verbatim_plan() {
 /// and the declared result kind remain bound to the emitted artifact bytes.
 #[test]
 fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping scalar-f64 verbatim test: `lake` not available");
         return;
     }
@@ -6301,16 +4736,13 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
         .expect("compiler-produced f64verbatim wasm must validate");
 
     let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let (_, _, _, def) = plan_entry_fields(&plans, "floatOrZero");
+    let block = plan_def_block(&plans, &def);
     assert!(
-        plans.contains(
-            "def floatOrZeroVerbatimPlan : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 2, fieldLocal := 1, resultSig := .f64Scalar, body := .test 1 (.project 1 0) (.leaf (.f64Bits 0)) }"
-        ),
-        "floatOrZero plan must pin the scalar-f64 result and zero default"
-    );
-    let module = std::fs::read_to_string(cert.join("Module.lean")).unwrap();
-    assert!(
-        module.contains("if fn = 1 then some ⟨1, 3,"),
-        "floatOrZero code obligation must bind nlocals = 3"
+        block.contains("⟨[(.sum 0)], .float⟩")
+            && block.contains("locals := [.float, .eqref, .int]")
+            && block.contains("(.cons .wild (.literal (.float 0)) .nil)"),
+        "floatOrZero plan must pin the scalar-f64 result, its locals and the zero default:\n{block}"
     );
 
     let (ok, report) = aver_check(&wasm, &cert);
@@ -6435,1235 +4867,83 @@ fn cert_verify_scalar_f64_verbatim_fixture_and_tampers() {
     }
 }
 
-/// ACCEPTANCE-LEVEL guard-isolation for the two verbatim binds that the
-/// byte-equality gate does NOT cover, elaborated with `lake env lean` against the
-/// audited cert modules — no `aver cert verify`, no sibling defence in the path.
-/// The verbatim family has no host/self calls, so before these binds the code
-/// entry was the whole binding; but the code entry omits the function SIGNATURE
-/// (a second parameter leaves the locals + body bytes identical) and the
-/// `array.new_data` payload CONTENTS (only the segment index and length are
-/// encoded). Each assertion is constructed so it holds ONLY because its target
-/// guard fires (verified by weakening each guard in a throwaway copy: weakening
-/// `verbatimFuncTypeMatches` to `true` breaks solely the binary-arity reject line;
-/// weakening `verbatimPayloadsBound`/`verbatimLeafPayloadBound` to `true` breaks
-/// solely the equal-length-collision reject line; reverting `checkVerbatimLeaf`'s
-/// `arrayNewData` arm to `true` breaks solely the out-of-range reject line —
-/// nothing else moves).
-///
-/// SIGNATURE guard: two minimal modules identical in every section EXCEPT the
-/// type section (the second appends a second nominal-root parameter). The
-/// func/export/code/data sections — hence both the raw binding and code entry —
-/// are byte-for-byte identical. Therefore the exact binding lookup returns the
-/// SAME value and only `verbatimFuncTypeMatches` distinguishes unary from binary.
-///
-/// PAYLOAD guard: an equal-length payload substitution (`"alpha"` -> `"alphb"`)
-/// that the structural checker (`checkVerbatimRawPlan`) and the byte lowering
-/// (`lowerVerbatimCodeEntry`) are proven BLIND to (both accept / both lower to the
-/// same bytes); only `verbatimPayloadsBound`, comparing against the byte-pinned
-/// data segment, rejects it. Plus the FIX 2(c) out-of-range payload reject.
-#[test]
-fn verbatim_kernel_guards_are_isolating() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping verbatim-guard isolation test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    let mut lean = String::new();
-    lean.push_str("import Schema\nimport PlanCheck\nimport PlanBytes\nimport WasmSlice\nimport AcceptedArtifact\n\n");
-    lean.push_str("open AverCert\nopen AverCert.Schema\n");
-    lean.push_str("set_option maxRecDepth 100000\n\n");
-    lean.push_str(
-        r#"private theorem regressionCodeEntryByFuncIndex_of_binding
-    (modBytes modLen funcIdx : Nat) (binding : WasmSlice.FuncBinding)
-    (hBinding : WasmSlice.funcBindingByFuncIndex modBytes modLen funcIdx = some binding) :
-    WasmSlice.codeEntryByFuncIndex modBytes modLen funcIdx = some binding.codeEntry := by
-  unfold WasmSlice.funcBindingByFuncIndex at hBinding
-  unfold WasmSlice.codeEntryByFuncIndex
-  cases hCodeIdx : WasmSlice.codeIndexByFuncIndex modBytes modLen funcIdx with
-  | none => simp_all
-  | some codeIdx =>
-      cases hType : WasmSlice.typeIndexByCodeIndex modBytes modLen codeIdx with
-      | none => simp_all
-      | some typeIdx =>
-          cases hCode : WasmSlice.codeEntryByCodeIndex modBytes modLen codeIdx with
-          | none => simp_all
-          | some codeEntry =>
-              simp_all
-              subst binding
-              rfl
-
-private theorem regressionCodeEntryForExport_of_binding
-    (modBytes modLen : Nat) (targetName : WasmSlice.ByteSeq)
-    (binding : WasmSlice.FuncBinding)
-    (hBinding : WasmSlice.funcBindingForExport modBytes modLen targetName = some binding) :
-    WasmSlice.codeEntryForExport modBytes modLen targetName = some binding.codeEntry := by
-  unfold WasmSlice.funcBindingForExport at hBinding
-  unfold WasmSlice.codeEntryForExport
-  cases hExport : WasmSlice.exportFuncIndex modBytes modLen targetName with
-  | none => simp [hExport] at hBinding
-  | some funcIdx =>
-      simp only [hExport] at hBinding ⊢
-      exact regressionCodeEntryByFuncIndex_of_binding
-        modBytes modLen funcIdx binding hBinding
-
-theorem exactBindingPreservesLegacyPins
-    (modBytes modLen : Nat) (targetName expectedCode : WasmSlice.ByteSeq)
-    (binding : WasmSlice.FuncBinding) :
-    WasmSlice.exactFuncBindingForExport
-        modBytes modLen targetName expectedCode = some binding ↔
-      WasmSlice.codeEntryForExport modBytes modLen targetName = some expectedCode ∧
-      WasmSlice.funcBindingForExport modBytes modLen targetName = some binding ∧
-      binding.codeEntry = expectedCode := by
-  constructor
-  · intro hExact
-    unfold WasmSlice.exactFuncBindingForExport at hExact
-    have hFiltered := Option.filter_eq_some_iff.mp hExact
-    have hLookup : WasmSlice.funcBindingForExport modBytes modLen targetName =
-        some binding := hFiltered.1
-    have hCode : binding.codeEntry = expectedCode := by
-      simpa using hFiltered.2
-    refine ⟨?_, hLookup, hCode⟩
-    simpa [hCode] using
-      regressionCodeEntryForExport_of_binding modBytes modLen targetName binding hLookup
-  · rintro ⟨_hEntry, hLookup, hCode⟩
-    unfold WasmSlice.exactFuncBindingForExport
-    rw [hLookup]
-    simp [hCode]
-
-"#,
-    );
-    lean.push_str("def packLE : List Nat → Nat | [] => 0 | b :: bs => b + (packLE bs <<< 8)\n\n");
-    lean.push_str("def decodeTestType (bytes : List Nat) : Option CertDecode.TypeEntry :=\n  match CertDecode.readTypeEntry (packLE bytes) bytes.length with\n  | some (entry, _, 0) => some entry\n  | _ => none\n\n");
-    // Minimal modules: header, type section, then a shared func/export/code/data
-    // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`; data segment 0 is
-    // "alpha" (passive). Only the type section differs between the two.
-    lean.push_str("def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]\n");
-    lean.push_str("def unaryType : List Nat := [1, 8, 1, 96, 1, 99, 4, 1, 99, 5]\n");
-    lean.push_str("def binaryType : List Nat := [1, 10, 1, 96, 2, 99, 4, 99, 4, 1, 99, 5]\n");
-    lean.push_str("def tailSecs : List Nat := [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11, 11, 8, 1, 1, 5, 97, 108, 112, 104, 97]\n");
-    lean.push_str("def unaryMod : List Nat := hdr ++ unaryType ++ tailSecs\n");
-    lean.push_str("def binaryMod : List Nat := hdr ++ binaryType ++ tailSecs\n");
-    lean.push_str("def nameF : List Nat := [102]\n\n");
-    // SIGNATURE isolation: the byte-equality gate's inputs are identical...
-    lean.push_str("example : WasmSlice.funcBindingForExport (packLE unaryMod) unaryMod.length nameF = WasmSlice.funcBindingForExport (packLE binaryMod) binaryMod.length nameF := rfl\n");
-    lean.push_str("example : WasmSlice.codeEntryForExport (packLE unaryMod) unaryMod.length nameF = WasmSlice.codeEntryForExport (packLE binaryMod) binaryMod.length nameF := rfl\n");
-    lean.push_str("example : WasmSlice.exactFuncBindingForExport (packLE unaryMod) unaryMod.length nameF [2, 0, 11] = WasmSlice.exactFuncBindingForExport (packLE binaryMod) binaryMod.length nameF [2, 0, 11] := rfl\n");
-    lean.push_str("example : WasmSlice.exactFuncBindingForExport (packLE unaryMod) unaryMod.length nameF [3, 0, 11] = none := rfl\n");
-    // ...and only the signature guard tells unary from binary.
-    lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches (packLE unaryMod) unaryMod.length 0 (.refNull 5) = true := rfl\n",
-    );
-    lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches (packLE binaryMod) binaryMod.length 0 (.refNull 5) = false := rfl\n\n",
-    );
-    // PAYLOAD isolation: segment 0 is "alpha".
-    lean.push_str(
-        "example : WasmSlice.dataSegmentBytes (packLE unaryMod) unaryMod.length 0 = some [97, 108, 112, 104, 97] := rfl\n",
-    );
-    lean.push_str("def planAlpha : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .test 1 (.arrayNewData 5 0 [97, 108, 112, 104, 97]) (.leaf .refNull) }\n");
-    lean.push_str("def planAlphB : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .test 1 (.arrayNewData 5 0 [97, 108, 112, 104, 98]) (.leaf .refNull) }\n");
-    // The structural checker and byte lowering are BLIND to the payload content...
-    lean.push_str("example : PlanCheck.checkVerbatimRawPlan planAlpha = true := rfl\n");
-    lean.push_str("example : PlanCheck.checkVerbatimRawPlan planAlphB = true := rfl\n");
-    lean.push_str("example : PlanCheck.checkVerbatimPlan 2 planAlpha = true := rfl\n");
-    lean.push_str("example : PlanCheck.checkVerbatimPlan 2 planAlphB = true := rfl\n");
-    lean.push_str("example : PlanBytes.lowerVerbatimCodeEntry 7 planAlpha = PlanBytes.lowerVerbatimCodeEntry 7 planAlphB := rfl\n");
-    // ...so only `verbatimPayloadsBound` rejects the equal-length collision.
-    lean.push_str(
-        "example : AcceptedArtifact.verbatimPayloadsBound (packLE unaryMod) unaryMod.length planAlpha.body = true := rfl\n",
-    );
-    lean.push_str("example : AcceptedArtifact.verbatimPayloadsBound (packLE unaryMod) unaryMod.length planAlphB.body = false := rfl\n\n");
-    // Full admission additionally closes the two generic-proof preconditions:
-    // a dispatch root and in-range scratch locals. The raw checker deliberately
-    // remains the byte-facing grammar check.
-    lean.push_str("def leafRootPlan : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .leaf .refNull }\n");
-    lean.push_str("example : PlanCheck.checkVerbatimRawPlan leafRootPlan = true := rfl\n");
-    lean.push_str("example : PlanCheck.checkVerbatimPlan 2 leafRootPlan = false := rfl\n");
-    lean.push_str("def oobScrutineePlan : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 9, fieldLocal := 0, resultSig := .refNull 5, body := .test 1 .refNull (.leaf .refNull) }\n");
-    lean.push_str("example : PlanCheck.checkVerbatimRawPlan oobScrutineePlan = true := rfl\n");
-    lean.push_str("example : PlanCheck.checkVerbatimPlan 2 oobScrutineePlan = false := rfl\n");
-    lean.push_str("def oobFieldPlan : VerbatimRawPlan := { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 10, resultSig := .refNull 5, body := .test 1 .refNull (.leaf .refNull) }\n");
-    lean.push_str("example : PlanCheck.checkVerbatimRawPlan oobFieldPlan = true := rfl\n");
-    lean.push_str("example : PlanCheck.checkVerbatimPlan 2 oobFieldPlan = false := rfl\n");
-    // FIX 2(c): an out-of-range payload element is rejected up front.
-    lean.push_str("example : PlanCheck.checkVerbatimRawPlan { profile := \"verbatim-plan-v1\", scrutineeLocal := 1, fieldLocal := 0, resultSig := .refNull 5, body := .test 1 (.arrayNewData 5 0 [256]) (.leaf .refNull) } = false := rfl\n\n");
-
-    // NULLABILITY isolation (re-review FIX 2): the certified verbatim signature is
-    // one nominal-root ref -> `[(ref null resultHeapTy)]` — the `0x63` nullable form the
-    // `ref.null` default requires. A non-null `0x64` result is rejected. The only
-    // byte differing between `unaryMod` and `nonNullMod` is `0x63 -> 0x64`, so the
-    // byte-derived binding and code entry are IDENTICAL (the reftype is never in
-    // the code entry) — only `checkVerbatimFuncType` tells them apart.
-    lean.push_str(
-        "example : (decodeTestType [96, 1, 99, 4, 1, 99, 5]).map (WasmSlice.checkVerbatimFuncType (.refNull 5)) = some true := rfl\n",
-    );
-    lean.push_str(
-        "example : (decodeTestType [96, 1, 99, 4, 1, 100, 5]).map (WasmSlice.checkVerbatimFuncType (.refNull 5)) = some false := rfl\n",
-    );
-    lean.push_str(
-        "def nonNullMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 4, 1, 100, 5] ++ tailSecs\n",
-    );
-    lean.push_str("example : WasmSlice.funcBindingForExport (packLE nonNullMod) nonNullMod.length nameF = WasmSlice.funcBindingForExport (packLE unaryMod) unaryMod.length nameF := rfl\n");
-    lean.push_str("example : WasmSlice.codeEntryForExport (packLE nonNullMod) nonNullMod.length nameF = WasmSlice.codeEntryForExport (packLE unaryMod) unaryMod.length nameF := rfl\n");
-    lean.push_str("example : WasmSlice.exactFuncBindingForExport (packLE nonNullMod) nonNullMod.length nameF [2, 0, 11] = WasmSlice.exactFuncBindingForExport (packLE unaryMod) unaryMod.length nameF [2, 0, 11] := rfl\n");
-    lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches (packLE nonNullMod) nonNullMod.length 0 (.refNull 5) = false := rfl\n\n",
-    );
-
-    // ABSTRACT-PARAM isolation: after `0x63` a NEGATIVE s33 heap type encodes an
-    // abstract heap type (long-form eqref is `0x63 0x6D`, s33 -19), not a concrete
-    // nominal root, so the signature guard fail-closes. The module differs from
-    // `unaryMod` only in that param byte (`4 -> 109`), so the byte-derived binding
-    // and code entry are IDENTICAL — only `checkVerbatimFuncType` tells them apart.
-    lean.push_str(
-        "example : (decodeTestType [96, 1, 99, 109, 1, 99, 5]).map (WasmSlice.checkVerbatimFuncType (.refNull 5)) = some false := rfl\n",
-    );
-    lean.push_str(
-        "example : (decodeTestType [96, 1, 99, 109, 1, 124]).map (WasmSlice.checkVerbatimFuncType .f64Scalar) = some false := rfl\n",
-    );
-    lean.push_str(
-        "def abstractParamMod : List Nat := hdr ++ [1, 8, 1, 96, 1, 99, 109, 1, 99, 5] ++ tailSecs\n",
-    );
-    lean.push_str("example : WasmSlice.funcBindingForExport (packLE abstractParamMod) abstractParamMod.length nameF = WasmSlice.funcBindingForExport (packLE unaryMod) unaryMod.length nameF := rfl\n");
-    lean.push_str("example : WasmSlice.codeEntryForExport (packLE abstractParamMod) abstractParamMod.length nameF = WasmSlice.codeEntryForExport (packLE unaryMod) unaryMod.length nameF := rfl\n");
-    lean.push_str("example : WasmSlice.exactFuncBindingForExport (packLE abstractParamMod) abstractParamMod.length nameF [2, 0, 11] = WasmSlice.exactFuncBindingForExport (packLE unaryMod) unaryMod.length nameF [2, 0, 11] := rfl\n");
-    lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches (packLE abstractParamMod) abstractParamMod.length 0 (.refNull 5) = false := rfl\n\n",
-    );
-
-    // PARSER STRICTNESS isolation (re-review FIX 3): the type-section and
-    // data-section walkers parse EVERY declared entry/segment and require EXACT
-    // payload exhaustion, so a valid entry followed by trailing bytes, or a count
-    // that does not match the bytes, declines — and an over-wide LEB is rejected
-    // by the width cap. The honest single-entry sections still match.
-    // Type section: a trailing `0xff` after the one valid func type.
-    lean.push_str("def trailingTypeMod : List Nat := hdr ++ [1, 9, 1, 96, 1, 99, 4, 1, 99, 5, 255] ++ tailSecs\n");
-    lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches (packLE trailingTypeMod) trailingTypeMod.length 0 (.refNull 5) = false := rfl\n",
-    );
-    // Type section: count claims 2 rectypes but only 1 is present.
-    lean.push_str("def countMismatchTypeMod : List Nat := hdr ++ [1, 8, 2, 96, 1, 99, 4, 1, 99, 5] ++ tailSecs\n");
-    lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches (packLE countMismatchTypeMod) countMismatchTypeMod.length 0 (.refNull 5) = false := rfl\n",
-    );
-    // Data section: a trailing `0xff` after the one valid segment.
-    lean.push_str(
-        "def dataTrailMod : List Nat := hdr ++ [11, 9, 1, 1, 5, 97, 108, 112, 104, 97, 255]\n",
-    );
-    lean.push_str("example : WasmSlice.dataSegmentBytes (packLE dataTrailMod) dataTrailMod.length 0 = none := rfl\n");
-    // Data section: count claims 2 segments but only 1 is present.
-    lean.push_str(
-        "def dataCountMismatchMod : List Nat := hdr ++ [11, 8, 2, 1, 5, 97, 108, 112, 104, 97]\n",
-    );
-    lean.push_str("example : WasmSlice.dataSegmentBytes (packLE dataCountMismatchMod) dataCountMismatchMod.length 0 = none := rfl\n");
-    // Over-wide (6-byte) unsigned LEB32 exceeds the u32 width cap and declines.
-    lean.push_str("example : WasmSlice.readUleb32 [128, 128, 128, 128, 128, 0] = none := rfl\n");
-    lean.push_str("example : WasmSlice.readS33 [128, 128, 128, 128, 128, 0] = none := rfl\n");
-    lean.push_str(
-        "example : WasmSlice.readS33 [255, 255, 255, 255, 15] = some (4294967295, []) := rfl\n",
-    );
-    lean.push_str("example : WasmSlice.readS33 [128, 128, 128, 128, 16] = none := rfl\n");
-    lean.push_str(
-        "example : WasmSlice.readS33 [128, 128, 128, 128, 112] = some (-4294967296, []) := rfl\n",
-    );
-    lean.push_str("example : WasmSlice.readS33 [128, 128, 128, 128, 96] = none := rfl\n");
-
-    // F64 RESULT-KIND isolation. These two tiny modules have identical
-    // func/export/code sections and differ only in the byte-derived type result:
-    // `[f64]` versus `[(ref null 5)]`. The weakened predicate below is a literal
-    // copy of `verbatimPlanAccepted` with exactly its
-    // `verbatimFuncTypeMatches` conjunct removed. It accepts the f64 plan against
-    // the ref module; the shipped predicate rejects exactly at that conjunct.
-    // Direct checks also prove both cross-kind directions reject.
-    lean.push_str(
-        r#"
-def isoHdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]
-def isoF64Type : List Nat := [1, 7, 1, 96, 1, 99, 4, 1, 124]
-def isoRefType : List Nat := [1, 8, 1, 96, 1, 99, 4, 1, 99, 5]
-def isoTail : List Nat :=
-  [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0,
-   10, 46, 1, 44, 3, 1, 124, 1, 109, 1, 99, 5, 32, 0, 33, 2,
-   32, 2, 251, 20, 1, 4, 124, 32, 2, 251, 22, 1, 251, 2, 1, 0,
-   33, 1, 32, 1, 5, 68, 0, 0, 0, 0, 0, 0, 0, 0, 11, 11]
-def isoF64Mod : List Nat := isoHdr ++ isoF64Type ++ isoTail
-def isoRefMod : List Nat := isoHdr ++ isoRefType ++ isoTail
-def isoNameF : List Nat := [102]
-def isoExpectedBinding : WasmSlice.FuncBinding :=
-  { funcIdx := 0, typeIdx := 0,
-    codeEntry := [44, 3, 1, 124, 1, 109, 1, 99, 5, 32, 0, 33, 2,
-                  32, 2, 251, 20, 1, 4, 124, 32, 2, 251, 22, 1,
-                  251, 2, 1, 0, 33, 1, 32, 1, 5, 68, 0, 0, 0, 0,
-                  0, 0, 0, 0, 11, 11] }
-
-def isoF64Plan : VerbatimRawPlan :=
-  { profile := "verbatim-plan-v1", scrutineeLocal := 2, fieldLocal := 1,
-    resultSig := .f64Scalar,
-    body := .test 1 (.project 1 0) (.leaf (.f64Bits 0)) }
-
-def isoCode : CertPrelude.CodeTbl := fun i : Nat =>
-  if i = 0 then
-    some ({ arity := 1, nlocals := 3,
-            body := AverCert.PlanLower.lowerVerbatimBody isoF64Plan } : CertPrelude.WCode)
-  else none
-
-def isoOb : Obligation :=
-  { export_ := "f", policy := .simulatesModel, carrier := 5,
-    code := isoCode, host := fun _ _ _ _ _ _ _ _ => (fun _ : Nat => none), self := 0,
-    Dom := Unit, Cod := Unit,
-    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
-    model := fun _ => () }
-
-def weakVerbatimPlanAcceptedWithoutResultSig
-    (modBytes modLen : Nat) (exportNameBytes : WasmSlice.ByteSeq) (exportName : String)
-    (carrier : Nat) (plan : VerbatimRawPlan) (obligation : Obligation) : Prop :=
-  obligation.export_ = exportName ∧
-    obligation.carrier = carrier ∧
-    PlanCheck.checkVerbatimPlan (AcceptedArtifact.verbatimNLocals plan) plan = true ∧
-    ∃ codeEntry binding,
-      PlanBytes.lowerVerbatimCodeEntry carrier plan = some codeEntry ∧
-      WasmSlice.exactFuncBindingForExport
-        modBytes modLen exportNameBytes codeEntry = some binding ∧
-      binding.funcIdx = obligation.self ∧
-      AcceptedArtifact.verbatimPayloadsBound modBytes modLen plan.body = true ∧
-      obligation.code binding.funcIdx =
-        some { arity := 1, nlocals := AcceptedArtifact.verbatimNLocals plan,
-               body := PlanLower.lowerVerbatimBody plan }
-
-example : WasmSlice.verbatimFuncTypeMatches (packLE isoF64Mod) isoF64Mod.length 0 .f64Scalar = true := rfl
-example : WasmSlice.verbatimFuncTypeMatches (packLE isoF64Mod) isoF64Mod.length 0 (.refNull 5) = false := rfl
-example : WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 (.refNull 5) = true := rfl
-example : WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 .f64Scalar = false := rfl
-
-example : weakVerbatimPlanAcceptedWithoutResultSig
-    (packLE isoRefMod) isoRefMod.length isoNameF "f" 5 isoF64Plan isoOb := by
-  refine ⟨rfl, rfl, rfl, ⟨_, _, rfl, rfl, rfl, rfl, ?_⟩⟩
-  simp [packLE, isoRefMod, isoHdr, isoRefType, isoTail, isoOb, isoCode,
-    AcceptedArtifact.verbatimNLocals, isoF64Plan,
-    PlanCheck.dispatchHasProjection]
-  decide
-
-example : ¬ AcceptedArtifact.verbatimPlanAccepted
-    (packLE isoRefMod) isoRefMod.length isoNameF "f" 5 isoF64Plan isoOb := by
-  intro h
-  rcases h with ⟨_, _, _, ⟨codeEntry, binding, hlower, hbinding, _, hsig, _, _⟩⟩
-  have lowerKnown : PlanBytes.lowerVerbatimCodeEntry 5 isoF64Plan =
-      some isoExpectedBinding.codeEntry := by rfl
-  rw [lowerKnown] at hlower
-  injection hlower with hcode
-  subst codeEntry
-  have known : WasmSlice.exactFuncBindingForExport
-      (packLE isoRefMod) isoRefMod.length isoNameF isoExpectedBinding.codeEntry =
-        some isoExpectedBinding := by rfl
-  rw [known] at hbinding
-  injection hbinding with hb
-  subst binding
-  change WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 .f64Scalar = true at hsig
-  have cross : WasmSlice.verbatimFuncTypeMatches (packLE isoRefMod) isoRefMod.length 0 .f64Scalar = false := rfl
-  rw [cross] at hsig
-  contradiction
-"#,
-    );
-
-    // Regression-only plan checker controls belong in the test witness, not in
-    // the checker-owned proof wall.
-    lean.push_str(
-        r#"
-def offGrammarSymPlan : SymRawPlan :=
-  { profile := "sym-fragment-v1", params := [.string, .string], result := .bool,
-    body := { nodes := [
-      { id := 0, ty := .string, kind := .param 0 },
-      { id := 1, ty := .string, kind := .param 1 },
-      { id := 2, ty := .bool, kind := .prim .stringEq [0, 1] }], result := 2 } }
-
-example : PlanCheck.checkSymRawPlan offGrammarSymPlan = true := rfl
-example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-    [] [] offGrammarSymPlan = none := rfl
-
-def illTypedExprPlan : ExprFragmentRawPlan :=
-  { profile := "expr-fragment-v1", params := [], result := .boolI32,
-    body := { nodes := [
-      { id := 0, ty := .boolI32, kind := .constBool true },
-      { id := 1, ty := .boolI32, kind := .prim .i64Eq [0, 0] }], result := 1 } }
-
-example : PlanCheck.checkExprFragmentRawPlan illTypedExprPlan = false := rfl
-example : PlanCheck.checkConstructRawPlan
-    ({ profile := "construct-v1", arity := 1,
-       fields := [.local 9] } : ConstructRawPlan) = false := rfl
-"#,
-    );
-
-    let out_dir = temp_dir("cert-verbatim-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/verbatimgen.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "verbatimgen compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    let honest_build = lake_for_cert(&cert)
-        .arg("build")
-        .current_dir(&cert)
-        .output()
-        .expect("lake build runs");
-    assert!(honest_build.status.success(), "honest cert must lake-build");
-
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = lake_for_cert(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .current_dir(&cert)
-        .output()
-        .expect("lake env lean runs");
-    assert!(
-        elab.status.success(),
-        "verbatim signature/payload guard-isolation assertions must all hold:\n{}\n{}",
-        String::from_utf8_lossy(&elab.stdout),
-        String::from_utf8_lossy(&elab.stderr)
-    );
-}
-
-/// A tampered byte-first `int-dispatch-v1` plan is declined, and the tamper
-/// vectors are shown to be guard-isolating. Each vector mutates the Int-face
-/// `ref.test`-dispatch plan for `boxInt`/`gauge` in the shipped `Plans.lean`
-/// while leaving the wasm untouched, so the plan no longer canonically lowers
-/// to the export's real code-entry bytes. The plan names host helpers by ROLE
-/// only (the byte-derived role table parameterizes the lowerers), so every
-/// semantic field of the plan — tags, arm order, roles, constants, operand
-/// order, and the default — reaches the lowered bytes and is caught by the
-/// byte-equality gate: both the shipped `Artifact.lean`
-/// `lowerIntDispatchCodeEntry`/`exactFuncBindingForExport` `rfl` pins and the
-/// checker's `manifest.intDispatchPlans` `rfl` pin reject the tampered plan.
-/// The `GuardIso.lean` block below isolates each byte-reaching vector by
-/// proving in-kernel (`by decide`) that its lowered code entry diverges from
-/// the honest one, and the profile vector by proving the lowering BLIND to it
-/// (`rfl`) while only `checkIntDispatchRawPlan` rejects it. A rootless plan is
-/// likewise lowerable but rejected at admission, before the generic theorem.
-/// Two further
-/// vectors target the binds the byte gate cannot see: (h) a ZERO-LOCALS code
-/// table (honest bytes/plan/wiring; the vacuity attack the exact
-/// `nlocals := armCount + 2` bind closes), (i) a coordinated ROLE/TABLE
-/// PERMUTATION across `Plans.lean` and the `Artifact.lean` claim (byte- and
-/// sibling-blind; rejected only by the host-builder equality bind
-/// `obligation.host = intDispatchCanonicalHost carrier hostTable`), and (j) a
-/// SAMPLED-PROBE ESCAPE: a box slot behaving canonically only at one input and
-/// trapping on every real constant (vacuity via host trap) — extensionally
-/// unequal to the canonical builder, so the equality bind declines it.
+/// A tampered Int-producing dispatch plan is declined: constructor tags, arm
+/// order, arithmetic roles, arm constants, operand order, the default and the
+/// declared locals all reach the lowered bytes. The helper-role indices are
+/// no longer plan data (they live in the template-pinned subject table,
+/// covered by `cert_verify_declines_host_role_relabel_in_plans_lean`), and
+/// the obligation's host wiring is derived by the wall, so neither a role
+/// permutation nor a hostile host builder has a surface to tamper.
 #[test]
 fn cert_verify_declines_tampered_int_dispatch_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping int-dispatch-plan tamper test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-int-dispatch-plan");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/intdispatchgen.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "intdispatchgen compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
+    let out_dir = compile_checked_fixture(
+        "tools/certkit/fixtures/intdispatchgen.av",
+        "cert-int-dispatch-plan",
     );
-
-    let wasm = out_dir.join("intdispatchgen.wasm");
-    let cert = out_dir.join("cert");
-    let (ok, report) = aver_check(&wasm, &cert);
-    assert!(
-        ok,
-        "honest int-dispatch certificate should verify:\n{report}"
-    );
-
-    let honest = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    // (a) wrong `ref.test` tag: `boxInt` tests struct type 1 -> 2.
-    // (b) swapped dispatch cascade: `gauge` tests tags 5 <-> 6.
-    // (c) role swap: `gauge`'s Lo arm combinator `sub` -> `add`. The role table
-    //     maps roles to DISTINCT indices, so the swap changes the host call
-    //     byte — the exact discrimination `hostTableIndicesDistinct` protects.
-    // (d) wrong arm constant: `gauge`'s Hi arm `x + 9` -> `x + 8`.
-    // (e) flipped operand order: `gauge`'s Hi arm payload-first -> const-first.
-    // (f) wrong default constant: `gauge`'s Off arm `7` -> `8`.
-    // (g) wrong profile string: rejected by `checkIntDispatchRawPlan` (the
-    //     lowering is blind to the profile, so the byte gate alone would pass).
-    let tampers: [(&str, &str, &str); 7] = [
-        (
-            "ref.test tag",
-            ".test 1 (.proj) (.default (0))",
-            ".test 2 (.proj) (.default (0))",
-        ),
-        (
-            "swapped dispatch cascade",
-            ".test 5 (.hostOp .sub (0) true) (.test 6",
-            ".test 6 (.hostOp .sub (0) true) (.test 5",
-        ),
-        (
-            "host role swap",
-            "(.hostOp .sub (0) true)",
-            "(.hostOp .add (0) true)",
-        ),
-        (
-            "arm constant",
-            "(.hostOp .add (9) false)",
-            "(.hostOp .add (8) false)",
-        ),
-        (
-            "operand order flip",
-            "(.hostOp .add (9) false)",
-            "(.hostOp .add (9) true)",
-        ),
-        ("default constant", "(.default (7))", "(.default (8))"),
-        (
-            "profile string",
-            "def boxIntIntDispatchPlan : IntDispatchRawPlan := { profile := \"int-dispatch-v1\"",
-            "def boxIntIntDispatchPlan : IntDispatchRawPlan := { profile := \"int-dispatch-v2\"",
-        ),
-    ];
-    for (label, from, to) in tampers {
-        assert!(
-            honest.contains(from),
-            "intdispatchgen Plans.lean plan shape changed ({label}); update the test"
-        );
-        let dir = temp_dir("cert-int-dispatch-plan-tamper");
-        copy_dir(&out_dir, &dir);
-        let tampered_plans = dir.join("cert").join("Plans.lean");
-        let src = std::fs::read_to_string(&tampered_plans).unwrap();
-        std::fs::write(&tampered_plans, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
-        assert!(
-            !ok,
-            "{label}: tampered int-dispatch plan must be declined:\n{report}"
-        );
-    }
-
-    // (h) ZERO-LOCALS vacuity vector: honest bytes, honest plan, honest wiring,
-    // but the obligation's code table claims nlocals := 0 — the body would trap
-    // on its first `local.set`, making the partial-correctness obligation
-    // vacuously true. The acceptance predicate pins the code table's locals
-    // count to the CANONICAL byte-derived value (armCount + 2), so this must be
-    // DECLINED (an existentially-free nlocals accepted it; weaken-confirmed).
-    {
-        let dir = temp_dir("cert-int-dispatch-zero-locals");
-        copy_dir(&out_dir, &dir);
-        let module = dir.join("cert").join("Module.lean");
-        let src = std::fs::read_to_string(&module).unwrap();
-        assert!(
-            src.contains("some ⟨1, 3,"),
-            "boxIntCode locals-count header shape changed; update the test"
-        );
-        std::fs::write(&module, src.replacen("some ⟨1, 3,", "some ⟨1, 0,", 1)).unwrap();
-        let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
-        assert!(!ok, "zero-locals code table must be DECLINED:\n{report}");
-    }
-
-    // (i) ROLE/TABLE PERMUTATION vector: swap the two arm roles in the plan AND
-    // permute the claimed host-role table consistently, in every surface the
-    // artifact ships (the `Plans.lean` plan, the `Artifact.lean` claim and the
-    // leaves that lower the plan under the table). The pair
-    // lowers byte-identically and the table stays distinct, so the byte gate,
-    // the structural checker and the distinctness guard are all blind — only
-    // the host-builder equality bind rejects it. The host-table declared-type
-    // pin (`hostTableFuncTypesMatch`) is blind to this permutation as well:
-    // the add and sub roles fix the SAME canonical two-argument carrier
-    // signature (proved by `rfl` in the host-table type-pin GuardIso), so the
-    // permuted table still type-checks and the attribution here stands.
-    {
-        let dir = temp_dir("cert-int-dispatch-role-permutation");
-        copy_dir(&out_dir, &dir);
-        let package = package_lean_text(&dir.join("cert"));
-        assert!(
-            package.contains("(.hostOp .sub (0) true)")
-                && package.contains("(.hostOp .add (9) false)")
-                && package.contains("hostTable := [(.box, 7), (.add, 8), (.sub, 9)]"),
-            "intdispatchgen gauge plan or claim shape changed; update the test"
-        );
-        tamper_cert_lean_files(&dir.join("cert"), "role/table permutation", &|src| {
-            src.replace("(.hostOp .sub (0) true)", "(.hostOp .add (0) true)")
-                .replace("(.hostOp .add (9) false)", "(.hostOp .sub (9) false)")
-                .replace(
-                    "[(.box, 7), (.add, 8), (.sub, 9)]",
-                    "[(.box, 7), (.add, 9), (.sub, 8)]",
-                )
-        });
-        let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
-        assert!(!ok, "role/table permutation must be DECLINED:\n{report}");
-    }
-
-    // (j) SAMPLED-PROBE ESCAPE vector (attack (b)): replace the box slot of
-    // `boxIntHost` with a function behaving canonically ONLY at `i64 0` and
-    // trapping (`none`) on every other constant — the honest body's boxed
-    // default would trap at runtime, making partial correctness vacuous. Any
-    // point probe of the slot at `i64 0` accepts it; the EXTENSIONAL
-    // host-builder equality (`obligation.host = intDispatchCanonicalHost …`)
-    // rejects it, so this must be DECLINED.
-    {
-        let dir = temp_dir("cert-int-dispatch-sneaky-box");
-        copy_dir(&out_dir, &dir);
-        let module = dir.join("cert").join("Module.lean");
-        let src = std::fs::read_to_string(&module).unwrap();
-        let from = "def boxIntHost : HostTbl := fun fn =>\n  if fn = 7 then some (1, boxRef 11)\n  else none";
-        let to = "def boxIntHost : HostTbl := fun fn =>\n  if fn = 7 then some (1, fun args => match args with | [WVal.i64v 0] => boxRef 11 args | _ => none)\n  else none";
-        assert!(
-            src.contains(from),
-            "boxIntHost shape changed; update the test"
-        );
-        std::fs::write(&module, src.replacen(from, to, 1)).unwrap();
-        let (ok, report) = aver_check(&dir.join("intdispatchgen.wasm"), &dir.join("cert"));
-        assert!(!ok, "sampled-probe-escape host must be DECLINED:\n{report}");
-    }
-
-    // Guard-isolation: prove in-kernel that each byte-reaching vector diverges
-    // the lowered code-entry bytes (so the byte-equality gate catches it), and
-    // that the profile vector — which the lowering is provably BLIND to — is
-    // rejected exactly by the structural checker. carrier 11; role table
-    // box 7 / add 8 / sub 9 (the fixture's byte-derived table).
-    let mut lean = String::new();
-    lean.push_str("import Schema\nimport PlanCheck\nimport PlanLower\nimport PlanBytes\n\n");
-    lean.push_str("open AverCert.Schema\nopen AverCert.PlanBytes\n\n");
-    lean.push_str("def tbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 9)]\n");
-    lean.push_str("def honestBox : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 1 (.proj) (.default (0)) }\n");
-    lean.push_str("def honestGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 5 (.hostOp .sub (0) true) (.test 6 (.hostOp .add (9) false) (.test 7 (.proj) (.default (7)))) }\n\n");
-    lean.push_str("example : AverCert.PlanCheck.checkIntDispatchRawPlan honestBox = true := rfl\n");
-    lean.push_str(
-        "example : AverCert.PlanCheck.checkIntDispatchRawPlan honestGauge = true := rfl\n\n",
-    );
-    lean.push_str("def tamper1 : IntDispatchRawPlan := { honestBox with body := .test 2 (.proj) (.default (0)) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper1 ≠ lowerIntDispatchCodeEntry 11 tbl honestBox := by decide\n");
-    lean.push_str("def tamper2 : IntDispatchRawPlan := { honestGauge with body := .test 6 (.hostOp .sub (0) true) (.test 5 (.hostOp .add (9) false) (.test 7 (.proj) (.default (7)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper2 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
-    lean.push_str("def tamper3 : IntDispatchRawPlan := { honestGauge with body := .test 5 (.hostOp .add (0) true) (.test 6 (.hostOp .add (9) false) (.test 7 (.proj) (.default (7)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper3 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
-    lean.push_str("def tamper4 : IntDispatchRawPlan := { honestGauge with body := .test 5 (.hostOp .sub (0) true) (.test 6 (.hostOp .add (8) false) (.test 7 (.proj) (.default (7)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper4 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
-    lean.push_str("def tamper5 : IntDispatchRawPlan := { honestGauge with body := .test 5 (.hostOp .sub (0) true) (.test 6 (.hostOp .add (9) true) (.test 7 (.proj) (.default (7)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper5 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
-    lean.push_str("def tamper6 : IntDispatchRawPlan := { honestGauge with body := .test 5 (.hostOp .sub (0) true) (.test 6 (.hostOp .add (9) false) (.test 7 (.proj) (.default (8)))) }\n");
-    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper6 ≠ lowerIntDispatchCodeEntry 11 tbl honestGauge := by decide\n");
-    // Profile vector: the lowering is BLIND to the profile string, so the byte
-    // gate alone would accept it — only the structural checker rejects it.
-    lean.push_str(
-        "def tamper7 : IntDispatchRawPlan := { honestBox with profile := \"int-dispatch-v2\" }\n",
-    );
-    lean.push_str("example : lowerIntDispatchCodeEntry 11 tbl tamper7 = lowerIntDispatchCodeEntry 11 tbl honestBox := rfl\n");
-    lean.push_str("example : AverCert.PlanCheck.checkIntDispatchRawPlan tamper7 = false := rfl\n");
-    // A default-only cascade has bytes, but cannot satisfy the generic proof's
-    // initial-stack boundary; admission rejects it before theorem application.
-    lean.push_str("def rootless : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .default 0 }\n");
-    lean.push_str("example : (lowerIntDispatchCodeEntry 11 tbl rootless).isSome = true := rfl\n");
-    lean.push_str("example : AverCert.PlanCheck.checkIntDispatchRawPlan rootless = false := rfl\n");
-
-    let honest_build = lake_for_cert(&cert)
-        .arg("build")
-        .current_dir(&cert)
-        .output()
-        .expect("lake build runs");
-    assert!(honest_build.status.success(), "honest cert must lake-build");
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = lake_for_cert(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .current_dir(&cert)
-        .output()
-        .expect("lake env lean runs");
-    assert!(
-        elab.status.success(),
-        "int-dispatch guard-isolation assertions must all hold:\n{}\n{}",
-        String::from_utf8_lossy(&elab.stdout),
-        String::from_utf8_lossy(&elab.stderr)
-    );
-}
-
-/// ACCEPTANCE-LEVEL guard-isolation for the List-constructor binds, elaborated
-/// with `lake env lean` against the audited cert modules of a real certified
-/// `examples/data/json.av` package — no `aver cert verify` in the path.
-///
-/// Four vectors, each a predicate-level copy weakened by EXACTLY one conjunct:
-/// SymCheckAttack (an empty-tail node lying about its element type; only
-/// `checkSymRawPlan` rejects it), PermAttack (a target plan that uses every
-/// parameter once but swaps head and tail; only the source/target matcher
-/// rejects it), TypeAttack (the claimed element representation, read from both
-/// the list struct and the exported signature, so a coherent symbolic relabel
-/// cannot reach it), and CountAttack (a copy of `constructPlanAccepted`
-/// dropping only `plan.fields.length = fieldCount`).
-///
-/// A byte tamper on the constructed code entry is exhibited alongside, to show
-/// the byte gate still covers what these binds do not.
-#[test]
-fn list_constructor_kernel_guards_are_isolating() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping List-constructor guard isolation test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-list-constructor-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("examples/data/json.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile JSON constructor guard fixture");
-    assert!(
-        compile.status.success(),
-        "JSON constructor guard fixture failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    let build = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build JSON certificate before constructor guard transcript");
-    assert!(
-        build.status.success(),
-        "JSON certificate build failed before constructor guard transcript:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
-    let mut types = Vec::new();
-    let mut imported_func_count = 0;
-    let mut defined_func_types = Vec::new();
-    let mut singleton_func_idx = None;
-    let mut code_idx = 0;
-    let mut tamper_offset = None;
-    for payload in wasmparser::Parser::new(0).parse_all(&wasm) {
-        match payload.expect("parse JSON constructor guard fixture") {
-            wasmparser::Payload::TypeSection(reader) => {
-                for group in reader {
-                    types.extend(group.expect("read type rec group").into_types());
-                }
-            }
-            wasmparser::Payload::ImportSection(reader) => {
-                for group in reader {
-                    for import in group.expect("read import group") {
-                        let (_, import) = import.expect("read import");
-                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                            imported_func_count += 1;
-                        }
-                    }
-                }
-            }
-            wasmparser::Payload::FunctionSection(reader) => {
-                for type_idx in reader {
-                    defined_func_types.push(type_idx.expect("read defined function type"));
-                }
-            }
-            wasmparser::Payload::ExportSection(reader) => {
-                for export in reader {
-                    let export = export.expect("read export");
-                    if export.name == "singletonJsonEntries"
-                        && export.kind == wasmparser::ExternalKind::Func
-                    {
-                        singleton_func_idx = Some(export.index);
-                    }
-                }
-            }
-            wasmparser::Payload::CodeSectionEntry(body) => {
-                if Some(imported_func_count + code_idx) == singleton_func_idx {
-                    let range = body.range();
-                    let offset = range.start + 1;
-                    assert!(
-                        offset < range.end,
-                        "code entry must contain an interior byte"
-                    );
-                    tamper_offset = Some(offset);
-                }
-                code_idx += 1;
-            }
-            _ => {}
-        }
-    }
-    let tamper_offset = tamper_offset.expect("code entry for singletonJsonEntries export");
-    assert_ne!(wasm[tamper_offset], 24, "tamper must change the code byte");
-    let singleton_func_idx = singleton_func_idx.expect("singletonJsonEntries function export");
-    let singleton_defined_idx = singleton_func_idx
-        .checked_sub(imported_func_count)
-        .expect("singletonJsonEntries must be a defined function");
-    let singleton_type_idx = defined_func_types[singleton_defined_idx as usize];
-    let singleton_type = &types[singleton_type_idx as usize];
-    let wasmparser::CompositeInnerType::Func(singleton_type) = &singleton_type.composite_type.inner
-    else {
-        panic!("singletonJsonEntries must have a function type");
-    };
-    assert_eq!(singleton_type.params().len(), 1);
-    assert_eq!(singleton_type.results().len(), 1);
-    let wasmparser::ValType::Ref(result_ref) = singleton_type.results()[0] else {
-        panic!("singletonJsonEntries result must be a nullable list reference");
-    };
-    assert!(result_ref.is_nullable());
-    let list_struct_idx = match result_ref.heap_type() {
-        wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => idx
-            .as_module_index()
-            .expect("list result type must use a module-local heap type"),
-        _ => panic!("singletonJsonEntries result must name its list struct"),
-    };
-    let wasmparser::ValType::Ref(element_ref) = singleton_type.params()[0] else {
-        panic!("singletonJsonEntries element must be a nullable reference");
-    };
-    assert!(element_ref.is_nullable());
-    let element_type_idx = match element_ref.heap_type() {
-        wasmparser::HeapType::Concrete(idx) | wasmparser::HeapType::Exact(idx) => idx
-            .as_module_index()
-            .expect("list element type must use a module-local heap type"),
-        _ => panic!("singletonJsonEntries element must name its tuple struct"),
-    };
-    let lean = r#"import Artifact
-open CertPrelude AverCert.Schema AverCert.WasmSlice
-set_option maxRecDepth 400000
-
-def honestSym := AverCert.Plans.singletonJsonEntriesConstructSymPlan
-def honestSingleton := AverCert.Plans.singletonJsonEntriesConstructPlan
-def honestPrependSym := AverCert.Plans.prependJsonEntryConstructSymPlan
-def honestClaim := AverCert.Artifact.constructClaims[0]
-def permutedPrepend : ConstructRawPlan :=
-  { profile := "construct-v1", arity := 2, fields := [.local 1, .local 0] }
-
--- SymCheckAttack: the empty-tail node lies about its element type while every
--- source/target-origin check remains green. Dropping ONLY checkSymRawPlan
--- accepts it; the shipped conjunction rejects it.
-def badEmptySym : SymRawPlan :=
-  { honestSym with body :=
-      { nodes := [
-          { id := 0, ty := (.app2 "Tuple" .string (.named "Json")), kind := .param 0 },
-          { id := 1, ty := (.app1 "List" (.app2 "Tuple" .string (.named "Json"))),
-            kind := .emptyList .string },
-          { id := 2, ty := (.app1 "List" (.app2 "Tuple" .string (.named "Json"))),
-            kind := .construct "List" "::" [0, 1] }], result := 2 } }
-def sourceAccepted (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
-  AverCert.PlanCheck.checkSymRawPlan s &&
-  AverCert.PlanCheck.checkConstructRawPlan p &&
-  AverCert.PlanCheck.constructPlanMatchesSymRawPlan s p
-def sourceDropSym (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
-  AverCert.PlanCheck.checkConstructRawPlan p &&
-  AverCert.PlanCheck.constructPlanMatchesSymRawPlan s p
-example : sourceDropSym badEmptySym honestSingleton = true := rfl
-example : sourceAccepted badEmptySym honestSingleton = false := rfl
-
--- PermAttack: the target plan uses every parameter once but swaps head/tail.
--- Dropping ONLY the source/target matcher accepts it; shipped rejects it.
-def sourceDropMatch (s : SymRawPlan) (p : ConstructRawPlan) : Bool :=
-  AverCert.PlanCheck.checkSymRawPlan s &&
-  AverCert.PlanCheck.checkConstructRawPlan p
-example : sourceDropMatch honestPrependSym permutedPrepend = true := rfl
-example : sourceAccepted honestPrependSym permutedPrepend = false := rfl
-
--- TypeAttack: the claimed element representation is read from both the list
--- struct and the exported signature. A coherent symbolic relabel cannot turn
--- the fixture's concrete nullable-ref element into another byte type. Numeric
--- type indices come from wasmparser above rather than depending on declaration
--- order in this whole-program fixture.
-example : AverCert.WasmSlice.listConstructStructTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen __LIST_STRUCT_IDX__ (.nullableRef __LIST_ELEMENT_TYPE_IDX__) = true := rfl
-example : AverCert.WasmSlice.listConstructFuncTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen __LIST_FUNC_TYPE_IDX__ 1 __LIST_STRUCT_IDX__ (.nullableRef __LIST_ELEMENT_TYPE_IDX__) = true := rfl
-example : AverCert.WasmSlice.listConstructStructTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen __LIST_STRUCT_IDX__ .eqref = false := rfl
-example : AverCert.WasmSlice.listConstructFuncTypeMatches
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen __LIST_FUNC_TYPE_IDX__ 1 __LIST_STRUCT_IDX__ .eqref = false := rfl
-
--- CountAttack: predicate-level copy of constructPlanAccepted dropping ONLY
--- `plan.fields.length = fieldCount`.
-def constructDropCount
-    (modBytes modLen : Nat) (exportNameBytes : ByteSeq) (exportName : String)
-    (carrier structIdx : Nat) (elemTy : ConstructValType)
-    (symPlan : SymRawPlan) (plan : ConstructRawPlan) (obligation : Obligation) : Prop :=
-  obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
-  AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
-  AverCert.PlanCheck.constructPlanMatchesSymRawPlan symPlan plan = true ∧
-  AverCert.PlanCheck.checkConstructRawPlan plan = true ∧
-  ∃ body codeEntry binding,
-    AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
-    AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
-    AverCert.WasmSlice.exactFuncBindingForExport
-      modBytes modLen exportNameBytes codeEntry = some binding ∧
-    binding.funcIdx = obligation.self ∧
-    AverCert.WasmSlice.listConstructStructTypeMatches modBytes modLen structIdx elemTy = true ∧
-    AverCert.WasmSlice.listConstructFuncTypeMatches
-      modBytes modLen binding.typeIdx plan.arity structIdx elemTy = true ∧
-    obligation.code binding.funcIdx = some { arity := plan.arity, nlocals := 1, body := body }
-example : constructDropCount AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen honestClaim.exportNameBytes
-    honestClaim.exportName honestClaim.carrier honestClaim.structIdx honestClaim.elemTy
-    honestClaim.symPlan honestSingleton honestClaim.obligation :=
-  ⟨rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl,
-    AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
-    AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
-example : ¬ AverCert.AcceptedArtifact.constructPlanAccepted
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen honestClaim.exportNameBytes honestClaim.exportName
-    honestClaim.carrier honestClaim.structIdx 3 honestClaim.elemTy honestClaim.symPlan
-    honestSingleton honestClaim.obligation := by
-  intro h
-  rcases h with ⟨_, _, _, _, _, hcount, _⟩
-  exact (by decide : honestSingleton.fields.length ≠ 3) hcount
-
--- ByteAttack: predicate-level copy dropping ONLY the exact binding lookup,
--- while retaining the deliberately weaker export-name lookup.
-def tamperedBytes :=
-  let shift := 8 * __BYTE_OFFSET__
-  AverCert.ArtifactBytes.modBytes -
-      (((AverCert.ArtifactBytes.modBytes >>> shift) &&& 0xff) <<< shift) +
-    (24 <<< shift)
-def constructDropByteExact
-    (modBytes modLen : Nat) (exportNameBytes : ByteSeq) (exportName : String)
-    (carrier structIdx fieldCount : Nat) (elemTy : ConstructValType)
-    (symPlan : SymRawPlan) (plan : ConstructRawPlan) (obligation : Obligation) : Prop :=
-  obligation.export_ = exportName ∧ obligation.carrier = carrier ∧
-  AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
-  AverCert.PlanCheck.constructPlanMatchesSymRawPlan symPlan plan = true ∧
-  AverCert.PlanCheck.checkConstructRawPlan plan = true ∧ plan.fields.length = fieldCount ∧
-  ∃ body codeEntry binding,
-    AverCert.PlanLower.lowerConstructBody structIdx plan = some body ∧
-    AverCert.PlanBytes.lowerConstructCodeEntry carrier structIdx plan = some codeEntry ∧
-    AverCert.WasmSlice.funcBindingForExport modBytes modLen exportNameBytes = some binding ∧
-    binding.funcIdx = obligation.self ∧
-    AverCert.WasmSlice.listConstructStructTypeMatches modBytes modLen structIdx elemTy = true ∧
-    AverCert.WasmSlice.listConstructFuncTypeMatches
-      modBytes modLen binding.typeIdx plan.arity structIdx elemTy = true ∧
-    obligation.code binding.funcIdx = some { arity := plan.arity, nlocals := 1, body := body }
-example : constructDropByteExact tamperedBytes AverCert.ArtifactBytes.modLen honestClaim.exportNameBytes honestClaim.exportName
-    honestClaim.carrier honestClaim.structIdx honestClaim.fieldCount honestClaim.elemTy
-    honestClaim.symPlan honestSingleton honestClaim.obligation :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl,
-    AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
-    AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
-example : ¬ AverCert.AcceptedArtifact.constructPlanAccepted tamperedBytes AverCert.ArtifactBytes.modLen
-    honestClaim.exportNameBytes honestClaim.exportName honestClaim.carrier honestClaim.structIdx
-    honestClaim.fieldCount honestClaim.elemTy honestClaim.symPlan honestSingleton
-    honestClaim.obligation := by
-  intro h
-  rcases h with ⟨_, _, _, _, _, _, _, codeEntry, binding, _, hlower, hexact, _⟩
-  have hcode :
-      (AverCert.PlanBytes.lowerConstructCodeEntry
-        honestClaim.carrier honestClaim.structIdx honestSingleton).get! = codeEntry := by
-    simpa using congrArg Option.get! hlower
-  rw [← hcode] at hexact
-  have rejected : AverCert.WasmSlice.exactFuncBindingForExport
-      tamperedBytes AverCert.ArtifactBytes.modLen honestClaim.exportNameBytes
-      (AverCert.PlanBytes.lowerConstructCodeEntry
-        honestClaim.carrier honestClaim.structIdx honestSingleton).get! = none := by rfl
-  rw [rejected] at hexact
-  contradiction
-
--- ZeroAttack: the canonical byte lowering declares exactly one carrier local.
--- A zero-local code table keeps the honest body but is accepted only when the
--- exact locals conjunct is dropped.
-def zeroCode : CodeTbl := fun fn =>
-  (CertModule.singletonJsonEntriesCode fn).map (fun c => { c with nlocals := 0 })
-def localsAccepted (code : CodeTbl) : Bool :=
-  match code 20 with
-  | some c => c.arity == 1 && c.nlocals == 1 && c.body.length == 3
-  | none => false
-def localsDropCount (code : CodeTbl) : Bool :=
-  match code 20 with
-  | some c => c.arity == 1 && c.body.length == 3
-  | none => false
-example : localsDropCount zeroCode = true := rfl
-example : localsAccepted zeroCode = false := rfl
-
--- OrphanAttack: family-local predicate copies. Each weakens exactly one of the
--- two coverage guards while retaining per-claim constructPlanAccepted checks.
-def orphanPlans : List (String × ConstructRawPlan) :=
-  AverCert.manifest.constructPlans ++ [("orphan", honestSingleton)]
-def constructFamilyDropNames (manifest : Manifest) (claims : List AverCert.AcceptedArtifact.ConstructClaim) : Prop :=
-  AverCert.AcceptedArtifact.constructClaimsAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen manifest claims ∧
-  (AverCert.AcceptedArtifact.constructClaimExportNames claims).Nodup
-def orphanManifest : Manifest := { AverCert.manifest with constructPlans := orphanPlans }
-example : constructFamilyDropNames orphanManifest AverCert.Artifact.constructClaims := by
-  constructor
-  · constructor
-    · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl,
-        Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
-        Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
-    · constructor
-      · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl,
-          Or.inr AverCert.Plans.prependJsonEntryConstructStructTypeMatches,
-          Or.inr AverCert.Plans.prependJsonEntryConstructFuncTypeMatches, rfl⟩
-      · trivial
-  · decide
-
-def dupClaims := [honestClaim, honestClaim]
-def dupPlans := [(honestClaim.exportName, honestSingleton),
-  (honestClaim.exportName, permutedPrepend)]
-def dupManifest : Manifest := { AverCert.manifest with constructPlans := dupPlans }
-def constructFamilyDropNodup (manifest : Manifest) (claims : List AverCert.AcceptedArtifact.ConstructClaim) : Prop :=
-  AverCert.AcceptedArtifact.constructClaimsAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen manifest claims ∧
-  AverCert.AcceptedArtifact.constructClaimExportNames claims =
-    AverCert.AcceptedArtifact.constructManifestPlanNames manifest
-example : constructFamilyDropNodup dupManifest dupClaims := by
-  constructor
-  · constructor
-    · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl,
-        Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
-        Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
-    · constructor
-      · exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, _, _, _, rfl, rfl, rfl, rfl,
-          Or.inr AverCert.Plans.singletonJsonEntriesConstructStructTypeMatches,
-          Or.inr AverCert.Plans.singletonJsonEntriesConstructFuncTypeMatches, rfl⟩
-      · trivial
-  · decide
-example : ¬ (AverCert.AcceptedArtifact.constructClaimExportNames dupClaims).Nodup := by decide
-"#
-    .replace("__BYTE_OFFSET__", &tamper_offset.to_string())
-    .replace("__LIST_STRUCT_IDX__", &list_struct_idx.to_string())
-    .replace(
-        "__LIST_ELEMENT_TYPE_IDX__",
-        &element_type_idx.to_string(),
-    )
-    .replace("__LIST_FUNC_TYPE_IDX__", &singleton_type_idx.to_string());
-    std::fs::write(cert.join("ListConstructGuardIso.lean"), lean).unwrap();
-    let check = lake_for_cert(&cert)
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("ListConstructGuardIso.lean")
-        .output()
-        .expect("run List constructor guard isolation transcript");
-    assert!(
-        check.status.success(),
-        "List constructor guard isolation transcript failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// The permuted-table probes below attribute their rejection to the
-/// host-builder equality conjunct alone, and the host-table declared-type pin
-/// (`hostTableFuncTypesMatch`, added alongside the dispatch guards) does not
-/// weaken that attribution: add and sub fix the SAME canonical declared
-/// signature (`checkHostRoleFuncType` collapses to one
-/// `checkCanonicalFuncType 2` for both, proved by `rfl` in the host-table
-/// type-pin GuardIso), so a consistently permuted add/sub table still
-/// type-checks and the equality conjunct remains the sole rejector.
-#[test]
-fn int_dispatch_kernel_guards_are_isolating() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping int-dispatch guard isolation test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    let mut lean = String::new();
-    lean.push_str(
-        "import Schema\nimport PlanCheck\nimport PlanBytes\nimport WasmSlice\nimport AcceptedArtifact\nimport Manifest\nimport Module\nimport Plans\n\n",
-    );
-    lean.push_str("open AverCert\nopen AverCert.Schema\nopen CertPrelude\n");
-    lean.push_str("set_option maxRecDepth 100000\n\n");
-    lean.push_str("def packLE : List Nat → Nat | [] => 0 | b :: bs => b + (packLE bs <<< 8)\n\n");
-    // Minimal modules: header, type section, then a shared func/export/code
-    // tail. `f` is func 0 of type 0; code entry `[2, 0, 11]`. Only the type
-    // section differs between the two: type 0 is one nominal-root ref ->
-    // `[(ref null 5)]` vs two nominal-root refs -> `[(ref null 5)]`.
-    // NOTE: these hand-built modules have a result-bearing signature with a
-    // body returning nothing, so they would FAIL the wasmparser `validate_all`
-    // chokepoint — they demonstrate slicer/guard DISCRIMINATION only, not
-    // end-to-end admission; the E2E tamper vectors in
-    // `cert_verify_declines_tampered_int_dispatch_plan` close the end-to-end
-    // gap on a real validated artifact.
-    lean.push_str("def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]\n");
-    lean.push_str("def unaryType : List Nat := [1, 8, 1, 96, 1, 99, 4, 1, 99, 5]\n");
-    lean.push_str("def binaryType : List Nat := [1, 10, 1, 96, 2, 99, 4, 99, 4, 1, 99, 5]\n");
-    lean.push_str(
-        "def tailSecs : List Nat := [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11]\n",
-    );
-    lean.push_str("def unaryMod : List Nat := hdr ++ unaryType ++ tailSecs\n");
-    lean.push_str("def binaryMod : List Nat := hdr ++ binaryType ++ tailSecs\n");
-    lean.push_str("def nameF : List Nat := [102]\n\n");
-    // SIGNATURE isolation: the byte-equality gate's inputs are identical...
-    lean.push_str("example : WasmSlice.funcBindingForExport (packLE unaryMod) unaryMod.length nameF = WasmSlice.funcBindingForExport (packLE binaryMod) binaryMod.length nameF := rfl\n");
-    lean.push_str("example : WasmSlice.codeEntryForExport (packLE unaryMod) unaryMod.length nameF = WasmSlice.codeEntryForExport (packLE binaryMod) binaryMod.length nameF := rfl\n");
-    lean.push_str("example : WasmSlice.exactFuncBindingForExport (packLE unaryMod) unaryMod.length nameF [2, 0, 11] = WasmSlice.exactFuncBindingForExport (packLE binaryMod) binaryMod.length nameF [2, 0, 11] := rfl\n");
-    // ...and only the signature guard tells unary from binary.
-    lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches (packLE unaryMod) unaryMod.length 0 (.refNull 5) = true := rfl\n",
-    );
-    lean.push_str(
-        "example : WasmSlice.verbatimFuncTypeMatches (packLE binaryMod) binaryMod.length 0 (.refNull 5) = false := rfl\n\n",
-    );
-    // HOST-TABLE DISTINCTNESS isolation: two plans differing ONLY in the arm's
-    // host ROLE.
-    lean.push_str("def planAdd : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .add (2) false) (.default (0)) }\n");
-    lean.push_str("def planSub : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .sub (2) false) (.default (0)) }\n");
-    lean.push_str("def dupTbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 8)]\n");
-    lean.push_str("def distinctTbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 9)]\n");
-    // The structural checker is blind to the role either way...
-    lean.push_str("example : PlanCheck.checkIntDispatchRawPlan planAdd = true := rfl\n");
-    lean.push_str("example : PlanCheck.checkIntDispatchRawPlan planSub = true := rfl\n");
-    // ...under a duplicated table the byte lowering is blind to it too...
-    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 dupTbl planAdd = PlanBytes.lowerIntDispatchCodeEntry 5 dupTbl planSub := rfl\n");
-    // ...under the honest distinct table the byte gate discriminates...
-    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 distinctTbl planAdd ≠ PlanBytes.lowerIntDispatchCodeEntry 5 distinctTbl planSub := by decide\n");
-    // ...and only the distinctness guard rejects the duplicated table.
-    lean.push_str("example : PlanCheck.hostTableIndicesDistinct dupTbl = false := rfl\n");
-    lean.push_str("example : PlanCheck.hostTableIndicesDistinct distinctTbl = true := rfl\n\n");
-    // A role missing from the table fail-closes the lowering entirely (the
-    // plan cannot conjure a callee out of a missing contract).
-    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 5 [(.box, 7), (.add, 8)] planSub = none := rfl\n\n");
-
-    // HOST-BUILDER EQUALITY isolation, on the REAL fixture obligations (role
-    // table box 7 / add 8 / sub 9). The acceptance requires the whole
-    // `obligation.host` to EQUAL the canonical builder for the claimed table —
-    // extensionally, so no unsampled slot behaviour is left free.
-    lean.push_str("def honestTbl : List (HostRole × Nat) := [(.box, 7), (.add, 8), (.sub, 9)]\n");
-    lean.push_str("def permTbl : List (HostRole × Nat) := [(.box, 7), (.add, 9), (.sub, 8)]\n");
-    lean.push_str("def honestGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .sub (0) true) (.test 4 (.hostOp .add (9) false) (.test 5 (.proj) (.default (7)))) }\n");
-    lean.push_str("def permGauge : IntDispatchRawPlan := { profile := \"int-dispatch-v1\", body := .test 3 (.hostOp .add (0) true) (.test 4 (.hostOp .sub (9) false) (.test 5 (.proj) (.default (7)))) }\n");
-    // A distinguishing observer for the ≠ proofs (NOT part of the acceptance —
-    // the guard is the whole-builder equality; this only exhibits one input on
-    // which two unequal builders differ).
-    lean.push_str(concat!(
-        "def hostBuilderProbe\n",
-        "    (h : (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
-        "         (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
-        "         (Nat → List WVal → Option WVal) →\n",
-        "         (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
-        "         (List WVal → Option WVal) → CertPrelude.HostTbl)\n",
-        "    (idx : Nat) (args : List WVal) : Option Int :=\n",
-        "  match h (fun _ => some (.i64v 1)) (fun _ => some (.i64v 2)) (fun _ => some (.i64v 3)) (fun _ => some (.i64v 4)) (fun _ _ => some (.i64v 5)) (fun _ => some (.i64v 6)) (fun _ => some (.i64v 7)) (fun _ => some (.i64v 8)) idx with\n",
-        "  | some (_, f) =>\n",
-        "      match f args with\n",
-        "      | some (.i64v k) => some k\n",
-        "      | some (.structv _ (.i64v k :: _)) => some (1000 + k)\n",
-        "      | some _ => some 999\n",
-        "      | none => none\n",
-        "  | none => none\n\n",
-    ));
-    // The permuted (plan, table) pair lowers BYTE-IDENTICALLY...
-    lean.push_str("example : PlanBytes.lowerIntDispatchCodeEntry 11 permTbl permGauge = PlanBytes.lowerIntDispatchCodeEntry 11 honestTbl honestGauge := rfl\n");
-    // ...and every sibling guard is blind to the permutation...
-    lean.push_str("example : PlanCheck.checkIntDispatchRawPlan permGauge = true := rfl\n");
-    lean.push_str("example : PlanCheck.hostTableIndicesDistinct permTbl = true := rfl\n");
-    // ...the honest tables close the equality by `rfl` (whole-builder defeq,
-    // incl. the box-only widened match)...
-    lean.push_str("example : AverCert.gaugeOb.host = AcceptedArtifact.intDispatchCanonicalHost 11 honestTbl := rfl\n");
-    lean.push_str("example : AverCert.boxIntOb.host = AcceptedArtifact.intDispatchCanonicalHost 11 [(.box, 7)] := rfl\n");
-    // ...and ONLY the equality conjunct rejects the permuted table: the honest
-    // obligation wires index 8 to the add slot, the permuted canonical wires it
-    // to sub, and `hostBuilderProbe` exhibits the divergence.
-    lean.push_str("example : hostBuilderProbe AverCert.gaugeOb.host 8 [] = some 1 := rfl\n");
-    lean.push_str("example : hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 11 permTbl) 8 [] = some 2 := rfl\n");
-    lean.push_str(concat!(
-        "example : AverCert.gaugeOb.host ≠ AcceptedArtifact.intDispatchCanonicalHost 11 permTbl := by\n",
-        "  intro h\n",
-        "  have honest : hostBuilderProbe AverCert.gaugeOb.host 8 [] = some 1 := rfl\n",
-        "  rw [h] at honest\n",
-        "  exact absurd honest (by decide)\n\n",
-    ));
-    // SAMPLED-PROBE ESCAPE (attack (b)): a host builder whose box slot behaves
-    // canonically ONLY at one probed input (`i64 0`) and traps on every real
-    // constant — a point probe accepts it (equal observation at the probe
-    // point), the EXTENSIONAL equality rejects it.
-    lean.push_str(concat!(
-        "def sneakyBoxHost :\n",
-        "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
-        "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
-        "    (Nat → List WVal → Option WVal) →\n",
-        "    (List WVal → Option WVal) → (List WVal → Option WVal) →\n",
-        "    (List WVal → Option WVal) → CertPrelude.HostTbl :=\n",
-        "  fun _ _ _ _ _ _ _ _ => fun fn =>\n",
-        "    if fn = 7 then\n",
-        "      some (1, fun args => match args with\n",
-        "        | [WVal.i64v 0] => CertPrelude.boxRef 11 args\n",
-        "        | _ => none)\n",
-        "    else none\n",
-    ));
-    // At the probe point the sneaky builder is indistinguishable from canonical...
-    lean.push_str("example : hostBuilderProbe sneakyBoxHost 7 [.i64v 0] = hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 11 [(.box, 7)]) 7 [.i64v 0] := rfl\n");
-    // ...but it traps on a real constant where canonical boxes it...
-    lean.push_str("example : hostBuilderProbe sneakyBoxHost 7 [.i64v 7] = none := rfl\n");
-    lean.push_str("example : hostBuilderProbe (AcceptedArtifact.intDispatchCanonicalHost 11 [(.box, 7)]) 7 [.i64v 7] = some 1007 := rfl\n");
-    // ...so the extensional equality rejects it.
-    lean.push_str(concat!(
-        "example : sneakyBoxHost ≠ AcceptedArtifact.intDispatchCanonicalHost 11 [(.box, 7)] := by\n",
-        "  intro h\n",
-        "  have sneaky : hostBuilderProbe sneakyBoxHost 7 [.i64v 7] = none := rfl\n",
-        "  rw [h] at sneaky\n",
-        "  exact absurd sneaky (by decide)\n\n",
-    ));
-
-    // LOCALS-COUNT bind: the acceptance pins the code table's locals count to
-    // the canonical byte-derived value; a zero-locals table (whose body traps
-    // on its first `local.set`) diverges from it.
-    lean.push_str("example : (CertModule.boxIntCode 1).map (fun c => c.nlocals) =\n  some (PlanCheck.intDispatchArmCount Plans.boxIntIntDispatchPlan.body + 2) := rfl\n");
-    lean.push_str("def zeroLocalsBox : CertPrelude.CodeTbl :=\n  fun fn => (CertModule.boxIntCode fn).map (fun c => { c with nlocals := 0 })\n");
-    lean.push_str("example : ¬ ((zeroLocalsBox 1).map (fun c => c.nlocals) =\n  some (PlanCheck.intDispatchArmCount Plans.boxIntIntDispatchPlan.body + 2)) := by decide\n");
-
-    let out_dir = temp_dir("cert-int-dispatch-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/intdispatchgen.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "intdispatchgen compile --certify failed:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    let honest_build = lake_for_cert(&cert)
-        .arg("build")
-        .current_dir(&cert)
-        .output()
-        .expect("lake build runs");
-    assert!(honest_build.status.success(), "honest cert must lake-build");
-
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let elab = lake_for_cert(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .current_dir(&cert)
-        .output()
-        .expect("lake env lean runs");
-    assert!(
-        elab.status.success(),
-        "int-dispatch signature/host-table guard-isolation assertions must all hold:\n{}\n{}",
-        String::from_utf8_lossy(&elab.stdout),
-        String::from_utf8_lossy(&elab.stderr)
+    assert_package_tampers_decline(
+        &out_dir,
+        "intdispatchgen.wasm",
+        &[
+            (
+                "zero locals",
+                "plan:boxInt",
+                "locals := [.int, .eqref, .int]",
+                "locals := []",
+            ),
+            (
+                "ref.test tag",
+                "plan:boxInt",
+                "(.ctor (.user 0 0) [1])",
+                "(.ctor (.user 0 1) [1])",
+            ),
+            (
+                "swapped dispatch cascade",
+                "plan:gauge",
+                "(.cons (.ctor (.user 1 0) [1]) (.binOp .sub (.literal (.int 0)) (.local 1)) (.cons (.ctor (.user 1 1) [2])",
+                "(.cons (.ctor (.user 1 1) [1]) (.binOp .sub (.literal (.int 0)) (.local 1)) (.cons (.ctor (.user 1 0) [2])",
+            ),
+            (
+                "arithmetic role swap",
+                "plan:gauge",
+                "(.binOp .sub (.literal (.int 0)) (.local 1))",
+                "(.binOp .add (.literal (.int 0)) (.local 1))",
+            ),
+            (
+                "arm constant",
+                "plan:gauge",
+                "(.binOp .add (.local 2) (.literal (.int 9)))",
+                "(.binOp .add (.local 2) (.literal (.int 8)))",
+            ),
+            (
+                "operand order flip",
+                "plan:gauge",
+                "(.binOp .add (.local 2) (.literal (.int 9)))",
+                "(.binOp .add (.literal (.int 9)) (.local 2))",
+            ),
+            (
+                "default constant",
+                "plan:gauge",
+                "(.literal (.int 7))",
+                "(.literal (.int 8))",
+            ),
+        ],
     );
 }
 
 /// End-to-end acceptance and fail-closed tamper coverage for the fused
-/// `Option.withDefault(Vector.get(vec, idx), d)` face: a `cellAt`-shaped
-/// export reaches CERTIFIED, and each of the three template holes an attacker
-/// could try to move — the literal default, the array type index, and the
-/// to-index/box helper wiring — is pinned by the byte-equality gate (with the
-/// audited encoder equality and the nominal type gate behind it), so a
-/// consistent rewrite of the attacker-editable plan data is DECLINED, never
-/// re-credited.
+/// `Option.withDefault(Vector.get(vec, idx), d)` read: a `cellAt`-shaped export
+/// reaches CERTIFIED, and each of the three holes an attacker could try to
+/// move — the literal default, the declared vector array type, and the
+/// to-index/box helper wiring — is pinned, so a consistent rewrite of the
+/// attacker-editable package data is DECLINED, never re-credited.
 #[test]
 fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping fused vector-read verify test: `lake` not available");
         return;
     }
@@ -7697,77 +4977,92 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
         "verdict must credit cellAt:\n{report}"
     );
 
-    // Recover the emitted template holes from the public plan data so the
-    // tampers stay robust to shifting module indices.
-    let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    let marker = ".vectorGetOrDefault ";
-    let at = plans_text
-        .find(marker)
-        .expect("Plans.lean carries the fused vector-read node");
-    let tail = &plans_text[at + marker.len()..];
-    let mut holes = tail.split_whitespace();
-    let arr_ty: u32 = holes.next().unwrap().parse().expect("arrTy hole");
-    let to_index_idx: u32 = holes.next().unwrap().parse().expect("toIndex hole");
-    let box_idx: u32 = holes.next().unwrap().parse().expect("box hole");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let to_index_idx = manifest["hostRoleTable"]["toIndex"]
+        .as_u64()
+        .expect("cell_at declares the index helper");
+    let box_idx = manifest["hostRoleTable"]["box"]
+        .as_u64()
+        .expect("cell_at declares the box helper");
     assert_ne!(to_index_idx, box_idx, "helper roles must be distinct");
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let vecs_at = plans
+        .find("vecs := [(.int, ")
+        .expect("cell_at declares Vector<Int>")
+        + "vecs := [(.int, ".len();
+    let arr_ty: u32 = plans[vecs_at..]
+        .split(')')
+        .next()
+        .unwrap()
+        .parse()
+        .expect("the Vector<Int> array index");
 
-    // The plan nodes live in `Plans.lean` and the struct table in the
-    // `Artifact.lean` claim, so each edit ranges over the whole package.
-    let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
-        let dir = temp_dir(&format!("cert-fused-vector-read-{name}"));
+    // (1) the literal default `0` becomes `1`; (2) the declared Vector<Int>
+    //     array type index moves; (3) the index and box helpers swap in the
+    //     subject's role table.
+    let helper_swap_from = format!("box := some {box_idx}, add := ");
+    let helper_swap_to = format!("box := some {to_index_idx}, add := ");
+    let vec_from = format!("vecs := [(.int, {arr_ty})]");
+    let vec_to = format!("vecs := [(.int, {})]", arr_ty + 1);
+    let to_index_from = format!("toIndex := some {to_index_idx}");
+    let to_index_to = format!("toIndex := some {box_idx}");
+    for (label, file, from, to) in [
+        (
+            "default literal",
+            "plan:cellAt",
+            "(.literal (.int 0))",
+            "(.literal (.int 1))",
+        ),
+        (
+            "array type",
+            "Plans.lean",
+            vec_from.as_str(),
+            vec_to.as_str(),
+        ),
+        (
+            "helper swap",
+            "Manifest.lean",
+            helper_swap_from.as_str(),
+            helper_swap_to.as_str(),
+        ),
+    ] {
+        let dir = temp_dir(&format!(
+            "cert-fused-vector-read-{}",
+            label.replace(' ', "-")
+        ));
         copy_dir(&out_dir, &dir);
-        tamper_cert_lean_files(&dir.join("cert"), name, edit);
-        let (ok, out) = aver_verify(&dir.join("cell_at.wasm"), &dir.join("cert"));
-        assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
+        let tampered = dir.join("cert");
+        if let Some(export) = file.strip_prefix("plan:") {
+            tamper_export_plan(&tampered.join("Plans.lean"), export, from, to);
+        } else {
+            replace_once(&tampered.join(file), from, to);
+        }
+        if label == "helper swap" {
+            replace_once(
+                &tampered.join("Manifest.lean"),
+                &to_index_from,
+                &to_index_to,
+            );
+            let mf = tampered.join("cert-manifest.json");
+            let mut m: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+            m["hostRoleTable"]["box"] = serde_json::json!(to_index_idx);
+            m["hostRoleTable"]["toIndex"] = serde_json::json!(box_idx);
+            std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+        }
+        let (ok, out) = aver_verify(&dir.join("cell_at.wasm"), &tampered);
+        assert!(!ok, "tamper `{label}` must be DECLINED:\n{out}");
         assert!(
             out.contains("DECLINED"),
-            "tamper `{name}` must report a decline verdict, not an error:\n{out}"
+            "tamper `{label}` must report a decline verdict, not an error:\n{out}"
         );
         assert!(
             !out.contains("CERTIFIED"),
-            "tamper `{name}` must never re-credit the export:\n{out}"
+            "tamper `{label}` must never re-credit the export:\n{out}"
         );
-    };
-
-    // (1) Flip the literal default consistently in the source AND encoded
-    //     plans: the encoder equality still holds, but the rendered bytes
-    //     (`i64.const 1`) no longer match the module (`i64.const 0`).
-    tamper("default-literal", &|text| {
-        text.replace(
-            &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx} (0 : Int)"),
-            &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx} (1 : Int)"),
-        )
-        .replace(
-            ".vectorGetOrDefault \"Vector<Int>\" (0 : Int)",
-            ".vectorGetOrDefault \"Vector<Int>\" (1 : Int)",
-        )
-    });
-
-    // (2) Flip the array type index (plan node + struct table): the rendered
-    //     `array.get` immediate and the nominal array-element gate both break.
-    tamper("array-type", &|text| {
-        text.replace(
-            &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx}"),
-            &format!(
-                ".vectorGetOrDefault {} {to_index_idx} {box_idx}",
-                arr_ty + 1
-            ),
-        )
-        .replace(
-            &format!("(\"Vector<Int>\", {arr_ty})"),
-            &format!("(\"Vector<Int>\", {})", arr_ty + 1),
-        )
-    });
-
-    // (3) Swap the to-index and box helper indices in the encoded plan: the
-    //     audited encoder (driven by the byte-derived role table) can no
-    //     longer reproduce the claimed representation plan.
-    tamper("helper-swap", &|text| {
-        text.replace(
-            &format!(".vectorGetOrDefault {arr_ty} {to_index_idx} {box_idx}"),
-            &format!(".vectorGetOrDefault {arr_ty} {box_idx} {to_index_idx}"),
-        )
-    });
+    }
 }
 
 /// The five real source functions the Int value-comparison faces were built
@@ -7779,7 +5074,7 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
 /// passthrough of an input local (`minInt`, `bigger`).
 #[test]
 fn cert_verify_certifies_the_five_int_comparison_witnesses() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Int-comparison witness verify test: `lake` not available");
         return;
     }
@@ -7840,80 +5135,14 @@ fn cert_verify_certifies_the_five_int_comparison_witnesses() {
 }
 
 /// Fail-closed tamper coverage for the two comparison host roles, on the
-/// module that carries one face of each. The attacker-editable surface is the
-/// emitted plan data, and both edits below are CONSISTENT rewrites of it — the
-/// kind that a checker which merely re-read the certificate's own claims would
-/// re-credit. Each is DECLINED instead, because the role indices are derived
-/// from the module's export section and the lowered bytes are pinned to the
-/// module's own code section.
-/// Every `.lean` file the producer wrote into a package directory, sorted, as
-/// (path, contents). Acceptance is indifferent to which file carries which
-/// value (format spec section 2.2), so a tamper that keys on a value must look
-/// for it across the package rather than in one file by name.
-fn cert_lean_files(cert_dir: &std::path::Path) -> Vec<(PathBuf, String)> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(cert_dir)
-        .expect("the package directory is readable")
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| path.extension().is_some_and(|ext| ext == "lean"))
-        .collect();
-    files.sort();
-    files
-        .into_iter()
-        .map(|path| {
-            let text = std::fs::read_to_string(&path).expect("a package file is readable");
-            (path, text)
-        })
-        .collect()
-}
-
-/// Every emitted `.lean` file of a package, concatenated in filename order:
-/// the text to search when a test keys on a value acceptance reads, since the
-/// format does not say which file carries it.
-fn package_lean_text(cert_dir: &std::path::Path) -> String {
-    cert_lean_files(cert_dir)
-        .into_iter()
-        .map(|(_, text)| text)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Read one host role's resolved function index out of the package's own data,
-/// so tampers stay robust both to shifting module indices and to which emitted
-/// file carries the role table.
-fn cert_role_index(cert_dir: &std::path::Path, marker: &str) -> u32 {
-    let (_, text, at) = cert_lean_files(cert_dir)
-        .into_iter()
-        .find_map(|(path, text)| text.find(marker).map(|at| (path, text, at)))
-        .unwrap_or_else(|| panic!("the package carries `{marker}` in some emitted file"));
-    text[at + marker.len()..]
-        .split(|c: char| !c.is_ascii_digit())
-        .find(|s| !s.is_empty())
-        .expect("an index follows the marker")
-        .parse()
-        .expect("the index parses")
-}
-
-/// Apply one textual tamper to every emitted `.lean` file of a package,
-/// returning how many files it changed. Panics when it changed none: a tamper
-/// that edits nothing proves nothing.
-fn tamper_cert_lean_files(cert_dir: &std::path::Path, name: &str, edit: &dyn Fn(&str) -> String) {
-    let mut changed = 0usize;
-    for (path, text) in cert_lean_files(cert_dir) {
-        let edited = edit(&text);
-        if edited != text {
-            std::fs::write(&path, edited).expect("the package file is writable");
-            changed += 1;
-        }
-    }
-    assert!(
-        changed > 0,
-        "tamper `{name}` must change at least one emitted package file"
-    );
-}
-
+/// module that carries one comparison of each kind. Both edits are CONSISTENT
+/// rewrites of the subject's role table (the Lean subject and the JSON agree),
+/// the kind a checker that merely re-read the certificate's own claims would
+/// re-credit. Each is DECLINED instead: `cmp` is bound to its export name and
+/// `eq` to its template, and the plans lower to calls at the declared indices.
 #[test]
 fn cert_verify_declines_int_comparison_role_tampers() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Int-comparison tamper test: `lake` not available");
         return;
     }
@@ -7941,23 +5170,32 @@ fn cert_verify_declines_int_comparison_role_tampers() {
     let (ok, report) = aver_verify(&wasm, &cert);
     assert!(ok, "the honest control must verify CERTIFIED:\n{report}");
 
-    // Recover the two helper indices from the package's own data so the tampers
-    // stay robust to shifting module indices. The role table travels in the
-    // files acceptance reads (`Artifact.lean`, `Manifest.lean`), so the lookup
-    // and the edits below both range over the whole emitted package.
-    let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    let cmp_idx = cert_role_index(&cert, "(.cmp, ");
-    let eq_idx = cert_role_index(&cert, "(.eq, ");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let cmp_idx = manifest["hostRoleTable"]["cmp"]
+        .as_u64()
+        .expect("the module declares the comparison helper");
+    let eq_idx = manifest["hostRoleTable"]["eq"]
+        .as_u64()
+        .expect("the module declares the equality helper");
     assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
-    assert!(
-        plans_text.contains(&format!(".hostCall .cmp {cmp_idx} ")),
-        "the comparison plan must cite the role table's own cmp index:\n{plans_text}"
-    );
 
-    let tamper = |name: &str, edit: &dyn Fn(&str) -> String| {
+    let tamper = |name: &str, cmp: u64, eq: u64| {
         let dir = temp_dir(&format!("cert-intcmp-tamper-{name}"));
         copy_dir(&out_dir, &dir);
-        tamper_cert_lean_files(&dir.join("cert"), name, edit);
+        let man = dir.join("cert").join("Manifest.lean");
+        replace_once(
+            &man,
+            &format!("cmp := some {cmp_idx}, eq := some {eq_idx}"),
+            &format!("cmp := some {cmp}, eq := some {eq}"),
+        );
+        let mf = dir.join("cert").join("cert-manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
+        m["hostRoleTable"]["cmp"] = serde_json::json!(cmp);
+        m["hostRoleTable"]["eq"] = serde_json::json!(eq);
+        std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
         let (ok, out) = aver_verify(&dir.join("int_comparison_laws.wasm"), &dir.join("cert"));
         assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
         assert!(
@@ -7970,29 +5208,12 @@ fn cert_verify_declines_int_comparison_role_tampers() {
         );
     };
 
-    // (1) Move the comparison helper's index consistently in the encoded plan
-    //     and in the role table the encoder is driven by: the certificate now
-    //     claims the three-way helper lives where the equality helper does.
-    //     The export section says otherwise and the lowered call immediate no
-    //     longer matches the module's own code bytes.
-    tamper("cmp-index-swap", &|text| {
-        text.replace(
-            &format!(".hostCall .cmp {cmp_idx} "),
-            &format!(".hostCall .cmp {eq_idx} "),
-        )
-        .replace(&format!("(.cmp, {cmp_idx})"), &format!("(.cmp, {eq_idx})"))
-    });
-
-    // (2) Swap which role name each exported helper carries, leaving both
-    //     plans and every byte list untouched. The two helpers declare the
-    //     SAME function type, so nothing in the type section objects; only the
-    //     export-name binding of each role does, and it is what makes the
-    //     audited encoder produce a different plan than the one claimed.
-    tamper("eq-for-cmp-role-swap", &|text| {
-        text.replace(&format!("(.cmp, {cmp_idx})"), "(.cmp, __SWAP__)")
-            .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
-            .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
-    });
+    // (1) The comparison helper declared where the equality helper lives.
+    tamper("cmp-index-move", eq_idx, eq_idx);
+    // (2) The two roles swapped. Both helpers declare the SAME function type,
+    //     so nothing in the type section objects; the export-name binding of
+    //     `cmp` and the template of `eq` do.
+    tamper("cmp-eq-role-swap", eq_idx, cmp_idx);
 }
 
 /// Tamper gate for the record projection-compute face's exact-signature pin:
@@ -8001,7 +5222,7 @@ fn cert_verify_declines_int_comparison_role_tampers() {
 /// DECLINE — the #1209 tamper class, now caught by `funcTypeMatchesExact`.
 #[test]
 fn cert_tripwire_declines_tampered_record_compute_signature() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping record-compute tamper test: `lake` not available");
         return;
     }
@@ -8083,246 +5304,97 @@ fn cert_tripwire_declines_tampered_record_compute_signature() {
     );
 }
 
-/// Tamper suite for the inline sign template and the compute face's comparison
-/// roles. The positive half asserts the clean fixture really reaches every
-/// conjunct (a declared `intSignCmp` node, a `__aint_cmp` call, a `__aint_eq`
-/// call and a body whose ONLY computing node is the template).
-///
-/// Each tamper must DECLINE, and each asserts WHICH pin fires. That is the
-/// point of the suite: `Plans.lean` carries the sym plan and the fragment plan
-/// side by side, and any edit to one alone is caught by the sym-to-fragment
-/// re-encoding equality (`encodeSymRawPlanToExprFragmentRawPlan … = some plan`,
-/// by `rfl`) before any byte pin is ever consulted. So the first four tampers
-/// exercise that equality — naming a pin they do not reach would be a false
-/// account of what defends the format. The fifth edits BOTH plans coherently,
-/// clears the re-encoding equality, and is then caught by the pins that bind
-/// the plan to the module's actual bytes.
+/// Tamper suite for the Int comparisons against a literal and between two
+/// products. The positive half asserts the clean fixture reaches every
+/// comparison shape (a sign test against a literal, `<` and `==` between two
+/// computed values, and a comparison over a bare field read), and every
+/// tamper — the operator, the literal, the parameter slot, the comparison
+/// kind — changes the lowering the wall pins to the code entry.
 #[test]
 fn cert_tripwire_declines_tampered_int_sign_cmp_plan() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping sign-template tamper test: `lake` not available");
         return;
     }
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-intcompare");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/intcompare.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "intcompare compile --certify failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
-    let wasm = out_dir.join("intcompare.wasm");
+    let out_dir =
+        compile_checked_fixture("tools/certkit/fixtures/intcompare.av", "cert-intcompare");
     let cert = out_dir.join("cert");
-    let plans_text = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-
-    // Positive half: every new conjunct is really reached by this fixture.
-    assert!(
-        plans_text.contains(".intSignCmp .ge (0 : Int) 1 "),
-        "isNonNeg must carry the sign template at the declared scratch slot:\n{plans_text}"
-    );
-    assert!(
-        plans_text.contains(".intSignCmp .le (0 : Int) 1 "),
-        "isNonPos must carry the sign template with the other operator:\n{plans_text}"
-    );
-    assert!(
-        plans_text.contains(".hostCall .cmp "),
-        "below must call the three-way helper:\n{plans_text}"
-    );
-    assert!(
-        plans_text.contains(".hostCall .eq "),
-        "sameValue must call the equality helper:\n{plans_text}"
-    );
-    // `isNonNegField` is a body whose only computing node is the template:
-    // one field read, no host call anywhere. It used to be silently
-    // non-admitted, so its plan is the positive half of that fix.
-    assert!(
-        plans_text.contains("def isNonNegFieldPlan"),
-        "a projection-only sign test must reach the compute face:\n{plans_text}"
-    );
-    assert!(
-        !plans_text
-            .split("def isNonNegFieldPlan")
-            .nth(1)
-            .expect("the isNonNegField plan exists")
-            .split("\n\n")
-            .next()
-            .expect("the plan is one line")
-            .contains(".hostCall"),
-        "isNonNegField must carry no host call at all:\n{plans_text}"
-    );
-
-    let (ok, report) = aver_check(&wasm, &cert);
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    for (export, shape) in [
+        ("isNonNeg", "(.binOp .gte (.binOp .mul"),
+        ("isNonPos", "(.binOp .lte (.binOp .mul"),
+        ("below", "(.binOp .lt (.binOp .mul"),
+        ("sameValue", "(.binOp .eq (.binOp .mul"),
+        (
+            "isNonNegField",
+            "(.binOp .gte (.project 0 0 (.local 0)) (.literal (.int 0)))",
+        ),
+    ] {
+        let (_, _, _, def) = plan_entry_fields(&plans, export);
+        assert!(
+            plan_def_block(&plans, &def).contains(shape),
+            "{export} must keep its comparison shape `{shape}`:\n{plans}"
+        );
+    }
+    let (ok, report) = aver_check(&out_dir.join("intcompare.wasm"), &cert);
     assert!(ok, "clean intcompare certificate must check:\n{report}");
     assert!(
         report.contains("5 checked exports"),
         "intcompare should certify all five comparisons:\n{report}"
     );
 
-    let cmp_idx = cert_role_index(&cert, "(.cmp, ");
-    let eq_idx = cert_role_index(&cert, "(.eq, ");
-    assert_ne!(cmp_idx, eq_idx, "the two helper roles must be distinct");
-
-    // `expect_pins` are Lean-level pin names the decline report must name;
-    // `absent_pins` are pins that must NOT appear, which is how the last
-    // tamper proves it got past the re-encoding equality.
-    let tamper =
-        |name: &str, edit: &dyn Fn(&str) -> String, expect_pins: &[&str], absent_pins: &[&str]| {
-            let dir = temp_dir(&format!("cert-intcompare-tamper-{name}"));
-            copy_dir(&out_dir, &dir);
-            tamper_cert_lean_files(&dir.join("cert"), name, edit);
-            let (ok, out) = aver_check(&dir.join("intcompare.wasm"), &dir.join("cert"));
-            assert!(!ok, "tamper `{name}` must be DECLINED:\n{out}");
-            assert!(
-                !out.contains("CERTIFIED") && !out.contains("CHECKED"),
-                "tamper `{name}` must never re-credit an export:\n{out}"
-            );
-            for pin in expect_pins {
-                assert!(
-                    out.contains(pin),
-                    "tamper `{name}` must be caught by `{pin}`:\n{out}"
-                );
-            }
-            for pin in absent_pins {
-                assert!(
-                    !out.contains(pin),
-                    "tamper `{name}` must NOT reach `{pin}`:\n{out}"
-                );
-            }
-        };
-
-    // (1) Point the template at a PARAMETER slot instead of the one declared
-    //     scratch local. `params.length` is the pin that stops the template
-    //     from clobbering an input, and it is enforced in TWO places: the sym
-    //     plan no longer re-encodes to this fragment plan, and the fragment
-    //     plan no longer passes `checkExprFragmentRawPlan`. Both are asserted,
-    //     because the second is the one that owns the slot rule.
-    tamper(
-        "scratch-slot",
-        &|text| {
-            text.replace(
-                ".intSignCmp .ge (0 : Int) 1 ",
-                ".intSignCmp .ge (0 : Int) 0 ",
-            )
-        },
+    assert_package_tampers_decline(
+        &out_dir,
+        "intcompare.wasm",
         &[
-            "encodeSymRawPlanToExprFragmentRawPlan",
-            "checkExprFragmentRawPlan",
+            (
+                "operator",
+                "plan:isNonNeg",
+                "(.binOp .gte (.binOp .mul",
+                "(.binOp .gt (.binOp .mul",
+            ),
+            (
+                "constant",
+                "plan:isNonNegField",
+                "(.literal (.int 0)))",
+                "(.literal (.int 1)))",
+            ),
+            (
+                "parameter slot",
+                "plan:below",
+                "(.project 0 0 (.local 0)) (.project 0 1 (.local 1))",
+                "(.project 0 0 (.local 1)) (.project 0 1 (.local 1))",
+            ),
+            (
+                "comparison kind",
+                "plan:sameValue",
+                "(.binOp .eq (.binOp .mul",
+                "(.binOp .lt (.binOp .mul",
+            ),
         ],
-        &[],
-    );
-
-    // (2) Flip the operator the template decides with. The fragment plan alone
-    //     is edited, so the sym-to-fragment re-encoding equality is what
-    //     objects; the byte pins report the same divergence behind it.
-    tamper(
-        "operator",
-        &|text| {
-            text.replace(
-                ".intSignCmp .ge (0 : Int) 1 ",
-                ".intSignCmp .gt (0 : Int) 1 ",
-            )
-        },
-        &["encodeSymRawPlanToExprFragmentRawPlan"],
-        &[],
-    );
-
-    // (3) Move the literal the template compares against. Same pin as (2).
-    tamper(
-        "constant",
-        &|text| {
-            text.replace(
-                ".intSignCmp .ge (0 : Int) 1 ",
-                ".intSignCmp .ge (1 : Int) 1 ",
-            )
-        },
-        &["encodeSymRawPlanToExprFragmentRawPlan"],
-        &[],
-    );
-
-    // (4) Swap which exported helper each comparison role names. Both helpers
-    //     declare the same function type, so only the export-name binding
-    //     objects — and it is what drives the audited encoder.
-    //
-    //     The named encoding equality rejects the changed role table before
-    //     the aggregate proof tries to unify byte-derived leaf statements.
-    //     Require that pin: a timeout or memory failure is not this regression's
-    //     expected rejection.
-    tamper(
-        "cmp-eq-role-swap",
-        &|text| {
-            text.replace(&format!("(.cmp, {cmp_idx})"), "(.cmp, __SWAP__)")
-                .replace(&format!("(.eq, {eq_idx})"), &format!("(.eq, {cmp_idx})"))
-                .replace("(.cmp, __SWAP__)", &format!("(.cmp, {eq_idx})"))
-        },
-        &["encodeSymRawPlanToExprFragmentRawPlan"],
-        &[],
-    );
-
-    // (5) Move the literal in BOTH plans at once, so the sym plan really does
-    //     re-encode to the edited fragment plan. The re-encoding equality is
-    //     satisfied and the tamper reaches the pins that bind the plan to the
-    //     module: the canonical lowering against `Module.lean`'s emitted body
-    //     and the byte lowering against the pinned code entry. This is the
-    //     tamper that shows the byte binding is load-bearing on its own and
-    //     not merely shadowed by the encoder equality.
-    tamper(
-        "consistent-literal",
-        &|text| {
-            let sym = ".intConstCmp .ge 4 (0 : Int)";
-            let frag = ".intSignCmp .ge (0 : Int) 1 4";
-            // The edit visits every emitted file; only the one carrying the
-            // two plan definitions is touched, and there each node is unique.
-            if !text.contains(sym) && !text.contains(frag) {
-                return text.to_string();
-            }
-            assert_eq!(text.matches(sym).count(), 1, "isNonNeg sym node is unique");
-            assert_eq!(
-                text.matches(frag).count(),
-                1,
-                "isNonNeg frag node is unique"
-            );
-            text.replace(sym, ".intConstCmp .ge 4 (1 : Int)")
-                .replace(frag, ".intSignCmp .ge (1 : Int) 1 4")
-        },
-        &["lowerExprFragmentBody", "lowerExprFragmentCodeEntry"],
-        &["encodeSymRawPlanToExprFragmentRawPlan"],
     );
 }
 
-/// The record projection-compute face is the one whose certified domain is
-/// narrower than "any represented carrier": its inputs AND the Int leaves of
-/// its record parameters are assumed to be in the runtime's normal form
-/// (`StandardFace.recordComputeDomRepr`). A reader of a verdict has to be told,
-/// so `explain` prints that domain on the export's own line — and only there.
-/// A generic expression fragment carries no such restriction and must show no
-/// such line. The same block carries the face's certified MODEL: `plan` on its
-/// own, or `plan ≡ <fn>` once a credited plan-equals-source bridge identifies
-/// the two.
+/// Every certified export's model is its plan, so `explain` states on the
+/// export's own line what that model is: `plan` alone, or `plan ≡ <fn>` once a
+/// credited plan-equals-source bridge identifies the plan with the source
+/// function. The credit is about the STATEMENT printed under SOURCE-BRIDGES,
+/// which `explain` prints from the text the checker rendered and pinned, never
+/// from the manifest (the manifest has no statement to print).
+///
+/// The input domain is disclosed too. The retired record projection-compute
+/// face printed a per-export "domain: Int leaves assumed in the runtime's
+/// normal form" line; now every export's Int inputs are canonical carriers
+/// (`Grammar.SRepr` reads an Int through `CanonRepr`), so `explain` states
+/// that assumption once, for all exports, under "Certified domain".
 #[test]
 fn explain_states_the_record_compute_faces_certified_domain() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping compute-face domain disclosure test: `lake` not available");
+    if !lean_required::lake_available() {
+        eprintln!("skipping explain model-line test: `lake` not available");
         return;
     }
-    const DOMAIN_LINE: &str =
-        "domain: Int leaves assumed in the runtime's normal form (canonical carriers)";
-
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    // Positive half: every k5 ring export is a record projection-compute claim.
     let k5_dir = temp_dir("cert-k5-explain-domain");
     let compile = aver_command()
         .current_dir(&repo_root)
@@ -8349,6 +5421,15 @@ fn explain_states_the_record_compute_faces_certified_domain() {
         &k5_dir.join("cert"),
     );
     assert!(ok, "k5 explain must accept the certificate:\n{explain}");
+    assert!(
+        explain.contains("Certified domain")
+            && explain.contains(
+                "domain: every Int input (an argument, or a field, element or payload \
+                 inside one) is assumed to be a canonical carrier word, the runtime's \
+                 normal form; a non-canonical word is outside the certified domain."
+            ),
+        "explain must disclose the canonical-carrier assumption on Int inputs:\n{explain}"
+    );
 
     let plus_block: Vec<&str> = explain
         .split("  Domain_Rational_plus\n")
@@ -8358,12 +5439,11 @@ fn explain_states_the_record_compute_faces_certified_domain() {
         .take_while(|line| line.starts_with("    "))
         .collect();
     assert!(
-        plus_block.iter().any(|line| line.trim() == DOMAIN_LINE),
-        "the compute face must disclose its certified domain:\n{explain}"
+        plus_block
+            .iter()
+            .any(|line| line.trim() == "class: source-plan-v1 (records)"),
+        "the export's line block names its plan class and facets:\n{explain}"
     );
-    // The same line block says what that face's certified MODEL is. A credited
-    // plan-equals-source bridge is the only thing that turns `plan` into
-    // `plan ≡ <fn>`.
     assert!(
         plus_block.iter().any(|line| {
             line.trim()
@@ -8371,78 +5451,20 @@ fn explain_states_the_record_compute_faces_certified_domain() {
         }),
         "a credited bridge must name the source function on the export's line:\n{explain}"
     );
-    // The line points at the section rather than calling itself kernel-checked,
-    // because the credit is about the STATEMENT printed there — which `explain`
-    // prints from the text the checker rendered and pinned, never from the
-    // manifest (the manifest has no statement to print).
     assert!(
-        explain.contains("SOURCE-BRIDGES"),
-        "explain must list the bridges it checked:\n{explain}"
-    );
-    assert!(
-        explain.contains(
-            "_root_.AverCert.StandardFace.recordComputeModel \
-             _root_.AverCert.Plans.Domain_Rational_plusPlan.body"
-        ) && explain.contains("[credited]"),
+        explain.contains("SOURCE-BRIDGES")
+            && explain
+                .contains("Domain_Rational_plus  ≡ Domain.Rational.plus  (exact)  [credited]")
+            && explain.contains(
+                "_root_.AverCert.GrammarBridge.Exact _root_.AverCert.manifest \
+                 \"Domain_Rational_plus\" (fun (x : "
+            ),
         "the rendered statement and its credit must be printed under SOURCE-BRIDGES:\n{explain}"
-    );
-
-    // Negative half: a genuinely generic expression fragment (`bool_window`'s
-    // `inWindow`, Int carriers in and a Bool out, no host call and no record
-    // parameter) is unconditional over represented carriers, so it must carry
-    // no domain line at all. `certprobe`'s exports are NOT the control any
-    // more: a scalar-parameter arithmetic or comparison body is a compute
-    // claim since the straight-line integer and Int-comparison faces retired
-    // into the declared face.
-    let probe_dir = temp_dir("cert-boolwindow-explain-domain");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/bool_window.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&probe_dir)
-        .output()
-        .expect("aver compile --certify runs");
-    assert!(
-        compile.status.success(),
-        "bool_window compile --certify failed:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let (ok, explain) = aver_cert(
-        &["explain"],
-        &probe_dir.join("bool_window.wasm"),
-        &probe_dir.join("cert"),
-    );
-    assert!(
-        ok,
-        "bool_window explain must accept the certificate:\n{explain}"
-    );
-    assert!(
-        explain.contains("inWindow"),
-        "bool_window explain lost its generic fragment export:\n{explain}"
-    );
-    assert!(
-        !explain.contains(DOMAIN_LINE),
-        "a generic fragment must not claim the compute face's narrower domain:\n{explain}"
-    );
-    // A face whose obligation already names the source model has nothing for a
-    // bridge to say, so it carries no model line and declares no bridge.
-    assert!(
-        !explain.contains("model: plan"),
-        "a generic fragment's model is not a plan and must show no model line:\n{explain}"
-    );
-    assert!(
-        !explain.contains("SOURCE-BRIDGES"),
-        "a package with no compute-face export declares no bridge:\n{explain}"
     );
 }
 
-/// Law-claims pin (schema 7): a clean k5 package carries eleven kernel-checked
-/// law corollaries, all credited; the checker-owned witness re-elaborates each
+/// Law-claims pin (schema 9): a clean k5 package carries eleven kernel-checked
+/// law corollaries, all credited, each also bridged to the bytes; the checker-owned witness re-elaborates each
 /// corollary at exactly the manifest-declared statement and audits its axioms.
 ///
 /// The two failure modes are deliberately different verdicts. A pin that does
@@ -8453,7 +5475,7 @@ fn explain_states_the_record_compute_faces_certified_domain() {
 /// the export verdict and exit code stand.
 #[test]
 fn cert_tripwire_declines_tampered_law_claims() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping law-claims tamper test: `lake` not available");
         return;
     }
@@ -8507,8 +5529,8 @@ fn cert_tripwire_declines_tampered_law_claims() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "clean k5 law-claims certificate must check:\n{report}");
     assert!(
-        report.contains("10 checked exports"),
-        "k5 should keep its ten certified exports:\n{report}"
+        report.contains("12 checked exports"),
+        "k5 should keep its twelve certified exports:\n{report}"
     );
     assert!(
         report.contains("law-claims: 11 of 11 credited"),
@@ -8519,14 +5541,18 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "a clean package names no uncredited law:\n{report}"
     );
     assert!(
-        report.contains("source-bridges: 10 of 10 credited"),
+        report.contains("bridged-laws: 11 of 11 credited"),
+        "every k5 law must be bridged to the bytes on a clean package:\n{report}"
+    );
+    assert!(
+        report.contains("source-bridges: 12 of 12 credited"),
         "every k5 export must carry a credited plan-equals-source bridge:\n{report}"
     );
 
     // Tamper A: edit one law statement inside the package's `Laws.lean`. The
     // corollary no longer has the declared type, so the package build (or the
     // witness) must fail — never a silent re-interpretation.
-    let needle = "(Domain.Rational.plus a b) (Domain.Rational.plus b a)";
+    let needle = "(_root_.Domain.Rational.plus a b) (_root_.Domain.Rational.plus b a)";
     assert!(laws_lean.contains(needle), "expected commutative statement");
     let dir = temp_dir("cert-k5-laws-file-tamper");
     copy_dir(&out_dir, &dir);
@@ -8534,7 +5560,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         dir.join("cert").join("Laws.lean"),
         laws_lean.replacen(
             needle,
-            "(Domain.Rational.plus a b) (Domain.Rational.plus a a)",
+            "(_root_.Domain.Rational.plus a b) (_root_.Domain.Rational.plus a a)",
             1,
         ),
     )
@@ -8549,7 +5575,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // Tamper B: edit the same statement in `cert-manifest.json` only. The
     // witness re-elaborates the corollary at the manifest-declared statement,
     // so the declared surface and the package theorem no longer agree.
-    let json_needle = "(Domain.Rational.plus a b) (Domain.Rational.plus b a)";
+    let json_needle = "(_root_.Domain.Rational.plus a b) (_root_.Domain.Rational.plus b a)";
     assert!(
         manifest.contains(json_needle),
         "expected statement in manifest"
@@ -8560,7 +5586,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         dir.join("cert").join("cert-manifest.json"),
         manifest.replacen(
             json_needle,
-            "(Domain.Rational.plus a b) (Domain.Rational.plus a a)",
+            "(_root_.Domain.Rational.plus a b) (_root_.Domain.Rational.plus a a)",
             1,
         ),
     )
@@ -8610,7 +5636,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "a law failing only its axiom audit must not sink the exports:\n{out}"
     );
     assert!(
-        out.contains("10 checked exports"),
+        out.contains("12 checked exports"),
         "the export verdict must stand unchanged beside an uncredited law:\n{out}"
     );
     assert!(
@@ -8625,7 +5651,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         "the uncredited law must be named together with the axiom that sank it:\n{out}"
     );
     assert!(
-        out.contains("source-bridges: 10 of 10 credited"),
+        out.contains("source-bridges: 12 of 12 credited"),
         "a law losing its credit must not take the bridges it cited down:\n{out}"
     );
     assert!(
@@ -8643,17 +5669,19 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // well-formed `ok` line.
 }
 
-/// The same tripwire for the plan-equals-source bridge surface, on the k5
-/// package whose ten record projection-compute exports are all bridged.
+/// The same tripwire for the plan-equals-source bridge surface (schema 9), on
+/// the k5 package whose twelve exports are all bridged (`exact` kind: no k5
+/// call closure recurses).
 ///
-/// (A) and (B) are the two ways a manifest can try to state something other
-/// than what the package proves, now that the entry carries STRUCTURE and the
-/// checker renders the statement from it: a permuted record accessor list
-/// renders a different claim, so the pin no longer has the package corollary's
-/// type; a smuggled `statement` key, or an encoder kind outside the closed set,
-/// is refused at the manifest gate before Lean runs at all. There is no third
-/// way — a tautology is not expressible, because the left-hand side of the
-/// rendered statement is always the export's own plan.
+/// (A) and (B) are the ways a manifest can try to state something other than
+/// what the package proves, now that the entry carries STRUCTURE and the
+/// checker renders the statement from it: a permuted record accessor list, or
+/// a `model` naming a different source function, renders a different claim,
+/// so the pin no longer has the package corollary's type; a smuggled
+/// `statement` key, or an encoder kind outside the closed set, is refused at
+/// the manifest gate before Lean runs at all. A tautology is not expressible,
+/// because the left-hand side of the rendered statement is always the named
+/// export's own obligation model.
 ///
 /// (C) A bridge proof degraded to `sorry` still elaborates at the rendered
 /// statement, so only its axiom audit fails. It costs the bridge and the
@@ -8668,22 +5696,16 @@ fn cert_tripwire_declines_tampered_law_claims() {
 /// case and deliberately not a decline: the claim is then simply not part of
 /// the bridged surface, and nothing is credited that was not proven.
 ///
-/// (E) A composition step the fixed script cannot close falls to `sorry`
-/// instead of failing the build, so a shape the producer guessed wrong about
-/// is a not-credited bridge and never a declined package. `isNonPos` is the one
-/// bridged export no k5 law mentions, which keeps (E)'s law counters full and
-/// isolates the bridge's own credit.
+/// (E) A per-function STEP lemma that does not close falls to `sorry` instead
+/// of failing the build, and it costs exactly the bridges whose call closure
+/// contains that function. `isNonPos` calls nothing and no other export calls
+/// it, and no k5 law mentions it, so (E) isolates one bridge's credit.
 ///
-/// The audit LINES themselves — all three markers — are covered where they are
-/// read, by the parser unit tests in `aver-cert`
-/// (`bridge_audit_without_a_line_declines_instead_of_crediting`,
-/// `bridge_audit_rejects_malformed_and_repeated_lines`,
-/// `bridged_law_pins_are_numbered_over_the_bridged_claims_only`): the witness
-/// is authored inside a temporary build directory this test cannot reach, so
-/// that tamper is unit-level only, exactly as it is for law-claims.
+/// The audit LINES themselves are covered where they are read, by the parser
+/// unit tests in `aver-cert`.
 #[test]
 fn cert_tripwire_declines_tampered_source_bridges() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping source-bridge tamper test: `lake` not available");
         return;
     }
@@ -8711,40 +5733,42 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     );
 
     let cert = out_dir.join("cert");
-    let bridge_lean = std::fs::read_to_string(cert.join("Bridge.lean")).unwrap();
+    let bridge_lean = std::fs::read_to_string(cert.join("BridgeProof.lean")).unwrap();
     let manifest = std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap();
     assert_eq!(
         bridge_lean
             .matches("/-- plan-equals-source bridge for `")
             .count(),
-        10,
-        "k5 package must carry ten bridge theorems"
+        12,
+        "k5 package must carry twelve bridge theorems"
     );
     assert!(
-        manifest.contains("\"export\": \"Domain_Rational_isNonPos\""),
-        "the bridge surface must name every certified export"
+        manifest.contains("\"export\": \"Domain_Rational_isNonPos\"")
+            && manifest.contains("\"kind\": \"exact\""),
+        "the bridge surface must name every certified export, in the exact kind"
     );
     assert!(
-        !manifest.contains("\"statement\": \"_root_."),
+        !manifest.contains("\"statement\": \"∃ o"),
         "a bridge entry must transport structure, never statement text:\n{manifest}"
     );
 
     // Tamper A: permute one record encoder's accessors. The checker renders
-    // `SVal.r [bottom x, top x]` where the package proved `[top x, bottom x]`,
-    // so the pin no longer has the corollary's type.
-    let honest_fields = "\"fields\": [\"_root_.Domain.Rational.Fraction.top\", \
-                         \"_root_.Domain.Rational.Fraction.bottom\"]";
+    // `SVal.record 0 [bottom x, top x]` where the package proved
+    // `[top x, bottom x]`, so the pin no longer has the corollary's type.
+    let top =
+        "{\"accessor\": \"_root_.Domain.Rational.Fraction.top\", \"encoder\": {\"kind\": \"int\"}}";
+    let bottom = "{\"accessor\": \"_root_.Domain.Rational.Fraction.bottom\", \"encoder\": {\"kind\": \"int\"}}";
+    let honest_fields = format!("\"fields\": [{top}, {bottom}]");
     assert!(
-        manifest.contains(honest_fields),
-        "expected the Fraction encoder to list its two Int leaves in order"
+        manifest.contains(&honest_fields),
+        "expected the Fraction encoder to list its two Int fields in order"
     );
-    let permuted_fields = "\"fields\": [\"_root_.Domain.Rational.Fraction.bottom\", \
-                           \"_root_.Domain.Rational.Fraction.top\"]";
+    let permuted_fields = format!("\"fields\": [{bottom}, {top}]");
     let dir = temp_dir("cert-k5-bridge-permuted-fields");
     copy_dir(&out_dir, &dir);
     std::fs::write(
         dir.join("cert").join("cert-manifest.json"),
-        manifest.replacen(honest_fields, permuted_fields, 1),
+        manifest.replacen(&honest_fields, &permuted_fields, 1),
     )
     .unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
@@ -8754,9 +5778,35 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         "a permuted encoder credited:\n{out}"
     );
 
-    // Tamper B: the two shapes the manifest gate refuses outright, before any
-    // Lean step — a statement smuggled back in beside the structure, and an
-    // encoder kind outside the closed set.
+    // Tamper A': point one bridge at a different source function. The checker
+    // renders the claim about `isNonPos` where the package proved one about
+    // `isNonNeg`, so the pin fails to elaborate.
+    let honest_model = "\"model\": \"Domain.Rational.isNonNeg\"";
+    assert!(
+        manifest.contains(honest_model),
+        "expected the isNonNeg bridge"
+    );
+    let dir = temp_dir("cert-k5-bridge-other-model");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("cert-manifest.json"),
+        manifest.replacen(honest_model, "\"model\": \"Domain.Rational.isNonPos\"", 1),
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
+    assert!(
+        !ok,
+        "a bridge naming another source function must be DECLINED:\n{out}"
+    );
+    assert!(
+        !out.contains("CERTIFIED"),
+        "a bridge naming another source function credited:\n{out}"
+    );
+
+    // Tamper B: the shapes the manifest gate refuses outright, before any
+    // Lean step — a statement smuggled back in beside the structure, an
+    // encoder kind outside the closed set, and a statement kind outside the
+    // two the checker renders.
     for (label, tampered) in [
         (
             "a declared statement",
@@ -8770,6 +5820,10 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         (
             "an unknown encoder kind",
             manifest.replacen("\"kind\": \"record\"", "\"kind\": \"matrix\"", 1),
+        ),
+        (
+            "an unknown statement kind",
+            manifest.replacen("\"kind\": \"exact\"", "\"kind\": \"total\"", 1),
         ),
     ] {
         let dir = temp_dir("cert-k5-bridge-manifest-gate");
@@ -8790,18 +5844,18 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     );
     let dir = temp_dir("cert-k5-bridge-sorry-tamper");
     copy_dir(&out_dir, &dir);
-    std::fs::write(dir.join("cert").join("Bridge.lean"), sorried).unwrap();
+    std::fs::write(dir.join("cert").join("BridgeProof.lean"), sorried).unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
     assert!(
         ok,
         "a bridge failing only its axiom audit must not sink the exports:\n{out}"
     );
     assert!(
-        out.contains("10 checked exports"),
+        out.contains("12 checked exports"),
         "the export verdict must stand beside an uncredited bridge:\n{out}"
     );
     assert!(
-        out.contains("source-bridges: 9 of 10 credited"),
+        out.contains("source-bridges: 11 of 12 credited"),
         "the sorry'd bridge must lose exactly its own credit:\n{out}"
     );
     assert!(
@@ -8835,12 +5889,6 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     // that law's bridged pin at exactly the declared conjunction, so the
     // package's `_bridged` corollary — which proves one conjunct FEWER — no
     // longer has the pinned type. A claim cannot declare more than it proves.
-    //
-    // The other direction is deliberately not a decline: a claim that lists
-    // fewer bridges than its corollary happens to prove is claiming LESS, and
-    // it simply drops out of the bridged surface (`bridged-laws` counts one
-    // less denominator). Nothing is credited that was not proven, which is why
-    // section 4.1 calls this list a producer choice.
     let at = manifest
         .find("\"bridges\": [\"")
         .expect("the first k5 law-claim declares the bridges it conjoins");
@@ -8867,30 +5915,46 @@ fn cert_tripwire_declines_tampered_source_bridges() {
         "an over-declared law-claim surface credited:\n{out}"
     );
 
-    // Tamper E: the composition step, which has no fixed script that closes
-    // every shape, degraded to `sorry`. The `first | … | sorry` in the emitted
-    // proof is what makes this a not-credited bridge instead of a failed build,
-    // and a failed build would decline the whole package.
-    let sorried = sorry_out_theorem(
-        &bridge_lean,
-        "_root_.AverCert.Bridge.Domain_Rational_isNonPos_sourceModel",
-    );
-    let dir = temp_dir("cert-k5-bridge-composition-tamper");
+    // Tamper E: the per-function step lemma of `isNonPos`, degraded to `sorry`.
+    // The `first | … | sorry` in the emitted proof is what makes a step that
+    // cannot close a not-credited bridge instead of a failed build, and the
+    // step is cited only by the bridges whose call closure reaches it. The
+    // step lemmas are emitted in slices (`BridgeSteps<k>.lean`), so the
+    // tamper finds the slice that carries this one.
+    let step_doc = "/-- One step of `Domain.Rational.isNonPos`";
+    let (steps_file, steps_lean) = std::fs::read_dir(&cert)
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().to_string_lossy().to_string();
+            (name.starts_with("BridgeSteps") && name.ends_with(".lean")).then_some(name)
+        })
+        .map(|name| {
+            let text = std::fs::read_to_string(cert.join(&name)).unwrap();
+            (name, text)
+        })
+        .find(|(_, text)| text.contains(step_doc))
+        .expect("expected the isNonPos step lemma in a BridgeSteps slice");
+    let at = steps_lean.find(step_doc).unwrap();
+    let name_at = steps_lean[at..].find("theorem ").expect("the step lemma") + at + 8;
+    let name_end = steps_lean[name_at..].find(' ').expect("its name ends") + name_at;
+    let step_name = &steps_lean[name_at..name_end];
+    let sorried = sorry_out_theorem(&steps_lean, step_name);
+    let dir = temp_dir("cert-k5-bridge-step-tamper");
     copy_dir(&out_dir, &dir);
-    std::fs::write(dir.join("cert").join("Bridge.lean"), sorried).unwrap();
+    std::fs::write(dir.join("cert").join(&steps_file), sorried).unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
     assert!(
         ok,
-        "a composition step that cannot close must not decline the package:\n{out}"
+        "a step lemma that cannot close must not decline the package:\n{out}"
     );
     assert!(
-        out.contains("10 checked exports")
-            && out.contains("source-bridges: 9 of 10 credited")
+        out.contains("12 checked exports")
+            && out.contains("source-bridges: 11 of 12 credited")
             && out.contains(
                 "source-bridge not credited: Domain_Rational_isNonPos \
                  (proof depends on sorryAx)"
             ),
-        "the unclosed composition costs exactly its own bridge:\n{out}"
+        "the unclosed step costs exactly its own bridge:\n{out}"
     );
     assert!(
         out.contains("law-claims: 11 of 11 credited")
@@ -8904,15 +5968,19 @@ fn cert_tripwire_declines_tampered_source_bridges() {
 /// The theorem is found by its `theorem <name> :` header and ends at the blank
 /// line before the next doc comment.
 fn sorry_out_theorem(lean: &str, name: &str) -> String {
-    let header = format!("theorem {name} :\n");
+    let header = format!("theorem {name} :");
     let at = lean
         .find(&header)
         .unwrap_or_else(|| panic!("expected the theorem {name}"));
     let rest = &lean[at..];
     let assign = rest.find(" := by\n").expect("expected a tactic proof");
-    let end = rest[assign..]
-        .find("\n\n/--")
-        .expect("expected the theorem to end before the next doc comment")
+    // The next declaration opens with its `#guard_msgs` isolation line, its
+    // doc comment, or the namespace's `end`.
+    let end = ["\n\n#guard_msgs", "\n\n/--", "\nend AverCert"]
+        .iter()
+        .filter_map(|next| rest[assign..].find(next))
+        .min()
+        .expect("expected the theorem to end before the next declaration")
         + assign;
     format!(
         "{}{} := by\n  sorry{}",

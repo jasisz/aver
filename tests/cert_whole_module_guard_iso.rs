@@ -1,7 +1,21 @@
+//! Guard-isolation checks for the certificate wall's whole-module and
+//! byte-pin conjuncts.
+//!
+//! Each test hands the checker-owned wall a hostile artifact (hostile bytes,
+//! a hostile declaration, or both) inside a real compiled package, and states
+//! the verdict as Lean `example`s the kernel decides: the real conjunct
+//! rejects the hostile artifact, and — where one conjunct is claimed to be the
+//! sole rejector — a literal copy of the live wall definition weakened by
+//! exactly that conjunct (cut from the materialized wall source, with the
+//! removed text asserted to occur exactly once) accepts it. A moved or renamed
+//! conjunct therefore fails the test loudly instead of leaving a stale hand
+//! copy passing.
 #![cfg(feature = "wasm")]
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::aver_command;
 
@@ -11,12 +25,189 @@ mod cert_wall;
 mod scratch_dir;
 
 use cert_wall::materialize as materialize_wall;
-use scratch_dir::temp_dir;
+use scratch_dir::{ScratchDir, temp_dir};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn assert_manifest_decode_declines(wasm: &std::path::Path, cert: &std::path::Path, expected: &str) {
+fn lake_available() -> bool {
+    lean_required::lake_available()
+}
+
+/// Compile `fixture` (a path under the repository root) with `--certify`,
+/// materialize the wall into its package and build the package's acceptance
+/// root (`ArtifactCertificate`, which imports `Artifact`), so a probe can
+/// import it. Returns the scratch directory, the package directory and the
+/// artifact bytes.
+fn built_package(fixture: &str, extra: &[&str], prefix: &str) -> (ScratchDir, PathBuf, Vec<u8>) {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir(prefix);
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(fixture)
+        .args(extra)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "{fixture} compile failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let stem = Path::new(fixture)
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let wasm = std::fs::read(out_dir.join(format!("{stem}.wasm"))).unwrap();
+    let cert = out_dir.join("cert");
+    materialize_wall(&cert);
+    let build = Command::new("lake")
+        .current_dir(&cert)
+        .args(["build", "ArtifactCertificate"])
+        .output()
+        .expect("lake builds the acceptance root");
+    assert!(
+        build.status.success(),
+        "{fixture} certificate failed to build before its guard probe:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    (out_dir, cert, wasm)
+}
+
+/// Stage the checker-owned wall alone (no package) and build it, for probes
+/// over synthetic modules. `roots` names the modules a probe imports; the lake
+/// library lists their whole import closure within the wall, because a
+/// `roots` list is not extended by imports and a module outside it is never
+/// built (and the modules that import package data cannot be built here).
+fn built_wall(prefix: &str, roots: &[&str]) -> ScratchDir {
+    let wall_dir = temp_dir(prefix);
+    std::fs::create_dir_all(&wall_dir).unwrap();
+    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
+    for source in wall.sources {
+        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
+    }
+    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
+    let imports_of = |module: &str| -> Vec<String> {
+        let source = wall
+            .sources
+            .iter()
+            .find(|source| source.name.strip_suffix(".lean") == Some(module))
+            .unwrap_or_else(|| panic!("the probe needs `{module}`, which the wall does not stage"));
+        // Toolchain imports (`Std.*`) are not wall modules and need no root.
+        source
+            .contents
+            .lines()
+            .filter_map(|line| line.strip_prefix("import "))
+            .map(|name| name.trim().to_string())
+            .filter(|name| {
+                wall.sources
+                    .iter()
+                    .any(|source| source.name.strip_suffix(".lean") == Some(name.as_str()))
+            })
+            .collect()
+    };
+    let mut closure: BTreeSet<String> = BTreeSet::new();
+    let mut pending: Vec<String> = roots.iter().map(|root| root.to_string()).collect();
+    while let Some(module) = pending.pop() {
+        if closure.insert(module.clone()) {
+            pending.extend(imports_of(&module));
+        }
+    }
+    let roots = closure
+        .iter()
+        .map(|root| format!("`{root}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(
+        wall_dir.join("lakefile.lean"),
+        format!(
+            "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
+             @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n"
+        ),
+    )
+    .unwrap();
+    let build = Command::new("lake")
+        .current_dir(&wall_dir)
+        .arg("build")
+        .output()
+        .expect("lake builds the staged wall");
+    assert!(
+        build.status.success(),
+        "the staged wall failed to build:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    wall_dir
+}
+
+/// Elaborate `lean` as `{file}` inside `dir` with `lake env lean`, and assert
+/// every `example` in it holds.
+fn assert_probe_holds(dir: &Path, file: &str, lean: &str) {
+    std::fs::write(dir.join(file), lean).unwrap();
+    let check = Command::new("lake")
+        .current_dir(dir)
+        .args(["env", "lean", file])
+        .output()
+        .expect("lake env lean runs the probe");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        check.status.success() && !combined.contains("error"),
+        "{file} failed:\n{combined}"
+    );
+}
+
+/// The declared host-role table of a package, from its public manifest.
+fn manifest_roles(cert: &Path) -> serde_json::Value {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(cert.join("cert-manifest.json")).unwrap()).unwrap();
+    manifest["hostRoleTable"].clone()
+}
+
+fn role(roles: &serde_json::Value, name: &str) -> Option<u32> {
+    roles[name].as_u64().map(|index| index as u32)
+}
+
+fn lean_option(index: Option<u32>) -> String {
+    index.map_or_else(|| "none".to_string(), |index| format!("some {index}"))
+}
+
+/// A `CertDecode.AddSub.Roles` literal.
+fn roles_lit(roles: &serde_json::Value, overrides: &[(&str, Option<u32>)]) -> String {
+    let pick = |name: &str| -> String {
+        overrides
+            .iter()
+            .find(|(field, _)| *field == name)
+            .map_or_else(
+                || lean_option(role(roles, name)),
+                |(_, value)| lean_option(*value),
+            )
+    };
+    format!(
+        "({{ box := {}, add := {}, mul := {}, sub := {}, toIndex := {}, cmp := {}, eq := {}, divmod := {} }} : CertDecode.AddSub.Roles)",
+        pick("box"),
+        pick("add"),
+        pick("mul"),
+        pick("sub"),
+        pick("toIndex"),
+        pick("cmp"),
+        pick("eq"),
+        pick("divmod"),
+    )
+}
+
+fn assert_manifest_decode_declines(wasm: &Path, cert: &Path, expected: &str) {
     let output = aver_command()
         .arg("cert")
         .arg("verify")
@@ -40,25 +231,11 @@ fn assert_manifest_decode_declines(wasm: &std::path::Path, cert: &std::path::Pat
 }
 
 fn section_offset_after_export(bytes: &[u8]) -> usize {
-    fn read_uleb(bytes: &[u8], cursor: &mut usize) -> usize {
-        let mut value = 0usize;
-        let mut shift = 0usize;
-        loop {
-            let byte = bytes[*cursor];
-            *cursor += 1;
-            value |= usize::from(byte & 0x7f) << shift;
-            if byte & 0x80 == 0 {
-                return value;
-            }
-            shift += 7;
-        }
-    }
-
     let mut cursor = 8usize;
     while cursor < bytes.len() {
         let id = bytes[cursor];
         cursor += 1;
-        let size = read_uleb(bytes, &mut cursor);
+        let size = read_uleb_at(bytes, &mut cursor);
         cursor += size;
         if id == 7 {
             return cursor;
@@ -68,20 +245,24 @@ fn section_offset_after_export(bytes: &[u8]) -> usize {
 }
 
 /// The declared closure of the emitted certificate, read back out of the
-/// `Artifact.lean` the producer just wrote. The whole-module guard-iso needs it
-/// to keep its escaped-call control non-vacuous: an admitted index is not a
-/// mutation that leaves the closure.
+/// `Artifact.lean` the producer just wrote
+/// (`closureClaim := ⟨roots, helpers, admitted⟩`). The whole-module guard-iso
+/// needs it to keep its escaped-call control non-vacuous: an admitted index is
+/// not a mutation that leaves the closure.
 fn admitted_closure_indices(artifact_lean: &Path) -> BTreeSet<u32> {
     let text = std::fs::read_to_string(artifact_lean).expect("Artifact.lean exists");
     let start = text
-        .find("admitted := [")
-        .expect("Artifact.lean declares the closure's admitted set")
-        + "admitted := [".len();
-    let end = start
-        + text[start..]
-            .find(']')
-            .expect("the admitted set is a closed list");
-    text[start..end]
+        .find("closureClaim := ⟨")
+        .expect("Artifact.lean declares the closure claim")
+        + "closureClaim := ⟨".len();
+    let end = start + text[start..].find('⟩').expect("the closure claim closes");
+    let lists: Vec<&str> = text[start..end]
+        .split(']')
+        .map(|part| part.trim_start_matches([',', ' ']).trim_start_matches('['))
+        .filter(|part| !part.trim().is_empty())
+        .collect();
+    let admitted = lists.last().expect("the admitted set is the third list");
+    admitted
         .split(',')
         .map(|entry| {
             entry
@@ -150,11 +331,11 @@ fn certified_opcode_offsets(bytes: &[u8]) -> (usize, u32, usize) {
             _ => {}
         }
     }
-    let (call_offset, call_target) = call.expect("jsonInt must directly call its box helper");
-    // The hostile artifact below adds 1 to the byte at `call_offset`, the
-    // lowest LEB128 byte of the call target, so the call lands on the next
-    // function index whatever the encoding width is. That only holds while
-    // the low seven bits do not carry into the continuation bit.
+    let (call_offset, call_target) = call.expect("jsonInt must directly call a helper");
+    // The hostile artifact below adds a delta to the byte at `call_offset`, the
+    // lowest LEB128 byte of the call target, so the call lands on another
+    // function index whatever the encoding width is. That only holds while the
+    // low seven bits do not carry into the continuation bit.
     assert!(
         call_target & 0x7f != 0x7f,
         "GuardIso bumps the low LEB byte of the call target; it must not carry"
@@ -171,845 +352,12 @@ fn leb_low_byte(index: u32) -> u8 {
     if index >= 0x80 { low | 0x80 } else { low }
 }
 
-/// Five hostile artifacts leave all sibling conjuncts true, fail exactly their
-/// named whole-module guard, and pass the literal one-conjunct-weakened copy.
-#[test]
-fn whole_module_guards_are_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping whole-module GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-whole-module-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("examples/data/json.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile json fixture for whole-module GuardIso");
-    assert!(
-        compile.status.success(),
-        "json compile failed for whole-module GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build json certificate before whole-module GuardIso");
-    assert!(
-        build.status.success(),
-        "json certificate failed before whole-module GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    // The three new JSON fields are required and their nested objects have an
-    // exact shape; malformed candidates decline before any Lean build.
-    let manifest_path = cert.join("cert-manifest.json");
-    let honest_manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    let wasm_path = out_dir.join("json.wasm");
-    let mut malformed = honest_manifest.clone();
-    malformed
-        .as_object_mut()
-        .unwrap()
-        .remove("declaredUncertified");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&malformed).unwrap(),
-    )
-    .unwrap();
-    assert_manifest_decode_declines(
-        &wasm_path,
-        &cert,
-        "missing array field `declaredUncertified`",
-    );
-
-    let mut malformed = honest_manifest.clone();
-    malformed["capabilities"][0]["extra"] = serde_json::json!(true);
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&malformed).unwrap(),
-    )
-    .unwrap();
-    assert_manifest_decode_declines(
-        &wasm_path,
-        &cert,
-        "must contain exactly fields module, name",
-    );
-
-    let mut malformed = honest_manifest.clone();
-    malformed["start"]["function_index"] = serde_json::json!(0);
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&malformed).unwrap(),
-    )
-    .unwrap();
-    assert_manifest_decode_declines(&wasm_path, &cert, "absent start must use null");
-
-    let mut malformed = honest_manifest.clone();
-    malformed.as_object_mut().unwrap().remove("hostRoleTable");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&malformed).unwrap(),
-    )
-    .unwrap();
-    assert_manifest_decode_declines(&wasm_path, &cert, "missing object field `hostRoleTable`");
-
-    let mut malformed = honest_manifest.clone();
-    malformed["hostRoleTable"]["extra"] = serde_json::json!(0);
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&malformed).unwrap(),
-    )
-    .unwrap();
-    assert_manifest_decode_declines(
-        &wasm_path,
-        &cert,
-        "must contain exactly fields box, add, mul, sub",
-    );
-    let mut malformed = honest_manifest.clone();
-    malformed.as_object_mut().unwrap().remove("stringHostRoles");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&malformed).unwrap(),
-    )
-    .unwrap();
-    assert_manifest_decode_declines(&wasm_path, &cert, "missing array field `stringHostRoles`");
-    let mut malformed = honest_manifest.clone();
-    malformed["stringHostRoles"][0]["extra"] = serde_json::json!(true);
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&malformed).unwrap(),
-    )
-    .unwrap();
-    assert_manifest_decode_declines(
-        &wasm_path,
-        &cert,
-        "must contain exactly fields function_index, role",
-    );
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&honest_manifest).unwrap(),
-    )
-    .unwrap();
-
-    let wasm = std::fs::read(&wasm_path).unwrap();
-    let start_insert_offset = section_offset_after_export(&wasm);
-    let (call_offset, call_target, local_get_offset) = certified_opcode_offsets(&wasm);
-    let capability_offset = wasm
-        .windows(b"console_print".len())
-        .position(|window| window == b"console_print")
-        .expect("json wasm must import aver.console_print");
-    assert_eq!(wasm[capability_offset], b'c');
-    assert_eq!(wasm[call_offset], leb_low_byte(call_target));
-    // The escaped-call control below re-points `jsonInt`'s first call by adding
-    // a delta to the LOW LEB byte of its target. A fixed delta of 1 goes
-    // vacuous the moment the admitted closure happens to contain the next
-    // function index — which is exactly what happened when one more export
-    // became certified. The delta is therefore derived from the closure the
-    // producer just declared, so the mutated call provably leaves it.
-    let admitted = admitted_closure_indices(&cert.join("Artifact.lean"));
-    assert!(
-        admitted.contains(&call_target),
-        "jsonInt's own box helper must be inside the declared closure: \
-         {call_target} not in {admitted:?}"
-    );
-    let call_delta = (1u32..=0x7f)
-        .find(|delta| {
-            (call_target & 0x7f) + delta <= 0x7f && !admitted.contains(&(call_target + delta))
-        })
-        .expect("some in-byte call target must sit outside the admitted closure");
-    let lean = format!(
-        r#"import Artifact
-
-open CertPrelude AverCert AverCert.Schema
-set_option maxRecDepth 300000
-
-def withoutExports (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.importsWithinCapabilities artifact = true ∧
-  AcceptedArtifact.startAccounted artifact = true ∧
-  AcceptedArtifact.closureIsolation artifact = true
-def withoutCapabilities (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.exportsAccounted artifact = true ∧
-  AcceptedArtifact.startAccounted artifact = true ∧
-  AcceptedArtifact.closureIsolation artifact = true
-def withoutStart (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.exportsAccounted artifact = true ∧
-  AcceptedArtifact.importsWithinCapabilities artifact = true ∧
-  AcceptedArtifact.closureIsolation artifact = true
-def withoutClosure (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.exportsAccounted artifact = true ∧
-  AcceptedArtifact.importsWithinCapabilities artifact = true ∧
-  AcceptedArtifact.startAccounted artifact = true
-
--- (a) Existing byte-derived export removed only from the declaration.
-def missingExportManifest : Manifest :=
-  {{ manifest with subject :=
-      {{ manifest.subject with
-         declaredUncertified := manifest.subject.declaredUncertified.tail }} }}
-def missingExportArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with manifest := missingExportManifest }}
-example : AcceptedArtifact.exportsAccounted missingExportArtifact = false := rfl
-example : withoutExports missingExportArtifact := ⟨rfl, rfl, rfl⟩
-
--- (b) Actual console import is outside the declared capability set.
-def unknownCapabilityManifest : Manifest :=
-  {{ manifest with subject :=
-      {{ manifest.subject with capabilities := [("aver", "xonsole_print")] }} }}
-def unknownCapabilityBytes : Nat := ArtifactBytes.modBytes +
-  (21 <<< (8 * {capability_offset}))
-def unknownCapabilityArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with manifest := unknownCapabilityManifest, modBytes := unknownCapabilityBytes }}
-example : CAPABILITY_REGISTRY.contains ("aver", "xonsole_print") = false := rfl
-example : AcceptedArtifact.importsWithinCapabilities unknownCapabilityArtifact = false := rfl
-example : withoutCapabilities unknownCapabilityArtifact := ⟨rfl, rfl, rfl⟩
-
--- (c) Insert `start 0` after exports while the manifest declares absent.
-def startSectionBytes : Nat :=
-  (ArtifactBytes.modBytes &&& ((1 <<< (8 * {start_insert_offset})) - 1)) +
-  (0x0108 <<< (8 * {start_insert_offset})) +
-  ((ArtifactBytes.modBytes >>> (8 * {start_insert_offset})) <<<
-    (8 * ({start_insert_offset} + 3)))
-def undeclaredStartArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with modBytes := startSectionBytes, modLen := ArtifactBytes.modLen + 3 }}
-example : AcceptedArtifact.startAccounted undeclaredStartArtifact = false := rfl
-example : withoutStart undeclaredStartArtifact := ⟨rfl, rfl, rfl⟩
-
--- (d) Spike negative control: jsonInt's call leaves the admitted closure.
-def escapedCallBytes : Nat := ArtifactBytes.modBytes +
-  ({call_delta} <<< (8 * {call_offset}))
-def escapedCallArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with modBytes := escapedCallBytes }}
-example : AcceptedArtifact.closureIsolation escapedCallArtifact = false := rfl
-example : withoutClosure escapedCallArtifact := ⟨rfl, rfl, rfl⟩
-
--- (e) `local.get` (0x20) -> `global.get` (0x23) in a certified root.
-def globalReadBytes : Nat := ArtifactBytes.modBytes +
-  (3 <<< (8 * {local_get_offset}))
-def globalReadArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with modBytes := globalReadBytes }}
-example : AcceptedArtifact.closureIsolation globalReadArtifact = false := rfl
-example : withoutClosure globalReadArtifact := ⟨rfl, rfl, rfl⟩
-"#
-    );
-    std::fs::write(cert.join("GuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("GuardIso.lean")
-        .output()
-        .expect("run whole-module GuardIso");
-    assert!(
-        check.status.success(),
-        "whole-module GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// S3 GuardIso: module bytes and every per-claim decode stay identical, while
-/// only the manifest's add role is changed. Full acceptance fails at the
-/// module-wide role-table equality; deleting exactly that conjunct accepts the
-/// same hostile manifest.
-#[test]
-fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping S3 host-role GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-inkernel-host-role-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("examples/data/json.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile json fixture for S3 GuardIso");
-    assert!(
-        compile.status.success(),
-        "json compile failed for S3 GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let wasm = std::fs::read(out_dir.join("json.wasm")).unwrap();
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    let to_index = match to_index_idx {
-        Some(index) => format!("some {index}"),
-        None => "none".to_string(),
-    };
-    // The two comparison roles are declared honestly in every table below: this
-    // test attacks the `add` and `toIndex` bindings, and a hostile comparison
-    // declaration is the separate per-role guard-iso probe.
-    let lean_role = |index: Option<u32>| match index {
-        Some(index) => format!("some {index}"),
-        None => "none".to_string(),
-    };
-    let cmp = lean_role(cmp_idx);
-    let eq = lean_role(eq_idx);
-    let (box_idx, add_idx, mul_idx, sub_idx) = (
-        box_idx.expect("json box role"),
-        add_idx.expect("json add role"),
-        mul_idx.expect("json mul role"),
-        sub_idx.expect("json sub role"),
-    );
-    let wrong_add_idx = add_idx + 1;
-    assert_ne!(wrong_add_idx, add_idx);
-    // A hostile `toIndex` declaration: any index other than the one the export
-    // section binds. When the module exports no helper at all, declaring one is
-    // itself the attack (the fused read's contract slot would become wirable).
-    let hostile_to_index = match to_index_idx {
-        Some(index) => format!("some {}", index + 1),
-        None => "some 0".to_string(),
-    };
-
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build json certificate before S3 GuardIso");
-    assert!(
-        build.status.success(),
-        "json certificate failed before S3 GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    // The two weakened checks below are CUT FROM THE LIVE acceptance source the
-    // certificate just elaborated against, not hand-transcribed: a hand copy
-    // silently stops being a one-conjunct weakening the moment the real check
-    // grows a conjunct, and then it attributes a rejection to less than it
-    // claims.
-    let accepted_core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
-        .expect("materialized wall has AcceptedArtifactCore.lean");
-    let live_table_check = extract_wall_def(&accepted_core, "arithTableCheck");
-    let to_index_name = "      (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&\n";
-    let to_index_template = "      arithRoleCheck n len .toIndex roles.toIndex p &&\n";
-    for (conjunct, what) in [
-        (to_index_name, "toIndex export-name"),
-        (to_index_template, "toIndex template"),
-    ] {
-        assert_eq!(
-            live_table_check.matches(conjunct).count(),
-            1,
-            "the {what} conjunct moved; refit the GuardIso surgery"
-        );
-    }
-    assert_eq!(
-        live_table_check.matches("arithTableCheck").count(),
-        1,
-        "`arithTableCheck` is not a single top-level definition; refit the surgery"
-    );
-    let weakened_table_check = |name: &str, drop: &[&str]| {
-        let mut text = live_table_check.clone();
-        for conjunct in drop {
-            text = text.replace(conjunct, "");
-        }
-        text.replace("arithTableCheck", name)
-    };
-    let to_index_weak_copies = format!(
-        "namespace AverCert.AcceptedArtifact\n\n\
-         /-! Live acceptance check weakened by EXACTLY the two `toIndex` conjuncts. -/\n{}\n\n\
-         /-! Live acceptance check weakened by EXACTLY the `toIndex` export-name\n    \
-         equality; the template equality it keeps is vacuous on an absent role. -/\n{}\n\n\
-         end AverCert.AcceptedArtifact\n",
-        weakened_table_check(
-            "arithTableCheckWithoutToIndex",
-            &[to_index_name, to_index_template]
-        ),
-        weakened_table_check("arithTableCheckWithoutToIndexName", &[to_index_name]),
-    );
-    // The second toIndex attack, available only when the module really does
-    // export the helper: declare the role ABSENT. `arithRoleCheck` is vacuous on
-    // `none`, so the template equality accepts this and the export-name equality
-    // is the only thing that rejects it. This is the case that says the two pins
-    // are not redundant and neither may be dropped for the other.
-    let to_index_none_block = match to_index_idx {
-        None => String::new(),
-        Some(_) => format!(
-            r#"
--- Same bytes and claims; the manifest declares `toIndex` ABSENT while the
--- module exports `__aint_to_index`. Left unchecked this is the strongest form
--- of the attack: an unbound role is what `Subject.hostRoles` reports to claim
--- matching, so the producer would be free to decide whether the index-extraction
--- contract exists at all.
-def absentToIndexTable : CertDecode.AddSub.Roles :=
-  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
-     toIndex := none, cmp := {cmp}, eq := {eq} }}
-def absentToIndexManifest : Manifest :=
-  {{ manifest with subject :=
-      {{ manifest.subject with hostRoleTable := some absentToIndexTable }} }}
-def absentToIndexArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with manifest := absentToIndexManifest }}
-
--- Isolation: every sibling decoded fact still accepts it.
-example : withoutHostRoleTable absentToIndexArtifact := by
-  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
-    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
-  exact honestDecoded.2
-
-example : ¬ AcceptedArtifact.decodedNonExprFacts absentToIndexArtifact := by
-  intro h
-  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-      (some absentToIndexTable) Artifact.data.manifest.subject.arithParams = true := h.1
-  exact absurd bad (by decide +kernel)
-
--- Attribution: the copy that KEEPS the toIndex template equality and drops only
--- the export-name equality ACCEPTS the absent declaration. The template pin is
--- blind to this attack by construction — it is vacuous on `none` — so the name
--- pin is load-bearing on its own and must not be replaced by the template one.
-example : AcceptedArtifact.arithTableCheckWithoutToIndexName ArtifactBytes.modBytes
-    ArtifactBytes.modLen
-    (some absentToIndexTable) Artifact.data.manifest.subject.arithParams = true := by
-  decide +kernel
-"#
-        ),
-    };
-
-    let lean = format!(
-        r#"import ArtifactCertificate
-
-open CertPrelude AverCert AverCert.Schema
-set_option maxRecDepth 300000
-
-def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
-  have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
-  exact accepted.2.2.2.2.2.2.2.1
-
--- Same bytes and claims; only the manifest's add index is hostile.
-def hostileRoleTable : CertDecode.AddSub.Roles :=
-  {{ box := some {box_idx}, add := some {wrong_add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
-     toIndex := {to_index}, cmp := {cmp}, eq := {eq} }}
-def hostileManifest : Manifest :=
-  {{ manifest with subject :=
-      {{ manifest.subject with hostRoleTable := some hostileRoleTable }} }}
-def hostileArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with manifest := hostileManifest }}
-
--- Literal one-conjunct-weakened copy: only the roleTable equality is absent.
-def withoutHostRoleTable (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.decodedStringHostRoles artifact ∧
-  AcceptedArtifact.decodedNonExprClaimFacts artifact
-
--- Every sibling decoded fact accepts the hostile manifest with identical bytes.
-example : withoutHostRoleTable hostileArtifact := by
-  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
-    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
-  exact honestDecoded.2
-
--- The full predicate fails exactly at the omitted module-wide template pin:
--- the hostile add index does not carry the canonical add helper body.
-example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
-  intro h
-  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-      (some hostileRoleTable) Artifact.data.manifest.subject.arithParams = true := h.1
-  exact absurd bad (by decide +kernel)
-
--- Same bytes and claims; only the manifest's toIndex index is hostile. The
--- fused vector-read face wires an ABSTRACT contract function at the declared
--- index and never interprets its body, so this index must be byte-bound to the
--- `__aint_to_index` export or the contract could be wired to any function.
-def hostileToIndexTable : CertDecode.AddSub.Roles :=
-  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
-     toIndex := {hostile_to_index}, cmp := {cmp}, eq := {eq} }}
-def hostileToIndexManifest : Manifest :=
-  {{ manifest with subject :=
-      {{ manifest.subject with hostRoleTable := some hostileToIndexTable }} }}
-def hostileToIndexArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with manifest := hostileToIndexManifest }}
-
--- Isolation: every sibling decoded fact still accepts the hostile toIndex.
-example : withoutHostRoleTable hostileToIndexArtifact := by
-  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
-    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
-  exact honestDecoded.2
-
--- The full predicate fails exactly at the omitted export-name binding.
-example : ¬ AcceptedArtifact.decodedNonExprFacts hostileToIndexArtifact := by
-  intro h
-  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-      (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := h.1
-  exact absurd bad (by decide +kernel)
-
--- Attribution, one conjunct deep: a literal copy of `arithTableCheck` with ONLY
--- the two toIndex conjuncts removed ACCEPTS the same hostile table. So the
--- rejection above is caused by those conjuncts alone, not by a sibling check
--- that happens to dislike the hostile manifest for an unrelated reason. Both
--- have to come out: a hostile INDEX is refused by the export-name equality and
--- again by the template equality, since the function at the hostile index does
--- not carry the canonical index-helper body either.
-{to_index_weak_copies}
-example : AcceptedArtifact.arithTableCheckWithoutToIndex ArtifactBytes.modBytes
-    ArtifactBytes.modLen
-    (some hostileToIndexTable) Artifact.data.manifest.subject.arithParams = true := by
-  decide +kernel
-{to_index_none_block}
--- A carriered artifact cannot declare the table absent either: the byte-derived
--- box export is present, so the carrierless `none`/`none` pin never closes.
-def absentTableManifest : Manifest :=
-  {{ manifest with subject :=
-      {{ manifest.subject with hostRoleTable := none, arithParams := none }} }}
-def absentTableArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with manifest := absentTableManifest }}
-example : ¬ AcceptedArtifact.decodedNonExprFacts absentTableArtifact := by
-  intro h
-  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-      none none = true := h.1
-  exact absurd bad (by decide +kernel)
-"#
-    );
-    std::fs::write(cert.join("HostRoleGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("HostRoleGuardIso.lean")
-        .output()
-        .expect("run S3 host-role GuardIso");
-    assert!(
-        check.status.success(),
-        "S3 host-role GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// Per-role GuardIso for the two Int value-comparison host roles, with
-/// EXCLUSIVE attribution. For each of `cmp` and `eq` the same three-part
-/// pattern is exhibited rather than asserted:
-///   * the hostile declaration is rejected by the REAL wall;
-///   * it is ACCEPTED by a literal copy of the live acceptance check weakened
-///     by exactly THAT role's two conjuncts;
-///   * it is STILL REJECTED by the copy weakened by the OTHER role's two
-///     conjuncts — so neither role's pins are doing the other's work.
-///
-/// Both attacks are run twice: once with a hostile INDEX, and once with the
-/// role declared ABSENT while the module exports the helper. The second is the
-/// case the template equality is blind to by construction (it is vacuous on
-/// `none`), so it is what makes the export-name equality load-bearing on its
-/// own. The swapped table — `cmp` declared at the `eq` export's index and vice
-/// versa — is the attack that only the name pin can see at all, since the two
-/// helpers declare the SAME function type; that fact is stated against the
-/// module's own type section rather than assumed.
-///
-/// Every weakened copy is CUT FROM THE LIVE materialized wall source, with the
-/// removed conjunct asserted to occur exactly once first, so a moved or
-/// renamed conjunct fails this test loudly instead of leaving a stale hand
-/// copy quietly passing.
-#[test]
-fn inkernel_int_comparison_roles_guard_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping Int-comparison role GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-intcmp-role-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/certprobe.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile certprobe fixture for the Int-comparison role GuardIso");
-    assert!(
-        compile.status.success(),
-        "certprobe compile failed for the Int-comparison role GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let wasm = std::fs::read(out_dir.join("certprobe.wasm")).unwrap();
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    let (box_idx, add_idx, mul_idx, sub_idx) = (
-        box_idx.expect("certprobe box role"),
-        add_idx.expect("certprobe add role"),
-        mul_idx.expect("certprobe mul role"),
-        sub_idx.expect("certprobe sub role"),
-    );
-    // The whole point of the fixture: both comparison helpers really are
-    // exported, at distinct indices, so "declared absent" is a lie about the
-    // bytes rather than a description of them.
-    let cmp_idx = cmp_idx.expect("certprobe must export __aint_cmp");
-    let eq_idx = eq_idx.expect("certprobe must export __aint_eq");
-    assert_ne!(
-        cmp_idx, eq_idx,
-        "the two helpers must be distinct functions"
-    );
-    let to_index = match to_index_idx {
-        Some(index) => format!("some {index}"),
-        None => "none".to_string(),
-    };
-    let wrong_cmp = cmp_idx + 1;
-    let wrong_eq = eq_idx + 1;
-
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build certprobe certificate before the Int-comparison role GuardIso");
-    assert!(
-        build.status.success(),
-        "certprobe certificate failed before the Int-comparison role GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    // Literal weakened copies, cut from the LIVE acceptance source the
-    // certificate just elaborated against. Four of them: each role's PAIR of
-    // conjuncts, and each role's export-name equality alone.
-    let accepted_core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
-        .expect("materialized wall has AcceptedArtifactCore.lean");
-    let live = extract_wall_def(&accepted_core, "arithTableCheck");
-    let cmp_name = "      (roles.cmp == CertDecode.AddSub.cmpIdx n len) &&\n";
-    let eq_name = "      (roles.eq == CertDecode.AddSub.eqIdx n len) &&\n";
-    let cmp_template = "      arithRoleCheck n len .cmp roles.cmp p &&\n";
-    let eq_template = " &&\n      arithRoleCheck n len .eq roles.eq p";
-    for (conjunct, what) in [
-        (cmp_name, "cmp export-name"),
-        (eq_name, "eq export-name"),
-        (cmp_template, "cmp template"),
-        (eq_template, "eq template"),
-    ] {
-        assert_eq!(
-            live.matches(conjunct).count(),
-            1,
-            "the {what} conjunct moved; refit the GuardIso surgery"
-        );
-    }
-    assert_eq!(
-        live.matches("arithTableCheck").count(),
-        1,
-        "`arithTableCheck` is not a single top-level definition; refit the surgery"
-    );
-    let weakened = |name: &str, drop: &[&str]| {
-        let mut text = live.clone();
-        for conjunct in drop {
-            text = text.replace(conjunct, "");
-        }
-        text.replace("arithTableCheck", name)
-    };
-    let weak_copies = format!(
-        "namespace AverCert.AcceptedArtifact\n\n\
-         /-! Live acceptance check weakened by EXACTLY the two `cmp` conjuncts. -/\n{}\n\n\
-         /-! Live acceptance check weakened by EXACTLY the two `eq` conjuncts. -/\n{}\n\n\
-         /-! Live acceptance check weakened by EXACTLY the `cmp` export-name equality. -/\n{}\n\n\
-         /-! Live acceptance check weakened by EXACTLY the `eq` export-name equality. -/\n{}\n\n\
-         end AverCert.AcceptedArtifact",
-        weakened("weakCmpArithTableCheck", &[cmp_name, cmp_template]),
-        weakened("weakEqArithTableCheck", &[eq_name, eq_template]),
-        weakened("weakCmpNameArithTableCheck", &[cmp_name]),
-        weakened("weakEqNameArithTableCheck", &[eq_name]),
-    );
-
-    // One hostile manifest per attack: same bytes, same claims, only the two
-    // comparison fields of the declared role table move.
-    let mut tables = String::new();
-    let mut attack = |name: &str, cmp: String, eq: String, note: &str| {
-        tables.push_str(&format!(
-            r#"
--- {note}
-def {name}Table : CertDecode.AddSub.Roles :=
-  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
-     toIndex := {to_index}, cmp := {cmp}, eq := {eq} }}
-def {name}Artifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with manifest :=
-      {{ manifest with subject :=
-          {{ manifest.subject with hostRoleTable := some {name}Table }} }} }}
-
--- Isolation: every sibling decoded fact still accepts it.
-example : withoutHostRoleTable {name}Artifact := by
-  change AcceptedArtifact.decodedStringHostRoles Artifact.data ∧
-    AcceptedArtifact.decodedNonExprClaimFacts Artifact.data
-  exact honestDecoded.2
-
--- The REAL wall rejects it, at the host-role table pin.
-example : ¬ AcceptedArtifact.decodedNonExprFacts {name}Artifact := by
-  intro h
-  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-      (some {name}Table) Artifact.data.manifest.subject.arithParams = true := h.1
-  exact absurd bad (by decide +kernel)
-"#
-        ));
-    };
-    attack(
-        "hostileCmp",
-        format!("some {wrong_cmp}"),
-        format!("some {eq_idx}"),
-        "A hostile `cmp` INDEX: any function other than the one the export section binds.",
-    );
-    attack(
-        "hostileEq",
-        format!("some {cmp_idx}"),
-        format!("some {wrong_eq}"),
-        "The mirror attack on `eq`.",
-    );
-    attack(
-        "absentCmp",
-        "none".to_string(),
-        format!("some {eq_idx}"),
-        "`cmp` declared ABSENT while the module exports `__aint_cmp`. The template \
-         equality is vacuous on `none`, so only the export-name equality can see this.",
-    );
-    attack(
-        "absentEq",
-        format!("some {cmp_idx}"),
-        "none".to_string(),
-        "The mirror absent-declaration attack on `eq`.",
-    );
-    attack(
-        "swapped",
-        format!("some {eq_idx}"),
-        format!("some {cmp_idx}"),
-        "Each role declared at the OTHER helper's index. The two helpers declare the \
-         same function type, so the declared-type gate is blind to this by construction \
-         (exhibited below).",
-    );
-
-    let lean = format!(
-        r#"import ArtifactCertificate
-
-open CertPrelude AverCert AverCert.Schema
-set_option maxRecDepth 300000
-
-def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
-  have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
-  exact accepted.2.2.2.2.2.2.2.1
-
--- Literal one-conjunct-weakened copy of the decoded-facts bundle: only the
--- role-table equality is absent.
-def withoutHostRoleTable (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.decodedStringHostRoles artifact ∧
-  AcceptedArtifact.decodedNonExprClaimFacts artifact
-
--- BYTE-DERIVED GROUND TRUTH. Both helpers are exported, at distinct indices.
-example : CertDecode.AddSub.cmpIdx ArtifactBytes.modBytes ArtifactBytes.modLen
-    = some {cmp_idx} := by decide +kernel
-example : CertDecode.AddSub.eqIdx ArtifactBytes.modBytes ArtifactBytes.modLen
-    = some {eq_idx} := by decide +kernel
-example : ({cmp_idx} : Nat) ≠ {eq_idx} := by decide
-
--- The declared-type gate CANNOT separate the two roles: the swapped table
--- passes it against this module's own type section. So the export-name
--- equality is not a redundant second opinion here — it is the only conjunct
--- with any power to say which helper is which.
-example : (match CertDecode.carrierState ArtifactBytes.modBytes ArtifactBytes.modLen with
-    | some (some c) =>
-        AverCert.WasmSlice.hostTableFuncTypesMatch ArtifactBytes.modBytes ArtifactBytes.modLen
-          c [(.cmp, {eq_idx}), (.eq, {cmp_idx})]
-    | _ => false) = true := by decide +kernel
-
--- The HONEST control: the byte-derived declaration the certificate really
--- carries, accepted by the real check, so no rejection below is an artefact of
--- the framing.
-def honestTable : CertDecode.AddSub.Roles :=
-  {{ box := some {box_idx}, add := some {add_idx}, mul := some {mul_idx}, sub := some {sub_idx},
-     toIndex := {to_index}, cmp := some {cmp_idx}, eq := some {eq_idx} }}
-example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-{tables}
-{weak_copies}
-
--- Every weakened copy still accepts the HONEST table, so each acceptance flip
--- below is caused by the hostile declaration and not by the surgery.
-example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakEqNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some honestTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-
--- ATTRIBUTION, hostile `cmp` index: accepted by the copy weakened by the two
--- `cmp` conjuncts, and STILL REJECTED by the copy weakened by the two `eq`
--- conjuncts. Both pins have to come out: a hostile index is refused by the
--- export-name equality and again by the template equality, since the function
--- at the hostile index carries some other body.
-example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some hostileCmpTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some hostileCmpTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-
--- ATTRIBUTION, hostile `eq` index: the exact mirror.
-example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some hostileEqTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some hostileEqTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-
--- ATTRIBUTION, `cmp` DECLARED ABSENT while exported: dropping the export-name
--- equality ALONE admits it — the template equality it keeps is vacuous on
--- `none` — while the `eq` name equality still rejects it. So the `cmp` name
--- pin is load-bearing on its own and cannot be replaced by the template one.
-example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some absentCmpTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakEqNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some absentCmpTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-
--- ATTRIBUTION, `eq` DECLARED ABSENT while exported: the exact mirror.
-example : AcceptedArtifact.weakEqNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some absentEqTable) Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some absentEqTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-
--- The SWAP is caught twice over, once per role: each singly-weakened copy
--- still rejects it, so the two roles' pins are complementary here too.
-example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some swappedTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    (some swappedTable) Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-"#
-    );
-    std::fs::write(cert.join("IntCmpRoleGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("IntCmpRoleGuardIso.lean")
-        .output()
-        .expect("run the Int-comparison role GuardIso");
-    assert!(
-        check.status.success(),
-        "Int-comparison role GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// Byte offset of the SOLE occurrence of `opcode` inside the body of the
-/// defined function at absolute wasm index `func_idx`.
-///
-/// The position is derived by PARSING the module — imports counted, the code
-/// entry selected by the same index the export section binds, then that
-/// entry's operator stream walked — and never from a fixed file position: a
-/// change anywhere upstream moves every body, and a stale literal offset would
-/// quietly mutate some other function while the test kept passing. Only
-/// operator START positions are examined, so an immediate byte that happens to
-/// equal `opcode` can never be mistaken for the instruction.
-fn sole_body_opcode_offset(bytes: &[u8], func_idx: u32, opcode: u8, what: &str) -> usize {
+/// Byte offsets of every instruction START equal to `opcode` inside the body
+/// of the defined function at absolute wasm index `func_idx`. Positions are
+/// derived by PARSING the module and walking the operator stream, never from
+/// a fixed file position, so an immediate byte that happens to equal `opcode`
+/// can never be mistaken for the instruction.
+fn body_opcode_offsets(bytes: &[u8], func_idx: u32, opcode: u8) -> Vec<usize> {
     let mut imported_funcs = 0u32;
     let mut code_ordinal = 0u32;
     let mut hits = Vec::new();
@@ -1043,6 +391,11 @@ fn sole_body_opcode_offset(bytes: &[u8], func_idx: u32, opcode: u8, what: &str) 
             _ => {}
         }
     }
+    hits
+}
+
+fn sole_body_opcode_offset(bytes: &[u8], func_idx: u32, opcode: u8, what: &str) -> usize {
+    let hits = body_opcode_offsets(bytes, func_idx, opcode);
     assert_eq!(
         hits.len(),
         1,
@@ -1051,351 +404,164 @@ fn sole_body_opcode_offset(bytes: &[u8], func_idx: u32, opcode: u8, what: &str) 
     hits[0]
 }
 
-/// The mirror of the Int-comparison role GuardIso above: there the BYTES are
-/// honest and the declaration moves, here the DECLARATION is honest and one
-/// byte of the module moves.
-///
-/// A live single-byte mutation inside each comparison helper's body, with
-/// every other pin left correct: `__aint_cmp` gets its `i32.gt_s` (`0x4a`)
-/// turned into `i32.lt_s` (`0x48`), `__aint_eq` gets its `i64.eq` (`0x51`)
-/// turned into `i64.ne` (`0x52`). Both mutants are still VALID wasm (asserted
-/// with `wasmparser`), both keep the export names, the export indices, the
-/// declared function types and every other module byte, and the producer-side
-/// classifier resolves the identical role table from them — so nothing but the
-/// template equality can tell them from the certified module, and the decline
-/// cannot be an artefact of a broken module.
-///
-/// LAYER. The flip does not reach this pin through `aver cert verify`: the
-/// artifact hash gate refuses a mutated wasm before any Lean process starts
-/// (`cert_tripwire_declines_flipped_countdown_body_byte` pins that behaviour).
-/// That gate is not what defends against this attack, because the hash is the
-/// producer's own datum — a hostile producer mutates the body and hashes what
-/// it mutated. So the tamper is applied at the layer the guard-iso operates
-/// at, exactly as the hostile-manifest tests do in reverse: the wall is handed
-/// the mutant's numeral (the LITERAL numeral of the byte vector validated
-/// here, not a re-derivation) together with the certificate's own honest
-/// declaration, and it has to refuse it.
-///
-/// Per mutant the same three-part pattern the file uses everywhere is
-/// exhibited rather than asserted:
-///   * the REAL wall refuses the mutant under the certificate's own table;
-///   * the copy of the live acceptance check weakened by EXACTLY that role's
-///     TEMPLATE conjunct ACCEPTS it — so that conjunct is the sole rejector,
-///     and every sibling pin (carrier, all four export-name equalities, the
-///     other six template equalities including the other comparison role)
-///     still holds of these bytes;
-///   * the copies weakened by that role's NAME equality and by the OTHER
-///     role's template equality still REJECT it — a body edit is invisible to
-///     the name pin, and the two roles are not covering for each other.
-///
-/// All four weakened copies are CUT FROM THE LIVE materialized wall source,
-/// with the removed conjunct asserted to occur exactly once first, so a moved
-/// or renamed conjunct fails this test loudly instead of leaving a stale hand
-/// copy quietly passing.
-#[test]
-fn inkernel_int_comparison_role_bodies_reject_a_flipped_body_byte() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping Int-comparison body-mutation GuardIso test: `lake` not available");
-        return;
+fn hex_le(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes.iter().rev() {
+        out.push_str(&format!("{byte:02x}"));
     }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-intcmp-body-mutation-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/certprobe.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile certprobe fixture for the Int-comparison body-mutation GuardIso");
-    assert!(
-        compile.status.success(),
-        "certprobe compile failed for the Int-comparison body-mutation GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let wasm = std::fs::read(out_dir.join("certprobe.wasm")).unwrap();
-    let honest_roles = aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    let cmp_idx = honest_roles.5.expect("certprobe must export __aint_cmp");
-    let eq_idx = honest_roles.6.expect("certprobe must export __aint_eq");
-    assert_ne!(
-        cmp_idx, eq_idx,
-        "the two helpers must be distinct functions"
-    );
+    out
+}
 
-    // The two mutation sites, located by content. Each replacement keeps the
-    // instruction's operand and result types — `i32.gt_s`/`i32.lt_s` and
-    // `i64.eq`/`i64.ne` are the same shape — so the module stays structurally
-    // valid and the decline below cannot come from wasm validation.
-    let cmp_at = sole_body_opcode_offset(&wasm, cmp_idx, 0x4a, "__aint_cmp");
-    let eq_at = sole_body_opcode_offset(&wasm, eq_idx, 0x51, "__aint_eq");
-    let mut cmp_mut = wasm.clone();
-    cmp_mut[cmp_at] = 0x48;
-    let mut eq_mut = wasm.clone();
-    eq_mut[eq_at] = 0x52;
-    for (label, mutant) in [("__aint_cmp", &cmp_mut), ("__aint_eq", &eq_mut)] {
-        wasmparser::Validator::new()
-            .validate_all(mutant)
-            .unwrap_or_else(|error| panic!("the {label} mutant must stay valid wasm: {error}"));
-        assert_eq!(
-            mutant.len(),
-            wasm.len(),
-            "the {label} mutant must keep the module length"
-        );
-        assert_eq!(
-            mutant.iter().zip(&wasm).filter(|(a, b)| a != b).count(),
-            1,
-            "the {label} mutant must differ in exactly one byte"
-        );
-        // The producer's own classifier — the independent oracle this suite
-        // runs against the kernel decoders — reads the same role table out of
-        // the mutant. The attack is invisible to everything that binds a role
-        // to an index; only the body equality can see it.
-        assert_eq!(
-            aver::codegen::cert::byte_derived_frag_host_role_indices(mutant).unwrap(),
-            honest_roles,
-            "the {label} mutant must keep every byte-derived role index"
-        );
+/// Extract one top-level `def NAME ...` block (through the line before the
+/// next top-level item) from a wall source file. Used to build LITERAL
+/// weakened copies of live checker definitions: the copy is derived from the
+/// exact source the certificate elaborated against, so a moved or renamed
+/// conjunct fails this test loudly instead of letting a stale hand copy
+/// keep passing.
+fn extract_wall_def(source: &str, name: &str) -> String {
+    let header = format!("def {name} ");
+    let alt_header = format!("def {name} :");
+    let bare_header = format!("def {name}");
+    let start = source
+        .lines()
+        .scan(0usize, |offset, line| {
+            let at = *offset;
+            *offset += line.len() + 1;
+            Some((at, line))
+        })
+        .find(|(_, line)| {
+            line.starts_with(&header) || line.starts_with(&alt_header) || *line == bare_header
+        })
+        .map(|(at, _)| at)
+        .unwrap_or_else(|| panic!("wall source has no top-level `def {name}`"));
+    let rest = &source[start..];
+    let mut end = rest.len();
+    let mut offset = 0usize;
+    for (index, line) in rest.lines().enumerate() {
+        if index > 0 && !line.is_empty() && !line.starts_with(' ') && !line.starts_with('|') {
+            end = offset;
+            break;
+        }
+        offset += line.len() + 1;
     }
+    rest[..end].trim_end().to_string()
+}
 
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build certprobe certificate before the Int-comparison body-mutation GuardIso");
-    assert!(
-        build.status.success(),
-        "certprobe certificate failed before the Int-comparison body-mutation GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    // Literal weakened copies, cut from the LIVE acceptance source the
-    // certificate just elaborated against: each comparison role's TEMPLATE
-    // equality alone, and each role's export-NAME equality alone.
-    let accepted_core = std::fs::read_to_string(cert.join("AcceptedArtifactCore.lean"))
-        .expect("materialized wall has AcceptedArtifactCore.lean");
+/// Literal copies of the live `arithTableCheck`, each weakened by exactly the
+/// listed conjuncts (asserted to occur exactly once) and renamed, wrapped in
+/// the wall's own namespace.
+fn weakened_arith_table_checks(cert_or_wall: &Path, copies: &[(&str, &[&str])]) -> String {
+    let accepted_core = std::fs::read_to_string(cert_or_wall.join("AcceptedArtifactCore.lean"))
+        .expect("the materialized wall has AcceptedArtifactCore.lean");
     let live = extract_wall_def(&accepted_core, "arithTableCheck");
-    let cmp_name = "      (roles.cmp == CertDecode.AddSub.cmpIdx n len) &&\n";
-    let eq_name = "      (roles.eq == CertDecode.AddSub.eqIdx n len) &&\n";
-    let cmp_template = "      arithRoleCheck n len .cmp roles.cmp p &&\n";
-    let eq_template = " &&\n      arithRoleCheck n len .eq roles.eq p";
-    for (conjunct, what) in [
-        (cmp_name, "cmp export-name"),
-        (eq_name, "eq export-name"),
-        (cmp_template, "cmp template"),
-        (eq_template, "eq template"),
-    ] {
-        assert_eq!(
-            live.matches(conjunct).count(),
-            1,
-            "the {what} conjunct moved; refit the GuardIso surgery"
-        );
-    }
     assert_eq!(
         live.matches("arithTableCheck").count(),
         1,
         "`arithTableCheck` is not a single top-level definition; refit the surgery"
     );
-    let weakened = |name: &str, drop: &str| live.replace(drop, "").replace("arithTableCheck", name);
-    let weak_copies = format!(
-        "namespace AverCert.AcceptedArtifact\n\n\
-         /-! Live acceptance check weakened by EXACTLY the `cmp` TEMPLATE equality. -/\n{}\n\n\
-         /-! Live acceptance check weakened by EXACTLY the `eq` TEMPLATE equality. -/\n{}\n\n\
-         /-! Live acceptance check weakened by EXACTLY the `cmp` export-name equality. -/\n{}\n\n\
-         /-! Live acceptance check weakened by EXACTLY the `eq` export-name equality. -/\n{}\n\n\
-         end AverCert.AcceptedArtifact",
-        weakened("weakCmpTemplateArithTableCheck", cmp_template),
-        weakened("weakEqTemplateArithTableCheck", eq_template),
-        weakened("weakCmpNameArithTableCheck", cmp_name),
-        weakened("weakEqNameArithTableCheck", eq_name),
-    );
-
-    let lean = format!(
-        r#"import ArtifactCertificate
-
-open CertPrelude AverCert AverCert.Schema
-set_option maxRecDepth 300000
-
--- The two mutants, as the LITERAL numerals of the byte vectors the harness
--- validated as wasm. Nothing here re-derives the edit: what the kernel reads
--- below is the module `wasmparser` accepted.
-def cmpMutBytes : Nat := 0x{cmp_hex}
-def eqMutBytes : Nat := 0x{eq_hex}
-
--- Each mutant is the certified module with ONE byte moved. Stated as numeral
--- arithmetic, so it covers every byte of the module rather than only the bytes
--- the checks below happen to read: the difference is exactly one unit-weight
--- at one position, and the module length is untouched.
-example : ArtifactBytes.modBytes - cmpMutBytes = 2 <<< {cmp_shift} := by decide +kernel
-example : eqMutBytes - ArtifactBytes.modBytes = 1 <<< {eq_shift} := by decide +kernel
-
--- ...and the byte that moved is the instruction named in the doc block:
--- `i32.gt_s` became `i32.lt_s`, `i64.eq` became `i64.ne`.
-example : CertDecode.takeBytes 1 (ArtifactBytes.modBytes >>> {cmp_shift}) = [0x4a] := by
-  decide +kernel
-example : CertDecode.takeBytes 1 (cmpMutBytes >>> {cmp_shift}) = [0x48] := by decide +kernel
-example : CertDecode.takeBytes 1 (ArtifactBytes.modBytes >>> {eq_shift}) = [0x51] := by
-  decide +kernel
-example : CertDecode.takeBytes 1 (eqMutBytes >>> {eq_shift}) = [0x52] := by decide +kernel
-
--- BYTE-DERIVED GROUND TRUTH, on the certified module and on both mutants
--- alike: the export section still binds both helpers, at the same indices.
--- Every declaration the export-name conjuncts admit for these bytes is
--- therefore the honest one the certificate already carries — the escape routes
--- the sibling GuardIso covers (a hostile index, a role declared absent) are
--- closed here by those conjuncts, so the mutant has to be refused on its BODY
--- or not at all.
-example : CertDecode.AddSub.cmpIdx ArtifactBytes.modBytes ArtifactBytes.modLen
-    = some {cmp_idx} := by decide +kernel
-example : CertDecode.AddSub.eqIdx ArtifactBytes.modBytes ArtifactBytes.modLen
-    = some {eq_idx} := by decide +kernel
-example : CertDecode.AddSub.cmpIdx cmpMutBytes ArtifactBytes.modLen = some {cmp_idx} := by
-  decide +kernel
-example : CertDecode.AddSub.eqIdx cmpMutBytes ArtifactBytes.modLen = some {eq_idx} := by
-  decide +kernel
-example : CertDecode.AddSub.cmpIdx eqMutBytes ArtifactBytes.modLen = some {cmp_idx} := by
-  decide +kernel
-example : CertDecode.AddSub.eqIdx eqMutBytes ArtifactBytes.modLen = some {eq_idx} := by
-  decide +kernel
-
--- The declared-type gate reads the same type section in both mutants, so it
--- accepts them exactly as it accepts the honest module: a body edit is
--- invisible to it by construction.
-example : (match CertDecode.carrierState ArtifactBytes.modBytes ArtifactBytes.modLen with
-    | some (some c) =>
-        AverCert.WasmSlice.hostTableFuncTypesMatch cmpMutBytes ArtifactBytes.modLen
-          c [(.cmp, {cmp_idx}), (.eq, {eq_idx})] &&
-        AverCert.WasmSlice.hostTableFuncTypesMatch eqMutBytes ArtifactBytes.modLen
-          c [(.cmp, {cmp_idx}), (.eq, {eq_idx})]
-    | _ => false) = true := by decide +kernel
-
--- What DID move, at the granularity the template equality works on: exactly
--- one byte of the mutated helper's body, with the other helper's body left
--- byte-identical. This is the whole attack surface — one instruction inside
--- one of the two runtime helpers the table pins.
-example : (match AcceptedArtifact.bodyBytesAtFuncIndex cmpMutBytes ArtifactBytes.modLen {cmp_idx},
-    AcceptedArtifact.bodyBytesAtFuncIndex ArtifactBytes.modBytes ArtifactBytes.modLen {cmp_idx} with
-    | some xs, some ys =>
-        (xs.length == ys.length) && (((xs.zip ys).filter (fun p => p.1 != p.2)).length == 1)
-    | _, _ => false) = true := by decide +kernel
-example : AcceptedArtifact.bodyBytesAtFuncIndex cmpMutBytes ArtifactBytes.modLen {eq_idx}
-    = AcceptedArtifact.bodyBytesAtFuncIndex ArtifactBytes.modBytes ArtifactBytes.modLen {eq_idx} := by
-  decide +kernel
-example : (match AcceptedArtifact.bodyBytesAtFuncIndex eqMutBytes ArtifactBytes.modLen {eq_idx},
-    AcceptedArtifact.bodyBytesAtFuncIndex ArtifactBytes.modBytes ArtifactBytes.modLen {eq_idx} with
-    | some xs, some ys =>
-        (xs.length == ys.length) && (((xs.zip ys).filter (fun p => p.1 != p.2)).length == 1)
-    | _, _ => false) = true := by decide +kernel
-example : AcceptedArtifact.bodyBytesAtFuncIndex eqMutBytes ArtifactBytes.modLen {cmp_idx}
-    = AcceptedArtifact.bodyBytesAtFuncIndex ArtifactBytes.modBytes ArtifactBytes.modLen {cmp_idx} := by
-  decide +kernel
-
--- The HONEST control: the certificate's own declared table, accepted by the
--- real check against the real bytes, so no rejection below is an artefact of
--- the framing.
-example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
-    Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-
--- THE DECLINE. The certificate's own honest declaration does not accept either
--- mutant: `decodedHostRoleTable` is exactly this conjunct, so an artifact
--- carrying these bytes cannot reach acceptance.
-def cmpMutArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with modBytes := cmpMutBytes }}
-def eqMutArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with modBytes := eqMutBytes }}
-
-example : ¬ AcceptedArtifact.decodedHostRoleTable cmpMutArtifact := by
-  intro h
-  have bad : AcceptedArtifact.arithTableCheck cmpMutBytes ArtifactBytes.modLen
-      Artifact.data.manifest.subject.hostRoleTable
-      Artifact.data.manifest.subject.arithParams = true := h
-  exact absurd bad (by decide +kernel)
-
-example : ¬ AcceptedArtifact.decodedHostRoleTable eqMutArtifact := by
-  intro h
-  have bad : AcceptedArtifact.arithTableCheck eqMutBytes ArtifactBytes.modLen
-      Artifact.data.manifest.subject.hostRoleTable
-      Artifact.data.manifest.subject.arithParams = true := h
-  exact absurd bad (by decide +kernel)
-{weak_copies}
-
--- Every weakened copy still accepts the HONEST module, so each acceptance flip
--- below is caused by the mutation and not by the surgery.
-example : AcceptedArtifact.weakCmpTemplateArithTableCheck ArtifactBytes.modBytes
-    ArtifactBytes.modLen Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakEqTemplateArithTableCheck ArtifactBytes.modBytes
-    ArtifactBytes.modLen Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes
-    ArtifactBytes.modLen Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakEqNameArithTableCheck ArtifactBytes.modBytes
-    ArtifactBytes.modLen Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-
--- ATTRIBUTION, mutated `__aint_cmp` body: dropping EXACTLY the `cmp` template
--- equality admits it. So that one conjunct is the sole rejector, and every
--- sibling pin — the carrier, all four export-name equalities, and the other
--- six template equalities including `eq` — holds of these bytes.
-example : AcceptedArtifact.weakCmpTemplateArithTableCheck cmpMutBytes ArtifactBytes.modLen
-    Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-
--- ...and neither the `cmp` NAME equality nor the `eq` template equality is
--- doing that work: with either of them removed the mutant is still refused.
-example : AcceptedArtifact.weakCmpNameArithTableCheck cmpMutBytes ArtifactBytes.modLen
-    Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-example : AcceptedArtifact.weakEqTemplateArithTableCheck cmpMutBytes ArtifactBytes.modLen
-    Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-
--- ATTRIBUTION, mutated `__aint_eq` body: the exact mirror.
-example : AcceptedArtifact.weakEqTemplateArithTableCheck eqMutBytes ArtifactBytes.modLen
-    Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = true := by decide +kernel
-example : AcceptedArtifact.weakEqNameArithTableCheck eqMutBytes ArtifactBytes.modLen
-    Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-example : AcceptedArtifact.weakCmpTemplateArithTableCheck eqMutBytes ArtifactBytes.modLen
-    Artifact.data.manifest.subject.hostRoleTable
-    Artifact.data.manifest.subject.arithParams = false := by decide +kernel
-"#,
-        cmp_hex = hex_le(&cmp_mut),
-        eq_hex = hex_le(&eq_mut),
-        cmp_shift = 8 * cmp_at,
-        eq_shift = 8 * eq_at,
-    );
-    std::fs::write(cert.join("IntCmpBodyMutationGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("IntCmpBodyMutationGuardIso.lean")
-        .output()
-        .expect("run the Int-comparison body-mutation GuardIso");
-    assert!(
-        check.status.success(),
-        "Int-comparison body-mutation GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
+    let mut out = String::from("namespace AverCert.AcceptedArtifact\n\n");
+    for (name, drop) in copies {
+        let mut text = live.clone();
+        for conjunct in *drop {
+            assert_eq!(
+                text.matches(conjunct).count(),
+                1,
+                "the conjunct `{conjunct}` moved; refit the GuardIso surgery"
+            );
+            text = text.replace(conjunct, "");
+        }
+        out.push_str(&format!(
+            "/-! Live `arithTableCheck` weakened by exactly: {}. -/\n{}\n\n",
+            drop.iter()
+                .map(|conjunct| conjunct.trim().trim_end_matches("&&").trim())
+                .collect::<Vec<_>>()
+                .join("; "),
+            text.replace("arithTableCheck", name)
+        ));
+    }
+    out.push_str("end AverCert.AcceptedArtifact\n");
+    out
 }
 
-/// A module WITH the Int box helper whose module-wide role scan fails: it
-/// contains an unrelated carrier-binop-signature function whose body starts
-/// with an instruction encoding outside the certificate decoder's scan
-/// vocabulary (`ref.as_non_null`). The strict decode must land in the closed
-/// `none` state that satisfies NO manifest declaration — in particular the
-/// carrierless `null` this attack claims.
+const CMP_NAME: &str = "      (roles.cmp == _root_.CertDecode.AddSub.cmpIdx n len) &&\n";
+const TO_INDEX_NAME: &str =
+    "      (roles.toIndex == _root_.CertDecode.AddSub.toIndexIdx n len) &&\n";
+const CARRIER_STATE: &str =
+    "      (_root_.CertDecode.carrierState n len == some (some p.carrier)) &&\n";
+const CMP_TEMPLATE: &str = "      arithRoleCheck n len .cmp roles.cmp p &&\n";
+const TO_INDEX_TEMPLATE: &str = "      arithRoleCheck n len .toIndex roles.toIndex p &&\n";
+const EQ_TEMPLATE: &str = "      arithRoleCheck n len .eq roles.eq p &&\n";
+const DIVMOD_TEMPLATE: &str = " &&\n      arithRoleCheck n len .divmod roles.divmod p";
+
+fn read_uleb_at(bytes: &[u8], cursor: &mut usize) -> usize {
+    let mut value = 0usize;
+    let mut shift = 0usize;
+    loop {
+        let byte = bytes[*cursor];
+        *cursor += 1;
+        value |= usize::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return value;
+        }
+        shift += 7;
+    }
+}
+
+fn encode_uleb(mut value: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            out.push(byte | 0x80);
+        } else {
+            out.push(byte);
+            return out;
+        }
+    }
+}
+
+/// Split a module into `(section id, payload)` pairs and re-emit them with
+/// re-encoded section sizes, so a tampered payload of any length reframes
+/// correctly.
+fn module_sections(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    let mut cursor = 8usize;
+    let mut sections = Vec::new();
+    while cursor < bytes.len() {
+        let id = bytes[cursor];
+        cursor += 1;
+        let size = read_uleb_at(bytes, &mut cursor);
+        sections.push((id, bytes[cursor..cursor + size].to_vec()));
+        cursor += size;
+    }
+    sections
+}
+
+fn rebuild_module(sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let mut out = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    for (id, payload) in sections {
+        out.push(*id);
+        out.extend(encode_uleb(payload.len()));
+        out.extend(payload);
+    }
+    out
+}
+
+/// The `def types : TypeTable := … }` block of an emitted `Plans.lean`,
+/// renamed, so a probe can state facts about the package's own declared type
+/// table under hostile bytes without restating it.
+fn plans_types_block(cert: &Path, rename: &str) -> String {
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let start = plans
+        .find("def types : TypeTable :=")
+        .expect("Plans.lean declares types");
+    let end = plans[start..].find("\n\n").unwrap() + start;
+    plans[start..end].replacen("def types :", &format!("def {rename} :"), 1)
+}
+
+/// A module WITH the Int box helper and an unrelated carrier-binop-signature
+/// function whose body starts with `ref.as_non_null` (outside the retired role
+/// scan's vocabulary). It must satisfy no carrierless declaration.
 const POISONED_ROLE_SCAN_WAT: &str = r#"
 (module
   (type $carrier (struct (field i64) (field anyref) (field i32)))
@@ -1441,25 +607,585 @@ const HEALTHY_ROLE_SCAN_WAT: &str = r#"
   (export "__rt_aint_from_i64" (func $box)))
 "#;
 
-fn hex_le(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes.iter().rev() {
-        out.push_str(&format!("{byte:02x}"));
+/// Five hostile artifacts leave all sibling whole-module conjuncts true, fail
+/// exactly their named guard, and pass the literal one-conjunct-weakened copy.
+/// The manifest's whole-module fields are also required and exact-shaped:
+/// malformed candidates decline before any Lean build.
+#[test]
+fn whole_module_guards_are_isolated_and_weaken_confirmed() {
+    if !lake_available() {
+        eprintln!("skipping whole-module GuardIso test: `lake` not available");
+        return;
     }
-    out
+    let (out_dir, cert, wasm) =
+        built_package("examples/data/json.av", &[], "cert-whole-module-guard-iso");
+
+    let manifest_path = cert.join("cert-manifest.json");
+    let honest_manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    let wasm_path = out_dir.join("json.wasm");
+    for (label, edit, expected) in [
+        (
+            "declaredUncertified removed",
+            Box::new(|m: &mut serde_json::Value| {
+                m.as_object_mut().unwrap().remove("declaredUncertified");
+            }) as Box<dyn Fn(&mut serde_json::Value)>,
+            "missing array field `declaredUncertified`",
+        ),
+        (
+            "capability extra field",
+            Box::new(|m: &mut serde_json::Value| {
+                m["capabilities"][0]["extra"] = serde_json::json!(true);
+            }),
+            "must contain exactly fields module, name",
+        ),
+        (
+            "absent start with an index",
+            Box::new(|m: &mut serde_json::Value| {
+                m["start"]["function_index"] = serde_json::json!(0);
+            }),
+            "absent start must use null",
+        ),
+        (
+            "hostRoleTable removed",
+            Box::new(|m: &mut serde_json::Value| {
+                m.as_object_mut().unwrap().remove("hostRoleTable");
+            }),
+            "missing object field `hostRoleTable`",
+        ),
+        (
+            "hostRoleTable extra field",
+            Box::new(|m: &mut serde_json::Value| {
+                m["hostRoleTable"]["extra"] = serde_json::json!(0);
+            }),
+            "must contain exactly fields box, add, mul, sub",
+        ),
+        (
+            "stringHostRoles removed",
+            Box::new(|m: &mut serde_json::Value| {
+                m.as_object_mut().unwrap().remove("stringHostRoles");
+            }),
+            "missing array field `stringHostRoles`",
+        ),
+        (
+            "stringHostRoles extra field",
+            Box::new(|m: &mut serde_json::Value| {
+                m["stringHostRoles"][0]["extra"] = serde_json::json!(true);
+            }),
+            "must contain exactly fields function_index, role",
+        ),
+    ] {
+        let mut malformed = honest_manifest.clone();
+        edit(&mut malformed);
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&malformed).unwrap(),
+        )
+        .unwrap();
+        assert_manifest_decode_declines(&wasm_path, &cert, expected);
+        let _ = label;
+    }
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&honest_manifest).unwrap(),
+    )
+    .unwrap();
+
+    let start_insert_offset = section_offset_after_export(&wasm);
+    let (call_offset, call_target, local_get_offset) = certified_opcode_offsets(&wasm);
+    let capability_offset = wasm
+        .windows(b"console_print".len())
+        .position(|window| window == b"console_print")
+        .expect("json wasm must import aver.console_print");
+    assert_eq!(wasm[capability_offset], b'c');
+    assert_eq!(wasm[call_offset], leb_low_byte(call_target));
+    // The escaped-call control re-points `jsonInt`'s first call by adding a
+    // delta to the LOW LEB byte of its target. The delta is derived from the
+    // closure the producer just declared, so the mutated call provably leaves
+    // it.
+    let admitted = admitted_closure_indices(&cert.join("Artifact.lean"));
+    assert!(
+        admitted.contains(&call_target),
+        "jsonInt's first callee must be inside the declared closure: \
+         {call_target} not in {admitted:?}"
+    );
+    let call_delta = (1u32..=0x7f)
+        .find(|delta| {
+            (call_target & 0x7f) + delta <= 0x7f && !admitted.contains(&(call_target + delta))
+        })
+        .expect("some in-byte call target must sit outside the admitted closure");
+    let lean = format!(
+        r#"import Artifact
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+noncomputable section
+
+def withoutExports (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.importsWithinCapabilities artifact = true ∧
+  AcceptedArtifact.startAccounted artifact = true ∧
+  AcceptedArtifact.closureIsolation artifact = true
+def withoutCapabilities (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.exportsAccounted artifact = true ∧
+  AcceptedArtifact.startAccounted artifact = true ∧
+  AcceptedArtifact.closureIsolation artifact = true
+def withoutStart (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.exportsAccounted artifact = true ∧
+  AcceptedArtifact.importsWithinCapabilities artifact = true ∧
+  AcceptedArtifact.closureIsolation artifact = true
+def withoutClosure (artifact : AcceptedArtifact.ArtifactData) : Prop :=
+  AcceptedArtifact.exportsAccounted artifact = true ∧
+  AcceptedArtifact.importsWithinCapabilities artifact = true ∧
+  AcceptedArtifact.startAccounted artifact = true
+
+-- (a) Existing byte-derived export removed only from the declaration.
+def missingExportManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with
+         declaredUncertified := manifest.subject.declaredUncertified.tail }} }}
+def missingExportArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := missingExportManifest }}
+example : AcceptedArtifact.exportsAccounted missingExportArtifact = false := by decide +kernel
+example : withoutExports missingExportArtifact :=
+  ⟨by decide +kernel, by decide +kernel, by decide +kernel⟩
+
+-- (b) Actual console import is outside the declared capability set.
+def unknownCapabilityManifest : Manifest :=
+  {{ manifest with subject :=
+      {{ manifest.subject with capabilities := [("aver", "xonsole_print")] }} }}
+def unknownCapabilityBytes : Nat := ArtifactBytes.modBytes +
+  (21 <<< (8 * {capability_offset}))
+def unknownCapabilityArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest := unknownCapabilityManifest, modBytes := unknownCapabilityBytes }}
+example : CAPABILITY_REGISTRY.contains ("aver", "xonsole_print") = false := by decide
+example : AcceptedArtifact.importsWithinCapabilities unknownCapabilityArtifact = false := by
+  decide +kernel
+example : withoutCapabilities unknownCapabilityArtifact :=
+  ⟨by decide +kernel, by decide +kernel, by decide +kernel⟩
+
+-- (c) Insert `start 0` after exports while the manifest declares absent.
+def startSectionBytes : Nat :=
+  (ArtifactBytes.modBytes &&& ((1 <<< (8 * {start_insert_offset})) - 1)) +
+  (0x0108 <<< (8 * {start_insert_offset})) +
+  ((ArtifactBytes.modBytes >>> (8 * {start_insert_offset})) <<<
+    (8 * ({start_insert_offset} + 3)))
+def undeclaredStartArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := startSectionBytes, modLen := ArtifactBytes.modLen + 3 }}
+example : AcceptedArtifact.startAccounted undeclaredStartArtifact = false := by decide +kernel
+example : withoutStart undeclaredStartArtifact :=
+  ⟨by decide +kernel, by decide +kernel, by decide +kernel⟩
+
+-- (d) jsonInt's first call leaves the admitted closure.
+def escapedCallBytes : Nat := ArtifactBytes.modBytes +
+  ({call_delta} <<< (8 * {call_offset}))
+def escapedCallArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := escapedCallBytes }}
+example : AcceptedArtifact.closureIsolation escapedCallArtifact = false := by decide +kernel
+example : withoutClosure escapedCallArtifact :=
+  ⟨by decide +kernel, by decide +kernel, by decide +kernel⟩
+
+-- (e) `local.get` (0x20) -> `global.get` (0x23) in a certified root.
+def globalReadBytes : Nat := ArtifactBytes.modBytes +
+  (3 <<< (8 * {local_get_offset}))
+def globalReadArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := globalReadBytes }}
+example : AcceptedArtifact.closureIsolation globalReadArtifact = false := by decide +kernel
+example : withoutClosure globalReadArtifact :=
+  ⟨by decide +kernel, by decide +kernel, by decide +kernel⟩
+"#
+    );
+    assert_probe_holds(&cert, "GuardIso.lean", &lean);
 }
 
-/// Negative control for the round-two attack on the module-wide host-role
-/// pin: a CARRIERED module (the Int box helper is exported) engineered so the
-/// role scan fails, with a manifest claiming the carrierless `null`, must be
-/// REJECTED at the host-role-table pin. The producer refuses to certify such
-/// a module at all, and the kernel-side strict decode equals `some v` for no
-/// manifest value `v`, so the claimed `null` (and every other declaration)
-/// leaves the acceptance pin unprovable.
+/// S3 GuardIso: module bytes stay identical while only the manifest's
+/// host-role table moves. The real module-wide pin `decodedHostRoleTable`
+/// (`arithTableCheck`) rejects a hostile `add` index (the function there does
+/// not carry the add template) and a hostile or absent `toIndex` (the export
+/// name binds it), and the literal copies of the live check weakened by
+/// exactly the `toIndex` conjuncts attribute each rejection. A carriered
+/// module cannot declare the table absent either.
+#[test]
+fn inkernel_host_role_table_guard_is_isolated_and_weaken_confirmed() {
+    if !lake_available() {
+        eprintln!("skipping S3 host-role GuardIso test: `lake` not available");
+        return;
+    }
+    let (_out_dir, cert, _wasm) = built_package(
+        "examples/data/json.av",
+        &[],
+        "cert-inkernel-host-role-guard-iso",
+    );
+    let roles = manifest_roles(&cert);
+    let add_idx = role(&roles, "add").expect("json add role");
+    let to_index_idx = role(&roles, "toIndex");
+    let hostile_add = roles_lit(&roles, &[("add", Some(add_idx + 1))]);
+    let hostile_to_index = roles_lit(
+        &roles,
+        &[("toIndex", Some(to_index_idx.map_or(0, |index| index + 1)))],
+    );
+    let absent_to_index = roles_lit(&roles, &[("toIndex", None)]);
+    let weak = weakened_arith_table_checks(
+        &cert,
+        &[
+            (
+                "arithTableCheckWithoutToIndex",
+                &[TO_INDEX_NAME, TO_INDEX_TEMPLATE],
+            ),
+            ("arithTableCheckWithoutToIndexName", &[TO_INDEX_NAME]),
+        ],
+    );
+    let absent_block = if to_index_idx.is_some() {
+        format!(
+            r#"
+-- The module exports `__aint_to_index`, but the table declares the role
+-- ABSENT. `arithRoleCheck` is vacuous on `none`, so only the export-name
+-- equality rejects it: the copy that keeps the template equality and drops
+-- only the name equality ACCEPTS it.
+def absentToIndexTable : CertDecode.AddSub.Roles := {absent_to_index}
+example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some absentToIndexTable) manifest.subject.arithParams = false := by decide +kernel
+example : AcceptedArtifact.arithTableCheckWithoutToIndexName ArtifactBytes.modBytes
+    ArtifactBytes.modLen (some absentToIndexTable) manifest.subject.arithParams = true := by
+  decide +kernel
+"#
+        )
+    } else {
+        String::new()
+    };
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+noncomputable section
+
+-- The honest control: the package's own proof of the pin.
+example : AcceptedArtifact.decodedHostRoleTable Artifact.data := Artifact.roles_ok
+
+-- Same bytes; only the manifest's add index is hostile. The full pin fails:
+-- the function at the hostile index does not carry the canonical add body.
+def hostileRoleTable : CertDecode.AddSub.Roles := {hostile_add}
+def hostileArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with manifest :=
+      {{ manifest with subject :=
+          {{ manifest.subject with hostRoleTable := some hostileRoleTable }} }} }}
+example : ¬ AcceptedArtifact.decodedHostRoleTable hostileArtifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+      (some hostileRoleTable) manifest.subject.arithParams = true := h
+  exact absurd bad (by decide +kernel)
+
+{weak}
+-- Same bytes; only the toIndex index is hostile. The fused vector read calls
+-- an ABSTRACT contract at the declared index, so this index must be bound to
+-- the `__aint_to_index` export and its template, or the contract could be
+-- wired to any function. Rejected by the real check, ACCEPTED by the copy
+-- weakened by exactly the two toIndex conjuncts.
+def hostileToIndexTable : CertDecode.AddSub.Roles := {hostile_to_index}
+example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    (some hostileToIndexTable) manifest.subject.arithParams = false := by decide +kernel
+example : AcceptedArtifact.arithTableCheckWithoutToIndex ArtifactBytes.modBytes
+    ArtifactBytes.modLen (some hostileToIndexTable) manifest.subject.arithParams = true := by
+  decide +kernel
+{absent_block}
+-- A carriered artifact cannot declare the table absent either: the box export
+-- is present, so the carrierless `none`/`none` arm never closes.
+example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    none none = false := by decide +kernel
+"#
+    );
+    assert_probe_holds(&cert, "HostRoleGuardIso.lean", &lean);
+}
+
+/// Per-role GuardIso for the two Int value-comparison host roles on a module
+/// exporting both helpers. `cmp` is pinned twice — to its export name and to
+/// its template — while `eq` is pinned by its template alone (the emitter
+/// exports `__aint_eq` only when user code marks it live, while an Int literal
+/// `match` calls it all the same). For each attack the REAL wall rejects it
+/// and a literal copy of the live check weakened by exactly the attacked
+/// role's conjuncts accepts it, while the copy weakened by the OTHER role's
+/// conjuncts still rejects it. `eq` declared ABSENT passes the table pin by
+/// design and is refused where it matters: the plan citing `==` lowers to an
+/// index no code entry encodes, so the plans do not bind.
+#[test]
+fn inkernel_int_comparison_roles_guard_is_isolated_and_weaken_confirmed() {
+    if !lake_available() {
+        eprintln!("skipping Int-comparison role GuardIso test: `lake` not available");
+        return;
+    }
+    let (_out_dir, cert, wasm) = built_package(
+        "tools/certkit/fixtures/certprobe.av",
+        &[],
+        "cert-intcmp-role-guard-iso",
+    );
+    let roles = manifest_roles(&cert);
+    let cmp_idx = role(&roles, "cmp").expect("certprobe must declare __aint_cmp");
+    let eq_idx = role(&roles, "eq").expect("certprobe must declare __aint_eq");
+    assert_ne!(
+        cmp_idx, eq_idx,
+        "the two helpers must be distinct functions"
+    );
+    assert!(
+        wasm.windows(b"__aint_cmp".len())
+            .any(|w| w == b"__aint_cmp"),
+        "certprobe must export __aint_cmp"
+    );
+
+    let weak = weakened_arith_table_checks(
+        &cert,
+        &[
+            ("weakCmpArithTableCheck", &[CMP_NAME, CMP_TEMPLATE]),
+            ("weakEqArithTableCheck", &[EQ_TEMPLATE]),
+            ("weakCmpNameArithTableCheck", &[CMP_NAME]),
+        ],
+    );
+    let table = |name: &str, cmp: Option<u32>, eq: Option<u32>| {
+        format!(
+            "def {name}Table : CertDecode.AddSub.Roles := {}\n\
+             def {name}Artifact : AcceptedArtifact.ArtifactData :=\n  \
+             {{ Artifact.data with manifest :=\n      \
+             {{ manifest with subject :=\n          \
+             {{ manifest.subject with hostRoleTable := some {name}Table }} }} }}\n",
+            roles_lit(&roles, &[("cmp", cmp), ("eq", eq)])
+        )
+    };
+    let tables = [
+        table("hostileCmp", Some(cmp_idx + 1), Some(eq_idx)),
+        table("hostileEq", Some(cmp_idx), Some(eq_idx + 1)),
+        table("absentCmp", None, Some(eq_idx)),
+        table("absentEq", Some(cmp_idx), None),
+        table("swapped", Some(eq_idx), Some(cmp_idx)),
+    ]
+    .join("\n");
+    let check = |table: &str, which: &str, verdict: &str| {
+        format!(
+            "example : AcceptedArtifact.{which} ArtifactBytes.modBytes ArtifactBytes.modLen\n    \
+             (some {table}Table) manifest.subject.arithParams = {verdict} := by decide +kernel\n"
+        )
+    };
+    let mut examples = String::new();
+    for (table_name, real, weak_cmp, weak_eq, weak_cmp_name) in [
+        // A hostile `cmp` index: both cmp pins reject it; the eq copy keeps them.
+        ("hostileCmp", "false", "true", "false", "false"),
+        // A hostile `eq` index: only the eq template rejects it.
+        ("hostileEq", "false", "false", "true", "false"),
+        // `cmp` declared absent while exported: the name equality alone
+        // rejects it (the template is vacuous on `none`).
+        ("absentCmp", "false", "true", "false", "true"),
+        // `eq` declared absent: accepted by the table pin by design.
+        ("absentEq", "true", "true", "true", "true"),
+        // Each role at the other one's index: refused by both roles' pins.
+        ("swapped", "false", "false", "false", "false"),
+    ] {
+        examples.push_str(&check(table_name, "arithTableCheck", real));
+        examples.push_str(&check(table_name, "weakCmpArithTableCheck", weak_cmp));
+        examples.push_str(&check(table_name, "weakEqArithTableCheck", weak_eq));
+        examples.push_str(&check(
+            table_name,
+            "weakCmpNameArithTableCheck",
+            weak_cmp_name,
+        ));
+    }
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+noncomputable section
+
+-- BYTE-DERIVED GROUND TRUTH: `cmp` is bound by its export name.
+example : CertDecode.AddSub.cmpIdx ArtifactBytes.modBytes ArtifactBytes.modLen
+    = some {cmp_idx} := by decide +kernel
+
+-- The honest control, and every weakened copy accepts it too, so each flip
+-- below is caused by the hostile declaration and not by the surgery.
+example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    manifest.subject.hostRoleTable manifest.subject.arithParams = true := by decide +kernel
+{weak}
+example : AcceptedArtifact.weakCmpArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    manifest.subject.hostRoleTable manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakEqArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    manifest.subject.hostRoleTable manifest.subject.arithParams = true := by decide +kernel
+example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    manifest.subject.hostRoleTable manifest.subject.arithParams = true := by decide +kernel
+
+{tables}
+{examples}
+-- `eq` declared ABSENT is refused by the plans: `sameKey` compares with `==`,
+-- which lowers to a call at the (never encoded) absent index.
+example : AcceptedArtifact.plansAccepted absentEqArtifact = false := by decide +kernel
+
+-- The declared-type gate CANNOT separate the two roles: the two helpers
+-- declare the same function type, so the swapped table passes it against the
+-- module's own type section. The export-name and template pins are what tell
+-- the roles apart.
+example : AcceptedArtifact.roleTypesPinned ArtifactBytes.modBytes ArtifactBytes.modLen
+    (AverCert.TypeTable.mctxOf swappedArtifact.manifest.subject manifest.types manifest.fnPlans)
+    = true := by decide +kernel
+"#
+    );
+    assert_probe_holds(&cert, "IntCmpRoleGuardIso.lean", &lean);
+}
+
+/// The mirror of the comparison-role GuardIso: the DECLARATION is honest and
+/// one byte of a helper body moves. A live single-byte mutation inside each of
+/// three template-pinned helpers — `__aint_cmp` (`i32.gt_s` -> `i32.lt_s`),
+/// `__aint_eq` (`i64.eq` -> `i64.ne`) and the Euclidean `__aint_divmod`
+/// helper (`i64.div_s` -> `i64.div_u`) — keeps every export, every index,
+/// every declared function type and the module length, so nothing but the
+/// template equality can tell the mutant from the certified module. For each
+/// mutant the real pin refuses it under the certificate's own table, the copy
+/// weakened by exactly that role's template conjunct accepts it, and the
+/// copies weakened elsewhere still refuse it.
+#[test]
+fn inkernel_int_comparison_role_bodies_reject_a_flipped_body_byte() {
+    if !lake_available() {
+        eprintln!("skipping helper body-mutation GuardIso test: `lake` not available");
+        return;
+    }
+    let (_out_dir, cert, wasm) = built_package(
+        "tools/certkit/fixtures/certprobe.av",
+        &[],
+        "cert-intcmp-body-mutation-guard-iso",
+    );
+    let roles = manifest_roles(&cert);
+    let cmp_idx = role(&roles, "cmp").expect("certprobe must declare __aint_cmp");
+    let eq_idx = role(&roles, "eq").expect("certprobe must declare __aint_eq");
+    let divmod_idx = role(&roles, "divmod").expect("certprobe must declare __aint_divmod");
+
+    let cmp_at = sole_body_opcode_offset(&wasm, cmp_idx, 0x4a, "__aint_cmp");
+    let eq_at = sole_body_opcode_offset(&wasm, eq_idx, 0x51, "__aint_eq");
+    let divmod_at = sole_body_opcode_offset(&wasm, divmod_idx, 0x7f, "__aint_divmod");
+    let mut cmp_mut = wasm.clone();
+    cmp_mut[cmp_at] = 0x48;
+    let mut eq_mut = wasm.clone();
+    eq_mut[eq_at] = 0x52;
+    let mut divmod_mut = wasm.clone();
+    divmod_mut[divmod_at] = 0x80;
+    for (label, mutant) in [
+        ("__aint_cmp", &cmp_mut),
+        ("__aint_eq", &eq_mut),
+        ("__aint_divmod", &divmod_mut),
+    ] {
+        wasmparser::Validator::new()
+            .validate_all(mutant)
+            .unwrap_or_else(|error| panic!("the {label} mutant must stay valid wasm: {error}"));
+        assert_eq!(
+            mutant.iter().zip(&wasm).filter(|(a, b)| a != b).count(),
+            1,
+            "the {label} mutant must differ in exactly one byte"
+        );
+    }
+
+    let weak = weakened_arith_table_checks(
+        &cert,
+        &[
+            ("weakCmpTemplateArithTableCheck", &[CMP_TEMPLATE]),
+            ("weakEqTemplateArithTableCheck", &[EQ_TEMPLATE]),
+            ("weakCmpNameArithTableCheck", &[CMP_NAME]),
+            ("weakDivmodTemplateArithTableCheck", &[DIVMOD_TEMPLATE]),
+        ],
+    );
+    let verdict = |bytes: &str, which: &str, value: &str| {
+        format!(
+            "example : AcceptedArtifact.{which} {bytes} ArtifactBytes.modLen\n    \
+             manifest.subject.hostRoleTable manifest.subject.arithParams = {value} := by\n  \
+             decide +kernel\n"
+        )
+    };
+    let mut examples = String::new();
+    for (bytes, sole) in [
+        ("cmpMutBytes", "weakCmpTemplateArithTableCheck"),
+        ("eqMutBytes", "weakEqTemplateArithTableCheck"),
+        ("divmodMutBytes", "weakDivmodTemplateArithTableCheck"),
+    ] {
+        examples.push_str(&verdict(bytes, "arithTableCheck", "false"));
+        for copy in [
+            "weakCmpTemplateArithTableCheck",
+            "weakEqTemplateArithTableCheck",
+            "weakCmpNameArithTableCheck",
+            "weakDivmodTemplateArithTableCheck",
+        ] {
+            examples.push_str(&verdict(
+                bytes,
+                copy,
+                if copy == sole { "true" } else { "false" },
+            ));
+        }
+        // A body edit is invisible to the declared-type gate.
+        examples.push_str(&format!(
+            "example : AcceptedArtifact.roleTypesPinned {bytes} ArtifactBytes.modLen\n    \
+             (AverCert.TypeTable.mctxOf manifest.subject manifest.types manifest.fnPlans) = true := by\n  \
+             decide +kernel\n"
+        ));
+    }
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+noncomputable section
+
+-- The three mutants, as the LITERAL numerals of the byte vectors the harness
+-- validated as wasm.
+def cmpMutBytes : Nat := 0x{cmp_hex}
+def eqMutBytes : Nat := 0x{eq_hex}
+def divmodMutBytes : Nat := 0x{divmod_hex}
+
+-- Each mutant is the certified module with ONE byte moved by one opcode step.
+example : ArtifactBytes.modBytes - cmpMutBytes = 2 <<< {cmp_shift} := by decide +kernel
+example : eqMutBytes - ArtifactBytes.modBytes = 1 <<< {eq_shift} := by decide +kernel
+example : divmodMutBytes - ArtifactBytes.modBytes = 1 <<< {divmod_shift} := by decide +kernel
+
+-- The name-bound role reads the same export section in the mutants.
+example : CertDecode.AddSub.cmpIdx cmpMutBytes ArtifactBytes.modLen = some {cmp_idx} := by
+  decide +kernel
+
+-- THE DECLINE: the certificate's own honest declaration refuses every mutant.
+def cmpMutArtifact : AcceptedArtifact.ArtifactData :=
+  {{ Artifact.data with modBytes := cmpMutBytes }}
+example : ¬ AcceptedArtifact.decodedHostRoleTable cmpMutArtifact := by
+  intro h
+  have bad : AcceptedArtifact.arithTableCheck cmpMutBytes ArtifactBytes.modLen
+      manifest.subject.hostRoleTable manifest.subject.arithParams = true := h
+  exact absurd bad (by decide +kernel)
+{weak}
+-- Every weakened copy accepts the HONEST module.
+example : AcceptedArtifact.weakCmpTemplateArithTableCheck ArtifactBytes.modBytes
+    ArtifactBytes.modLen manifest.subject.hostRoleTable manifest.subject.arithParams = true := by
+  decide +kernel
+example : AcceptedArtifact.weakEqTemplateArithTableCheck ArtifactBytes.modBytes
+    ArtifactBytes.modLen manifest.subject.hostRoleTable manifest.subject.arithParams = true := by
+  decide +kernel
+example : AcceptedArtifact.weakCmpNameArithTableCheck ArtifactBytes.modBytes
+    ArtifactBytes.modLen manifest.subject.hostRoleTable manifest.subject.arithParams = true := by
+  decide +kernel
+example : AcceptedArtifact.weakDivmodTemplateArithTableCheck ArtifactBytes.modBytes
+    ArtifactBytes.modLen manifest.subject.hostRoleTable manifest.subject.arithParams = true := by
+  decide +kernel
+
+-- ATTRIBUTION per mutant: rejected by the real check, accepted only by the
+-- copy without that role's template conjunct.
+{examples}"#,
+        cmp_hex = hex_le(&cmp_mut),
+        eq_hex = hex_le(&eq_mut),
+        divmod_hex = hex_le(&divmod_mut),
+        cmp_shift = 8 * cmp_at,
+        eq_shift = 8 * eq_at,
+        divmod_shift = 8 * divmod_at,
+    );
+    assert_probe_holds(&cert, "HelperBodyMutationGuardIso.lean", &lean);
+}
+
+/// A module WITH the Int box helper whose declared table is the carrierless
+/// `null` must be REJECTED at the host-role pin: the carrierless arm demands
+/// the box export be byte-provably absent. Two hand-built carriered modules
+/// (one with an extra function the retired role scan could not read) and the
+/// real `add_one` module all refuse the claim.
 #[test]
 fn a_carriered_module_cannot_claim_the_carrierless_null_table() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping poisoned role-scan pin test: `lake` not available");
+    if !lake_available() {
+        eprintln!("skipping carrierless-null-claim test: `lake` not available");
         return;
     }
     let poisoned = wat::parse_str(POISONED_ROLE_SCAN_WAT).expect("poisoned WAT compiles");
@@ -1469,130 +1195,53 @@ fn a_carriered_module_cannot_claim_the_carrierless_null_table() {
             .validate_all(bytes)
             .unwrap_or_else(|error| panic!("{name} module must be valid wasm: {error}"));
     }
-
-    // Producer honesty: the poisoned module is refused at disassembly with a
-    // readable reason — no certificate package in the unverifiable state is
-    // ever emitted.
-    let refusal = aver::codegen::cert::byte_derived_frag_host_role_indices(&poisoned)
-        .expect_err("the poisoned module must be refused by the producer");
-    assert!(
-        refusal.contains("__rt_aint_from_i64") && refusal.contains("role scan"),
-        "the refusal must name the helper and the failed role scan, got: {refusal}"
+    let (_out_dir, cert, _wasm) = built_package(
+        "examples/certification/add_one.av",
+        &[],
+        "cert-poisoned-role-scan-pin",
     );
-
-    // Healthy control: the identical module without the unscannable function
-    // resolves its box and add roles.
-    let (box_idx, add_idx, mul_idx, sub_idx, _to_index_idx, _cmp_idx, _eq_idx) =
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&healthy)
-            .expect("the healthy control must classify");
-    let (box_idx, add_idx) = (
-        box_idx.expect("healthy box role"),
-        add_idx.expect("healthy add role"),
-    );
-    assert_eq!((mul_idx, sub_idx), (None, None));
-
-    // Kernel side, inside a production package environment: the full
-    // acceptance predicate rejects the carrierless null claim exactly at the
-    // host-role-table pin, and the literal one-conjunct-weakened copy accepts
-    // the same artifact. The Rust-side classifier assertions above remain the
-    // differential oracle over these two fixtures.
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-poisoned-role-scan-pin");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("examples/certification/add_one.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile add_one fixture for the poisoned role-scan pin test");
-    assert!(
-        compile.status.success(),
-        "add_one compile failed for the poisoned role-scan pin test:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build add_one certificate before the poisoned role-scan pin test");
-    assert!(
-        build.status.success(),
-        "add_one certificate failed before the poisoned role-scan pin test:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
     let lean = format!(
         r#"import ArtifactCertificate
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
+noncomputable section
 
--- A module WITH the Int box helper export whose role scan hits an unrelated
--- carrier-binop-signature function with an instruction encoding outside the
--- decoder's vocabulary. Bytes crafted by the test harness.
 def poisonedBytes : Nat := 0x{poisoned_hex}
 def poisonedLen : Nat := {poisoned_len}
+def healthyBytes : Nat := 0x{healthy_hex}
+def healthyLen : Nat := {healthy_len}
 
--- The attack itself: this module claims the carrierless `null`.
+-- The attack itself: the module claims the carrierless `null`.
 def nullClaimManifest : Manifest :=
-  {{ manifest with
-      obligations := [],
-      subject := {{ manifest.subject with
-        hostRoleTable := none, arithParams := none, stringHostRoles := [] }} }}
+  {{ manifest with subject := {{ manifest.subject with
+      hostRoleTable := none, arithParams := none, stringHostRoles := [] }} }}
 def poisonedArtifact : AcceptedArtifact.ArtifactData :=
   {{ Artifact.data with
       modBytes := poisonedBytes, modLen := poisonedLen,
-      manifest := nullClaimManifest,
-      symFragmentClaims := [], stringEqClaims := [], stringConcatClaims := [],
-      constructClaims := [], recursionClaims := [], mutualRecursionClaims := [],
-      verbatimClaims := [], intDispatchClaims := [], fieldProjectionClaims := [],
-      compositionMembers := [], compositionClaims := [] }}
+      manifest := nullClaimManifest }}
 
--- Literal one-conjunct-weakened copy: only the role-table equality is absent.
-def withoutHostRoleTable (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.decodedStringHostRoles artifact ∧
-  AcceptedArtifact.decodedNonExprClaimFacts artifact
+-- The sibling string-role pin accepts it (no String helper)...
+example : AcceptedArtifact.decodedStringHostRoles poisonedArtifact := by
+  show CertDecode.StringHost.roleTable poisonedBytes poisonedLen = some []
+  decide +kernel
 
--- Every sibling decoded fact accepts the poisoned artifact...
-example : withoutHostRoleTable poisonedArtifact := by
-  constructor
-  · show CertDecode.StringHost.roleTable poisonedBytes poisonedLen = some []
-    rfl
-  · exact ⟨trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial, trivial⟩
-
--- ...and the full predicate rejects it exactly at the host-role-table pin: the
--- carrierless `none`/`none` declaration demands the box export be byte-provably
--- absent, but this module exports it, so the pin never closes.
-example : ¬ AcceptedArtifact.decodedNonExprFacts poisonedArtifact := by
+-- ...and the host-role pin rejects it: the box export is present.
+example : ¬ AcceptedArtifact.decodedHostRoleTable poisonedArtifact := by
   intro h
-  have bad : AcceptedArtifact.arithTableCheck poisonedBytes poisonedLen none none = true := h.1
+  have bad : AcceptedArtifact.arithTableCheck poisonedBytes poisonedLen none none = true := h
   exact absurd bad (by decide +kernel)
+example : AcceptedArtifact.arithTableCheck healthyBytes healthyLen none none = false := by
+  decide +kernel
+example : AcceptedArtifact.arithTableCheck ArtifactBytes.modBytes ArtifactBytes.modLen
+    none none = false := by decide +kernel
 "#,
         poisoned_hex = hex_le(&poisoned),
         poisoned_len = poisoned.len(),
+        healthy_hex = hex_le(&healthy),
+        healthy_len = healthy.len(),
     );
-    std::fs::write(cert.join("PoisonedRoleScanPin.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("PoisonedRoleScanPin.lean")
-        .output()
-        .expect("run the poisoned role-scan pin check");
-    assert!(
-        check.status.success(),
-        "poisoned role-scan pin check failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
+    assert_probe_holds(&cert, "PoisonedRoleScanPin.lean", &lean);
 }
 
 /// GuardIso for the LEB encoding of the arith template splices. The wall
@@ -1617,42 +1266,28 @@ example : ¬ AcceptedArtifact.decodedNonExprFacts poisonedArtifact := by
 /// fixture derives both modules from the template definitions under test.
 #[test]
 fn arith_call_target_leb_encoding_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lake_available() {
         eprintln!("skipping arith LEB GuardIso test: `lake` not available");
         return;
     }
-    let wall_dir = temp_dir("cert-arith-leb-guard-iso");
-    std::fs::create_dir_all(&wall_dir).unwrap();
-    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
-    for source in wall.sources {
-        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
-    }
-    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
-    std::fs::write(
-        wall_dir.join("lakefile.lean"),
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
-         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
-         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `Wasip2Envelope, `AcceptedArtifactCore]\n",
-    )
-    .unwrap();
-    let build = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("build")
-        .output()
-        .expect("build the wall before the arith LEB GuardIso");
-    assert!(
-        build.status.success(),
-        "wall build failed before the arith LEB GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
+    let wall_dir = built_wall(
+        "cert-arith-leb-guard-iso",
+        &[
+            "CertPrelude",
+            "CertDecode",
+            "SchemaCore",
+            "ArithTemplateDerisk",
+            "WasmSlice",
+            "Wasip2Envelope",
+            "AcceptedArtifactCore",
+        ],
     );
 
     let lean = r#"import AcceptedArtifactCore
 
 open AverCert ArithTemplateDerisk CertPrelude
 set_option maxRecDepth 300000
+noncomputable section
 
 -- Params shaped like a large honest program: the four sub-routine call
 -- targets sit in the two-byte unsigned-LEB band (166..169, the indices the
@@ -1901,42 +1536,28 @@ example : arithRoleCheckRawSplice (natOfBytes honestModuleBytes)
 /// directly.
 #[test]
 fn comparison_templates_splice_wide_indices_through_their_encoders() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lake_available() {
         eprintln!("skipping wide-index template check: `lake` not available");
         return;
     }
-    let wall_dir = temp_dir("cert-intcmp-wide-template");
-    std::fs::create_dir_all(&wall_dir).unwrap();
-    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
-    for source in wall.sources {
-        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
-    }
-    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
-    std::fs::write(
-        wall_dir.join("lakefile.lean"),
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
-         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
-         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `Wasip2Envelope, `AcceptedArtifactCore]\n",
-    )
-    .unwrap();
-    let build = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("build")
-        .output()
-        .expect("build the wall before the wide-index template check");
-    assert!(
-        build.status.success(),
-        "wall build failed before the wide-index template check:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
+    let wall_dir = built_wall(
+        "cert-intcmp-wide-template",
+        &[
+            "CertPrelude",
+            "CertDecode",
+            "SchemaCore",
+            "ArithTemplateDerisk",
+            "WasmSlice",
+            "Wasip2Envelope",
+            "AcceptedArtifactCore",
+        ],
     );
 
     let lean = r#"import AcceptedArtifactCore
 
 open AverCert ArithTemplateDerisk CertPrelude
 set_option maxRecDepth 300000
+noncomputable section
 
 -- The regime every measured module sits in: each hole below 0x80, one byte
 -- per splice. These are the smallest module's real declared indices.
@@ -2088,898 +1709,115 @@ example : AcceptedArtifact.arithRoleCheck (natOfBytes eqModule) eqModule.length
     );
 }
 
-/// F5 GuardIso: bytes and every sibling binding are identical, while only the
-/// claimed String.eq index changes. Full acceptance fails at the decode-once
-/// string-role equality and its literal one-conjunct-weakened copy accepts.
+/// String-role GuardIso: bytes and every sibling pin stay identical while only
+/// the declared String.eq index moves. The decode-once string-role equality
+/// rejects it; the host-role pin (a sibling reading the same bytes) still
+/// holds of the hostile artifact; and the hostile index also makes the plan
+/// that compares strings lower to a call the module does not make.
 #[test]
 fn inkernel_string_host_roles_guard_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lake_available() {
         eprintln!("skipping F5 string-role GuardIso test: `lake` not available");
         return;
     }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-inkernel-string-role-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/stringeq.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile stringeq fixture for F5 GuardIso");
-    assert!(
-        compile.status.success(),
-        "stringeq compile failed for F5 GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+    let (_out_dir, cert, _wasm) = built_package(
+        "tools/certkit/fixtures/stringeq.av",
+        &[],
+        "cert-inkernel-string-role-guard-iso",
     );
-    let wasm = std::fs::read(out_dir.join("stringeq.wasm")).unwrap();
-    let roles = aver::codegen::cert::byte_derived_string_host_roles(&wasm).unwrap();
-    assert_eq!(roles.len(), 1);
-    assert_eq!(roles[0].1, aver::codegen::cert::StringHostRole::Eq);
-    let eq_idx = roles[0].0;
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(cert.join("cert-manifest.json")).unwrap()).unwrap();
+    let roles = manifest["stringHostRoles"].as_array().unwrap();
+    assert_eq!(roles.len(), 1, "stringeq carries one String.eq helper");
+    assert_eq!(roles[0]["role"], "stringEq");
+    let eq_idx = roles[0]["function_index"].as_u64().unwrap();
     let wrong_eq_idx = eq_idx + 1;
-
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build stringeq certificate before F5 GuardIso");
-    assert!(
-        build.status.success(),
-        "stringeq certificate failed before F5 GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
     let lean = format!(
         r#"import ArtifactCertificate
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
-
-def honestDecoded : AcceptedArtifact.decodedNonExprFacts Artifact.data := by
-  have accepted : AcceptedArtifact.accepted Artifact.data := Artifact.certificate
-  exact accepted.2.2.2.2.2.2.2.1
+noncomputable section
 
 def hostileStringRoles : List (Nat × CertDecode.StringHost.Role) :=
   [({wrong_eq_idx}, .eq)]
-def hostileManifest : Manifest :=
-  {{ manifest with subject :=
-      {{ manifest.subject with stringHostRoles := hostileStringRoles }} }}
 def hostileArtifact : AcceptedArtifact.ArtifactData :=
-  {{ Artifact.data with manifest := hostileManifest }}
-
-def withoutStringHostRoles (artifact : AcceptedArtifact.ArtifactData) : Prop :=
-  AcceptedArtifact.decodedHostRoleTable artifact ∧
-  AcceptedArtifact.decodedNonExprClaimFacts artifact
+  {{ Artifact.data with manifest :=
+      {{ manifest with subject :=
+          {{ manifest.subject with stringHostRoles := hostileStringRoles }} }} }}
 
 -- Mutation is manifest-only: the exact module byte fact is unchanged.
 example : hostileArtifact.modBytes = Artifact.data.modBytes := rfl
 example : hostileArtifact.modLen = Artifact.data.modLen := rfl
 
--- The retained claim binding covers the complete host builder, not merely the
--- classified index: the honest obligation is canonical and a vacuous host is
--- extensionally distinct at the real String.eq slot.
-def deadHost : List WVal → Option WVal := fun _ => none
-def deadConcat : Nat → List WVal → Option WVal := fun _ _ => none
-def nerfedStringHost :
-    (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (Nat → List WVal → Option WVal) →
-    (List WVal → Option WVal) → (List WVal → Option WVal) →
-    (List WVal → Option WVal) → HostTbl :=
-  fun _ _ _ _ _ _ _ _ _ => none
-example : quoteOrSelfOb.host =
-    AcceptedArtifact.stringEqCanonicalHost {eq_idx} := rfl
-example : nerfedStringHost ≠
-    AcceptedArtifact.stringEqCanonicalHost {eq_idx} := by
-  intro h
-  have bad := congrFun (congrFun (congrFun (congrFun (congrFun (congrFun (congrFun
-    (congrFun (congrFun h
-    deadHost) deadHost) deadHost) deadHost) deadConcat) deadHost) deadHost) deadHost) {eq_idx}
-  simp [nerfedStringHost, AcceptedArtifact.stringEqCanonicalHost] at bad
+-- The sibling pin reading the same bytes still holds of the hostile artifact.
+example : AcceptedArtifact.decodedHostRoleTable hostileArtifact := Artifact.roles_ok
 
--- Every sibling decode accepts the hostile manifest.
-example : withoutStringHostRoles hostileArtifact := by
-  exact ⟨honestDecoded.1, honestDecoded.2.2⟩
-
--- Full acceptance fails exactly at the omitted string-role equality.
-example : ¬ AcceptedArtifact.decodedNonExprFacts hostileArtifact := by
+-- The string-role equality rejects it: the kernel's decode-once classifier
+-- finds the String.eq helper at {eq_idx}, not at {wrong_eq_idx}.
+example : ¬ AcceptedArtifact.decodedStringHostRoles hostileArtifact := by
   intro h
-  have bad := h.2.1
-  change CertDecode.StringHost.roleTable ArtifactBytes.modBytes ArtifactBytes.modLen =
-      some hostileStringRoles at bad
-  rw [Artifact.decodedStringHostRoles] at bad
-  have badRoles : manifest.subject.stringHostRoles = hostileStringRoles :=
-    Option.some.inj bad
-  change [({eq_idx}, CertDecode.StringHost.Role.eq)] =
-      [({wrong_eq_idx}, CertDecode.StringHost.Role.eq)] at badRoles
-  have distinct :
-      ([({eq_idx}, CertDecode.StringHost.Role.eq)] :
-        List (Nat × CertDecode.StringHost.Role)) ≠
-      [({wrong_eq_idx}, CertDecode.StringHost.Role.eq)] := by decide
-  exact distinct badRoles
+  have bad : CertDecode.StringHost.roleTable ArtifactBytes.modBytes ArtifactBytes.modLen =
+      some hostileStringRoles := h
+  exact absurd bad (by decide +kernel)
+
+-- And the plan comparing strings lowers under the hostile index to a call the
+-- module does not make.
+example : AcceptedArtifact.plansAccepted hostileArtifact = false := by decide +kernel
 "#
     );
-    std::fs::write(cert.join("StringHostRoleGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("StringHostRoleGuardIso.lean")
-        .output()
-        .expect("run F5 string-role GuardIso");
-    assert!(
-        check.status.success(),
-        "F5 string-role GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
+    assert_probe_holds(&cert, "StringHostRoleGuardIso.lean", &lean);
 }
 
-/// S1 GuardIso: keep the mutual module bytes fixed and corrupt only the second
-/// arm of `isEven`'s manifest-claimed shared code table. The strong witness
-/// fails at `decodeCode bytes 2 = obligation.code 2`; a literal copy with that
-/// one equality omitted accepts the same hostile manifest.
-#[test]
-fn inkernel_code_table_guard_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping S1 decode GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-inkernel-code-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/mutual.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile mutual fixture for S1 GuardIso");
-    assert!(
-        compile.status.success(),
-        "mutual compile failed for S1 GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build mutual certificate before S1 GuardIso");
-    assert!(
-        build.status.success(),
-        "mutual certificate failed before S1 GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    let lean = r#"import Artifact
-
-open CertPrelude AverCert AverCert.Schema
-set_option maxRecDepth 200000
-
--- Same module bytes; only the manifest obligation's code table is hostile.
-def hostileEvenCode : CodeTbl := fun fn =>
-  if fn = 2 then none else AverCert.isEvenOb.code fn
-def hostileEvenOb : Obligation :=
-  { AverCert.isEvenOb with code := hostileEvenCode }
-def hostileManifest : Manifest :=
-  { AverCert.manifest with
-    obligations := hostileEvenOb :: AverCert.manifest.obligations.tail }
-
-def evenObligation (m : Manifest) : Option Obligation :=
-  m.obligations.find? (fun o => o.export_ = "isEven")
-
--- Exact S1 witness for isEven's shared SCC table: carrier plus both members.
-def mutualDecodeWitness (m : Manifest) : Prop :=
-  match evenObligation m with
-  | some obligation =>
-      AverCert.AcceptedArtifact.decodedObligationFacts
-        AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-        obligation [1, 2]
-  | none => False
-
--- Deliberately weakened copy: the cross-member equality at index 2 is absent.
-def mutualDecodeWitnessWithoutCrossCode (m : Manifest) : Prop :=
-  match evenObligation m with
-  | some obligation =>
-      AverCert.AcceptedArtifact.decodedObligationFacts
-        AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-        obligation [1]
-  | none => False
-
-example : mutualDecodeWitness AverCert.manifest := by
-  repeat' constructor
-
--- All retained byte equalities hold for the hostile manifest.
-example : mutualDecodeWitnessWithoutCrossCode hostileManifest := by
-  repeat' constructor
-
--- The omitted equality is the only difference, and it is load-bearing.
-example : ¬ mutualDecodeWitness hostileManifest := by
-  intro h
-  change AverCert.AcceptedArtifact.decodedObligationFacts
-    AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen
-    hostileEvenOb [1, 2] at h
-  have bad := h.2.2.1
-  change CertDecode.decodeCode AverCert.ArtifactBytes.modBytes
-    AverCert.ArtifactBytes.modLen 2 = hostileEvenOb.code 2 at bad
-  have honestAtTwo :
-      CertDecode.decodeCode AverCert.ArtifactBytes.modBytes
-        AverCert.ArtifactBytes.modLen 2 = AverCert.isEvenOb.code 2 := rfl
-  have hostileAtTwo : hostileEvenOb.code 2 = none := rfl
-  rw [honestAtTwo, hostileAtTwo] at bad
-  cases bad
-"#;
-    std::fs::write(cert.join("DecodeGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("DecodeGuardIso.lean")
-        .output()
-        .expect("run S1 decode GuardIso");
-    assert!(
-        check.status.success(),
-        "S1 decode GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// F6 self retirement: the checker no longer splices a Rust `self` list into the
-/// witness. This is sound because `exportsAccounted` already pins every
-/// obligation's `(export name, function kind, self index)` triple into the
-/// byte-decoded export section (`WasmSlice.enumExports`). This test confirms the
-/// binding is load-bearing: the honest artifact passes `exportsAccounted`, and
-/// decoupling one obligation's `self` from the index its export name resolves to
-/// in the bytes fails it (so a manifest cannot claim a fabricated self index).
+/// The export accounting binds every obligation's `(export name, function
+/// kind, self index)` triple to the byte-decoded export section, so an
+/// obligation cannot claim a fabricated self index: the honest artifact passes
+/// `exportsAccounted`, and decoupling one obligation's `self` from the index
+/// its export name resolves to in the bytes fails it.
 #[test]
 fn self_index_is_kernel_bound_by_exports_accounted() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping F6 self-binding GuardIso test: `lake` not available");
+    if !lake_available() {
+        eprintln!("skipping self-binding GuardIso test: `lake` not available");
         return;
     }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-self-index-binding");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("examples/data/json.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile json fixture for F6 self-binding GuardIso");
-    assert!(
-        compile.status.success(),
-        "json compile failed for F6 self-binding GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+    let (_out_dir, cert, _wasm) = built_package(
+        "tools/certkit/fixtures/certprobe2.av",
+        &[],
+        "cert-self-index-binding",
     );
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build json certificate before F6 self-binding GuardIso");
-    assert!(
-        build.status.success(),
-        "json certificate failed before F6 self-binding GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
     let lean = r#"import Artifact
 
 open CertPrelude AverCert AverCert.Schema
 set_option maxRecDepth 300000
+noncomputable section
 
--- Honest artifact: every obligation's self index is the byte-derived export
--- index for its name, so the export accounting holds.
-example : AcceptedArtifact.exportsAccounted Artifact.data = true := rfl
+example : AcceptedArtifact.exportsAccounted Artifact.data = true := Artifact.exports_ok
 
--- Decouple the first obligation's self index from its export name. The
--- (name, func-kind, self) triple is no longer a member of the byte-decoded
--- export section, so the accounting fails: `self` cannot be fabricated even
--- though the Rust checker no longer pins it with a separate `rfl` splice.
 def hostileSelfManifest : Manifest :=
   match manifest.obligations with
   | o :: rest => { manifest with obligations := { o with self := o.self + 1 } :: rest }
   | [] => manifest
 def hostileSelfArtifact : AcceptedArtifact.ArtifactData :=
   { Artifact.data with manifest := hostileSelfManifest }
-example : AcceptedArtifact.exportsAccounted hostileSelfArtifact = false := rfl
+example : AcceptedArtifact.exportsAccounted hostileSelfArtifact = false := by decide +kernel
 "#;
-    std::fs::write(cert.join("SelfBindingGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("SelfBindingGuardIso.lean")
-        .output()
-        .expect("run F6 self-binding GuardIso");
-    assert!(
-        check.status.success(),
-        "F6 self-binding GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// The type index the named export's function declares (for anchoring nominal
-/// type-gate probes to the byte-derived binding).
-fn export_func_type_idx(bytes: &[u8], name: &str) -> u32 {
-    let mut imported_funcs = 0u32;
-    let mut func_types = Vec::new();
-    let mut export_idx = None;
-    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
-        match payload.expect("compiler-produced wasm must parse") {
-            wasmparser::Payload::ImportSection(reader) => {
-                for group in reader {
-                    for import in group.expect("import group must parse") {
-                        let (_, import) = import.expect("import must parse");
-                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                            imported_funcs += 1;
-                        }
-                    }
-                }
-            }
-            wasmparser::Payload::FunctionSection(reader) => {
-                for type_idx in reader {
-                    func_types.push(type_idx.expect("function type index must parse"));
-                }
-            }
-            wasmparser::Payload::ExportSection(reader) => {
-                for export in reader {
-                    let export = export.expect("export must parse");
-                    if export.kind == wasmparser::ExternalKind::Func && export.name == name {
-                        export_idx = Some(export.index);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    let export_idx = export_idx.unwrap_or_else(|| panic!("module exports no function `{name}`"));
-    func_types[(export_idx - imported_funcs) as usize]
-}
-
-/// Nominal vector-read GuardIso: the fused `Vector.get`-or-default face pins
-/// the claimed array type's element storage to the nullable carrier reference
-/// (`checkVectorGetTypes` via `exprVectorGetTypesMatch`). Two hand-built
-/// modules that differ ONLY in that element storage are indistinguishable to
-/// the byte-binding gates (same export map, same code entry), so this gate is
-/// the sole discriminator; a literal gate-weakened copy accepts the raw-i64
-/// module. The honest surfaces are then confirmed on the real fused-read
-/// artifact at its byte-derived binding, and the audited sym-plan encoder is
-/// pinned to fail closed when the to-index role or the array binding is
-/// absent from the byte-derived tables.
-#[test]
-fn inkernel_vector_get_nominal_type_guard_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping vector-read nominal GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-vector-get-nominal-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/cell_at.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile cell_at fixture for vector-read nominal GuardIso");
-    assert!(
-        compile.status.success(),
-        "cell_at compile failed for vector-read nominal GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
-    let wasm = std::fs::read(out_dir.join("cell_at.wasm")).unwrap();
-    let type_idx = export_func_type_idx(&wasm, "cellAt");
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
-        aver::codegen::cert::byte_derived_frag_host_role_indices(&wasm).unwrap();
-    // `cellAt` reads a vector; it compares no two Int VALUES, so the module
-    // calls neither comparison helper and exports neither. The honest claim
-    // table below therefore names the roles this module really binds — the
-    // producer's table is byte-derived, and an absent role is simply not in
-    // the list.
-    let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx) = (
-        box_idx.expect("cell_at box role"),
-        add_idx.expect("cell_at add role"),
-        mul_idx.expect("cell_at mul role"),
-        sub_idx.expect("cell_at sub role"),
-        to_index_idx.expect("cell_at to-index role"),
-    );
-    let comparison_roles = [(".cmp", cmp_idx), (".eq", eq_idx)]
-        .into_iter()
-        .filter_map(|(role, index)| index.map(|index| format!(", ({role}, {index})")))
-        .collect::<String>();
-
-    let cert = out_dir.join("cert");
-    // The manifest's fused-read host call carries the claim's carrier and
-    // array-type surfaces; cross-check its helper indices against the
-    // independent Rust role classifier before probing the gate with them.
-    let manifest_text = std::fs::read_to_string(cert.join("Manifest.lean")).unwrap();
-    let host_call = manifest_text
-        .split("vectorGetOrDefaultHost ")
-        .nth(1)
-        .expect("manifest must carry the fused vector-read host");
-    let leading_number = |s: &str| -> u32 {
-        let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
-        digits
-            .parse()
-            .unwrap_or_else(|_| panic!("expected a number at `{}`", &s[..s.len().min(40)]))
-    };
-    let field = |key: &str| -> u32 {
-        leading_number(
-            host_call
-                .split(key)
-                .nth(1)
-                .unwrap_or_else(|| panic!("manifest host call lacks `{key}`")),
-        )
-    };
-    let carrier = leading_number(host_call);
-    let arr_ty = field("arrTy := ");
-    assert_eq!(field("toIndexIdx := "), to_index_idx);
-    assert_eq!(field("boxIdx := "), box_idx);
-    assert_ne!(arr_ty, carrier, "fixture carrier/array types must differ");
-
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build cell_at certificate before vector-read nominal GuardIso");
-    assert!(
-        build.status.success(),
-        "cell_at certificate failed before vector-read nominal GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    let name_bytes = "cellAt"
-        .bytes()
-        .map(|b| b.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let lean = format!(
-        r#"import ArtifactCertificate
-
-open CertPrelude AverCert AverCert.Schema
-set_option maxRecDepth 300000
-
-def packLE : List Nat → Nat | [] => 0 | b :: bs => b + (packLE bs <<< 8)
-
--- Minimal modules: header, type section, then a shared func/export/code tail.
--- `f` is func 0 of type 0 with the canonical fused-read signature over
--- carrier 2 and array type 1; only the ARRAY ELEMENT STORAGE differs between
--- the two: `(mut (ref null 2))` (carrier elements) vs `(mut i64)` (raw
--- limbs). NOTE: like the int-dispatch signature probes, these hand-built
--- modules demonstrate guard DISCRIMINATION only (they would fail the
--- wasmparser chokepoint); the fused-read E2E tampers close the end-to-end gap
--- on a real validated artifact.
-def hdr : List Nat := [0, 97, 115, 109, 1, 0, 0, 0]
-def carrierElemType : List Nat := [1, 14, 2, 96, 2, 99, 1, 99, 2, 1, 99, 2, 94, 99, 2, 1]
-def rawElemType : List Nat := [1, 13, 2, 96, 2, 99, 1, 99, 2, 1, 99, 2, 94, 126, 1]
-def tailSecs : List Nat := [3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11]
-def honestMod : List Nat := hdr ++ carrierElemType ++ tailSecs
-def hostileMod : List Nat := hdr ++ rawElemType ++ tailSecs
-def nameF : List Nat := [102]
-
--- The byte-binding gates cannot tell the two modules apart...
-example : WasmSlice.funcBindingForExport (packLE honestMod) honestMod.length nameF =
-    WasmSlice.funcBindingForExport (packLE hostileMod) hostileMod.length nameF := rfl
-example : WasmSlice.exactFuncBindingForExport (packLE honestMod) honestMod.length nameF [2, 0, 11] =
-    WasmSlice.exactFuncBindingForExport (packLE hostileMod) hostileMod.length nameF [2, 0, 11] := rfl
--- ...only the nominal vector-read type gate discriminates them...
-example : WasmSlice.exprVectorGetTypesMatch (packLE honestMod) honestMod.length 0 2 1 = true := rfl
-example : WasmSlice.exprVectorGetTypesMatch (packLE hostileMod) hostileMod.length 0 2 1 = false := rfl
--- ...and the fused-read face routes through exactly that gate: the plan
--- recognizer is blind to the module's type section either way.
-def probePlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.adtRef, .intCarrier], result := .intCarrier, body := ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .vectorGetOrDefault 1 5 6 (0 : Int) }}], result := 0 }} : FragBlock) }}
-example : WasmSlice.exprVectorGetOrDefaultArrTy? probePlan = some 1 := rfl
-example : WasmSlice.exprFragmentNominalTypesMatch (packLE honestMod) honestMod.length 0 2 probePlan = true := rfl
-example : WasmSlice.exprFragmentNominalTypesMatch (packLE hostileMod) hostileMod.length 0 2 probePlan = false := rfl
--- An array type confused with the carrier itself fail-closes on either module.
-example : WasmSlice.exprVectorGetTypesMatch (packLE honestMod) honestMod.length 0 1 1 = false := rfl
--- The literal gate-weakened copy accepts every negative.
-def weakVectorTypes (_ _ _ _ _ : Nat) : Bool := true
-example : weakVectorTypes (packLE hostileMod) hostileMod.length 0 2 1 = true := rfl
-example : weakVectorTypes (packLE honestMod) honestMod.length 0 1 1 = true := rfl
-
--- On the real artifact the honest claim surfaces pass the gate at the
--- byte-derived binding's type index, and the carrier-confused variant fails.
-example : (WasmSlice.funcBindingForExport ArtifactBytes.modBytes ArtifactBytes.modLen
-    [{name_bytes}]).map (fun b => b.typeIdx) = some {type_idx} := rfl
-example : WasmSlice.exprVectorGetTypesMatch ArtifactBytes.modBytes ArtifactBytes.modLen
-    {type_idx} {carrier} {arr_ty} = true := rfl
-example : WasmSlice.exprVectorGetTypesMatch ArtifactBytes.modBytes ArtifactBytes.modLen
-    {type_idx} {carrier} {carrier} = false := rfl
-
--- The claim really carries exactly those surfaces...
-def honestHostTable : List (HostRole × Nat) :=
-  [(.box, {box_idx}), (.add, {add_idx}), (.mul, {mul_idx}), (.sub, {sub_idx}),
-   (.toIndex, {to_index_idx}){comparison_roles}]
-def honestStructTable : List (String × Nat) := [("Vector<Int>", {arr_ty})]
-example : Artifact.symFragmentClaims.map (fun c => (c.carrier, c.hostTable, c.structTable)) =
-    [({carrier}, honestHostTable, honestStructTable)] := rfl
-
--- ...the audited encoder binds the fused node through the byte-derived
--- tables...
-example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-    honestHostTable honestStructTable Plans.cellAtSymPlan = some Plans.cellAtPlan := rfl
--- ...and fail-closes when the to-index role or the array binding is absent.
-def noToIndexTable : List (HostRole × Nat) :=
-  [(.box, {box_idx}), (.add, {add_idx}), (.mul, {mul_idx}), (.sub, {sub_idx})]
-example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-    noToIndexTable honestStructTable Plans.cellAtSymPlan = none := rfl
-example : PlanCheck.encodeSymRawPlanToExprFragmentRawPlan
-    honestHostTable [] Plans.cellAtSymPlan = none := rfl
-"#
-    );
-    std::fs::write(cert.join("VectorGetNominalGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("VectorGetNominalGuardIso.lean")
-        .output()
-        .expect("run vector-read nominal GuardIso");
-    assert!(
-        check.status.success(),
-        "vector-read nominal GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// One `String.concat` module in four states: the Int-carrier struct present or
-/// absent, crossed with the emitted locals prelude reserving a carrier slot or
-/// none. The two DIAGONAL states are what the compiler actually emits — a
-/// module that touches `Int` carries the struct and the scratch local, a module
-/// that never touches `Int` carries neither — and the two OFF-DIAGONAL states
-/// are the artifacts a producer would need in order to choose the more
-/// convenient byte template for a module it does not fit.
-///
-/// Everything but the struct's first storage byte and the locals prelude is
-/// shared: the same export, the same concatenation, the same data segment, the
-/// same function and code sections.
-fn string_concat_carrier_fixture(carrier_field: &str, locals: &str) -> Vec<u8> {
-    let wat = format!(
-        r#"
-(module
-  (type $str (array (mut i8)))
-  (type $parts (array (mut (ref null $str))))
-  (type $shape (struct (field {carrier_field}) (field anyref) (field i32)))
-  (func $concat (param (ref null $parts)) (result (ref null $str))
-    ref.null $str)
-  (func $greet (param (ref null $str)) (result (ref null $str))
-    {locals}
-    i32.const 0
-    i32.const 7
-    array.new_data $str $hello
-    local.get 0
-    array.new_fixed $parts 2
-    call $concat)
-  (data $hello "Hello, ")
-  (export "greet" (func $greet)))
-"#
-    );
-    let bytes = wat::parse_str(&wat).expect("string-concat carrier fixture assembles");
-    wasmparser::Validator::new()
-        .validate_all(&bytes)
-        .expect("string-concat carrier fixture must be valid wasm");
-    bytes
-}
-
-/// GuardIso for the `string-concat-v1` locals prelude. The family is the only
-/// one that lowers in both carrier states of a module, so it is the only one
-/// whose certificate carries a template SELECTOR at all — and a selector the
-/// producer could pick freely would let a carriered module present the shorter
-/// body, or a carrierless one the longer, whichever its bytes happened to fit.
-///
-/// Four facts, all against kernel-evaluated modules built inside the fixture:
-///
-/// (a) the two honest states are ACCEPTED by the real family predicate, so the
-///     fixture exercises both templates and the rejections below are not an
-///     artefact of the framing;
-/// (b) a CARRIERED module presenting the zero-local body with a `carrier :=
-///     none` claim is REJECTED, and the mirror — a CARRIERLESS module
-///     presenting the one-local body with a `carrier := some 2` claim — is
-///     rejected too, so neither direction is open;
-/// (c) the literal one-conjunct-weakened copy — `stringConcatPlanAccepted`
-///     with the `CertDecode.carrierState` equality deleted and nothing else
-///     touched — ACCEPTS both hostile artifacts. This is the attribution: the
-///     hostile bodies satisfy every other conjunct, byte binding included,
-///     because the byte template each claim selected really is the byte
-///     template sitting in that module.
-///
-/// Point (c) is why the pin cannot be dropped in favour of the byte equality
-/// alone: the byte equality checks that the claim describes the module's bytes,
-/// never that the module was entitled to those bytes.
-#[test]
-fn string_concat_carrier_state_guard_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping String.concat carrier-state GuardIso test: `lake` not available");
-        return;
-    }
-    let wall_dir = temp_dir("cert-string-concat-carrier-guard-iso");
-    std::fs::create_dir_all(&wall_dir).unwrap();
-    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
-    for source in wall.sources {
-        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
-    }
-    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
-    std::fs::write(
-        wall_dir.join("lakefile.lean"),
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
-         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
-         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `StringSoundness, `Wasip2Envelope, `AcceptedArtifactCore]\n",
-    )
-    .unwrap();
-    let build = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("build")
-        .output()
-        .expect("build the wall before the String.concat carrier-state GuardIso");
-    assert!(
-        build.status.success(),
-        "wall build failed before the String.concat carrier-state GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    // The carrier struct is `{i64, anyref, i32}`; the decoy differs in exactly
-    // one storage-type byte and is therefore NOT a carrier. The locals prelude
-    // is either empty or one nullable reference to that same struct type.
-    let carrier_local = "(local (ref null $shape))";
-    let honest_carriered = string_concat_carrier_fixture("i64", carrier_local);
-    let honest_carrierless = string_concat_carrier_fixture("i32", "");
-    let hostile_carriered = string_concat_carrier_fixture("i64", "");
-    let hostile_carrierless = string_concat_carrier_fixture("i32", carrier_local);
-
-    let lean = format!(
-        r#"import AcceptedArtifactCore
-import StringSoundness
-
-open CertPrelude AverCert AverCert.Schema AverCert.AcceptedArtifact
-set_option maxRecDepth 300000
-
--- Four assemblies of ONE module. The struct at type index 2 is the Int carrier
--- shape `{{i64, anyref, i32}}` in the "carriered" pair and a decoy differing in
--- one storage-type byte in the "carrierless" pair. `greet` reserves one
--- nullable reference to that struct in the "oneLocal" pair and no locals at all
--- in the "zeroLocal" pair. Bytes crafted by the test harness.
-def honestCarrieredBytes : Nat := 0x{honest_carriered_hex}
-def honestCarrieredLen : Nat := {honest_carriered_len}
-def honestCarrierlessBytes : Nat := 0x{honest_carrierless_hex}
-def honestCarrierlessLen : Nat := {honest_carrierless_len}
-def hostileCarrieredBytes : Nat := 0x{hostile_carriered_hex}
-def hostileCarrieredLen : Nat := {hostile_carriered_len}
-def hostileCarrierlessBytes : Nat := 0x{hostile_carrierless_hex}
-def hostileCarrierlessLen : Nat := {hostile_carrierless_len}
-
--- The byte-derived carrier state of each: the struct SHAPE decides it, and the
--- locals prelude has no say in it whatsoever.
-example : CertDecode.carrierState honestCarrieredBytes honestCarrieredLen
-    = some (some 2) := by decide +kernel
-example : CertDecode.carrierState hostileCarrieredBytes hostileCarrieredLen
-    = some (some 2) := by decide +kernel
-example : CertDecode.carrierState honestCarrierlessBytes honestCarrierlessLen
-    = some none := by decide +kernel
-example : CertDecode.carrierState hostileCarrierlessBytes hostileCarrierlessLen
-    = some none := by decide +kernel
-
-def greetName : AverCert.WasmSlice.ByteSeq := [103, 114, 101, 101, 116]
-def helloBytes : List Nat := [72, 101, 108, 108, 111, 44, 32]
-
-def concatPlan : StringConcatRawPlan :=
-  {{ profile := "string-concat-v1",
-     prefixes := [({{ dataIdx := 0, bytes := helloBytes }} : StringConcatChunk)],
-     suffixes := [] }}
-
-def concatSymPlan : SymRawPlan :=
-  {{ profile := "sym-fragment-v1", params := [.string], result := .string,
-     body := ({{ nodes := [{{ id := 0, ty := .string, kind := .constStringBytes helloBytes }},
-                          {{ id := 1, ty := .string, kind := .param 0 }},
-                          {{ id := 2, ty := .string, kind := .prim .stringConcat [0, 1] }}],
-                result := 2 }} : SymBlock) }}
-
-def concatBody : List WInstr :=
-  [.i32Const (0), .i32Const (7), .arrayNewData 0 helloBytes, .localGet 0,
-   .arrayNewFixed 1 2, .call 0]
-
--- One obligation shape, parameterised by exactly the two fields the carrier
--- state fixes: the declared carrier index and the frame's locals count.
-def greetOb (carrierIdx nlocals : Nat) : Obligation :=
-  {{ export_ := "greet", policy := .simulatesModel, carrier := carrierIdx,
-     code := fun fn => if fn = 1 then some ⟨1, nlocals, concatBody⟩ else none,
-     host := stringConcatCanonicalHost 0 0,
-     self := 1, Dom := WVal, Cod := WVal,
-     domRepr := fun _ v vs => vs = [v],
-     codRepr := fun S v w => verbatimRepr S v w,
-     model := fun v => StringSoundness.evalStringConcat 0 1 concatPlan v }}
-
-def concatRoles : List (Nat × CertDecode.StringHost.Role) := [(0, .concat)]
-
--- Literal one-conjunct-weakened copy of `stringConcatPlanAccepted`: the
--- `CertDecode.carrierState` equality is deleted and every other conjunct, in
--- its original order, is kept verbatim.
-def stringConcatPlanAcceptedWithoutCarrierState
-    (modBytes modLen : Nat)
-    (exportNameBytes : AverCert.WasmSlice.ByteSeq)
-    (exportName : String)
-    (carrier : Option Nat)
-    (resultTy containerTy concatFuncIdx : Nat)
-    (stringHostRoles : List (Nat × CertDecode.StringHost.Role))
-    (symPlan : SymRawPlan)
-    (plan : StringConcatRawPlan)
-    (obligation : Obligation) : Prop :=
-  obligation.export_ = exportName ∧
-  obligation.carrier = carrier.getD 0 ∧
-  stringHostRoles.contains (concatFuncIdx, .concat) = true ∧
-  obligation.host = stringConcatCanonicalHost concatFuncIdx resultTy ∧
-  ∃ body codeEntry binding,
-    AverCert.PlanCheck.checkSymRawPlan symPlan = true ∧
-    AverCert.PlanCheck.stringConcatPlanMatchesSymRawPlan symPlan plan = true ∧
-    AverCert.PlanCheck.checkStringConcatRawPlan plan = true ∧
-    AverCert.PlanLower.lowerStringConcatBody
-      resultTy containerTy concatFuncIdx plan = some body ∧
-    AverCert.PlanBytes.lowerStringConcatCodeEntry
-      carrier resultTy containerTy concatFuncIdx plan = some codeEntry ∧
-    AverCert.WasmSlice.exactFuncBindingForExport
-      modBytes modLen exportNameBytes codeEntry = some binding ∧
-    AverCert.WasmSlice.stringConcatExportFuncTypeMatches
-      modBytes modLen binding.typeIdx resultTy = true ∧
-    AverCert.WasmSlice.stringConcatHelperFuncTypeMatches
-      modBytes modLen concatFuncIdx containerTy resultTy = true ∧
-    obligation.self = binding.funcIdx ∧
-    obligation.code binding.funcIdx =
-      some {{ arity := 1, nlocals := stringConcatNLocals carrier, body := body }}
-
-def oneLocalEntry : AverCert.WasmSlice.ByteSeq :=
-  (AverCert.PlanBytes.lowerStringConcatCodeEntry (some 2) 0 1 0 concatPlan).getD []
-def zeroLocalEntry : AverCert.WasmSlice.ByteSeq :=
-  (AverCert.PlanBytes.lowerStringConcatCodeEntry none 0 1 0 concatPlan).getD []
-
--- The two templates really are different bytes, so the fixture is not testing a
--- distinction without a difference.
-example : oneLocalEntry ≠ zeroLocalEntry := by decide +kernel
-
-def bindingIn (modBytes modLen : Nat) (entry : AverCert.WasmSlice.ByteSeq) :
-    AverCert.WasmSlice.FuncBinding :=
-  (AverCert.WasmSlice.exactFuncBindingForExport modBytes modLen greetName entry).getD
-    ⟨0, 0, []⟩
-
--- (a) Isolation, honest carriered: carrier struct present, one-local body,
--- `carrier := some 2` claimed. The real predicate accepts.
-example : stringConcatPlanAccepted honestCarrieredBytes honestCarrieredLen greetName
-    "greet" (some 2) 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 2 1) :=
-  ⟨rfl, rfl, rfl, rfl, rfl, concatBody, oneLocalEntry,
-   bindingIn honestCarrieredBytes honestCarrieredLen oneLocalEntry,
-   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-
--- (a) Isolation, honest carrierless: no carrier struct, zero-local body,
--- `carrier := none` claimed. The real predicate accepts this too, which is the
--- point of the whole change.
-example : stringConcatPlanAccepted honestCarrierlessBytes honestCarrierlessLen greetName
-    "greet" none 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 0 0) :=
-  ⟨rfl, rfl, rfl, rfl, rfl, concatBody, zeroLocalEntry,
-   bindingIn honestCarrierlessBytes honestCarrierlessLen zeroLocalEntry,
-   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-
--- (b) A CARRIERED module claiming the carrierless template is rejected, exactly
--- at the carrier-state decode.
-example : ¬ stringConcatPlanAccepted hostileCarrieredBytes hostileCarrieredLen greetName
-    "greet" none 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 0 0) := by
-  intro h
-  have bad : CertDecode.carrierState hostileCarrieredBytes hostileCarrieredLen = some none :=
-    h.2.1
-  exact absurd bad (by decide +kernel)
-
--- (b) The mirror: a CARRIERLESS module claiming the carriered template.
-example : ¬ stringConcatPlanAccepted hostileCarrierlessBytes hostileCarrierlessLen greetName
-    "greet" (some 2) 0 1 0 concatRoles concatSymPlan concatPlan (greetOb 2 1) := by
-  intro h
-  have bad : CertDecode.carrierState hostileCarrierlessBytes hostileCarrierlessLen
-      = some (some 2) := h.2.1
-  exact absurd bad (by decide +kernel)
-
--- (c) ATTRIBUTION. Delete that one conjunct and the SAME hostile artifacts are
--- accepted: every remaining conjunct holds of them, the byte binding included.
-example : stringConcatPlanAcceptedWithoutCarrierState hostileCarrieredBytes
-    hostileCarrieredLen greetName "greet" none 0 1 0 concatRoles concatSymPlan
-    concatPlan (greetOb 0 0) :=
-  ⟨rfl, rfl, rfl, rfl, concatBody, zeroLocalEntry,
-   bindingIn hostileCarrieredBytes hostileCarrieredLen zeroLocalEntry,
-   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-
-example : stringConcatPlanAcceptedWithoutCarrierState hostileCarrierlessBytes
-    hostileCarrierlessLen greetName "greet" (some 2) 0 1 0 concatRoles concatSymPlan
-    concatPlan (greetOb 2 1) :=
-  ⟨rfl, rfl, rfl, rfl, concatBody, oneLocalEntry,
-   bindingIn hostileCarrierlessBytes hostileCarrierlessLen oneLocalEntry,
-   rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-
--- The byte equality on its own is blind to the attack, which is why it cannot
--- stand in for the pin: each hostile module really does carry the code entry
--- its claim synthesizes.
-example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrieredBytes
-    hostileCarrieredLen greetName zeroLocalEntry ≠ none := by decide +kernel
-example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrierlessBytes
-    hostileCarrierlessLen greetName oneLocalEntry ≠ none := by decide +kernel
-
--- And the honest-template equalities fail on the swapped bodies, so the module
--- pairs really are in the states the fixture claims.
-example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrieredBytes
-    hostileCarrieredLen greetName oneLocalEntry = none := by decide +kernel
-example : AverCert.WasmSlice.exactFuncBindingForExport hostileCarrierlessBytes
-    hostileCarrierlessLen greetName zeroLocalEntry = none := by decide +kernel
-"#,
-        honest_carriered_hex = hex_le(&honest_carriered),
-        honest_carriered_len = honest_carriered.len(),
-        honest_carrierless_hex = hex_le(&honest_carrierless),
-        honest_carrierless_len = honest_carrierless.len(),
-        hostile_carriered_hex = hex_le(&hostile_carriered),
-        hostile_carriered_len = hostile_carriered.len(),
-        hostile_carrierless_hex = hex_le(&hostile_carrierless),
-        hostile_carrierless_len = hostile_carrierless.len(),
-    );
-    std::fs::write(wall_dir.join("StringConcatCarrierGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("env")
-        .arg("lean")
-        .arg("StringConcatCarrierGuardIso.lean")
-        .output()
-        .expect("run the String.concat carrier-state GuardIso check");
-    assert!(
-        check.status.success(),
-        "String.concat carrier-state GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
+    assert_probe_holds(&cert, "SelfBindingGuardIso.lean", lean);
 }
 
 /// A minimal but REAL Int runtime: the canonical `__rt_aint_from_i64` helper
-/// over a three-field carrier struct, exported under its runtime name. The flag
-/// field's storage type is the only parameter — `i32` is the shape
-/// `CertDecode.TypeEntry.isCarrier` recognises, and a packed `i8` is a carrier
-/// that works exactly as well in a real engine while decoding as no carrier at
-/// all (`isCarrier` compares the storage tag against `0x7f`, and packed `i8` is
-/// `0x78`). The two assemblies differ in that single byte; the box helper's code
-/// entry is byte-identical in both.
+/// over a three-field carrier struct, exported under its runtime name, in one
+/// explicit rec group. The flag field's storage type is the only parameter —
+/// `i32` is the shape `CertDecode.TypeEntry.isCarrier` recognises, and a
+/// packed `i8` is a carrier that works exactly as well in a real engine while
+/// decoding as no carrier at all. The two assemblies differ in that single
+/// byte; the box helper's code entry is byte-identical in both.
 fn arith_carrier_fixture(flag_field: &str) -> Vec<u8> {
     let wat = format!(
         r#"
 (module
-  (type $mag (array (mut i64)))
-  (type $aint (struct (field i64) (field (ref null $mag)) (field {flag_field})))
+  (rec
+    (type $mag (array (mut i64)))
+    (type $aint (struct (field i64) (field (ref null $mag)) (field {flag_field}))))
   (func $box (param i64) (result (ref null $aint))
     local.get 0
     ref.null $mag
@@ -2995,100 +1833,49 @@ fn arith_carrier_fixture(flag_field: &str) -> Vec<u8> {
     bytes
 }
 
-/// GuardIso for the two conjuncts that keep a DECLARED arith table, and the
-/// carrier index every obligation declares, tied to the module's type section.
+/// The two pins that tie a DECLARED Int carrier to the module's type section.
 ///
-/// The attack this closes: `arithTableCheck` reads the export section
-/// (`carrierHelperAbsent`, `boxIdx`, `toIndexIdx`), the code section
-/// (`arithRoleCheck`) and a pure bound (`checkArithHostParams`) — and, before
-/// this change, nothing else. `arithParams.carrier` was therefore confirmed only
-/// against helper bodies the wall itself synthesized FROM it, never against the
-/// type section. A module can hold a perfectly good Int carrier that
-/// `isCarrier` cannot see (the packed-`i8` flag field below), which makes
-/// `carrierState` report the carrierless state while a full arith table is
-/// admissible. Pair that with the reserved carrier index the carrierless arm of
-/// `decodedCarrierIndex` forces, and an Int-family claim could wire the box role
-/// — int-dispatch needs no other — and state its obligation over `CarrierSpec 0`
-/// while the values its code builds live at a different struct index.
+/// A module can hold a perfectly good Int carrier that `isCarrier` cannot see
+/// (the packed-`i8` flag field below), which makes `carrierState` report the
+/// carrierless state while the box helper is exported and carries the
+/// canonical template body. Without a type-section pin, `arithParams.carrier`
+/// would be confirmed only against helper bodies the wall itself synthesized
+/// FROM it.
 ///
-/// Four facts, all against kernel-evaluated modules built inside the fixture:
-///
-/// (a) the honest module — same bytes, `i32` flag field — is ACCEPTED by both
-///     pins, so the fixture exercises the admitting path;
-/// (b) the packed-`i8` module is REJECTED by the real `arithTableCheck`, and by
-///     the real `decodedObligationFacts` when its obligation declares the index
-///     its own values actually live at;
-/// (c) the literal one-conjunct-weakened copies — `arithTableCheck` without the
-///     `carrierState` equality, and `decodedObligationFacts` without the carrier
-///     equality — ACCEPT that same module. Both attributions are acceptances:
-///     every other conjunct genuinely holds, template equality included;
-/// (d) the exploit's remaining links are pinned as facts, so the chain is
-///     legible rather than asserted: the helper export really is present, the
-///     box body really does equal the canonical template, and the role a claim
-///     would cite really is bound by `hostTableBound`.
+/// (a) the honest module (`i32` flag) is ACCEPTED by `arithTableCheck` and by
+///     the type table's `carrierConfirmed`;
+/// (b) the packed-`i8` module is REJECTED by both under the same declaration;
+/// (c) a literal copy of the live `arithTableCheck` weakened by exactly the
+///     `carrierState` conjunct ACCEPTS that same module — every other
+///     conjunct, template equality included, holds of it;
+/// (d) nor can the hidden module be declared carrierless instead: the type
+///     table's carrierless arm matches it, but the role table's carrierless
+///     arm needs the box export absent.
 #[test]
 fn declared_arith_carrier_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lake_available() {
         eprintln!("skipping declared-arith-carrier GuardIso test: `lake` not available");
         return;
     }
-    let wall_dir = temp_dir("cert-arith-carrier-guard-iso");
-    std::fs::create_dir_all(&wall_dir).unwrap();
-    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
-    for source in wall.sources {
-        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
-    }
-    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
-    // The import closure of what this fixture needs — the sibling GuardIso
-    // root list plus `StandardFace` and everything `StandardFace` transitively
-    // imports. A `roots` list is NOT auto-extended: a module outside it is not
-    // part of the library, so its olean is never built and the import fails,
-    // which is why naming `StandardFace` alone is not enough, and why a wall
-    // module that gains an import needs its new dependency added here too or
-    // the staged build fails with `unknown module prefix` — the way
-    // `StandardFace`'s `RecordComputeBridge` (and, behind it,
-    // `ExprFragmentSoundness`, `ExprFragmentSemantics` and
-    // `InterpreterSequencing`) did. Twenty-four roots instead of the wall's
-    // full forty-six keeps the fresh-temp-dir build proportionate. Only files
-    // the wall actually EMBEDS may be named: the staged directory is
-    // `wall.sources`, a strict subset of the repository.
-    std::fs::write(
-        wall_dir.join("lakefile.lean"),
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
-         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
-         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `ExprFragmentSemantics, `ExprFragmentSoundness, `InterpreterSequencing, \
-         `StringSoundness, `Wasip2Envelope, `AcceptedArtifactCore, `ConstructVerbatimSoundness, \
-         `DeclaredEnvelopeAcceptTransport, `DeclaredIndexEnvelope, `EnvelopeLowering, \
-         `FieldProjectionSoundness, `IntDispatchSoundness, `RecordComputeBridge, \
-         `WidenedEnvelope, `StandardFace]\n",
-    )
-    .unwrap();
-    let build = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("build")
-        .output()
-        .expect("build the wall before the declared-arith-carrier GuardIso");
-    assert!(
-        build.status.success(),
-        "wall build failed before the declared-arith-carrier GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
+    let wall_dir = built_wall(
+        "cert-arith-carrier-guard-iso",
+        &[
+            "CertPrelude",
+            "CertDecode",
+            "SchemaCore",
+            "ArithTemplateDerisk",
+            "WasmSlice",
+            "Wasip2Envelope",
+            "TypeTable",
+            "AcceptedArtifactCore",
+        ],
     );
-
     let hidden = arith_carrier_fixture("i8");
     let visible = arith_carrier_fixture("i32");
-    // The whole difference between a carrier the wall sees and one it does not.
-    // `zip` truncates, so the length equality has to be asserted first or the
-    // one-byte claim below would hold vacuously for a shorter prefix — and the
-    // "the box helper code entry is byte-identical in both" conclusion rests on
-    // exactly this.
     assert_eq!(
         hidden.len(),
         visible.len(),
-        "the two arith carrier fixtures must be the same length for the \
-         byte-difference count below to mean anything"
+        "the two arith carrier fixtures must be the same length"
     );
     let differing: Vec<usize> = hidden
         .iter()
@@ -3102,1608 +1889,132 @@ fn declared_arith_carrier_is_isolated_and_weaken_confirmed() {
         "the two arith carrier fixtures must differ in exactly one byte, got {differing:?}"
     );
     assert_eq!((hidden[differing[0]], visible[differing[0]]), (0x78, 0x7f));
+    let weak = weakened_arith_table_checks(
+        &wall_dir,
+        &[("arithTableCheckWithoutCarrierStruct", &[CARRIER_STATE])],
+    );
 
     let lean = format!(
         r#"import AcceptedArtifactCore
-import StandardFace
 
 open CertPrelude AverCert AverCert.Schema AverCert.AcceptedArtifact
 set_option maxRecDepth 300000
+noncomputable section
 
--- One Int runtime, assembled twice. The carrier struct at type index 1 has a
--- packed `i8` flag field in `hidden` and an `i32` flag field in `visible`; the
--- exported `__rt_aint_from_i64` body is byte-identical in both. Bytes crafted by
--- the test harness.
 def hiddenBytes : Nat := 0x{hidden_hex}
 def hiddenLen : Nat := {hidden_len}
 def visibleBytes : Nat := 0x{visible_hex}
 def visibleLen : Nat := {visible_len}
 
+-- `$mag` is type 0, the carrier `$aint` type 1, the box function 0.
 def params : ArithTemplateDerisk.ArithHostParams :=
   {{ carrier := 1, limb := 0, decompose := 0, normalize := 0, strip := 0, umagCmp := 0 }}
 def roles : CertDecode.AddSub.Roles :=
   {{ box := some 0, add := none, mul := none, sub := none, toIndex := none,
-     cmp := none, eq := none }}
+     cmp := none, eq := none, divmod := none }}
+def carrierTable : AverCert.Schema.TypeTable :=
+  {{ carrier := some 1, mag := some 0, str := none, strVec := none, records := [], sums := [],
+     options := [], results := [], vecs := [], lists := [], opaques := [], strSegs := [] }}
+def carrierlessTable : AverCert.Schema.TypeTable :=
+  {{ carrierTable with carrier := none, mag := none }}
+def carrierConfirmedIn (n len : Nat) (tt : AverCert.Schema.TypeTable) : Bool :=
+  match AverCert.TypeTable.firstRecGroup n len with
+  | some grp => AverCert.TypeTable.carrierConfirmed n len grp tt
+  | none => false
 
--- (d) The exploit's links, pinned rather than asserted.
--- The Int runtime is genuinely present in BOTH modules...
+-- The exploit's links, pinned: the runtime is present in BOTH modules, and
+-- the box body is the canonical template in both.
 example : CertDecode.AddSub.carrierHelperAbsent hiddenBytes hiddenLen = false := by decide +kernel
 example : CertDecode.AddSub.boxIdx hiddenBytes hiddenLen = some 0 := by decide +kernel
-example : CertDecode.AddSub.toIndexIdx hiddenBytes hiddenLen = none := by decide +kernel
--- ...and the declared box index really does carry the canonical helper body, so
--- the template equality that is supposed to confirm `params.carrier` is fully
--- satisfied by a module whose type section holds no carrier the wall can see.
 example : AcceptedArtifact.arithRoleCheck hiddenBytes hiddenLen .box (some 0) params = true := by
   decide +kernel
-example : ArithTemplateDerisk.checkArithHostParams params = true := by decide
--- The role an Int-dispatch claim would cite is bound by the declared table.
-example : StandardFace.hostTableBound roles [(HostRole.box, 0)] = true := by decide
-
 -- The single byte decides whether the carrier is visible to the wall at all.
 example : CertDecode.carrierState hiddenBytes hiddenLen = some none := by decide +kernel
 example : CertDecode.carrierState visibleBytes visibleLen = some (some 1) := by decide +kernel
-
--- Literal one-conjunct-weakened copy of `arithTableCheck`: the `carrierState`
--- equality is deleted and every other conjunct, in its original order, is kept.
-def arithTableCheckWithoutCarrierStruct (n len : Nat)
-    (roles? : Option CertDecode.AddSub.Roles)
-    (params? : Option ArithTemplateDerisk.ArithHostParams) : Bool :=
-  match roles?, params? with
-  | none, none => CertDecode.AddSub.carrierHelperAbsent n len
-  | some roles, some p =>
-      !CertDecode.AddSub.carrierHelperAbsent n len &&
-      (roles.box == CertDecode.AddSub.boxIdx n len) &&
-      (roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&
-      ArithTemplateDerisk.checkArithHostParams p &&
-      AcceptedArtifact.arithRoleCheck n len .box roles.box p &&
-      AcceptedArtifact.arithRoleCheck n len .toIndex roles.toIndex p &&
-      AcceptedArtifact.arithRoleCheck n len .add roles.add p &&
-      AcceptedArtifact.arithRoleCheck n len .sub roles.sub p &&
-      AcceptedArtifact.arithRoleCheck n len .mul roles.mul p
-  | _, _ => false
-
--- (a) Isolation: the honest module is accepted by the real check.
+{weak}
+-- (a) The honest module is accepted by both pins.
 example : AcceptedArtifact.arithTableCheck visibleBytes visibleLen (some roles) (some params)
     = true := by decide +kernel
+example : carrierConfirmedIn visibleBytes visibleLen carrierTable = true := by decide +kernel
 
--- (b) The packed-`i8` module is rejected — its type section names no carrier.
+-- (b) The packed-`i8` module is rejected by both under the same declaration.
 example : AcceptedArtifact.arithTableCheck hiddenBytes hiddenLen (some roles) (some params)
     = false := by decide +kernel
+example : carrierConfirmedIn hiddenBytes hiddenLen carrierTable = false := by decide +kernel
 
--- (c) ATTRIBUTION: delete that one conjunct and the SAME module is accepted.
-example : arithTableCheckWithoutCarrierStruct hiddenBytes hiddenLen (some roles) (some params)
-    = true := by decide +kernel
+-- (c) ATTRIBUTION: delete the `carrierState` conjunct and the same module is
+-- accepted; the weakened copy still accepts the honest one.
+example : AcceptedArtifact.arithTableCheckWithoutCarrierStruct hiddenBytes hiddenLen
+    (some roles) (some params) = true := by decide +kernel
+example : AcceptedArtifact.arithTableCheckWithoutCarrierStruct visibleBytes visibleLen
+    (some roles) (some params) = true := by decide +kernel
 
--- ...and the weakened copy still accepts the honest module, so the flip is
--- attributable to the deleted conjunct and not to the fixture's framing.
-example : arithTableCheckWithoutCarrierStruct visibleBytes visibleLen (some roles) (some params)
-    = true := by decide +kernel
-
-/-! ### The second conjunct: the obligation's own carrier index -/
-
--- The exact code entry both assemblies decode to at function 0. Written as a
--- LITERAL, not as `decodeCode` applied to the module: if the stub's code table
--- were the decoder itself, the surviving conjunct of the weakened copy below
--- would hold as a beta-identity rather than by decoding the artifact, and the
--- two attributions would not be of equal strength.
-def boxWCode : WCode := ⟨1, 0, [.localGet 0, .refNull, .i32Const (0), .structNew 1 3]⟩
-
--- ...and that literal really is what the bytes decode to, in both assemblies.
-example : CertDecode.decodeCode hiddenBytes hiddenLen 0 = some boxWCode := by rfl
-example : CertDecode.decodeCode visibleBytes visibleLen 0 = some boxWCode := by rfl
-
-def stubOb (carrierIdx : Nat) : Obligation :=
-  {{ export_ := "__rt_aint_from_i64", policy := .simulatesModel, carrier := carrierIdx,
-     code := fun fn => if fn = 0 then some boxWCode else none,
-     host := stringConcatCanonicalHost 0 0,
-     self := 0, Dom := WVal, Cod := WVal,
-     domRepr := fun _ v vs => vs = [v],
-     codRepr := fun S v w => verbatimRepr S v w,
-     model := fun v => v }}
-
-/-! ### The scoping: which binding a family is wired to is the whole guarantee
-
-`decodedObligationFacts` (strict) is what NINE families get;
-`decodedCarrierFreeObligationFacts` (three-state) is wired to the String.concat
-claim list alone. The pair of facts below is the same artifact and the same
-obligation under both, so the accept/reject flip is attributable to the scoping
-decision and to nothing else. -/
-
--- (a) Isolation, honest carriered module: the obligation declares the decoded
--- carrier index and the strict predicate accepts.
-example : AcceptedArtifact.decodedObligationFacts visibleBytes visibleLen
-    (stubOb 1) [0] := ⟨rfl, rfl, trivial⟩
-
--- ...and any other index is rejected, so the equality is not vacuous.
-example : ¬ AcceptedArtifact.decodedObligationFacts visibleBytes visibleLen
-    (stubOb 2) [0] := by
-  intro h
-  have hcar : CertDecode.decodeCarrier visibleBytes visibleLen = some 2 := h.1
-  exact absurd hcar (by decide +kernel)
-
--- (b) THE RESTORED GUARANTEE. In a module with no decodable carrier struct the
--- strict binding admits NO index at all — not the struct index the module's own
--- values live at, and not the reserved `0` either. This is what keeps a
--- carrier-SENSITIVE but role-FREE family out of the carrierless state:
--- `construct-v1`'s named face pins `HEq o.Dom Int` and
--- `HEq o.domRepr (intArgDomRepr env.carrier)` while fixing `host = emptyHost`,
--- so neither the role table nor the arith-table carrier pin constrains it, and
--- this conjunct is the only thing standing between it and an Int-representation
--- face stated over an index the bytes do not license.
-example : ¬ AcceptedArtifact.decodedObligationFacts hiddenBytes hiddenLen
-    (stubOb 1) [0] := by
-  intro h
-  have hcar : CertDecode.decodeCarrier hiddenBytes hiddenLen = some 1 := h.1
-  exact absurd hcar (by decide +kernel)
-
-example : ¬ AcceptedArtifact.decodedObligationFacts hiddenBytes hiddenLen
-    (stubOb 0) [0] := by
-  intro h
-  have hcar : CertDecode.decodeCarrier hiddenBytes hiddenLen = some 0 := h.1
-  exact absurd hcar (by decide +kernel)
-
--- (c) ATTRIBUTION. The String.concat-scoped binding ACCEPTS that same artifact
--- and that same obligation at the reserved index. Every conjunct it keeps holds
--- of the artifact — the code binding equates the literal table above with the
--- real decode — so the rejection in (b) is attributable to the carrier binding,
--- and admitting it for a family whose face reads the CarrierSpec is exactly the
--- unsoundness the scoping prevents.
-example : AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes hiddenLen
-    (stubOb 0) [0] := ⟨rfl, rfl, trivial⟩
-
--- The relaxed binding is still not a free choice: it forces the reserved index
--- and rejects the struct index the module's values actually live at.
-example : ¬ AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes hiddenLen
-    (stubOb 1) [0] := by
-  intro h
-  have hcar : (1 : Nat) = 0 := h.1
-  exact absurd hcar (by decide)
-
--- The `none` arm of `decodedCarrierIndex`, which no other example reaches: a
--- module whose type section does not decode admits nothing under EITHER
--- binding, reserved index included. Truncating the module mid-type-section is
--- the cheapest way to reach that state.
-def truncatedLen : Nat := 12
-example : CertDecode.carrierState hiddenBytes truncatedLen = none := by decide +kernel
-example : ¬ AcceptedArtifact.decodedCarrierFreeObligationFacts hiddenBytes truncatedLen
-    (stubOb 0) [0] := by
-  intro h
-  exact h.1
+-- (d) Declaring the hidden module carrierless matches its type section, but
+-- the role table cannot follow: its box export is present.
+example : carrierConfirmedIn hiddenBytes hiddenLen carrierlessTable = true := by decide +kernel
+example : AcceptedArtifact.arithTableCheck hiddenBytes hiddenLen none none = false := by
+  decide +kernel
 "#,
         hidden_hex = hex_le(&hidden),
         hidden_len = hidden.len(),
         visible_hex = hex_le(&visible),
         visible_len = visible.len(),
     );
-    std::fs::write(wall_dir.join("ArithCarrierGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("env")
-        .arg("lean")
-        .arg("ArithCarrierGuardIso.lean")
-        .output()
-        .expect("run the declared-arith-carrier GuardIso check");
-    assert!(
-        check.status.success(),
-        "declared-arith-carrier GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
+    assert_probe_holds(&wall_dir, "ArithCarrierGuardIso.lean", &lean);
 }
 
-/// Extract one top-level `def NAME ...` block (through the line before the
-/// next top-level item) from a wall source file. Used to build LITERAL
-/// weakened copies of live checker definitions: the copy is derived from the
-/// exact source the certificate elaborated against, so a moved or renamed
-/// conjunct fails this test loudly instead of letting a stale hand copy
-/// keep passing.
-fn extract_wall_def(source: &str, name: &str) -> String {
-    let header = format!("def {name} ");
-    let alt_header = format!("def {name} :");
-    let bare_header = format!("def {name}");
-    let start = source
-        .lines()
-        .scan(0usize, |offset, line| {
-            let at = *offset;
-            *offset += line.len() + 1;
-            Some((at, line))
-        })
-        .find(|(_, line)| {
-            line.starts_with(&header) || line.starts_with(&alt_header) || *line == bare_header
-        })
-        .map(|(at, _)| at)
-        .unwrap_or_else(|| panic!("wall source has no top-level `def {name}`"));
-    let rest = &source[start..];
-    let mut end = rest.len();
-    let mut offset = 0usize;
-    for (index, line) in rest.lines().enumerate() {
-        if index > 0 && !line.is_empty() && !line.starts_with(' ') && !line.starts_with('|') {
-            end = offset;
-            break;
-        }
-        offset += line.len() + 1;
-    }
-    rest[..end].trim_end().to_string()
-}
-
-/// GuardIso for the `i32.and` fragment primitive's Boolean operand typing —
-/// the one conjunct that keeps the new conjunction primitive sound. `i32.and`
-/// over arbitrary raw i32 operands can produce a value outside {0, 1}
-/// (`2 and 2 = 2`), and the wall interpreter's `.i32And` clause models the
-/// operation on the {0, 1} domain, so declaring `boolI32` for a non-Boolean
-/// conjunction would poison every downstream reader of the result AND break
-/// the model/wasm agreement at once.
-///
-/// Attribution is BY ACCEPTANCE at both plan levels, with the weakened
-/// checkers built as literal copies of the LIVE wall source text (surgery
-/// asserts the strict conjunct exists exactly once before relaxing it):
-///   - representation level: `checkExprFragmentRawPlan` rejects a plan whose
-///     `i32.and` operands are raw i32 constants, while the copy whose only
-///     change is the comparisons' loose `hasI32Ty` admission accepts it;
-///   - source level: `checkSymRawPlan` (and therefore the audited encoder,
-///     which the acceptance predicate matches on) rejects `bool.and` over two
-///     Int operands, while the copy weakened by exactly the `[.bool, .bool]`
-///     operand typing accepts it.
-/// The honest fixture plan passes the real checkers AND both weakened copies,
-/// so each rejection above is attributable to exactly the weakened conjunct.
-#[test]
-fn i32_and_boolean_operand_typing_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping Bool.and GuardIso test: `lake` not available");
-        return;
-    }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-bool-and-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/bool_window.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("--certify")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile bool_window fixture for Bool.and GuardIso");
-    assert!(
-        compile.status.success(),
-        "bool_window compile failed for Bool.and GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
-    );
-
-    let cert = out_dir.join("cert");
-    materialize_wall(&cert);
-    let build = Command::new("lake")
-        .current_dir(&cert)
-        .arg("build")
-        .output()
-        .expect("build bool_window certificate before Bool.and GuardIso");
-    assert!(
-        build.status.success(),
-        "bool_window certificate failed before Bool.and GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    // Literal copies from the LIVE materialized checker source.
-    let plan_check = std::fs::read_to_string(cert.join("PlanCheck.lean"))
-        .expect("materialized wall has PlanCheck.lean");
-    let mut weak_frag = [
-        extract_wall_def(&plan_check, "primResultTy?"),
-        extract_wall_def(&plan_check, "checkBlockFuel"),
-        extract_wall_def(&plan_check, "checkBlock"),
-        extract_wall_def(&plan_check, "checkExprFragmentRawPlan"),
-    ]
-    .join("\n\n");
-    let strict_frag = "hasTy nodes a .boolI32 && hasTy nodes b .boolI32";
-    assert_eq!(
-        weak_frag.matches(strict_frag).count(),
-        1,
-        "the strict i32.and operand conjunct moved; refit the GuardIso surgery"
-    );
-    weak_frag = weak_frag.replace(strict_frag, "hasI32Ty nodes a && hasI32Ty nodes b");
-    for (from, to) in [
-        ("checkExprFragmentRawPlan", "weakCheckExprFragmentRawPlan"),
-        ("checkBlockFuel", "weakCheckBlockFuel"),
-        ("checkBlock", "weakCheckBlock"),
-        ("primResultTy?", "weakPrimResultTy?"),
-    ] {
-        weak_frag = weak_frag.replace(from, to);
-    }
-
-    let mut weak_sym = [
-        extract_wall_def(&plan_check, "symPrimResultTy?"),
-        extract_wall_def(&plan_check, "checkSymBlockFuel"),
-        extract_wall_def(&plan_check, "checkSymBlock"),
-        extract_wall_def(&plan_check, "checkSymRawPlan"),
-    ]
-    .join("\n\n");
-    let strict_sym = "if symArgsHaveTys nodes args [.bool, .bool] then some .bool else none";
-    assert_eq!(
-        weak_sym.matches(strict_sym).count(),
-        1,
-        "the strict bool.and operand conjunct moved; refit the GuardIso surgery"
-    );
-    weak_sym = weak_sym.replace(
-        strict_sym,
-        "if symArgsExist nodes args then some .bool else none",
-    );
-    for (from, to) in [
-        ("symPrimResultTy?", "weakSymPrimResultTy?"),
-        ("checkSymRawPlan", "weakCheckSymRawPlan"),
-        ("checkSymBlockFuel", "weakCheckSymBlockFuel"),
-        ("checkSymBlock", "weakCheckSymBlock"),
-    ] {
-        weak_sym = weak_sym.replace(from, to);
-    }
-
-    // Lean structure-instance fields are indentation-sensitive: a field that
-    // starts left of the first field's column ends the field block, so the
-    // multi-line hostile literals keep `result` aligned under `nodes`.
-    let lean = format!(
-        r#"import ArtifactCertificate
-
-open CertPrelude AverCert AverCert.Schema AverCert.PlanCheck
-set_option maxRecDepth 300000
-
-namespace BoolAndGuardIso
-
-/-! Hostile representation plan: `i32.and` over two raw i32 constants outside
-    {{0, 1}}, declaring a Boolean result (2 and 3 = 2 — not a Boolean, and the
-    interpreter's {{0,1}}-domain model would not even agree with wasm here). -/
-def hostilePlan : ExprFragmentRawPlan :=
-  {{ profile := "expr-fragment-v1", params := [], result := .boolI32,
-    body := ({{ nodes :=
-                 [{{ id := 0, ty := .rawI32, kind := .constI32 2 }},
-                  {{ id := 1, ty := .rawI32, kind := .constI32 3 }},
-                  {{ id := 2, ty := .boolI32, kind := .prim .i32And [0, 1] }}],
-               result := 2 }} : FragBlock) }}
-
--- The real checker rejects it...
-example : AverCert.PlanCheck.checkExprFragmentRawPlan hostilePlan = false := rfl
--- ...while accepting the honest fixture plan at the same entry point.
-example : AverCert.PlanCheck.checkExprFragmentRawPlan AverCert.Plans.inWindowPlan = true := rfl
-
-/-! Literal copy of the live checker, weakened by EXACTLY the i32.and operand
-    typing (Boolean operands relaxed to the comparisons' loose i32
-    admission). -/
-{weak_frag}
-
--- The weakened copy accepts the hostile plan: the rejection above is
--- attributable to exactly that conjunct...
-example : weakCheckExprFragmentRawPlan hostilePlan = true := rfl
--- ...and the weakening is strict: the honest plan still passes it.
-example : weakCheckExprFragmentRawPlan AverCert.Plans.inWindowPlan = true := rfl
-
-/-! Hostile source plan: `bool.and` over two Int parameters. -/
-def hostileSymPlan : SymRawPlan :=
-  {{ profile := "sym-fragment-v1", params := [.int, .int], result := .bool,
-    body := ({{ nodes :=
-                 [{{ id := 0, ty := .int, kind := .param 0 }},
-                  {{ id := 1, ty := .int, kind := .param 1 }},
-                  {{ id := 2, ty := .bool, kind := .prim .boolAnd [0, 1] }}],
-               result := 2 }} : SymBlock) }}
-
--- The real source checker rejects it, so the audited encoder — the arm
--- `symFragmentPlanAccepted` matches on before anything else — fail-closes
--- regardless of the tables the claim carries.
-example : AverCert.PlanCheck.checkSymRawPlan hostileSymPlan = false := rfl
-example : AverCert.PlanCheck.encodeSymRawPlanToExprFragmentRawPlan [] [] hostileSymPlan = none := rfl
-example : AverCert.PlanCheck.checkSymRawPlan AverCert.Plans.inWindowSymPlan = true := rfl
-
-/-! Literal copy of the live source checker, weakened by EXACTLY the
-    `[.bool, .bool]` operand typing of `bool.and`. -/
-{weak_sym}
-
-example : weakCheckSymRawPlan hostileSymPlan = true := rfl
-example : weakCheckSymRawPlan AverCert.Plans.inWindowSymPlan = true := rfl
-
-end BoolAndGuardIso
-"#
-    );
-    std::fs::write(cert.join("BoolAndGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&cert)
-        .arg("env")
-        .arg("lean")
-        .arg("BoolAndGuardIso.lean")
-        .output()
-        .expect("run Bool.and GuardIso");
-    assert!(
-        check.status.success(),
-        "Bool.and GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-/// The canonical tag-dispatch representation plan for a `slotCount`-shaped
-/// export (`match Option { Some(_) -> 1; None -> 0 }`): scrutinee struct at
-/// type `opt_idx`, box helper at function `box_idx`.
-fn slot_count_probe_plan(opt_idx: u32, box_idx: u32) -> aver::codegen::cert::ExprFragmentPlan {
-    use aver::codegen::cert::{
-        ExprFragmentPlan, FragBlock, FragHostRole, FragNode, FragNodeKind, FragPrim, FragTy,
-        FragValueId,
-    };
-    let arm = |k: i64| FragBlock {
-        nodes: vec![
-            FragNode {
-                id: FragValueId(0),
-                ty: FragTy::I64,
-                kind: FragNodeKind::ConstI64(k),
-            },
-            FragNode {
-                id: FragValueId(1),
-                ty: FragTy::IntCarrier,
-                kind: FragNodeKind::HostCall {
-                    role: FragHostRole::Box,
-                    func_idx: box_idx,
-                    args: vec![FragValueId(0)],
-                },
-            },
-        ],
-        result: FragValueId(1),
-    };
-    ExprFragmentPlan {
-        params: vec![FragTy::AdtRef],
-        result: FragTy::IntCarrier,
-        body: FragBlock {
-            nodes: vec![
-                FragNode {
-                    id: FragValueId(0),
-                    ty: FragTy::AdtRef,
-                    kind: FragNodeKind::Local { index: 0 },
-                },
-                FragNode {
-                    id: FragValueId(1),
-                    ty: FragTy::RawI32,
-                    kind: FragNodeKind::StructGetUser {
-                        ty_idx: opt_idx,
-                        field: 0,
-                        value: FragValueId(0),
-                    },
-                },
-                FragNode {
-                    id: FragValueId(2),
-                    ty: FragTy::RawI32,
-                    kind: FragNodeKind::ConstI32(1),
-                },
-                FragNode {
-                    id: FragValueId(3),
-                    ty: FragTy::BoolI32,
-                    kind: FragNodeKind::Prim {
-                        op: FragPrim::I32Eq,
-                        args: vec![FragValueId(1), FragValueId(2)],
-                    },
-                },
-                FragNode {
-                    id: FragValueId(4),
-                    ty: FragTy::IntCarrier,
-                    kind: FragNodeKind::If {
-                        cond: FragValueId(3),
-                        then_block: Box::new(arm(1)),
-                        else_block: Box::new(arm(0)),
-                    },
-                },
-            ],
-            result: FragValueId(4),
-        },
-    }
-}
-
-/// One `slotCount` tag-dispatch module, parameterized by the CLAIMED carrier
-/// index its dispatch body cites and by the box helper's DECLARED result
-/// reference (ref-type tag byte, heap index byte). Type layout:
-///   0 `$fake` — an OPEN two-field struct `{i64, anyref}` (NOT a carrier, so
-///     `CertDecode.carrierState` skips it and derives `some (some 1)`),
-///   1 `$real` — the real three-field carrier `{i64, anyref, i32}`, declared
-///     `sub final $fake` so `(ref null 1) <: (ref null 0)` holds nominally,
-///   2 `$opt`  — the scrutinee struct `{i32 tag, anyref payload}`, widened to
-///     `{i32 tag, anyref payload, anyref extra}` when `opt_fields` is 3,
-///   3 the box helper's function type `[i64] -> (result)` with the declared
-///     result supplied by the caller — `(0x63, 1)` is the canonical
-///     `(ref null $real)`, `(0x63, 0)` the fake supertype, `(0x64, 1)` the
-///     non-nullable `(ref $real)`,
-///   4 the dispatch function type `[(ref null 2)] -> (ref null claim)`.
-/// Function 0 is the box helper (its BODY always builds `struct.new $real`),
-/// function 1 the exported `slotCount` whose code entry is EXACTLY the
-/// canonical byte lowering for the claimed carrier.
-fn tag_dispatch_type_confusion_module(
-    claim_carrier: u32,
-    box_result: (u8, u8),
-    opt_fields: u8,
-) -> Vec<u8> {
-    assert!(claim_carrier < 64, "single-byte s33 heap index expected");
-    assert!(
-        opt_fields == 2 || opt_fields == 3,
-        "the scrutinee probe varies only between the face's two fields and one more"
-    );
-    let plan = slot_count_probe_plan(2, 0);
-    let dispatch_entry =
-        aver::codegen::cert::lower_expr_fragment_plan_code_entry_bytes(&plan, claim_carrier)
-            .expect("probe plan lowers to code-entry bytes");
-    let leb = |value: usize| -> Vec<u8> {
-        assert!(value < 128, "single-byte section framing expected");
-        vec![value as u8]
-    };
-    let section = |id: u8, payload: Vec<u8>| -> Vec<u8> {
-        let mut out = vec![id];
-        out.extend(leb(payload.len()));
-        out.extend(payload);
-        out
-    };
-    let mut types = vec![0x05];
-    // 0 $fake: (sub (struct (field i64) (field anyref)))
-    types.extend([0x50, 0x00, 0x5f, 0x02, 0x7e, 0x00, 0x6e, 0x00]);
-    // 1 $real: (sub final $fake (struct (field i64) (field anyref) (field i32)))
-    types.extend([
-        0x4f, 0x01, 0x00, 0x5f, 0x03, 0x7e, 0x00, 0x6e, 0x00, 0x7f, 0x00,
-    ]);
-    // 2 $opt: (struct (field i32) (field anyref) [(field anyref)])
-    types.extend([0x5f, opt_fields, 0x7f, 0x00, 0x6e, 0x00]);
-    if opt_fields == 3 {
-        types.extend([0x6e, 0x00]);
-    }
-    // 3 box: (func (param i64) (result (<box_result.0> <box_result.1>)))
-    types.extend([0x60, 0x01, 0x7e, 0x01, box_result.0, box_result.1]);
-    // 4 dispatch: (func (param (ref null $opt)) (result (ref null claim)))
-    types.extend([0x60, 0x01, 0x63, 0x02, 0x01, 0x63, claim_carrier as u8]);
-    let funcs = vec![0x02, 0x03, 0x04];
-    let mut exports = vec![0x01, 0x09];
-    exports.extend(b"slotCount");
-    exports.extend([0x00, 0x01]);
-    // Box body: local.get 0; ref.null any; i32.const 0; struct.new $real.
-    let box_payload = vec![
-        0x00, 0x20, 0x00, 0xd0, 0x6e, 0x41, 0x00, 0xfb, 0x00, 0x01, 0x0b,
-    ];
-    let mut code = vec![0x02];
-    code.extend(leb(box_payload.len()));
-    code.extend(box_payload);
-    code.extend(dispatch_entry);
-    let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-    module.extend(section(1, types));
-    module.extend(section(3, funcs));
-    module.extend(section(7, exports));
-    module.extend(section(10, code));
-    module
-}
-
-/// The canonical representation plan of a role-free `Int -> Bool` predicate:
-/// the small/big split the source encoder emits for `c >= 48` (the shape
-/// `RangePred.inAsciiDigit` certifies with). It cites NO host role, so it
-/// encodes under an EMPTY host table — and its parameter is `.intCarrier`, so
-/// `StandardFace.fragment`'s `domRepr` asserts `carrierSmall carrier value`,
-/// the concrete three-field carrier layout, at the claimed index.
-fn int_const_cmp_probe_plan() -> aver::codegen::cert::ExprFragmentPlan {
-    use aver::codegen::cert::{
-        ExprFragmentPlan, FragBlock, FragNode, FragNodeKind, FragPrim, FragTy, FragValueId,
-    };
-    let carrier_local = FragNode {
-        id: FragValueId(0),
-        ty: FragTy::IntCarrier,
-        kind: FragNodeKind::Local { index: 0 },
-    };
-    let small_arm = FragBlock {
-        nodes: vec![
-            carrier_local.clone(),
-            FragNode {
-                id: FragValueId(1),
-                ty: FragTy::I64,
-                kind: FragNodeKind::StructGet {
-                    field: 0,
-                    receiver: FragValueId(0),
-                },
-            },
-            FragNode {
-                id: FragValueId(2),
-                ty: FragTy::I64,
-                kind: FragNodeKind::ConstI64(48),
-            },
-            FragNode {
-                id: FragValueId(3),
-                ty: FragTy::BoolI32,
-                kind: FragNodeKind::Prim {
-                    op: FragPrim::I64GeS,
-                    args: vec![FragValueId(1), FragValueId(2)],
-                },
-            },
-        ],
-        result: FragValueId(3),
-    };
-    let big_arm = FragBlock {
-        nodes: vec![
-            carrier_local.clone(),
-            FragNode {
-                id: FragValueId(1),
-                ty: FragTy::RawI32,
-                kind: FragNodeKind::StructGet {
-                    field: 2,
-                    receiver: FragValueId(0),
-                },
-            },
-            FragNode {
-                id: FragValueId(2),
-                ty: FragTy::BoolI32,
-                kind: FragNodeKind::ConstBool(false),
-            },
-            FragNode {
-                id: FragValueId(3),
-                ty: FragTy::BoolI32,
-                kind: FragNodeKind::Prim {
-                    op: FragPrim::I32GtS,
-                    args: vec![FragValueId(1), FragValueId(2)],
-                },
-            },
-        ],
-        result: FragValueId(3),
-    };
-    ExprFragmentPlan {
-        params: vec![FragTy::IntCarrier],
-        result: FragTy::BoolI32,
-        body: FragBlock {
-            nodes: vec![
-                carrier_local,
-                FragNode {
-                    id: FragValueId(1),
-                    ty: FragTy::Ref,
-                    kind: FragNodeKind::StructGet {
-                        field: 1,
-                        receiver: FragValueId(0),
-                    },
-                },
-                FragNode {
-                    id: FragValueId(2),
-                    ty: FragTy::BoolI32,
-                    kind: FragNodeKind::RefIsNull {
-                        value: FragValueId(1),
-                    },
-                },
-                FragNode {
-                    id: FragValueId(3),
-                    ty: FragTy::BoolI32,
-                    kind: FragNodeKind::If {
-                        cond: FragValueId(2),
-                        then_block: Box::new(small_arm),
-                        else_block: Box::new(big_arm),
-                    },
-                },
-            ],
-            result: FragValueId(3),
-        },
-    }
-}
-
-/// One role-free `inAsciiDigit` module, parameterized by the CLAIMED carrier
-/// index its body cites. Type layout:
-///   0 `$wide` — a FOUR-field struct `{i64, anyref, i32, i32}`: every field the
-///     lowering reads exists at the right scalar type, so the body validates
-///     against it, but `CertDecode.TypeEntry.isCarrier` (exactly three fields)
-///     rejects it,
-///   1 `$real` — the real three-field carrier `{i64, anyref, i32}`, so
-///     `CertDecode.carrierState` derives `some (some 1)` in BOTH assemblies,
-///   2 the predicate function type `[(ref null claim)] -> [i32]`.
-/// The single function is the exported `inAsciiDigit`, whose code entry is
-/// EXACTLY the canonical byte lowering for the claimed carrier. The module
-/// declares no host helper at all, so its fragment host table is empty.
-fn generic_int_fragment_module(claim_carrier: u32) -> Vec<u8> {
-    assert!(claim_carrier < 64, "single-byte s33 heap index expected");
-    let plan = int_const_cmp_probe_plan();
-    let entry =
-        aver::codegen::cert::lower_expr_fragment_plan_code_entry_bytes(&plan, claim_carrier)
-            .expect("probe plan lowers to code-entry bytes");
-    let leb = |value: usize| -> Vec<u8> {
-        assert!(value < 128, "single-byte section framing expected");
-        vec![value as u8]
-    };
-    let section = |id: u8, payload: Vec<u8>| -> Vec<u8> {
-        let mut out = vec![id];
-        out.extend(leb(payload.len()));
-        out.extend(payload);
-        out
-    };
-    let mut types = vec![0x03];
-    // 0 $wide: (struct (field i64) (field anyref) (field i32) (field i32))
-    types.extend([0x5f, 0x04, 0x7e, 0x00, 0x6e, 0x00, 0x7f, 0x00, 0x7f, 0x00]);
-    // 1 $real: (struct (field i64) (field anyref) (field i32))
-    types.extend([0x5f, 0x03, 0x7e, 0x00, 0x6e, 0x00, 0x7f, 0x00]);
-    // 2 pred: (func (param (ref null claim)) (result i32))
-    types.extend([0x60, 0x01, 0x63, claim_carrier as u8, 0x01, 0x7f]);
-    let funcs = vec![0x01, 0x02];
-    let mut exports = vec![0x01, 0x0c];
-    exports.extend(b"inAsciiDigit");
-    exports.extend([0x00, 0x00]);
-    let mut code = vec![0x01];
-    code.extend(entry);
-    let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-    module.extend(section(1, types));
-    module.extend(section(3, funcs));
-    module.extend(section(7, exports));
-    module.extend(section(10, code));
-    module
-}
-
-/// GuardIso for the carrier-reference-point pins on the sym-fragment
-/// acceptance arm (`symFragmentPlanAccepted`) plus the scrutinee arity pin the
-/// tag-dispatch face depends on. Helper BODIES are pinned by template byte
-/// equality elsewhere; these conjuncts pin what that equality never reads. The
-/// declared-type pin (`hostTableFuncTypesMatch`) compares each cited helper's
-/// declared function type against the CLAIMED carrier — but the expr-fragment
-/// carrier is itself claim data bound to no decoder, so alone the pin is
-/// circular: a producer that declares the box helper AT a fake supertype and
-/// claims that same fake index satisfies it while the pinned box body still
-/// builds `struct.new $real`. The byte-derived carrier binding
-/// (`symFragmentCarrierBound`) closes that by forcing the claim's carrier to
-/// equal `CertDecode.carrierState`; the declared-type pin in turn catches a
-/// wrong helper declaration at the RIGHT carrier, which no carrier equality
-/// sees.
-///
-/// This is a PLAN-LEVEL demonstration, elaborated directly against
-/// `symFragmentPlanAccepted` on crafted modules. Every probe module is real
-/// validated wasm (`wasmparser::validate_all` passes, including the
-/// `(ref null $real) <: (ref null $fake)` uses), but each exports ONLY its one
-/// certified function: at whole-artifact level none of them carries a
-/// host-role table, and no face or full-artifact acceptance is exhibited here
-/// — whole-module conjuncts (`arithTableCheck`, faces, manifest coverage) are
-/// deliberately out of frame. What the probes show is that within this
-/// predicate each pin is the SOLE rejector of its attack shape, with every
-/// weakened copy cut from the LIVE materialized wall source (surgery asserted
-/// exactly-once — never a hand-maintained copy).
-///
-/// Four assemblies of the `slotCount` tag-dispatch module, which cites the box
-/// role:
-///
-///   - hostileSig — claim = the byte-derived carrier `$real`, box DECLARED at
-///     the non-nullable `(ref $real)` instead of the canonical
-///     `(ref null $real)`: the real predicate REJECTS it, the copy weakened
-///     by EXACTLY the declared-type conjunct ACCEPTS it, and the copy
-///     weakened by the carrier conjunct still rejects it.
-///   - hostileCarrier — box declared AT the fake supertype and the claim
-///     citing that same fake index ("both consistently fake", the shape the
-///     declared-type pin alone cannot see): the declared-type pin holds of
-///     it; the real predicate REJECTS it, the copy weakened by EXACTLY the
-///     carrier conjunct ACCEPTS it, and the copy weakened by the
-///     declared-type conjunct still rejects it.
-///   - hostileBoth — claim cites the fake index while the box is declared at
-///     the real carrier: rejected by the real predicate AND by each
-///     singly-weakened copy, and ACCEPTED by the DOUBLY-weakened copy (also
-///     cut from the live source), so "only removing both pins admits it" is
-///     exhibited, not asserted.
-///   - the honest twin (claim = real carrier, canonical declaration) is
-///     ACCEPTED by the real predicate and by both weakened copies, so no
-///     rejection above is a framing artefact.
-///
-/// Two assemblies of a ROLE-FREE `inAsciiDigit` module — the `Int -> Bool`
-/// comparison shape, whose plan cites no host role at all and whose host table
-/// is therefore empty. The declared-type pin is VACUOUSLY true on an empty
-/// table, so it cannot see this attack at all; keying the carrier binding on
-/// table emptiness (its previous shape) exempted the whole family, and
-/// `StandardFace.fragment`'s `domRepr` asserts `carrierSmall carrier value`
-/// for the `.intCarrier` parameter — a concrete three-field struct at the
-/// claimed index:
-///
-///   - genericHostile — the claim names the FOUR-field `$wide` struct the body
-///     reads while the module's real carrier sits at type 1: the real
-///     predicate REJECTS it (the plan names `.intCarrier`, so the binding
-///     applies), the copy weakened by EXACTLY the carrier conjunct ACCEPTS it,
-///     and the copy weakened by the declared-type conjunct still rejects it.
-///   - genericHonest — the same plan claiming the real carrier is ACCEPTED.
-///
-/// Two assemblies of the tag-dispatch module differing ONLY in the scrutinee
-/// struct's field count, for the face-layout pin in `checkTagDispatchTypes`:
-///
-///   - wideOpt — `$opt` declared with THREE fields while the face states
-///     `domRepr := vs = [.structv optIdx [.i32v p.1, p.2]]`, a two-field
-///     struct: the real predicate REJECTS it, a copy of the whole
-///     `checkTagDispatchTypes → exprTagDispatchTypesMatch →
-///     exprFragmentNominalTypesMatch → exprFragmentPlanAccepted →
-///     symFragmentPlanAccepted` chain weakened by EXACTLY the arity term
-///     ACCEPTS it, and both carrier-side weakened copies still reject it.
-#[test]
-fn host_table_declared_type_pin_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        eprintln!("skipping host-table type-pin GuardIso test: `lake` not available");
-        return;
-    }
-    let honest = tag_dispatch_type_confusion_module(1, (0x63, 1), 2);
-    let hostile_sig = tag_dispatch_type_confusion_module(1, (0x64, 1), 2);
-    let hostile_carrier = tag_dispatch_type_confusion_module(0, (0x63, 0), 2);
-    let hostile_both = tag_dispatch_type_confusion_module(0, (0x63, 1), 2);
-    let wide_opt = tag_dispatch_type_confusion_module(1, (0x63, 1), 3);
-    for (label, bytes) in [
-        ("honest", &honest),
-        ("hostileSig", &hostile_sig),
-        ("hostileCarrier", &hostile_carrier),
-        ("hostileBoth", &hostile_both),
-        ("wideOpt", &wide_opt),
-    ] {
-        wasmparser::Validator::new()
-            .validate_all(bytes)
-            .unwrap_or_else(|error| panic!("{label} probe module must be valid wasm: {error}"));
-        assert_eq!(
-            export_func_type_idx(bytes, "slotCount"),
-            4,
-            "{label} probe module binds slotCount to the dispatch type"
-        );
-    }
-    let generic_honest = generic_int_fragment_module(1);
-    let generic_hostile = generic_int_fragment_module(0);
-    for (label, bytes) in [
-        ("genericHonest", &generic_honest),
-        ("genericHostile", &generic_hostile),
-    ] {
-        wasmparser::Validator::new()
-            .validate_all(bytes)
-            .unwrap_or_else(|error| panic!("{label} probe module must be valid wasm: {error}"));
-        assert_eq!(
-            export_func_type_idx(bytes, "inAsciiDigit"),
-            2,
-            "{label} probe module binds inAsciiDigit to the predicate type"
-        );
-    }
-
-    let wall_dir = temp_dir("cert-host-table-type-pin-guard-iso");
-    std::fs::create_dir_all(&wall_dir).unwrap();
-    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
-    for source in wall.sources {
-        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
-    }
-    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
-    std::fs::write(
-        wall_dir.join("lakefile.lean"),
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
-         roots := #[`CertPrelude, `CertDecode, `SchemaCore, `ArithTemplateDerisk, \
-         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `Wasip2Envelope, `AcceptedArtifactCore]\n",
-    )
-    .unwrap();
-    let build = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("build")
-        .output()
-        .expect("build the wall before the host-table type-pin GuardIso");
-    assert!(
-        build.status.success(),
-        "wall build failed before the host-table type-pin GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
-
-    // Literal weakened copies from the LIVE materialized acceptance source:
-    // one deletes EXACTLY the declared-type conjunct, one EXACTLY the
-    // byte-derived carrier conjunct, one BOTH, and nothing else moves in any
-    // of them.
-    let accepted_core = std::fs::read_to_string(wall_dir.join("AcceptedArtifactCore.lean"))
-        .expect("materialized wall has AcceptedArtifactCore.lean");
-    let live_def = extract_wall_def(&accepted_core, "symFragmentPlanAccepted");
-    let sig_conjunct = "      AverCert.WasmSlice.hostTableFuncTypesMatch\n        \
-                        modBytes modLen carrier hostTable = true ∧\n";
-    let carrier_conjunct =
-        "      symFragmentCarrierBound modBytes modLen carrier hostTable exprPlan = true ∧\n";
-    for (conjunct, what) in [
-        (sig_conjunct, "host-table declared-type"),
-        (carrier_conjunct, "byte-derived carrier"),
-    ] {
-        assert_eq!(
-            live_def.matches(conjunct).count(),
-            1,
-            "the {what} conjunct moved; refit the GuardIso surgery"
-        );
-    }
-    let weak_sig_def = live_def
-        .replace(sig_conjunct, "")
-        .replace("symFragmentPlanAccepted", "weakSigSymFragmentPlanAccepted");
-    let weak_carrier_def = live_def.replace(carrier_conjunct, "").replace(
-        "symFragmentPlanAccepted",
-        "weakCarrierSymFragmentPlanAccepted",
-    );
-    let weak_both_def = live_def
-        .replace(sig_conjunct, "")
-        .replace(carrier_conjunct, "")
-        .replace("symFragmentPlanAccepted", "weakBothSymFragmentPlanAccepted");
-
-    // The face-layout chain, weakened by EXACTLY the scrutinee arity term of
-    // `checkTagDispatchTypes`. Everything from that check up to the acceptance
-    // arm is re-cut from the live sources so the weakened arity term is the
-    // only difference; each rename is asserted exactly-once.
-    let wasm_slice = std::fs::read_to_string(wall_dir.join("WasmSlice.lean"))
-        .expect("materialized wall has WasmSlice.lean");
-    let arity_term = "fields.length == 2 &&\n        ";
-    let live_tag_check = extract_wall_def(&wasm_slice, "checkTagDispatchTypes");
-    assert_eq!(
-        live_tag_check.matches(arity_term).count(),
-        1,
-        "the tag-dispatch scrutinee arity term moved; refit the GuardIso surgery"
-    );
-    let mut chain = Vec::new();
-    chain.push(
-        live_tag_check
-            .replace(arity_term, "")
-            .replace("checkTagDispatchTypes", "weakArityCheckTagDispatchTypes"),
-    );
-    for (def, callee, renamed) in [
-        (
-            "exprTagDispatchTypesMatch",
-            "checkTagDispatchTypes",
-            "weakArityCheckTagDispatchTypes",
-        ),
-        (
-            "exprFragmentNominalTypesMatch",
-            "exprTagDispatchTypesMatch",
-            "weakArityExprTagDispatchTypesMatch",
-        ),
-    ] {
-        let live = extract_wall_def(&wasm_slice, def);
-        assert_eq!(
-            live.matches(&format!("{callee} ")).count(),
-            1,
-            "`{def}` no longer calls `{callee}` exactly once; refit the GuardIso surgery"
-        );
-        assert_eq!(
-            live.matches(&format!("def {def}")).count(),
-            1,
-            "`{def}` is not a single top-level definition; refit the GuardIso surgery"
-        );
-        chain.push(
-            live.replace(&format!("{callee} "), &format!("{renamed} "))
-                .replace(
-                    def,
-                    &format!("weakArity{}{}", &def[..1].to_uppercase(), &def[1..]),
-                ),
-        );
-    }
-    let weak_arity_wasm_slice = format!(
-        "namespace AverCert.WasmSlice\n\n{}\n\nend AverCert.WasmSlice",
-        chain.join("\n\n")
-    );
-    let live_expr_accepted = extract_wall_def(&accepted_core, "exprFragmentPlanAccepted");
-    assert_eq!(
-        live_expr_accepted
-            .matches("AverCert.WasmSlice.exprFragmentNominalTypesMatch")
-            .count(),
-        1,
-        "`exprFragmentPlanAccepted` no longer calls the nominal-type check exactly once"
-    );
-    let weak_arity_expr_accepted = live_expr_accepted
-        .replace(
-            "AverCert.WasmSlice.exprFragmentNominalTypesMatch",
-            "AverCert.WasmSlice.weakArityExprFragmentNominalTypesMatch",
-        )
-        .replace(
-            "exprFragmentPlanAccepted",
-            "weakArityExprFragmentPlanAccepted",
-        );
-    assert_eq!(
-        live_def.matches("exprFragmentPlanAccepted").count(),
-        1,
-        "`symFragmentPlanAccepted` no longer calls `exprFragmentPlanAccepted` exactly once"
-    );
-    let weak_arity_sym_accepted = live_def
-        .replace(
-            "exprFragmentPlanAccepted",
-            "weakArityExprFragmentPlanAccepted",
-        )
-        .replace(
-            "symFragmentPlanAccepted",
-            "weakAritySymFragmentPlanAccepted",
-        );
-    let weak_arity_accepted_core = format!(
-        "namespace AverCert.AcceptedArtifact\n\n{weak_arity_expr_accepted}\n\n\
-         {weak_arity_sym_accepted}\n\nend AverCert.AcceptedArtifact"
-    );
-
-    let lean = format!(
-        r#"import AcceptedArtifactCore
-
-open CertPrelude AverCert AverCert.Schema AverCert.AcceptedArtifact AverCert.PlanCheck
-set_option maxRecDepth 300000
-
--- Four assemblies of ONE module (crafted and wasmparser-validated by the test
--- harness): type 0 is an open two-field NON-carrier struct, type 1 the real
--- three-field carrier declared as its final subtype — so the byte-derived
--- carrier state is `some (some 1)` in ALL four — and the box helper's BODY
--- always builds `struct.new $real`. They differ only in the claimed carrier
--- the dispatch body cites and in the box helper's DECLARED result type:
---   honest         claim 1, box declared `[i64] -> (ref null 1)`
---   hostileSig     claim 1, box declared `[i64] -> (ref 1)` (non-nullable)
---   hostileCarrier claim 0, box declared `[i64] -> (ref null 0)` (the fake)
---   hostileBoth    claim 0, box declared `[i64] -> (ref null 1)`
-def honestBytes : Nat := 0x{honest_hex}
-def honestLen : Nat := {honest_len}
-def hostileSigBytes : Nat := 0x{hostile_sig_hex}
-def hostileSigLen : Nat := {hostile_sig_len}
-def hostileCarrierBytes : Nat := 0x{hostile_carrier_hex}
-def hostileCarrierLen : Nat := {hostile_carrier_len}
-def hostileBothBytes : Nat := 0x{hostile_both_hex}
-def hostileBothLen : Nat := {hostile_both_len}
-
-def slotCountName : AverCert.WasmSlice.ByteSeq := [115, 108, 111, 116, 67, 111, 117, 110, 116]
-def probeHostTable : List (HostRole × Nat) := [(.box, 0)]
-def probeStructTable : List (String × Nat) := [("Option", 2)]
-
-def slotCountSym : SymRawPlan :=
-  {{ profile := "sym-fragment-v1",
-    params := [.app1 "Option" .int],
-    result := .int,
-    body :=
-      {{ nodes :=
-        [ {{ id := 0, ty := .app1 "Option" .int, kind := .param 0 }},
-          {{ id := 1, ty := .int,
-            kind := .tagMatch "Option" 0 1
-              {{ nodes := [{{ id := 0, ty := .int, kind := .constInt 1 }}], result := 0 }}
-              {{ nodes := [{{ id := 0, ty := .int, kind := .constInt 0 }}], result := 0 }} }} ],
-        result := 1 }} }}
-
-def probePlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.adtRef], result := .intCarrier, body := ({{ nodes := [{{ id := 0, ty := .adtRef, kind := .local 0 }}, {{ id := 1, ty := .rawI32, kind := .structGetUser 2 0 0 }}, {{ id := 2, ty := .rawI32, kind := .constI32 (1 : Int) }}, {{ id := 3, ty := .boolI32, kind := .prim .i32Eq [1, 2] }}, {{ id := 4, ty := .intCarrier, kind := .ifElse 3 ({{ nodes := [{{ id := 0, ty := .i64, kind := .constI64 (1 : Int) }}, {{ id := 1, ty := .intCarrier, kind := .hostCall .box 0 [0] }}], result := 1 }} : FragBlock) ({{ nodes := [{{ id := 0, ty := .i64, kind := .constI64 (0 : Int) }}, {{ id := 1, ty := .intCarrier, kind := .hostCall .box 0 [0] }}], result := 1 }} : FragBlock) }}], result := 4 }} : FragBlock) }}
-
-example : encodeSymRawPlanToExprFragmentRawPlan probeHostTable probeStructTable slotCountSym
-    = some probePlan := rfl
-
-def bodyFor (carrier : Nat) : List WInstr :=
-  (AverCert.PlanLower.lowerExprFragmentBody carrier probePlan).getD []
-def entryFor (carrier : Nat) : AverCert.WasmSlice.ByteSeq :=
-  (AverCert.PlanBytes.lowerExprFragmentCodeEntry carrier probePlan).getD []
-
--- The two dispatch entries genuinely differ (the scratch local and the `if`
--- block type cite the claimed carrier), so the byte gate really selects the
--- claimed-carrier lowering in each module.
-example : entryFor 0 ≠ entryFor 1 := by decide +kernel
-
-def probeOb (carrier : Nat) : Obligation :=
-  {{ export_ := "slotCount", policy := .simulatesModel, carrier := carrier,
-    code := fun i => if i = 1 then some ⟨1, 1, bodyFor carrier⟩ else none,
-    host := fun _ _ _ _ _ _ _ _ => fun _ => none,
-    self := 1, Dom := Unit, Cod := Int,
-    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
-    model := fun _ => 0 }}
-
--- Byte-derived ground truth: the type sections of all four modules decode to
--- the SAME carrier state — the real three-field carrier at type 1.
-example : CertDecode.carrierState honestBytes honestLen = some (some 1) := by
-  decide +kernel
-example : CertDecode.carrierState hostileSigBytes hostileSigLen = some (some 1) := by
-  decide +kernel
-example : CertDecode.carrierState hostileCarrierBytes hostileCarrierLen = some (some 1) := by
-  decide +kernel
-example : CertDecode.carrierState hostileBothBytes hostileBothLen = some (some 1) := by
-  decide +kernel
-
--- HONEST control: the claim names the real carrier with the canonical
--- declaration and the REAL predicate accepts, so no rejection below is an
--- artefact of the framing.
-example : symFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
-  ⟨rfl, rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- Conjunct-level ground truth for the declared-type pin. Note the third line:
--- the pin HOLDS of hostileCarrier — box declared at the fake supertype, claim
--- citing the same fake index — which is exactly the circularity the carrier
--- binding exists to close.
-example : AverCert.WasmSlice.hostTableFuncTypesMatch honestBytes honestLen
-    1 probeHostTable = true := by decide +kernel
-example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
-    1 probeHostTable = false := by decide +kernel
-example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileCarrierBytes hostileCarrierLen
-    0 probeHostTable = true := by decide +kernel
-example : AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
-    0 probeHostTable = false := by decide +kernel
-
--- hostileSig is rejected by the real predicate, at exactly the declared-type
--- pin (its carrier bound holds: claim 1 IS the byte-derived carrier).
-example : ¬ symFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
-  intro h
-  have h' : symFragmentCarrierBound hostileSigBytes hostileSigLen 1 probeHostTable probePlan
-        = true ∧
-      AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
-        1 probeHostTable = true ∧
-      exprFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
-        1 probePlan (probeOb 1) := h
-  exact absurd h'.2.1 (by decide +kernel)
-
--- hostileCarrier is rejected by the real predicate, at exactly the carrier
--- binding (the declared-type pin holds of it, per the ground truth above).
-example : ¬ symFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
-    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
-  intro h
-  have h' : symFragmentCarrierBound hostileCarrierBytes hostileCarrierLen 0 probeHostTable
-        probePlan = true ∧
-      AverCert.WasmSlice.hostTableFuncTypesMatch hostileCarrierBytes hostileCarrierLen
-        0 probeHostTable = true ∧
-      exprFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
-        0 probePlan (probeOb 0) := h
-  exact absurd h'.1 (by decide +kernel)
-
--- hostileBoth is rejected by the real predicate (either pin rejects it).
-example : ¬ symFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
-    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
-  intro h
-  have h' : symFragmentCarrierBound hostileBothBytes hostileBothLen 0 probeHostTable probePlan
-        = true ∧
-      AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
-        0 probeHostTable = true ∧
-      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
-        0 probePlan (probeOb 0) := h
-  exact absurd h'.1 (by decide +kernel)
-
-/-! Literal copy of the live acceptance predicate, weakened by EXACTLY the
-    host-table declared-function-type conjunct. -/
-{weak_sig_def}
-
-/-! Literal copy of the live acceptance predicate, weakened by EXACTLY the
-    byte-derived carrier conjunct. -/
-{weak_carrier_def}
-
-/-! Literal copy of the live acceptance predicate, weakened by BOTH pins. -/
-{weak_both_def}
-
--- ATTRIBUTION THROUGH ACCEPTANCE, declared-type pin: the copy weakened by
--- exactly that conjunct accepts hostileSig — every remaining conjunct holds
--- of it, the carrier binding and the byte binding included.
-example : weakSigSymFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
-  ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- ATTRIBUTION THROUGH ACCEPTANCE, carrier binding: the copy weakened by
--- exactly that conjunct accepts hostileCarrier — the declared-type pin and
--- every byte conjunct hold of it, so WITHOUT the carrier binding the
--- consistently-fake pair would be admitted.
-example : weakCarrierSymFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen
-    slotCountName "slotCount"
-    0 probeHostTable probeStructTable slotCountSym (probeOb 0) :=
-  ⟨rfl, rfl, rfl, bodyFor 0, entryFor 0, ⟨1, 4, entryFor 0⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- The attributions are EXCLUSIVE: each singly-weakened copy still rejects the
--- OTHER hostile pair, so neither conjunct shadows the other.
-example : ¬ weakSigSymFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen
-    slotCountName "slotCount"
-    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
-  intro h
-  have h' : symFragmentCarrierBound hostileCarrierBytes hostileCarrierLen 0 probeHostTable
-        probePlan = true ∧
-      exprFragmentPlanAccepted hostileCarrierBytes hostileCarrierLen slotCountName "slotCount"
-        0 probePlan (probeOb 0) := h
-  exact absurd h'.1 (by decide +kernel)
-example : ¬ weakCarrierSymFragmentPlanAccepted hostileSigBytes hostileSigLen
-    slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
-  intro h
-  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch hostileSigBytes hostileSigLen
-        1 probeHostTable = true ∧
-      exprFragmentPlanAccepted hostileSigBytes hostileSigLen slotCountName "slotCount"
-        1 probePlan (probeOb 1) := h
-  exact absurd h'.1 (by decide +kernel)
-
--- The pins are COMPLEMENTARY, not redundant: hostileBoth is still rejected by
--- EACH singly-weakened copy, and the DOUBLY-weakened copy accepts it — so
--- "only removing both conjuncts admits it" is exhibited, not asserted.
-example : weakBothSymFragmentPlanAccepted hostileBothBytes hostileBothLen
-    slotCountName "slotCount"
-    0 probeHostTable probeStructTable slotCountSym (probeOb 0) :=
-  ⟨rfl, rfl, bodyFor 0, entryFor 0, ⟨1, 4, entryFor 0⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-example : ¬ weakSigSymFragmentPlanAccepted hostileBothBytes hostileBothLen
-    slotCountName "slotCount"
-    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
-  intro h
-  have h' : symFragmentCarrierBound hostileBothBytes hostileBothLen 0 probeHostTable probePlan
-        = true ∧
-      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
-        0 probePlan (probeOb 0) := h
-  exact absurd h'.1 (by decide +kernel)
-example : ¬ weakCarrierSymFragmentPlanAccepted hostileBothBytes hostileBothLen
-    slotCountName "slotCount"
-    0 probeHostTable probeStructTable slotCountSym (probeOb 0) := by
-  intro h
-  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch hostileBothBytes hostileBothLen
-        0 probeHostTable = true ∧
-      exprFragmentPlanAccepted hostileBothBytes hostileBothLen slotCountName "slotCount"
-        0 probePlan (probeOb 0) := h
-  exact absurd h'.1 (by decide +kernel)
-
--- Both weakenings are strict: the honest pair still passes each weakened copy.
-example : weakSigSymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
-  ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-example : weakCarrierSymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
-  ⟨rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- Attribution of the OLDER role-permutation probes is preserved: the add and
--- sub roles fix the SAME canonical declared signature, so the declared-type
--- pin is blind to a consistent add/sub table permutation and the host-builder
--- equality remains that vector's sole rejector. (The carrier binding is blind
--- to it as well: a permutation moves indices, never the claimed carrier.)
-example : ∀ carrier entry,
-    AverCert.WasmSlice.checkHostRoleFuncType carrier .add entry
-      = AverCert.WasmSlice.checkHostRoleFuncType carrier .sub entry :=
-  fun _ _ => rfl
-"#,
-        honest_hex = hex_le(&honest),
-        honest_len = honest.len(),
-        hostile_sig_hex = hex_le(&hostile_sig),
-        hostile_sig_len = hostile_sig.len(),
-        hostile_carrier_hex = hex_le(&hostile_carrier),
-        hostile_carrier_len = hostile_carrier.len(),
-        hostile_both_hex = hex_le(&hostile_both),
-        hostile_both_len = hostile_both.len(),
-    );
-
-    // Probe 2: the role-free `Int -> Bool` fragment. Keying the carrier
-    // binding on host-table emptiness exempted this whole family, and the
-    // declared-type pin is vacuously true on an empty table, so nothing at all
-    // held the claimed carrier down here.
-    let generic = format!(
-        r#"
-/-! ## Role-free generic Int fragment
-
-Two assemblies of ONE module: type 0 is a FOUR-field struct whose every read
-field has the type the lowering expects, type 1 the real three-field carrier —
-so `CertDecode.carrierState` derives `some (some 1)` in BOTH — and the module
-declares no host helper at all, so the claim's host table is EMPTY. They differ
-only in the carrier index the body cites and the claim names. -/
-def genericHonestBytes : Nat := 0x{generic_honest_hex}
-def genericHonestLen : Nat := {generic_honest_len}
-def genericHostileBytes : Nat := 0x{generic_hostile_hex}
-def genericHostileLen : Nat := {generic_hostile_len}
-
-def digitName : AverCert.WasmSlice.ByteSeq :=
-  [105, 110, 65, 115, 99, 105, 105, 68, 105, 103, 105, 116]
-def emptyHostTable : List (HostRole × Nat) := []
-def emptyStructTable : List (String × Nat) := []
-
-def digitSym : SymRawPlan :=
-  {{ profile := "sym-fragment-v1",
-    params := [.int],
-    result := .bool,
-    body :=
-      {{ nodes :=
-        [ {{ id := 0, ty := .int, kind := .param 0 }},
-          {{ id := 1, ty := .bool, kind := .intConstCmp .ge 0 (48 : Int) }} ],
-        result := 1 }} }}
-
-def digitPlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.intCarrier], result := .boolI32, body := ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .local 0 }}, {{ id := 1, ty := .ref, kind := .structGet 1 0 }}, {{ id := 2, ty := .boolI32, kind := .refIsNull 1 }}, {{ id := 3, ty := .boolI32, kind := .ifElse 2 ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .local 0 }}, {{ id := 1, ty := .i64, kind := .structGet 0 0 }}, {{ id := 2, ty := .i64, kind := .constI64 (48 : Int) }}, {{ id := 3, ty := .boolI32, kind := .prim .i64GeS [1, 2] }}], result := 3 }} : FragBlock) ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .local 0 }}, {{ id := 1, ty := .rawI32, kind := .structGet 2 0 }}, {{ id := 2, ty := .boolI32, kind := .constBool false }}, {{ id := 3, ty := .boolI32, kind := .prim .i32GtS [1, 2] }}], result := 3 }} : FragBlock) }}], result := 3 }} : FragBlock) }}
-
--- The source encoder really does produce this plan WITHOUT consulting any host
--- role: the empty table encodes fine, which is what made the family reachable
--- under the old table-keyed exemption.
-example : encodeSymRawPlanToExprFragmentRawPlan emptyHostTable emptyStructTable digitSym
-    = some digitPlan := rfl
-
-def digitBodyFor (carrier : Nat) : List WInstr :=
-  (AverCert.PlanLower.lowerExprFragmentBody carrier digitPlan).getD []
-def digitEntryFor (carrier : Nat) : AverCert.WasmSlice.ByteSeq :=
-  (AverCert.PlanBytes.lowerExprFragmentCodeEntry carrier digitPlan).getD []
-
-def digitOb (carrier : Nat) : Obligation :=
-  {{ export_ := "inAsciiDigit", policy := .simulatesModel, carrier := carrier,
-    code := fun i => if i = 0 then some ⟨1, 1, digitBodyFor carrier⟩ else none,
-    host := fun _ _ _ _ _ _ _ _ => fun _ => none,
-    self := 0, Dom := Unit, Cod := Int,
-    domRepr := fun _ _ _ => True, codRepr := fun _ _ _ => True,
-    model := fun _ => 0 }}
-
--- Byte-derived ground truth: both assemblies decode to the SAME carrier state,
--- the real three-field carrier at type 1.
-example : CertDecode.carrierState genericHonestBytes genericHonestLen = some (some 1) := by
-  decide +kernel
-example : CertDecode.carrierState genericHostileBytes genericHostileLen = some (some 1) := by
-  decide +kernel
-
--- The plan-derived trigger, not the table: this plan cites NO role, so the
--- table is empty, yet its `.intCarrier` parameter makes
--- `StandardFace.fragment`'s `domRepr` assert `carrierSmall carrier value`.
-example : symFragmentCarrierBindingRequired emptyHostTable digitPlan = true := by decide
-
--- The declared-type pin is VACUOUSLY true on an empty table, in BOTH
--- assemblies: it cannot see this attack at all, which is why the two conjuncts
--- are complementary rather than alternatives.
-example : AverCert.WasmSlice.hostTableFuncTypesMatch genericHostileBytes genericHostileLen
-    0 emptyHostTable = true := by decide +kernel
-example : AverCert.WasmSlice.hostTableFuncTypesMatch genericHonestBytes genericHonestLen
-    1 emptyHostTable = true := by decide +kernel
-
--- HONEST control: the same plan claiming the real carrier is accepted.
-example : symFragmentPlanAccepted genericHonestBytes genericHonestLen digitName "inAsciiDigit"
-    1 emptyHostTable emptyStructTable digitSym (digitOb 1) :=
-  ⟨rfl, rfl, rfl, rfl, digitBodyFor 1, digitEntryFor 1, ⟨0, 2, digitEntryFor 1⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- genericHostile is rejected by the real predicate, at exactly the carrier
--- binding.
-example : ¬ symFragmentPlanAccepted genericHostileBytes genericHostileLen digitName
-    "inAsciiDigit" 0 emptyHostTable emptyStructTable digitSym (digitOb 0) := by
-  intro h
-  have h' : symFragmentCarrierBound genericHostileBytes genericHostileLen 0 emptyHostTable
-        digitPlan = true ∧
-      AverCert.WasmSlice.hostTableFuncTypesMatch genericHostileBytes genericHostileLen
-        0 emptyHostTable = true ∧
-      exprFragmentPlanAccepted genericHostileBytes genericHostileLen digitName "inAsciiDigit"
-        0 digitPlan (digitOb 0) := h
-  exact absurd h'.1 (by decide +kernel)
-
--- ATTRIBUTION THROUGH ACCEPTANCE: the copy weakened by EXACTLY the carrier
--- conjunct ACCEPTS it — every other conjunct, the byte gate included, holds of
--- a module that declares a four-field struct where the face asserts the
--- three-field carrier layout. On an EMPTY table the previous, table-keyed
--- shape of this conjunct reduced to `True`, so this weakened copy is exactly
--- that shape on this input: the acceptance below is the hole, exhibited.
-example : weakCarrierSymFragmentPlanAccepted genericHostileBytes genericHostileLen digitName
-    "inAsciiDigit" 0 emptyHostTable emptyStructTable digitSym (digitOb 0) :=
-  ⟨rfl, rfl, rfl, digitBodyFor 0, digitEntryFor 0, ⟨0, 2, digitEntryFor 0⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- EXCLUSIVE: the copy weakened by the OTHER conjunct still rejects it.
-example : ¬ weakSigSymFragmentPlanAccepted genericHostileBytes genericHostileLen digitName
-    "inAsciiDigit" 0 emptyHostTable emptyStructTable digitSym (digitOb 0) := by
-  intro h
-  have h' : symFragmentCarrierBound genericHostileBytes genericHostileLen 0 emptyHostTable
-        digitPlan = true ∧
-      exprFragmentPlanAccepted genericHostileBytes genericHostileLen digitName "inAsciiDigit"
-        0 digitPlan (digitOb 0) := h
-  exact absurd h'.1 (by decide +kernel)
-
--- The weakening is strict: the honest pair still passes the weakened copy.
-example : weakCarrierSymFragmentPlanAccepted genericHonestBytes genericHonestLen digitName
-    "inAsciiDigit" 1 emptyHostTable emptyStructTable digitSym (digitOb 1) :=
-  ⟨rfl, rfl, rfl, digitBodyFor 1, digitEntryFor 1, ⟨0, 2, digitEntryFor 1⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
-/-! ### Scope of the residual permissive arm
-
-The binding still admits a free carrier index exactly when nothing can read it:
-no `.intCarrier` anywhere in the encoded plan AND no role cited. The walk that
-decides this descends into nested blocks — `deepCarrierPlan` hides its only
-`.intCarrier` two `ifElse` levels down and is still caught. -/
-def carrierFreePlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.boolI32], result := .boolI32, body := ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .local 0 }}], result := 0 }} : FragBlock) }}
-
-def deepCarrierPlan : ExprFragmentRawPlan := {{ profile := "expr-fragment-v1", params := [.boolI32], result := .boolI32, body := ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .local 0 }}, {{ id := 1, ty := .boolI32, kind := .ifElse 0 ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .ifElse 0 ({{ nodes := [{{ id := 0, ty := .intCarrier, kind := .local 0 }}], result := 0 }} : FragBlock) ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .constBool false }}], result := 0 }} : FragBlock) }}], result := 0 }} : FragBlock) ({{ nodes := [{{ id := 0, ty := .boolI32, kind := .constBool false }}], result := 0 }} : FragBlock) }}], result := 1 }} : FragBlock) }}
-
-example : fragPlanMentionsIntCarrier carrierFreePlan = false := by decide
-example : fragPlanMentionsIntCarrier deepCarrierPlan = true := by decide
-example : symFragmentCarrierBindingRequired emptyHostTable carrierFreePlan = false := by decide
-example : symFragmentCarrierBindingRequired emptyHostTable deepCarrierPlan = true := by decide
--- Unconstrained where nothing can read it: even a nonsense index passes.
-example : symFragmentCarrierBound genericHostileBytes genericHostileLen 7 emptyHostTable
-    carrierFreePlan = true := by decide +kernel
-"#,
-        generic_honest_hex = hex_le(&generic_honest),
-        generic_honest_len = generic_honest.len(),
-        generic_hostile_hex = hex_le(&generic_hostile),
-        generic_hostile_len = generic_hostile.len(),
-    );
-
-    // Probe 3: the tag-dispatch face's scrutinee arity. The face states
-    // `domRepr := vs = [.structv optIdx [.i32v p.1, p.2]]`, so a scrutinee
-    // declared with any other field count leaves the obligation quantified
-    // over states the module's own type section forbids.
-    let arity = format!(
-        r#"
-/-! ## Tag-dispatch scrutinee arity
-
-`wideOpt` is the honest tag-dispatch module with ONE byte changed: the
-scrutinee struct `$opt` is declared with three fields instead of two. The claim,
-the carrier, the box declaration and the code bytes are all the honest ones. -/
-def wideOptBytes : Nat := 0x{wide_opt_hex}
-def wideOptLen : Nat := {wide_opt_len}
-
--- Byte-derived ground truth: the scrutinee's decoded field count is the ONLY
--- difference, and the face's layout contradicts it.
-example : CertDecode.decodeStructFieldCount honestBytes honestLen 2 = some 2 := by decide +kernel
-example : CertDecode.decodeStructFieldCount wideOptBytes wideOptLen 2 = some 3 := by decide +kernel
-example : CertDecode.carrierState wideOptBytes wideOptLen = some (some 1) := by decide +kernel
-example : AverCert.WasmSlice.exprTagDispatchTypesMatch honestBytes honestLen 1 2 = true := by
-  decide +kernel
-example : AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 = false := by
-  decide +kernel
-
--- Both carrier-side conjuncts HOLD of it: they are blind to the scrutinee's
--- shape, which is why this needs its own pin.
-example : symFragmentCarrierBound wideOptBytes wideOptLen 1 probeHostTable probePlan = true := by
-  decide +kernel
-example : AverCert.WasmSlice.hostTableFuncTypesMatch wideOptBytes wideOptLen
-    1 probeHostTable = true := by decide +kernel
-
-{weak_arity_wasm_slice}
-
-{weak_arity_accepted_core}
-
--- The nominal check reaches the tag-dispatch arm for this plan, so it does not
--- depend on the existentially quantified binding's type index.
-example : ∀ t, AverCert.WasmSlice.exprFragmentNominalTypesMatch wideOptBytes wideOptLen t 1
-    probePlan = AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 :=
-  fun _ => rfl
-
--- wideOpt is rejected by the real predicate, at exactly the arity term.
-example : ¬ symFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
-  intro h
-  have h' : symFragmentCarrierBound wideOptBytes wideOptLen 1 probeHostTable probePlan = true ∧
-      AverCert.WasmSlice.hostTableFuncTypesMatch wideOptBytes wideOptLen
-        1 probeHostTable = true ∧
-      exprFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
-        1 probePlan (probeOb 1) := h
-  obtain ⟨_hExport, _hCarrier, _body, _entry, binding, _hAccepted, _hFuncType, hNominal,
-    _hSelf, _hCode⟩ := h'.2.2
-  have hArm : AverCert.WasmSlice.exprFragmentNominalTypesMatch wideOptBytes wideOptLen
-      binding.typeIdx 1 probePlan
-      = AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 := rfl
-  rw [hArm] at hNominal
-  exact absurd hNominal (by decide +kernel)
-
--- ATTRIBUTION THROUGH ACCEPTANCE: the chain weakened by EXACTLY the arity term
--- accepts it — every other conjunct, the i32 tag field and the byte gate
--- included, holds of the widened scrutinee.
-example : weakAritySymFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
-  ⟨rfl, rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- EXCLUSIVE: both carrier-side weakenings still reject it, so the arity term is
--- its sole rejector.
-example : ¬ weakSigSymFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
-  intro h
-  have h' : symFragmentCarrierBound wideOptBytes wideOptLen 1 probeHostTable probePlan = true ∧
-      exprFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
-        1 probePlan (probeOb 1) := h
-  obtain ⟨_hExport, _hCarrier, _body, _entry, binding, _hAccepted, _hFuncType, hNominal,
-    _hSelf, _hCode⟩ := h'.2
-  have hArm : AverCert.WasmSlice.exprFragmentNominalTypesMatch wideOptBytes wideOptLen
-      binding.typeIdx 1 probePlan
-      = AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 := rfl
-  rw [hArm] at hNominal
-  exact absurd hNominal (by decide +kernel)
-example : ¬ weakCarrierSymFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) := by
-  intro h
-  have h' : AverCert.WasmSlice.hostTableFuncTypesMatch wideOptBytes wideOptLen
-        1 probeHostTable = true ∧
-      exprFragmentPlanAccepted wideOptBytes wideOptLen slotCountName "slotCount"
-        1 probePlan (probeOb 1) := h
-  obtain ⟨_hExport, _hCarrier, _body, _entry, binding, _hAccepted, _hFuncType, hNominal,
-    _hSelf, _hCode⟩ := h'.2
-  have hArm : AverCert.WasmSlice.exprFragmentNominalTypesMatch wideOptBytes wideOptLen
-      binding.typeIdx 1 probePlan
-      = AverCert.WasmSlice.exprTagDispatchTypesMatch wideOptBytes wideOptLen 1 2 := rfl
-  rw [hArm] at hNominal
-  exact absurd hNominal (by decide +kernel)
-
--- The weakening is strict: the honest two-field scrutinee still passes the
--- weakened chain.
-example : weakAritySymFragmentPlanAccepted honestBytes honestLen slotCountName "slotCount"
-    1 probeHostTable probeStructTable slotCountSym (probeOb 1) :=
-  ⟨rfl, rfl, rfl, rfl, bodyFor 1, entryFor 1, ⟨1, 4, entryFor 1⟩,
-   ⟨⟨rfl, rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl⟩⟩
-
--- The projection face states the same two-field layout
--- (`vs = [.structv structIdx [p.1, p.2]]`) and its own check already pins the
--- arity, so it needed no change; the fused vector-read face asserts no fixed
--- width at all (its element list is existentially quantified).
-def probeField : CertDecode.FieldType :=
-  {{ storage := .val (.numeric 0x7f), mutability := 0 }}
-def probeProjFuncEntry : CertDecode.TypeEntry :=
-  {{ form := .plain,
-    composite := .funcType [AverCert.WasmSlice.nullableRefType 2] [.numeric 0x7f] }}
-example : AverCert.WasmSlice.checkExprProjectionTypes 1 2 0 probeProjFuncEntry
-    {{ form := .plain, composite := .structType [probeField, probeField] }} = true := by decide
-example : AverCert.WasmSlice.checkExprProjectionTypes 1 2 0 probeProjFuncEntry
-    {{ form := .plain, composite := .structType [probeField, probeField, probeField] }}
-      = false := by decide
-"#,
-        wide_opt_hex = hex_le(&wide_opt),
-        wide_opt_len = wide_opt.len(),
-    );
-    let lean = format!("{lean}{generic}{arity}");
-    std::fs::write(wall_dir.join("HostTableTypePinGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("env")
-        .arg("lean")
-        .arg("HostTableTypePinGuardIso.lean")
-        .output()
-        .expect("run the host-table type-pin GuardIso check");
-    assert!(
-        check.status.success(),
-        "host-table type-pin GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
-}
-
-fn read_uleb_at(bytes: &[u8], cursor: &mut usize) -> usize {
-    let mut value = 0usize;
-    let mut shift = 0usize;
-    loop {
-        let byte = bytes[*cursor];
-        *cursor += 1;
-        value |= usize::from(byte & 0x7f) << shift;
-        if byte & 0x80 == 0 {
-            return value;
-        }
-        shift += 7;
-    }
-}
-
-fn encode_uleb(mut value: usize) -> Vec<u8> {
-    let mut out = Vec::new();
-    loop {
-        let byte = (value & 0x7f) as u8;
-        value >>= 7;
-        if value != 0 {
-            out.push(byte | 0x80);
-        } else {
-            out.push(byte);
-            return out;
-        }
-    }
-}
-
-/// Split a module into `(section id, payload)` pairs and re-emit them with
-/// re-encoded section sizes, so a tampered type-section payload of any length
-/// reframes correctly.
-fn module_sections(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
-    let mut cursor = 8usize;
-    let mut sections = Vec::new();
-    while cursor < bytes.len() {
-        let id = bytes[cursor];
-        cursor += 1;
-        let size = read_uleb_at(bytes, &mut cursor);
-        sections.push((id, bytes[cursor..cursor + size].to_vec()));
-        cursor += size;
-    }
-    sections
-}
-
-fn rebuild_module(sections: &[(u8, Vec<u8>)]) -> Vec<u8> {
-    let mut out = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-    for (id, payload) in sections {
-        out.push(*id);
-        out.extend(encode_uleb(payload.len()));
-        out.extend(payload);
-    }
-    out
-}
-
-/// The compiled person module's layout, read back out of the artifact (never
-/// written down as literals): the record struct index (the readMember export's
-/// declared parameter), the Int carrier index (the record's first field
-/// reference), and the flattened type count (where the duplicate-entry tamper
-/// lands).
-fn person_record_layout(bytes: &[u8]) -> (u32, u32, u32) {
-    let read_member_type = export_func_type_idx(bytes, "readMember");
-    let mut structs: Vec<Option<Vec<wasmparser::FieldType>>> = Vec::new();
+/// The compiled person module's layout, read back out of the artifact: the
+/// record struct index (the readMember export's declared parameter) and the
+/// flattened type count (where the duplicate-entry tamper lands).
+fn person_record_layout(bytes: &[u8]) -> (u32, u32) {
+    let mut imported_funcs = 0u32;
+    let mut func_types = Vec::new();
+    let mut read_member = None;
     let mut funcs: Vec<Option<Vec<wasmparser::ValType>>> = Vec::new();
     for payload in wasmparser::Parser::new(0).parse_all(bytes) {
-        if let wasmparser::Payload::TypeSection(reader) = payload.expect("person.wasm must parse") {
-            for group in reader {
-                for sub in group.expect("rec group must parse").into_types() {
-                    match &sub.composite_type.inner {
-                        wasmparser::CompositeInnerType::Struct(st) => {
-                            structs.push(Some(st.fields.to_vec()));
-                            funcs.push(None);
-                        }
-                        wasmparser::CompositeInnerType::Func(ft) => {
-                            structs.push(None);
-                            funcs.push(Some(ft.params().to_vec()));
-                        }
-                        _ => {
-                            structs.push(None);
-                            funcs.push(None);
+        match payload.expect("person.wasm must parse") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group must parse") {
+                        let (_, import) = import.expect("import must parse");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported_funcs += 1;
                         }
                     }
                 }
             }
+            wasmparser::Payload::TypeSection(reader) => {
+                for group in reader {
+                    for sub in group.expect("rec group must parse").into_types() {
+                        match &sub.composite_type.inner {
+                            wasmparser::CompositeInnerType::Func(ft) => {
+                                funcs.push(Some(ft.params().to_vec()));
+                            }
+                            _ => funcs.push(None),
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::FunctionSection(reader) => {
+                for type_idx in reader {
+                    func_types.push(type_idx.expect("function type index must parse"));
+                }
+            }
+            wasmparser::Payload::ExportSection(reader) => {
+                for export in reader {
+                    let export = export.expect("export must parse");
+                    if export.kind == wasmparser::ExternalKind::Func && export.name == "readMember"
+                    {
+                        read_member = Some(export.index);
+                    }
+                }
+            }
+            _ => {}
         }
     }
-    let type_count = structs.len() as u32;
-    let params = funcs[read_member_type as usize]
+    let read_member = read_member.expect("person exports readMember");
+    let type_idx = func_types[(read_member - imported_funcs) as usize];
+    let params = funcs[type_idx as usize]
         .as_ref()
         .expect("readMember's type is a function type");
     assert_eq!(params.len(), 1, "readMember takes exactly the record");
@@ -4716,52 +2027,11 @@ fn person_record_layout(bytes: &[u8]) -> (u32, u32, u32) {
         },
         other => panic!("readMember parameter is a reference, got {other:?}"),
     };
-    let fields = structs[struct_idx as usize]
-        .as_ref()
-        .expect("record parameter names a struct type");
-    assert_eq!(fields.len(), 2, "Person is the two-field record");
-    let carrier = match fields[0].element_type {
-        wasmparser::StorageType::Val(wasmparser::ValType::Ref(rt)) => match rt.heap_type() {
-            wasmparser::HeapType::Concrete(idx) => idx
-                .as_module_index()
-                .expect("age field names a module type index"),
-            other => panic!("age field heap type is concrete, got {other:?}"),
-        },
-        other => panic!("age field is a carrier reference, got {other:?}"),
-    };
-    (carrier, struct_idx, type_count)
+    (struct_idx, funcs.len() as u32)
 }
 
-/// Tamper (a): declare the record entry as a `(sub …)` supertype — the 0A
-/// doppelganger — by inserting the two-byte `sub` header (empty supertype
-/// vector) before the record struct's `0x5f`. The module stays valid wasm.
-fn person_sub_tamper(bytes: &[u8]) -> Vec<u8> {
-    let mut sections = module_sections(bytes);
-    let type_section = sections
-        .iter_mut()
-        .find(|(id, _)| *id == 1)
-        .expect("person.wasm has a type section");
-    let payload = &mut type_section.1;
-    let mut cursor = 0usize;
-    let _rectype_count = read_uleb_at(payload, &mut cursor);
-    assert_eq!(
-        payload[cursor], 0x4e,
-        "person.wasm's first rectype is the shared rec group; refit the tamper"
-    );
-    cursor += 1;
-    let _group_members = read_uleb_at(payload, &mut cursor);
-    assert_eq!(
-        payload[cursor], 0x5f,
-        "the rec group's first entry is the record struct; refit the tamper"
-    );
-    payload.splice(cursor..cursor, [0x50, 0x00]);
-    rebuild_module(&sections)
-}
-
-/// Tamper (c): append a singleton rectype duplicating the record's exact entry
-/// shape at a fresh flattened index. The record equality pin HOLDS at that
-/// index; only the param binding ties the claim back to the function's real
-/// declared parameter type.
+/// Append a singleton rectype duplicating the record's exact field shape at a
+/// fresh flattened index, outside the opening rec group.
 fn person_dup_tamper(bytes: &[u8], carrier: u32) -> Vec<u8> {
     assert!(carrier < 64, "single-byte s33 heap index expected");
     let mut sections = module_sections(bytes);
@@ -4779,299 +2049,399 @@ fn person_dup_tamper(bytes: &[u8], carrier: u32) -> Vec<u8> {
     rebuild_module(&sections)
 }
 
-/// Tamper (e): flip the record's SECOND field mutability from `const` (0x00) to
-/// `var` (0x01), over otherwise-real person bytes. The byte-side scalar-storage
-/// gate `isRecordScalarStorage` matches mutability with a wildcard, so the param
-/// binding still accepts the module; only the face's type-section equality pin
-/// rejects it, because `lowerTypeDecl` emits every field at mutability 0 and no
-/// declaration lowers to a mutability-1 field. The module stays valid wasm — a
-/// never-written mutable field is well-typed and `struct.get` reads it fine.
-fn person_mut_tamper(bytes: &[u8]) -> Vec<u8> {
-    let mut sections = module_sections(bytes);
-    let type_section = sections
-        .iter_mut()
-        .find(|(id, _)| *id == 1)
-        .expect("person.wasm has a type section");
-    let payload = &mut type_section.1;
-    let mut cursor = 0usize;
-    let _rectype_count = read_uleb_at(payload, &mut cursor);
-    assert_eq!(
-        payload[cursor], 0x4e,
-        "person.wasm's first rectype is the shared rec group; refit the tamper"
-    );
-    cursor += 1;
-    let _group_members = read_uleb_at(payload, &mut cursor);
-    assert_eq!(
-        payload[cursor], 0x5f,
-        "the rec group's first entry is the record struct; refit the tamper"
-    );
-    cursor += 1;
-    let field_count = read_uleb_at(payload, &mut cursor);
-    assert_eq!(
-        field_count, 2,
-        "Person is the two-field record; refit the tamper"
-    );
-    // Field 0: `0x63 <s33 carrier heap index> <mutability>`.
-    assert_eq!(
-        payload[cursor], 0x63,
-        "field 0 is the carrier reference; refit the tamper"
-    );
-    cursor += 1;
-    let _carrier_heap = read_uleb_at(payload, &mut cursor);
-    assert_eq!(
-        payload[cursor], 0x00,
-        "field 0 is declared const; refit the tamper"
-    );
-    cursor += 1;
-    // Field 1: `0x7f <mutability>` — the i32 scalar. Flip its mutability byte.
-    assert_eq!(
-        payload[cursor], 0x7f,
-        "field 1 is the i32 scalar; refit the tamper"
-    );
-    cursor += 1;
-    assert_eq!(
-        payload[cursor], 0x00,
-        "field 1 is declared const; refit the tamper"
-    );
-    payload[cursor] = 0x01;
-    rebuild_module(&sections)
-}
-
-/// Tamper (d) frame: a minimal record module whose type section holds the REAL
-/// carrier shape at index 0, an identically-shaped carrier DOPPELGANGER at
-/// index 1, the two-field record at index 2 with its Int field referencing
-/// `age_ref`, and the `readMember` function type at index 3. `CertDecode`
-/// derives carrier state `some (some 0)` in both assemblies (first carrier
-/// wins), so a claim whose record declaration cites the doppelganger at 1
-/// satisfies the equality pin and the param binding while the byte-derived
-/// carrier binding rejects it.
-fn pseudo_carrier_record_module(age_ref: u8) -> Vec<u8> {
-    let carrier_entry = [0x5f, 0x03, 0x7e, 0x00, 0x6e, 0x00, 0x7f, 0x00];
-    let mut types = vec![0x04];
-    types.extend(carrier_entry);
-    types.extend(carrier_entry);
-    types.extend([0x5f, 0x02, 0x63, age_ref, 0x00, 0x7f, 0x00]);
-    types.extend([0x60, 0x01, 0x63, 0x02, 0x01, 0x7f]);
-    let funcs = vec![0x01, 0x03];
-    let name = b"readMember";
-    let mut exports = vec![0x01, name.len() as u8];
-    exports.extend(name);
-    exports.extend([0x00, 0x00]);
-    let body = [0x00, 0x20, 0x00, 0xfb, 0x02, 0x02, 0x01, 0x0b];
-    let mut code = vec![0x01, body.len() as u8];
-    code.extend(body);
-    let section = |id: u8, payload: Vec<u8>| -> Vec<u8> {
-        let mut out = vec![id];
-        out.extend(encode_uleb(payload.len()));
-        out.extend(payload);
-        out
-    };
-    let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-    module.extend(section(1, types));
-    module.extend(section(3, funcs));
-    module.extend(section(7, exports));
-    module.extend(section(10, code));
-    module
-}
-
-/// GuardIso for the record-parameter declared face over the REAL compiled
-/// `person.wasm`: each conjunct of `StandardFace.recordParamDeclaredFace` is
-/// exercised by a hostile artifact rejected at exactly that conjunct, a copy
-/// weakened by exactly that conjunct (cut from the LIVE materialized wall
-/// source with exactly-once surgery) accepts it, the other weakened copies
-/// keep rejecting it, and the honest twin passes everything.
-///
-///   (a) `.sub`-declared record entry (the 0A doppelganger) — rejected at the
-///       type-section EQUALITY PIN via `lowerTypeDecl_plain`;
-///   (b) permuted field declaration over the honest bytes — rejected at the
-///       pin via the storage inversion lemmas; the extra-field declaration is
-///       exhibited at conjunct level plus weakened-copy acceptance (with the
-///       pin cut nothing forces the declaration's field list, so the
-///       pin-retaining rejections are the permuted probe's);
-///   (c) claim pinning a byte-identical DUPLICATE entry at a fresh index —
-///       rejected at the PARAM BINDING;
-///   (d) record declaration citing a carrier doppelganger — rejected at the
-///       byte-derived CARRIER BINDING (forced through the pin's storage
-///       inversion; exhibited against the carrier-weakened copy, with the
-///       param-weakened copy still rejecting).
-///   (e) record entry with a field's MUTABILITY flipped (`const` -> `var`) over
-///       otherwise-real bytes — the byte-side scalar gate is mutability-blind,
-///       so this is rejected ONLY at the type-section EQUALITY PIN, and by a
-///       DECIDABLE-false pin (`lowerTypeDecl` emits mutability 0 for every
-///       field), not by the HEq residues of shapes (a)/(b)/(d).
-///
-/// This test is the record face's CI coverage: it exercises the acceptance
-/// face's pin/param/carrier conjuncts over the real compiled module through the
-/// `cert_whole_module_guard_iso` lane. The accepted/discharge level of the
-/// record route (`symFragmentMatches` record branch + `recordParam_claim_
-/// discharges`) was previously exercised only by the hand-checked, unbuilt
-/// fixture `PersonBeachhead.lean` (removed as dead test material — no
-/// harness ever compiled it) and still awaits the record producer leg; that
-/// end-to-end gap is recorded here, not silently closed.
+/// The declared record layout is bound to the module's own type section:
+/// over the real compiled `person.wasm`, the honest type table is confirmed,
+/// and each hostile declaration — fields permuted, the record moved to a
+/// byte-identical duplicate struct outside the opening rec group, the Int
+/// carrier declared at another index — is refused by `typeTableConfirmed`.
+/// The duplicate struct appended to the bytes changes nothing for the honest
+/// declaration, which pins the record at its real index. (Field mutability
+/// and a record struct's subtype form are deliberately NOT pinned: the plan
+/// grammar never writes a field and never type-tests a record.)
 #[test]
 fn record_type_declaration_pin_is_isolated_and_weaken_confirmed() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lake_available() {
         eprintln!("skipping record-declaration GuardIso test: `lake` not available");
         return;
     }
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-record-decl-guard-iso");
-    let compile = aver_command()
-        .current_dir(&repo_root)
-        .arg("compile")
-        .arg("tools/certkit/fixtures/person.av")
-        .arg("--target")
-        .arg("wasm-gc")
-        .arg("-o")
-        .arg(&out_dir)
-        .output()
-        .expect("compile person fixture for record-declaration GuardIso");
-    assert!(
-        compile.status.success(),
-        "person compile failed for record-declaration GuardIso:\n{}{}",
-        String::from_utf8_lossy(&compile.stdout),
-        String::from_utf8_lossy(&compile.stderr)
+    let (_out_dir, cert, person) = built_package(
+        "tools/certkit/fixtures/person.av",
+        &[],
+        "cert-record-decl-guard-iso",
     );
-    let person = std::fs::read(out_dir.join("person.wasm")).expect("compiled person.wasm");
-    let (carrier, struct_idx, dup_idx) = person_record_layout(&person);
-    let hostile_sub = person_sub_tamper(&person);
+    let (struct_idx, dup_idx) = person_record_layout(&person);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(cert.join("cert-manifest.json")).unwrap()).unwrap();
+    let carrier = manifest["carrier_type_index"]
+        .as_u64()
+        .expect("person carries the Int carrier") as u32;
     let hostile_dup = person_dup_tamper(&person, carrier);
-    let hostile_mut = person_mut_tamper(&person);
-    let pseudo_honest = pseudo_carrier_record_module(0);
-    let pseudo_hostile = pseudo_carrier_record_module(1);
-    for (label, bytes) in [
-        ("honest", &person),
-        ("hostileSub", &hostile_sub),
-        ("hostileDup", &hostile_dup),
-        ("hostileMut", &hostile_mut),
-        ("pseudoHonest", &pseudo_honest),
-        ("pseudoHostile", &pseudo_hostile),
-    ] {
-        wasmparser::Validator::new()
-            .validate_all(bytes)
-            .unwrap_or_else(|error| panic!("{label} probe module must be valid wasm: {error}"));
-    }
-
-    let wall_dir = temp_dir("cert-record-decl-guard-iso-wall");
-    std::fs::create_dir_all(&wall_dir).unwrap();
-    let wall = aver::codegen::cert::wall::resolve(aver::codegen::cert::wall::CURRENT_ID).unwrap();
-    for source in wall.sources {
-        std::fs::write(wall_dir.join(source.name), source.contents).unwrap();
-    }
-    std::fs::write(wall_dir.join("lean-toolchain"), wall.toolchain).unwrap();
-    std::fs::write(
-        wall_dir.join("lakefile.lean"),
-        "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-         @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  \
-         roots := #[`CertPrelude, `CertDecode, `ArithTemplateDerisk, `SchemaCore, \
-         `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `ExprFragmentAccepted, \
-         `ExprFragmentSemantics, `ExprFragmentSoundness, `InterpreterSequencing, \
-         `Wasip2Envelope, `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering, \
-         `ConstructVerbatimSoundness, `FieldProjectionSoundness, `StringSoundness, \
-         `RecordComputeBridge, `WidenedEnvelope, `DeclaredIndexEnvelope, \
-         `DeclaredEnvelopeAcceptTransport, `StandardFace]\n",
-    )
-    .unwrap();
-    let build = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("build")
-        .output()
-        .expect("build the wall before the record-declaration GuardIso");
+    wasmparser::Validator::new()
+        .validate_all(&hostile_dup)
+        .expect("the duplicate-entry module must be valid wasm");
+    let honest_types = plans_types_block(&cert, "honestTypes");
     assert!(
-        build.status.success(),
-        "wall build failed before the record-declaration GuardIso:\n{}{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
+        honest_types.contains(&format!("records := [⟨0, {struct_idx}, [.int, .bool]⟩]")),
+        "person's declared record changed; refit the probe:\n{honest_types}"
     );
+    let lean = format!(
+        r#"import ArtifactCertificate
 
-    // Literal weakened copies from the LIVE materialized face source: one cuts
-    // EXACTLY the type-section equality pin, one EXACTLY the param binding,
-    // one EXACTLY the byte-derived carrier binding, and nothing else moves.
-    let standard_face = std::fs::read_to_string(wall_dir.join("StandardFace.lean"))
-        .expect("materialized wall has StandardFace.lean");
-    let live_face = extract_wall_def(&standard_face, "recordParamDeclaredFace");
-    let pin_conjunct = "    AverCert.WasmSlice.typeSectionMatches\n      (fun entry =>\n        \
-                        decide (lowerTypeDecl claim.carrier lowerTypeDeclFuel decl = some entry))\n      \
-                        modBytes modLen structIdx = true ∧\n";
-    let param_conjunct = "    AverCert.WasmSlice.recordParamFuncTypeMatches\n      \
-                          modBytes modLen claim.exportNameBytes structIdx = true ∧\n";
-    let carrier_conjunct = "    (typeDeclMentionsIntCarrier decl = true →\n      \
-                            CertDecode.carrierState modBytes modLen = some (some claim.carrier)) ∧\n";
-    let live_with_newline = format!("{live_face}\n");
-    for (conjunct, what) in [
-        (pin_conjunct, "type-section equality pin"),
-        (param_conjunct, "param binding"),
-        (carrier_conjunct, "byte-derived carrier binding"),
-    ] {
+open CertPrelude AverCert AverCert.Schema AverCert.Grammar
+set_option maxRecDepth 300000
+noncomputable section
+
+{honest_types}
+
+def dupBytes : Nat := 0x{dup_hex}
+def dupLen : Nat := {dup_len}
+
+def confirmed (n len : Nat) (tt : AverCert.Schema.TypeTable) : Bool :=
+  AverCert.TypeTable.typeTableConfirmed n len manifest.subject tt manifest.fnPlans
+
+-- The honest declaration, on the real bytes and on the bytes with a
+-- duplicate struct appended.
+example : confirmed ArtifactBytes.modBytes ArtifactBytes.modLen honestTypes = true := by
+  decide +kernel
+example : confirmed dupBytes dupLen honestTypes = true := by decide +kernel
+
+-- Fields permuted.
+def permutedTypes : AverCert.Schema.TypeTable :=
+  {{ honestTypes with records := [⟨0, {struct_idx}, [.bool, .int]⟩] }}
+example : confirmed ArtifactBytes.modBytes ArtifactBytes.modLen permutedTypes = false := by
+  decide +kernel
+
+-- The record declared at the duplicate struct: same field shape, but outside
+-- the opening rec group the pins read.
+def dupTypes : AverCert.Schema.TypeTable :=
+  {{ honestTypes with records := [⟨0, {dup_idx}, [.int, .bool]⟩] }}
+example : confirmed dupBytes dupLen dupTypes = false := by decide +kernel
+
+-- The Int carrier declared at the record's own index.
+def movedCarrierTypes : AverCert.Schema.TypeTable :=
+  {{ honestTypes with carrier := some {struct_idx} }}
+example : confirmed ArtifactBytes.modBytes ArtifactBytes.modLen movedCarrierTypes = false := by
+  decide +kernel
+"#,
+        dup_hex = hex_le(&hostile_dup),
+        dup_len = hostile_dup.len(),
+    );
+    assert_probe_holds(&cert, "RecordDeclGuardIso.lean", &lean);
+}
+
+/// The declared function type of every present helper is pinned
+/// (`roleTypesPinned`), separately from its body (`arithTableCheck`'s template
+/// equality). Pointing the `add` helper at another function type in the
+/// FUNCTION section — its body bytes untouched — is invisible to the template
+/// pin and refused by the type pin alone.
+#[test]
+fn role_types_pin_is_isolated_from_the_template_pin() {
+    if !lake_available() {
+        eprintln!("skipping role-type pin GuardIso test: `lake` not available");
+        return;
+    }
+    let (_out_dir, cert, wasm) = built_package(
+        "tools/certkit/fixtures/certprobe2.av",
+        &[],
+        "cert-role-type-pin-guard-iso",
+    );
+    let roles = manifest_roles(&cert);
+    let add_idx = role(&roles, "add").expect("certprobe2 add role");
+    let box_idx = role(&roles, "box").expect("certprobe2 box role");
+    // Locate the function-section entry of `add` and the type index `box`
+    // declares; both are single-byte LEBs in this module.
+    let mut imported = 0u32;
+    let mut function_section = None;
+    for payload in wasmparser::Parser::new(0).parse_all(&wasm) {
+        match payload.expect("certprobe2 parses") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group parses") {
+                        let (_, import) = import.expect("import parses");
+                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
+                            imported += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::FunctionSection(reader) => {
+                function_section = Some(reader.range());
+            }
+            _ => {}
+        }
+    }
+    let range = function_section.expect("certprobe2 has a function section");
+    let mut cursor = range.start;
+    let count = read_uleb_at(&wasm, &mut cursor);
+    let entries_start = cursor;
+    let mut types = Vec::with_capacity(count);
+    for _ in 0..count {
+        let at = cursor;
+        let type_idx = read_uleb_at(&wasm, &mut cursor);
         assert_eq!(
-            live_with_newline.matches(conjunct).count(),
+            cursor - at,
             1,
-            "the {what} conjunct moved; refit the GuardIso surgery"
+            "single-byte function-section entries expected"
         );
+        types.push(type_idx as u8);
     }
-    let weak_pin = live_with_newline
-        .replace(pin_conjunct, "")
-        .replace("recordParamDeclaredFace", "weakPinRecordParamDeclaredFace");
-    let weak_param = live_with_newline.replace(param_conjunct, "").replace(
-        "recordParamDeclaredFace",
-        "weakParamRecordParamDeclaredFace",
+    let add_at = entries_start + (add_idx - imported) as usize;
+    let box_type = types[(box_idx - imported) as usize];
+    assert_ne!(
+        wasm[add_at], box_type,
+        "the add and box helpers must declare different types"
     );
-    let weak_carrier = live_with_newline.replace(carrier_conjunct, "").replace(
-        "recordParamDeclaredFace",
-        "weakCarrierRecordParamDeclaredFace",
-    );
+    let mut mutant = wasm.clone();
+    mutant[add_at] = box_type;
+    let lean = format!(
+        r#"import ArtifactCertificate
 
-    let read_member_name = format!(
-        "[{}]",
-        "readMember"
-            .bytes()
-            .map(|b| b.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+noncomputable section
+
+def mutBytes : Nat := 0x{mut_hex}
+def M := AverCert.TypeTable.mctxOf manifest.subject manifest.types manifest.fnPlans
+
+-- The honest module passes both pins.
+example : AcceptedArtifact.roleTypesPinned ArtifactBytes.modBytes ArtifactBytes.modLen M = true := by
+  decide +kernel
+
+-- The mutant keeps every helper body, so the template pin still accepts it...
+example : AcceptedArtifact.arithTableCheck mutBytes ArtifactBytes.modLen
+    manifest.subject.hostRoleTable manifest.subject.arithParams = true := by decide +kernel
+-- ...and the declared-type pin alone refuses it.
+example : AcceptedArtifact.roleTypesPinned mutBytes ArtifactBytes.modLen M = false := by
+  decide +kernel
+"#,
+        mut_hex = hex_le(&mutant),
     );
-    let lean = include_str!("fixtures/cert_record_decl_guard_iso.lean")
-        .replace("%personBytes%", &format!("0x{}", hex_le(&person)))
-        .replace("%personLen%", &person.len().to_string())
-        .replace("%subBytes%", &format!("0x{}", hex_le(&hostile_sub)))
-        .replace("%subLen%", &hostile_sub.len().to_string())
-        .replace("%dupBytes%", &format!("0x{}", hex_le(&hostile_dup)))
-        .replace("%dupLen%", &hostile_dup.len().to_string())
-        .replace("%mutBytes%", &format!("0x{}", hex_le(&hostile_mut)))
-        .replace("%mutLen%", &hostile_mut.len().to_string())
-        .replace(
-            "%pseudoHonestBytes%",
-            &format!("0x{}", hex_le(&pseudo_honest)),
-        )
-        .replace("%pseudoHonestLen%", &pseudo_honest.len().to_string())
-        .replace(
-            "%pseudoHostileBytes%",
-            &format!("0x{}", hex_le(&pseudo_hostile)),
-        )
-        .replace("%pseudoHostileLen%", &pseudo_hostile.len().to_string())
-        .replace("%readMemberName%", &read_member_name)
-        .replace("%carrier%", &carrier.to_string())
-        .replace("%structIdx%", &struct_idx.to_string())
-        .replace("%dupIdx%", &dup_idx.to_string())
-        .replace("%weakPin%", weak_pin.trim_end())
-        .replace("%weakParam%", weak_param.trim_end())
-        .replace("%weakCarrier%", weak_carrier.trim_end());
+    assert_probe_holds(&cert, "RoleTypePinGuardIso.lean", &lean);
+}
+
+/// No obligation may be vacuous: a declared type no finite value inhabits
+/// would make an obligation's hypothesis unsatisfiable and the obligation true
+/// of any code. `declsWellFormed` — a conjunct of `plansAccepted` that reads
+/// no byte at all — refuses each vacuity source over the real package's
+/// declarations, and accepts a recursive sum that has a base case.
+#[test]
+fn inhabitation_check_rejects_vacuous_declarations() {
+    if !lake_available() {
+        eprintln!("skipping inhabitation-check GuardIso test: `lake` not available");
+        return;
+    }
+    let (_out_dir, cert, _wasm) = built_package(
+        "tools/certkit/fixtures/person.av",
+        &[],
+        "cert-inhabitation-guard-iso",
+    );
+    let lean = r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema AverCert.Grammar
+set_option maxRecDepth 300000
+noncomputable section
+
+def wf (tt : AverCert.Schema.TypeTable) (fns : List FnEntry) : Bool :=
+  AverCert.TypeTable.declsWellFormed manifest.subject tt fns
+
+-- The honest declarations are well formed.
+example : wf manifest.types manifest.fnPlans = true := by decide +kernel
+
+-- A self-referential newtype `R = [record R]`.
+example : wf { manifest.types with records := manifest.types.records ++ [⟨9, 99, [.record 9]⟩] }
+    manifest.fnPlans = false := by decide +kernel
+
+-- A record with no finite value `R = [int, record R]`.
+example : wf { manifest.types with records := manifest.types.records ++ [⟨9, 99, [.int, .record 9]⟩] }
+    manifest.fnPlans = false := by decide +kernel
+
+-- A sum whose only constructor recurses.
+example : wf { manifest.types with sums := [⟨8, 90, [(91, [.sum 8])]⟩] }
+    manifest.fnPlans = false := by decide +kernel
+
+-- ...and the same sum with a base case is inhabited.
+example : wf { manifest.types with sums := [⟨8, 90, [(91, [.sum 8]), (92, [.int])]⟩] }
+    manifest.fnPlans = true := by decide +kernel
+
+-- `eqref` in a record field.
+example : wf { manifest.types with records := manifest.types.records ++ [⟨9, 99, [.eqref, .int]⟩] }
+    manifest.fnPlans = false := by decide +kernel
+
+-- `eqref` in a plan signature.
+def eqrefPlans : List FnEntry :=
+  manifest.fnPlans.map fun e =>
+    { e with plan := { e.plan with sig := ⟨[.eqref], e.plan.sig.ret⟩ } }
+example : wf manifest.types eqrefPlans = false := by decide +kernel
+"#;
+    assert_probe_holds(&cert, "InhabitationGuardIso.lean", lean);
+}
+
+/// A constructor struct must be declared FINAL with exactly its sum root as
+/// supertype: `ref.test` on a non-final struct would also accept a subtype
+/// the program never built, so the lowering's exact tag test would not mean
+/// what the plan's `match` means. Flipping the nullary constructor's
+/// `sub final` to `sub` (a valid module) is refused by the type table pin.
+#[test]
+fn ctor_struct_finality_is_pinned() {
+    if !lake_available() {
+        eprintln!("skipping constructor-finality GuardIso test: `lake` not available");
+        return;
+    }
+    let (_out_dir, cert, wasm) = built_package(
+        "tools/certkit/fixtures/signalgauge.av",
+        &[],
+        "cert-ctor-finality-guard-iso",
+    );
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
     assert!(
-        !lean.contains('%'),
-        "tests/fixtures/cert_record_decl_guard_iso.lean still holds an \
-         unsubstituted placeholder after rendering"
+        plans.contains("sums := [⟨0, 0, [(1, [.int]), (2, [.int]), (3, [.int]), (4, [])]⟩]"),
+        "signalgauge's declared sum changed; refit the probe:\n{plans}"
     );
-    std::fs::write(wall_dir.join("RecordDeclGuardIso.lean"), lean).unwrap();
-    let check = Command::new("lake")
-        .current_dir(&wall_dir)
-        .arg("env")
-        .arg("lean")
-        .arg("RecordDeclGuardIso.lean")
-        .output()
-        .expect("run the record-declaration GuardIso check");
+    // The nullary constructor struct: `sub final (root 0) (struct)`.
+    let header = [0x4f, 0x01, 0x00, 0x5f, 0x00];
+    let type_range = wasmparser::Parser::new(0)
+        .parse_all(&wasm)
+        .find_map(|payload| match payload.expect("signalgauge parses") {
+            wasmparser::Payload::TypeSection(reader) => Some(reader.range()),
+            _ => None,
+        })
+        .expect("signalgauge has a type section");
+    let hits: Vec<usize> = wasm[type_range.clone()]
+        .windows(header.len())
+        .enumerate()
+        .filter_map(|(offset, window)| (window == header).then_some(type_range.start + offset))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "exactly one final empty constructor struct expected"
+    );
+    let mut mutant = wasm.clone();
+    mutant[hits[0]] = 0x50;
+    wasmparser::Validator::new()
+        .validate_all(&mutant)
+        .expect("a non-final constructor struct is still a valid module");
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema
+set_option maxRecDepth 300000
+noncomputable section
+
+def mutBytes : Nat := 0x{mut_hex}
+def confirmed (n len : Nat) : Bool :=
+  AverCert.TypeTable.typeTableConfirmed n len manifest.subject manifest.types manifest.fnPlans
+
+example : confirmed ArtifactBytes.modBytes ArtifactBytes.modLen = true := by decide +kernel
+example : confirmed mutBytes ArtifactBytes.modLen = false := by decide +kernel
+"#,
+        mut_hex = hex_le(&mutant),
+    );
+    assert_probe_holds(&cert, "CtorFinalityGuardIso.lean", &lean);
+}
+
+/// The policy axes are derived from the plans (`GrammarTotal.checkTermGroup`),
+/// never declared: a call group gets L3 only when every member's recursion
+/// descends by the canonical `n - 1` step on its first Int parameter, with
+/// the `.mul` totality role exactly when a member multiplies. The honest
+/// recursions of `recgen` and a mutual pair pass; an ascending step, a
+/// non-literal step and a mutual group with one ascending member fall back
+/// to L1.
+#[test]
+fn termination_check_grants_l3_only_to_descending_groups() {
+    if !lake_available() {
+        eprintln!("skipping termination-check GuardIso test: `lake` not available");
+        return;
+    }
+    let (_out_dir, cert, _wasm) = built_package(
+        "tools/certkit/fixtures/recgen.av",
+        &[],
+        "cert-termination-guard-iso",
+    );
+    // The mutual pair's plans, read from its own package, stated as data here.
+    let (_mutual_dir, mutual_cert, _mutual_wasm) = built_package(
+        "tools/certkit/fixtures/mutual.av",
+        &[],
+        "cert-termination-guard-iso-mutual",
+    );
+    let mutual_plans = std::fs::read_to_string(mutual_cert.join("Plans.lean")).unwrap();
+    let plan_block = |text: &str, def: &str, rename: &str| -> String {
+        let head = format!("def {def} : FnPlan :=");
+        let at = text
+            .find(&head)
+            .unwrap_or_else(|| panic!("Plans.lean has no {def}"));
+        let end = text[at..].find("\n\n").unwrap() + at;
+        text[at..end].replacen(&format!("def {def} :"), &format!("def {rename} :"), 1)
+    };
+    let is_even = plan_block(&mutual_plans, "fn1", "isEvenP");
+    let is_odd = plan_block(&mutual_plans, "fn2", "isOddP");
+    let descent = "(.binOp .sub (.local 0) (.literal (.int 1)))";
     assert!(
-        check.status.success(),
-        "record-declaration GuardIso failed:\n{}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
+        is_odd.contains(&format!("(.tailCall 1 [{descent}])")),
+        "the mutual plan shape changed; refit the probe:\n{is_odd}"
     );
+    let is_odd_ascending = is_odd
+        .replacen("def isOddP :", "def isOddAscending :", 1)
+        .replacen(
+            &format!("(.tailCall 1 [{descent}])"),
+            "(.tailCall 1 [(.binOp .add (.local 0) (.literal (.int 1)))])",
+            1,
+        );
+    let recgen_plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let sum_from = plan_block(&recgen_plans, "fn1", "sumFromP");
+    let self_call = format!("(.call (.fn 1) [{descent}])");
+    assert!(
+        sum_from.contains(&self_call),
+        "sumFrom's plan shape changed; refit the probe:\n{sum_from}"
+    );
+    let ascending = sum_from
+        .replacen("def sumFromP :", "def ascendingP :", 1)
+        .replacen(
+            &self_call,
+            "(.call (.fn 1) [(.binOp .add (.local 0) (.literal (.int 1)))])",
+            1,
+        );
+    let step_two = sum_from
+        .replacen("def sumFromP :", "def stepTwoP :", 1)
+        .replacen(
+            &self_call,
+            "(.call (.fn 1) [(.binOp .sub (.local 0) (.literal (.int 2)))])",
+            1,
+        );
+    let lean = format!(
+        r#"import ArtifactCertificate
+
+open CertPrelude AverCert AverCert.Schema AverCert.Grammar
+set_option maxRecDepth 300000
+noncomputable section
+
+{sum_from}
+
+{ascending}
+
+{step_two}
+
+{is_even}
+
+{is_odd}
+
+{is_odd_ascending}
+
+-- The honest recursions: L3 at the add/sub role, and at the mul role for
+-- the multiplying `factorial`.
+example : checkTermGroup [(1, AverCert.Plans.fn1)] = some .addSub := by decide +kernel
+example : checkTermGroup [(4, AverCert.Plans.fn4)] = some .mul := by decide +kernel
+example : checkTermGroup [(5, AverCert.Plans.fn5)] = some .addSub := by decide +kernel
+example : checkTermGroup [(1, isEvenP), (2, isOddP)] = some .addSub := by decide +kernel
+
+-- An ascending step, a step of two, and a mutual group with one ascending
+-- member get no termination claim: the derived policy is the partial one.
+example : checkTermGroup [(1, ascendingP)] = none := by decide +kernel
+example : checkTermGroup [(1, stepTwoP)] = none := by decide +kernel
+example : checkTermGroup [(1, isEvenP), (2, isOddAscending)] = none := by decide +kernel
+example : (groupPolicy [(1, ascendingP)]).1 = .simulatesModel := by decide +kernel
+example : (groupPolicy [(1, sumFromP)]).1 = .simulatesModelTotally := by decide +kernel
+"#
+    );
+    assert_probe_holds(&cert, "TerminationGuardIso.lean", &lean);
 }

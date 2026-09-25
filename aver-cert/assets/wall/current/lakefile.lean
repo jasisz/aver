@@ -7,18 +7,8 @@ package «certprelude» where
 @[default_target]
 lean_lib «CertPrelude» where
   srcDir := "."
-  roots := #[`CertPrelude, `CertPreludeSanity, `CertDecode, `SchemaCore,
-    `SchemaSanity,
-    `PlanCheck, `PlanLower, `PlanBytes, `WasmSlice, `Wasip2Envelope,
-    `ExprFragmentAccepted,
-    `AcceptedArtifactCore, `IntDispatchSoundness, `EnvelopeLowering,
-    `ConstructVerbatimSoundness, `StringSoundness,
-    `WidenedEnvelope, `DeclaredIndexEnvelope, `DeclaredEnvelopeAcceptTransport,
-    `ClaimAxes, `ExprFragmentSemantics, `InterpreterSequencing,
-    `RecordComputeBridge,
-    `ExprFragmentSoundness, `FieldProjectionSoundness, `StandardFace,
-    `RecursionSoundness, `MutualRecursionSoundness,
-    `CompositionSoundness, `AcceptanceSoundnessCore, `DischargeExprFragment,
-    `DischargeFieldProjection, `DischargeConstruct, `DischargeVerbatim,
-    `DischargeString, `DischargeIntDispatch, `DischargeRecursion,
-    `DischargeComposition, `AcceptanceSoundness, `ArithTemplateDerisk]
+  roots := #[`CertPrelude, `CertPreludeSanity, `CertDecode, `SchemaBase, `SchemaCore,
+    `SchemaSanity, `WasmSlice, `Wasip2Envelope, `ArithTemplateDerisk,
+    `InterpreterSequencing, `Grammar, `GrammarLower, `GrammarSound, `GrammarTotal,
+    `TypeTable, `AcceptedArtifactCore, `ClaimAxes, `AcceptanceSoundnessCore,
+    `AcceptanceSoundness, `GrammarBridge, `ModelPrelude]

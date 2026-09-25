@@ -20,11 +20,10 @@ include = [
 
 [features]
 default = ["verify"]
-# Plan surface only: the fragment/sym plan IR types plus the canonical byte
-# lowering the wasm-gc emitter consumes in every build. No classifier, no
-# renderer, no embedded Lean wall — this keeps ordinary (non-certify)
-# compiler builds free of the certificate engine.
-plans = ["dep:wasm-encoder"]
+# Plan surface only: the one-grammar plan data types the compiler prints
+# into. No producer, no renderer, no embedded Lean wall — this keeps ordinary
+# (non-certify) compiler builds free of the certificate engine.
+plans = []
 engine = ["plans", "dep:sha2", "dep:wasmparser"]
 producer = ["engine"]
 verify = [
@@ -45,7 +44,6 @@ clap = { version = "4", features = ["derive"], optional = true }
 colored = { version = "2", optional = true }
 serde_json = { version = "1", optional = true }
 sha2 = { version = "0.10", optional = true }
-wasm-encoder = { version = "0.248", optional = true }
 wasmparser = { version = "0.248", optional = true }
 
 [dev-dependencies]

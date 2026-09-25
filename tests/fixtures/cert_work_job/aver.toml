@@ -1,0 +1,6 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Validation"
+work = "Node.validate"

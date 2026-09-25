@@ -13,70 +13,38 @@ pub const LEAN_TOOLCHAIN: &str = include_str!("../assets/wall/current/lean-toolc
 
 pub const CERT_PRELUDE: &str = include_str!("../assets/wall/current/CertPrelude.lean");
 pub const CERT_DECODE: &str = include_str!("../assets/wall/current/CertDecode.lean");
+pub const CERT_SCHEMA_BASE: &str = include_str!("../assets/wall/current/SchemaBase.lean");
 pub const CERT_SCHEMA: &str = include_str!("../assets/wall/current/Schema.lean");
 pub const CERT_SCHEMA_CORE: &str = include_str!("../assets/wall/current/SchemaCore.lean");
-pub const CERT_PLAN_CHECK: &str = include_str!("../assets/wall/current/PlanCheck.lean");
-pub const CERT_PLAN_LOWER: &str = include_str!("../assets/wall/current/PlanLower.lean");
-pub const CERT_PLAN_BYTES: &str = include_str!("../assets/wall/current/PlanBytes.lean");
 pub const CERT_WASM_SLICE: &str = include_str!("../assets/wall/current/WasmSlice.lean");
 pub const CERT_WASIP2_ENVELOPE: &str = include_str!("../assets/wall/current/Wasip2Envelope.lean");
-pub const CERT_EXPR_FRAGMENT_ACCEPTED: &str =
-    include_str!("../assets/wall/current/ExprFragmentAccepted.lean");
-pub const CERT_ACCEPTED_ARTIFACT: &str =
-    include_str!("../assets/wall/current/AcceptedArtifact.lean");
-pub const CERT_ACCEPTED_ARTIFACT_CORE: &str =
-    include_str!("../assets/wall/current/AcceptedArtifactCore.lean");
-pub const CERT_CLAIM_AXES: &str = include_str!("../assets/wall/current/ClaimAxes.lean");
-pub const CERT_EXPR_FRAGMENT_SEMANTICS: &str =
-    include_str!("../assets/wall/current/ExprFragmentSemantics.lean");
-pub const CERT_INTERPRETER_SEQUENCING: &str =
-    include_str!("../assets/wall/current/InterpreterSequencing.lean");
-pub const CERT_EXPR_FRAGMENT_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/ExprFragmentSoundness.lean");
-pub const CERT_RECORD_COMPUTE_BRIDGE: &str =
-    include_str!("../assets/wall/current/RecordComputeBridge.lean");
-pub const CERT_FIELD_PROJECTION_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/FieldProjectionSoundness.lean");
-pub const CERT_CONSTRUCT_VERBATIM_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/ConstructVerbatimSoundness.lean");
-pub const CERT_INT_DISPATCH_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/IntDispatchSoundness.lean");
-pub const CERT_ENVELOPE_LOWERING: &str =
-    include_str!("../assets/wall/current/EnvelopeLowering.lean");
-pub const CERT_WIDENED_ENVELOPE: &str = include_str!("../assets/wall/current/WidenedEnvelope.lean");
-pub const CERT_DECLARED_INDEX_ENVELOPE: &str =
-    include_str!("../assets/wall/current/DeclaredIndexEnvelope.lean");
-pub const CERT_DECLARED_ENVELOPE_ACCEPT_TRANSPORT: &str =
-    include_str!("../assets/wall/current/DeclaredEnvelopeAcceptTransport.lean");
-pub const CERT_STRING_SOUNDNESS: &str = include_str!("../assets/wall/current/StringSoundness.lean");
-pub const CERT_STANDARD_FACE: &str = include_str!("../assets/wall/current/StandardFace.lean");
-pub const CERT_RECURSION_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/RecursionSoundness.lean");
-pub const CERT_MUTUAL_RECURSION_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/MutualRecursionSoundness.lean");
-pub const CERT_COMPOSITION_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/CompositionSoundness.lean");
-pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
-    include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
-pub const CERT_DISCHARGE_EXPR_FRAGMENT: &str =
-    include_str!("../assets/wall/current/DischargeExprFragment.lean");
-pub const CERT_DISCHARGE_FIELD_PROJECTION: &str =
-    include_str!("../assets/wall/current/DischargeFieldProjection.lean");
-pub const CERT_DISCHARGE_CONSTRUCT: &str =
-    include_str!("../assets/wall/current/DischargeConstruct.lean");
-pub const CERT_DISCHARGE_VERBATIM: &str =
-    include_str!("../assets/wall/current/DischargeVerbatim.lean");
-pub const CERT_DISCHARGE_STRING: &str = include_str!("../assets/wall/current/DischargeString.lean");
-pub const CERT_DISCHARGE_INT_DISPATCH: &str =
-    include_str!("../assets/wall/current/DischargeIntDispatch.lean");
-pub const CERT_DISCHARGE_RECURSION: &str =
-    include_str!("../assets/wall/current/DischargeRecursion.lean");
-pub const CERT_DISCHARGE_COMPOSITION: &str =
-    include_str!("../assets/wall/current/DischargeComposition.lean");
-pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
-    include_str!("../assets/wall/current/AcceptanceSoundness.lean");
 pub const CERT_ARITH_TEMPLATE_DERISK: &str =
     include_str!("../assets/wall/current/ArithTemplateDerisk.lean");
+pub const CERT_INTERPRETER_SEQUENCING: &str =
+    include_str!("../assets/wall/current/InterpreterSequencing.lean");
+pub const CERT_GRAMMAR: &str = include_str!("../assets/wall/current/Grammar.lean");
+pub const CERT_GRAMMAR_LOWER: &str = include_str!("../assets/wall/current/GrammarLower.lean");
+pub const CERT_GRAMMAR_SOUND: &str = include_str!("../assets/wall/current/GrammarSound.lean");
+pub const CERT_GRAMMAR_TOTAL: &str = include_str!("../assets/wall/current/GrammarTotal.lean");
+pub const CERT_TYPE_TABLE: &str = include_str!("../assets/wall/current/TypeTable.lean");
+pub const CERT_ACCEPTED_ARTIFACT_CORE: &str =
+    include_str!("../assets/wall/current/AcceptedArtifactCore.lean");
+pub const CERT_ACCEPTED_ARTIFACT: &str =
+    include_str!("../assets/wall/current/AcceptedArtifact.lean");
+pub const CERT_DECLARED_LAYOUT: &str = include_str!("../assets/wall/current/DeclaredLayout.lean");
+pub const CERT_BYTE_WINDOW: &str = include_str!("../assets/wall/current/ByteWindow.lean");
+pub const CERT_SORTED_KEYS: &str = include_str!("../assets/wall/current/SortedKeys.lean");
+pub const CERT_CLAIM_AXES: &str = include_str!("../assets/wall/current/ClaimAxes.lean");
+pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
+    include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
+pub const CERT_ACCEPTANCE_SOUNDNESS: &str =
+    include_str!("../assets/wall/current/AcceptanceSoundness.lean");
+pub const CERT_GRAMMAR_BRIDGE: &str = include_str!("../assets/wall/current/GrammarBridge.lean");
+
+/// The checker-owned pieces of the certificate source model (`AverBits` with
+/// its `@[simp]` equations, the `aver_int_order` tactic): the constructs the
+/// token gate refuses in package text, owned and pinned here instead.
+pub const CERT_MODEL_PRELUDE: &str = include_str!("../assets/wall/current/ModelPrelude.lean");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Source {
@@ -86,19 +54,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 40] = [
-    Source {
-        name: "AcceptedArtifact.lean",
-        contents: CERT_ACCEPTED_ARTIFACT,
-    },
-    Source {
-        name: "ArithTemplateDerisk.lean",
-        contents: CERT_ARITH_TEMPLATE_DERISK,
-    },
-    Source {
-        name: "AcceptedArtifactCore.lean",
-        contents: CERT_ACCEPTED_ARTIFACT_CORE,
-    },
+pub const SOURCES: [Source; 24] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -106,6 +62,22 @@ pub const SOURCES: [Source; 40] = [
     Source {
         name: "AcceptanceSoundnessCore.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS_CORE,
+    },
+    Source {
+        name: "AcceptedArtifact.lean",
+        contents: CERT_ACCEPTED_ARTIFACT,
+    },
+    Source {
+        name: "AcceptedArtifactCore.lean",
+        contents: CERT_ACCEPTED_ARTIFACT_CORE,
+    },
+    Source {
+        name: "ArithTemplateDerisk.lean",
+        contents: CERT_ARITH_TEMPLATE_DERISK,
+    },
+    Source {
+        name: "ByteWindow.lean",
+        contents: CERT_BYTE_WINDOW,
     },
     Source {
         name: "CertDecode.lean",
@@ -120,176 +92,92 @@ pub const SOURCES: [Source; 40] = [
         contents: CERT_CLAIM_AXES,
     },
     Source {
-        name: "CompositionSoundness.lean",
-        contents: CERT_COMPOSITION_SOUNDNESS,
+        name: "DeclaredLayout.lean",
+        contents: CERT_DECLARED_LAYOUT,
     },
     Source {
-        name: "ConstructVerbatimSoundness.lean",
-        contents: CERT_CONSTRUCT_VERBATIM_SOUNDNESS,
+        name: "Grammar.lean",
+        contents: CERT_GRAMMAR,
     },
     Source {
-        name: "DeclaredEnvelopeAcceptTransport.lean",
-        contents: CERT_DECLARED_ENVELOPE_ACCEPT_TRANSPORT,
+        name: "GrammarBridge.lean",
+        contents: CERT_GRAMMAR_BRIDGE,
     },
     Source {
-        name: "DeclaredIndexEnvelope.lean",
-        contents: CERT_DECLARED_INDEX_ENVELOPE,
+        name: "GrammarLower.lean",
+        contents: CERT_GRAMMAR_LOWER,
     },
     Source {
-        name: "DischargeComposition.lean",
-        contents: CERT_DISCHARGE_COMPOSITION,
+        name: "GrammarSound.lean",
+        contents: CERT_GRAMMAR_SOUND,
     },
     Source {
-        name: "DischargeConstruct.lean",
-        contents: CERT_DISCHARGE_CONSTRUCT,
-    },
-    Source {
-        name: "DischargeExprFragment.lean",
-        contents: CERT_DISCHARGE_EXPR_FRAGMENT,
-    },
-    Source {
-        name: "DischargeFieldProjection.lean",
-        contents: CERT_DISCHARGE_FIELD_PROJECTION,
-    },
-    Source {
-        name: "DischargeIntDispatch.lean",
-        contents: CERT_DISCHARGE_INT_DISPATCH,
-    },
-    Source {
-        name: "DischargeRecursion.lean",
-        contents: CERT_DISCHARGE_RECURSION,
-    },
-    Source {
-        name: "DischargeString.lean",
-        contents: CERT_DISCHARGE_STRING,
-    },
-    Source {
-        name: "DischargeVerbatim.lean",
-        contents: CERT_DISCHARGE_VERBATIM,
-    },
-    Source {
-        name: "EnvelopeLowering.lean",
-        contents: CERT_ENVELOPE_LOWERING,
-    },
-    Source {
-        name: "ExprFragmentAccepted.lean",
-        contents: CERT_EXPR_FRAGMENT_ACCEPTED,
-    },
-    Source {
-        name: "ExprFragmentSemantics.lean",
-        contents: CERT_EXPR_FRAGMENT_SEMANTICS,
-    },
-    Source {
-        name: "ExprFragmentSoundness.lean",
-        contents: CERT_EXPR_FRAGMENT_SOUNDNESS,
-    },
-    Source {
-        name: "RecordComputeBridge.lean",
-        contents: CERT_RECORD_COMPUTE_BRIDGE,
-    },
-    Source {
-        name: "FieldProjectionSoundness.lean",
-        contents: CERT_FIELD_PROJECTION_SOUNDNESS,
-    },
-    Source {
-        name: "IntDispatchSoundness.lean",
-        contents: CERT_INT_DISPATCH_SOUNDNESS,
+        name: "GrammarTotal.lean",
+        contents: CERT_GRAMMAR_TOTAL,
     },
     Source {
         name: "InterpreterSequencing.lean",
         contents: CERT_INTERPRETER_SEQUENCING,
     },
     Source {
-        name: "MutualRecursionSoundness.lean",
-        contents: CERT_MUTUAL_RECURSION_SOUNDNESS,
-    },
-    Source {
-        name: "PlanBytes.lean",
-        contents: CERT_PLAN_BYTES,
-    },
-    Source {
-        name: "PlanCheck.lean",
-        contents: CERT_PLAN_CHECK,
-    },
-    Source {
-        name: "PlanLower.lean",
-        contents: CERT_PLAN_LOWER,
-    },
-    Source {
-        name: "RecursionSoundness.lean",
-        contents: CERT_RECURSION_SOUNDNESS,
+        name: "ModelPrelude.lean",
+        contents: CERT_MODEL_PRELUDE,
     },
     Source {
         name: "Schema.lean",
         contents: CERT_SCHEMA,
     },
     Source {
+        name: "SchemaBase.lean",
+        contents: CERT_SCHEMA_BASE,
+    },
+    Source {
         name: "SchemaCore.lean",
         contents: CERT_SCHEMA_CORE,
     },
     Source {
-        name: "StandardFace.lean",
-        contents: CERT_STANDARD_FACE,
+        name: "SortedKeys.lean",
+        contents: CERT_SORTED_KEYS,
     },
     Source {
-        name: "StringSoundness.lean",
-        contents: CERT_STRING_SOUNDNESS,
-    },
-    Source {
-        name: "WasmSlice.lean",
-        contents: CERT_WASM_SLICE,
+        name: "TypeTable.lean",
+        contents: CERT_TYPE_TABLE,
     },
     Source {
         name: "Wasip2Envelope.lean",
         contents: CERT_WASIP2_ENVELOPE,
     },
     Source {
-        name: "WidenedEnvelope.lean",
-        contents: CERT_WIDENED_ENVELOPE,
+        name: "WasmSlice.lean",
+        contents: CERT_WASM_SLICE,
     },
 ];
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 38] = [
+pub const PRISTINE_ROOTS: [&str; 22] = [
     "CertPrelude",
     "CertDecode",
+    "ByteWindow",
     "ArithTemplateDerisk",
     "WasmSlice",
     "Wasip2Envelope",
+    "SchemaBase",
     "SchemaCore",
-    "PlanCheck",
-    "PlanLower",
-    "PlanBytes",
-    "ExprFragmentAccepted",
-    "AcceptedArtifactCore",
-    "ClaimAxes",
-    "ExprFragmentSemantics",
     "InterpreterSequencing",
-    "ExprFragmentSoundness",
-    "RecordComputeBridge",
-    "FieldProjectionSoundness",
-    "ConstructVerbatimSoundness",
-    "IntDispatchSoundness",
-    "StringSoundness",
-    "EnvelopeLowering",
-    "WidenedEnvelope",
-    "DeclaredIndexEnvelope",
-    "DeclaredEnvelopeAcceptTransport",
-    "StandardFace",
-    "RecursionSoundness",
-    "MutualRecursionSoundness",
-    "CompositionSoundness",
+    "Grammar",
+    "GrammarLower",
+    "GrammarSound",
+    "GrammarTotal",
+    "TypeTable",
+    "AcceptedArtifactCore",
+    "DeclaredLayout",
+    "SortedKeys",
+    "ClaimAxes",
     "AcceptanceSoundnessCore",
-    "DischargeExprFragment",
-    "DischargeFieldProjection",
-    "DischargeConstruct",
-    "DischargeVerbatim",
-    "DischargeString",
-    "DischargeIntDispatch",
-    "DischargeRecursion",
-    "DischargeComposition",
     "AcceptanceSoundness",
+    "GrammarBridge",
+    "ModelPrelude",
 ];
 
 #[derive(Debug)]
@@ -376,6 +264,29 @@ pub fn render_artifact_component_bytes(bytes: &[u8]) -> String {
     )
 }
 
+/// Checker-authored `Module.lean`: the SHA-256 of the delivered artifact that
+/// `Schema.Holds` compares the manifest's hash against. The wall's `Schema`
+/// imports this module, so it must never come from a certificate package: a
+/// package module in the wall's import closure could declare names that the
+/// wall's own definitions resolve to. `sha` is the hash the verifier computed
+/// from the bytes it read (64 lowercase hex digits).
+pub fn render_module(sha: &str) -> String {
+    debug_assert!(
+        sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+        "render_module takes a hex SHA-256"
+    );
+    format!(
+        "-- Authored by aver-cert from the artifact bytes; never accepted from the certificate.\n\
+         namespace CertModule\n\n\
+         /-- SHA-256 of the delivered artifact, computed by the verifier. -/\n\
+         def wasmSha256 : String := \"{sha}\"\n\n\
+         end CertModule\n"
+    )
+}
+
+/// Bytes per hex numeral in a checker-rendered byte module.
+const BYTE_NUMERAL_CHUNK: usize = 1024;
+
 fn render_byte_module(
     module: &str,
     bytes_name: &str,
@@ -386,15 +297,31 @@ fn render_byte_module(
     let numeral = if bytes.is_empty() {
         "0".to_string()
     } else {
-        let mut numeral = String::with_capacity(2 + bytes.len() * 2);
-        numeral.push_str("0x");
-        for byte in bytes.iter().rev() {
-            numeral.push_str(&format!("{byte:02x}"));
-        }
-        numeral
+        // Lean reads a numeral in time quadratic in its length (a 116 KiB
+        // module's single hex numeral took 20 s to elaborate, once per byte
+        // module). Chunks of `BYTE_NUMERAL_CHUNK` bytes, each shifted to its
+        // byte offset and joined by `|||`, denote the same number: the ranges
+        // are disjoint, and the kernel evaluates the join with its built-in
+        // `Nat` shift and `lor`.
+        bytes
+            .chunks(BYTE_NUMERAL_CHUNK)
+            .enumerate()
+            .map(|(index, chunk)| {
+                let mut hex = String::with_capacity(2 + chunk.len() * 2);
+                hex.push_str("0x");
+                for byte in chunk.iter().rev() {
+                    hex.push_str(&format!("{byte:02x}"));
+                }
+                match index {
+                    0 => hex,
+                    _ => format!("({hex} <<< {})", 8 * BYTE_NUMERAL_CHUNK * index),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" |||\n  ")
     };
     format!(
-        "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.{module}\n\n/-- {description} -/\ndef {bytes_name} : Nat := {numeral}\ndef {len_name} : Nat := {}\n\nend AverCert.{module}\n",
+        "import WasmSlice\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.{module}\n\n/-- {description} -/\nnoncomputable def {bytes_name} : Nat :=\n  {numeral}\ndef {len_name} : Nat := {}\n\nend AverCert.{module}\n",
         bytes.len()
     )
 }
@@ -457,7 +384,7 @@ mod tests {
     /// wins and each silently re-bound `toIndex`; this is what caught them.
     #[test]
     fn lint_still_flags_the_historical_index_helper_gap() {
-        const NAME_PIN: &str = "(roles.toIndex == CertDecode.AddSub.toIndexIdx n len) &&";
+        const NAME_PIN: &str = "(roles.toIndex == _root_.CertDecode.AddSub.toIndexIdx n len) &&";
         const TEMPLATE_PIN: &str = "arithRoleCheck n len .toIndex roles.toIndex p &&";
         let core = CERT_ACCEPTED_ARTIFACT_CORE;
         for pin in [NAME_PIN, TEMPLATE_PIN] {
@@ -522,6 +449,114 @@ mod tests {
         assert!(
             clean.is_bound("AddSub.Roles", "toIndex"),
             "`Roles.toIndex` is not bound on the current wall"
+        );
+    }
+
+    /// The wall with one text replacement in `AcceptedArtifactCore.lean`.
+    fn wall_with_core_edit(old: &str, new: &str) -> String {
+        assert!(
+            CERT_ACCEPTED_ARTIFACT_CORE.contains(old),
+            "the edited text has moved ({old:?}); re-aim this regression test rather than \
+             deleting it"
+        );
+        CERT_ACCEPTED_ARTIFACT_CORE.replace(old, new)
+    }
+
+    fn sources_with_core(core: &str) -> Vec<(&'static str, &str)> {
+        wall_sources()
+            .into_iter()
+            .map(|(name, text)| {
+                if name == "AcceptedArtifactCore.lean" {
+                    (name, core)
+                } else {
+                    (name, text)
+                }
+            })
+            .collect()
+    }
+
+    /// Removing the code-entry equality must leave the plan payload unbound.
+    ///
+    /// The equality `exactFuncBindingForExport n len name bytes` (and the
+    /// `codeEntry == bytes` filter for internal callees) is the one fact that
+    /// makes a plan's lowering the delivered code. An earlier lint counted
+    /// `planTyped M e.plan` and `callsOrdered fns e` as binding the plan,
+    /// because they sit in a definition whose `match` reads the bytes, and so
+    /// stayed green with the equality deleted. The function type pin
+    /// (`sigPinned`) is the control: it still binds the signature.
+    #[test]
+    fn lint_flags_the_removed_code_entry_pin() {
+        let core = wall_with_core_edit(
+            "        _root_.AverCert.WasmSlice.exactFuncBindingForExport n len (stringBytes e.name) bytes\n      else\n        (_root_.AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx).filter\n          (fun b => b.codeEntry == bytes)\n",
+            "        AverCert.WasmSlice.funcBindingForExport n len (stringBytes e.name)\n      else\n        AverCert.WasmSlice.funcBindingByFuncIndex n len e.funcIdx\n",
+        );
+        let sources = sources_with_core(&core);
+        let report = byte_binding_lint::analyse(&sources);
+        for field in ["body", "locals", "nslots"] {
+            assert!(
+                report.is_flagged("FnPlan", field),
+                "`FnPlan.{field}` is still considered bound with the code-entry equality \
+                 removed"
+            );
+        }
+        assert!(
+            report.is_bound("Sig", "params") && report.is_bound("Sig", "ret"),
+            "control failed: the function type pin `sigPinned` must still bind the signature"
+        );
+        assert!(
+            byte_binding_lint::check(&sources, FORMAT_DOC).is_err(),
+            "the lint gate passes a wall whose plans are not bound to their code"
+        );
+    }
+
+    /// Rule D must not accept a derivation that is a tautology.
+    ///
+    /// `startPin m := m.subject = subjectOfManifest m` with
+    /// `subjectOfManifest m := m.subject` has a producer value whole on one side
+    /// and a wall definition applied on the other, and its right-hand side does
+    /// not contain the text `m.subject`; a text-level rule D accepted it and so
+    /// bound every leaf of `Subject`, with the start-section pin deleted. The
+    /// argument `m` is an ancestor of the value, so D must not fire.
+    #[test]
+    fn lint_rejects_a_tautological_derivation() {
+        let core = wall_with_core_edit(
+            "def startAccounted (artifact : ArtifactData) : Bool :=\n  _root_.AverCert.WasmSlice.startFuncIndex artifact.modBytes artifact.modLen ==\n    some artifact.manifest.subject.start\n",
+            "def subjectOfManifest (m : AverCert.Schema.Manifest) : AverCert.Schema.Subject := m.subject\n\ndef startPin (m : AverCert.Schema.Manifest) : Prop :=\n  m.subject = subjectOfManifest m\n\ndef startAccounted (artifact : ArtifactData) : Prop :=\n  startPin artifact.manifest\n",
+        );
+        let core = core.replace(
+            "  startAccounted artifact = true ∧\n",
+            "  startAccounted artifact ∧\n",
+        );
+        let sources = sources_with_core(&core);
+        let report = byte_binding_lint::analyse(&sources);
+        assert!(
+            report.is_flagged("Subject", "start"),
+            "`Subject.start` is considered bound by a tautological derivation"
+        );
+        assert!(
+            report
+                .bound
+                .values()
+                .all(|e| !(e.rule.starts_with('D') && e.decl.ends_with("startPin"))),
+            "rule D fired on `m.subject = subjectOfManifest m`"
+        );
+        assert!(
+            byte_binding_lint::check(&sources, FORMAT_DOC).is_err(),
+            "the lint gate passes a wall whose start pin was replaced by a tautology"
+        );
+
+        // On the real wall, rule D fires exactly at `obligationsDerived`.
+        let clean = byte_binding_lint::analyse(&wall_sources());
+        let d_sites: std::collections::BTreeSet<&str> = clean
+            .bound
+            .values()
+            .filter(|e| e.rule.starts_with('D'))
+            .map(|e| e.decl.as_str())
+            .collect();
+        assert_eq!(
+            d_sites.into_iter().collect::<Vec<_>>(),
+            vec!["AverCert.AcceptedArtifact.obligationsDerived"],
+            "rule D fires somewhere other than the derived obligations"
         );
     }
 

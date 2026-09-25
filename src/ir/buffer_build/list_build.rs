@@ -209,6 +209,18 @@ pub fn run_list_build_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
 /// cannot leave a generic `__lst_*` rewrite behind, and a program with no byte
 /// shape remains byte-for-byte unchanged.
 pub fn run_byte_sink_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
+    run_byte_sink_pass_keeping(items, &HashSet::new())
+}
+
+/// [`run_byte_sink_pass`] that commits nothing when the replay would change
+/// the body of a function named in `kept` (see [`crate::ir::cert_shape`]).
+/// Consumers and loops are accounted as one unit here, so a partial commit
+/// could leave a variant half-consumed; declining the whole retarget keeps
+/// the existing all-or-nothing boundary.
+pub fn run_byte_sink_pass_keeping(
+    items: &mut Vec<TopLevel>,
+    kept: &HashSet<String>,
+) -> ListBuildPassReport {
     let pristine = items.clone();
     let mut probe = pristine.clone();
     let probe_report = run_list_build_pass_filtered(&mut probe, None);
@@ -240,6 +252,27 @@ pub fn run_byte_sink_pass(items: &mut Vec<TopLevel>) -> ListBuildPassReport {
             declined.byte_declined.insert(
                 format!("{name}{COLLECTED_SUFFIX}"),
                 "filtered replay retained a generic list builder",
+            );
+        }
+        return declined;
+    }
+
+    let touches_kept = crate::ir::chars_fusion::fn_defs(&replay).any(|fd| {
+        kept.contains(&fd.name)
+            && crate::ir::chars_fusion::fn_defs(&pristine)
+                .find(|orig| orig.name == fd.name)
+                .is_some_and(|orig| *orig.body != *fd.body)
+    });
+    if touches_kept {
+        let mut declined = ListBuildPassReport {
+            byte_declined: probe_report.byte_declined,
+            pair_declined: probe_report.pair_declined,
+            ..Default::default()
+        };
+        for name in byte_loops {
+            declined.byte_declined.insert(
+                format!("{name}{COLLECTED_SUFFIX}"),
+                "the retarget would rewrite a function the certificate printer admits unfused",
             );
         }
         return declined;

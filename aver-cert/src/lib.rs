@@ -8,6 +8,7 @@
 
 pub mod bridge_statement;
 pub mod format;
+pub mod lean_gate;
 #[cfg(any(feature = "engine", feature = "verify"))]
 pub mod wall;
 

@@ -369,6 +369,11 @@ pub enum LiftError {
     /// already rejects these earlier, but the lifter re-checks to keep
     /// the invariant local.
     UnclassifiedEffect { method: String },
+    /// The operation's oracle is generic (`Wait.poll<K>`): its signature
+    /// mentions a type variable that only a call site instantiates, so there
+    /// is no single oracle parameter type to prepend. Proof export drops the
+    /// function instead of emitting an unresolved type.
+    GenericOracle { method: String },
 }
 
 /// Lift a function body under the given configuration.
@@ -1299,6 +1304,11 @@ pub fn oracle_params_for_effects_with_registry(
             _ => {
                 let binding = oracle_binding_name_for(name, capabilities);
                 let type_str = match oracle_signature_with_registry(capabilities, name) {
+                    Some(t) if type_mentions_var(&t) => {
+                        return Err(LiftError::GenericOracle {
+                            method: name.clone(),
+                        });
+                    }
                     Some(t) => type_to_annotation(&t),
                     None => continue,
                 };
@@ -1309,13 +1319,26 @@ pub fn oracle_params_for_effects_with_registry(
     Ok(out)
 }
 
+/// Whether a type still carries a type variable (or checker recovery), which
+/// no backend type can spell.
+fn type_mentions_var(ty: &Type) -> bool {
+    match ty {
+        Type::Var(_) | Type::Invalid => true,
+        Type::Result(a, b) | Type::Map(a, b) => type_mentions_var(a) || type_mentions_var(b),
+        Type::Option(a) | Type::List(a) | Type::Vector(a) => type_mentions_var(a),
+        Type::Tuple(items) => items.iter().any(type_mentions_var),
+        Type::Fn(params, ret, _) => params.iter().any(type_mentions_var) || type_mentions_var(ret),
+        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named { .. } => false,
+    }
+}
+
 /// Choose the synth BranchPath param name. Defaults to `path` (the
 /// name every stub and example writes); falls back to the first
 /// collision-free `branch_path` / `__branch_path__N` only when the
-/// user function already binds `path` itself.
-fn pick_unique_path_name(user_params: &[(String, String)]) -> String {
-    let user_names: std::collections::HashSet<&str> =
-        user_params.iter().map(|(n, _)| n.as_str()).collect();
+/// user function already binds `path` itself: as a parameter, a
+/// statement binding or a pattern binder, any of which would shadow the
+/// synth parameter for the effect calls beneath it.
+fn pick_unique_path_name(user_names: &std::collections::HashSet<String>) -> String {
     for candidate in ["path", "branch_path", "__branch_path__"] {
         if !user_names.contains(candidate) {
             return candidate.to_string();
@@ -1569,14 +1592,16 @@ fn lift_fn_def_reporting(
     // would shadow it on the Lean side and the effect stub
     // would receive a `String` where it expects a `BranchPath`. Pick
     // a collision-free fallback only when the source forces it.
-    let path_name = pick_unique_path_name(&fd.params);
+    let mut bound_names = std::collections::HashSet::new();
+    crate::ir::collect_bound_names(fd, &mut bound_names);
+    let path_name = pick_unique_path_name(&bound_names);
     let mut new_params: Vec<(String, String)> = Vec::new();
     if needs_path {
         new_params.push((path_name.clone(), "BranchPath".to_string()));
     }
     let oracle_counter_name = if uses_threaded_oracle_counter(fd) {
         let mut used: std::collections::HashSet<&str> =
-            fd.params.iter().map(|(name, _)| name.as_str()).collect();
+            bound_names.iter().map(String::as_str).collect();
         used.insert(path_name.as_str());
         let name = ["oracleIndex", "effectIndex", "__oracle_index__"]
             .into_iter()
@@ -2101,6 +2126,22 @@ mod tests {
         let fd = parse_fn("fn double(x: Int) -> Int\n    x * 2\n");
         let lifted = lift_fn_def(&fd).unwrap();
         assert!(lifted.is_none(), "pure fn should not be lifted");
+    }
+
+    /// A body binding named `path` shadows the synth parameter for every
+    /// effect call beneath it (btc-listener's `Infra.Blocks.append` binds
+    /// `path = segmentPath(..)` and then appends to it), so the synth name
+    /// avoids body binders as well as parameters.
+    #[test]
+    fn lift_fn_def_path_param_avoids_a_body_binding_named_path() {
+        let fd = parse_fn(
+            "fn roll(n: Int) -> Int\n    ! [Random.int]\n    path = n + 1\n    Random.int(path, 6)\n",
+        );
+        let lifted = lift_fn_def(&fd).unwrap().unwrap();
+        assert_eq!(
+            lifted.params[0],
+            ("branch_path".to_string(), "BranchPath".to_string())
+        );
     }
 
     #[test]

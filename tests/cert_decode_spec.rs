@@ -5,8 +5,8 @@
 //! kernel decoder (`CertDecode.decode…`, checked by `rfl`) agrees, TERM FOR
 //! TERM, with the Python byte-level oracle (`tools/certkit/decode_ref.py`) on
 //! every user-function body, the section walk, exports, imports and carrier —
-//! and, for the CERTIFIED obligations, additionally with the Rust
-//! `cert::rederive_obligations` (three oracles on those; two on the rest).
+//! and, for every function the producer planned, additionally with the export
+//! index and carrier the producer declared in `Plans.lean` and the manifest.
 //! It compiles each fixture, emits a Lean witness pinning a test-only whole-file
 //! section walk built from `CertDecode.readU`,
 //! `decodeExports`, `decodeImports`, `decodeCarrier`, and per-function
@@ -34,6 +34,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::aver_command;
 
@@ -195,11 +197,11 @@ end CertDecodeTest
 // ---- environment ---------------------------------------------------------
 
 fn lake_available() -> bool {
-    Command::new("lake").arg("--version").output().is_ok()
+    lean_required::lake_available()
 }
 
 fn python_available() -> bool {
-    Command::new("python3").arg("--version").output().is_ok()
+    lean_required::tool_available("python3")
 }
 
 /// Copy the decoder prelude sources into a fresh temp dir and `lake build` them
@@ -257,9 +259,20 @@ fn compile_wasm_at(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Vec<u
     std::fs::read(out.join(format!("{name}.wasm"))).unwrap()
 }
 
-/// Emit the certificate for a fixture and return its model `.lean` files, which
-/// `rederive_obligations` reads to recover the recursion combinator operator.
-fn model_lean_files(repo: &Path, av_path: &Path, out: &Path) -> Vec<(String, String)> {
+/// What the producer declared for one module: its bytes, its public manifest
+/// and its `Plans.lean`. The producer is untrusted, so every fact read from
+/// here is an ORACLE the kernel decode is compared against, never an input
+/// to it.
+struct Produced {
+    bytes: Vec<u8>,
+    manifest: serde_json::Value,
+    plans_lean: String,
+}
+
+/// Compile a fixture with `--certify` into its own directory and read back the
+/// bytes, the manifest and `Plans.lean` the producer emitted for it.
+fn compile_certified(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Produced {
+    let dir = out.join(format!("{name}-certified"));
     let c = aver_command()
         .current_dir(repo)
         .arg("compile")
@@ -268,39 +281,86 @@ fn model_lean_files(repo: &Path, av_path: &Path, out: &Path) -> Vec<(String, Str
         .arg("wasm-gc")
         .arg("--certify")
         .arg("-o")
-        .arg(out)
+        .arg(&dir)
         .output()
         .expect("aver compile --certify runs");
-    if !c.status.success() {
-        return Vec::new();
+    assert!(
+        c.status.success(),
+        "compile --certify {name} failed:\n{}",
+        String::from_utf8_lossy(&c.stderr)
+    );
+    let bytes = std::fs::read(dir.join(format!("{name}.wasm"))).unwrap();
+    let manifest = serde_json::from_slice(
+        &std::fs::read(dir.join("cert").join("cert-manifest.json")).expect("cert-manifest.json"),
+    )
+    .expect("cert-manifest.json parses");
+    let plans_lean =
+        std::fs::read_to_string(dir.join("cert").join("Plans.lean")).expect("Plans.lean");
+    Produced {
+        bytes,
+        manifest,
+        plans_lean,
     }
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(out.join("cert")) {
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("lean") {
-                let name = p.file_name().unwrap().to_string_lossy().to_string();
-                if let Ok(content) = std::fs::read_to_string(&p) {
-                    files.push((name, content));
+}
+
+/// The producer's `fnPlans` entries as `(name, exported, function index)`,
+/// read from the `⟨"name", exported, funcIdx, group, plan⟩` lines of
+/// `Plans.lean`.
+fn planned_entries(plans_lean: &str) -> Vec<(String, bool, u32)> {
+    let Some(at) = plans_lean.find("def fnPlans : List FnEntry :=") else {
+        return Vec::new();
+    };
+    plans_lean[at..]
+        .split('⟨')
+        .skip(1)
+        .map(|entry| {
+            let fields: Vec<&str> = entry.split(',').map(str::trim).collect();
+            let name = fields[0].trim_matches('"').to_string();
+            let exported = fields[1] == "true";
+            let func_idx = fields[2]
+                .parse::<u32>()
+                .unwrap_or_else(|_| panic!("fnPlans entry index: {entry}"));
+            (name, exported, func_idx)
+        })
+        .collect()
+}
+
+/// The manifest's `stringHostRoles` as the kernel's `List (Nat × Role)` literal.
+fn string_host_roles_lit(roles: &serde_json::Value) -> String {
+    format!(
+        "[{}]",
+        roles
+            .as_array()
+            .expect("stringHostRoles is an array")
+            .iter()
+            .map(|entry| {
+                let index = entry["function_index"].as_u64().unwrap();
+                let role = match entry["role"].as_str().unwrap() {
+                    "stringEq" => ".eq",
+                    "stringConcat" => ".concat",
+                    other => panic!("unknown string host role {other}"),
+                };
+                format!("({index}, {role})")
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Independent oracle for a name-bound helper role: the function index
+/// `wasmparser` reads for the function export `name`, or `None`.
+fn wasmparser_export_index(bytes: &[u8], name: &str) -> Option<u32> {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let Ok(wasmparser::Payload::ExportSection(reader)) = payload {
+            for export in reader {
+                let export = export.expect("export parses");
+                if export.name == name && export.kind == wasmparser::ExternalKind::Func {
+                    return Some(export.index);
                 }
             }
         }
     }
-    // The rendered certificate omits the model project's build files. Restore
-    // the entry-root metadata that the certificate engine originally received.
-    if let Ok(source) = std::fs::read_to_string(av_path)
-        && let Some(module_name) = source.lines().find_map(|line| {
-            line.trim()
-                .strip_prefix("module ")
-                .and_then(|rest| rest.split_whitespace().next())
-        })
-    {
-        files.push((
-            "lakefile.lean".to_string(),
-            format!("roots := #[`{module_name}]\n"),
-        ));
-    }
-    files
+    None
 }
 
 /// An effectful module the test writes itself: `Console.print` lowers to a real
@@ -396,63 +456,6 @@ fn imports_lit(imports: &serde_json::Value) -> String {
     format!("[{}]", items.join(", "))
 }
 
-/// Extract the `⟨arity, nlocals, [body]⟩` `WCode` literal from a
-/// `rederive_obligations` `code` string (`fun fn => if fn = N then some ⟨…⟩
-/// else none`).
-fn wcode_from_rederive(code: &str) -> String {
-    let start = code.find("then some ").expect("rederive code shape") + "then some ".len();
-    let end = code.rfind(" else none").expect("rederive code shape");
-    code[start..end].trim().to_string()
-}
-
-/// Function indices on which a Rust-rendered sparse `CodeTbl` is populated.
-/// The production renderer always emits one `fn = N then some ...` arm per
-/// semantic table entry (one for ordinary families, several for mutual and
-/// composition). The transition differential checks every arm, not merely the
-/// obligation's `self` entry.
-fn rust_code_indices(code: &str) -> Vec<u32> {
-    let mut indices = code
-        .split("fn = ")
-        .skip(1)
-        .map(|tail| {
-            tail.chars()
-                .take_while(char::is_ascii_digit)
-                .collect::<String>()
-                .parse::<u32>()
-                .expect("Rust CodeTbl arm has a decimal function index")
-        })
-        .collect::<Vec<_>>();
-    indices.sort_unstable();
-    indices.dedup();
-    indices
-}
-
-fn s1_family(o: &aver::codegen::cert::RederivedObligation) -> Option<&'static str> {
-    if o.fragment_plan_lean.is_some() {
-        return None;
-    }
-    if o.string_eq_plan_lean.is_some()
-        || o.string_concat_plan_lean.is_some()
-        || o.verbatim_plan_lean.is_some()
-    {
-        Some("verbatim-style")
-    } else if o.int_dispatch_plan_lean.is_some() {
-        Some("dispatch")
-    } else if o.recursion_plan_lean.is_some() {
-        Some("recursion")
-    } else if o.mutual_plan_lean.is_some() {
-        Some("mutual")
-    } else if !o.composition_members.is_empty() {
-        Some("composition")
-    } else if o.field_projection_plan_lean.is_some() {
-        Some("field-projection")
-    } else if o.construct_plan_lean.is_some() {
-        Some("construct")
-    } else {
-        None
-    }
-}
-
 /// Run `lake env lean` on a witness source in the prebuilt prelude dir. Returns
 /// (clean, combined-output). A divergence surfaces as a kernel error here.
 fn run_lean(prelude: &Path, src: &str) -> (bool, String) {
@@ -511,31 +514,18 @@ fn wasmparser_carrier_index(bytes: &[u8]) -> Option<u32> {
     None
 }
 
-fn string_host_roles_lit(roles: &aver::codegen::cert::StringHostRoles) -> String {
-    format!(
-        "[{}]",
-        roles
-            .iter()
-            .map(|(index, role)| {
-                let role = match role {
-                    aver::codegen::cert::StringHostRole::Eq => ".eq",
-                    aver::codegen::cert::StringHostRole::Concat => ".concat",
-                };
-                format!("({index}, {role})")
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
+// ---- S3 host-role differential ----------------------------------------
 
-// ---- S3 host-role differential transition ------------------------------
-
-/// Before the production witness relies on the in-kernel table, pin its result
-/// to the independent Rust classifier on every certkit fixture plus json.av.
-/// Kept permanently so either implementation changing requires an explicit,
-/// corpus-wide parity decision.
+/// The name-bound helper roles (`box`, `toIndex`, `cmp`), the carrierless
+/// proof and the carrier state the kernel decodes, pinned on every certkit
+/// fixture plus json.av and hello.av to an independent `wasmparser` oracle,
+/// and cross-checked against the host-role table the producer declared. Kept
+/// permanently so either side changing requires an explicit, corpus-wide
+/// parity decision. (`add`/`mul`/`sub`/`eq`/`divmod` are not decoded from
+/// bytes at all: they are declared and confirmed against a synthesized helper
+/// template, which the guard-iso and tamper suites cover.)
 #[test]
-fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
+fn s3_kernel_role_decoders_match_independent_oracles_on_full_corpus() {
     if !lake_available() {
         eprintln!("skipping S3 role-table differential: `lake` not available");
         return;
@@ -582,18 +572,34 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
     let mut checked = 0usize;
     let mut carrierless_seen = 0usize;
     for (name, av_path) in corpus {
-        let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
-        let (box_idx, add_idx, mul_idx, sub_idx, to_index_idx, cmp_idx, eq_idx) =
-            aver::codegen::cert::byte_derived_frag_host_role_indices(&bytes)
-                .unwrap_or_else(|error| panic!("{name}: Rust role classifier failed: {error}"));
-        // The production acceptance pin binds exactly the four name-derived
-        // roles plus the carrierless proof; `add`/`mul`/`sub` are no longer
-        // discovered from bytes at all (they are declared and confirmed
-        // against a synthesized helper body), so only these decoders are on
-        // the trusted path and worth a differential. `cmp` and `eq` earn their
-        // place twice over: they are the only pair that share a declared
-        // function type, so the export-name decode is the ONLY thing telling
-        // the two roles apart.
+        let produced = compile_certified(&repo, &av_path, &name, &out);
+        let bytes = produced.bytes;
+        // The independent oracle: the export `wasmparser` reads for each
+        // helper name the kernel binds its role by.
+        let box_idx = wasmparser_export_index(&bytes, "__rt_aint_from_i64");
+        let to_index_idx = wasmparser_export_index(&bytes, "__aint_to_index");
+        let cmp_idx = wasmparser_export_index(&bytes, "__aint_cmp");
+        // The producer's declaration must name the same helpers (a carrierless
+        // module declares the null table).
+        let table = &produced.manifest["hostRoleTable"];
+        if box_idx.is_some() {
+            for (role, oracle) in [
+                ("box", box_idx),
+                ("toIndex", to_index_idx),
+                ("cmp", cmp_idx),
+            ] {
+                assert_eq!(
+                    table[role].as_u64(),
+                    oracle.map(u64::from),
+                    "{name}: the producer declared `{role}` away from its named export"
+                );
+            }
+        } else {
+            assert!(
+                table.is_null(),
+                "{name}: a module without the box helper must declare the null table"
+            );
+        }
         let helper_absent = if box_idx.is_some() { "false" } else { "true" };
         // The carrier STATE, from an independent oracle: `wasmparser` reads the
         // type section and reports the first struct shaped `{i64, _, i32}`. The
@@ -613,7 +619,6 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
              example : CertDecode.AddSub.boxIdx bytesN bytesLen = {} := rfl\n\
              example : CertDecode.AddSub.toIndexIdx bytesN bytesLen = {} := rfl\n\
              example : CertDecode.AddSub.cmpIdx bytesN bytesLen = {} := rfl\n\
-             example : CertDecode.AddSub.eqIdx bytesN bytesLen = {} := rfl\n\
              example : CertDecode.AddSub.carrierHelperAbsent bytesN bytesLen = {} := rfl\n\
              example : CertDecode.decodeCarrier bytesN bytesLen = {} := rfl\n\
              example : CertDecode.carrierState bytesN bytesLen = {} := rfl\n",
@@ -622,7 +627,6 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
             option_nat(box_idx),
             option_nat(to_index_idx),
             option_nat(cmp_idx),
-            option_nat(eq_idx),
             helper_absent,
             option_nat(carrier),
             carrier_state,
@@ -630,7 +634,7 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
         let (ok, report) = run_lean(&prelude, &src);
         assert!(
             ok,
-            "S3 Rust/kernel role-table differential DIVERGED on `{name}`:\n{report}"
+            "S3 oracle/kernel role-table differential DIVERGED on `{name}`:\n{report}"
         );
         if carrier.is_none() {
             carrierless_seen += 1;
@@ -649,11 +653,12 @@ fn s3_kernel_role_table_matches_rust_classifier_on_full_corpus() {
     );
 }
 
-/// F5 transition differential: one decode-once equality per module pins the
-/// entire ordered string-role list to the independent Rust classifier on every
-/// certkit fixture plus json.av (the explicit stringeq fixture is in that set).
+/// F5 differential: one decode-once equality per module pins the entire
+/// ordered string-role list the kernel decodes to the list the producer's
+/// independent Rust classifier declared (`stringHostRoles`), on every certkit
+/// fixture plus json.av (the explicit stringeq fixture is in that set).
 #[test]
-fn f5_kernel_string_roles_match_rust_classifier_on_full_corpus() {
+fn f5_kernel_string_roles_match_producer_classifier_on_full_corpus() {
     if !lake_available() {
         eprintln!("skipping F5 string-role differential: `lake` not available");
         return;
@@ -692,9 +697,9 @@ fn f5_kernel_string_roles_match_rust_classifier_on_full_corpus() {
 
     let mut checked = 0usize;
     for (name, av_path) in corpus {
-        let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
-        let roles = aver::codegen::cert::byte_derived_string_host_roles(&bytes)
-            .unwrap_or_else(|error| panic!("{name}: Rust F5 classifier failed: {error}"));
+        let produced = compile_certified(&repo, &av_path, &name, &out);
+        let bytes = produced.bytes;
+        let roles = &produced.manifest["stringHostRoles"];
         let src = format!(
             "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
              def bytesN : Nat := 0x{}\n\
@@ -702,12 +707,12 @@ fn f5_kernel_string_roles_match_rust_classifier_on_full_corpus() {
              example : CertDecode.StringHost.roleTable bytesN bytesLen = some {} := rfl\n",
             hex_le(&bytes),
             bytes.len(),
-            string_host_roles_lit(&roles),
+            string_host_roles_lit(roles),
         );
         let (ok, report) = run_lean(&prelude, &src);
         assert!(
             ok,
-            "F5 Rust/kernel string-role differential DIVERGED on `{name}`:\n{report}"
+            "F5 producer/kernel string-role differential DIVERGED on `{name}`:\n{report}"
         );
         checked += 1;
     }
@@ -715,48 +720,6 @@ fn f5_kernel_string_roles_match_rust_classifier_on_full_corpus() {
     eprintln!(
         "F5 string-role differential PASS: {checked} modules (all certkit fixtures, including stringeq.av, + json.av)"
     );
-}
-
-fn first_i64_arith_offsets(bytes: &[u8], targets: &[u32]) -> Vec<(u32, usize, u8)> {
-    let mut imported_funcs = 0u32;
-    let mut defined = 0u32;
-    let mut found = Vec::new();
-    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
-        match payload.expect("compiler-produced wasm must parse") {
-            wasmparser::Payload::ImportSection(reader) => {
-                for group in reader {
-                    for import in group.expect("import group must parse") {
-                        let (_, import) = import.expect("import must parse");
-                        if matches!(import.ty, wasmparser::TypeRef::Func(_)) {
-                            imported_funcs += 1;
-                        }
-                    }
-                }
-            }
-            wasmparser::Payload::CodeSectionEntry(body) => {
-                let func_idx = imported_funcs + defined;
-                if targets.contains(&func_idx) {
-                    let mut operators = body.get_operators_reader().unwrap();
-                    while !operators.eof() {
-                        let offset = operators.original_position();
-                        let opcode = match operators.read().expect("operator must parse") {
-                            wasmparser::Operator::I64Add => Some(0x7c),
-                            wasmparser::Operator::I64Sub => Some(0x7d),
-                            wasmparser::Operator::I64Mul => Some(0x7e),
-                            _ => None,
-                        };
-                        if let Some(opcode) = opcode {
-                            found.push((func_idx, offset, opcode));
-                            break;
-                        }
-                    }
-                }
-                defined += 1;
-            }
-            _ => {}
-        }
-    }
-    found
 }
 
 /// Spike controls ported to the audited kernel path: changing add's first
@@ -802,7 +765,8 @@ fn function_opcode_offsets(bytes: &[u8], target: u32) -> (u32, Vec<(usize, u8)>)
 }
 
 /// F5 negative control: a valid i32.ne→i32.eq mutation in the loop body makes
-/// the exact template comparison decline, in both Rust and the kernel scan.
+/// the kernel's exact template comparison decline. The honest helper's index
+/// comes from the producer's declared `stringHostRoles`.
 #[test]
 fn f5_mutated_string_eq_loop_opcode_changes_kernel_classification() {
     if !lake_available() {
@@ -836,10 +800,14 @@ fn bump(n: Int) -> Int
 "#,
     )
     .unwrap();
-    let bytes = compile_wasm_at(&repo, &runtime_fixture, "runtime_stringeq", &out);
-    let roles = aver::codegen::cert::byte_derived_string_host_roles(&bytes).unwrap();
-    assert_eq!(roles, vec![(3, aver::codegen::cert::StringHostRole::Eq)]);
-    let eq_idx = roles[0].0;
+    let produced = compile_certified(&repo, &runtime_fixture, "runtime_stringeq", &out);
+    let bytes = produced.bytes;
+    assert_eq!(
+        produced.manifest["stringHostRoles"],
+        serde_json::json!([{"function_index": 3, "role": "stringEq"}]),
+        "the producer must classify exactly one String.eq helper"
+    );
+    let eq_idx = 3u32;
     let (imported, offsets) = function_opcode_offsets(&bytes, eq_idx);
     let mutation_offset = offsets
         .get(1)
@@ -851,12 +819,6 @@ fn bump(n: Int) -> Int
     wasmparser::Validator::new()
         .validate_all(&mutated)
         .expect("i32.eq mutation remains valid wasm");
-    assert!(
-        aver::codegen::cert::byte_derived_string_host_roles(&mutated)
-            .unwrap()
-            .is_empty(),
-        "Rust F5 classifier must decline the mutated exact template"
-    );
 
     let def_idx = eq_idx - imported;
     let src = format!(
@@ -918,16 +880,6 @@ fn f5_two_eq_helpers_are_both_classified_without_uniqueness_decline() {
     wasmparser::Validator::new()
         .validate_all(&bytes)
         .expect("two-eq module must validate");
-    let expected = vec![
-        (0, aver::codegen::cert::StringHostRole::Eq),
-        (1, aver::codegen::cert::StringHostRole::Eq),
-    ];
-    assert_eq!(
-        aver::codegen::cert::byte_derived_string_host_roles(&bytes).unwrap(),
-        expected,
-        "Rust F5 classifier must retain both independent matches"
-    );
-
     let prelude = build_prelude();
     let src = format!(
         "import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n\
@@ -939,154 +891,6 @@ fn f5_two_eq_helpers_are_both_classified_without_uniqueness_decline() {
     );
     let (ok, report) = run_lean(&prelude, &src);
     assert!(ok, "F5 kernel two-eq control failed:\n{report}");
-}
-
-// ---- S1 differential transition -----------------------------------------
-
-#[test]
-fn s1_rust_splices_equal_kernel_decodes_on_full_corpus() {
-    if !lake_available() {
-        eprintln!("skipping S1 differential: `lake` not available");
-        return;
-    }
-
-    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let prelude = build_prelude();
-    let out = temp_dir("cdec-s1-differential");
-    std::fs::create_dir_all(&out).unwrap();
-    let mut corpus = S1_FIXTURES
-        .iter()
-        .map(|name| {
-            (
-                (*name).to_string(),
-                repo.join(format!("tools/certkit/fixtures/{name}.av")),
-            )
-        })
-        .collect::<Vec<_>>();
-    corpus.push(("json".to_string(), repo.join("examples/data/json.av")));
-
-    let actual_fixture_names = std::fs::read_dir(repo.join("tools/certkit/fixtures"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            (path.extension().and_then(|ext| ext.to_str()) == Some("av"))
-                .then(|| path.file_stem().unwrap().to_string_lossy().to_string())
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    let declared_fixture_names = S1_FIXTURES
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        declared_fixture_names, actual_fixture_names,
-        "S1 differential corpus must contain every certkit .av fixture"
-    );
-
-    let mut covered_families = std::collections::BTreeSet::new();
-    let mut checked_obligations = 0usize;
-    let mut checked_code_arms = 0usize;
-    let mut checked_struct_facts = 0usize;
-
-    for (name, av_path) in corpus {
-        let bytes = compile_wasm_at(&repo, &av_path, &name, &out);
-        let models = model_lean_files(&repo, &av_path, &out);
-        let obligations = aver::codegen::cert::rederive_obligations(&bytes, &models)
-            .unwrap_or_else(|error| panic!("{name}: Rust rederive failed: {error}"));
-
-        let mut src = String::new();
-        src.push_str("import CertDecode\nopen CertPrelude\nset_option maxRecDepth 200000\n\n");
-        src.push_str(&format!("def bytesN : Nat := 0x{}\n", hex_le(&bytes)));
-        src.push_str(&format!("def bytesLen : Nat := {}\n\n", bytes.len()));
-
-        let mut module_obligations = 0usize;
-        for obligation in obligations.iter().filter(|o| s1_family(o).is_some()) {
-            let family = s1_family(obligation).unwrap();
-            covered_families.insert(family);
-            checked_obligations += 1;
-            module_obligations += 1;
-
-            src.push_str(&format!(
-                "-- {family}: {export}\nexample : CertDecode.decodeCarrier bytesN bytesLen = some {carrier} := rfl\n",
-                export = obligation.name,
-                carrier = obligation.carrier,
-            ));
-
-            // F6: the export section maps this obligation's name to the Rust
-            // `self_idx`. The production witness pins `self` through the
-            // whole-module `exportsAccounted` conjunct (`WasmSlice.enumExports`);
-            // this corpus-wide differential confirms the byte-derived export
-            // table agrees with the Rust self index, so removing the Rust
-            // `self` splice loses no constraint.
-            src.push_str(&format!(
-                "example : (match CertDecode.decodeExports bytesN bytesLen with | some es => (es.find? (fun e => e.1 == {name})).map Prod.snd | none => none) = some {self_idx} := rfl\n",
-                name = lean_str(&obligation.name),
-                self_idx = obligation.self_idx,
-            ));
-
-            let code_indices = rust_code_indices(&obligation.code);
-            assert!(
-                code_indices.contains(&obligation.self_idx),
-                "{name}/{}: Rust CodeTbl does not contain its self index {}",
-                obligation.name,
-                obligation.self_idx
-            );
-            for index in code_indices {
-                checked_code_arms += 1;
-                src.push_str(&format!(
-                    "example : CertDecode.decodeCode bytesN bytesLen {index} = ({code}) {index} := rfl\n",
-                    code = obligation.code,
-                ));
-            }
-
-            if let (Some(struct_idx), Some(field_count)) = (
-                obligation.construct_struct_idx,
-                obligation.construct_field_count,
-            ) {
-                checked_struct_facts += 1;
-                src.push_str(&format!(
-                    "example : CertDecode.decodeStructFieldCount bytesN bytesLen {struct_idx} = some {field_count} := rfl\n"
-                ));
-            }
-            if let (Some(struct_idx), Some(field_count)) = (
-                obligation.field_projection_struct_idx,
-                obligation.field_projection_field_count,
-            ) {
-                checked_struct_facts += 1;
-                src.push_str(&format!(
-                    "example : CertDecode.decodeStructFieldCount bytesN bytesLen {struct_idx} = some {field_count} := rfl\n"
-                ));
-            }
-        }
-
-        let (ok, report) = run_lean(&prelude, &src);
-        assert!(
-            ok,
-            "S1 Rust-splice/kernel-decode differential DIVERGED on `{name}` ({module_obligations} obligations):\n{report}"
-        );
-    }
-
-    let expected_families = [
-        "composition",
-        "construct",
-        "dispatch",
-        "field-projection",
-        "mutual",
-        "recursion",
-        "verbatim-style",
-    ]
-    .into_iter()
-    .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        covered_families, expected_families,
-        "S1 differential did not exercise every in-scope family"
-    );
-    assert!(checked_obligations > 0);
-    assert!(checked_code_arms >= checked_obligations);
-    assert!(checked_struct_facts > 0);
-    eprintln!(
-        "S1 differential PASS: {checked_obligations} obligations, {checked_code_arms} CodeTbl arms, {checked_struct_facts} struct facts"
-    );
 }
 
 // ---- main differential + coverage ---------------------------------------
@@ -1125,8 +929,11 @@ fn cert_decode_three_way_differential_and_coverage() {
     modules.push((IMPORTS_FIXTURE_NAME.to_string(), imports_av));
 
     for (fixture, av_path) in &modules {
-        let bytes = compile_wasm_at(&repo, av_path, fixture, &out);
-        let wasm_path = out.join(format!("{fixture}.wasm"));
+        let produced = compile_certified(&repo, av_path, fixture, &out);
+        let bytes = produced.bytes.clone();
+        let wasm_path = out
+            .join(format!("{fixture}-certified"))
+            .join(format!("{fixture}.wasm"));
         let oracle = oracle_json(&repo, &wasm_path);
 
         // The import-section witness must actually witness something: a lowering
@@ -1137,13 +944,6 @@ fn cert_decode_three_way_differential_and_coverage() {
                 "{fixture}: expected a non-empty import section (effect lowering changed?)"
             );
         }
-
-        // Rust oracle: certified obligations, cross-checked against the Python
-        // oracle (carrier + export-name → self), then pinned to the Lean decoder
-        // with rederive's exact rendered code strings.
-        let models = model_lean_files(&repo, av_path, &out);
-        let obligations = aver::codegen::cert::rederive_obligations(&bytes, &models)
-            .expect("rederive succeeds on a compiled module");
 
         let mut src = String::new();
         src.push_str("import CertDecode\nopen CertPrelude\n\n");
@@ -1205,31 +1005,32 @@ fn cert_decode_three_way_differential_and_coverage() {
             // opcode census for the coverage matrix.
         }
 
-        // Certified obligations (oracle: Rust rederive) — the SAME rendered code
-        // strings the production witness pins, bound to the Lean decoder.
-        for o in &obligations {
-            // cross-check Rust vs Python: the carrier and the export → self map.
-            if let Some(c) = oracle["carrier"].as_u64() {
-                assert_eq!(
-                    o.carrier as u64, c,
-                    "{fixture}: rederive carrier {} != oracle carrier {c}",
-                    o.carrier
-                );
+        // Producer oracle: every exported entry of `Plans.lean` names the
+        // function index the Python oracle's export map and the kernel's
+        // `decodeExports` both give its export name, and the producer's
+        // declared carrier is the one both decoders read.
+        for (name, exported, func_idx) in planned_entries(&produced.plans_lean) {
+            if !exported {
+                continue;
             }
             let mapped = oracle["exports"].as_array().unwrap().iter().any(|e| {
-                e[0].as_str() == Some(o.name.as_str()) && e[1].as_u64() == Some(o.self_idx as u64)
+                e[0].as_str() == Some(name.as_str()) && e[1].as_u64() == Some(u64::from(func_idx))
             });
             assert!(
                 mapped,
-                "{fixture}: rederive export {}→{} not in the decoded export map",
-                o.name, o.self_idx
+                "{fixture}: planned export {name}→{func_idx} not in the decoded export map"
             );
             src.push_str(&format!(
-                "example : CertDecode.decodeCode bytesN bytesLen {} = some {} := rfl\n",
-                o.self_idx,
-                wcode_from_rederive(&o.code)
+                "example : (CertDecode.decodeExports bytesN bytesLen).bind (fun m => m.lookup {}) = some {func_idx} := rfl\n",
+                lean_str(&name)
             ));
         }
+        let declared_carrier = produced.manifest["carrier_type_index"].as_u64();
+        assert_eq!(
+            declared_carrier,
+            oracle["carrier"].as_u64(),
+            "{fixture}: the producer's declared carrier differs from the oracle carrier"
+        );
 
         let (ok, report) = run_lean(&prelude, &src);
         assert!(
@@ -1266,8 +1067,9 @@ fn cert_decode_three_way_differential_and_coverage() {
     // no `native_decide` / `ofReduceBool` escape hatch (brief constraint). Pin
     // it as a regression on the richest fixture (certprobe2's nested body).
     {
-        let bytes = std::fs::read(out.join("certprobe2.wasm")).unwrap();
-        let oracle = oracle_json(&repo, &out.join("certprobe2.wasm"));
+        let certprobe2 = out.join("certprobe2-certified").join("certprobe2.wasm");
+        let bytes = std::fs::read(&certprobe2).unwrap();
+        let oracle = oracle_json(&repo, &certprobe2);
         let sumto = &oracle["funcs"].as_array().unwrap()[1];
         let mut src = String::new();
         src.push_str("import CertDecode\nopen CertPrelude\n\n");
@@ -1403,15 +1205,30 @@ fn cert_decode_mutations_fail_closed() {
         "certprobe2",
         &out,
     );
-    let models = model_lean_files(
-        &repo,
-        &repo.join("tools/certkit/fixtures/certprobe2.av"),
-        &out,
+    // The honest decode of `sumTo`, from the Python byte-level oracle.
+    let oracle = oracle_json(&repo, &out.join("certprobe2.wasm"));
+    let self_idx = oracle["exports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e[0].as_str() == Some("sumTo"))
+        .and_then(|e| e[1].as_u64())
+        .expect("sumTo export in the oracle export map");
+    let sumto = oracle["funcs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["idx"].as_u64() == Some(self_idx))
+        .expect("sumTo body in the oracle decode");
+    let orig_wcode = format!(
+        "⟨{}, {}, {}⟩",
+        sumto["arity"].as_u64().unwrap(),
+        sumto["nlocals"].as_u64().unwrap(),
+        sumto["body"].as_str().unwrap()
     );
-    let obligations = aver::codegen::cert::rederive_obligations(&bytes, &models).unwrap();
-    let sumto = obligations.iter().find(|o| o.name == "sumTo").unwrap();
-    let self_idx = sumto.self_idx;
-    let orig_wcode = wcode_from_rederive(&sumto.code);
+    let carrier = oracle["carrier"]
+        .as_u64()
+        .expect("certprobe2 carries the Int carrier");
 
     // helper: build a witness over an explicit byte array + a single example.
     let witness = |b: &[u8], example: &str| -> String {
@@ -1489,8 +1306,7 @@ fn cert_decode_mutations_fail_closed() {
         assert_ne!(m, bytes);
         let example = format!(
             "example : CertDecode.decodeCode bytesN bytesLen {self_idx} = some {orig_wcode} := rfl\n\
-             example : CertDecode.decodeCarrier bytesN bytesLen = some {} := rfl",
-            sumto.carrier
+             example : CertDecode.decodeCarrier bytesN bytesLen = some {carrier} := rfl"
         );
         let (ok, report) = run_lean(&prelude, &witness(&m, &example));
         assert!(

@@ -5,7 +5,6 @@
 -- exact raw code/data slices into the shapes admitted by certified plans. Its
 -- closure scanner additionally rejects every instruction channel outside the
 -- certificate profile.
-import SchemaCore
 import CertDecode
 import Std.Data.TreeSet
 
@@ -196,327 +195,6 @@ def checkComparisonFuncType (carrier : Nat) (entry : CertDecode.TypeEntry) : Boo
         decide (results = [.numeric 0x7f])
   | _, _ => false
 
-/-- The exact declared function type fixed by one certified host-helper role:
-    `box` wraps a raw `i64` into the carrier, `toIndex` extracts a raw `i32`
-    array index from the carrier, `cmp` and `eq` take two carriers and return a
-    raw `i32` verdict, and the arithmetic combinators carry the canonical
-    two-argument carrier signature. Helper BODIES are pinned
-    elsewhere by template byte equality, which leaves the declared type free:
-    a helper declared at a strict supertype of the carrier reference still
-    wasm-validates by subtyping while the proof faces model the exact claimed
-    carrier. This check closes that declared-type channel.
-
-    `cmp` and `eq` share a signature, which is exactly why the SEPARATE
-    export-name pin on each of them is load-bearing: the declared type alone
-    cannot tell the two helpers apart. -/
-def checkHostRoleFuncType (carrier : Nat) :
-    AverCert.Schema.HostRole → CertDecode.TypeEntry → Bool
-  | .box, entry =>
-      match entry.form, entry.composite with
-      | .plain, .funcType params results =>
-          decide (params = [.numeric 0x7e]) &&
-            decide (results = [nullableRefType carrier])
-      | _, _ => false
-  | .toIndex, entry =>
-      match entry.form, entry.composite with
-      | .plain, .funcType params results =>
-          decide (params = [nullableRefType carrier]) &&
-            decide (results = [.numeric 0x7f])
-      | _, _ => false
-  | .add, entry => checkCanonicalFuncType 2 carrier entry
-  | .sub, entry => checkCanonicalFuncType 2 carrier entry
-  | .mul, entry => checkCanonicalFuncType 2 carrier entry
-  | .cmp, entry => checkComparisonFuncType carrier entry
-  | .eq, entry => checkComparisonFuncType carrier entry
-
-def fragValTypeMatches (carrier : Nat) :
-    AverCert.Schema.FragTy → CertDecode.ValType → Bool
-  | .f64, .numeric 0x7c => true
-  | .boolI32, .numeric 0x7f => true
-  | .i64, .numeric 0x7e => true
-  | .rawI32, .numeric 0x7f => true
-  | .intCarrier, actual => actual == nullableRefType carrier
-  | .ref, .ref 0x63 heap => decide (0 ≤ heap)
-  | .adtRef, .ref 0x63 heap =>
-      decide (0 ≤ heap) && decide (heap ≠ Int.ofNat carrier)
-  | _, _ => false
-
-def fragParamsMatch (carrier : Nat) :
-    List AverCert.Schema.FragTy → List CertDecode.ValType → Bool
-  | [], [] => true
-  | expected :: expectedRest, actual :: actualRest =>
-      fragValTypeMatches carrier expected actual &&
-        fragParamsMatch carrier expectedRest actualRest
-  | _, _ => false
-
-/-- Exact scalar/reference shape of an expression-fragment function. Unlike a
-    code entry, the type-section binding distinguishes e.g. `f64 → i32` from
-    `i32 → f64`; reference-shaped ADT projections are tightened nominally by
-    `exprFragmentNominalTypesMatch` below. -/
-def checkExprFragmentFuncType
-    (carrier : Nat)
-    (params : List AverCert.Schema.FragTy)
-    (result : AverCert.Schema.FragTy)
-    (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .funcType actualParams [actualResult] =>
-      fragParamsMatch carrier params actualParams &&
-        fragValTypeMatches carrier result actualResult
-  | _, _ => false
-
-def exprFragmentFuncTypeMatches
-    (modBytes modLen typeIdx carrier : Nat)
-    (params : List AverCert.Schema.FragTy)
-    (result : AverCert.Schema.FragTy) : Bool :=
-  typeSectionMatches (checkExprFragmentFuncType carrier params result)
-    modBytes modLen typeIdx
-
-/-- One of the two admitted opaque-ADT fragment shapes is a direct field
-    projection (the other, tag dispatch, is checked below). Its function
-    parameter must name that exact struct, and its result must equal the
-    selected field's decoded storage type. This simultaneously proves that
-    the struct and field exist in the artifact's type section.
-
-    `fields.length == 2` is the same arity pin `checkTagDispatchTypes` carries
-    and for the same reason: the projection face states
-    `domRepr := vs = [.structv structIdx [p.1, p.2]]`, a struct value with
-    exactly two fields, so a type entry of any other width would make the
-    obligation quantify over states the module forbids. -/
-def checkExprProjectionTypes
-    (carrier structIdx fieldIdx : Nat)
-    (funcEntry structEntry : CertDecode.TypeEntry) : Bool :=
-  if structIdx == carrier then false else
-    match funcEntry.form, funcEntry.composite,
-        structEntry.form, structEntry.composite with
-    | .plain, .funcType [param] [result], .plain, .structType fields =>
-        fields.length == 2 && decide (param = nullableRefType structIdx) &&
-          match fields[fieldIdx]? with
-          | some { storage := .val fieldType, .. } => decide (result = fieldType)
-          | _ => false
-    | _, _, _, _ => false
-
-def exprProjectionTypesMatch
-    (modBytes modLen typeIdx carrier structIdx fieldIdx : Nat) : Bool :=
-  match CertDecode.decodeTypes modBytes modLen with
-  | some info =>
-      match info.entryIndex[typeIdx]?, info.entryIndex[structIdx]? with
-      | some funcEntry, some structEntry =>
-          checkExprProjectionTypes carrier structIdx fieldIdx funcEntry structEntry
-      | _, _ => false
-  | none => false
-
-def exprProjectionFace? (plan : AverCert.Schema.ExprFragmentRawPlan) :
-    Option (Nat × Nat) :=
-  if plan.params = [.adtRef] && plan.result = .adtRef &&
-      plan.body.result = 1 then
-    match plan.body.nodes with
-    | [n0, n1] =>
-        match n0.kind, n1.kind with
-        | .local 0, .structGetUser structIdx fieldIdx 0 =>
-            if fieldIdx ≤ 1 && n0.ty = .adtRef && n1.ty = .adtRef then
-              some (structIdx, fieldIdx)
-            else none
-        | _, _ => none
-    | _ => none
-  else none
-
-/-- Byte-level recognizer of the tag-dispatch shape (mirror of the representation
-    plan; lives here because WasmSlice cannot import StandardFace). Returns the
-    scrutinee struct index. -/
-def exprTagDispatchStructIdx? (plan : AverCert.Schema.ExprFragmentRawPlan) : Option Nat :=
-  if plan.params = [.adtRef] && plan.result = .intCarrier && plan.body.result = 4 then
-    match plan.body.nodes with
-    | [n0, n1, n2, n3, n4] =>
-        match n0.kind, n1.kind, n2.kind, n3.kind, n4.kind with
-        | .local 0, .structGetUser structIdx 0 0, .constI32 _, .prim .i32Eq [1, 2], .ifElse 3 _ _ =>
-            if n0.ty = .adtRef && n1.ty = .rawI32 && n2.ty = .rawI32 &&
-                n3.ty = .boolI32 && n4.ty = .intCarrier
-            then some structIdx else none
-        | _, _, _, _, _ => none
-    | _ => none
-  else none
-
-/-- The scrutinee struct must have EXACTLY two fields, of which field 0 is the
-    i32 operational tag. Guard structIdx≠carrier (the Int carrier is never the
-    scrutinee).
-
-    The field count is soundness-relevant, not tidiness. The tag-dispatch face
-    states `domRepr := vs = [.structv structIdx [.i32v p.1, p.2]]` — a struct
-    value with exactly two fields at that index. A module whose type section
-    declares the index with a different field count admits no such state, so
-    the obligation would be quantified over nothing while the report labels the
-    export certified. `fields.length` here is `CertDecode.TypeEntry.fieldCount`
-    of the same decoded entry — the quantity `CertDecode.decodeStructFieldCount`
-    reports for this index — read off the single decode already performed by
-    `exprTagDispatchTypesMatch` rather than by decoding the section twice. -/
-def checkTagDispatchTypes (carrier structIdx : Nat) (structEntry : CertDecode.TypeEntry) : Bool :=
-  if structIdx == carrier then false else
-  match structEntry.form, structEntry.composite with
-  | .plain, .structType fields =>
-      fields.length == 2 &&
-        match (fields[0]? : Option CertDecode.FieldType) with
-        | some { storage := .val (.numeric 0x7f), .. } => true
-        | _ => false
-  | _, _ => false
-
-def exprTagDispatchTypesMatch (modBytes modLen carrier structIdx : Nat) : Bool :=
-  match CertDecode.decodeTypes modBytes modLen with
-  | some info =>
-      match info.entryIndex[structIdx]? with
-      | some structEntry => checkTagDispatchTypes carrier structIdx structEntry
-      | none => false
-  | none => false
-
-/-- Byte-level recognizer of the monolithic fused vector-read shape (mirror of
-    the representation plan). Returns the vector's array type index. -/
-def exprVectorGetOrDefaultArrTy?
-    (plan : AverCert.Schema.ExprFragmentRawPlan) : Option Nat :=
-  if plan.params = [.adtRef, .intCarrier] && plan.result = .intCarrier &&
-      plan.body.result = 0 then
-    match plan.body.nodes with
-    | [n0] =>
-        match n0.kind with
-        | .vectorGetOrDefault arrTy _toIndexIdx _boxIdx _default =>
-            if n0.ty = .intCarrier then some arrTy else none
-        | _ => none
-    | _ => none
-  else none
-
-/-- The fused vector read is nominally bound on both ends: the function must
-    take exactly the declared vector array plus one Int carrier and return the
-    carrier, and the declared array type's element storage must be the nullable
-    carrier reference — so the elements a `domRepr` state carries really are
-    Int-carrier representations. The carrier is never the array itself.
-
-    Unlike the projection and tag-dispatch faces there is no field count to
-    pin here: `vecDomRepr` reads `vs = [.arr arrTy elems, wi]` with `elems`
-    existentially quantified, so the face asserts no fixed width — the shape
-    fact it does assert is the ELEMENT type, which is what this check binds. -/
-def checkVectorGetTypes
-    (carrier arrTy : Nat)
-    (funcEntry arrEntry : CertDecode.TypeEntry) : Bool :=
-  if arrTy == carrier then false else
-    match funcEntry.form, funcEntry.composite,
-        arrEntry.form, arrEntry.composite with
-    | .plain, .funcType [vecParam, idxParam] [result], .plain, .arrayType field =>
-        decide (vecParam = nullableRefType arrTy) &&
-          decide (idxParam = nullableRefType carrier) &&
-          decide (result = nullableRefType carrier) &&
-          (match field.storage with
-           | .val elemTy => decide (elemTy = nullableRefType carrier)
-           | .packed _ => false)
-    | _, _, _, _ => false
-
-def exprVectorGetTypesMatch
-    (modBytes modLen typeIdx carrier arrTy : Nat) : Bool :=
-  match CertDecode.decodeTypes modBytes modLen with
-  | some info =>
-      match info.entryIndex[typeIdx]?, info.entryIndex[arrTy]? with
-      | some funcEntry, some arrEntry =>
-          checkVectorGetTypes carrier arrTy funcEntry arrEntry
-      | _, _ => false
-  | none => false
-
-/-- Byte-level recognizer of the record-parameter scalar field read (mirror of
-    the representation plan; the record face in `StandardFace` reuses this same
-    recognizer, so the byte gate and the face fire on exactly one shape):
-    `local 0 : adtRef; structGetUser structIdx field 0 : <scalar>`, with the
-    plan result the same scalar. The node ids are matched literally so the
-    canonical lowering of a recognized plan is exactly the two-instruction
-    `recordProjTemplate`. Unlike `exprProjectionFace?` the projected field is a
-    SCALAR, and the field index is not capped: the record face's equality pin
-    (`lowerTypeDecl` against the decoded entry) fixes the whole ordered field
-    list. -/
-def exprRecordProjFace? (plan : AverCert.Schema.ExprFragmentRawPlan) :
-    Option (Nat × Nat) :=
-  if plan.params = [.adtRef] &&
-      AverCert.Schema.fragTyIsRecordScalar plan.result &&
-      plan.body.result = 1 then
-    match plan.body.nodes with
-    | [{ id := 0, ty := ty0, kind := .local 0 },
-       { id := 1, ty := ty1, kind := .structGetUser structIdx field 0 }] =>
-        if ty0 = .adtRef && ty1 = plan.result then some (structIdx, field)
-        else none
-    | _ => none
-  else none
-
-/-- Structural content of a fired record-projection recognizer: the parameter
-    is the single opaque record reference, the declared result is a stage-1
-    scalar, and the body is EXACTLY the two-node field read (ids, types and
-    kinds all pinned by the literal match). -/
-theorem exprRecordProjFace?_spec
-    (plan : AverCert.Schema.ExprFragmentRawPlan) (structIdx field : Nat)
-    (h : exprRecordProjFace? plan = some (structIdx, field)) :
-    plan.params = [.adtRef] ∧
-    AverCert.Schema.fragTyIsRecordScalar plan.result = true ∧
-    plan.body = { nodes := [{ id := 0, ty := .adtRef, kind := .local 0 },
-                            { id := 1, ty := plan.result,
-                              kind := .structGetUser structIdx field 0 }],
-                  result := 1 } := by
-  unfold exprRecordProjFace? at h
-  split at h
-  case isFalse => exact absurd h (by simp)
-  case isTrue hcond =>
-    simp only [Bool.and_eq_true, decide_eq_true_eq] at hcond
-    obtain ⟨⟨hparams, hscalar⟩, hres⟩ := hcond
-    split at h
-    case h_2 => exact absurd h (by simp)
-    case h_1 ty0 ty1 si fi heq =>
-      split at h
-      case isFalse => exact absurd h (by simp)
-      case isTrue htys =>
-        simp only [Bool.and_eq_true, decide_eq_true_eq] at htys
-        obtain ⟨hty0, hty1⟩ := htys
-        injection h with hpair
-        injection hpair with hsi hfi
-        subst hsi; subst hfi; subst hty0; subst hty1
-        refine ⟨hparams, hscalar, ?_⟩
-        have hblock : plan.body = ⟨plan.body.nodes, plan.body.result⟩ := by
-          cases plan.body
-          rfl
-        rw [hblock, heq, hres]
-
-/-- Storage shape a stage-1 record field may carry: `i32` (Bool), `f64`
-    (Float), or a nullable concrete reference (the Int carrier field). The
-    record face's equality pin compares the FULL decoded entry — form, ordered
-    fields, storages and mutabilities — against the wall lowering of the Plan
-    declaration; the declaration is not in scope on the byte side, so this
-    check admits only the SHAPE. -/
-def isRecordScalarStorage : CertDecode.FieldType → Bool
-  | ⟨.val (.numeric 0x7f), _⟩ => true
-  | ⟨.val (.numeric 0x7c), _⟩ => true
-  | ⟨.val (.ref 0x63 _), _⟩ => true
-  | _ => false
-
-/-- Byte-side admission of the record-parameter shape: the exported function's
-    single parameter names EXACTLY the projected struct index (the same move
-    `checkExprProjectionTypes` makes — this closes the param-type/struct-index
-    confusion channel on the byte side as well as in the face), the projected
-    entry is a `.plain` struct of scalar storages only, and the projected field
-    exists. Deep equality with the Plan declaration lives in the record face,
-    where the declaration exists. -/
-def checkRecordProjTypes
-    (carrier structIdx field : Nat)
-    (funcEntry structEntry : CertDecode.TypeEntry) : Bool :=
-  if structIdx == carrier then false else
-    match funcEntry.form, funcEntry.composite,
-        structEntry.form, structEntry.composite with
-    | .plain, .funcType [param] [_result], .plain, .structType fields =>
-        decide (param = nullableRefType structIdx) &&
-          fields.all isRecordScalarStorage &&
-          (fields[field]?).isSome
-    | _, _, _, _ => false
-
-def exprRecordProjTypesMatch
-    (modBytes modLen typeIdx carrier structIdx field : Nat) : Bool :=
-  match CertDecode.decodeTypes modBytes modLen with
-  | some info =>
-      match info.entryIndex[typeIdx]?, info.entryIndex[structIdx]? with
-      | some funcEntry, some structEntry =>
-          checkRecordProjTypes carrier structIdx field funcEntry structEntry
-      | _, _ => false
-  | none => false
-
 /-- Exact function-type pin: the decoded entry is a plain func type with
     EXACTLY the given parameter and result lists. -/
 def checkFuncTypeExact (params results : List CertDecode.ValType)
@@ -524,240 +202,6 @@ def checkFuncTypeExact (params results : List CertDecode.ValType)
   match entry.form, entry.composite with
   | .plain, .funcType ps rs => decide (ps = params) && decide (rs = results)
   | _, _ => false
-
-/-- The nodes that make a body COMPUTE rather than merely PROJECT — the
-    any-fact of both the nominal-signature gate below and
-    `StandardFace.classifyRecordCompute`, which exports this name rather than
-    keeping a second copy: the two must count the same nodes, or a plan could
-    pass one gate and fail the other.
-
-    Three kinds qualify: a construction, ANY host call (`cmp` and `eq`
-    included — they leave the carrier and decide an order), and the inline
-    sign template, which is the emitter's open-coded comparison of a computed
-    carrier against a literal and is therefore exactly as computing as the
-    `cmp` call it replaces.
-
-    Leaving `.intSignCmp` out was a SILENT non-admission: a projection-only
-    sign test (`f.num >= 0`, no host call anywhere in the body) matched
-    neither the two-node projection face nor the compute face, so the producer
-    emitted no plan at all and the export dropped to source-level-only with no
-    stated reason. The two-node projection faces stay ruled out because their
-    bodies carry none of the three. -/
-def fragNodeComputes (n : AverCert.Schema.FragNode) : Bool :=
-  match n.kind with
-  | .structNew _ _ => true
-  | .hostCall _ _ _ => true
-  | .intSignCmp _ _ _ _ => true
-  | _ => false
-
-/-- Byte-level recognizer of the record projection-compute shape (mirror of
-    `StandardFace.classifyRecordCompute`'s struct-index core; lives here
-    because WasmSlice cannot import StandardFace): every parameter is an
-    opaque record reference, at least one node computes, and every cited
-    user-struct index agrees on one pinned index. -/
-def exprRecordComputeStructIdx?
-    (plan : AverCert.Schema.ExprFragmentRawPlan) : Option Nat :=
-  if plan.params.all (· == .adtRef) &&
-      plan.body.nodes.any fragNodeComputes then
-    match plan.body.nodes.filterMap (fun n =>
-        match n.kind with
-        | .structGetUser tyIdx _ _ => some tyIdx
-        | .structNew tyIdx _ => some tyIdx
-        | _ => none) with
-    | [] => none
-    | i :: rest => if rest.all (· == i) then some i else none
-  else none
-
-/-- Nominal signature of a compute-shape export: k references to the pinned
-    struct in, and the declared record/carrier/i32 result out. -/
-def exprRecordComputeTypesMatch
-    (modBytes modLen typeIdx carrier structIdx : Nat)
-    (plan : AverCert.Schema.ExprFragmentRawPlan) : Bool :=
-  let result? : Option CertDecode.ValType :=
-    match plan.result with
-    | .adtRef => some (nullableRefType structIdx)
-    | .intCarrier => some (nullableRefType carrier)
-    | .boolI32 => some (.numeric 0x7f)
-    | _ => none
-  match result? with
-  | some result =>
-      typeSectionMatches
-        (checkFuncTypeExact
-          (List.replicate plan.params.length (nullableRefType structIdx))
-          [result])
-        modBytes modLen typeIdx
-  | none => false
-
-/-- Opaque references fail closed unless the plan has one of the four admitted
-    faces: the field-projection face (whose nominal signature and field type are
-    decoded above), the tag-dispatch face (whose i32 tag field is decoded
-    below), the fused vector-read face (whose array element type is decoded
-    above), or the record-parameter scalar field read (whose param binding and
-    scalar struct shape are decoded above; the deep entry equality lives in the
-    record face's pin). -/
-def exprFragmentNominalTypesMatch
-    (modBytes modLen typeIdx carrier : Nat)
-    (plan : AverCert.Schema.ExprFragmentRawPlan) : Bool :=
-  if plan.params.contains .adtRef || plan.result = .adtRef then
-    match exprProjectionFace? plan with
-    | some (structIdx, fieldIdx) =>
-        exprProjectionTypesMatch
-          modBytes modLen typeIdx carrier structIdx fieldIdx
-    | none =>
-        match exprTagDispatchStructIdx? plan with
-        | some structIdx => exprTagDispatchTypesMatch modBytes modLen carrier structIdx
-        | none =>
-            match exprVectorGetOrDefaultArrTy? plan with
-            | some arrTy => exprVectorGetTypesMatch modBytes modLen typeIdx carrier arrTy
-            | none =>
-                match exprRecordProjFace? plan with
-                | some (structIdx, field) =>
-                    exprRecordProjTypesMatch
-                      modBytes modLen typeIdx carrier structIdx field
-                | none =>
-                    match exprRecordComputeStructIdx? plan with
-                    | some structIdx =>
-                        exprRecordComputeTypesMatch
-                          modBytes modLen typeIdx carrier structIdx plan
-                    | none => false
-  else true
-
-def isNonnegativeNullableRef : CertDecode.ValType → Bool
-  | .ref 0x63 heap => decide (0 ≤ heap)
-  | _ => false
-
-def verbatimResultTypeMatches
-    (expected : AverCert.Schema.VerbatimResultSig) : CertDecode.ValType → Bool
-  | .ref 0x63 heap =>
-      match expected with
-      | .refNull expectedHeap => heap == Int.ofNat expectedHeap
-      | .f64Scalar => false
-  | .numeric 0x7c => expected == .f64Scalar
-  | _ => false
-
-/-- Exact plain certified verbatim signature: one nullable concrete nominal
-    root parameter and exactly one result selected by `resultSig`. -/
-def checkVerbatimFuncType (resultSig : AverCert.Schema.VerbatimResultSig)
-    (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .funcType [root] [result] =>
-      isNonnegativeNullableRef root && verbatimResultTypeMatches resultSig result
-  | _, _ => false
-
-/-- Whether the module's byte-derived type-section entry `typeIdx` exactly
-    matches the verbatim plan's declared result-signature variant. -/
-def verbatimFuncTypeMatches (modBytes modLen typeIdx : Nat)
-    (resultSig : AverCert.Schema.VerbatimResultSig) : Bool :=
-  typeSectionMatches (checkVerbatimFuncType resultSig) modBytes modLen typeIdx
-
-/-! ### Bare field-projection type binding -/
-
-def projectionResultTypeMatches
-    (expected : AverCert.Schema.FieldProjectionResultTy) : CertDecode.ValType → Bool
-  | .abstract 0x6d => expected == .eqref
-  | .ref 0x63 heap =>
-      match expected with
-      | .nullableRef expectedIdx => heap == Int.ofNat expectedIdx
-      | .eqref => false
-  | _ => false
-
-def hasValStorage : CertDecode.FieldType → Bool
-  | ⟨.val _, _⟩ => true
-  | _ => false
-
-def projectionFieldMatches
-    (expected : AverCert.Schema.FieldProjectionResultTy)
-    (field : CertDecode.FieldType) : Bool :=
-  match field.storage with
-  | .val actual => projectionResultTypeMatches expected actual
-  | .packed _ => false
-
-def checkProjectionStructType
-    (fieldCount fieldIdx : Nat)
-    (resultTy : AverCert.Schema.FieldProjectionResultTy)
-    (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .structType fields =>
-      fields.length == fieldCount && fields.all hasValStorage &&
-        match fields[fieldIdx]? with
-        | some field => projectionFieldMatches resultTy field
-        | none => false
-  | _, _ => false
-
-def projectionStructTypeMatches
-    (modBytes modLen structIdx fieldCount fieldIdx : Nat)
-    (resultTy : AverCert.Schema.FieldProjectionResultTy) : Bool :=
-  typeSectionMatches
-    (checkProjectionStructType fieldCount fieldIdx resultTy)
-    modBytes modLen structIdx
-
-def checkProjectionFuncType
-    (structIdx : Nat)
-    (resultTy : AverCert.Schema.FieldProjectionResultTy)
-    (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .funcType [param] [result] =>
-      decide (param = nullableRefType structIdx) &&
-        projectionResultTypeMatches resultTy result
-  | _, _ => false
-
-def projectionFuncTypeMatches
-    (modBytes modLen typeIdx structIdx : Nat)
-    (resultTy : AverCert.Schema.FieldProjectionResultTy) : Bool :=
-  typeSectionMatches (checkProjectionFuncType structIdx resultTy) modBytes modLen typeIdx
-
-/-! ### List-constructor type binding -/
-
-def constructValType
-    (expected : AverCert.Schema.ConstructValType) : CertDecode.ValType :=
-  match expected with
-  | .i32 => .numeric 0x7f
-  | .i64 => .numeric 0x7e
-  | .f64 => .numeric 0x7c
-  | .eqref => .abstract 0x6d
-  | .nullableRef typeIdx => nullableRefType typeIdx
-
-def immutableConstructFieldMatches
-    (expected : AverCert.Schema.ConstructValType)
-    (field : CertDecode.FieldType) : Bool :=
-  field.mutability == 0 &&
-    match field.storage with
-    | .val actual => decide (actual = constructValType expected)
-    | .packed _ => false
-
-def checkListConstructStructType
-    (structIdx : Nat) (elemTy : AverCert.Schema.ConstructValType)
-    (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .structType [head, tail] =>
-      immutableConstructFieldMatches elemTy head &&
-        immutableConstructFieldMatches (.nullableRef structIdx) tail
-  | _, _ => false
-
-def listConstructStructTypeMatches
-    (modBytes modLen structIdx : Nat)
-    (elemTy : AverCert.Schema.ConstructValType) : Bool :=
-  typeSectionMatches (checkListConstructStructType structIdx elemTy) modBytes modLen structIdx
-
-def checkListConstructFuncType
-    (arity structIdx : Nat) (elemTy : AverCert.Schema.ConstructValType)
-    (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .funcType params results =>
-      let head := constructValType elemTy
-      let tail := nullableRefType structIdx
-      let paramsMatch :=
-        if arity = 1 then decide (params = [head])
-        else if arity = 2 then decide (params = [head, tail])
-        else false
-      paramsMatch && decide (results = [tail])
-  | _, _ => false
-
-def listConstructFuncTypeMatches
-    (modBytes modLen typeIdx arity structIdx : Nat)
-    (elemTy : AverCert.Schema.ConstructValType) : Bool :=
-  typeSectionMatches (checkListConstructFuncType arity structIdx elemTy)
-    modBytes modLen typeIdx
 
 /-- Exact selected passive data payload.  The full declared vector must parse
     and exhaust the section payload. -/
@@ -840,11 +284,6 @@ def funcBindingByFuncIndex (modBytes modLen funcIdx : Nat) : Option FuncBinding 
       | _, _ => none
   | none => none
 
-def codeEntryForExport (modBytes modLen : Nat) (targetName : ByteSeq) : Option ByteSeq :=
-  match exportFuncIndex modBytes modLen targetName with
-  | some funcIdx => codeEntryByFuncIndex modBytes modLen funcIdx
-  | none => none
-
 def funcBindingForExport (modBytes modLen : Nat) (targetName : ByteSeq) : Option FuncBinding :=
   match exportFuncIndex modBytes modLen targetName with
   | some funcIdx => funcBindingByFuncIndex modBytes modLen funcIdx
@@ -855,107 +294,6 @@ def exactFuncBindingForExport
     (modBytes modLen : Nat) (targetName expectedCode : ByteSeq) : Option FuncBinding :=
   (funcBindingForExport modBytes modLen targetName).filter
     (fun binding => binding.codeEntry = expectedCode)
-
-/-- The exported String.concat fragment must keep the ordinary Aver string ABI:
-    one nullable string-array reference in, one nullable string-array reference
-    out. The code-entry bytes pin the body, but not this function-section type
-    index; this check makes nullability and the selected string heap type
-    byte-derived instead of claim-only data. -/
-def checkStringConcatExportFuncType
-    (resultTy : Nat) (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .funcType [param] [result] =>
-      decide (param = nullableRefType resultTy) &&
-        decide (result = nullableRefType resultTy)
-  | _, _ => false
-
-def stringConcatExportFuncTypeMatches
-    (modBytes modLen typeIdx resultTy : Nat) : Bool :=
-  typeSectionMatches (checkStringConcatExportFuncType resultTy)
-    modBytes modLen typeIdx
-
-/-- The internal String.concat helper consumes the temporary container of parts
-    and returns the packed string array. `CertDecode.StringHost.roleTable`
-    recognizes the helper's byte body, while this separate pin keeps the helper
-    signature exact, including `0x63` nullable-reference tags. -/
-def checkStringConcatHelperFuncType
-    (containerTy resultTy : Nat) (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .funcType [param] [result] =>
-      decide (param = nullableRefType containerTy) &&
-        decide (result = nullableRefType resultTy)
-  | _, _ => false
-
-/-- Resolve a helper function index through the function section and require its
-    declared type to be the exact String.concat helper ABI. Imported functions
-    and malformed type/function sections fail closed. -/
-def stringConcatHelperFuncTypeMatches
-    (modBytes modLen funcIdx containerTy resultTy : Nat) : Bool :=
-  match funcBindingByFuncIndex modBytes modLen funcIdx with
-  | some binding =>
-      typeSectionMatches (checkStringConcatHelperFuncType containerTy resultTy)
-        modBytes modLen binding.typeIdx
-  | none => false
-
-/-- The record face's PARAM BINDING check over one decoded function type: a
-    single parameter, and that parameter is EXACTLY the nullable reference to
-    the record's pinned struct index (`checkExprProjectionTypes`'s move). -/
-def checkRecordParamFuncType (structIdx : Nat) (entry : CertDecode.TypeEntry) : Bool :=
-  match entry.form, entry.composite with
-  | .plain, .funcType [param] [_result] => decide (param = nullableRefType structIdx)
-  | _, _ => false
-
-/-- The record face's PARAM BINDING against the module bytes: resolve the
-    certified export's own function binding and require its declared single
-    parameter to name exactly the pinned struct index. Without it, a claim
-    could pin (and lower against) one struct index while the certified function
-    is declared over a different one — the param/struct confusion class. -/
-def recordParamFuncTypeMatches
-    (modBytes modLen : Nat) (exportName : ByteSeq) (structIdx : Nat) : Bool :=
-  match funcBindingForExport modBytes modLen exportName with
-  | some binding =>
-      typeSectionMatches (checkRecordParamFuncType structIdx)
-        modBytes modLen binding.typeIdx
-  | none => false
-
-/-- Exact function-type pin against the module bytes for one certified
-    export: resolve its function binding and require the declared type to be
-    exactly the given parameter/result lists. -/
-def funcTypeMatchesExact
-    (modBytes modLen : Nat) (exportName : ByteSeq)
-    (params results : List CertDecode.ValType) : Bool :=
-  match funcBindingForExport modBytes modLen exportName with
-  | some binding =>
-      typeSectionMatches (checkFuncTypeExact params results)
-        modBytes modLen binding.typeIdx
-  | none => false
-
-/-- Whether the module function `funcIdx` declares exactly the certified
-    function type its host role fixes. The index resolves through the function
-    section (`funcBindingByFuncIndex`), so an imported function — which has no
-    function-section binding — fails closed, and `typeSectionMatches` requires
-    the whole type section to decode exactly. -/
-def hostRoleFuncTypeMatches
-    (modBytes modLen carrier funcIdx : Nat)
-    (role : AverCert.Schema.HostRole) : Bool :=
-  match funcBindingByFuncIndex modBytes modLen funcIdx with
-  | some binding =>
-      typeSectionMatches (checkHostRoleFuncType carrier role)
-        modBytes modLen binding.typeIdx
-  | none => false
-
-/-- Every entry of a claim's byte-derived host-role table declares exactly the
-    function type its role fixes over the claimed carrier. Acceptance requires
-    this for EVERY family that carries a host table; the encoder resolves every
-    role citation a plan makes (`hostCall` nodes AND the fused vector-read
-    node's `toIndexIdx`/`boxIdx` immediates) through this same table, so the
-    pin covers every helper index the proof faces model. -/
-def hostTableFuncTypesMatch (modBytes modLen carrier : Nat) :
-    List (AverCert.Schema.HostRole × Nat) → Bool
-  | [] => true
-  | (role, funcIdx) :: rest =>
-      hostRoleFuncTypeMatches modBytes modLen carrier funcIdx role &&
-        hostTableFuncTypesMatch modBytes modLen carrier rest
 
 /-! ### Certified direct-call closure and rejected-channel scan
 
@@ -1135,6 +473,55 @@ def natSetEq (xs ys : List Nat) : Bool :=
   indexedSetEq xs ys
 
 def natListNodup (xs : List Nat) : Bool := indexedNodup xs
+
+/-- The numeric key of a byte sequence whose elements are all below
+    `2^21 - 1` (every byte and every Unicode scalar value): the base-`2^21`
+    numeral with digits `b + 1`, first element lowest. `none` outside that
+    range, where every set-shaped check reading keys fails.
+
+    Set-shaped checks over names index these keys, never the sequences: the
+    kernel compares two keys as one numeral, while ordering two lists walks
+    them through the generic `Ord` instance (the export accounting of a
+    605-export module took minutes that way). The keys are injective
+    (`seqKey_inj`), so a check over keys decides the same set facts as the
+    same check over the sequences. -/
+def seqKey : ByteSeq → Option Nat
+  | [] => some 0
+  | b :: rest =>
+      if b < 2097151 then (seqKey rest).map (fun k => b + 1 + 2097152 * k) else none
+
+theorem seqKey_inj : ∀ {a b : ByteSeq} {k : Nat}, seqKey a = some k → seqKey b = some k → a = b
+  | [], [], _, _, _ => rfl
+  | [], x :: xs, k, ha, hb => by
+      simp only [seqKey, Option.some.injEq] at ha
+      subst ha
+      simp only [seqKey] at hb
+      split at hb
+      · obtain ⟨k', _, hk⟩ := Option.map_eq_some_iff.mp hb
+        omega
+      · cases hb
+  | x :: xs, [], k, ha, hb => by
+      simp only [seqKey, Option.some.injEq] at hb
+      subst hb
+      simp only [seqKey] at ha
+      split at ha
+      · obtain ⟨k', _, hk⟩ := Option.map_eq_some_iff.mp ha
+        omega
+      · cases ha
+  | x :: xs, y :: ys, k, ha, hb => by
+      simp only [seqKey] at ha hb
+      split at ha
+      · split at hb
+        · obtain ⟨ka, hka, hxa⟩ := Option.map_eq_some_iff.mp ha
+          obtain ⟨kb, hkb, hyb⟩ := Option.map_eq_some_iff.mp hb
+          have hxy : x = y ∧ ka = kb := by omega
+          obtain ⟨rfl, rfl⟩ := hxy
+          rw [seqKey_inj hka hkb]
+        · cases hb
+      · cases ha
+
+/-- The keys of a list of byte sequences, when every sequence has one. -/
+def seqKeys (xs : List ByteSeq) : Option (List Nat) := xs.mapM seqKey
 
 /-- Fuel-bounded transitive direct-call closure, using the spike-proven
     worklist/seen fold over the big-Nat module representation. -/
