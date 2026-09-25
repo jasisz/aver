@@ -7440,6 +7440,12 @@ fn certificate_source_model(
         true,  // run_contract_lower
         true,  // run_law_lower
     );
+    // The model's laws cite each other exactly as `aver proof` emits them: a
+    // law comes after every law it cites (see `citation_order`). In source
+    // order a law whose cited law sits lower in the file had no theorem to
+    // cite and fell to its `sorry` floor. A citation cycle keeps source order;
+    // `aver proof` is where it is reported.
+    let _ = lean_codegen::order_verify_blocks_for_citation(&mut mctx);
     let emitted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let out = lean_codegen::transpile_for_cert_model(&mut mctx);
         (out, lean_codegen::cert_model_entry_namespace(&mctx))
