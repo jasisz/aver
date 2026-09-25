@@ -192,6 +192,7 @@ use std::sync::OnceLock;
 use super::VM;
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
+use crate::vm::types::VmError;
 
 /// How many operand-stack cells the decision will walk over and above the
 /// number of map entries a copy would move.
@@ -593,6 +594,115 @@ impl VM {
             self.live_refs_to_slot(target.arena_index()),
         );
         true
+    }
+
+    /// What giving up `value` can save a later write: the entries of a map, the
+    /// length of a vector, and those of the maps and vectors directly inside a
+    /// record, tuple or box, one level further down at most. Zero for anything
+    /// else.
+    pub(super) fn release_worth(&self, value: NanValue, depth: u8) -> usize {
+        if !value.counts_holders() {
+            return 0;
+        }
+        if let Some(map) = self.arena.map_slot(value) {
+            return map.entries;
+        }
+        if let Some(vector) = self.arena.vector_slot(value) {
+            return vector.len;
+        }
+        if depth > 1 {
+            return 0;
+        }
+        let children: &[NanValue] = if value.is_record() {
+            self.arena.get_record(value.arena_index()).1
+        } else if value.is_tuple() {
+            self.arena.get_tuple(value.arena_index())
+        } else if value.is_boxed_wrapper() {
+            return self.release_worth(value.wrapper_inner(&self.arena), depth + 1);
+        } else {
+            return 0;
+        };
+        children
+            .iter()
+            .map(|child| self.release_worth(*child, depth + 1))
+            .sum()
+    }
+
+    /// Whether a tuple or boxed wrapper just destructured, and no longer on
+    /// the operand stack as the match subject, is held by nothing at all, so
+    /// its parts may be released. Asked only when that can save a copy worth
+    /// the walk: `worth` is [`VM::release_worth`] of the parts, and the walk
+    /// is bounded by it the way a map write's is.
+    pub(super) fn destructured_is_unheld(&self, value: NanValue, worth: usize) -> bool {
+        worth != 0
+            && self.stack.len() <= worth + WALK_SLACK
+            && !self.arena.wrapper_or_tuple_is_held_elsewhere(value)
+            && self.slot_is_unheld(value)
+    }
+
+    /// A boxed wrapper a match or `?` consumed, with `inner` already on the
+    /// stack in its place: when nothing else holds the box, it stops holding
+    /// `inner`. Kept out of the dispatch loop, which it would otherwise grow.
+    #[inline(never)]
+    pub(super) fn release_consumed_box(&mut self, wrapper: NanValue, inner: NanValue) {
+        if self.destructured_is_unheld(wrapper, self.release_worth(inner, 0)) {
+            self.arena.take_boxed_value(wrapper);
+        }
+    }
+
+    /// A tuple a match consumed, already popped: when nothing else holds it,
+    /// it stops holding its items.
+    #[inline(never)]
+    pub(super) fn release_consumed_tuple(&mut self, tuple: NanValue) {
+        let worth = self
+            .arena
+            .get_tuple(tuple.arena_index())
+            .iter()
+            .map(|item| self.release_worth(*item, 0))
+            .sum();
+        if self.destructured_is_unheld(tuple, worth) {
+            self.arena.release_tuple_items(tuple);
+        }
+    }
+
+    /// Whether exactly `holders` operand-stack cells hold `record`, which has
+    /// just been popped or read out of another record. Zero asks the cheaper
+    /// question [`VM::slot_is_unheld`] answers.
+    pub(super) fn record_stack_holders_are(&self, record: NanValue, holders: u8) -> bool {
+        match (holders, record.heap_index()) {
+            (0, _) => self.slot_is_unheld(record),
+            (_, Some(index)) => self.stack_holders_excluding(index, None) == u32::from(holders),
+            (_, None) => false,
+        }
+    }
+
+    /// The slot of the field `field_symbol_id` names in `record`, or the
+    /// runtime error a projection of a field the record does not have raises.
+    pub(super) fn record_field_index(
+        &self,
+        record: NanValue,
+        field_symbol_id: u32,
+    ) -> Result<usize, VmError> {
+        if record.is_record() {
+            let (type_id, _) = self.arena.get_record(record.arena_index());
+            if let Some(&field_idx) = self
+                .code
+                .record_field_slots
+                .get(&(type_id, field_symbol_id))
+            {
+                return Ok(field_idx as usize);
+            }
+        }
+        let field_name = self
+            .code
+            .symbols
+            .get(field_symbol_id)
+            .map(|info| info.name.as_str())
+            .unwrap_or("<unknown>");
+        Err(VmError::runtime(format!(
+            "record has no field '{}'",
+            field_name
+        )))
     }
 
     /// Whether a record update may move the fields of `base`, whose operand

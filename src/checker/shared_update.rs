@@ -29,6 +29,8 @@
 //! that reads the field it replaces once and otherwise only other fields of
 //! `x`, with `x` dead afterwards. The VM takes that field out of the record
 //! before the update, so the collection is not shared when the update runs.
+//! The same goes for a field further down (`x.window.created`) read once in
+//! such a literal or update, inside updates of `x.window` that write it.
 //!
 //! What it misses: a caller that keeps a record it passed to the function
 //! doing the update (the function cannot see its callers), aliases made
@@ -41,6 +43,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::ast::{Expr, FnDef, Spanned, Stmt, StrPart, TopLevel};
 
 use super::CheckFinding;
+use crate::ir::field_take::ReadLog;
 
 /// The builtins that update their first argument in place when they own it.
 const UPDATES: [(&str, Kind); 3] = [
@@ -364,67 +367,73 @@ fn repeated_fns(items: &[TopLevel]) -> HashSet<String> {
     repeated
 }
 
-/// A record literal or update the VM may take a field out of: the fields of
-/// each local it may take. Mirrors the VM's rule: every read of the local in
-/// the values is a projection, the field is projected once, the local dies
-/// there, and an update of the local itself writes the field.
+/// A record literal or update the VM may take a field out of: the paths of
+/// each local it may take. The VM's own planning decides
+/// (`vm::compiler::field_take`), fed the same reads from the checked AST:
+/// every read of the local in the values is a path of fields, no other read
+/// goes through the path, the local dies there, and every update of the local
+/// or a shorter path around the read writes the field the path goes on
+/// through.
 #[derive(Default)]
 struct Scope {
-    takes: HashMap<u16, HashSet<String>>,
+    takes: HashMap<u16, Vec<Vec<String>>>,
 }
 
-#[derive(Default)]
-struct SlotReads {
-    bare: bool,
-    projected: HashMap<String, usize>,
-    last_use: bool,
-}
-
-fn collect_reads(expr: &Spanned<Expr>, reads: &mut HashMap<u16, SlotReads>) {
-    match &expr.node {
+/// `local.f1.….fn` as `(slot, last_use, [f1, …, fn])`; a bare local has no
+/// fields.
+fn resolved_path(expr: &Expr) -> Option<(u16, bool, Vec<String>)> {
+    match expr {
+        Expr::Resolved { slot, last_use, .. } => Some((*slot, last_use.0, Vec::new())),
         Expr::Attr(base, field) => {
-            if let Expr::Resolved { slot, last_use, .. } = &base.node {
-                let entry = reads.entry(*slot).or_default();
-                *entry.projected.entry(field.clone()).or_default() += 1;
-                entry.last_use |= last_use.0;
-                return;
+            let (slot, last_use, mut fields) = resolved_path(&base.node)?;
+            fields.push(field.clone());
+            Some((slot, last_use, fields))
+        }
+        _ => None,
+    }
+}
+
+fn collect_reads(expr: &Spanned<Expr>, log: &mut ReadLog) {
+    if let Some((slot, last_use, fields)) = resolved_path(&expr.node) {
+        log.read(u32::from(slot), last_use, fields);
+        return;
+    }
+    match &expr.node {
+        Expr::RecordUpdate { base, updates, .. } if resolved_path(&base.node).is_some() => {
+            let (slot, last_use, fields) = resolved_path(&base.node).expect("checked above");
+            let written = updates.iter().map(|(name, _)| name.clone()).collect();
+            log.enter_base(u32::from(slot), last_use, fields, written);
+            for (_, value) in updates {
+                collect_reads(value, log);
             }
-            collect_reads(base, reads);
+            log.leave_base();
         }
-        Expr::Resolved { slot, last_use, .. } => {
-            let entry = reads.entry(*slot).or_default();
-            entry.bare = true;
-            entry.last_use |= last_use.0;
-        }
-        other => children(other, &mut |child| collect_reads(child, reads)),
+        other => children(other, &mut |child| collect_reads(child, log)),
     }
 }
 
 fn scope_of<'e>(
-    base_slot: Option<u16>,
+    base: Option<(u16, Vec<String>)>,
     written: &HashSet<&str>,
     values: impl Iterator<Item = &'e Spanned<Expr>>,
 ) -> Scope {
-    let mut reads: HashMap<u16, SlotReads> = HashMap::new();
+    let mut log = ReadLog::default();
+    if let Some((slot, fields)) = base {
+        let written = written.iter().map(|field| field.to_string()).collect();
+        log.enter_base(u32::from(slot), false, fields, written);
+    }
     for value in values {
-        collect_reads(value, &mut reads);
+        collect_reads(value, &mut log);
     }
     let mut scope = Scope::default();
-    for (slot, slot_reads) in reads {
-        if slot_reads.bare || !slot_reads.last_use {
+    for plan in log.plans() {
+        let Ok(slot) = u16::try_from(plan.slot) else {
             continue;
-        }
-        let fields: HashSet<String> = slot_reads
-            .projected
-            .into_iter()
-            .filter(|(field, count)| {
-                *count == 1 && (base_slot != Some(slot) || written.contains(field.as_str()))
-            })
-            .map(|(field, _)| field)
-            .collect();
-        if !fields.is_empty() {
-            scope.takes.insert(slot, fields);
-        }
+        };
+        scope.takes.insert(
+            slot,
+            plan.paths.into_iter().map(|path| path.fields).collect(),
+        );
     }
     scope
 }
@@ -487,13 +496,17 @@ struct Walk<'s, 'd> {
 }
 
 impl Walk<'_, '_> {
-    /// Whether the VM takes field `field` out of local `slot` before the
-    /// update: an enclosing literal or update plans it.
-    fn taken_first(&self, slot: u16, field: &str) -> bool {
+    /// Whether the VM takes the field at the end of `path` out of local `slot`
+    /// before the update: an enclosing literal or update plans it.
+    fn taken_first(&self, slot: u16, path: &[&str]) -> bool {
         self.scopes
             .iter()
             .find(|scope| scope.takes.contains_key(&slot))
-            .is_some_and(|scope| scope.takes[&slot].contains(field))
+            .is_some_and(|scope| {
+                scope.takes[&slot]
+                    .iter()
+                    .any(|taken| taken.iter().map(String::as_str).eq(path.iter().copied()))
+            })
     }
 
     fn check_site(&mut self, callee: &str, index: usize, args: &[Spanned<Expr>]) {
@@ -518,8 +531,7 @@ impl Walk<'_, '_> {
             return;
         }
         fields.reverse();
-        let first = fields.first().copied();
-        let exempt = first.is_some_and(|first| fields.len() == 1 && self.taken_first(*slot, first));
+        let exempt = self.taken_first(*slot, &fields);
         let held_by_pending = self
             .pending
             .iter()
@@ -617,7 +629,7 @@ impl Walk<'_, '_> {
                 };
                 let written: HashSet<&str> = updates.iter().map(|(n, _)| n.as_str()).collect();
                 self.scopes.push(scope_of(
-                    base_slot,
+                    resolved_path(&base.node).map(|(slot, _, fields)| (slot, fields)),
                     &written,
                     updates.iter().map(|(_, value)| value),
                 ));

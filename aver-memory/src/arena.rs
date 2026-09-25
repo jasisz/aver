@@ -195,7 +195,7 @@ impl<T: ArenaTypes> Arena<T> {
                 let idx = self.push(ArenaEntry::String(s));
                 NanValue::new_string(idx)
             }
-            ArenaEntry::Tuple(items) => {
+            ArenaEntry::Tuple { items, .. } => {
                 let imported: Vec<NanValue> =
                     items.iter().map(|v| self.deep_import(*v, source)).collect();
                 let idx = self.push_tuple(imported);
@@ -286,9 +286,9 @@ impl<T: ArenaTypes> Arena<T> {
                 });
                 NanValue::new_variant(idx)
             }
-            ArenaEntry::Boxed(inner) => {
+            ArenaEntry::Boxed { value: inner, .. } => {
                 let imported = self.deep_import(inner, source);
-                let idx = self.push(ArenaEntry::Boxed(imported));
+                let idx = self.push_boxed(imported);
                 NanValue::encode(value.tag(), ARENA_REF_BIT | (idx as u64))
             }
             // Fn/Builtin/Namespace — should not appear in independent product results
@@ -307,10 +307,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// of marking sites for maps, vectors, and records.
     #[inline(always)]
     pub fn note_held_elsewhere(&mut self, value: NanValue) {
-        if value.is_heap_map()
-            || (value.is_vector() && !value.is_empty_vector_immediate())
-            || value.is_record()
-        {
+        if value.counts_holders() {
             self.mark_held_elsewhere(value.arena_index());
         }
     }
@@ -326,7 +323,9 @@ impl<T: ArenaTypes> Arena<T> {
         match self.get_mut(index) {
             ArenaEntry::Map { holder_count, .. }
             | ArenaEntry::Vector { holder_count, .. }
-            | ArenaEntry::Record { holder_count, .. } => {
+            | ArenaEntry::Record { holder_count, .. }
+            | ArenaEntry::Tuple { holder_count, .. }
+            | ArenaEntry::Boxed { holder_count, .. } => {
                 *holder_count = holder_count.saturating_add(1);
             }
             _ => {}
@@ -337,10 +336,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// physically stopped holding `value`.
     #[inline(always)]
     fn release_held_elsewhere(&mut self, value: NanValue) {
-        if value.is_heap_map()
-            || (value.is_vector() && !value.is_empty_vector_immediate())
-            || value.is_record()
-        {
+        if value.counts_holders() {
             self.release_holder(value.arena_index());
         }
     }
@@ -350,7 +346,9 @@ impl<T: ArenaTypes> Arena<T> {
         match self.get_mut(index) {
             ArenaEntry::Map { holder_count, .. }
             | ArenaEntry::Vector { holder_count, .. }
-            | ArenaEntry::Record { holder_count, .. } => {
+            | ArenaEntry::Record { holder_count, .. }
+            | ArenaEntry::Tuple { holder_count, .. }
+            | ArenaEntry::Boxed { holder_count, .. } => {
                 // Saturation is sticky. Once exact cardinality is lost, the
                 // safe answer is "held" forever rather than a future false 0.
                 if *holder_count == u32::MAX {
@@ -384,8 +382,8 @@ impl<T: ArenaTypes> Arena<T> {
     #[inline(never)]
     fn note_entry_holds_takeable(&mut self, entry: &ArenaEntry<T>) {
         match entry {
-            ArenaEntry::Boxed(value) => self.note_held_elsewhere(*value),
-            ArenaEntry::Tuple(items) => {
+            ArenaEntry::Boxed { value, .. } => self.note_held_elsewhere(*value),
+            ArenaEntry::Tuple { items, .. } => {
                 for value in items {
                     self.note_held_elsewhere(*value);
                 }
@@ -491,6 +489,9 @@ impl<T: ArenaTypes> Arena<T> {
             _ => {
                 if self.holds_any_map || self.holds_any_vector || self.holds_any_record {
                     self.note_entry_holds_takeable(&entry);
+                }
+                if matches!(entry, ArenaEntry::Tuple { .. } | ArenaEntry::Boxed { .. }) {
+                    self.holds_any_record = true;
                 }
                 return self.push_heap(entry);
             }
@@ -977,7 +978,10 @@ impl<T: ArenaTypes> Arena<T> {
         self.push(ArenaEntry::String(Rc::from(s)))
     }
     pub fn push_boxed(&mut self, val: NanValue) -> u32 {
-        self.push(ArenaEntry::Boxed(val))
+        self.push(ArenaEntry::Boxed {
+            value: val,
+            holder_count: 0,
+        })
     }
     pub fn push_record(&mut self, type_id: u32, fields: Vec<NanValue>) -> u32 {
         self.push(ArenaEntry::Record {
@@ -1017,10 +1021,7 @@ impl<T: ArenaTypes> Arena<T> {
         for (key, value) in map.values() {
             all_immediate &= key.is_immediate() && value.is_immediate();
             for child in [*key, *value] {
-                if child.is_heap_map()
-                    || (child.is_vector() && !child.is_empty_vector_immediate())
-                    || child.is_record()
-                {
+                if child.counts_holders() {
                     held.get_or_insert_default().push(child);
                 }
             }
@@ -1038,7 +1039,10 @@ impl<T: ArenaTypes> Arena<T> {
         })
     }
     pub fn push_tuple(&mut self, items: Vec<NanValue>) -> u32 {
-        self.push(ArenaEntry::Tuple(items))
+        self.push(ArenaEntry::Tuple {
+            items,
+            holder_count: 0,
+        })
     }
     /// Store a vector, marking every map or vector it holds as held by this
     /// entry — the vector spelling of [`Arena::push_map`]'s marking pass, made
@@ -1059,11 +1063,7 @@ impl<T: ArenaTypes> Arena<T> {
             if child.heap_index().is_some() {
                 all_immediate = false;
             }
-            if marking
-                && (child.is_heap_map()
-                    || (child.is_vector() && !child.is_empty_vector_immediate())
-                    || child.is_record())
-            {
+            if marking && child.counts_holders() {
                 held.get_or_insert_default().push(*child);
             }
         }
@@ -1131,7 +1131,7 @@ impl<T: ArenaTypes> Arena<T> {
     }
     pub fn get_boxed(&self, index: u32) -> NanValue {
         match self.get(index) {
-            ArenaEntry::Boxed(v) => *v,
+            ArenaEntry::Boxed { value, .. } => *value,
             _ => panic!("Arena: expected Boxed at {}", index),
         }
     }
@@ -1145,6 +1145,44 @@ impl<T: ArenaTypes> Arena<T> {
     }
 
     /// Whether a root or another arena entry has registered a reference to
+    /// this tuple or boxed wrapper. `false` for anything else.
+    pub fn wrapper_or_tuple_is_held_elsewhere(&self, value: NanValue) -> bool {
+        match self.get(value.arena_index()) {
+            ArenaEntry::Tuple { holder_count, .. } | ArenaEntry::Boxed { holder_count, .. } => {
+                *holder_count != 0
+            }
+            _ => true,
+        }
+    }
+
+    /// Empty a boxed wrapper nothing else holds and hand back its value. The
+    /// box stops holding the value, so the value loses that registered holder;
+    /// the caller has established that no root, entry or stack cell can reach
+    /// the box again.
+    pub fn take_boxed_value(&mut self, wrapper: NanValue) -> NanValue {
+        let value = match self.get_mut(wrapper.arena_index()) {
+            ArenaEntry::Boxed { value, .. } => std::mem::replace(value, NanValue::UNIT),
+            _ => panic!("Arena: expected Boxed at {}", wrapper.arena_index()),
+        };
+        self.release_held_elsewhere(value);
+        value
+    }
+
+    /// Empty a tuple nothing else holds, releasing the registered holder it
+    /// was of each item. The caller has established that no root, entry or
+    /// stack cell can reach the tuple again, and has already copied out the
+    /// items it needs.
+    pub fn release_tuple_items(&mut self, tuple: NanValue) {
+        let items = match self.get_mut(tuple.arena_index()) {
+            ArenaEntry::Tuple { items, .. } => std::mem::take(items),
+            _ => panic!("Arena: expected Tuple at {}", tuple.arena_index()),
+        };
+        for item in items {
+            self.release_held_elsewhere(item);
+        }
+    }
+
+    /// Whether a root or another arena entry has registered a reference to
     /// this record. Operand-stack aliases are deliberately not represented
     /// here; the VM can inspect those directly after popping its operand.
     pub fn record_is_held_elsewhere(&self, record: NanValue) -> bool {
@@ -1152,6 +1190,31 @@ impl<T: ArenaTypes> Arena<T> {
             ArenaEntry::Record { holder_count, .. } => *holder_count != 0,
             _ => false,
         }
+    }
+
+    /// How many roots and arena entries have registered a reference to this
+    /// record. Saturates, and a saturated count never comes back down.
+    pub fn record_holder_count(&self, record: NanValue) -> u32 {
+        match self.get(record.arena_index()) {
+            ArenaEntry::Record { holder_count, .. } => *holder_count,
+            _ => u32::MAX,
+        }
+    }
+
+    /// [`Arena::take_record_field`] from a record that its parent record still
+    /// holds. The caller has established that the parent is the only holder
+    /// off the operand stack, that the parent itself is held only where the
+    /// caller accounted for, and that none of those holders reads this field
+    /// again.
+    pub fn take_nested_record_field(&mut self, record: NanValue, field_idx: usize) -> NanValue {
+        let value = match self.get_mut(record.arena_index()) {
+            ArenaEntry::Record { fields, .. } => {
+                std::mem::replace(&mut fields[field_idx], NanValue::UNIT)
+            }
+            _ => panic!("Arena: expected Record at {}", record.arena_index()),
+        };
+        self.release_held_elsewhere(value);
+        value
     }
 
     /// Remove and return one field from a record whose uniqueness the caller
@@ -1188,7 +1251,7 @@ impl<T: ArenaTypes> Arena<T> {
     }
     pub fn get_tuple(&self, index: u32) -> &[NanValue] {
         match self.get(index) {
-            ArenaEntry::Tuple(items) => items,
+            ArenaEntry::Tuple { items, .. } => items,
             _ => panic!("Arena: expected Tuple at {}", index),
         }
     }

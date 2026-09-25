@@ -7,6 +7,7 @@ mod calls;
 mod chars_fusion;
 pub mod dump;
 pub mod escape;
+pub(crate) mod field_take;
 pub mod hir;
 pub mod identity;
 mod interp_lower;

@@ -394,8 +394,17 @@ fn nonfinal_record_field_access_keeps_record_get_named() {
 
 #[test]
 fn try_propagation_emits_propagate_err() {
+    // `?` on a temporary consumes the Result: an `Ok` box nothing else holds
+    // gives up its value.
     assert_emits(
         "fn fetch(x: Int) -> Result<Int, String>\n    Result.Ok(x)\n\nfn relay(x: Int) -> Result<Int, String>\n    Result.Ok(fetch(x)?)\n",
+        "relay",
+        opcode::PROPAGATE_ERR_CONSUMED,
+        "PROPAGATE_ERR_CONSUMED",
+    );
+    // A local read again afterwards is not consumed.
+    assert_emits(
+        "fn relay(r: Result<Int, String>) -> Result<Int, String>\n    x = r?\n    Result.Ok(x + Result.withDefault(r, 0))\n",
         "relay",
         opcode::PROPAGATE_ERR,
         "PROPAGATE_ERR",

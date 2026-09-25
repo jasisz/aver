@@ -336,3 +336,504 @@ fn main() -> Int
     let (answer, _) = run(&src);
     assert_eq!(answer, 100 + 5);
 }
+
+// ── Fields two and three levels down ─────────────────────────────────────
+//
+// `setting.window.created`: the Map sits in a record that another record
+// holds. The path read is compiled to `RECORD_TAKE_PATH`, which checks every
+// record on the way down. Each refusal below puts a second holder at one level
+// of the path (the root record, the record in the middle, or the Map) and the
+// answer must be the one immutable values give.
+
+const NESTED: &str = r#"module Nested
+    intent = "nested record field updates"
+    effects []
+
+record Window
+    created: Map<Int, Int>
+    spent: Map<Int, Int>
+
+record Setting
+    window: Window
+    rounds: Int
+
+record Outer
+    setting: Setting
+    turns: Int
+
+record Pair
+    left: Window
+    right: Map<Int, Int>
+
+fn fill(counts: Map<Int, Int>, left: Int) -> Map<Int, Int>
+    match left <= 0
+        true -> counts
+        false -> fill(Map.set(counts, left, 1), left - 1)
+
+fn freshWindow() -> Window
+    Window(created = fill({}, 200), spent = fill({}, 200))
+
+fn fresh() -> Setting
+    Setting(window = freshWindow(), rounds = 0)
+
+fn get(m: Map<Int, Int>, k: Int) -> Int
+    Option.withDefault(Map.get(m, k), 0 - 1)
+
+fn absorbed(created: Map<Int, Int>, spent: Map<Int, Int>, key: Int) -> Window
+    Window(created = Map.set(created, key, 2), spent = Map.set(spent, key, 3))
+"#;
+
+fn nested(body: &str) -> String {
+    format!("{NESTED}\n{body}")
+}
+
+/// Both Maps of the window handed to a function inside a new record, while
+/// the record is read again for its counter.
+#[test]
+fn two_maps_one_level_down_handed_on_copy_nothing() {
+    let src = nested(&format!(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting(window = absorbed(setting.window.created, setting.window.spent, key), rounds = setting.rounds + 1)
+
+fn serve(setting: Setting, left: Int) -> Setting
+    match left <= 0
+        true -> setting
+        false -> serve(step(setting, left), left - 1)
+
+fn main() -> Int
+    done = serve(fresh(), {REQUESTS})
+    done.rounds * 10000 + get(done.window.created, 7) * 100 + get(done.window.spent, 7) * 10 + Map.len(done.window.spent) - 200
+"#
+    ));
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, REQUESTS * 10000 + 2 * 100 + 3 * 10);
+    assert_eq!(copied, 0, "a request copied a Map two levels down");
+}
+
+/// The window updated inside the update of the setting: the inner update's
+/// base holds the window while its Map is read.
+#[test]
+fn an_update_of_an_update_copies_nothing() {
+    let src = nested(&format!(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, 4)), rounds = setting.rounds + 1)
+
+fn serve(setting: Setting, left: Int) -> Setting
+    match left <= 0
+        true -> setting
+        false -> serve(step(setting, left), left - 1)
+
+fn main() -> Int
+    done = serve(fresh(), {REQUESTS})
+    done.rounds * 10000 + get(done.window.created, 7) * 100 + get(done.window.spent, 7) * 10 + Map.len(done.window.created) - 200
+"#
+    ));
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, REQUESTS * 10000 + 4 * 100 + 10);
+    assert_eq!(copied, 0, "a request copied the Map it updated");
+}
+
+/// The two Maps of the window updated in turn: the window each update leaves
+/// behind must not go on holding the Map the next one updates.
+#[test]
+fn alternating_updates_two_levels_down_copy_nothing() {
+    let src = nested(&format!(
+        r#"
+fn bumpCreated(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, 5)), rounds = setting.rounds + 1)
+
+fn bumpSpent(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, spent = Map.set(setting.window.spent, key, 6)), rounds = setting.rounds + 1)
+
+fn serve(setting: Setting, left: Int) -> Setting
+    match left <= 0
+        true -> setting
+        false -> match Int.mod(left, 2) == 0
+            true -> serve(bumpCreated(setting, left), left - 1)
+            false -> serve(bumpSpent(setting, left), left - 1)
+
+fn main() -> Int
+    done = serve(fresh(), {REQUESTS})
+    done.rounds * 100 + get(done.window.created, 2) * 10 + get(done.window.spent, 1)
+"#
+    ));
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, REQUESTS * 100 + 5 * 10 + 6);
+    assert_eq!(
+        copied, 0,
+        "an update copied a Map a window left behind still held"
+    );
+}
+
+/// Three levels: an update of an update of an update.
+#[test]
+fn an_update_three_levels_down_copies_nothing() {
+    let src = nested(&format!(
+        r#"
+fn step(outer: Outer, key: Int) -> Outer
+    Outer.update(outer, setting = Setting.update(outer.setting, window = Window.update(outer.setting.window, created = Map.set(outer.setting.window.created, key, 7))), turns = outer.turns + 1)
+
+fn serve(outer: Outer, left: Int) -> Outer
+    match left <= 0
+        true -> outer
+        false -> serve(step(outer, left), left - 1)
+
+fn main() -> Int
+    done = serve(Outer(setting = fresh(), turns = 0), {REQUESTS})
+    done.turns * 1000 + get(done.setting.window.created, 7) * 10 + get(done.setting.window.spent, 7)
+"#
+    ));
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, REQUESTS * 1000 + 7 * 10 + 1);
+    assert_eq!(copied, 0, "a request copied the Map three levels down");
+}
+
+/// The path read at the local's last use, outside any record literal or
+/// update.
+#[test]
+fn a_path_read_at_the_last_use_copies_nothing() {
+    let src = nested(&format!(
+        r#"
+fn grown(setting: Setting, key: Int) -> Map<Int, Int>
+    Map.set(setting.window.created, key, 8)
+
+fn step(setting: Setting, key: Int) -> Setting
+    Setting(window = Window(created = grown(setting, key), spent = {{}}), rounds = 0)
+
+fn serve(setting: Setting, left: Int) -> Setting
+    match left <= 0
+        true -> setting
+        false -> serve(step(setting, left), left - 1)
+
+fn main() -> Int
+    done = serve(fresh(), {REQUESTS})
+    get(done.window.created, 7) * 1000 + Map.len(done.window.created)
+"#
+    ));
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 8 * 1000 + 200);
+    assert_eq!(copied, 0, "a request copied the Map it updated");
+}
+
+/// Level 0: the caller keeps the setting it passed.
+#[test]
+fn a_setting_the_caller_still_holds_is_not_taken_from() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, 5)), rounds = setting.rounds + 1)
+
+fn main() -> Int
+    before = fresh()
+    after = step(before, 7)
+    get(before.window.created, 7) * 1000 + get(after.window.created, 7) * 100 + Map.len(before.window.created)
+"#,
+    );
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 1000 + 5 * 100 + 200);
+    assert!(copied > 0, "the shared Map was written in place");
+}
+
+/// Level 0: the caller keeps the setting, and the step hands both Maps on.
+#[test]
+fn a_setting_the_caller_still_holds_keeps_both_maps() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting(window = absorbed(setting.window.created, setting.window.spent, key), rounds = setting.rounds + 1)
+
+fn main() -> Int
+    before = fresh()
+    after = step(before, 7)
+    get(before.window.created, 7) * 1000 + get(before.window.spent, 7) * 100 + get(after.window.spent, 7) * 10 + Map.len(before.window.spent) - 200
+"#,
+    );
+    let (answer, _) = run(&src);
+    assert_eq!(answer, 1000 + 100 + 3 * 10);
+}
+
+/// Level 1: one window in two settings.
+#[test]
+fn a_window_two_settings_share_is_not_taken_from() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting(window = absorbed(setting.window.created, setting.window.spent, key), rounds = setting.rounds + 1)
+
+fn main() -> Int
+    shared = freshWindow()
+    first = Setting(window = shared, rounds = 0)
+    second = Setting(window = shared, rounds = 0)
+    after = step(first, 7)
+    get(second.window.created, 7) * 100 + get(second.window.spent, 7) * 10 + get(after.window.spent, 7)
+"#,
+    );
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 100 + 10 + 3);
+    assert!(copied > 0, "the shared Maps were written in place");
+}
+
+/// Level 1: one window in two settings, through an update of an update.
+#[test]
+fn a_shared_window_is_not_taken_from_by_an_update_of_an_update() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, 5)), rounds = setting.rounds + 1)
+
+fn main() -> Int
+    shared = freshWindow()
+    first = Setting(window = shared, rounds = 0)
+    second = Setting(window = shared, rounds = 0)
+    after = step(first, 7)
+    get(second.window.created, 7) * 100 + get(after.window.created, 7) * 10 + get(shared.created, 7)
+"#,
+    );
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 100 + 5 * 10 + 1);
+    assert!(copied > 0, "the shared Map was written in place");
+}
+
+/// Level 1: a local names the window before the setting's last use.
+#[test]
+fn a_window_another_local_holds_is_not_taken_from() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Int
+    kept = setting.window
+    after = Setting(window = absorbed(setting.window.created, setting.window.spent, key), rounds = setting.rounds + 1)
+    get(kept.created, key) * 100 + get(kept.spent, key) * 10 + get(after.window.created, key)
+
+fn main() -> Int
+    step(fresh(), 7)
+"#,
+    );
+    let (answer, _) = run(&src);
+    assert_eq!(answer, 100 + 10 + 2);
+}
+
+/// Level 1: a local names the window, and the update of an update runs after.
+#[test]
+fn a_window_another_local_holds_is_not_taken_from_by_an_update_of_an_update() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Int
+    kept = setting.window
+    after = Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, 5)), rounds = setting.rounds + 1)
+    get(kept.created, key) * 100 + get(after.window.created, key) * 10 + Map.len(kept.created) - 200
+
+fn main() -> Int
+    step(fresh(), 7)
+"#,
+    );
+    let (answer, _) = run(&src);
+    assert_eq!(answer, 100 + 5 * 10);
+}
+
+/// Level 1: the window is stored whole beside its own Map.
+#[test]
+fn a_window_stored_whole_beside_its_map_is_not_taken_from() {
+    let src = nested(
+        r#"
+fn split(setting: Setting, key: Int) -> Pair
+    Pair(left = setting.window, right = Map.set(setting.window.created, key, 5))
+
+fn main() -> Int
+    pair = split(fresh(), 7)
+    get(pair.left.created, 7) * 100 + get(pair.right, 7) * 10 + Map.len(pair.left.created) - 200
+"#,
+    );
+    let (answer, _) = run(&src);
+    assert_eq!(answer, 100 + 5 * 10);
+}
+
+/// Level 2: one Map in two windows.
+#[test]
+fn a_map_two_windows_share_is_not_written_in_place() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, 5)), rounds = setting.rounds + 1)
+
+fn main() -> Int
+    shared = fill({}, 200)
+    first = Setting(window = Window(created = shared, spent = {}), rounds = 0)
+    second = Setting(window = Window(created = shared, spent = {}), rounds = 0)
+    after = step(first, 7)
+    get(second.window.created, 7) * 100 + get(after.window.created, 7)
+"#,
+    );
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 100 + 5);
+    assert!(copied > 0, "the shared Map was written in place");
+}
+
+/// Level 2: the path is read twice; the second read must see the whole Map.
+#[test]
+fn a_path_read_twice_is_not_taken() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, Map.len(setting.window.created))), rounds = setting.rounds + 1)
+
+fn main() -> Int
+    after = step(fresh(), 7)
+    get(after.window.created, 7) * 1000 + Map.len(after.window.created)
+"#,
+    );
+    let (answer, _) = run(&src);
+    assert_eq!(answer, 200 * 1000 + 200);
+}
+
+/// The inner update writes another field: the new window keeps the Map the
+/// path reads, so it must stay in the window.
+#[test]
+fn a_map_the_inner_update_does_not_write_is_not_taken() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, spent = Map.set(setting.window.created, key, 5)), rounds = setting.rounds + 1)
+
+fn main() -> Int
+    after = step(fresh(), 1000)
+    Map.len(after.window.created) * 1000 + get(after.window.spent, 1000) * 100 + get(after.window.created, 7)
+"#,
+    );
+    let (answer, _) = run(&src);
+    assert_eq!(answer, 200 * 1000 + 5 * 100 + 1);
+}
+
+/// The outer update writes another field: the new setting keeps the window
+/// the path goes through, so nothing in it may be taken.
+#[test]
+fn a_window_the_outer_update_does_not_write_is_not_taken_from() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, rounds = Map.len(Map.set(setting.window.created, key, 5)))
+
+fn main() -> Int
+    after = step(fresh(), 1000)
+    after.rounds * 1000 + Map.len(after.window.created)
+"#,
+    );
+    let (answer, _) = run(&src);
+    assert_eq!(answer, 201 * 1000 + 200);
+}
+
+/// The setting is read again after the literal: nothing is its last use.
+#[test]
+fn a_setting_read_after_the_literal_is_not_taken_from() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Int
+    after = Setting(window = absorbed(setting.window.created, setting.window.spent, key), rounds = 0)
+    get(setting.window.created, key) * 100 + get(after.window.created, key)
+
+fn main() -> Int
+    step(fresh(), 7)
+"#,
+    );
+    let (answer, _) = run(&src);
+    assert_eq!(answer, 100 + 2);
+}
+
+/// Level 1 of three: one setting in two outers.
+#[test]
+fn a_setting_two_outers_share_is_not_taken_from() {
+    let src = nested(
+        r#"
+fn step(outer: Outer, key: Int) -> Outer
+    Outer.update(outer, setting = Setting.update(outer.setting, window = Window.update(outer.setting.window, created = Map.set(outer.setting.window.created, key, 7))), turns = outer.turns + 1)
+
+fn main() -> Int
+    shared = fresh()
+    first = Outer(setting = shared, turns = 0)
+    second = Outer(setting = shared, turns = 0)
+    after = step(first, 7)
+    get(second.setting.window.created, 7) * 10 + get(after.setting.window.created, 7)
+"#,
+    );
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 10 + 7);
+    assert!(copied > 0, "the shared Map was written in place");
+}
+
+/// A path read at the last use of a setting the caller still holds.
+#[test]
+fn a_path_read_at_the_last_use_of_a_shared_setting_is_not_taken() {
+    let src = nested(
+        r#"
+fn grown(setting: Setting, key: Int) -> Map<Int, Int>
+    Map.set(setting.window.created, key, 8)
+
+fn main() -> Int
+    before = fresh()
+    after = grown(before, 7)
+    get(before.window.created, 7) * 100 + get(after, 7) * 10 + get(before.window.spent, 7)
+"#,
+    );
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 100 + 8 * 10 + 1);
+    assert!(copied > 0, "the shared Map was written in place");
+}
+
+/// A path read at the last use of a setting whose window another setting
+/// holds.
+#[test]
+fn a_path_read_at_the_last_use_through_a_shared_window_is_not_taken() {
+    let src = nested(
+        r#"
+fn grown(setting: Setting, key: Int) -> Map<Int, Int>
+    Map.set(setting.window.created, key, 8)
+
+fn main() -> Int
+    shared = freshWindow()
+    other = Setting(window = shared, rounds = 0)
+    after = grown(Setting(window = shared, rounds = 1), 7)
+    get(other.window.created, 7) * 10 + get(after, 7)
+"#,
+    );
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 10 + 8);
+    assert!(copied > 0, "the shared Map was written in place");
+}
+
+/// The measured fixture: two thousand requests, each updating Maps one record
+/// down, copy no entry. Before the path take, each copied a whole Map.
+#[test]
+fn the_nested_fixture_updates_its_maps_in_place() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/vm_nested_field_update/main.av"
+    );
+    let src = std::fs::read_to_string(path).expect("read the fixture");
+    let mut machine = compiled_vm(&src);
+    machine.run().expect("the fixture should run");
+    assert_eq!(
+        machine.arena.map_entries_copied(),
+        0,
+        "a request copied a Map its setting's window holds"
+    );
+}
+
+/// Level 0: another record holds the setting the path starts from.
+#[test]
+fn a_setting_held_by_another_record_is_not_taken_from() {
+    let src = nested(
+        r#"
+fn step(setting: Setting, key: Int) -> Setting
+    Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, 5)), rounds = setting.rounds + 1)
+
+fn main() -> Int
+    holder = Outer(setting = fresh(), turns = 0)
+    after = step(holder.setting, 7)
+    get(holder.setting.window.created, 7) * 100 + get(after.window.created, 7)
+"#,
+    );
+    let (answer, copied) = run(&src);
+    assert_eq!(answer, 100 + 5);
+    assert!(copied > 0, "the shared Map was written in place");
+}

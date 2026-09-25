@@ -309,6 +309,13 @@ impl VM {
                     self.stack.pop().ok_or(VmError::StackUnderflow)?;
                 }
 
+                POP_CONSUMED => {
+                    let subject = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if subject.is_tuple() {
+                        self.release_consumed_tuple(subject);
+                    }
+                }
+
                 DUP => {
                     let val = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(val);
@@ -1628,11 +1635,14 @@ impl VM {
                     }
                 }
 
-                PROPAGATE_ERR => {
+                PROPAGATE_ERR | PROPAGATE_ERR_CONSUMED => {
                     let value = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     if value.is_ok() {
                         let inner = value.wrapper_inner(&self.arena);
                         *self.stack.last_mut().ok_or(VmError::StackUnderflow)? = inner;
+                        if op == PROPAGATE_ERR_CONSUMED && value.is_boxed_wrapper() {
+                            self.release_consumed_box(value, inner);
+                        }
                         continue;
                     }
                     if value.is_err() {
@@ -1763,6 +1773,44 @@ impl VM {
                             arena.push_record(type_id, fields)
                         });
                     self.stack.push(NanValue::new_record(idx));
+                }
+
+                RECORD_TAKE_PATH => {
+                    let depth = read_u8!(code, ip);
+                    let root_holders = read_u8!(code, ip);
+                    let mut field_symbol_id = read_u32!(code, ip);
+                    let mut record = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    // Whether every record from the root down to `record` is
+                    // held only where the compiler accounted for: the root by
+                    // nothing off the stack, and exactly the cells it counted.
+                    let mut unique = !self.arena.record_is_held_elsewhere(record)
+                        && self.record_stack_holders_are(record, root_holders);
+                    for _ in 1..depth {
+                        let detach = read_u8!(code, ip) != 0;
+                        let holders = read_u8!(code, ip);
+                        let field_idx = self.record_field_index(record, field_symbol_id)?;
+                        let take = unique && detach;
+                        let child = if take {
+                            self.arena.take_nested_record_field(record, field_idx)
+                        } else {
+                            self.arena.get_record(record.arena_index()).1[field_idx]
+                        };
+                        // Off the stack, a record still in its parent is held
+                        // by that parent alone, one taken out of it by nothing.
+                        unique = unique
+                            && child.is_record()
+                            && self.arena.record_holder_count(child) == u32::from(!take)
+                            && self.record_stack_holders_are(child, holders);
+                        record = child;
+                        field_symbol_id = read_u32!(code, ip);
+                    }
+                    let field_idx = self.record_field_index(record, field_symbol_id)?;
+                    let value = if unique {
+                        self.arena.take_nested_record_field(record, field_idx)
+                    } else {
+                        self.arena.get_record(record.arena_index()).1[field_idx]
+                    };
+                    self.stack.push(value);
                 }
 
                 RECORD_GET_NAMED | RECORD_TAKE_NAMED => {
@@ -1916,8 +1964,10 @@ impl VM {
                 }
 
                 MATCH_UNWRAP => {
-                    let kind = read_u8!(code, ip);
+                    let raw_kind = read_u8!(code, ip);
                     let offset = read_jump!(code, ip);
+                    let consumes = raw_kind & MATCH_UNWRAP_CONSUMES != 0;
+                    let kind = raw_kind & !MATCH_UNWRAP_CONSUMES;
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     let matches = match kind {
                         0 => top.is_ok(),
@@ -1928,6 +1978,12 @@ impl VM {
                     if matches {
                         let inner = top.wrapper_inner(&self.arena);
                         *self.stack.last_mut().unwrap() = inner;
+                        // The subject is consumed here: a box nothing else
+                        // holds is gone after this, so it stops holding its
+                        // value and a later write to that value need not copy.
+                        if consumes && top.is_boxed_wrapper() {
+                            self.release_consumed_box(top, inner);
+                        }
                     } else {
                         ip = (ip as isize + offset as isize) as usize;
                     }
