@@ -663,6 +663,8 @@ impl VM {
         if self.destructured_is_unheld(tuple, worth) {
             self.arena.release_tuple_items(tuple);
         }
+    }
+
     /// Whether exactly `holders` operand-stack cells hold `record`, which has
     /// just been popped or read out of another record. Zero asks the cheaper
     /// question [`VM::slot_is_unheld`] answers.
