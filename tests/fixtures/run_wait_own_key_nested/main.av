@@ -1,0 +1,44 @@
+module Main
+    intent = "A program whose generated loop keys its wait by Int, and whose own waits, run with `manual`, are keyed by a sum and matched with nested patterns: once here in the entry and again in a dependency."
+    depends [Clock, Ticks, Validation, Scoring, Collecting]
+    effects [Args.get, Clock.tick, Console.print, Validation.begin, Validation.take, Wait.poll, yield]
+
+fn main() -> Result<Unit, String>
+    ? "`manual` waits on two jobs keyed by Collecting.Watch; anything else runs the loop."
+    ! [Args.get, Console.print, Validation.begin, Validation.take, Wait.poll]
+    match List.contains(Args.get(), "manual")
+        true -> manual()
+        false -> Run.all()
+
+fn manual() -> Result<Unit, String>
+    ? "Begins two jobs, waits once here on a set keyed by Collecting.Watch that holds nothing, and collects the jobs in Collecting."
+    ! [Console.print, Validation.begin, Validation.take, Wait.poll]
+    first = Validation.begin("alpha")?
+    second = Validation.begin("beta-two")?
+    idle: Map<Collecting.Watch, Wait.Item> = {}
+    Console.print(emptiness(Wait.poll(idle, 0)))
+    Collecting.collect({Collecting.Watch.Read(1) => Wait.Item.Job(first), Collecting.Watch.Write(2) => Wait.Item.Job(second)}, 50)
+
+fn ticker() -> Unit
+    ? "Three ticks."
+    ! [Clock.tick, Console.print, yield]
+    ticking(0)
+
+fn ticking(seen: Int) -> Unit
+    ? "One tick at a time."
+    ! [Clock.tick, Console.print, yield]
+    match Clock.tick() >= 3
+        true -> Console.print("ticked {seen + 1} times")
+        false -> ticking(seen + 1)
+
+fn emptiness(waited: Result<List<Collecting.Watch>, String>) -> String
+    ? "What a wait on an empty set reported."
+    match waited
+        Result.Ok([]) -> "an empty wait reported 0 keys"
+        Result.Ok(keys) -> "an empty wait reported {List.len(keys)} keys"
+        Result.Err(reason) -> "an empty wait failed: {reason}"
+
+verify emptiness
+    emptiness(Result.Ok([])) => "an empty wait reported 0 keys"
+    emptiness(Result.Ok([Collecting.Watch.Read(1)])) => "an empty wait reported 1 keys"
+    emptiness(Result.Err("closed")) => "an empty wait failed: closed"

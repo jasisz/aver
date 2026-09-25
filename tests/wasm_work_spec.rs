@@ -635,15 +635,18 @@ fn one_recording(dir: &Path) -> Result<PathBuf, String> {
 /// The generated loop keys its wait by `Int`, and the program's own waits,
 /// in the entry and in a dependency, are keyed by a sum. Both wasm targets
 /// run both paths and do the same work as the VM. The jobs land in whatever
-/// order they finish, so the lines are compared as a multiset.
+/// order they finish, so the lines are compared as a multiset. The second
+/// fixture also matches the waits' answers with nested patterns, in the entry
+/// and in a dependency function that waits.
 #[test]
 fn waits_keyed_by_a_sum_beside_the_generated_loop_match_the_vm_on_both_wasm_targets() {
-    let name = "run_wait_own_key";
-    for target in wasm_targets() {
-        for args in [&[][..], &["manual"][..]] {
-            let vm = run(name, &[], args).unwrap_or_else(|error| panic!("{error}"));
-            let wasm = run(name, target, args).unwrap_or_else(|error| panic!("{error}"));
-            same_lines(name, &vm, &wasm).unwrap_or_else(|error| panic!("{error}"));
+    for name in ["run_wait_own_key", "run_wait_own_key_nested"] {
+        for target in wasm_targets() {
+            for args in [&[][..], &["manual"][..]] {
+                let vm = run(name, &[], args).unwrap_or_else(|error| panic!("{error}"));
+                let wasm = run(name, target, args).unwrap_or_else(|error| panic!("{error}"));
+                same_lines(name, &vm, &wasm).unwrap_or_else(|error| panic!("{error}"));
+            }
         }
     }
 }

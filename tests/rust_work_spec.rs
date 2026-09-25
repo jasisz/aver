@@ -1075,25 +1075,28 @@ mod native_transfer;
 /// are keyed by a sum, in the entry and in a dependency, compiles to Rust and
 /// does the same work as the VM on both of its paths: the loop, and the two
 /// jobs it collects by hand. The jobs land in whatever order they finish, so
-/// the lines are compared as a multiset.
+/// the lines are compared as a multiset. The second fixture also matches the
+/// waits' answers with nested patterns, in the entry and in a dependency
+/// function that waits.
 #[test]
 fn waits_keyed_by_a_sum_beside_the_generated_loop_match_the_vm() {
-    let name = "run_wait_own_key";
-    let ws = temp_dir(name);
-    let project = ws.join("project");
-    fs::create_dir_all(&project).expect("create project dir");
-    let result = (|| -> Result<(), String> {
-        compile_rust(name, &project, name, &[])?;
-        let bin = cargo_build(&project, name)?;
-        for args in [&[][..], &["manual"][..]] {
-            let vm = run_vm_with(name, args)?;
-            let rust = run_binary_with(&bin, args)?;
-            same_lines(name, &vm, &rust)?;
-        }
-        Ok(())
-    })();
-    let _ = fs::remove_dir_all(&ws);
-    result.unwrap_or_else(|error| panic!("{error}"));
+    for name in ["run_wait_own_key", "run_wait_own_key_nested"] {
+        let ws = temp_dir(name);
+        let project = ws.join("project");
+        fs::create_dir_all(&project).expect("create project dir");
+        let result = (|| -> Result<(), String> {
+            compile_rust(name, &project, name, &[])?;
+            let bin = cargo_build(&project, name)?;
+            for args in [&[][..], &["manual"][..]] {
+                let vm = run_vm_with(name, args)?;
+                let rust = run_binary_with(&bin, args)?;
+                same_lines(name, &vm, &rust)?;
+            }
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&ws);
+        result.unwrap_or_else(|error| panic!("{error}"));
+    }
 }
 
 // ── Run.fail ────────────────────────────────────────────────────────────

@@ -1134,49 +1134,58 @@ fn a_directory_check_names_an_answer_module_under_a_subdirectory_the_way_its_imp
 /// A program whose generated loop keys its wait by `Int` can key its own
 /// waits by a sum, in the entry and in a dependency. Each such wait is
 /// carried through an `Int`-keyed wait by helpers generated for its key type,
-/// and answers the same keys it would have answered, in the same order.
+/// and answers the same keys it would have answered, in the same order. The
+/// second fixture also matches the waits' answers with nested patterns, in
+/// the entry and in the dependency function that waits: the dependency's
+/// patterns are compiled first and its waits carried after.
 #[test]
 fn waits_keyed_by_a_sum_run_beside_the_generated_loop() {
-    let looped = aver_within("run_wait_own_key", &["run"], 60);
-    assert!(looped.status.success(), "{}", format_output(&looped));
-    assert_eq!(
-        String::from_utf8_lossy(&looped.stdout).trim(),
-        "ticked 3 times"
-    );
+    for name in ["run_wait_own_key", "run_wait_own_key_nested"] {
+        let looped = aver_within(name, &["run"], 60);
+        assert!(looped.status.success(), "{}", format_output(&looped));
+        assert_eq!(
+            String::from_utf8_lossy(&looped.stdout).trim(),
+            "ticked 3 times"
+        );
 
-    let manual = aver_within("run_wait_own_key", &["run", "--", "manual"], 60);
-    assert!(manual.status.success(), "{}", format_output(&manual));
-    let text = String::from_utf8_lossy(&manual.stdout);
-    let mut lines: Vec<&str> = text.lines().collect();
-    lines.sort_unstable();
-    assert_eq!(
-        lines,
-        [
-            "an empty wait reported 0 keys",
-            "read 1 scored 5",
-            "write 2 scored 8",
-        ],
-        "{}",
-        format_output(&manual)
-    );
+        let manual = aver_within(name, &["run", "--", "manual"], 60);
+        assert!(manual.status.success(), "{}", format_output(&manual));
+        let text = String::from_utf8_lossy(&manual.stdout);
+        let mut lines: Vec<&str> = text.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(
+            lines,
+            [
+                "an empty wait reported 0 keys",
+                "read 1 scored 5",
+                "write 2 scored 8",
+            ],
+            "{name}: {}",
+            format_output(&manual)
+        );
 
-    let dir = fixture("run_wait_own_key");
-    let dump = Command::new(aver_bin())
-        .current_dir(&dir)
-        .env("AVER_YIELD_DUMP", "1")
-        .arg("check")
-        .arg("main.av")
-        .arg("--module-root")
-        .arg(&dir)
-        .output()
-        .expect("aver runs");
-    assert!(dump.status.success(), "{}", format_output(&dump));
-    let dumped = combined(&dump);
-    for helper in [
-        "fn __waitPollByCollectingWatch(items: Map<Collecting.Watch, Wait.Item>, timeoutMs: Int) -> Result<List<Collecting.Watch>, String>",
-        "fn __waitKeysAtCollectingWatch(",
-    ] {
-        assert!(dumped.contains(helper), "missing `{helper}`:\n{dumped}");
+        let dir = fixture(name);
+        let dump = Command::new(aver_bin())
+            .current_dir(&dir)
+            .env("AVER_YIELD_DUMP", "1")
+            .arg("check")
+            .arg("main.av")
+            .arg("--module-root")
+            .arg(&dir)
+            .output()
+            .expect("aver runs");
+        assert!(dump.status.success(), "{}", format_output(&dump));
+        let dumped = combined(&dump);
+        for helper in [
+            "fn __waitPollByCollectingWatch(items: Map<Collecting.Watch, Wait.Item>, timeoutMs: Int) -> Result<List<Collecting.Watch>, String>",
+            "fn __waitKeysAtCollectingWatch(",
+            "fn __waitPollByWatch(items: Map<Watch, Wait.Item>, timeoutMs: Int) -> Result<List<Watch>, String>",
+        ] {
+            assert!(
+                dumped.contains(helper),
+                "{name}: missing `{helper}`:\n{dumped}"
+            );
+        }
     }
 }
 
