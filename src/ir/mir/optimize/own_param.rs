@@ -149,6 +149,11 @@ struct RustOwned {
     /// Map/Vector params each fn updates in place
     /// (`field_moves::in_place_collection_params`).
     in_place_params: HashMap<FnId, Vec<bool>>,
+    /// Locals bound by a `let` whose value is one of the movable field
+    /// reads above (`progress = flight.progress`). The provenance table
+    /// holds copies of the binding values, whose addresses the movable set
+    /// cannot recognise, so these are named here from the body itself.
+    movable_let_slots: HashMap<FnId, HashSet<u32>>,
 }
 
 /// A single visible call edge: `target(args…)` made from `caller`.
@@ -386,6 +391,11 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
         for (id, f) in program.iter() {
             let movable = crate::ir::mir::field_moves::movable_projections(&f.body.node);
             if !movable.is_empty() {
+                let mut slots = HashSet::new();
+                collect_movable_let_slots(&f.body.node, &movable, &mut slots);
+                if !slots.is_empty() {
+                    rust_owned.movable_let_slots.insert(*id, slots);
+                }
                 rust_owned.movable_projections.insert(*id, movable);
             }
         }
@@ -766,6 +776,19 @@ fn slot_owned(
     {
         return true;
     }
+    // A let-bound field read generated Rust moves out of its record
+    // (`progress = flight.progress`). It shares the record's backing, which
+    // is why the alias table flags it, but the move leaves the record
+    // without it, exactly as a movable field read passed directly.
+    if !is_param
+        && model.owned_carriers_are_cow_protected()
+        && rust_owned
+            .movable_let_slots
+            .get(&caller)
+            .is_some_and(|slots| slots.contains(&slot))
+    {
+        return true;
+    }
     // Flagged in the caller's table (RULE 1 param or RULE 2 intra-proc
     // alias such as a Vector.get handle).
     if caller_fn
@@ -850,6 +873,17 @@ fn collect_pattern_slots(pattern: &MirPattern, out: &mut HashSet<u32>) {
 }
 
 /// Collect `slot → binding-RHS` for every `Let` in the body.
+/// The `let` locals of a body bound directly to one of its `movable` field
+/// reads.
+fn collect_movable_let_slots(e: &MirExpr, movable: &HashSet<usize>, out: &mut HashSet<u32>) {
+    if let MirExpr::Let(l) = e
+        && movable.contains(&(&l.node.value.node as *const MirExpr as usize))
+    {
+        out.insert(l.node.binding.0);
+    }
+    walk_children(e, &mut |c| collect_movable_let_slots(c, movable, out));
+}
+
 fn collect_let_bindings(e: &MirExpr, out: &mut HashMap<u32, Spanned<MirExpr>>) {
     if let MirExpr::Let(l) = e {
         out.entry(l.node.binding.0)

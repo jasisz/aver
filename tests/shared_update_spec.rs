@@ -107,9 +107,10 @@ fn stepAgain(setting: Setting, left: Int) -> Setting
     )));
 }
 
-/// The parts are moved out of the record first (the btc fix): nothing warns.
+/// A part bound by a `match` is a copy while the record is still used whole
+/// afterwards: the record keeps its own, so the update copies the Map.
 #[test]
-fn parts_moved_out_of_the_record_do_not_warn() {
+fn a_part_bound_by_a_match_while_the_record_is_passed_on_warns() {
     let found = warnings(&program(
         r#"
 fn emptied(setting: Setting) -> Setting
@@ -120,8 +121,41 @@ fn step(setting: Setting, left: Int) -> Setting
     ? "One Block per step."
     match left <= 0
         true -> setting
+        false -> match (setting.window.created, setting.height)
+            (created, _) -> step(absorbedInto(emptied(setting), absorbed(created, left)), left - 1)
+"#,
+    ));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("`absorbed` updates `created`, read from `setting.window.created`, a Map that is still held by `setting`"),
+        "{}",
+        found[0]
+    );
+}
+
+/// A field read into a `let` and replaced by the update that uses the record
+/// next moves out: nothing else reads it, so nothing warns.
+#[test]
+fn a_field_read_before_the_update_that_replaces_it_does_not_warn() {
+    let found = warnings(&program(
+        r#"
+fn step(setting: Setting, left: Int) -> Setting
+    ? "One Block per step."
+    match left <= 0
+        true -> setting
+        false -> stepOn(setting, left)
+
+fn stepOn(setting: Setting, left: Int) -> Setting
+    ? "The window grown, then set back."
+    grown = absorbed(setting.window.created, left)
+    step(Setting.update(setting, window = Window(created = grown, held = 0), height = setting.height + 1), left - 1)
+
+fn bound(setting: Setting, left: Int) -> Setting
+    ? "The same with the Map bound by a match."
+    match left <= 0
+        true -> setting
         false -> match setting.window.created
-            created -> step(absorbedInto(emptied(setting), absorbed(created, left)), left - 1)
+            created -> bound(Setting.update(setting, window = Window(created = absorbed(created, left), held = 0)), left - 1)
 "#,
     ));
     assert!(found.is_empty(), "{found:?}");

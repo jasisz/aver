@@ -1,0 +1,49 @@
+module Main
+    intent = "An update of a record inside an update of the record that holds it."
+    effects [Args.get, Console.print]
+
+record Window
+    created: Map<Int, Int>
+    held: Int
+
+record Setting
+    window: Window
+    height: Int
+
+fn step(setting: Setting, left: Int) -> Setting
+    ? "One key per step, set through an update of the window inside an update of the setting."
+    match left <= 0
+        true -> setting
+        false -> step(Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, left, left)), height = setting.height + 1), left - 1)
+
+verify step
+    step(Setting(window = Window(created = {}, held = 7), height = 0), 2) => Setting(window = Window(created = {1 => 1, 2 => 2}, held = 7), height = 2)
+
+fn kept(setting: Setting, left: Int) -> Int
+    ? "The same update with the old window read after it: the window is copied."
+    match left <= 0
+        true -> setting.height
+        false -> keptOn(Window.update(setting.window, created = Map.set(setting.window.created, left, left)), setting.window, left)
+
+verify kept
+    kept(Setting(window = Window(created = {}, held = 7), height = 3), 0) => 3
+
+fn keptOn(grown: Window, old: Window, left: Int) -> Int
+    ? "How many keys the grown window has over the old one."
+    Map.len(grown.created) - Map.len(old.created) + left
+
+verify keptOn
+    keptOn(Window(created = {1 => 1}, held = 0), Window(created = {}, held = 0), 1) => 2
+
+fn arg(index: Int, fallback: Int) -> Int
+    ? "The index-th argument as an Int, or the fallback."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), index)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), fallback)
+        Option.None -> fallback
+
+fn main() -> Unit
+    ! [Args.get, Console.print]
+    size = arg(0, 1000)
+    done = step(Setting(window = Window(created = {}, held = 7), height = 0), size)
+    Console.print("{Map.len(done.window.created)} {done.window.held} {done.height} {kept(done, 5)}")
