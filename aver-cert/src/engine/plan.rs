@@ -550,6 +550,17 @@ impl PlanTypeTable {
     /// inline (see [`LEAN_TABLE_PIECE_CHARS`]); every byte list longer than
     /// [`LEAN_LIST_CHUNK`] is written in `++`-joined literals.
     pub fn lean_decls(&self, name: &str) -> String {
+        self.lean_decls_and_pieces(name).0
+    }
+
+    /// The names of the piece declarations [`Self::lean_decls`] writes before
+    /// `def {name}`, in order. A proof that unfolds the table by `simp` must
+    /// unfold these too, or a field written in pieces stays opaque.
+    pub fn lean_piece_names(&self, name: &str) -> Vec<String> {
+        self.lean_decls_and_pieces(name).1
+    }
+
+    fn lean_decls_and_pieces(&self, name: &str) -> (String, Vec<String>) {
         let records = self
             .records
             .iter()
@@ -607,13 +618,19 @@ impl PlanTypeTable {
         let lists = field("lists", "Ty × Nat", &pairs(&self.lists));
         let opaques = field("opaques", "Nat × Nat", &opaques);
         let segs = field("strSegs", "List Nat × Nat", &segs);
-        format!(
+        let pieces = decls
+            .lines()
+            .filter_map(|line| line.strip_prefix("def "))
+            .filter_map(|rest| rest.split_once(" :").map(|(n, _)| n.to_string()))
+            .collect();
+        let text = format!(
             "{decls}def {name} : TypeTable :=\n  {{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := {records},\n    sums := {sums},\n    options := {options}, results := {results},\n    vecs := {vecs}, lists := {lists}, opaques := {opaques},\n    strSegs := {segs} }}\n\n",
             lean_opt_nat(self.carrier),
             lean_opt_nat(self.mag),
             lean_opt_nat(self.str_),
             lean_opt_nat(self.str_vec),
-        )
+        );
+        (text, pieces)
     }
 }
 
@@ -748,6 +765,18 @@ mod tests {
             .flat_map(|r| [r.tid as u64, r.struct_idx as u64])
             .collect();
         assert_eq!(numerals(&piece_bodies(&text, "records").concat()), expected);
+
+        // The piece names are exactly the declarations written before the
+        // table, so a proof unfolding the table can name every one of them.
+        let names = tt.lean_piece_names("types");
+        let defs: Vec<String> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("def "))
+            .filter_map(|l| l.split_once(" :").map(|(n, _)| n.to_string()))
+            .filter(|n| n != "types")
+            .collect();
+        assert_eq!(names, defs);
+        assert!(names.iter().any(|n| n.starts_with("types_records_")));
     }
 
     /// A table that fits one piece is written as one declaration with one
