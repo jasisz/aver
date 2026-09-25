@@ -23,6 +23,11 @@ struct ModuleLayout {
     fn_types: BTreeMap<u32, (Vec<String>, Vec<String>)>,
     /// Position of each function export in the export section.
     export_positions: HashMap<String, usize>,
+    /// Byte length of each top-level entry (rec group or subtype) of the type
+    /// section, of each export entry, and (`code_lengths`) of each code entry:
+    /// the cuts at which the wall decodes each section one entry at a time.
+    type_cuts: Vec<usize>,
+    export_cuts: Vec<usize>,
 }
 
 struct Cursor<'a> {
@@ -113,6 +118,8 @@ impl ModuleLayout {
             code_lengths: Vec::new(),
             fn_types: BTreeMap::new(),
             export_positions: HashMap::new(),
+            type_cuts: Vec::new(),
+            export_cuts: Vec::new(),
         };
         let mut c = Cursor { bytes, at: 8 };
         while c.at < bytes.len() {
@@ -145,6 +152,7 @@ impl ModuleLayout {
                 }
                 7 => {
                     for position in 0..s.uleb()? as usize {
+                        let start = s.at;
                         let n = s.uleb()? as usize;
                         let name = bytes
                             .get(s.at..s.at + n)
@@ -154,6 +162,7 @@ impl ModuleLayout {
                         s.skip(n)?;
                         let kind = s.byte()?;
                         s.uleb()?;
+                        layout.export_cuts.push(s.at - start);
                         if kind == 0 {
                             layout.export_positions.entry(name).or_insert(position);
                         }
@@ -178,6 +187,7 @@ impl ModuleLayout {
     fn parse_types(&mut self, s: &mut Cursor<'_>) -> Result<(), String> {
         let mut index = 0u32;
         for _ in 0..s.uleb()? {
+            let start = s.at;
             let group = if s.bytes.get(s.at) == Some(&0x4e) {
                 s.skip(1)?;
                 s.uleb()?
@@ -219,6 +229,7 @@ impl ModuleLayout {
                 }
                 index += 1;
             }
+            self.type_cuts.push(s.at - start);
         }
         Ok(())
     }
@@ -235,6 +246,15 @@ fn packed_hex(values: impl DoubleEndedIterator<Item = u64>) -> Result<String, St
         hex.push_str(&format!("{value:0digits$x}"));
     }
     Ok(hex)
+}
+
+/// A list of lengths as a Lean list literal body, twenty to a line.
+fn nat_list(values: &[usize]) -> String {
+    values
+        .chunks(20)
+        .map(|line| line.iter().map(usize::to_string).collect::<Vec<_>>().join(", "))
+        .collect::<Vec<_>>()
+        .join(",\n   ")
 }
 
 /// `ArtifactLayout.lean`: the declared layout, the planned functions' types
@@ -293,6 +313,7 @@ fn render_artifact_layout(core_bytes: &[u8], analysis: &Analysis) -> Result<Stri
          -- position. Producer data: `layout_ok` confirms the layout against the\n\
          -- staged bytes, and the plan checks confirm the rest.\n\
          import DeclaredLayout\n\
+         import ByteWindow\n\
          import ArtifactBytes\n\n\
          set_option maxRecDepth 200000\n\n\
          namespace AverCert.Artifact\n\
@@ -304,8 +325,24 @@ fn render_artifact_layout(core_bytes: &[u8], analysis: &Analysis) -> Result<Stri
              lengths := {lengths} }}\n\n\
          def fnTypes : List FnType :=\n  [{fn_types}]\n\n\
          def fnDecls : List FnDecl :=\n  [{decls}]\n\n\
-         theorem layout_ok : layoutConfirmed AverCert.ArtifactBytes.modBytes\n    \
-           AverCert.ArtifactBytes.modLen layout = true := by decide +kernel\n\n\
+         -- The section cuts: the byte length of every top-level entry of the\n\
+         -- type section, of every export and of every code entry. Each cut is\n\
+         -- confirmed once below (every entry decodes alone and exactly fills its\n\
+         -- window), and every later check reads the section through its cut.\n\
+         def typeCuts : List Nat :=\n  [{type_cuts}]\n\n\
+         def exportCuts : List Nat :=\n  [{export_cuts}]\n\n\
+         def codeCuts : List Nat :=\n  [{code_cuts}]\n\n\
+         theorem types_cut : CertDecode.decodeTypes {bytes} =\n    \
+           AverCert.ByteWindow.typesLazy {bytes} typeCuts :=\n  \
+           AverCert.ByteWindow.decodeTypes_eq_lazy (by decide +kernel)\n\n\
+         theorem exports_cut : CertDecode.decodeRawExports {bytes} =\n    \
+           AverCert.ByteWindow.exportsLazy {bytes} exportCuts :=\n  \
+           AverCert.ByteWindow.decodeRawExports_eq_lazy (by decide +kernel)\n\n\
+         theorem code_cut : CertDecode.codeLocs {bytes} =\n    \
+           AverCert.ByteWindow.codeLazy {bytes} codeCuts :=\n  \
+           AverCert.ByteWindow.codeLocs_eq_lazy (by decide +kernel)\n\n\
+         theorem layout_ok : layoutConfirmed {bytes} layout = true := by\n  \
+           rw [layoutConfirmed, code_cut]; decide +kernel\n\n\
          end AverCert.Artifact\n",
         imports = layout.imports,
         count = layout.func_types.len(),
@@ -314,5 +351,9 @@ fn render_artifact_layout(core_bytes: &[u8], analysis: &Analysis) -> Result<Stri
         lengths = packed_hex(layout.code_lengths.iter().map(|&l| l as u64))?,
         fn_types = fn_types.join(",\n   "),
         decls = decls.join(",\n   "),
+        type_cuts = nat_list(&layout.type_cuts),
+        export_cuts = nat_list(&layout.export_cuts),
+        code_cuts = nat_list(&layout.code_lengths),
+        bytes = "AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen",
     ))
 }

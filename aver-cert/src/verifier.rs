@@ -1075,19 +1075,19 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
         (format!("{manifest}.subject.exports = {names}"), "rfl"),
         (
             format!("_root_.AverCert.ClaimAxes.reportEntries {data} = {report_entries}"),
-            "by first | rfl | decide +kernel",
+            KERNEL_REPORT_PROOF,
         ),
         (
             format!("_root_.AverCert.ClaimAxes.reportFacets {data} = {report_facets}"),
-            "by first | rfl | decide +kernel",
+            KERNEL_REPORT_PROOF,
         ),
         (
             format!("{manifest}.obligations.map (fun o => o.policy) = {policies}"),
-            "rfl",
+            KERNEL_REPORT_PROOF,
         ),
         (
             format!("{manifest}.obligations.map (fun o => o.termination?) = {terminations}"),
-            "rfl",
+            KERNEL_REPORT_PROOF,
         ),
         (format!("{manifest}.subject.contracts = {contracts}"), "rfl"),
         (
@@ -1124,6 +1124,9 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     );
     let mut report = String::new();
     for (index, (statement, proof)) in report_pins.iter().enumerate() {
+        if *proof == KERNEL_REPORT_PROOF {
+            report.push_str("set_option maxHeartbeats 4000000 in\n");
+        }
         report.push_str(&format!(
             "theorem _root_.{REPORT_PIN_PREFIX}{index} :\n    {statement} :=\n  {proof}\n\n"
         ));
@@ -1147,6 +1150,14 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
            _root_.AverCert.Artifact.certificate\n"
     )
 }
+
+/// The proof of a report pin whose left side the wall computes from every
+/// plan (report entries and facets, policies, termination witnesses). The
+/// kernel decides it; the elaborator's defeq check on a large module runs past
+/// its default budget before it reaches the kernel, so the budget is raised
+/// for the pin's declaration alone. It moves a resource limit only: the kernel still checks
+/// the equation, and a runaway is stopped by the step's time limit.
+const KERNEL_REPORT_PROOF: &str = "by first | decide +kernel | rfl";
 
 /// Number of report pins [`checker_witness`] writes (they are numbered
 /// `report_pin_0 ..`); the audit walks every one of them.

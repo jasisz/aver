@@ -22,7 +22,9 @@
 //!   resolve to (the wall imports `Module`, so it is checker-rendered);
 //! * a package constant nested under a wall namespace;
 //! * a law statement whose literals hide a parenthesis that re-associates the
-//!   witness's conjunction.
+//!   witness's conjunction;
+//! * a section cut (the producer's declared entry lengths) that moves one
+//!   byte between two exports, or between two code entries.
 //!
 //! Gated behind `wasm` and skipped when `lake` is unavailable, like the other
 //! certificate suites.
@@ -432,4 +434,52 @@ fn cert_hardening_declines_a_law_statement_that_reassociates_its_pin() {
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "is not a single plain term-position line");
+}
+
+/// Move one byte from the first entry of the section cut `name` to the second:
+/// the count and the total length stay right, and every window after the
+/// first two is unchanged.
+fn shift_first_cut(layout: &Path, name: &str) {
+    let text = std::fs::read_to_string(layout).unwrap();
+    let head = format!("def {name} : List Nat :=\n  [");
+    let start = text.find(&head).expect("the layout declares the cut") + head.len();
+    let end = start + text[start..].find(']').unwrap();
+    let mut cuts: Vec<u64> = text[start..end]
+        .split(',')
+        .map(|x| x.trim().parse().unwrap())
+        .collect();
+    assert!(cuts.len() >= 2 && cuts[1] > 1, "{name}: {cuts:?}");
+    cuts[0] += 1;
+    cuts[1] -= 1;
+    let body = cuts
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(layout, format!("{}{body}{}", &text[..start], &text[end..])).unwrap();
+}
+
+/// The section cuts are producer hints: the wall decodes each declared entry
+/// on its own window and requires it to fill the window exactly. A cut that
+/// moves one byte between two exports decodes neither, and the package
+/// declines.
+#[test]
+fn cert_hardening_declines_a_lying_export_cut() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-exportcut") else {
+        return;
+    };
+    shift_first_cut(&cert.join("ArtifactLayout.lean"), "exportCuts");
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The same lie about the code section's entries.
+#[test]
+fn cert_hardening_declines_a_lying_code_cut() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-codecut") else {
+        return;
+    };
+    shift_first_cut(&cert.join("ArtifactLayout.lean"), "codeCuts");
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
 }

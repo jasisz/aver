@@ -389,6 +389,7 @@ fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, Stri
          open AverCert AverCert.Schema AverCert.AcceptedArtifact AverCert.TypeTable{}\n\n",
         if layout { " AverCert.DeclaredLayout" } else { "" }
     );
+    let split = splits_artifact_modules(analysis);
     let mut plan_ok = "/-- One plan's acceptance check against the staged artifact bytes. -/\n\
          noncomputable abbrev planOk : FnEntry → Bool :=\n  \
            entryAccepted AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n    \
@@ -398,16 +399,24 @@ fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, Stri
     if layout {
         plan_ok.push_str(
             "theorem types_ok : fnTypesConfirmed AverCert.ArtifactBytes.modBytes\n    \
-               AverCert.ArtifactBytes.modLen fnTypes = true := by decide +kernel\n\n\
+               AverCert.ArtifactBytes.modLen fnTypes = true := by\n  \
+               rw [fnTypesConfirmed, types_cut]; decide +kernel\n\n\
              theorem names_ok : exportNamesDistinct AverCert.ArtifactBytes.modBytes\n    \
-               AverCert.ArtifactBytes.modLen = true := by decide +kernel\n\n",
+               AverCert.ArtifactBytes.modLen = true :=\n  ",
         );
+        // A split package proves the export accounting in its own module, and
+        // the accounting decides the names distinct; a small one decides them.
+        plan_ok.push_str(if split {
+            "AverCert.SortedKeys.exportNamesDistinct_of_accounted exports_ok\n\n"
+        } else {
+            "by rw [exportNamesDistinct, exports_cut]; decide +kernel\n\n"
+        });
     }
     let proof = |decls: &str| {
         if layout {
             format!(
                 ":=\n  entries_of_fast layout_ok types_ok names_ok (ds := {decls}) rfl\n    \
-                 (by decide +kernel)\n\n"
+                 (by rw [entriesFast, exports_cut]; decide +kernel)\n\n"
             )
         } else {
             ":= by\n  decide +kernel\n\n".to_string()
@@ -435,8 +444,9 @@ fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, Stri
         )
     };
     let imports = format!(
-        "import AcceptedArtifact\nimport ArtifactBytes\nimport Manifest\n{}\n",
-        if layout { "import ArtifactLayout\n" } else { "" }
+        "import AcceptedArtifact\nimport ArtifactBytes\nimport Manifest\n{}{}\n",
+        if layout { "import ArtifactLayout\n" } else { "" },
+        if layout && split { "import ArtifactInterface\n" } else { "" }
     );
     let mut body = String::new();
     let mut chained = String::new();
@@ -446,7 +456,7 @@ fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, Stri
     }
     let end = "theorem plans_all : AverCert.manifest.fnPlans.all planOk = true := plans_from_0\n\n\
          end AverCert.Artifact\n";
-    if !splits_artifact_modules(analysis) {
+    if !split {
         return vec![(
             "ArtifactPlans.lean".to_string(),
             format!(
@@ -544,9 +554,14 @@ fn render_artifact(
                  decodedHostRole_eq, decodedHostRole_divmod, Bool.and_true, Bool.true_and,\n    \
                  AverCert.DeclaredLayout.Chars.carrierHelperAbsent_eq,\n    \
                  AverCert.DeclaredLayout.Chars.boxIdx_eq, AverCert.DeclaredLayout.Chars.toIndexIdx_eq,\n    \
-                 AverCert.DeclaredLayout.Chars.cmpIdx_eq]\n  \
+                 AverCert.DeclaredLayout.Chars.cmpIdx_eq{cuts}]\n  \
                  decide +kernel",
-                r.roles_lean_value()
+                r.roles_lean_value(),
+                cuts = if layout {
+                    ", CertDecode.carrierState, types_cut, exports_cut"
+                } else {
+                    ""
+                },
             ),
         ),
         _ => (
@@ -569,18 +584,34 @@ fn render_artifact(
     );
     // The String roles are decided through `roleTableFast`, which reads a
     // function's signature only when its type has a helper's shape.
-    let strings = "theorem strings_ok : decodedStringHostRoles data := by\n  \
+    // With a declared layout they read the type and code sections through
+    // their confirmed cuts.
+    let strings = if layout {
+        "theorem strings_ok : decodedStringHostRoles data := by\n  \
+         dsimp only [decodedStringHostRoles, data]\n  \
+         rw [← AverCert.DeclaredLayout.StringFast.roleTableFast_eq,\n    \
+         AverCert.DeclaredLayout.StringFast.roleTableFast, CertDecode.StringHost.decodeTypeSigs,\n    \
+         CertDecode.StringHost.bodyLocs, types_cut, code_cut]\n  \
+         decide +kernel\n\n"
+    } else {
+        "theorem strings_ok : decodedStringHostRoles data := by\n  \
          unfold decodedStringHostRoles\n  \
-         rw [← AverCert.DeclaredLayout.StringFast.roleTableFast_eq]; decide +kernel\n\n";
+         rw [← AverCert.DeclaredLayout.StringFast.roleTableFast_eq]; decide +kernel\n\n"
+    };
     // With a declared layout the closure scan reads each member's code entry
     // from it (one slice) instead of decoding the code section per member.
     let closure_ok = if layout {
         "theorem closure_ok : closureIsolation data = true :=\n  \
-         AverCert.DeclaredLayout.closureIsolation_of_layout layout_ok (by decide +kernel)\n\n"
+         AverCert.DeclaredLayout.closureIsolation_of_layout layout_ok\n    \
+         (AverCert.SortedKeys.closureIsolationL_of_S (by decide +kernel))\n\n"
     } else {
         "theorem closure_ok : closureIsolation data = true := by decide +kernel\n\n"
     };
-    let layout_import = if layout { "import ArtifactLayout\n" } else { "" };
+    let layout_import = if layout {
+        "import ArtifactLayout\nimport SortedKeys\n"
+    } else {
+        ""
+    };
     let exports = format!(
         "theorem framing_ok : CertDecode.moduleFramingValid data.modBytes data.modLen = true := by\n  \
            decide +kernel\n\n\
@@ -588,7 +619,7 @@ fn render_artifact(
            exportsAccounted_of_chars data\n    \
            {obligation_names}\n    \
            {declared_names}\n    \
-           rfl rfl (by decide +kernel)\n\n\
+           rfl rfl {exports_proof}\n\n\
          theorem imports_ok : importsWithinCapabilities data = true :=\n  \
            AverCert.DeclaredLayout.Chars.importsWithinCapabilities_of_chars data\n    \
            {capabilities}\n    \
@@ -603,6 +634,12 @@ fn render_artifact(
                 .collect::<Vec<_>>(),
             "\n     "
         ),
+        // With a declared layout the export section is read through its cut.
+        exports_proof = if layout {
+            "(AverCert.SortedKeys.exportsAccountedOf_of_fast exports_cut (by decide +kernel))"
+        } else {
+            "(by decide +kernel)"
+        },
         capabilities = lean_char_pairs(&analysis.module_envelope.capabilities),
         declared_names = lean_char_lists(
             &declared_uncertified(analysis)
@@ -614,7 +651,12 @@ fn render_artifact(
     );
     // With a declared layout the helper types are read from it.
     let rest_proof = if layout {
-        "(AverCert.DeclaredLayout.plansAcceptedRest_of_layout layout_ok (by decide +kernel))"
+        "(AverCert.DeclaredLayout.plansAcceptedRest_of_layout layout_ok (by\n    \
+         dsimp only [AverCert.DeclaredLayout.plansAcceptedRestL, data]\n    \
+         simp only [AverCert.TypeTable.typeTableConfirmed, AverCert.TypeTable.carrierConfirmed,\n      \
+         CertDecode.carrierState, AverCert.DeclaredLayout.roleTypesPinnedL,\n      \
+         AverCert.DeclaredLayout.roleTypePinnedL, AverCert.WasmSlice.typeSectionMatches, types_cut]\n    \
+         decide +kernel))"
     } else {
         "(by decide +kernel)"
     };
@@ -669,7 +711,7 @@ fn render_artifact(
         ),
         (
             "ArtifactStrings.lean".to_string(),
-            part("The String helper roles, decoded from the module.", "", strings),
+            part("The String helper roles, decoded from the module.", layout_import, strings),
         ),
         (
             "ArtifactClosure.lean".to_string(),
@@ -679,7 +721,7 @@ fn render_artifact(
             "ArtifactInterface.lean".to_string(),
             part(
                 "The module's framing, exports, imports and start function.",
-                "",
+                layout_import,
                 &exports,
             ),
         ),

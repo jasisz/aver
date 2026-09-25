@@ -115,6 +115,8 @@ The wall is one hash-addressed unit of 22 Lean files. By module:
 - `GrammarTotal`: the L3 check (`checkTermGroup`) and `fn_certified_total`;
 - `TypeTable`: the lowering context from the declarations, and their confirmation against the type and data sections;
 - `DeclaredLayout`: the producer-declared module layout (where each function's code entry, type and export entry are), confirmed against the decoders once, with a proof that the checks reading it imply the decoder-based ones, so the declaration saves searching and decoding without changing what is accepted;
+- `ByteWindow`: section cuts, the producer-declared byte length of every entry of the type, export and code sections; each entry is decoded on its own window, which keeps the kernel's numerals entry-sized instead of section-sized, and the decoders are proved equal to lazy readings of the confirmed windows;
+- `SortedKeys`: the export accounting and closure isolation decided by merge sorts and walks over sorted numeric keys, with proofs that imply the balanced-tree checks they replace;
 - `ArithTemplateDerisk`: the Int helper body templates;
 - `AcceptedArtifactCore`, `AcceptedArtifact`: the derived obligations and the acceptance predicate;
 - `ClaimAxes`: the required runtime contracts and the report data;

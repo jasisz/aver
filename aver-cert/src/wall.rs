@@ -32,6 +32,8 @@ pub const CERT_ACCEPTED_ARTIFACT_CORE: &str =
 pub const CERT_ACCEPTED_ARTIFACT: &str =
     include_str!("../assets/wall/current/AcceptedArtifact.lean");
 pub const CERT_DECLARED_LAYOUT: &str = include_str!("../assets/wall/current/DeclaredLayout.lean");
+pub const CERT_BYTE_WINDOW: &str = include_str!("../assets/wall/current/ByteWindow.lean");
+pub const CERT_SORTED_KEYS: &str = include_str!("../assets/wall/current/SortedKeys.lean");
 pub const CERT_CLAIM_AXES: &str = include_str!("../assets/wall/current/ClaimAxes.lean");
 pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
     include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
@@ -52,7 +54,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 22] = [
+pub const SOURCES: [Source; 24] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -72,6 +74,10 @@ pub const SOURCES: [Source; 22] = [
     Source {
         name: "ArithTemplateDerisk.lean",
         contents: CERT_ARITH_TEMPLATE_DERISK,
+    },
+    Source {
+        name: "ByteWindow.lean",
+        contents: CERT_BYTE_WINDOW,
     },
     Source {
         name: "CertDecode.lean",
@@ -130,6 +136,10 @@ pub const SOURCES: [Source; 22] = [
         contents: CERT_SCHEMA_CORE,
     },
     Source {
+        name: "SortedKeys.lean",
+        contents: CERT_SORTED_KEYS,
+    },
+    Source {
         name: "TypeTable.lean",
         contents: CERT_TYPE_TABLE,
     },
@@ -145,9 +155,10 @@ pub const SOURCES: [Source; 22] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 20] = [
+pub const PRISTINE_ROOTS: [&str; 22] = [
     "CertPrelude",
     "CertDecode",
+    "ByteWindow",
     "ArithTemplateDerisk",
     "WasmSlice",
     "Wasip2Envelope",
@@ -161,6 +172,7 @@ pub const PRISTINE_ROOTS: [&str; 20] = [
     "TypeTable",
     "AcceptedArtifactCore",
     "DeclaredLayout",
+    "SortedKeys",
     "ClaimAxes",
     "AcceptanceSoundnessCore",
     "AcceptanceSoundness",
