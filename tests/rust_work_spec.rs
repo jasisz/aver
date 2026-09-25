@@ -517,6 +517,62 @@ fn a_record_gives_up_its_fields_at_its_last_use() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// An update that replaces a field read earlier builds, and the read moves.
+///
+/// `progress = flight.progress` followed by
+/// `Flight.update(flight, progress = grow(progress, key))` moved the field
+/// out in the `let` of a mutual tail-call arm and then moved the whole
+/// `flight` into the update, which rustc rejects (E0382). The arm now sees
+/// the same field-move facts as any other body, so the update keeps the
+/// other fields with `..flight`. The field read inside the update
+/// (`grow(flight.progress, ...)`) and the one bound by a `let` both move into
+/// `grow`, which then takes its Map by value and inserts in place. A loop
+/// that reads a field and later hands on the whole record clones the field.
+#[test]
+fn an_update_after_a_field_read_of_the_replaced_field_builds_and_moves() {
+    let name = "rust_update_after_field_move";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["300"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for moved in [
+            "pub fn grow(mut progress @ _: aver_rt::AverMap<",
+            "let progress @ _ = flight.progress;\n",
+            "__MutualTco1::Pong(Flight { progress: grow(progress, left.clone()), ..flight }",
+            "__MutualTco1::Ping(Flight { progress: grow(flight.progress, ",
+            "Flight { progress: grow(progress, key), ..flight }",
+            "Flight { progress: grow(flight.progress, key), ..flight }",
+            "let progress @ _ = flight.progress.clone();",
+        ] {
+            if !entry.contains(moved) {
+                return Err(format!(
+                    "{name}: missing `{moved}` in the generated entry module:\n{entry}"
+                ));
+            }
+        }
+        if entry.contains("let mut __updated = flight; __updated.progress") {
+            return Err(format!(
+                "{name}: an update moves a record whose field was already moved out:\n{entry}"
+            ));
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// Runs one backend against a loopback peer, on a port nobody else holds.
 fn with_peer(run: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
     let port = free_port();
