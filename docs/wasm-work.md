@@ -181,6 +181,13 @@ These are trusted host helpers; Aver source cannot call them as constructors.
 generated coordinators. The run state is an opaque reference kept in its own
 instance. Only job data moves to workers.
 
+A program that calls `Run.fail` also imports `aver.run_fail(anyref message, i32 caller)`
+and `aver.run_failure(anyref reason, i32 caller) -> anyref`. The module keeps
+the reason itself, so a live host answers `run_fail` with nothing and hands the
+`run_failure` argument back unchanged. The recorder writes both, and a replay
+answers `run_failure` with the recorded reason. `host.mjs` supplies both. When a
+turn fails the run, `runCoordinator()` answers `{ err: reason }`.
+
 JS transport uses BigInt for every Int, ordinary numbers for Float, strings,
 null for Unit, arrays for tuples/lists/vectors, arrays of pairs for maps,
 objects for records, `{ variant, fields }` for sums, `{ ok }`/`{ err }` for

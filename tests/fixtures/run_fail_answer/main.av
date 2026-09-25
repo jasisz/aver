@@ -1,0 +1,53 @@
+module Main
+    intent = "An answer module fails the run while the entry's stop policy is also asked. `quit` ends a process in the first turn, so stop ends the run before the clock breaks; `late` ends it in the turn the clock breaks, and the failure is what the run answers."
+    depends [Clock, Ticks]
+    effects [Args.get, Clock.tick, Console.print, yield]
+
+fn main() -> Result<Unit, String>
+    ? "Runs the loop and says how it ended."
+    ! [Args.get, Console.print]
+    match Run.all()
+        Result.Ok(_) -> Console.print("the run ended cleanly")
+        Result.Err(why) -> Console.print("the run failed: {why}")
+    Result.Ok(Unit)
+
+fn stop(view: Run.View) -> Bool
+    ? "The run stops once one of its two processes is over."
+    Map.len(view.pending) < 2
+
+verify stop
+    stop(Run.View(pending = {}, ready = [], askable = [], dropped = 0, stopping = false)) => true
+
+fn ticker() -> Unit
+    ? "Takes a tick every turn until the run stops."
+    ! [Clock.tick, Console.print, yield]
+    ticking(1)
+
+fn ticking(turn: Int) -> Unit
+    ? "One tick per turn."
+    ! [Clock.tick, Console.print, yield]
+    Console.print("ticker saw tick {Clock.tick()} in turn {turn}")
+    ticking(turn + 1)
+
+fn quitter() -> Unit
+    ? "Takes one tick with `quit` and two with `late`, then is over."
+    ! [Args.get, Clock.tick, Console.print, yield]
+    quitting(1, lastTurn(Args.get()))
+
+fn lastTurn(args: List<String>) -> Int
+    ? "The turn quitter is over in."
+    match List.contains(args, "quit")
+        true -> 1
+        false -> 2
+
+verify lastTurn
+    lastTurn(["quit"]) => 1
+    lastTurn(["late"]) => 2
+
+fn quitting(turn: Int, last: Int) -> Unit
+    ? "One tick per turn until the last one."
+    ! [Clock.tick, Console.print, yield]
+    Console.print("quitter saw tick {Clock.tick()} in turn {turn}")
+    match turn >= last
+        true -> Unit
+        false -> quitting(turn + 1, last)
