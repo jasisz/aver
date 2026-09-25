@@ -1,5 +1,6 @@
 mod classify;
 mod expr;
+mod field_take;
 pub mod mir;
 mod resolve_helpers;
 
@@ -1308,6 +1309,9 @@ pub(super) struct FnCompiler<'a> {
     /// to the legacy "everyone owned" behaviour for backwards
     /// compatibility; the alias pass always runs in real builds.
     aliased_slots: std::sync::Arc<Vec<bool>>,
+    /// Fields the record literals and updates being compiled may take out of
+    /// a local record, innermost last. See `field_take`.
+    field_takes: Vec<field_take::FieldTakePlan>,
 }
 
 impl<'a> FnCompiler<'a> {
@@ -1349,6 +1353,7 @@ impl<'a> FnCompiler<'a> {
             line_table: Vec::new(),
             last_noted_line: 0,
             aliased_slots: std::sync::Arc::new(Vec::new()),
+            field_takes: Vec::new(),
         }
     }
 
