@@ -11,6 +11,7 @@ pub use citation_order::{CitationCycle, order_verify_blocks_for_citation};
 mod crypto;
 mod decl_order;
 mod expr;
+pub mod isolate;
 mod kernel_decide;
 mod law_auto;
 pub mod lemma_calc;
@@ -109,8 +110,8 @@ pub enum VerifyEmitMode {
     TheoremSkeleton,
 }
 
-// RecursionPlan / ProofModeIssue moved to shared `crate::codegen::recursion`
-// so the Dafny backend can reuse the same classifier. Re-export here so
+// RecursionPlan / ProofModeIssue live in shared `crate::codegen::recursion`.
+// Re-export here so
 // existing `lean::RecursionPlan` / `lean::ProofModeIssue` call sites keep
 // working without churn.
 pub use crate::codegen::recursion::{ProofModeIssue, RecursionPlan};
@@ -312,7 +313,18 @@ pub fn transpile_for_proof_mode(
     // fact (recursive_fns, mutual_tco_members, proof_ir) once.
     // Synthetic-AST tests that bypass the pipeline call refresh_facts
     // themselves before reaching this fn.
-    transpile_unified(ctx, verify_mode, LeanEmitMode::Proof, false)
+    let mut output = transpile_unified(ctx, verify_mode, LeanEmitMode::Proof, false);
+    // One law whose proof escapes its `sorry` floor must not fail the whole
+    // build: see `isolate`. Only files that carry laws hold proof theorems.
+    for (path, content) in &mut output.files {
+        if path.ends_with(".lean")
+            && (content.contains(LAW_CLASS_MARKER_PREFIX)
+                || content.contains(LAW_OBLIGATION_MARKER_PREFIX))
+        {
+            *content = isolate::isolate_proof_theorems(content);
+        }
+    }
+    output
 }
 
 /// Proof-mode transpilation for an artifact CERTIFICATE's reused model

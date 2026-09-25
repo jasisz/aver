@@ -3,8 +3,7 @@ module RandomnessParadox
         "The same verify law reads two ways: aver verify passes under its chosen stub,"
         "while aver verify --hostile exposes the hidden oracle assumption."
         "Proof export keeps this singleton-domain constant claim as checked-domain/sample evidence"
-        "instead of inventing a universal theorem: Lean reports universal:no,"
-        "and Dafny's strict check rejects the omitted universal obligation."
+        "instead of inventing a universal theorem: Lean reports universal:no."
     effects [Console, Random]
 
 fn distinctStub(path: BranchPath, n: Int) -> Float
@@ -25,8 +24,7 @@ verify twoFloatsDistinct law alwaysDistinct
 fn main() -> Unit
     ! [Console.print]
     Console.print("aver verify: passes under distinctStub; --hostile fails under all three Random.float profiles")
-    Console.print("aver proof --backend lean --check: checked domain builds; universal:no")
-    Console.print("aver proof --backend dafny --check: Z3 has 0 errors; gate rejects 1 omitted obligation")
+    Console.print("aver proof --check: checked domain builds; universal:no")
 
 verify distinctStub
     distinctStub(BranchPath.Root, 0) => 1.0

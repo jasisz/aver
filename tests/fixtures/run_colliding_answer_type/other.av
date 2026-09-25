@@ -1,0 +1,13 @@
+module Other
+    intent = "Fixture: a second module declaring a type named Heard."
+    exposes [Heard, quiet]
+
+record Heard
+    why: String
+
+fn quiet() -> Heard
+    ? "Nothing heard."
+    Heard(why = "")
+
+verify quiet
+    quiet() => Heard(why = "")

@@ -1,0 +1,16 @@
+module Squares
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "The job kind that squares one whole number off the turn."
+    exposes []
+
+operation begin(task: Int) -> Result<Work.Job, String>
+    ? "Starts one square off the turn and answers its handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "None while the job is queued or runs, Some(square) once it finished."
+    oracle = generativeOutput
+    replay = recorded

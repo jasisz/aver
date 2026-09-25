@@ -1,0 +1,14 @@
+module Clock
+    kind = capability
+    semantics = effectful
+    intent = "The tick the ticker waits on."
+    exposes [Tick, tick]
+
+type Tick
+    Tock
+    Closed(Int)
+
+operation tick() -> Clock.Tick
+    ? "The next tick, or Closed once every job has landed, carrying what they scored together."
+    oracle = generative
+    replay = recorded

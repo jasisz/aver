@@ -300,25 +300,19 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
         );
     }
 
-    // Keyed on the wording built by `crate::yield_lowering::coordinator`.
-    if msg.contains("The view the loop fills is exactly:") {
-        return (
-            "view-shape",
-            None,
-            Vec::new(),
-            Some(
-                "Declare the view record and the marker sum exactly as the message prints them: the generated loop fills every field and one constructor per process"
-                    .to_string(),
-            ),
-        );
-    }
-    if msg.contains("aver.toml declares [run]") || msg.contains("aver.toml: [run] names") {
+    // Keyed on the wording built by `crate::yield_lowering::coordinator` and
+    // the trigger in `crate::yield_lowering`.
+    if msg.contains("the generated loop")
+        || msg.contains("the generated run table")
+        || msg.starts_with("`process ")
+        || msg.contains("calls Run.all()")
+    {
         return (
             "run-binding",
             None,
             Vec::new(),
             Some(
-                "A program that asks for its loop to be generated writes the processes, the answer modules and the three policies, and nothing the loop would write for it"
+                "An entry whose loop is generated writes the processes, one `process ... seated by ...` line per keyed process, and optionally `stop` and `admit`; each answer module has `fresh()`"
                     .to_string(),
             ),
         );

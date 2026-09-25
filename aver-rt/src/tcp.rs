@@ -897,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn poll_times_out_cleanly_and_rejects_unknown_handles() {
+    fn poll_times_out_cleanly_and_reports_unknown_handles_ready() {
         let (release_tx, release_rx) = mpsc::channel();
         let (connection, server) = loopback_connection(move |_| {
             release_rx.recv().expect("hold quiet peer open");
@@ -908,11 +908,27 @@ mod tests {
                 .expect("quiet poll")
                 .is_empty()
         );
+        // A handle the reactor no longer knows is reported ready, at once and
+        // beside the quiet one, the way a forgotten job counts as ready: the
+        // next operation on it gives the real error, and one stale key does
+        // not fail the whole wait.
         let unknown = TcpConnection::from_parts("tcp-missing".to_string(), String::new(), 0);
+        let started = Instant::now();
+        assert_eq!(
+            poll(
+                &[
+                    TcpSocket::Connected(connection.clone()),
+                    TcpSocket::Connected(unknown.clone()),
+                    TcpSocket::Sending(unknown),
+                ],
+                5000
+            )
+            .expect("a wait over an unknown handle answers"),
+            vec![1, 2]
+        );
         assert!(
-            poll(&[TcpSocket::Connected(unknown)], 0)
-                .expect_err("unknown handle")
-                .contains("unknown connection")
+            started.elapsed() < Duration::from_millis(2500),
+            "a wait with an unknown handle in it slept instead of reporting it"
         );
 
         close(&connection).expect("close client");

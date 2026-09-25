@@ -87,8 +87,8 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
     if intro_names.len() != 1 {
         return None;
     }
-    let f = shared::entry_qualified_lean_name(ctx, &pair.f_src);
-    let flist = shared::entry_qualified_lean_name(ctx, &pair.flist_src);
+    let f = shared::owner_qualified_lean_name(ctx, &pair.f_src);
+    let flist = shared::owner_qualified_lean_name(ctx, &pair.flist_src);
     let induct = format!("{f}.induct");
     let uid = format!(
         "{}_{}",
@@ -111,8 +111,8 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
             (Vec::new(), motive2, cases)
         }
         Claim::Equational { g_src, glist_src } => {
-            let g = shared::entry_qualified_lean_name(ctx, g_src);
-            let glist = shared::entry_qualified_lean_name(ctx, glist_src);
+            let g = shared::owner_qualified_lean_name(ctx, g_src);
+            let glist = shared::owner_qualified_lean_name(ctx, glist_src);
             // motive2 ts := fList (gList ts) = fList ts  (R_naive).
             let motive2 = format!("fun ts => {flist} ({glist} ts) = {flist} ts");
             // Container lemmas (numeric walker × ++/reverse), floored so a

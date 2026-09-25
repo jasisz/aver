@@ -1191,7 +1191,7 @@ fn emit_pattern_check(
             fc.emit_op(MATCH_INT_LITERAL);
             fc.emit_i64(*v);
             let patch = fc.offset();
-            fc.emit_i16(0);
+            fc.emit_i32(0);
             Ok(vec![patch])
         }
         MirPattern::Literal(lit) => {
@@ -1207,13 +1207,13 @@ fn emit_pattern_check(
         MirPattern::EmptyList => {
             fc.emit_op(MATCH_NIL);
             let patch = fc.offset();
-            fc.emit_i16(0);
+            fc.emit_i32(0);
             Ok(vec![patch])
         }
         MirPattern::Cons { head, tail, .. } => {
             fc.emit_op(MATCH_CONS);
             let patch = fc.offset();
-            fc.emit_i16(0);
+            fc.emit_i32(0);
             // Successful match: extract head/tail and bind into
             // the resolver-assigned slots. The HIR walker does
             // the same shape; MIR's `LocalId` directly carries
@@ -1271,7 +1271,7 @@ fn emit_pattern_check(
             fc.emit_op(MATCH_VARIANT);
             fc.emit_u16(arena_ctor_id as u16);
             let patch = fc.offset();
-            fc.emit_i16(0);
+            fc.emit_i32(0);
             // EXTRACT_FIELD doesn't consume the subject — value
             // stays on the stack between field extractions.
             // Wildcard `_` bindings carry the sentinel slot;
@@ -1302,7 +1302,7 @@ fn emit_pattern_check(
                 &format!("tuple pattern has {} items", items.len()),
             )?);
             let tuple_fail = fc.offset();
-            fc.emit_i16(0);
+            fc.emit_i32(0);
             let mut all_patches = vec![tuple_fail];
             for (i, sub) in items.iter().enumerate() {
                 let item_index = operand_u8(i, &format!("tuple pattern uses item index {i}"))?;
@@ -1337,7 +1337,7 @@ fn emit_pattern_check(
                     fc.emit_op(MATCH_UNWRAP);
                     fc.emit_u8(kind);
                     let patch = fc.offset();
-                    fc.emit_i16(0);
+                    fc.emit_i32(0);
                     // MATCH_UNWRAP replaces TOS with the inner
                     // value; the binding (when present) takes a
                     // DUP + store-or-pop — same shape the HIR
@@ -1437,7 +1437,7 @@ fn try_emit_match_dispatch_const(
         &format!("match dispatch table has {} entries", entries.len()),
     )?);
     let default_offset_patch = fc.offset();
-    fc.emit_i16(0); // default_offset — patched after the table
+    fc.emit_i32(0); // default_offset — patched after the table
 
     for (kind, expected, result) in &entries {
         fc.emit_u8(*kind);
@@ -1454,10 +1454,9 @@ fn try_emit_match_dispatch_const(
     // `table_end` (the opcode handler adds `default_offset` to
     // ip-after-table-end).
     let default_start = fc.offset();
-    let default_rel = (default_start as isize - table_end as isize) as i16;
-    let bytes = (default_rel as u16).to_be_bytes();
-    fc.code_mut()[default_offset_patch] = bytes[0];
-    fc.code_mut()[default_offset_patch + 1] = bytes[1];
+    let default_rel = super::jump_offset(table_end, default_start);
+    fc.code_mut()[default_offset_patch..default_offset_patch + 4]
+        .copy_from_slice(&default_rel.to_be_bytes());
 
     // Default arm body — subject was popped+repushed by the
     // opcode on miss. Bind it if the pattern is `Bind(local)`,
@@ -1580,7 +1579,7 @@ fn emit_last_arm_bindings(
                 };
                 fc.emit_op(MATCH_UNWRAP);
                 fc.emit_u8(kind);
-                fc.emit_i16(0); // no-fail (shape known)
+                fc.emit_i32(0); // no-fail (shape known)
                 emit_dup_and_bind(fc, *b)?;
             }
             Ok(())

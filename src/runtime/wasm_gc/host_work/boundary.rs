@@ -138,21 +138,10 @@ fn dispatch_inner(
                     .ok_or("work: malformed recorded trace token")
             })
             .transpose()?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        let outcome = loop {
-            let generation = work.engine.generation();
-            let outcome = work.begin(index, (*task).clone(), trace);
-            if recorded.is_some()
-                && outcome
-                    .as_ref()
-                    .is_err_and(|error| error.starts_with("work: job limit "))
-                && std::time::Instant::now() < deadline
-            {
-                work.engine.wait_until(generation, deadline);
-            } else {
-                break outcome;
-            }
-        };
+        // The engine queues a job begun at the limit rather than refusing it,
+        // so a replay starts the recorded job whatever `max-jobs` this host
+        // runs with.
+        let outcome = work.begin(index, (*task).clone(), trace);
         let json = match &outcome {
             Ok(job) => imports::json_ok_work_job(trace.unwrap_or(job.id()) as i64),
             Err(error) => serde_json::json!({"$err": error}),

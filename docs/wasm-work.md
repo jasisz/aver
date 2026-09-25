@@ -7,11 +7,15 @@ the compiled Module. A deployment pack also uses its precompiled code for
 workers, so the destination needs no compiler or JIT.
 
 The Aver surface stays `Kind.begin`, `Kind.take`, `Work.cancel`, and `Wait.poll`.
-`begin` returns immediately and refuses admission at `[work] max-jobs`.
-`take` may return `Ok(None)` until the job completes. A combined wait wakes for
-sockets, for completed or cancelled jobs, or at its timeout. Cancellation
-interrupts a running Wasm body through the host's epoch checks, and that
-includes a recursive body that never returns. A cancelled body keeps its
+`begin` returns immediately and never refuses at `[work] max-jobs`: a job begun
+while that many bodies run waits in the host's queue and starts, in the order it
+was begun, when one of them stops. `take` may return `Ok(None)` until the job
+completes, and a queued job is not ready. A combined wait wakes for sockets, for
+completed or cancelled jobs, at its timeout, or within about 100 ms of a stop
+request once the program watches for one; it is the same wait loop the VM and
+generated Rust run. Cancellation takes a queued job out of the queue so it never
+starts, and interrupts a running Wasm body through the host's epoch checks,
+which includes a recursive body that never returns. A cancelled body keeps its
 execution slot until it has actually stopped. When the program exits, the
 remaining jobs are cancelled with bounded cleanup.
 
@@ -24,7 +28,9 @@ and transport.
 
 The native host records and replays the same operations as the VM. Replay keeps
 the recorded handle tokens and readiness, recomputes pure jobs and checks their
-completed results. The existing recording format still refuses integers outside
+completed results. Replay starts every recorded job whatever limit the host runs
+with, and waits up to 30 seconds for a recomputation before it fails; the VM
+waits 5 seconds and lets the recorded answer stand. The existing recording format still refuses integers outside
 i64 and non-finite floats. That limit does not apply to live job transport.
 
 ## JavaScript host
@@ -56,12 +62,24 @@ const host = await createWorkHost(module, {
 await host.runCoordinator();
 ```
 
+`maxJobs` is the adapter's own limit, and without it the lower of the host's
+`hardwareConcurrency` and 8. The adapter does not read `[work] max-jobs` from
+the manifest, because the compiled module carries no limit. A job begun at the
+limit is queued, never refused, and starts on the next free Worker in the order
+it was begun. Cancelling a running job terminates its Worker at once, so its
+place is free at once and a replacement Worker starts; cancelling a queued job
+takes it out of the queue.
+
 The adapter provides Console.print, Time.unixMs and cooperative stopping.
 Pass other synchronous imports through `options.imports`. A combined socket
 wait also needs `options.pollSockets(entries, timeoutMs, signal)`, which
 returns a promise of ready keys. Entries are `[key, decoded Wait.Item]` pairs.
 The key has whatever type the program keys its wait by: a whole number arrives
 as a BigInt, and a key of the program's own type arrives as its decoded value.
+A socket the adapter no longer knows (closed, or dropped after an error) should
+be answered as ready, the way the native hosts answer it: the operation the
+program runs on it next reports the real error, and one stale key must not fail
+the whole wait.
 The callback must answer with keys taken from the `entries` it was given, not
 keys it built itself, because the wait orders and dedups its answer by each
 key's position in that list. A key from anywhere else is refused by name. The
@@ -172,6 +190,7 @@ results.
 
 WASI 0.2 stays on the inline lowering and does not get these non-WASI imports.
 Its `begin` computes immediately, and `max-jobs` still warns that it has no
-effect. Certifying the new Work import namespace needs a separate verifier ABI
+effect. There `take` never answers `Ok(None)`, a job whose body never ends
+blocks the turn, and a job whose body fails stops the component. Certifying the new Work import namespace needs a separate verifier ABI
 update; the current verifier rejects it. This change does not widen the set of
 imports the certificate wall accepts.

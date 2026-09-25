@@ -1,0 +1,10 @@
+module Calc
+    kind = capability
+    semantics = effectful
+    intent = "What the process asks for: a square, computed off the turn by whoever answers."
+    exposes [square]
+
+operation square(n: Int) -> Result<Int, String>
+    ? "The square of n, or why it could not be computed."
+    oracle = generative
+    replay = recorded

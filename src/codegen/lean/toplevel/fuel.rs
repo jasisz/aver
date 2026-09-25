@@ -1517,7 +1517,6 @@ pub(in crate::codegen::lean) fn native_measure_refusal(
 /// `MutualSizeOfRanked` — a Lean 4 `mutual ... end` block with one
 /// `termination_by` per def, the lex tuple `(measure, rank)` chosen by the
 /// call edge analysis so it decreases on every call between the members.
-/// Mirrors the Dafny native path from #83.
 ///
 /// Returns `None` when:
 /// - SCC isn't fully `MutualSizeOfRanked` (caller picks fuel)

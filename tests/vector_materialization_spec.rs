@@ -27,10 +27,6 @@ fn vector_emitters_do_not_duplicate_the_materialization_number() {
             include_str!("../src/codegen/lean/builtins.rs"),
         ),
         (
-            "src/codegen/dafny/expr.rs",
-            include_str!("../src/codegen/dafny/expr.rs"),
-        ),
-        (
             "src/codegen/wasm_gc/types.rs",
             include_str!("../src/codegen/wasm_gc/types.rs"),
         ),

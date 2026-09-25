@@ -9,16 +9,17 @@ pub(super) struct Cli {
     pub(super) command: Commands,
 }
 
-/// Proof backend target.
-#[derive(Clone, Debug, Default, ValueEnum)]
-pub(super) enum ProofBackend {
-    /// Generate Lean 4 proof project (default).
-    #[default]
-    #[value(name = "lean")]
-    Lean,
-    /// Generate Dafny verification file (Z3-powered).
-    #[value(name = "dafny")]
-    Dafny,
+/// Proof backend. Lean is the only one; the flag stays so existing
+/// `--backend lean` invocations keep working, and `--backend dafny` fails
+/// with a message saying the backend was removed.
+fn parse_proof_backend(value: &str) -> Result<String, String> {
+    match value {
+        "lean" => Ok(value.to_string()),
+        "dafny" => Err("the Dafny backend was removed; use Lean (the default)".to_string()),
+        other => Err(format!(
+            "unknown proof backend `{other}`; the only backend is `lean`"
+        )),
+    }
 }
 
 /// Proof verify emission mode.
@@ -671,32 +672,23 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
-        /// Proof backend: lean (default) or dafny
-        #[arg(long, default_value = "lean")]
-        backend: ProofBackend,
+        /// Proof backend. `lean` is the only one (and the default).
+        #[arg(long, default_value = "lean", value_parser = parse_proof_backend)]
+        backend: String,
         /// How to emit `verify` cases and law theorems in generated Lean
         #[arg(long, default_value = "auto")]
         verify_mode: ProofVerifyMode,
         /// After generating the proof project, invoke the backend
-        /// verifier (`dafny verify` / `lake build`) inside the
+        /// verifier (`lake build`) inside the
         /// output directory and report its exit status. Non-zero
         /// exit on any verification failure. Useful in CI to gate
         /// regressions on pinned `ProofStrategy` choices.
         #[arg(long)]
         check: bool,
-        /// Check mode (`--check`/`--check-json`) only: tolerate up to N Dafny
-        /// verification
-        /// errors. Gates regressions upward for examples whose laws
-        /// don't yet have a closing strategy. N is a WHOLE-FILE total,
-        /// not per-law: `--error-budget 2` passes a file with two
-        /// independently-failing laws. Defaults to 0 (strict).
-        #[arg(long, requires = "check_mode")]
-        error_budget: Option<usize>,
         /// Check mode (`--check`/`--check-json`) only: tolerate up to N
-        /// residual Lean `sorry`s (and,
-        /// on Dafny, `assume {:axiom}` trust-escapes). Symmetric to
-        /// `--error-budget`. Like it, N is a WHOLE-FILE total, not
-        /// per-law. Defaults to 0 (strict).
+        /// residual Lean `sorry`s. N is a WHOLE-FILE total, not per-law:
+        /// `--sorry-budget 2` passes a file with two independently-open
+        /// laws. Defaults to 0 (strict).
         #[arg(long, requires = "check_mode")]
         sorry_budget: Option<usize>,
         /// Check mode (`--check`/`--check-json`) only: tolerate up to N claims
@@ -714,21 +706,18 @@ pub(super) enum Commands {
         /// Emit a structured JSON summary
         /// (`{backend, errors, sorries, budget, passed, ...}`) to stdout
         /// instead of streaming the verifier's raw output. Implies check
-        /// mode, so it works without `--check`. Additive
-        /// telemetry fields: Lean carries `build_errors` (hard lake/lean
-        /// errors distinct from sorries), Dafny carries `timeouts`
-        /// (per-lemma timeouts the `errors` count is blind to); both are
-        /// informational and never change exit codes. Exit codes
+        /// mode, so it works without `--check`. The additive
+        /// `build_errors` field (hard lake/lean errors distinct from
+        /// sorries) is informational and never changes exit codes. Exit codes
         /// unchanged: 0 within budget, 1 over, 2 on harness failure.
         #[arg(long)]
         check_json: bool,
         /// Explain open proof steps in Aver: source locations, goals,
         /// assumptions, previous because results, and explicit using
         /// requirements, plus isolated citation applications and their
-        /// remaining premises where supported (Lean). Check mode only. JSON adds
+        /// remaining premises. Check mode only. JSON adds
         /// `explanations` keyed by law/step. Checker limits are distinguished
-        /// from unproved statements. Dafny adds `claims` with exported/checked/unresolved
-        /// status; a failing module grants no per-law credit. Technical output is saved in
+        /// from unproved statements. Technical output is saved in
         /// proof_backend.log (citation probes: proof_citations.log;
         /// unavailable helper suggestions: proof_candidates.log).
         /// Existing `open_goals` / manifest `open_goal`
@@ -738,7 +727,7 @@ pub(super) enum Commands {
         /// diagnostic fields are emitted.
         #[arg(long, requires = "check_mode")]
         explain: bool,
-        /// Check mode (`--check`/`--check-json`) only, Lean-only: MINIMIZE
+        /// Check mode (`--check`/`--check-json`) only: MINIMIZE
         /// each auto-proof. The emitter
         /// pins a deterministic `first | (tactic₁) | … | sorry` PORTFOLIO at
         /// every law (it cannot know statically which alternative will close);
@@ -759,7 +748,7 @@ pub(super) enum Commands {
         /// that closes for real loses its alternation and floor.
         #[arg(long, requires = "check_mode")]
         minimize: bool,
-        /// Mathlib break-glass tier (Lean-only, opt-in). DEFAULT OFF: the
+        /// Mathlib break-glass tier (opt-in). DEFAULT OFF: the
         /// generated proof is byte-identical to today — pure core, NO Mathlib
         /// import in any file, same tiers. When set, a `when`-law that WALLS in
         /// core (no core strategy closes it universally) gets an additional
@@ -784,8 +773,8 @@ pub(super) enum Commands {
         /// in tier (universal > bounded > sampled > failed), whose recorded
         /// kernel-axiom set grew (any axiom present now but not in that law's
         /// own baseline record — whitelisted or not), or whose backend
-        /// changed. New laws are allowed. Implies a verifier run; Lean-only
-        /// (Dafny emits no per-law identity). Exit 0 clean, 1 on regression,
+        /// changed. New laws are allowed. Implies a verifier run. Exit 0
+        /// clean, 1 on regression,
         /// 2 on harness failure (unreadable/corrupt baseline, duplicate law
         /// identity, verifier absent).
         ///
@@ -799,7 +788,7 @@ pub(super) enum Commands {
         /// Regenerate the `--gate` baseline at this path from the current
         /// proof and exit. The ack path for a legitimate removal or
         /// weakening: the change lands as a reviewable git diff. Implies a
-        /// verifier run; Lean-only.
+        /// verifier run.
         ///
         /// This is a HUMAN ACK path, not a CI step. The regenerated baseline
         /// must be committed and code-reviewed; CI must NOT auto-regenerate it
@@ -814,7 +803,7 @@ pub(super) enum Commands {
         /// that manifest, using the per-declaration hashes every manifest
         /// now carries. Diagnostic only: never changes `passed` or the exit
         /// code. `--check-json` adds a `changed` object keyed by claim. Implies
-        /// a verifier run; Lean-only. Exit 2 when the earlier manifest cannot
+        /// a verifier run. Exit 2 when the earlier manifest cannot
         /// be read or carries no hashes.
         #[arg(long, requires = "check_mode")]
         compare_manifest: Option<String>,
@@ -873,14 +862,7 @@ mod tests {
 
     #[test]
     fn proof_accepts_check_flag() {
-        let cli = Cli::parse_from([
-            "aver",
-            "proof",
-            "examples/data/sum_acc.av",
-            "--backend",
-            "dafny",
-            "--check",
-        ]);
+        let cli = Cli::parse_from(["aver", "proof", "examples/data/sum_acc.av", "--check"]);
         match cli.command {
             Commands::Proof { file, check, .. } => {
                 assert_eq!(file, "examples/data/sum_acc.av");
@@ -888,6 +870,33 @@ mod tests {
             }
             _ => panic!("expected proof command"),
         }
+    }
+
+    #[test]
+    fn proof_refuses_the_removed_dafny_backend() {
+        let Err(error) = Cli::try_parse_from([
+            "aver",
+            "proof",
+            "examples/data/sum_acc.av",
+            "--backend",
+            "dafny",
+        ]) else {
+            panic!("--backend dafny must be refused");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("the Dafny backend was removed; use Lean"),
+            "{error}"
+        );
+        let cli = Cli::parse_from([
+            "aver",
+            "proof",
+            "examples/data/sum_acc.av",
+            "--backend",
+            "lean",
+        ]);
+        assert!(matches!(cli.command, Commands::Proof { .. }));
     }
 
     #[test]

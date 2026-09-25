@@ -50,11 +50,25 @@ pub fn run_verify_for_items_wasm_gc(
 }
 
 pub fn run_verify_for_items_wasm_gc_with_mode(
+    items: Vec<TopLevel>,
+    config: Option<ProjectConfig>,
+    base_dir: Option<&str>,
+    source_file: &str,
+    mode: ExpansionMode,
+) -> Result<Vec<VerifyResult>, String> {
+    let marked = crate::config::MarkedCapabilities::for_project_dir(base_dir);
+    run_verify_for_items_wasm_gc_with_marks(items, config, base_dir, source_file, mode, &marked)
+}
+
+/// The same, lowered against the answer modules of the whole program the
+/// module belongs to.
+pub fn run_verify_for_items_wasm_gc_with_marks(
     mut items: Vec<TopLevel>,
     config: Option<ProjectConfig>,
     base_dir: Option<&str>,
     source_file: &str,
     mode: ExpansionMode,
+    marked: &crate::config::MarkedCapabilities,
 ) -> Result<Vec<VerifyResult>, String> {
     use super::vm_verify::{
         apply_hostile_expansion_with_registry, format_type_errors,
@@ -113,12 +127,11 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
 
     // The same front door the VM verify lane and every other door use:
     // TCO, the `yield` lowering, type errors AND the shadowing ban (#954).
-    let marked = crate::config::MarkedCapabilities::for_project_dir(base_dir);
     let tc = crate::ir::pipeline::front_gate(
         &mut items,
         &crate::ir::TypecheckMode::Full { base_dir },
         user_program_len,
-        &marked,
+        marked,
     );
     if !tc.errors.is_empty() {
         return Err(format_type_errors(&tc.errors));

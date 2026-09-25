@@ -172,6 +172,16 @@ fn write_module(out: &mut String, m: &Module) -> Result<()> {
     if let Some(effects) = &m.effects {
         writeln!(out, "{INDENT}effects [{}]", effects.join(", "))?;
     }
+    if !m.answers.is_empty() {
+        writeln!(out, "{INDENT}answers [{}]", m.answers.join(", "))?;
+    }
+    for seating in &m.seatings {
+        writeln!(
+            out,
+            "\nprocess {} seated by {}",
+            seating.process, seating.by
+        )?;
+    }
     Ok(())
 }
 

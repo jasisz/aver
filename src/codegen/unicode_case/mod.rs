@@ -1,5 +1,5 @@
 //! Shared Unicode case-mapping data for source-equivalent backend models.
-//! Lean, Dafny and wasm-gc consume the same tables; the VM uses Rust std directly.
+//! Lean and wasm-gc consume the same tables; the VM uses Rust std directly.
 //!
 //! # Where the numbers come from
 //!
@@ -40,7 +40,7 @@
 mod tables;
 pub(in crate::codegen) use tables::*;
 
-/// Integer decision expressions have identical syntax in Lean and Dafny.
+/// Integer decision expressions rendered as Lean source.
 #[cfg(feature = "runtime")]
 pub(in crate::codegen) fn simple(runs: &[SimpleRun]) -> String {
     let Some(&(first, last, delta)) = runs.get(runs.len() / 2) else {

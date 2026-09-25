@@ -8,8 +8,8 @@ use super::*;
 
 /// Stage 8 of #232: detect `wrapper(g) == other(g)` where `wrapper`
 /// is a `ModulePattern::WrapperOverRecursion` and the inner fn has a
-/// monoidal-accumulator shape we know how to emit Dafny support
-/// theorems for. Returns the typed strategy carrying enough payload
+/// monoidal-accumulator shape we know how to emit support theorems
+/// for. Returns the typed strategy carrying enough payload
 /// for the backend to emit the aux acc-decomposition lemma without
 /// re-walking the AST.
 pub(super) fn detect_wrapper_over_recursion(
@@ -229,7 +229,6 @@ pub(super) fn detect_tailrec_fixed_base_fold(
     }
     let g0 = law.givens[0].name.as_str();
     let g1 = law.givens[1].name.as_str();
-    let type_name = law.givens[1].type_name.clone();
 
     // Law sides: `spec(x, y)` (2 args, both givens) and `loop(x, y, neutral)`
     // (3 args, first two givens, third the inline neutral).
@@ -403,7 +402,6 @@ pub(super) fn detect_tailrec_fixed_base_fold(
         loop_fn,
         combine_fn: spec_combine,
         combine_op,
-        type_name,
     })
 }
 

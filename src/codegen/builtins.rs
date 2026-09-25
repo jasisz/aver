@@ -8,10 +8,8 @@
 /// [`recognize_builtin`] together. A backend can only ever render a
 /// `Builtin`, and a `Builtin` only ever comes out of `recognize_builtin`,
 /// so this is the exact set of names a proof backend has to have a
-/// declaration for — which is what
-/// `dafny::tests::every_builtin_the_emitter_can_render_resolves_in_the_dafny_prelude`
-/// walks. Keeping the two halves in one macro is what stops that guard
-/// from being handed a shorter list than the emitter can actually produce.
+/// declaration for. Keeping the two halves in one macro means no backend
+/// can be handed a shorter list than the emitter can actually produce.
 macro_rules! codegen_builtins {
     ($($variant:ident => $name:literal,)+) => {
         /// A recognized Aver builtin function or constructor.

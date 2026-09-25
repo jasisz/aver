@@ -1,9 +1,8 @@
 //! Shared proof-mode recursion analysis.
 //!
 //! Classifies each recursive pure fn into a [`RecursionPlan`] that tells
-//! the proof backends (Lean, Dafny) how to emit a fuel-guarded helper
-//! plus a wrapper with an appropriate fuel metric. The same classifier
-//! feeds both backends so supported shapes stay consistent.
+//! the proof backend (Lean) how to emit a fuel-guarded helper
+//! plus a wrapper with an appropriate fuel metric.
 //!
 //! Emission is backend-specific (syntax, termination-proof mechanism,
 //! default-value for fuel exhaustion), but the recognition pass and the
@@ -93,9 +92,7 @@ pub enum RecursionPlan {
     /// guard chain enclosing every self-call site implies `p >= 1`
     /// (so `p / k < p` and `p.toNat` strictly decreases). Backends
     /// emit a native well-founded def — Lean
-    /// `termination_by p.toNat` (kernel re-checks the measure),
-    /// Dafny `decreases if p >= 0 then p else 0` with no synthesized
-    /// `requires`.
+    /// `termination_by p.toNat` (kernel re-checks the measure).
     IntFloorDivCountdown {
         param_index: usize,
         /// The literal divisor (>= 2).
@@ -151,8 +148,8 @@ pub struct ProofModeIssue {
 }
 
 /// Canonical suffix for a fuel-guarded helper fn. Deliberately contains
-/// only lowercase ASCII + underscores so both Lean and Dafny accept it
-/// as an identifier without renaming.
+/// only lowercase ASCII + underscores so Lean accepts it as an
+/// identifier without renaming.
 pub fn fuel_helper_name(name: &str) -> String {
     format!("{}__fuel", name)
 }
@@ -166,9 +163,7 @@ pub fn native_aux_name(name: &str) -> String {
 
 /// Sentinel identifier injected as an extra synthetic argument at every
 /// recursive callsite inside an `IntCountdownGuarded` body. Lean's expr
-/// emitter recognises this name and renders it as `(by omega)`; Dafny's
-/// codegen never sees it because Dafny discharges preconditions via
-/// auto-inference at the existing fn-def emit path.
+/// emitter recognises this name and renders it as `(by omega)`.
 pub const OMEGA_PROOF_SENTINEL: &str = "__aver_omega_proof__";
 
 /// Flip a comparison `BinOp` to its logical negation so a caller's

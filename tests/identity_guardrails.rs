@@ -42,7 +42,7 @@
 //!   stage's own invariant.
 //! - `display-only` — pattern matches a `Type::Named { name, .. }`
 //!   only to render the name into a backend output string (e.g.
-//!   Lean / Dafny / Rust type-name emission, where `name` IS the
+//!   Lean / Rust type-name emission, where `name` IS the
 //!   right surface and `id` carries no display information). Use
 //!   for renderers, never for routing / lookup decisions.
 //! ## When this test fails

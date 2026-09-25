@@ -43,8 +43,8 @@ pub(super) fn uses_packed_u8(ctx: &CodegenContext, type_name: &str) -> bool {
 /// modules. Every parent directory along each module's path gets a
 /// `mod.rs` that declares `pub mod {child};` for each immediate child;
 /// the leaf node's `mod.rs` carries the body. Backend-local because the
-/// cascade is a Rust/Cargo-specific filesystem convention — Lean and
-/// Dafny just write the leaf path directly.
+/// cascade is a Rust/Cargo-specific filesystem convention — Lean just
+/// writes the leaf path directly.
 fn synthesize_rust_module_cascade(
     rel_dir: &str,
     modules: &[(Vec<String>, String)],
@@ -125,7 +125,7 @@ fn transpile_project(
     ctx.omitted_verify_cases.borrow_mut().clear();
     // ETAP-2 SLICE 1: make Int representation EXPLICIT in the MIR the Rust
     // backend codegens from. This runs ONLY here (the Rust entry) — the VM,
-    // wasm-gc, proof, Dafny and Lean backends never call `transpile`, so
+    // wasm-gc and Lean proof backends never call `transpile`, so
     // their `ctx.mir_program` keeps the all-`Int` representation and never
     // sees a `Box`/`Unbox` node. The rewrite reuses the (already-computed)
     // `bare_i64` range+escape analysis to tag each fn's `repr` and insert
@@ -155,6 +155,7 @@ fn transpile_project(
         ctx.mir_program = Some(
             crate::ir::mir::optimize::bare_i64_rewrite::rewrite_for_rust(prog, &boxed, &carrier),
         );
+        ctx.rust_owned_record_params = from_mir::compute_owned_record_params(ctx);
     }
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
@@ -2883,7 +2884,6 @@ fn main() -> Result<String, String>
             shape_expected: Vec::new(),
             provider_manifest: None,
             work_max_jobs: None,
-            run_policies: None,
         });
 
         let out = transpile(&mut ctx);
@@ -2980,7 +2980,6 @@ fn main() -> Result<Tuple<Int, Int>, String>
             shape_expected: Vec::new(),
             provider_manifest: None,
             work_max_jobs: None,
-            run_policies: None,
         });
 
         let out = transpile(&mut ctx);

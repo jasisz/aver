@@ -5,8 +5,8 @@
 # CLOSED iff `aver proof <f> --backend lean --check --check-json` reports
 # "universal":true (the #print-axioms-gated kernel-genuine signal).
 #
-# Lean-only on purpose: Lean elaboration has no wall-clock timeout, so a
-# heavy machine only makes this SLOW, never wrong (unlike Dafny/Z3). The
+# Lean elaboration has no wall-clock timeout, so a heavy machine only makes
+# this SLOW, never wrong. The
 # retry-once absorbs transient lake-lock failures. So the per-task verdicts
 # are trustworthy even under load.
 #

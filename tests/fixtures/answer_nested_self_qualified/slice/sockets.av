@@ -1,0 +1,22 @@
+module Sockets
+    intent = "Fixture answer module for Slice.Wire, itself under slice/."
+    depends [Slice.Wire, Wait]
+    exposes [State, fresh, frame]
+    effects []
+    answers [Slice.Wire]
+
+record State
+    left: Int
+
+fn fresh() -> State
+    ? "Two frames."
+    State(left = 2)
+
+fn frame(state: State) -> Tuple<State, Result<Slice.Wire.Heard, Run.Wake>>
+    ? "A message until none are left."
+    match state.left == 0
+        true -> (state, Result.Ok(Slice.Wire.Heard.Gone("done")))
+        false -> (State.update(state, left = state.left - 1), Result.Ok(Slice.Wire.Heard.Message("hi")))
+
+verify frame
+    frame(fresh()) => (State(left = 1), Result.Ok(Slice.Wire.Heard.Message("hi")))

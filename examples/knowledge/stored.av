@@ -1,19 +1,20 @@
 module Stored
-    intent = "The Content answer module owns Knowledge and an ordered job queue. Only the local Work landing seam inserts verdicts."
-    depends [Bytes, Knowledge, Content, Wait]
-    effects []
+    intent = "The Content answer module owns Knowledge and the validation jobs it begins itself. Only the take of a local validation job inserts verdicts."
+    depends [Bytes, Knowledge, Content, Validation, Wait, Work]
+    effects [Validation.begin, Validation.take]
+    answers [Content]
 
 record State
     knowledge: Knowledge.Knowledge
-    tasks: List<Bytes>
+    jobs: Map<String, Work.Job>
     failure: Option<String>
 
 fn fresh() -> State
     ? "No peer content, jobs or local failure."
-    State(knowledge = Knowledge.empty(), tasks = [], failure = Option.None)
+    State(knowledge = Knowledge.empty(), jobs = {}, failure = Option.None)
 
 verify fresh
-    fresh().tasks => []
+    Map.len(fresh().jobs) => 0
 
 fn contribution(peer: Content.Peer) -> Knowledge.Delta
     ? "The peer boundary can construct a body contribution only."
@@ -30,15 +31,15 @@ verify admitted
     admitted(samplePeer()) => true
     admitted(Content.Peer(hash = "forged", bytes = Bytes.empty())) => false
 
-fn offer(state: State, first: Content.Peer, second: Content.Peer) -> Tuple<State, Content.OfferReply>
-    ? "Hash both offers independently; reject the batch before any merge if either fails. Queue ownership remains ordered."
+fn offer(state: State, first: Content.Peer, second: Content.Peer) -> Tuple<State, Result<Bool, Run.Wake>>
+    ? "Hash both offers independently; reject the batch before any merge if either fails."
     match (admitted(first), admitted(second))!
-        (true, true) -> (accepted(state, first, second), Content.OfferReply.Now(true))
-        _ -> (state, Content.OfferReply.Now(false))
+        (true, true) -> (accepted(state, first, second), Result.Ok(true))
+        _ -> (state, Result.Ok(false))
 
 verify offer
-    offer(fresh(), Content.Peer(hash = "forged", bytes = Bytes.empty()), samplePeer()) => (fresh(), Content.OfferReply.Now(false))
-    offer(fresh(), samplePeer(), samplePeer()) => (accepted(fresh(), samplePeer(), samplePeer()), Content.OfferReply.Now(true))
+    offer(fresh(), Content.Peer(hash = "forged", bytes = Bytes.empty()), samplePeer()) => (fresh(), Result.Ok(false))
+    offer(fresh(), samplePeer(), samplePeer()) => (accepted(fresh(), samplePeer(), samplePeer()), Result.Ok(true))
 
 verify offer law rejectedBatchChangesNothing
     given state: State = [fresh(), known()]
@@ -46,7 +47,7 @@ verify offer law rejectedBatchChangesNothing
     given second: Content.Peer = [samplePeer(), Content.Peer(hash = "bad", bytes = Bytes.empty())]
     when Bool.not(Bool.and(admitted(first), admitted(second)))
     using []
-    offer(state, first, second) => (state, Content.OfferReply.Now(false))
+    offer(state, first, second) => (state, Result.Ok(false))
 
 verify offer law admittedBatchUsesTheModel
     given state: State = [fresh(), known()]
@@ -55,11 +56,11 @@ verify offer law admittedBatchUsesTheModel
     when admitted(first)
     when admitted(second)
     using []
-    offer(state, first, second) => (accepted(state, first, second), Content.OfferReply.Now(true))
+    offer(state, first, second) => (accepted(state, first, second), Result.Ok(true))
 
 fn accepted(state: State, first: Content.Peer, second: Content.Peer) -> State
-    ? "Merge an admitted batch and enqueue its bodies. Agreement is an explicit cryptographic premise of the merge laws."
-    State.update(state, knowledge = Knowledge.mergeAll(state.knowledge, [contribution(first), contribution(second)]), tasks = List.concat(state.tasks, [first.bytes, second.bytes]))
+    ? "Merge an admitted batch. Agreement is an explicit cryptographic premise of the merge laws."
+    State.update(state, knowledge = Knowledge.mergeAll(state.knowledge, [contribution(first), contribution(second)]))
 
 verify accepted law knowledgeCommutes
     given state: State = [fresh(), known()]
@@ -78,7 +79,7 @@ verify accepted law peersCannotWriteVerdicts
     using []
     accepted(state, first, second).knowledge.verdicts => state.knowledge.verdicts
 
-fn answer(body: Option<Bytes>, verdict: Option<Knowledge.Verdict>, failure: Option<String>) -> Content.ReadReply
+fn answer(body: Option<Bytes>, verdict: Option<Knowledge.Verdict>, failure: Option<String>) -> Result<Result<Content.Snapshot, String>, Run.Wake>
     ? "Combine two independent lookups; only successful answers claim stability."
     match body
         Option.None -> missing(failure)
@@ -104,39 +105,75 @@ verify answer law knownFactsAnswer
     given valid: Bool = [false, true]
     given failure: Option<String> = [Option.None, Option.Some("failed")]
     using [verdictOf.preservesFlag]
-    answer(Option.Some(bytes), Option.Some(verdictOf(valid)), failure) => Content.ReadReply.Now(Result.Ok(Content.Snapshot(body = bytes, valid = valid)))
+    answer(Option.Some(bytes), Option.Some(verdictOf(valid)), failure) => Result.Ok(Result.Ok(Content.Snapshot(body = bytes, valid = valid)))
 
-fn withBody(bytes: Bytes, verdict: Option<Knowledge.Verdict>, failure: Option<String>) -> Content.ReadReply
+fn withBody(bytes: Bytes, verdict: Option<Knowledge.Verdict>, failure: Option<String>) -> Result<Result<Content.Snapshot, String>, Run.Wake>
     ? "A known body still waits for its local verdict."
     match verdict
         Option.None -> missing(failure)
-        Option.Some(value) -> Content.ReadReply.Now(Result.Ok(Content.Snapshot(body = bytes, valid = value == Knowledge.Verdict.Valid)))
+        Option.Some(value) -> Result.Ok(Result.Ok(Content.Snapshot(body = bytes, valid = value == Knowledge.Verdict.Valid)))
 
 verify withBody
-    withBody(Bytes.empty(), Option.None, Option.None) => Content.ReadReply.Later(Wait.Wake.NextTurn)
-    withBody(Bytes.empty(), Option.Some(Knowledge.Verdict.Invalid), Option.None) => Content.ReadReply.Now(Result.Ok(Content.Snapshot(body = Bytes.empty(), valid = false)))
+    withBody(Bytes.empty(), Option.None, Option.None) => Result.Err(Run.Wake.Settled(Option.None))
+    withBody(Bytes.empty(), Option.Some(Knowledge.Verdict.Invalid), Option.None) => Result.Ok(Result.Ok(Content.Snapshot(body = Bytes.empty(), valid = false)))
 
-fn missing(failure: Option<String>) -> Content.ReadReply
-    ? "Missing knowledge waits unless a worker failure ended this attempt."
+fn missing(failure: Option<String>) -> Result<Result<Content.Snapshot, String>, Run.Wake>
+    ? "Missing knowledge waits for this module's state to move, unless a worker failure ended this attempt."
     match failure
-        Option.Some(message) -> Content.ReadReply.Now(Result.Err(message))
-        Option.None -> Content.ReadReply.Later(Wait.Wake.NextTurn)
+        Option.Some(message) -> Result.Ok(Result.Err(message))
+        Option.None -> Result.Err(Run.Wake.Settled(Option.None))
 
 verify missing
-    missing(Option.None) => Content.ReadReply.Later(Wait.Wake.NextTurn)
-    missing(Option.Some("cancelled")) => Content.ReadReply.Now(Result.Err("cancelled"))
+    missing(Option.None) => Result.Err(Run.Wake.Settled(Option.None))
+    missing(Option.Some("cancelled")) => Result.Ok(Result.Err("cancelled"))
 
-fn read(state: State, hash: String) -> Tuple<State, Content.ReadReply>
-    ? "Read body and verdict independently, then answer from those facts. Queue and failure state remain owned by the coordinator."
+fn read(state: State, hash: String) -> Tuple<State, Result<Result<Content.Snapshot, String>, Run.Wake>>
+    ? "The answer to Content.read. A body whose verdict is unknown starts its local validation job here and waits on it; the ask after the job settles takes it and merges the verdict. Everything else is answered from the knowledge alone."
+    ! [Validation.begin, Validation.take]
+    match Map.get(state.jobs, hash)
+        Option.Some(job) -> taken(state, hash, job)
+        Option.None -> match unjudged(state, hash)
+            Option.None -> lookup(state, hash)
+            Option.Some(body) -> begun(state, hash, body)
+
+fn unjudged(state: State, hash: String) -> Option<Bytes>
+    ? "The body at this hash when it is known, has no verdict yet, and no worker failure ended this attempt: the one case that needs a validation job."
+    match (Knowledge.body(state.knowledge, hash), Knowledge.verdict(state.knowledge, hash, "nonempty-v1"), state.failure)
+        (Option.Some(body), Option.None, Option.None) -> Option.Some(body)
+        _ -> Option.None
+
+verify unjudged
+    unjudged(fresh(), samplePeer().hash) => Option.None
+    unjudged(accepted(fresh(), samplePeer(), samplePeer()), samplePeer().hash) => Option.Some(Bytes.empty())
+    unjudged(known(), samplePeer().hash) => Option.None
+
+fn begun(state: State, hash: String, body: Bytes) -> Tuple<State, Result<Result<Content.Snapshot, String>, Run.Wake>>
+    ? "Begins the validation job of one body and waits on it; a job that could not begin is recorded as the failure it is."
+    ! [Validation.begin]
+    match Validation.begin(body)
+        Result.Err(message) -> lookup(validated(state, Result.Err(message)), hash)
+        Result.Ok(job) -> (State.update(state, jobs = Map.set(state.jobs, hash, job)), Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+
+fn taken(state: State, hash: String, job: Work.Job) -> Tuple<State, Result<Result<Content.Snapshot, String>, Run.Wake>>
+    ? "Takes the validation job of one body: still running waits on it again, and an outcome lands through validated before the answer is read from the knowledge."
+    ! [Validation.take]
+    match Validation.take(job)
+        Result.Err(message) -> lookup(validated(State.update(state, jobs = Map.remove(state.jobs, hash)), Result.Err(message)), hash)
+        Result.Ok(found) -> match found
+            Option.None -> (state, Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+            Option.Some(checked) -> lookup(validated(State.update(state, jobs = Map.remove(state.jobs, hash)), Result.Ok(checked)), hash)
+
+fn lookup(state: State, hash: String) -> Tuple<State, Result<Result<Content.Snapshot, String>, Run.Wake>>
+    ? "Read body and verdict independently, then answer from those facts alone."
     match (Knowledge.body(state.knowledge, hash), Knowledge.verdict(state.knowledge, hash, "nonempty-v1"))!
         (body, verdict) -> (state, answer(body, verdict, state.failure))
 
-verify read
-    read(fresh(), samplePeer().hash) => (fresh(), Content.ReadReply.Later(Wait.Wake.NextTurn))
-    read(known(), samplePeer().hash) => (known(), Content.ReadReply.Now(Result.Ok(Content.Snapshot(body = Bytes.empty(), valid = false))))
-    read(State.update(fresh(), failure = Option.Some("cancelled")), samplePeer().hash) => (State.update(fresh(), failure = Option.Some("cancelled")), Content.ReadReply.Now(Result.Err("cancelled")))
+verify lookup
+    lookup(fresh(), samplePeer().hash) => (fresh(), Result.Err(Run.Wake.Settled(Option.None)))
+    lookup(known(), samplePeer().hash) => (known(), Result.Ok(Result.Ok(Content.Snapshot(body = Bytes.empty(), valid = false))))
+    lookup(State.update(fresh(), failure = Option.Some("cancelled")), samplePeer().hash) => (State.update(fresh(), failure = Option.Some("cancelled")), Result.Ok(Result.Err("cancelled")))
 
-verify read law stableAnswer
+verify lookup law stableAnswer
     given state: State = [known()]
     given hash: String = [samplePeer().hash]
     given snapshot: Content.Snapshot = [Content.Snapshot(body = Bytes.empty(), valid = false)]
@@ -149,9 +186,9 @@ verify read law stableAnswer
     because Knowledge.body(Knowledge.merge(state.knowledge, delta), hash) == Option.Some(snapshot.body)
     because Knowledge.verdict(Knowledge.merge(state.knowledge, delta), hash, "nonempty-v1") == Option.Some(verdictOf(snapshot.valid))
     using [answer.successfulAnswerHasBothFacts, answer.knownFactsAnswer, Knowledge.body.stable, Knowledge.verdict.stable]
-    read(State.update(state, knowledge = Knowledge.merge(state.knowledge, delta)), hash) => (State.update(state, knowledge = Knowledge.merge(state.knowledge, delta)), Content.ReadReply.Now(Result.Ok(snapshot)))
+    lookup(State.update(state, knowledge = Knowledge.merge(state.knowledge, delta)), hash) => (State.update(state, knowledge = Knowledge.merge(state.knowledge, delta)), Result.Ok(Result.Ok(snapshot)))
 
-verify read law stableHistory
+verify lookup law stableHistory
     given state: State = [known()]
     given hash: String = [samplePeer().hash]
     given snapshot: Content.Snapshot = [Content.Snapshot(body = Bytes.empty(), valid = false)]
@@ -163,7 +200,7 @@ verify read law stableHistory
     because Knowledge.body(Knowledge.mergeAll(state.knowledge, deltas), hash) == Option.Some(snapshot.body)
     because Knowledge.verdict(Knowledge.mergeAll(state.knowledge, deltas), hash, "nonempty-v1") == Option.Some(verdictOf(snapshot.valid))
     using [answer.successfulAnswerHasBothFacts, answer.knownFactsAnswer, Knowledge.body.stableRun, Knowledge.verdict.stableRun]
-    read(State.update(state, knowledge = Knowledge.mergeAll(state.knowledge, deltas)), hash) => (State.update(state, knowledge = Knowledge.mergeAll(state.knowledge, deltas)), Content.ReadReply.Now(Result.Ok(snapshot)))
+    lookup(State.update(state, knowledge = Knowledge.mergeAll(state.knowledge, deltas)), hash) => (State.update(state, knowledge = Knowledge.mergeAll(state.knowledge, deltas)), Result.Ok(Result.Ok(snapshot)))
 
 fn validate(task: Bytes) -> Tuple<String, Bool>
     ? "A deliberately small validation rule, not Bitcoin validation: a body is valid exactly when nonempty. Identical bytes always give one verdict in the fixed nonempty-v1 context."
@@ -173,54 +210,8 @@ verify validate
     validate(Bytes.empty()) => (Knowledge.keyOf(Bytes.empty()), false)
     validate(Bytes.fromList([1])) => (Knowledge.keyOf(Bytes.fromList([1])), true)
 
-fn nextTask(state: State) -> Option<Bytes>
-    ? "Only the ordered coordinator offers the next queued body to Work."
-    match state.tasks
-        [] -> Option.None
-        [head, ..rest] -> Option.Some(head)
-
-verify nextTask
-    nextTask(fresh()) => Option.None
-    nextTask(accepted(fresh(), samplePeer(), samplePeer())) => Option.Some(Bytes.empty())
-
-fn taskStarted(state: State, task: Bytes) -> State
-    ? "Remove every duplicate of the body handed to a worker."
-    State.update(state, tasks = withoutTask(state.tasks, task, []))
-
-verify taskStarted law aStartedTaskIsNotAskedAgain
-    given state: State = [fresh(), State.update(fresh(), tasks = [Bytes.empty(), Bytes.empty()])]
-    given task: Bytes = [Bytes.empty()]
-    when nextTask(state) == Option.Some(task)
-    using [withoutTask.theStartedTaskIsOut]
-    nextTask(taskStarted(state, task)) != Option.Some(task) holds
-
-verify taskStarted
-    taskStarted(accepted(fresh(), samplePeer(), samplePeer()), Bytes.empty()).tasks => []
-
-fn withoutTask(tasks: List<Bytes>, task: Bytes, acc: List<Bytes>) -> List<Bytes>
-    ? "Remove all copies, retaining the order of other tasks."
-    match tasks
-        [] -> acc
-        [head, ..rest] -> withoutTask(rest, task, keptUnlessTask(acc, head, task))
-
-verify withoutTask law theStartedTaskIsOut
-    given tasks: List<Bytes> = [[], [Bytes.empty(), Bytes.empty()]]
-    given task: Bytes = [Bytes.empty()]
-    given acc: List<Bytes> = [[]]
-    List.contains(withoutTask(tasks, task, acc), task) => List.contains(acc, task)
-
-fn keptUnlessTask(acc: List<Bytes>, entry: Bytes, task: Bytes) -> List<Bytes>
-    ? "Retain only another task."
-    match entry == task
-        true -> acc
-        false -> List.concat(acc, [entry])
-
-verify keptUnlessTask
-    keptUnlessTask([], Bytes.empty(), Bytes.empty()) => []
-    keptUnlessTask([], Bytes.fromList([1]), Bytes.empty()) => [Bytes.fromList([1])]
-
 fn validated(state: State, outcome: Result<Tuple<String, Bool>, String>) -> State
-    ? "The manifest's local Work landing seam is the only verdict insertion path; failure changes control state only."
+    ? "Where a local validation job's outcome lands, and the only verdict insertion path; failure changes control state only."
     match outcome
         Result.Err(message) -> State.update(state, failure = Option.Some(message))
         Result.Ok(checked) -> match checked
@@ -276,20 +267,20 @@ verify verdictOf law preservesFlag
     given valid: Bool = [true, false]
     (verdictOf(valid) == Knowledge.Verdict.Valid) => valid
 
-fn successful(reply: Content.ReadReply) -> Option<Content.Snapshot>
-    ? "Exactly the successful Now payload; Later, Then and failures have no settled successful answer. Wake handles are never compared."
+fn successful(reply: Result<Result<Content.Snapshot, String>, Run.Wake>) -> Option<Content.Snapshot>
+    ? "Exactly the successful Ok payload; a parked request and failures have no settled successful answer. Wake handles are never compared."
     match reply
-        Content.ReadReply.Now(result) -> okSnapshot(result)
+        Result.Ok(result) -> okSnapshot(result)
         _ -> Option.None
 
 verify successful
-    successful(Content.ReadReply.Later(Wait.Wake.NextTurn)) => Option.None
-    successful(Content.ReadReply.Now(Result.Err("failed"))) => Option.None
-    successful(Content.ReadReply.Now(Result.Ok(Content.Snapshot(body = Bytes.empty(), valid = false)))) => Option.Some(Content.Snapshot(body = Bytes.empty(), valid = false))
+    successful(Result.Err(Run.Wake.Settled(Option.None))) => Option.None
+    successful(Result.Ok(Result.Err("failed"))) => Option.None
+    successful(Result.Ok(Result.Ok(Content.Snapshot(body = Bytes.empty(), valid = false)))) => Option.Some(Content.Snapshot(body = Bytes.empty(), valid = false))
 
 fn observed(state: State, hash: String) -> Option<Content.Snapshot>
-    ? "Project the successful Now answer of the actual Content.read implementation."
-    match read(state, hash)
+    ? "Project the successful answer the knowledge alone gives, which is what Content.read answers once no validation is left to run."
+    match lookup(state, hash)
         (_, reply) -> successful(reply)
 
 verify observed

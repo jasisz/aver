@@ -3,6 +3,7 @@ module Ledger
     depends [Pool]
     exposes [State, claim, gone]
     effects []
+    answers [Pool]
 
 record State
     free: List<Int>

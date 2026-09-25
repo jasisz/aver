@@ -272,11 +272,11 @@ fn unused_entries(declared: &[String], minimum: &BTreeSet<String>) -> Vec<String
     out.into_iter().collect()
 }
 
-/// Effect lists of a module that a rewrite must leave alone.
+/// Effect lists of a module that a rewrite may shrink as well as grow.
 ///
 /// A `yield` function is removed from the module by lowering and kept as
-/// proof metadata; its declared list belongs to that lowering, not to this
-/// computation.
+/// proof metadata; what it reaches through its stops belongs to that
+/// lowering, so its list only ever grows by what its body performs in place.
 fn is_rewritable(fd: &FnDef) -> bool {
     !crate::yield_lowering::is_yield_fn(fd)
 }
@@ -413,23 +413,32 @@ pub fn compute(mut units: Vec<SurfaceInput>) -> ProgramSurface {
             node_cursor += 1;
             let node = &nodes[index];
             if !is_rewritable(fd) {
-                // A yielding function's list is lowering's business; report it
-                // as written and say nothing about it. The boundary takes what
-                // it declares rather than what the fixpoint computed: a
+                // A yielding function's list is lowering's business, except
+                // for what its body plainly performs in place: `check`
+                // requires every such effect declared, so a rewrite adds it
+                // and removes nothing. Nothing is ever dropped because a
                 // yielding callee is lowered out of the signature map before
-                // the surface is computed, so a function that reaches the
-                // capability only through one resolves to the marker alone,
-                // while the boundary check still reads the declared list.
-                for entry in &node.declared {
+                // the surface is computed, so what a function reaches only
+                // through one is invisible here, while the boundary check
+                // still reads the declared list.
+                let mut kept = node.minimum.clone();
+                kept.extend(
+                    node.declared
+                        .iter()
+                        .filter(|entry| !is_preserved_marker(entry))
+                        .cloned(),
+                );
+                let resolved = resolve(&node.declared, &kept);
+                for entry in &resolved {
                     union.insert(entry.clone());
                 }
                 functions.push(FnSurface {
                     name: fd.name.clone(),
                     line: fd.line,
                     declared: node.declared.clone(),
-                    minimum: node.declared.clone(),
-                    resolved: node.declared.clone(),
-                    missing: Vec::new(),
+                    minimum: node.minimum.iter().cloned().collect(),
+                    resolved,
+                    missing: missing_entries(&node.declared, &node.minimum),
                     unused: Vec::new(),
                 });
                 continue;

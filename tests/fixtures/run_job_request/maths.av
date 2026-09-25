@@ -1,0 +1,22 @@
+module Maths
+    intent = "The pure function a Squares job runs."
+    exposes [square]
+    effects []
+
+fn square(n: Int) -> Int
+    ? "The square of n, reached by counting n down to zero first, so a large n keeps the job busy for as long as a test needs."
+    spin(n, n * n)
+
+fn spin(left: Int, answer: Int) -> Int
+    ? "Counts down to zero and answers what it was handed."
+    match left < 1
+        true -> answer
+        false -> spin(left - 1, answer)
+
+verify square
+    square(0) => 0
+    square(7) => 49
+
+verify spin
+    spin(0, 5) => 5
+    spin(3, 9) => 9

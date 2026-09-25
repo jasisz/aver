@@ -15,8 +15,8 @@ use crate::types::Type;
 ///   `    false -> Result.Err("...")`
 ///
 /// Detecting this shape lets backends emit the type as a true
-/// dependent / subset type (`def X := { n : T // P n }` in Lean,
-/// `type X = n: T | P n` in Dafny) instead of a flat product, which
+/// dependent / subset type (`def X := { n : T // P n }` in Lean)
+/// instead of a flat product, which
 /// in turn collapses universal-law proofs into one-liners
 /// (`rw [Int.add_comm]`) by carrying the invariant inside the type
 /// rather than threading it through ad-hoc tactic plumbing.
@@ -821,7 +821,7 @@ pub fn substitute_ident_in_resolved_expr(
 /// callee's param name; opaque-type `when`-redundancy check translates
 /// smart constructor's param name to the law's given name; future
 /// callers (verify-law domain translation, etc.) will too. Single
-/// definition keeps Lean and Dafny in sync.
+/// definition keeps every caller in sync.
 pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> Spanned<Expr> {
     use crate::ast::{MatchArm, StrPart, TailCallData};
     let line = expr.line;
@@ -939,8 +939,8 @@ pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> S
 
 /// True iff every refinement-lifted given's invariant is
 /// syntactically captured by some clause of `when` (and vice versa —
-/// a bijection between conjuncts). Used by both Lean and Dafny law
-/// emitters to decide whether `when` is provably redundant with the
+/// a bijection between conjuncts). Used by the Lean law emitter
+/// to decide whether `when` is provably redundant with the
 /// types of the lifted givens; if yes, drop it from the theorem
 /// premise (carrier is now the type's invariant); if no, keep it so
 /// the user's stronger / orthogonal predicate stays part of the claim
@@ -1022,8 +1022,8 @@ fn is_err_constructor(expr: &Spanned<Expr>) -> bool {
     }
 }
 
-// Backend-neutral predicates on AST items — all three codegen backends
-// (Lean, Dafny, Rust) want the same view of "is this pure?",
+// Backend-neutral predicates on AST items — the codegen backends
+// (Lean, Rust) want the same view of "is this pure?",
 // "self-referencing type?", and "what's the name of this type def?".
 
 /// A function is pure if it declares no effects and isn't `main`.
@@ -1654,175 +1654,6 @@ fn ctx_type_is_recursive_sum(ctx: &CodegenContext, type_name: &str) -> bool {
         })
 }
 
-/// The user fn an accumulator fold COMBINES with — the head of the threaded
-/// accumulator argument in its single self-call (`plus` of `triTR(m, plus(n,
-/// acc))`, `mul` of `factTR(m, mul(n, acc))`). `None` for a non-fold or a
-/// non-`FnCall` accumulator step (a builtin `+`/`*` step lowers to a `BinOp`,
-/// not a user fn, and the List corner needs no algebraic helpers).
-fn accfold_combine_fn(fd: &FnDef) -> Option<String> {
-    use crate::ast::Expr;
-    use crate::codegen::recursion::detect::{
-        call_matches, collect_calls_from_body, param_threaded_in_recursion,
-    };
-    let acc_idx = (0..fd.params.len()).find(|&i| param_threaded_in_recursion(fd, i))?;
-    let calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
-        .into_iter()
-        .filter(|(name, _)| call_matches(name, &fd.name))
-        .map(|(_, args)| args)
-        .collect();
-    let acc_arg = calls.first()?.get(acc_idx).copied()?;
-    let Expr::FnCall(callee, _) = &acc_arg.node else {
-        return None;
-    };
-    expr_to_dotted_name(&callee.node)
-}
-
-/// `e` is `fn(arg0, arg1, …)` with each arg the bare ident named in `arg_names`.
-fn call_args_are_idents(e: &Spanned<Expr>, fn_name: &str, arg_names: &[&str]) -> bool {
-    let Expr::FnCall(callee, args) = &e.node else {
-        return false;
-    };
-    expr_to_dotted_name(&callee.node).as_deref() == Some(fn_name)
-        && args.len() == arg_names.len()
-        && args.iter().zip(arg_names).all(
-            |(a, n)| matches!(&a.node, Expr::Ident(x) | Expr::Resolved { name: x, .. } if x == n),
-        )
-}
-
-/// `true` iff `vb` is a commutativity law for `combine`: `combine(a, b) =>
-/// combine(b, a)` over two givens, no premise.
-fn law_is_commutativity(vb: &VerifyBlock, combine: &str) -> bool {
-    let crate::ast::VerifyKind::Law(law) = &vb.kind else {
-        return false;
-    };
-    if law.givens.len() != 2 || law.when.is_some() {
-        return false;
-    }
-    let a = law.givens[0].name.as_str();
-    let b = law.givens[1].name.as_str();
-    (call_args_are_idents(&law.lhs, combine, &[a, b])
-        && call_args_are_idents(&law.rhs, combine, &[b, a]))
-        || (call_args_are_idents(&law.lhs, combine, &[b, a])
-            && call_args_are_idents(&law.rhs, combine, &[a, b]))
-}
-
-/// `true` iff `vb` is an associativity law for `combine`: `combine(combine(a,
-/// b), c) => combine(a, combine(b, c))` over three givens, no premise (either
-/// nesting may be on the lhs).
-fn law_is_associativity(vb: &VerifyBlock, combine: &str) -> bool {
-    let crate::ast::VerifyKind::Law(law) = &vb.kind else {
-        return false;
-    };
-    if law.givens.len() != 3 || law.when.is_some() {
-        return false;
-    }
-    let a = law.givens[0].name.as_str();
-    let b = law.givens[1].name.as_str();
-    let c = law.givens[2].name.as_str();
-    // `combine(combine(a, b), c)` — outer call, inner first arg.
-    let nested = |e: &Spanned<Expr>| -> bool {
-        let Expr::FnCall(callee, args) = &e.node else {
-            return false;
-        };
-        expr_to_dotted_name(&callee.node).as_deref() == Some(combine)
-            && args.len() == 2
-            && call_args_are_idents(&args[0], combine, &[a, b])
-            && matches!(&args[1].node, Expr::Ident(x) | Expr::Resolved { name: x, .. } if x == c)
-    };
-    // `combine(a, combine(b, c))` — outer call, inner second arg.
-    let flat = |e: &Spanned<Expr>| -> bool {
-        let Expr::FnCall(callee, args) = &e.node else {
-            return false;
-        };
-        expr_to_dotted_name(&callee.node).as_deref() == Some(combine)
-            && args.len() == 2
-            && matches!(&args[0].node, Expr::Ident(x) | Expr::Resolved { name: x, .. } if x == a)
-            && call_args_are_idents(&args[1], combine, &[b, c])
-    };
-    (nested(&law.lhs) && flat(&law.rhs)) || (nested(&law.rhs) && flat(&law.lhs))
-}
-
-/// `true` iff a Nat accumulator-generalizing law verified ON `verified_fn` can
-/// CLOSE its universal on Dafny. Unlike Lean (which bridges the user monoid fn
-/// to builtin `Nat` arithmetic that Z3 knows is associative/commutative), Dafny
-/// sees the user `plus` / `mul` over the ADT as opaque, so the datatype-induction
-/// proof only discharges when the file ALSO provides commutativity AND
-/// associativity laws for the fold's combine fn — which the generic driver
-/// proves and cites. Absent those helpers the universal would ERROR (Dafny
-/// cannot sorry), so it must stay sample-only. The List corner never reaches
-/// here (its accumulator combine is a builtin `BinOp`, so `accfold_combine_fn`
-/// is `None`, and list folds are excluded from `accumulator_fold_fn_names`).
-pub fn nat_accfold_self_closeable(
-    ctx: &CodegenContext,
-    verified_fn: &str,
-    accgen_law_name: &str,
-) -> bool {
-    if !accumulator_fold_fn_names(ctx).contains(verified_fn) {
-        return false;
-    }
-    let Some(fd) = ctx.fn_def_by_name(verified_fn, ctx.active_module_scope().as_deref()) else {
-        return false;
-    };
-    let Some(combine) = accfold_combine_fn(fd) else {
-        return false;
-    };
-    // Restrict to an ADDITIVE monoid combine (`plus`: base arm returns the 2nd
-    // param). Its commutativity / associativity prove generically by structural
-    // induction, so comm+assoc helpers are SUFFICIENT to close the accGen. A
-    // multiplicative combine (`mul`: base arm returns the zero constructor) also
-    // needs distributivity — comm+assoc alone do not even prove there — so it
-    // stays sample-only rather than ungating into a Z3 error.
-    if !ctx
-        .fn_def_by_name(&combine, ctx.active_module_scope().as_deref())
-        .is_some_and(combine_is_additive_monoid)
-    {
-        return false;
-    }
-    // Only count comm/assoc helpers the citation engine will actually hoist into
-    // the proof: laws EARLIER in source than the accGen block in THIS module
-    // (`eligible_cites` is earlier-in-source, same-module). A helper declared
-    // after the accGen — or in a dependency — is present but un-citable, so
-    // ungating on it would emit a body missing the algebra it needs and Dafny
-    // would error instead of cleanly omitting.
-    let citable: Vec<&VerifyBlock> = ctx
-        .items
-        .iter()
-        .filter_map(|i| match i {
-            TopLevel::Verify(vb) => Some(vb),
-            _ => None,
-        })
-        .take_while(|vb| {
-            !matches!(&vb.kind, VerifyKind::Law(l)
-                if vb.fn_name == verified_fn && l.name == accgen_law_name)
-        })
-        .collect();
-    let has_comm = citable.iter().any(|vb| law_is_commutativity(vb, &combine));
-    let has_assoc = citable.iter().any(|vb| law_is_associativity(vb, &combine));
-    has_comm && has_assoc
-}
-
-/// `true` iff `fd` is a 2-param ADDITIVE-monoid fn — some base (nullary-
-/// constructor) match arm returns the second parameter unchanged (`plus`'s
-/// `Z -> y`). A multiplicative monoid's base arm returns the zero constructor
-/// (`mul`'s `Z -> Z`) instead, so it fails this test.
-fn combine_is_additive_monoid(fd: &FnDef) -> bool {
-    use crate::ast::{Expr, Pattern, Stmt};
-    if fd.params.len() != 2 {
-        return false;
-    }
-    let second = fd.params[1].0.as_str();
-    let [Stmt::Expr(body)] = fd.body.stmts() else {
-        return false;
-    };
-    let Expr::Match { arms, .. } = &body.node else {
-        return false;
-    };
-    arms.iter().any(|arm| {
-        matches!(&arm.pattern, Pattern::Constructor(_, binders) if binders.is_empty())
-            && matches!(&arm.body.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == second)
-    })
-}
-
 /// `true` iff `law`'s lhs/rhs calls a recursive accumulator-threading fn OTHER
 /// than `verified_fn` — the foreign-fold hazard (see
 /// [`accumulator_fold_fn_names`]). Such a law can't close by simple induction
@@ -1831,8 +1662,6 @@ fn combine_is_additive_monoid(fd: &FnDef) -> bool {
 /// threaded-accumulator shape. The verified fn is excluded so an accumulator-
 /// generalizing law verified ON the fold (`triTR(n, acc) => plus(triSpec(n),
 /// acc)`) is NOT gated — Lean closes it by `induction … generalizing acc`.
-/// Lean uses THIS (it has the generalizing emit); Dafny uses
-/// [`law_calls_any_accumulator_fold`] because it has no such emit.
 pub fn law_calls_foreign_accumulator_fold(
     ctx: &CodegenContext,
     law: &crate::ast::VerifyLaw,
@@ -1843,29 +1672,6 @@ pub fn law_calls_foreign_accumulator_fold(
         .filter(|n| n != verified_fn)
         .collect();
     law_calls_unclassified_fn(law, &foreign)
-}
-
-/// Dafny's bound-vs-attempt decision for a law touching an accumulator fold,
-/// now that the Dafny backend HAS a datatype-induction generalizing emit. Bound
-/// (sample-only) when:
-///   * the law references a FOREIGN fold (needs that fold's own decomposition
-///     lemma, never available — the `fac(x) => qfac(x, 1)` shape), OR
-///   * the law is verified ON a Nat fold whose universal cannot close here
-///     (`nat_accfold_self_closeable` is false — no commutativity / associativity
-///     helper laws for the combine fn, which Z3 needs over the opaque ADT).
-///
-/// A self-fold WITH those helpers is NOT bound: the datatype-induction hint plus
-/// the cited algebra discharge it as a real universal. The List corner is never
-/// in `accumulator_fold_fn_names`, so its accumulator law always attempts (and
-/// closes — builtin `Int` arithmetic needs no helper).
-pub fn dafny_should_bound_accumulator_fold(
-    ctx: &CodegenContext,
-    law: &crate::ast::VerifyLaw,
-    verified_fn: &str,
-) -> bool {
-    law_calls_foreign_accumulator_fold(ctx, law, verified_fn)
-        || (accumulator_fold_fn_names(ctx).contains(verified_fn)
-            && !nat_accfold_self_closeable(ctx, verified_fn, &law.name))
 }
 
 /// Issue #128: is the law's RHS independent of every given identifier?
@@ -2096,7 +1902,7 @@ pub struct OracleIndexRefusal {
 /// every operation its cone reaches is numbered the way a run numbers it.
 ///
 /// `aver verify` numbers the calls of one operation across a whole case. The
-/// Lean and Dafny that `aver proof` exports number the calls of one function
+/// Lean that `aver proof` exports numbers the calls of one function
 /// body from the indices that body was entered at, and write the result down
 /// as a literal. Straight-line code, `?` bindings, `?!` propagation,
 /// independent products and `match` arms that call an operation equally often
@@ -3183,14 +2989,6 @@ pub(crate) fn module_prefix_to_rust_segments(prefix: &str) -> Vec<String> {
     prefix.split('.').map(module_segment_to_rust).collect()
 }
 
-/// Translate an Aver module prefix (`Models.User`, `Combat`) into a relative
-/// filesystem path stem with `/` separators. Lean's path-as-module convention
-/// and Dafny's `include "..."` paths both use this — same shape, no
-/// backend-specific escaping.
-pub(crate) fn module_prefix_to_filename(prefix: &str) -> String {
-    prefix.replace('.', "/")
-}
-
 /// Effects declared in fn signatures, preserving the distinction
 /// between namespace-level and method-level declarations.
 ///
@@ -3254,13 +3052,11 @@ pub(crate) fn collect_declared_effects(ctx: &CodegenContext) -> DeclaredEffects 
     }
 }
 
-/// Basename for the entry file emitted by Lean / Dafny. Prefer the
+/// Basename for the entry file emitted by the Lean export. Prefer the
 /// source-declared module name (`module Foo` → `Foo`) so the entry
 /// file's name matches what the user wrote; fall back to a capitalised
 /// project name when no `module` declaration is present. Lake's
-/// path-as-module-name convention forces this for Lean — Dafny doesn't
-/// strictly need it but the same basename keeps the two backends
-/// aligned (no more `playground.dfy` vs `OracleTrace.lean`).
+/// path-as-module-name convention forces this for Lean.
 pub fn entry_basename(ctx: &CodegenContext) -> String {
     ctx.items
         .iter()
@@ -3416,13 +3212,10 @@ pub(crate) fn split_type_params(s: &str, delim: char) -> Vec<String> {
     parts
 }
 
-/// Escape a string literal for target languages that use C-style escapes.
-/// Handles `\\`, `\"`, `\n`, `\r`, `\t`, `\0`,
-/// and generic control characters as `\xHH` (Lean/Rust) or `\uHHHH` (Dafny).
-///
-/// Use `unicode_escapes = true` for Dafny (which needs `\uHHHH`),
-/// `false` for Lean/Rust (which accept `\xHH`).
-pub(crate) fn escape_string_literal_ext(s: &str, unicode_escapes: bool) -> String {
+/// Escape a string literal for target languages that use C-style escapes
+/// (Lean, Rust). Handles `\\`, `\"`, `\n`, `\r`, `\t`, `\0`, and generic
+/// control characters as `\xHH`.
+pub(crate) fn escape_string_literal(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
@@ -3432,28 +3225,11 @@ pub(crate) fn escape_string_literal_ext(s: &str, unicode_escapes: bool) -> Strin
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             '\0' => out.push_str("\\0"),
-            c if c.is_control() => {
-                if unicode_escapes {
-                    // Dafny 4+ with Unicode chars enabled: \U{HHHHHH}
-                    out.push_str(&format!("\\U{{{:06x}}}", c as u32));
-                } else {
-                    out.push_str(&format!("\\x{:02x}", c as u32));
-                }
-            }
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
             c => out.push(c),
         }
     }
     out
-}
-
-/// Convenience: escape with `\xHH` for control chars (Lean, Rust).
-pub(crate) fn escape_string_literal(s: &str) -> String {
-    escape_string_literal_ext(s, false)
-}
-
-/// Convenience: escape with `\u{HHHH}` for control chars (Dafny).
-pub(crate) fn escape_string_literal_unicode(s: &str) -> String {
-    escape_string_literal_ext(s, true)
 }
 
 /// Parse an Aver type annotation string into the internal `Type` enum.
@@ -3463,18 +3239,9 @@ pub(crate) fn parse_type_annotation(ann: &str) -> Type {
     crate::types::parse_type_str(ann)
 }
 
-/// Check if a `Type` represents a set pattern: `Map<T, Unit>`.
-///
-/// Aver has no dedicated `Set` type — the idiomatic way to express a set
-/// is `Map<T, Unit>`. Codegen backends can lower this to the target
-/// language's native set type (Dafny `set<T>`, Lean `Finset T`, etc.).
-pub(crate) fn is_set_type(ty: &Type) -> bool {
-    matches!(ty, Type::Map(_, v) if matches!(v.as_ref(), Type::Unit))
-}
-
 /// Escape an Aver identifier if it collides with a target language reserved word.
 ///
-/// `affix` is appended as a suffix (e.g. `"_"` for Dafny, `"'"` for Lean).
+/// `suffix` is appended (e.g. `"'"` for Lean).
 /// For prefix escaping (e.g. Rust `r#`), use [`escape_reserved_word_prefix`].
 pub(crate) fn escape_reserved_word(name: &str, reserved: &[&str], suffix: &str) -> String {
     if reserved.contains(&name) {
@@ -3514,24 +3281,21 @@ pub(crate) fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
 /// Oracle v1: how to materialise the oracle argument for an effectful
 /// fn call in a law body.
 ///
-/// - `LemmaBinding` — use the lemma-local identifier (`rnd`), matching
-///   the `given` name. Correct for the universal lemma body.
+/// - `LemmaBindingProjected` — use the lemma-local identifier (`rnd`),
+///   matching the `given` name, projected through the subtype carrier.
+///   Correct for the universal lemma body.
 /// - `SampleCaseBinding(case_bindings)` — use the per-case binding
 ///   value (by `given.name`). Correct for sample theorems when the
 ///   domain has multiple values and each case substitutes a
 ///   different one (`given stub: Http.get = [httpDown, httpOk]`).
 #[derive(Debug, Clone)]
 pub(crate) enum OracleInjectionMode<'a> {
-    LemmaBinding,
-    /// Like `LemmaBinding` but project through the subtype carrier
-    /// for classified `Generative` / `GenerativeOutput` effect-givens
-    /// — `g.name` becomes `g.name.val` in the rewritten expression.
-    /// Used by the Lean backend where lifted theorems quantify over
-    /// the constrained subtype (`RandomIntInBounds`) instead of the
-    /// plain function type, so call sites need to peel the carrier.
-    /// Dafny stays on `LemmaBinding` (no first-class subtype types
-    /// over functions); the bound is enforced via `requires` on the
-    /// emitted lemma instead.
+    /// Use the lemma-local identifier, projected through the subtype
+    /// carrier for classified `Generative` / `GenerativeOutput`
+    /// effect-givens — `g.name` becomes `g.name.val` in the rewritten
+    /// expression. Lifted Lean theorems quantify over the constrained
+    /// subtype (`RandomIntInBounds`) instead of the plain function type,
+    /// so call sites need to peel the carrier.
     LemmaBindingProjected,
     SampleCaseBinding(&'a [(String, crate::ast::Spanned<Expr>)]),
 }
@@ -3541,8 +3305,8 @@ pub(crate) enum OracleInjectionMode<'a> {
 /// generative / gen+output effects) plus one argument per classified
 /// non-output effect in the callee's signature.
 ///
-/// Backend-agnostic — operates on AST + `CodegenContext`. Both the
-/// Dafny and Lean backends call this before emitting the law body so
+/// Backend-agnostic — operates on AST + `CodegenContext`. The Lean
+/// backend calls this before emitting the law body so
 /// the law statement matches the lifted fn shape emitted alongside.
 pub(crate) fn rewrite_effectful_calls_in_law<'fd, F>(
     expr: &crate::ast::Spanned<Expr>,
@@ -3577,9 +3341,6 @@ where
         .iter()
         .filter_map(|g| {
             let arg_expr = match &mode {
-                OracleInjectionMode::LemmaBinding => {
-                    Spanned::new(Expr::Ident(g.name.clone()), expr.line)
-                }
                 OracleInjectionMode::LemmaBindingProjected => {
                     // Inject the bare oracle name; the post-rewrite pass
                     // `project_oracle_direct_calls` walks the whole
@@ -3626,7 +3387,7 @@ where
         // projection. `EffectDimension::
         // Generative*` covers more effects than that — e.g.
         // `Disk.writeText` is `GenerativeOutput` but the quant param
-        // stays a plain function in both Lean and Dafny because there's
+        // stays a plain function in Lean because there's
         // no bound to encode. Projecting `.val` on a plain function
         // emits `write.val` on something with no `val` field and the
         // proof rejects it.
@@ -4049,58 +3810,31 @@ fn collect_resolved_called_fn_ids(
     }
 }
 
-/// Sections gathered per emission scope ("" for entry, module prefix
-/// otherwise). Each backend appends to the bucket for the scope a fn
-/// (or its SCC component) belongs to.
-pub(crate) struct PerScopeSections {
-    pub by_scope: std::collections::HashMap<String, Vec<String>>,
-}
-
-impl PerScopeSections {
-    pub(crate) fn take(&mut self, scope: &str) -> Vec<String> {
-        self.by_scope.remove(scope).unwrap_or_default()
-    }
-}
-
-/// Run SCC analysis on each scope's pure fns independently and route the
-/// rendered output through the supplied closure. Lean and Dafny share
-/// this — each scope (entry or dependent module) is SCC-analyzed in
-/// isolation so a `def foo` in one module and an unrelated `def foo` in
-/// another module don't get conflated.
+/// Run SCC analysis on each scope's pure fns independently and hand each
+/// component to the supplied closure. Each scope (entry or dependent
+/// module) is SCC-analyzed in isolation so a `def foo` in one module and an
+/// unrelated `def foo` in another module don't get conflated.
 ///
-/// `is_pure` filters which fns participate; `emit` renders one SCC
-/// component (>= 1 fn) into the lines to append to that scope's bucket.
-pub(crate) fn route_pure_components_per_scope<F, G>(
-    ctx: &CodegenContext,
-    is_pure: F,
-    mut emit: G,
-) -> PerScopeSections
+/// `is_pure` filters which fns participate; `visit` receives one SCC
+/// component (>= 1 fn) and its scope ("" for entry, module prefix
+/// otherwise).
+pub(crate) fn route_pure_components_per_scope<F, G>(ctx: &CodegenContext, is_pure: F, mut visit: G)
 where
     F: Fn(&FnDef) -> bool,
-    G: FnMut(&[&FnDef], &str) -> Vec<String>,
+    G: FnMut(&[&FnDef], &str),
 {
-    let mut by_scope: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-
-    let mut process =
-        |fns: Vec<&FnDef>,
-         scope: String,
-         by_scope: &mut std::collections::HashMap<String, Vec<String>>| {
-            let comps = crate::call_graph::ordered_fn_components(&fns, &ctx.module_prefixes);
-            let bucket = by_scope.entry(scope.clone()).or_default();
-            for comp in comps {
-                bucket.extend(emit(&comp, scope.as_str()));
-            }
-        };
+    let mut process = |fns: Vec<&FnDef>, scope: &str| {
+        for comp in crate::call_graph::ordered_fn_components(&fns, &ctx.module_prefixes) {
+            visit(&comp, scope);
+        }
+    };
 
     for module in &ctx.modules {
         let pure: Vec<&FnDef> = module.fn_defs.iter().filter(|fd| is_pure(fd)).collect();
-        process(pure, module.prefix.clone(), &mut by_scope);
+        process(pure, &module.prefix);
     }
     let entry_pure: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| is_pure(fd)).collect();
-    process(entry_pure, String::new(), &mut by_scope);
-
-    PerScopeSections { by_scope }
+    process(entry_pure, "");
 }
 
 #[cfg(test)]
@@ -4316,7 +4050,7 @@ mod tests {
         };
         let modules = vec![make_module("A"), make_module("B")];
 
-        let make_decl = |predicate_param: &str, witness: i64| RefinedTypeDecl {
+        let make_decl = |predicate_param: &str| RefinedTypeDecl {
             name: "Natural".to_string(),
             carrier_type: "Int".to_string(),
             carrier_field: "value".to_string(),
@@ -4330,7 +4064,6 @@ mod tests {
                     Literal::Bool(true),
                 )),
             },
-            witness: Some(witness.to_string()),
             interval: None,
             op_classes: Vec::new(),
         };
@@ -4343,20 +4076,18 @@ mod tests {
             .expect("B.Natural TypeId");
 
         let mut refined_types: HashMap<crate::ir::TypeId, RefinedTypeDecl> = HashMap::new();
-        refined_types.insert(a_id, make_decl("a", 0));
-        refined_types.insert(b_id, make_decl("b", 10));
+        refined_types.insert(a_id, make_decl("a"));
+        refined_types.insert(b_id, make_decl("b"));
 
         // Fully-qualified lookups hit the exact slot.
         let a = resolve_refined_type_in_with_key(&refined_types, &symbols, &modules, "A.Natural")
             .map(|(_, d)| d)
             .expect("A.Natural canonical lookup");
         assert_eq!(a.predicate_param, "a");
-        assert_eq!(a.witness.as_deref(), Some("0"));
         let b = resolve_refined_type_in_with_key(&refined_types, &symbols, &modules, "B.Natural")
             .map(|(_, d)| d)
             .expect("B.Natural canonical lookup");
         assert_eq!(b.predicate_param, "b");
-        assert_eq!(b.witness.as_deref(), Some("10"));
 
         // Bare lookup finds *something* (module-walk first match) —
         // the typechecker prevents mixed usage upstream, so the
@@ -4415,7 +4146,7 @@ mod tests {
             analysis: None,
         };
 
-        let make_decl = |param: &str, witness: &str| RefinedTypeDecl {
+        let make_decl = |param: &str| RefinedTypeDecl {
             name: "Natural".to_string(),
             carrier_type: "Int".to_string(),
             carrier_field: "value".to_string(),
@@ -4426,7 +4157,6 @@ mod tests {
                     Literal::Bool(true),
                 )),
             },
-            witness: Some(witness.to_string()),
             interval: None,
             op_classes: Vec::new(),
         };
@@ -4475,6 +4205,7 @@ mod tests {
             program_shape: None,
             mir_program: None,
             bare_i64: Default::default(),
+            rust_owned_record_params: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),
@@ -4482,10 +4213,10 @@ mod tests {
         };
         ctx.proof_ir
             .refined_types
-            .insert(entry_id, make_decl("entry_n", "0"));
+            .insert(entry_id, make_decl("entry_n"));
         ctx.proof_ir
             .refined_types
-            .insert(mod_id, make_decl("mod_n", "10"));
+            .insert(mod_id, make_decl("mod_n"));
 
         let from_module = find_refined_type_scoped(&ctx, "Natural", Some("Mod"))
             .expect("Mod-scoped Natural lookup");
@@ -4600,6 +4331,7 @@ mod tests {
             program_shape: None,
             mir_program: None,
             bare_i64: Default::default(),
+            rust_owned_record_params: Default::default(),
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),

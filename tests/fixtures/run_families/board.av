@@ -1,0 +1,19 @@
+module Board
+    kind = capability
+    semantics = effectful
+    intent = "What members and the feeder ask the hub for."
+    exposes [Step, next, post]
+
+type Step
+    Value(Int)
+    Gone
+
+operation next(key: Int, seen: Int) -> Board.Step
+    ? "The first posted value newer than seen, or Gone once the member's key is no longer wanted."
+    oracle = generative
+    replay = recorded
+
+operation post(value: Int) -> Unit
+    ? "Posts one value for every member to read."
+    oracle = generativeOutput
+    replay = recorded

@@ -55,14 +55,7 @@ fn equal_imported_results_do_not_hide_lost_or_reordered_effects() {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_imported_effects");
     let source = tempfile::tempdir().unwrap();
-    for name in [
-        "main.av",
-        "pool.av",
-        "pooled.av",
-        "looper.av",
-        "wrapper.av",
-        "aver.toml",
-    ] {
+    for name in ["main.av", "pool.av", "pooled.av", "looper.av", "wrapper.av"] {
         std::fs::copy(fixture.join(name), source.path().join(name)).unwrap();
     }
     let main = source.path().join("main.av");

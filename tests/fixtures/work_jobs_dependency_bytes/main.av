@@ -1,0 +1,44 @@
+module Main
+    depends [Bytes, Ledger, SplitJob, Node, Wait, Work]
+    intent = "Starts one split job, waits for it, and prints the chunks it answered with."
+    exposes [main]
+    effects [Console.print, SplitJob.begin, SplitJob.take, Wait.poll]
+
+fn main() -> Result<Unit, String>
+    ? "Begins one split job and prints what it split."
+    ! [Console.print, SplitJob.begin, SplitJob.take, Wait.poll]
+    data = Bytes.fromList([1, 2, 3, 250, 255])
+    job = SplitJob.begin(Ledger.Request(data = data, size = 2))?
+    pending: Map<Int, Wait.Item> = {1 => Wait.Item.Job(job)}
+    collect(pending, job, 50)
+
+fn collect(pending: Map<Int, Wait.Item>, job: Work.Job, turns: Int) -> Result<Unit, String>
+    ? "One turn per call: wait once, take the job when it is ready, and stop when it answered."
+    ! [Console.print, SplitJob.take, Wait.poll]
+    match turns < 1
+        true -> Result.Err("work: the job did not finish within the turns allowed")
+        false -> turn(pending, job, turns)
+
+fn turn(pending: Map<Int, Wait.Item>, job: Work.Job, turns: Int) -> Result<Unit, String>
+    ? "The body of one turn: the one wait, then the take it allows."
+    ! [Console.print, SplitJob.take, Wait.poll]
+    _ready = Wait.poll(pending, 200)?
+    match SplitJob.take(job)?
+        Option.None -> collect(pending, job, turns - 1)
+        Option.Some(parts) -> report(parts.chunks, parts.index)
+
+fn report(chunks: List<Bytes>, index: Map<Bytes, Ledger.Chunk>) -> Result<Unit, String>
+    ? "Says what the job split, one line per chunk, with where the index puts it."
+    ! [Console.print]
+    match chunks
+        [] -> Result.Ok(Unit)
+        [chunk, ..rest] -> printed(chunk, rest, index)
+
+fn printed(chunk: Bytes, rest: List<Bytes>, index: Map<Bytes, Ledger.Chunk>) -> Result<Unit, String>
+    ? "Says what one chunk holds and where it starts, and carries on with the rest."
+    ! [Console.print]
+    at = match Map.get(index, chunk)
+        Option.Some(found) -> found.at
+        Option.None -> -1
+    Console.print("chunk {Bytes.toHex(chunk)} of {Bytes.len(chunk)} bytes at {at}")
+    report(rest, index)

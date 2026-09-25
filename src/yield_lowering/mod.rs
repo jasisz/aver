@@ -43,6 +43,18 @@ use crate::types::checker::TypeError;
 pub(crate) type FnSigs =
     std::collections::HashMap<String, (Vec<crate::ast::Type>, crate::ast::Type, Vec<String>)>;
 
+/// How generated source spells the types whose source spelling would not
+/// name them in the module it is generated into, keyed by identity; see
+/// `SymbolTable::generated_type_spellings`.
+pub(crate) type TypeSpellings = std::collections::HashMap<crate::ir::TypeId, String>;
+
+/// A stamped type as generated source must write it: the source spelling,
+/// except where that spelling names another type (or none) in this module,
+/// where it is the declaring module's qualified name.
+pub(crate) fn spell_type(ty: &crate::ast::Type, spellings: &TypeSpellings) -> String {
+    ty.display_with(&|id| spellings.get(&id).cloned())
+}
+
 mod build;
 mod coordinator;
 mod lower;
@@ -197,6 +209,11 @@ impl YieldLoweringReport {
 /// The language's own effect: bare and lowercase, never a capability.
 pub const YIELD_EFFECT: &str = "yield";
 
+/// Whether a function body calls `Run.all()`, which runs the generated loop.
+pub fn calls_run_all(fd: &FnDef) -> bool {
+    coordinator::calls_run_all(fd)
+}
+
 pub fn is_yield_fn(fd: &FnDef) -> bool {
     fd.effects.iter().any(|e| e.node == YIELD_EFFECT)
 }
@@ -272,10 +289,7 @@ fn item_line(item: &TopLevel) -> Option<usize> {
 /// inferred type. `stamped_errors` are that check's diagnostics; the ones
 /// inside a `yield` function stop the lowering, the others are left to the
 /// second check of the lowered module (they may only concern names the
-/// lowering is about to generate). `laws` is that check's
-/// [`TypeCheckResult::laws`](crate::types::checker::TypeCheckResult): the
-/// loop generator cites a program's own law by name and refuses a program
-/// that does not state it.
+/// lowering is about to generate).
 #[allow(clippy::too_many_arguments)]
 pub fn lower(
     items: &mut Vec<TopLevel>,
@@ -284,7 +298,7 @@ pub fn lower(
     marked: &crate::config::MarkedCapabilities,
     fn_sigs: &FnSigs,
     imported: &std::collections::HashMap<String, ProcessProtocol>,
-    laws: &std::collections::BTreeSet<String>,
+    type_spellings: &TypeSpellings,
     coordinator_stop: CoordinatorStop,
 ) -> Result<YieldLoweringReport, Vec<TypeError>> {
     debug_assert_eq!(items.len(), stamped.len());
@@ -367,7 +381,7 @@ pub fn lower(
             failed.insert(name.clone());
             continue;
         }
-        match lower::lower_fn(fd, marked, fn_sigs, &nesting) {
+        match lower::lower_fn(fd, marked, fn_sigs, type_spellings, &nesting) {
             Ok(generated) => {
                 nesting.record(&generated);
                 lowered.insert(name.clone(), generated);
@@ -419,12 +433,20 @@ pub fn lower(
         return Err(errors);
     }
 
+    let module_name = items.iter().find_map(|item| match item {
+        TopLevel::Module(module) => Some(module.name.clone()),
+        _ => None,
+    });
+    let plan = marked.run();
+    let entry = coordinator::is_run_module(module_name.as_deref(), plan);
     let traces = trace::generate(
         items,
         &report.sources,
         &mut report.protocols,
         fn_sigs,
+        type_spellings,
         imported,
+        entry,
     )?;
     report.generated.extend(traces.iter().cloned());
     items.extend(traces);
@@ -435,59 +457,129 @@ pub fn lower(
     report.generated.extend(verification.iter().cloned());
     items.extend(verification);
 
-    // The loop the manifest asked for, generated into the module the `[run]`
-    // table names — the entry module, and no other, because that is where the
-    // policies and the view are and where a program is entered.
-    let module_name = items.iter().find_map(|item| match item {
-        TopLevel::Module(module) => Some(module.name.clone()),
-        _ => None,
-    });
-    let plan = marked.run();
-    // Only the entry module seats processes. Dependency protocols are
-    // libraries: callers enter them as helpers or drive them explicitly.
-    if coordinator::is_run_module(module_name.as_deref(), plan) {
+    // The loop, generated into the program's entry module when that module
+    // writes a process the loop can seat and either has no `main` or has a
+    // `main` that calls `Run.all()`. An entry whose own `main` drives the
+    // protocol by hand gets no loop.
+    if entry {
         let plan = plan.expect("checked by is_run_module");
+        let seatings: Vec<ProcessSeating> = stamped
+            .iter()
+            .find_map(|item| match item {
+                TopLevel::Module(module) => Some(module.seatings.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let main = stamped.iter().find_map(|item| match item {
+            TopLevel::FnDef(fd) if fd.name == "main" => Some(fd),
+            _ => None,
+        });
+        let runs_all = main.is_some_and(coordinator::calls_run_all);
         // The loop seats the processes, and a helper is not one: it is
         // entered through the protocol of the process that calls it, whose
-        // own request sum already carries the helper's requests. So the
-        // generator is handed what is seated, and a nested call stays
-        // invisible to it (decision 6).
+        // own request sum already carries the helper's requests.
         let entered: HashSet<&str> = calls
             .values()
             .flat_map(|called| called.iter().map(|edge| edge.callee.as_str()))
             .collect();
+        for seating in &seatings {
+            if !report.lowered.contains(&seating.process) {
+                errors.push(error_at(seating.line, format!(
+                    "`process {} seated by {}` names no yielding function of this module; a process is a function whose effect list names `yield`",
+                    seating.process, seating.by
+                )));
+            } else if entered.contains(seating.process.as_str()) {
+                errors.push(error_at(seating.line, format!(
+                    "`process {} seated by {}` names a yielding helper another process of this module enters; the loop seats processes, and a helper runs inside the process that calls it",
+                    seating.process, seating.by
+                )));
+            }
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        // What the loop seats: a yielding function that answers Unit, or one
+        // the module declares a seating for. One that answers something else
+        // and has no seating is a protocol the program drives or verifies
+        // itself. A Unit process with parameters and no seating is handed to
+        // the generator all the same, which says what it is missing.
         let seated: Vec<ProcessProtocol> = report
             .protocols
             .iter()
             .filter(|protocol| !entered.contains(protocol.fn_name.as_str()))
+            .filter(|protocol| {
+                seatings
+                    .iter()
+                    .any(|seating| seating.process == protocol.fn_name)
+                    || protocol.return_type == "Unit"
+            })
             .cloned()
             .collect();
-        let generated = coordinator::generate(
-            items,
-            &report.generated,
-            &seated,
-            plan,
-            fn_sigs,
-            laws,
-            coordinator_stop,
-        )?;
-        report.loop_source = Some(generated.source);
-        report.generated.extend(generated.items.iter().cloned());
-        items.extend(generated.items);
-        // The program declared the effects its processes perform; the turn
-        // performs the wait, the stop observation and both ends of every job
-        // kind besides, and the module's own boundary has to admit what is
-        // generated into it.
-        for item in items.iter_mut() {
-            let TopLevel::Module(module) = item else {
-                continue;
-            };
-            let Some(declared) = module.effects.as_mut() else {
-                continue;
-            };
-            for effect in &generated.module_effects {
-                if !declared.iter().any(|entry| entry == effect) {
-                    declared.push(effect.clone());
+        let generate = !seated.is_empty() && (main.is_none() || runs_all);
+        if runs_all && seated.is_empty() {
+            let line = main.map(|fd| fd.line).unwrap_or(1);
+            return Err(vec![error_at(line, "'main' calls Run.all(), which runs the generated loop, but this module writes no process the loop can seat: a yielding function that answers Unit, or one a `process ... seated by ...` line names".to_string())]);
+        }
+        if !generate && !seatings.is_empty() {
+            let line = seatings[0].line;
+            return Err(vec![error_at(line, "this module declares a seated process, and a seated process runs under the generated loop; its own 'main' does not call Run.all(). Call Run.all() from 'main', or remove 'main' and let the loop's own be generated".to_string())]);
+        }
+        if generate {
+            let generated = coordinator::generate(
+                items,
+                &report.generated,
+                &seated,
+                &seatings,
+                plan,
+                fn_sigs,
+                coordinator_stop,
+            )?;
+            report.loop_source = Some(generated.source);
+            report.generated.extend(generated.items.iter().cloned());
+            coordinator::rewrite_run_names(items);
+            items.extend(generated.items);
+            if main.is_none() {
+                let main_source = format!(
+                    "fn main() -> Result<Unit, String>\n    ? \"Runs the generated loop until it is over.\"\n    ! [{}]\n    __all()\n",
+                    generated.module_effects.join(", ")
+                );
+                let tokens = crate::lexer::Lexer::new(&main_source)
+                    .tokenize()
+                    .expect("generated main lexes");
+                let parsed = crate::parser::Parser::new_compiler_generated(tokens)
+                    .parse()
+                    .expect("generated main parses");
+                if let Some(source) = report.loop_source.as_mut() {
+                    source.push('\n');
+                    source.push_str(&main_source);
+                }
+                report.generated.extend(parsed.iter().cloned());
+                items.extend(parsed);
+            }
+            // The program declared the effects its processes perform; the
+            // turn performs the wait, the stop observation and the clock
+            // reading besides, and the module's own boundary and the `main`
+            // that runs the loop have to admit what is generated into them.
+            for item in items.iter_mut() {
+                match item {
+                    TopLevel::Module(module) => {
+                        let Some(declared) = module.effects.as_mut() else {
+                            continue;
+                        };
+                        for effect in &generated.module_effects {
+                            if !declared.iter().any(|entry| entry == effect) {
+                                declared.push(effect.clone());
+                            }
+                        }
+                    }
+                    TopLevel::FnDef(fd) if fd.name == "main" && runs_all => {
+                        for effect in &generated.module_effects {
+                            if !fd.effects.iter().any(|entry| &entry.node == effect) {
+                                fd.effects.push(Spanned::new(effect.clone(), fd.line));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

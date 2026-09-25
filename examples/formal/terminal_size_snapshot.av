@@ -1,7 +1,7 @@
 module TerminalSizeSnapshot
     intent =
         "Snapshot proof over Terminal.size — newly classified in 0.11.1."
-        "Shows the snapshot oracle shape () -> Result<Terminal.Size, String> and a universal law that holds in Lean and Dafny."
+        "Shows the snapshot oracle shape () -> Result<Terminal.Size, String> and a universal law that holds in Lean."
     effects [Console, Terminal]
 
 fn fixedSizeStub() -> Result<Terminal.Size, String>
@@ -30,5 +30,4 @@ verify widthFromSize
 fn main() -> Unit
     ! [Console.print]
     Console.print("aver verify:                passes (sample under fixedSizeStub: 80)")
-    Console.print("aver proof --backend lean:  exports forall-quantified theorem; lake build verifies")
-    Console.print("aver proof --backend dafny: exports the same lemma; dafny verify confirms")
+    Console.print("aver proof: exports forall-quantified theorem; lake build verifies")

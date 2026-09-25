@@ -1,15 +1,9 @@
 module Node
-    intent = "Perturb service grouping and job observations without timing races or live effects."
-    depends [Inbox, Scoring, Ledger, Wait, Work]
-    effects [
-        Inbox.arrive,
-        Process.stopRequested,
-        Scoring.begin, Scoring.take,
-        Time.unixMs,
-        Wait.poll,
-        Work.cancel,
-        yield,
-    ]
+    intent = "Perturb service grouping and seating without timing races or live effects, and state the generated loop's invariants over its own functions."
+    depends [Inbox, Ledger]
+    effects [Inbox.arrive, yield]
+
+process member seated by Ledger.members
 
 fn left() -> Unit
     ? "The first independent process records its own id."
@@ -21,9 +15,18 @@ fn right() -> Unit
     ! [Inbox.arrive, yield]
     Inbox.arrive(2)
 
+fn member(key: Int) -> Unit
+    ? "One member per listed key records its key."
+    ! [Inbox.arrive, yield]
+    Inbox.arrive(key)
+
+fn seeded() -> __Run
+    ? "Both processes without a key seated, then one member per listed key."
+    __seatFamilies(__seatRight(__seatLeft(__fresh())))
+
 fn serveGroups(groups: List<List<Int>>) -> List<Int>
     ? "Drive the generated service path in exactly the requested groups."
-    serveRemaining(__seatRight(__seatLeft(__fresh())), groups).ledger.served
+    servedBy(serveRemaining(seeded(), groups))
 
 verify serveGroups
     serveGroups([[1, 2]]) => [1, 2]
@@ -32,93 +35,159 @@ verify serveGroups
     serveGroups([[2], [1]]) => [2, 1]
     serveGroups([[1, 1, 2], [1, 2]]) => [1, 2]
     serveGroups([[], [999], [2], [], [1]]) => [2, 1]
+    serveGroups([[3, 4]]) => [7, 8]
 
 fn serveRemaining(run: __Run, groups: List<List<Int>>) -> __Run
+    ? "Serves each group in turn."
     match groups
         [] -> run
-        [ids, ..rest] -> serveRemaining(__serveEach(run, [1, 2], ids), rest)
+        [ids, ..rest] -> serveRemaining(__serveEach(run, [], ids), rest)
 
-fn beginStub(path: BranchPath, index: Int, fresh: Work.Job, task: Int) -> Result<Work.Job, String>
-    ? "Mint a test handle without starting a real job."
-    Result.Ok(fresh)
+verify serveRemaining
+    servedBy(serveRemaining(seeded(), [])) => []
 
-fn pendingThenReady(path: BranchPath, index: Int, job: Work.Job) -> Result<Option<Int>, String>
-    ? "Takes are numbered among themselves, whatever the turn observes around them. Take 0 is pending, take 1 returns the sole result; any later take is an error."
-    match index
-        0 -> Result.Ok(Option.None)
-        1 -> Result.Ok(Option.Some(10))
-        _ -> Result.Err("a settled job was taken again")
+fn servedBy(run: __Run) -> List<Int>
+    ? "What the ledger recorded as served. The run holds the ledger's state between answers; it is out only while one answer function holds it."
+    match run.ledger
+        Option.Some(ledger) -> ledger.served
+        Option.None -> []
 
-fn falselyReady(path: BranchPath, index: Int, items: Map<Int, Wait.Item>, timeout: Int) -> Result<List<Int>, String>
-    ? "Report the original job key even after its slot has been removed."
-    Result.Ok([1])
+verify servedBy
+    servedBy(seeded()) => []
 
-fn stoppedStub(path: BranchPath, index: Int) -> Bool
-    false
+fn seating(keys: List<Int>) -> Tuple<Int, Int, Int>
+    ? "Seats the family from the given keys after a first seating from the listed ones: how many slots, how many members and how many dropped instances that leaves."
+    run = __seatFamilyMember(seeded(), keys)
+    (Map.len(run.slots), Map.len(run.seatedMember), run.dropped)
 
-fn clockStub(path: BranchPath, index: Int) -> Int
-    index
+verify seating
+    seating([7, 8]) => (4, 2, 0)
+    seating([7, 7, 8]) => (4, 2, 0)
+    seating([8]) => (3, 1, 1)
+    seating([]) => (2, 0, 2)
+    seating([7, 8, 9]) => (5, 3, 0)
 
-fn cancelStub(path: BranchPath, index: Int, job: Work.Job) -> Unit
-    Unit
+fn retiring(keys: List<Int>) -> Tuple<Int, Int>
+    ? "Serves every member so each one returns and retires its key, then seats the family again from the given keys: how many members that seats, and how many keys stay retired."
+    served = __serveEach(seeded(), [], [3, 4])
+    run = __seatFamilyMember(served, keys)
+    (Map.len(run.seatedMember), Map.len(run.retiredMember))
 
-fn observeJob() -> Result<Tuple<Int, Int, Int, Int>, String>
-    ? "One pending take, one successful take, then a stale readiness notification."
-    ! [Process.stopRequested, Scoring.begin, Scoring.take, Time.unixMs, Wait.poll]
-    started = __startJobsScoring(__fresh())
-    pending = __turn(started)?
-    completed = __turn(pending)?
-    late = __turn(completed)?
-    Result.Ok((Map.len(pending.jobs), Map.len(completed.jobs), late.ledger.scored, late.ledger.failures))
+verify retiring
+    retiring([7, 8]) => (0, 2)
+    retiring([7]) => (0, 1)
+    retiring([]) => (0, 0)
 
-verify observeJob
-    given begin: Scoring.begin = [beginStub]
-    given take: Scoring.take = [pendingThenReady]
-    given ready: Wait.poll = [falselyReady]
-    given stop: Process.stopRequested = [stoppedStub]
-    given clock: Time.unixMs = [clockStub]
-    observeJob() => Result.Ok((1, 0, 10, 0))
+fn negativeDeadline() -> Tuple<Int, Int>
+    ? "Two parked deadlines, one of them negative, in both slot orders. A negative deadline is due now, so the turn waits for nothing whichever slot holds it."
+    run = seeded()
+    first = __park(__park(run, 1, Run.Wake.Until([], Option.Some(300)), 1), 2, Run.Wake.Until([], Option.Some(0 - 5)), 1)
+    second = __park(__park(run, 1, Run.Wake.Until([], Option.Some(0 - 5)), 1), 2, Run.Wake.Until([], Option.Some(300)), 1)
+    (__timeout(first), __timeout(second))
 
-fn observeCancelled() -> Result<Tuple<Int, Int, Int>, String>
-    ? "A notification for a cancelled table entry cannot land a second outcome."
-    ! [Process.stopRequested, Scoring.begin, Scoring.take, Time.unixMs, Wait.poll, Work.cancel]
-    started = __startJobsScoring(__fresh())
-    cancelled = __cancelOne(started, 1)
-    late = __turn(cancelled)?
-    Result.Ok((Map.len(late.jobs), late.ledger.scored, late.ledger.failures))
+verify negativeDeadline
+    negativeDeadline() => (0, 0)
 
-verify observeCancelled
-    given begin: Scoring.begin = [beginStub]
-    given take: Scoring.take = [pendingThenReady]
-    given cancel: Work.cancel = [cancelStub]
-    given ready: Wait.poll = [falselyReady]
-    given stop: Process.stopRequested = [stoppedStub]
-    given clock: Time.unixMs = [clockStub]
-    observeCancelled() => Result.Ok((0, 0, 0))
+fn settledWakes() -> Tuple<Bool, Bool, Bool, Int>
+    ? "A request parked on Settled: not askable while its module has not answered since, askable once it has, and its own Settled answer moves nothing. A turn with such a request askable waits for nothing."
+    parked = __park(seeded(), 1, Run.Wake.Settled(Option.None), 1)
+    moved = __bump(parked, 1)
+    slotOf = Map.get(parked.slots, 1)
+    (askableIn(parked, slotOf), askableIn(moved, slotOf), __versionOf(parked, 1) == __versionOf(seeded(), 1), __timeout(moved))
 
-fn historyObservation(events: List<__HistoryEvent>) -> Tuple<Bool, Int, Int, Int>
-    ? "Observe the generated history after both processes have been seated."
-    initial = __seatRight(__seatLeft(__fresh()))
-    final = __historyRun(initial, events)
-    (__historyAdmissible(initial, events), Map.len(final.slots), __current(final, 1), final.dropped)
+verify settledWakes
+    settledWakes() => (false, true, true, 0)
 
-verify historyObservation
-    historyObservation([]) => (true, 2, 1, 0)
-    historyObservation([__HistoryEvent.Later(1, Wait.Wake.After(5)), __HistoryEvent.Observe(0 - 5000, false)]) => (true, 2, 1, 0)
-    historyObservation([__HistoryEvent.SettleLeft(1, 1, __LeftOutcome.Done(Unit)), __HistoryEvent.Later(1, Wait.Wake.NextTurn), __HistoryEvent.SettleLeft(1, 1, __LeftOutcome.Done(Unit))]) => (true, 1, 0 - 1, 1)
-    historyObservation([__HistoryEvent.SettleRight(2, 1, __RightOutcome.Done(Unit)), __HistoryEvent.SettleLeft(1, 1, __LeftOutcome.Done(Unit))]) => (true, 0, 0 - 1, 0)
-    historyObservation([__HistoryEvent.SettleLeft(99, 0 - 1, __LeftOutcome.Done(Unit))]) => (false, 2, 1, 0)
+fn askableIn(run: __Run, slot: Option<__Slot>) -> Bool
+    ? "Whether one slot is askable in this run, with no key reported ready."
+    match slot
+        Option.None -> false
+        Option.Some(found) -> __askableSlot(run, found, [], 1)
 
-fn historyJobLimit() -> Result<Tuple<Bool, Bool, Bool, Int>, String>
-    ? "Admissibility checks the job table after each preceding event; cancellation makes room again."
-    ! [Scoring.begin]
-    handle = Scoring.begin(1)?
-    start = __HistoryEvent.StartScoring(1, handle)
-    initial = __fresh()
-    full = __historyRun(initial, [start])
-    cancelled = [start, __HistoryEvent.Cancel(1), start]
-    Result.Ok((__historyAdmissible(initial, [start]), __historyAdmissible(full, [start]), __historyAdmissible(initial, cancelled), Map.len(__historyRun(initial, cancelled).jobs)))
+verify askableIn
+    askableIn(seeded(), Option.None) => false
+    askableIn(seeded(), Map.get(seeded().slots, 1)) => true
 
-verify historyJobLimit
-    given begin: Scoring.begin = [beginStub]
-    historyJobLimit() => Result.Ok((true, false, true, 1))
+fn stale(run: __Run, id: Int, seq: Int) -> Bool
+    ? "Why an answer carrying this instance changes nothing."
+    seq != __current(run, id)
+
+verify stale
+    stale(seeded(), 1, 1) => false
+    stale(seeded(), 1, 5) => true
+
+fn seated(run: __Run, id: Int) -> Bool
+    ? "Why an Err moves the request nowhere: the slot is already there."
+    Map.has(run.slots, id)
+
+verify seated
+    seated(seeded(), 1) => true
+    seated(seeded(), 9) => false
+
+fn reached(deadline: Option<Int>, due: Int, now: Int) -> Bool
+    ? "Why a deadline has fired: one was asked for and the clock has reached it."
+    match deadline
+        Option.None -> false
+        Option.Some(_) -> due <= now
+
+verify reached
+    reached(Option.None, 0, 5) => false
+    reached(Option.Some(1), 0, 5) => true
+    reached(Option.Some(1), 9, 5) => false
+
+verify __settleLeft law lateAnswerIsDropped
+    given run: __Run = [seeded()]
+    given id: Int = [1, 2, 3]
+    given seq: Int = [0, 5]
+    given outcome: __LeftOutcome = [__LeftOutcome.Done(Unit)]
+    when seq != __current(run, id)
+    because stale(run, id, seq)
+    __settleLeft(run, id, seq, outcome).slots => run.slots
+
+verify __settleLeft law lateAnswerIsCounted
+    given run: __Run = [seeded()]
+    given id: Int = [1, 2, 3]
+    given seq: Int = [0, 5]
+    given outcome: __LeftOutcome = [__LeftOutcome.Done(Unit)]
+    when seq != __current(run, id)
+    because stale(run, id, seq)
+    __settleLeft(run, id, seq, outcome).late => run.late + 1
+
+verify __park law anErrKeepsTheInstance
+    given run: __Run = [seeded()]
+    given id: Int = [1, 2, 3]
+    given wake: Run.Wake = [Run.Wake.Until([], Option.Some(5)), Run.Wake.Settled(Option.None)]
+    given owner: Int = [1]
+    when Map.has(run.slots, id)
+    because seated(run, id)
+    __current(__park(run, id, wake, owner), id) => __current(run, id)
+
+verify __nextInstance law theNextInstanceIsHigher
+    given seq: Int = [0, 1, 7]
+    __nextInstance(seq) > seq holds
+
+verify __remaining law theWaitNeverExceedsTheRequest
+    given due: Int = [0, 5, 50]
+    given now: Int = [0 - 5000, 0, 5, 50]
+    given ms: Int = [0, 5, 50]
+    __remaining(due, now, ms) <= ms holds
+
+verify __deadlinePassed law aDeadlineThatHasPassedFires
+    given deadline: Option<Int> = [Option.None, Option.Some(0), Option.Some(5)]
+    given due: Int = [0, 5, 50]
+    given ms: Int = [0, 5]
+    given now: Int = [0 - 5000, 0, 5, 50]
+    when reached(deadline, due, now)
+    because reached(deadline, due, now)
+    __deadlinePassed(deadline, due, ms, now) => true
+
+verify __deadlinePassed law noDeadlineNeverFires
+    given due: Int = [0, 5, 50]
+    given ms: Int = [0, 5]
+    given now: Int = [0 - 5000, 0, 5, 50]
+    __deadlinePassed(Option.None, due, ms, now) => false
+
+verify __moved law aSettledAnswerMovesNoVersion
+    given run: __Run = [seeded()]
+    given owner: Int = [1, 2]
+    __moved(run, Run.Wake.Settled(Option.None), owner).versions => run.versions

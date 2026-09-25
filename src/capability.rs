@@ -38,6 +38,13 @@ pub fn canonicalize_type_names(ty: Type, scope: &str) -> Type {
     validation::canonicalize_type_names(ty, scope)
 }
 
+/// Whether a bare type name belongs to the compiler rather than to any
+/// module of the program: `Bytes` written inside `Ledger` is `Bytes`, never
+/// `Ledger.Bytes`.
+pub fn is_compiler_shipped_type_name(name: &str) -> bool {
+    validation::is_compiler_shipped_type_name(name)
+}
+
 /// What the rest of the program declares, as a capability contract needs to
 /// see it: every module's plain data types under their canonical name, and
 /// every capability resource name the program mints.

@@ -496,7 +496,8 @@ impl MirFnEmitPolicy {
     /// refinement requires an owned carrier instead: non-final uses clone,
     /// final uses move, and Map/Vector mutators preserve retained aliases via
     /// COW. Missing facts remain flagged and keep borrow-by-default.
-    pub(super) fn apply_own_param(&mut self, mir_fn: &crate::ir::mir::MirFn) {
+    pub(super) fn apply_own_param(&mut self, mir_fn: &crate::ir::mir::MirFn, ctx: &CodegenContext) {
+        let consumed = ctx.rust_owned_record_params.get(&mir_fn.fn_id);
         for (i, param) in mir_fn.params.iter().enumerate() {
             // Only collection params are candidates (the only thing
             // `own_param`'s RULE 1 ever flags). A non-collection param is
@@ -510,7 +511,8 @@ impl MirFnEmitPolicy {
                 continue;
             };
             let returned_record_successor = matches!(ty, Type::Named { .. })
-                && result_contains_record_successor_of(&mir_fn.body.node, param.local);
+                && (result_contains_record_successor_of(&mir_fn.body.node, param.local)
+                    || consumed.and_then(|owned| owned.get(i)).copied() == Some(true));
             // `own_param`'s `prone`/clearing both index `aliased_slots`
             // by PARAM POSITION `i` (its `(0..nparams).filter(|&i| …)`),
             // matching `MirParam.local = LocalId(i)`; match that exactly.
@@ -610,13 +612,15 @@ fn result_contains_record_successor_of(expr: &MirExpr, slot: LocalId) -> bool {
 pub(super) fn owned_collection_param_names(
     mir_fn: &crate::ir::mir::MirFn,
     param_types: &[(String, Type)],
+    ctx: &CodegenContext,
 ) -> HashSet<String> {
+    let consumed = ctx.rust_owned_record_params.get(&mir_fn.fn_id);
     let mut out = HashSet::new();
     for (i, (name, ty)) in param_types.iter().enumerate() {
         let returned_record_successor = matches!(ty, Type::Named { .. })
-            && mir_fn.params.get(i).is_some_and(|param| {
+            && (mir_fn.params.get(i).is_some_and(|param| {
                 result_contains_record_successor_of(&mir_fn.body.node, param.local)
-            });
+            }) || consumed.and_then(|owned| owned.get(i)).copied() == Some(true));
         let collection_graduated = is_owned_collection_candidate(ty)
             && !mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
         if !collection_graduated && !returned_record_successor {
@@ -625,6 +629,150 @@ pub(super) fn owned_collection_param_names(
         out.insert(aver_name_to_rust(name));
     }
     out
+}
+
+/// Which record params of every function the Rust backend takes by value.
+///
+/// A record param is borrowed by default, so a function that consumes it
+/// clones it first, and while that clone is alive the caller's copy still
+/// holds every Map and Vector the record carries. A later in-place update of
+/// one of them then copies it whole. A function consumes a param when it
+/// updates it at its last use or hands it at its last use to a callee that
+/// takes it by value; taking such a param by value lets a chain
+/// of calls move one record from caller to callee, which is what keeps the
+/// state a generated loop hands an answer module uniquely owned.
+///
+/// The facts are a least fixpoint over the program: a callee taking a param
+/// by value is what makes passing it at the last use a consumption. A
+/// self-tail-recursive function already takes every param by value; a mutual
+/// tail-call group keeps its borrowing wrappers and is never a by-value
+/// callee here.
+pub(super) fn compute_owned_record_params(
+    ctx: &CodegenContext,
+) -> HashMap<crate::ir::FnId, Vec<bool>> {
+    let mut owned: HashMap<crate::ir::FnId, Vec<bool>> = HashMap::new();
+    let Some(program) = ctx.mir_program.as_ref() else {
+        return owned;
+    };
+    let mut candidates: Vec<(crate::ir::FnId, Vec<usize>)> = Vec::new();
+    for (id, mir_fn) in program.iter() {
+        let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
+            continue;
+        };
+        if ctx.mutual_tco_members.contains(id) {
+            continue;
+        }
+        if super::toplevel::resolved_fn_has_self_tailcall(resolved) {
+            owned.insert(*id, vec![true; resolved.params.len()]);
+            continue;
+        }
+        let by_value = owned_collection_param_names(mir_fn, &resolved.params, ctx);
+        let mut abi = Vec::with_capacity(resolved.params.len());
+        let mut open = Vec::new();
+        for (i, (name, ty)) in resolved.params.iter().enumerate() {
+            let taken = !should_borrow_param(ty) || by_value.contains(&aver_name_to_rust(name));
+            if !taken && matches!(ty, Type::Named { .. }) && mir_fn.params.get(i).is_some() {
+                open.push(i);
+            }
+            abi.push(taken);
+        }
+        owned.insert(*id, abi);
+        if !open.is_empty() {
+            candidates.push((*id, open));
+        }
+    }
+    loop {
+        let mut graduated = Vec::new();
+        for (id, open) in &candidates {
+            let Some(mir_fn) = program.fn_by_id(*id) else {
+                continue;
+            };
+            for &i in open {
+                if owned[id][i] {
+                    continue;
+                }
+                let slot = mir_fn.params[i].local;
+                if consumes_local(&mir_fn.body.node, slot, &owned) {
+                    graduated.push((*id, i));
+                }
+            }
+        }
+        if graduated.is_empty() {
+            break;
+        }
+        for (id, i) in graduated {
+            if let Some(abi) = owned.get_mut(&id) {
+                abi[i] = true;
+            }
+        }
+    }
+    owned
+}
+
+/// Whether `expr` consumes the local in `slot`: updates it as the base of a
+/// record update at its last use, or passes it at its last use to a callee
+/// position `owned` says is by value. Returning it bare is not a consumption:
+/// a function that only hands its param back keeps borrowing it.
+fn consumes_local(
+    expr: &MirExpr,
+    slot: LocalId,
+    owned: &HashMap<crate::ir::FnId, Vec<bool>>,
+) -> bool {
+    let last_use_of =
+        |arg: &MirExpr| local_of(arg).is_some_and(|local| local.slot == slot && local.last_use);
+    let by_value = |callee: crate::ir::FnId, index: usize| {
+        owned
+            .get(&callee)
+            .and_then(|abi| abi.get(index))
+            .copied()
+            .unwrap_or(false)
+    };
+    match expr {
+        MirExpr::Call(call) => {
+            if let MirCallee::Fn(callee) = call.node.callee
+                && call
+                    .node
+                    .args
+                    .iter()
+                    .enumerate()
+                    .any(|(index, arg)| last_use_of(&arg.node) && by_value(callee, index))
+            {
+                return true;
+            }
+            call.node
+                .args
+                .iter()
+                .any(|arg| consumes_local(&arg.node, slot, owned))
+        }
+        MirExpr::TailCall(call) => {
+            call.node
+                .args
+                .iter()
+                .enumerate()
+                .any(|(index, arg)| last_use_of(&arg.node) && by_value(call.node.target, index))
+                || call
+                    .node
+                    .args
+                    .iter()
+                    .any(|arg| consumes_local(&arg.node, slot, owned))
+        }
+        MirExpr::RecordUpdate(update) => {
+            last_use_of(&update.node.base.node)
+                || consumes_local(&update.node.base.node, slot, owned)
+                || update
+                    .node
+                    .updates
+                    .iter()
+                    .any(|field| consumes_local(&field.value.node, slot, owned))
+        }
+        _ => {
+            let mut found = false;
+            crate::ir::mir::expr::walk_children(expr, &mut |child| {
+                found = found || consumes_local(child, slot, owned);
+            });
+            found
+        }
+    }
 }
 
 /// The legacy representation-backed `Tcp.Connection` carrier maps to its
@@ -3573,7 +3721,7 @@ pub(super) fn emit_mir_fn_body_routed(
     // SIGNATURE (`emit_fn_def_with_visibility`) computes the SAME owned
     // set from the same `mir_fn.aliased_slots` and emits `mut p: T`, so
     // body and signature agree on which params are owned.
-    policy.apply_own_param(mir_fn);
+    policy.apply_own_param(mir_fn, ctx);
     // Apply the Int unboxing facts so a proven-bare slot emits native
     // `i64`. Same per-fn slice the signature emit reads (via
     // `bare_fn_facts`), so body and signature agree on which params /
@@ -3677,7 +3825,7 @@ pub(super) fn emit_mir_tco_fn(
     // a structural TCO decision that takes precedence, so drop any
     // rc-wrapped name back out of `owned_params` to keep signature and
     // body consistent.
-    policy.apply_own_param(mir_fn);
+    policy.apply_own_param(mir_fn, ctx);
     // Int unboxing: a bare `i64` counter param is `Copy`-by-value, so it
     // is never rc-wrapped — a param bare in the summary is disjoint from
     // `rc_wrapped` by construction (rc only wraps non-Copy pass-through

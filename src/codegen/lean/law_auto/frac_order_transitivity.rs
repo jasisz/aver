@@ -496,7 +496,7 @@ pub(super) fn recognize_frac_order_transitivity_shape(
     Some(FracOrderTransitivity {
         lo,
         links,
-        subject: super::shared::entry_qualified_lean_name(ctx, &subject_src),
+        subject: super::shared::owner_qualified_lean_name(ctx, &subject_src),
         lessthan,
         isnonneg,
         minus,

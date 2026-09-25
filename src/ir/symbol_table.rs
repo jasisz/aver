@@ -712,6 +712,17 @@ impl SymbolTable {
             if asking == Some(prefix) {
                 return self.type_id_of(&TypeKey::in_module(prefix, bare));
             }
+            // A module loaded under a longer path (`Slice.Wire`) still names
+            // itself by the name it declares (`Wire`), exactly as it does
+            // when it is checked on its own. That is a self-reference unless
+            // the module depends on another module of that very name.
+            if let Some(scope) = asking
+                && scope.rsplit('.').next() == Some(prefix)
+                && !self.depends_of(asking).iter().any(|dep| dep == prefix)
+                && let Some(id) = self.type_id_of(&TypeKey::in_module(scope, bare))
+            {
+                return Some(id);
+            }
 
             // Provider resources are language-level atoms and can occur in a
             // lifted signature without a source `depends` edge.
@@ -911,6 +922,29 @@ impl SymbolTable {
         None
     }
 
+    /// How generated source spells the types whose source spelling does
+    /// not name them from the entry scope.
+    ///
+    /// A stamped type keeps its identity and its bare source name. Generated
+    /// source is parsed again in the entry's scope, where a bare name another
+    /// visible module also declares is ambiguous, or names the other type.
+    /// For every such type the canonical `Module.Type` is the spelling, when
+    /// it resolves back to the same identity; every other type keeps its
+    /// source spelling, so generated source changes only where it was wrong.
+    pub fn generated_type_spellings(&self) -> HashMap<TypeId, String> {
+        let mut spellings = HashMap::new();
+        for (key, id) in &self.type_index {
+            if self.resolve_type_id_in(&key.name, None) == Some(*id) {
+                continue;
+            }
+            let canonical = key.canonical();
+            if self.resolve_type_id_in(&canonical, None) == Some(*id) {
+                spellings.insert(*id, canonical);
+            }
+        }
+        spellings
+    }
+
     pub fn type_entry(&self, id: TypeId) -> &TypeEntry {
         self.type_entry_if_present(id)
             .unwrap_or_else(|| panic!("TypeId({}) does not belong to this symbol table", id.0))
@@ -1105,6 +1139,9 @@ mod tests {
             semantics_line: None,
             yield_protocols: Vec::new(),
             yield_sources: Vec::new(),
+            answers: Vec::new(),
+            answers_line: None,
+            seatings: Vec::new(),
         }
     }
 

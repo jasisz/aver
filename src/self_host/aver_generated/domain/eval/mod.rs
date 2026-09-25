@@ -22,7 +22,7 @@ pub fn evalProgramWithFns(
 pub fn callResolved(
     fd @ _: &crate::aver_generated::domain::ast::FnDef,
     args @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    fns @ _: &crate::aver_generated::domain::eval::store::FnStore,
+    mut fns @ _: crate::aver_generated::domain::eval::store::FnStore,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::core::callResolved(fd, args, fns)

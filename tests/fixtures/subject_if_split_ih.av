@@ -1,0 +1,31 @@
+module EqSplit
+    intent =
+        "count(y, insert(x, xs)) equals count(y, x :: xs); count branches on y == h."
+
+fn insert(x: Int, xs: List<Int>) -> List<Int>
+    ? "Puts x before the first element it does not exceed."
+    match xs
+        [] -> [x]
+        [h, ..t] -> match x <= h
+            true -> List.prepend(x, xs)
+            false -> List.prepend(h, insert(x, t))
+
+verify insert
+    insert(2, [1, 3]) => [1, 2, 3]
+
+fn count(y: Int, xs: List<Int>) -> Int
+    ? "How many times y occurs in xs."
+    match xs
+        [] -> 0
+        [h, ..t] -> match y == h
+            true -> 1 + count(y, t)
+            false -> count(y, t)
+
+verify count
+    count(1, [1, 2, 1]) => 2
+
+verify insert law insertCount
+    given y: Int = [-1, 0, 1, 2]
+    given x: Int = [-1, 0, 1, 2]
+    given xs: List<Int> = [[], [0], [1, 2], [0, 0, 2], [-1, 1, 1]]
+    count(y, insert(x, xs)) => count(y, List.prepend(x, xs))

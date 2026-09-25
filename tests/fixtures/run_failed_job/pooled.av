@@ -1,90 +1,60 @@
 module Pooled
-    intent = "Fixture answer module: the answer this program gives to Pool, all three ends of the job seam, and the ledger of what never landed."
-    depends [Pool, Wait]
-    exposes [State, fresh, claim, score, nextTask, taskStarted, landed]
-    effects []
+    intent = "Fixture answer module: each score is a Validation job this module begins itself. This one cancels the job the moment it begins, so the take after the wait reports it answers why it never will, and the module records that rejection and answers the request rather than failing the turn."
+    depends [Pool, Validation, Wait, Work]
+    exposes [State, fresh, scored, score]
+    effects [Validation.begin, Validation.take, Work.cancel]
+    answers [Pool]
 
 record State
-    left: Int
-    pending: List<Int>
-    scored: Int
+    jobs: Map<Int, Work.Job>
     rejected: List<String>
 
 fn fresh() -> State
-    ? "One handle to give out, one validation task to run, nothing scored and nothing rejected."
-    State(left = 1, pending = [1], scored = 0, rejected = [])
+    ? "No job running and nothing rejected."
+    State(jobs = {}, rejected = [])
 
-fn claim(state: State) -> Tuple<State, Pool.ClaimReply>
-    ? "One handle, until there are none."
-    match state.left == 0
-        true -> (state, Pool.ClaimReply.Now(Option.None))
-        false -> (State.update(state, left = state.left - 1), Pool.ClaimReply.Now(Option.Some(state.left)))
+fn scored(state: State, task: Int) -> Tuple<State, Result<Result<Int, String>, Run.Wake>>
+    ? "The first ask begins the job, cancels it and waits on it; an ask after the wait reported it takes it."
+    ! [Validation.begin, Validation.take, Work.cancel]
+    match Map.get(state.jobs, task)
+        Option.Some(job) -> taken(state, task, job)
+        Option.None -> begun(state, task)
+
+fn begun(state: State, task: Int) -> Tuple<State, Result<Result<Int, String>, Run.Wake>>
+    ? "Begins the job and cancels it before anything takes it: a cancelled job has no result to give and never will."
+    ! [Validation.begin, Work.cancel]
+    match Validation.begin(task)
+        Result.Err(reason) -> (state, Result.Ok(Result.Err(reason)))
+        Result.Ok(job) -> cancelled(State.update(state, jobs = Map.set(state.jobs, task, job)), job)
+
+fn cancelled(state: State, job: Work.Job) -> Tuple<State, Result<Result<Int, String>, Run.Wake>>
+    ? "The job is cancelled, and the request waits on it all the same: a cancelled job is ready for the wait."
+    ! [Work.cancel]
+    _stopped = Work.cancel(job)
+    (state, Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+
+fn taken(state: State, task: Int, job: Work.Job) -> Tuple<State, Result<Result<Int, String>, Run.Wake>>
+    ? "One take: nothing yet waits on the job again, a score answers, and a job that will never finish is recorded as a rejection and answered with its reason."
+    ! [Validation.take]
+    match Validation.take(job)
+        Result.Err(reason) -> (rejectedFor(state, task, reason), Result.Ok(Result.Err(reason)))
+        Result.Ok(found) -> match found
+            Option.None -> (state, Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+            Option.Some(points) -> (State.update(state, jobs = Map.remove(state.jobs, task)), Result.Ok(Result.Ok(points)))
+
+fn rejectedFor(state: State, task: Int, reason: String) -> State
+    ? "A job that will never finish: its handle goes and its reason is recorded."
+    State.update(state, jobs = Map.remove(state.jobs, task), rejected = List.concat(state.rejected, [reason]))
+
+verify rejectedFor law aFailedTakeIsRecorded
+    given state: State = [fresh(), State.update(fresh(), rejected = ["earlier"])]
+    given task: Int = [1, 2]
+    given reason: String = ["work: job cancelled"]
+    List.len(rejectedFor(state, task, reason).rejected) => List.len(state.rejected) + 1
 
 fn score(task: Int) -> Int
     ? "What one job computes off the turn."
     task + 1
 
-fn nextTask(state: State) -> Option<Int>
-    ? "The next task waiting to be started, if anything."
-    match state.pending
-        [] -> Option.None
-        [head, ..rest] -> Option.Some(head)
-
-fn taskStarted(state: State, task: Int) -> State
-    ? "A task whose job just began leaves the queue it was offered from — every copy of it — so the next ask is offered a different one. Named by aver.toml's started key."
-    State.update(state, pending = withoutTask(state.pending, task, []))
-
-fn withoutTask(pending: List<Int>, task: Int, acc: List<Int>) -> List<Int>
-    ? "The queue with every copy of one task taken out, in the order the rest were queued."
-    match pending
-        [] -> acc
-        [head, ..rest] -> withoutTask(rest, task, keptUnlessTask(acc, head, task))
-
-fn keptUnlessTask(acc: List<Int>, entry: Int, task: Int) -> List<Int>
-    ? "One queued entry, kept unless it is the task that just started."
-    match entry == task
-        true -> acc
-        false -> List.concat(acc, [entry])
-
-fn landed(state: State, outcome: Result<Int, String>) -> State
-    ? "Where a job that is over goes: its score, or the reason it will never have one. A run whose job was cancelled records the rejection and carries on."
-    match outcome
-        Result.Err(reason) -> State.update(state, rejected = List.concat(state.rejected, [reason]))
-        Result.Ok(points) -> State.update(state, scored = state.scored + points)
-
-verify claim
-    claim(fresh()) => (State.update(fresh(), left = 0), Pool.ClaimReply.Now(Option.Some(1)))
-
 verify score
     score(1) => 2
-
-verify nextTask
-    nextTask(fresh()) => Option.Some(1)
-    nextTask(State.update(fresh(), pending = [])) => Option.None
-
-verify withoutTask law theStartedTaskIsOut
-    given pending: List<Int> = [[], [1], [1, 2]]
-    given task: Int = [1, 2]
-    given acc: List<Int> = [[], [3]]
-    List.contains(withoutTask(pending, task, acc), task) => List.contains(acc, task)
-
-verify taskStarted law aStartedTaskIsNotAskedAgain
-    given state: State = [fresh(), State.update(fresh(), pending = [1, 2])]
-    given task: Int = [1, 2]
-    when nextTask(state) == Option.Some(task)
-    using [withoutTask.theStartedTaskIsOut]
-    nextTask(taskStarted(state, task)) != Option.Some(task) holds
-
-verify taskStarted
-    taskStarted(fresh(), 1) => State.update(fresh(), pending = [])
-
-verify withoutTask
-    withoutTask([1, 2], 1, []) => [2]
-
-verify keptUnlessTask
-    keptUnlessTask([], 1, 1) => []
-    keptUnlessTask([], 2, 1) => [2]
-
-verify landed
-    landed(fresh(), Result.Ok(4)) => State.update(fresh(), scored = 4)
-    landed(fresh(), Result.Err("work: job cancelled")) => State.update(fresh(), rejected = ["work: job cancelled"])

@@ -11,7 +11,7 @@ module IntAbsLaws
         ""
         "These are pure builtin facts. `Int.abs : Int -> Int` lowers Int-honestly"
         "to `((x : Int).natAbs : Int)`, so the Lean proofs are about the Nat.cast"
-        "of a natAbs; Dafny's Z3 discharges them too."
+        "of a natAbs."
     effects []
 
 fn magnitude(x: Int) -> Int

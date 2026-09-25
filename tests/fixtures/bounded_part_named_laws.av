@@ -7,21 +7,21 @@ module BoundedPartNamedLaws
     effects []
 
 fn scaledProduct(a: Int, b: Int) -> Int
-    ? "Plain product of two integers; nonlinear in both arguments so no lane recognizer fires."
-    a * b
+    ? "A square minus twice another square. Nonlinear, and the laws below say it is never zero, which no core closer proves, so both stay bounded."
+    a * a - 2 * b * b
 
 verify scaledProduct
-    scaledProduct(3, 4) => 12
-    scaledProduct(-2, 5) => -10
+    scaledProduct(3, 2) => 1
+    scaledProduct(1, 1) => -1
 
 verify scaledProduct law part1
-    given a: Int = [1, 2]
-    given b: Int = [3, 4]
+    given a: Int = [1, 2, 3]
+    given b: Int = [1, 2]
     when Bool.and(a > 0, b > 0)
-    scaledProduct(a, b) >= 0 => true
+    scaledProduct(a, b) != 0 => true
 
 verify scaledProduct law part2
-    given a: Int = [-1, -2]
-    given b: Int = [-3, -4]
+    given a: Int = [-1, -2, -3]
+    given b: Int = [-1, -2]
     when Bool.and(a < 0, b < 0)
-    scaledProduct(a, b) >= 0 => true
+    scaledProduct(a, b) != 0 => true

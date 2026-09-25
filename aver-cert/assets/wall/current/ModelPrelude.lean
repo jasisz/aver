@@ -85,6 +85,72 @@ def low (x w : Int) : Int := x % 2 ^ w.toNat
 @[simp] theorem neg_complement_involution (x : Int) : -(-x - 1) - 1 = x := by
   omega
 
+/-! Masks. A law that masks with a literal (`Bits.and(x, 128)`) is read through
+    `Nat`: split on the sign of `x`, rewrite `and` with `and_of_nonneg` or
+    `and_of_neg`, then take the mask apart into single bits (`nat_land_bit`)
+    and low runs (`nat_land_low`), splitting a composite mask at a run
+    boundary with `nat_land_split`. What is left is `/` and `%` by literals,
+    which `omega` decides. Core Lean only. -/
+
+/-- A nonnegative number masked by a nonnegative literal mask is the `Nat`
+    conjunction of the two. -/
+theorem and_of_nonneg (a m : Int) (M : Nat) (hM : m = M) (ha : 0 ≤ a) :
+    AverBits.and a m = ((a.toNat &&& M : Nat) : Int) := by
+  subst hM
+  have hm : ¬ ((M : Int) < 0) := by omega
+  have hna : ¬ (a < 0) := by omega
+  simp only [AverBits.and, AverBits.mag, hm, hna, ite_false, Int.toNat_natCast, Nat.land_eq]
+
+/-- A negative number masked by a nonnegative literal mask: the mask minus the
+    mask bits the complement `-a - 1` carries. -/
+theorem and_of_neg (a m : Int) (M : Nat) (hM : m = M) (ha : a < 0) :
+    AverBits.and a m = ((M - ((-a - 1).toNat &&& M) : Nat) : Int) := by
+  subst hM
+  have hm : ¬ ((M : Int) < 0) := by omega
+  simp only [AverBits.and, AverBits.mag, hm, ha, ite_true, ite_false, Int.toNat_natCast, Nat.land_eq]
+
+/-- A low mask `2^k - 1` keeps the remainder by `2^k`. -/
+theorem nat_land_low (x m M k : Nat) (hM : m + 1 = M) (hk : M = 2 ^ k) : x &&& m = x % M := by
+  subst hk
+  have e : m = 2 ^ k - 1 := by omega
+  rw [e, Nat.and_two_pow_sub_one_eq_mod]
+
+/-- A single-bit mask `2^k` keeps that bit of the quotient. -/
+theorem nat_land_bit (x m k : Nat) (hm : m = 2 ^ k) : x &&& m = m * (x / m % 2) := by
+  subst hm
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_and, Nat.testBit_two_pow]
+  rcases Nat.mod_two_eq_zero_or_one (x / 2 ^ k) with h | h
+  · rw [h, Nat.mul_zero, Nat.zero_testBit]
+    by_cases hk : k = i
+    · subst hk
+      rw [Nat.testBit_eq_decide_div_mod_eq, h]
+      simp
+    · simp [hk]
+  · rw [h, Nat.mul_one, Nat.testBit_two_pow]
+    by_cases hk : k = i
+    · subst hk
+      rw [Nat.testBit_eq_decide_div_mod_eq, h]
+      simp
+    · simp [hk]
+
+/-- A mask `2^j * hi + lo` with `lo < 2^j` splits at bit `j`: the high part
+    masks the quotient, the low part the remainder. Applied repeatedly it takes
+    any literal mask apart into single bits and low runs. -/
+theorem nat_land_split (x m P j hi lo : Nat) (hP : P = 2 ^ j) (hm : m = P * hi + lo)
+    (hlo : lo < P) : x &&& m = P * ((x / P) &&& hi) + ((x % P) &&& lo) := by
+  subst hP
+  subst hm
+  have hlt : (x % 2 ^ j) &&& lo < 2 ^ j := Nat.and_lt_two_pow _ hlo
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_and, Nat.testBit_two_pow_mul_add _ hlo, Nat.testBit_two_pow_mul_add _ hlt]
+  by_cases hij : i < j
+  · simp [hij, Nat.testBit_and, Nat.testBit_mod_two_pow]
+  · simp [hij, Nat.testBit_and, Nat.testBit_div_two_pow,
+      Nat.sub_add_cancel (Nat.le_of_not_lt hij)]
+
 end AverBits
 
 /-- A square is never negative — the sign-split base case the product

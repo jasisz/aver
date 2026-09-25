@@ -1,94 +1,70 @@
-//! The generated loop (jasisz/aver#1329, leg 2.3).
+//! The generated loop (jasisz/aver#1329, process layer v2).
 //!
-//! A program whose `aver.toml` carries a `[run]` table asks for its
-//! coordinator to be written for it. What the program writes is then only:
-//! the processes (its `yield` functions), the modules that answer the
-//! capabilities those processes wait on, and three pure policies over one
-//! record it declares. Everything between them — the slot table, the request
-//! instance numbers, the wait set, the poll timeout, the dispatch through the
-//! answer modules, the job seam, the stop observation, the turn and the loop
-//! itself — is generated here, into the entry module, in the reserved `__`
+//! An entry module that writes processes gets its loop written for it. What
+//! the program writes is then only: the processes (its `yield` functions),
+//! one `process ... seated by ...` line for each process that runs once per
+//! key, the modules that answer the capabilities those processes wait on
+//! (each says so with `answers [...]` in its header), and optionally a
+//! `stop` and an `admit` policy of the entry, found by name. Everything
+//! between them — the slot table, the request instance numbers, the seating
+//! of keyed processes, the wait set, the poll timeout, the dispatch through
+//! the answer modules, the stop observation, the turn and the loop itself —
+//! is generated here, into the entry module, in the reserved `__`
 //! namespace, by the same pass that generated the protocol.
 //!
 //! The generated items are ordinary Aver of the program: `aver verify` runs
-//! them, the VM executes them, and the invariants of the loop are `verify`
-//! laws over generated functions, so the Lean wall reads them directly rather
-//! than being handed a theorem about a generic loop that has to be
-//! instantiated. That is what "the loop is generated, not in the stdlib"
-//! buys, and it is why the generator emits the laws too: the program does not
-//! write them either.
-//!
-//! The generated names stay referenceable, so a program that wants to write
-//! its own loop over the protocol still can. That is a door, not the road.
+//! them and every backend compiles them. The generated names stay callable,
+//! so a program that wants to write its own loop over the protocol still
+//! can, and the scenario fixtures state the loop's properties over them.
 
-use crate::ast::{TopLevel, Type, TypeDef};
+use std::collections::BTreeSet;
+
+use crate::ast::{ProcessSeating, TopLevel, Type};
 use crate::config::RunPlan;
 use crate::types::checker::TypeError;
 
 use super::{CoordinatorStop, FnSigs, ProcessProtocol};
 
-mod history;
 mod host_driver;
-mod then_reply;
-
-/// The `__Run` field a job table lives in.
-const JOBS_FIELD: &str = "jobs";
 
 /// The fields the generated run table writes itself. An answer module whose
 /// name would take one of them is refused rather than generating a record
 /// with the field declared twice.
-const RUN_FIELDS: [&str; 6] = ["slots", JOBS_FIELD, "dropped", "stopping", "now", "nextId"];
-
-/// The operation the end of a run performs on a job that is still running.
-const CANCEL: &str = "Work.cancel";
-
-/// The fields the view record has to declare, in order, with the type each
-/// one carries. `pending`'s value type is the program's own `Pending` sum,
-/// so it is checked separately.
-const VIEW_FIELDS: [(&str, &str); 5] = [
-    ("ready", "List<Int>"),
-    ("askable", "List<Int>"),
-    ("jobs", "Int"),
-    ("room", "Int"),
-    ("stopping", "Bool"),
+const RUN_FIELDS: [&str; 7] = [
+    "slots", "versions", "late", "dropped", "stopping", "now", "nextId",
 ];
+
+/// The operation the end of a run performs on a job a parked request waits
+/// on.
+const CANCEL: &str = "Work.cancel";
 
 /// What the generator resolved about one answer module.
 struct Answer {
-    /// The module as the manifest names it, e.g. `Ledger`.
+    /// The module as the program loads it, e.g. `Ledger`.
     module: String,
     /// The `__Run` field its state is held in, e.g. `ledger`.
     field: String,
     /// The state type, qualified to the module that declares it.
     state: String,
-    /// The capabilities this module answers, as the manifest names them.
+    /// The capabilities this module answers.
     capabilities: Vec<String>,
+    /// The key its version lives under in `__Run.versions`.
+    index: usize,
 }
 
-/// What the generator resolved about one job kind.
-struct Job {
-    /// The job-kind capability, e.g. `Validation`.
-    capability: String,
-    /// The module-qualified `task` function.
-    task: String,
-    /// The module-qualified `started` function.
-    started: String,
-    /// The module-qualified `landed` function.
-    landed: String,
-    /// The `__Run` field of the module `task` reads and `started` writes —
-    /// the seam's ask and its record are one state, checked as one owner.
-    task_field: String,
-    /// The `__Run` field of the module `landed` writes.
-    landed_field: String,
-    /// The answer-module state the seam's first two ends thread, e.g.
-    /// `Ledger.State`.
-    seam_state: String,
-    /// What `task` answers, e.g. `Option<Bytes>`.
-    task_option: String,
-    /// The task itself, e.g. `Bytes`: the `begin` parameter.
-    task_type: String,
-    /// What one finished job carries, e.g. `Int`: the `take` payload.
-    payload_type: String,
+/// A process the loop seats: once, or once per key.
+struct Proc<'a> {
+    protocol: &'a ProcessProtocol,
+    upper: String,
+    keyed: Option<Keyed>,
+}
+
+/// What seats a keyed process: the pure function of an answer module that
+/// lists the keys, and the key type.
+struct Keyed {
+    key: String,
+    by: String,
+    field: String,
 }
 
 /// The generated loop: its source, so `AVER_YIELD_DUMP` can show it, and the
@@ -101,11 +77,11 @@ pub(super) struct GeneratedLoop {
     pub module_effects: Vec<String>,
 }
 
-/// Whether `module` is the one the `[run]` table asked the loop to be
-/// generated into. Every other module of the program is lowered without one.
+/// Whether `module` is the one the loop may be generated into: the
+/// program's entry. Every other module of the program is lowered without one.
 pub(super) fn is_run_module(module: Option<&str>, plan: Option<&RunPlan>) -> bool {
     match (module, plan) {
-        (Some(module), Some(plan)) => plan.policies.module() == module,
+        (Some(module), Some(plan)) => plan.entry == module,
         _ => false,
     }
 }
@@ -120,503 +96,7 @@ fn error(line: usize, message: String) -> TypeError {
     }
 }
 
-/// The law the generated loop cites on every job kind's `started` function:
-/// the program's own statement that a task whose start was recorded is not
-/// offered again, which is what makes two starts in one turn two tasks.
-const STARTED_LAW: &str = "aStartedTaskIsNotAskedAgain";
-
-/// Generate the loop for `protocols` into the module `items` declares.
-/// `laws` is every law a `using` clause of that module may name.
-pub(super) fn generate(
-    items: &[TopLevel],
-    generated: &[TopLevel],
-    protocols: &[ProcessProtocol],
-    plan: &RunPlan,
-    fn_sigs: &FnSigs,
-    laws: &std::collections::BTreeSet<String>,
-    coordinator_stop: CoordinatorStop,
-) -> Result<GeneratedLoop, Vec<TypeError>> {
-    let module = items.iter().find_map(|item| match item {
-        TopLevel::Module(module) => Some(module),
-        _ => None,
-    });
-    let line = module.map(|module| module.line).unwrap_or(1);
-    let mut errors = Vec::new();
-
-    if protocols.is_empty() {
-        errors.push(error(line, format!(
-            "aver.toml declares [run], so the loop of this program is generated into module '{}', but that module writes no process; a process is a function whose effect list names `yield`",
-            plan.policies.module()
-        )));
-        return Err(errors);
-    }
-    for protocol in protocols {
-        if !protocol.params.is_empty() {
-            errors.push(error(line, format!(
-                "aver.toml declares [run], so the generated loop seats one of every process this module writes, and it has nothing to seat '{}' with; a seated process takes no parameters and asks the module that answers its first request for what it needs",
-                protocol.fn_name
-            )));
-        }
-        if protocol.return_type != "Unit" {
-            errors.push(error(line, format!(
-                "aver.toml declares [run], so process '{}' is seated by the generated loop and its result goes nowhere; a seated process answers Unit, and it is '{}'",
-                protocol.fn_name, protocol.return_type
-            )));
-        }
-    }
-    if fn_sigs.contains_key("main") {
-        errors.push(error(line, format!(
-            "aver.toml declares [run], so the entry point of this program is generated; module '{}' also writes its own 'main'. Remove it, or remove [run] and drive the protocol by hand",
-            plan.policies.module()
-        )));
-    }
-
-    let answers = match resolve_answers(plan, fn_sigs, line) {
-        Ok(answers) => answers,
-        Err(found) => {
-            errors.extend(found);
-            return Err(errors);
-        }
-    };
-    let jobs = match resolve_jobs(plan, &answers, fn_sigs, laws, line) {
-        Ok(jobs) => jobs,
-        Err(found) => {
-            errors.extend(found);
-            return Err(errors);
-        }
-    };
-    let marker = if plan.policies.defaults {
-        "__Pending".to_string()
-    } else {
-        errors.extend(check_policies(plan, fn_sigs, line));
-        let (marker, view_errors) = check_view(items, protocols, plan, line);
-        errors.extend(view_errors);
-        marker
-    };
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-
-    let process_effects = process_effect_lists(protocols, generated, &answers, fn_sigs);
-    let serve_effects = serve_effect_list(&process_effects);
-    let turn_effects = turn_effect_list(&serve_effects, &jobs, coordinator_stop);
-    let main_effects = main_effect_list(&turn_effects, &process_effects, &jobs);
-    let source = write_loop(
-        protocols,
-        plan,
-        &answers,
-        &jobs,
-        &marker,
-        &process_effects,
-        &serve_effects,
-        &turn_effects,
-        &main_effects,
-        coordinator_stop,
-    );
-    // The module's own boundary has to admit everything generated into it,
-    // and the entry point is the widest of the generated functions.
-    let module_effects = main_effects;
-    match parse_generated(&source) {
-        Ok(items) => Ok(GeneratedLoop {
-            source,
-            items,
-            module_effects,
-        }),
-        Err(parse) => Err(vec![error(
-            line,
-            format!(
-                "internal error generating the loop of this program: {parse}; please report this program"
-            ),
-        )]),
-    }
-}
-
-/// Parse what the generator wrote. The compiler-generated entry point is the
-/// one that accepts the `__` namespace the loop lives in; a source file still
-/// cannot write those names.
-fn parse_generated(source: &str) -> Result<Vec<TopLevel>, String> {
-    let tokens = crate::lexer::Lexer::new(source)
-        .tokenize()
-        .map_err(|error| error.to_string())?;
-    crate::parser::Parser::new_compiler_generated(tokens)
-        .parse()
-        .map_err(|error| error.to_string())
-}
-
-/// One entry per module the manifest answers a capability with: which state
-/// it threads, and which field of the run holds it.
-fn resolve_answers(
-    plan: &RunPlan,
-    fn_sigs: &FnSigs,
-    line: usize,
-) -> Result<Vec<Answer>, Vec<TypeError>> {
-    let mut answers: Vec<Answer> = Vec::new();
-    let mut errors = Vec::new();
-    for (_, module) in &plan.answers {
-        if answers.iter().any(|answer| &answer.module == module) {
-            continue;
-        }
-        // The state is what `fresh` answers, not what some parameter happens
-        // to be: the loop starts every answer module from `fresh`, so that
-        // one function is where the state is named once and read once.
-        let fresh = format!("{module}.fresh");
-        let Some((params, result, effects)) = fn_sigs.get(&fresh) else {
-            errors.push(error(line, format!(
-                "aver.toml declares [run], so the generated loop starts module '{module}' from '{fresh}'; this program has no such function. Add 'fn fresh() -> {module}.State' to '{module}', the state it holds before anything has happened"
-            )));
-            continue;
-        };
-        let state = crate::capability::canonicalize_type_names(result.clone(), module).display();
-        if !params.is_empty() || !effects.is_empty() || !state.starts_with(&format!("{module}.")) {
-            errors.push(error(line, format!(
-                "aver.toml declares [run], so the generated loop starts module '{module}' from '{fresh}', which takes nothing, is pure, and answers a type '{module}' declares; it is '{}'",
-                render_fresh(params, &state, effects, module)
-            )));
-            continue;
-        }
-        let field = field_name(module);
-        if RUN_FIELDS.contains(&field.as_str()) {
-            errors.push(error(line, format!(
-                "aver.toml declares [run], so the generated run table holds the state of module '{module}' in a field named '{field}', and the loop writes a field of its own by that name. Rename the module"
-            )));
-            continue;
-        }
-        if let Some(other) = answers.iter().find(|answer| answer.field == field) {
-            errors.push(error(line, format!(
-                "aver.toml declares [run], so the generated run table holds the state of module '{module}' in a field named '{field}', and it already holds the state of module '{}' there. Rename one of them",
-                other.module
-            )));
-            continue;
-        }
-        answers.push(Answer {
-            module: module.clone(),
-            field,
-            state,
-            capabilities: plan
-                .answers
-                .iter()
-                .filter(|(_, owner)| owner == module)
-                .map(|(capability, _)| capability.clone())
-                .collect(),
-        });
-    }
-    if errors.is_empty() {
-        Ok(answers)
-    } else {
-        Err(errors)
-    }
-}
-
-/// One entry per job kind whose seam the manifest declared, with the three
-/// types the generated turn moves across it, and the one law the program has
-/// to state about that seam.
-fn resolve_jobs(
-    plan: &RunPlan,
-    answers: &[Answer],
-    fn_sigs: &FnSigs,
-    laws: &std::collections::BTreeSet<String>,
-    line: usize,
-) -> Result<Vec<Job>, Vec<TypeError>> {
-    let mut jobs = Vec::new();
-    let mut errors = Vec::new();
-    for seam in &plan.jobs {
-        fn owner(name: &str) -> &str {
-            name.rsplit_once('.').map(|(owner, _)| owner).unwrap_or("")
-        }
-        for name in [&seam.task, &seam.started, &seam.landed] {
-            if !answers.iter().any(|answer| answer.module == owner(name)) {
-                errors.push(error(line, format!(
-                    "aver.toml declares [run], so the generated turn moves job '{}' across '{name}'; that function's module answers no capability of this program, and the turn holds no state for it",
-                    seam.capability
-                )));
-            }
-        }
-        // The ask and the record are one seam: `task` reads the state a start
-        // is consumed from, so `started` has to thread that same state. Two
-        // modules would give the turn a second state it never asks. Leg 2.1's
-        // `work-binding` check says the same for every program; it is kept
-        // here too because the run door type-checks the lowered module before
-        // that check runs, and a seam across two states would otherwise be
-        // reported as type errors in generated code.
-        if owner(&seam.started) != owner(&seam.task) {
-            errors.push(error(line, format!(
-                "aver.toml declares [run], so the generated turn asks '{}' for the next task of job '{}' and records the start through '{}'; the task is consumed from the state that offered it, so both ends belong to one answer module — '{}' is in '{}' and '{}' is in '{}'",
-                seam.task,
-                seam.capability,
-                seam.started,
-                seam.task,
-                owner(&seam.task),
-                seam.started,
-                owner(&seam.started)
-            )));
-            continue;
-        }
-        let (Some((_, task_result, _)), Some((started_params, _, _)), Some((landed_params, _, _))) = (
-            fn_sigs.get(&seam.task),
-            fn_sigs.get(&seam.started),
-            fn_sigs.get(&seam.landed),
-        ) else {
-            // Leg 2.1's job-seam check is the one that says which end is
-            // missing or mis-shaped; this door only needs the types, so it
-            // stays quiet.
-            continue;
-        };
-        // `started` is `(S, T) -> S`, so the seam's state is its first
-        // parameter and the task it consumes is its second.
-        let (Some(state), Some(task)) = (started_params.first(), started_params.get(1)) else {
-            continue;
-        };
-        // `landed` is `(S, Result<R, String>) -> S`, so the payload one job
-        // carries is the ok half of its second parameter.
-        let Some(Type::Result(payload, _)) = landed_params.get(1) else {
-            continue;
-        };
-        let payload = payload.as_ref();
-        let task_owner = owner(&seam.task);
-        // The generated law over `__consumed<K>` cites the program's own law
-        // of the same name on `started`, so a program that does not state it
-        // is refused here, with the block it needs, rather than where the
-        // generated `using` fails to resolve at a line nobody wrote.
-        if !laws.contains(&format!("{}.{STARTED_LAW}", seam.started)) {
-            let in_module = |ty: &Type| {
-                crate::capability::canonicalize_type_names(ty.clone(), task_owner)
-                    .display()
-                    .replace(&format!("{task_owner}."), "")
-            };
-            errors.push(error(line, format!(
-                "aver.toml declares [run], so the generated turn records a start of job '{}' through '{}' and cites the law that function states about it; '{}' states no law named '{STARTED_LAW}'. State it in module '{task_owner}' — a task whose start was recorded is not offered again — over samples of its own:\n\nverify {} law {STARTED_LAW}\n    given state: {} = [fresh()]\n    given task: {} = [...]\n    when {}(state) == Option.Some(task)\n    {}({}(state, task)) != Option.Some(task) holds",
-                seam.capability,
-                seam.started,
-                seam.started,
-                bare(&seam.started),
-                in_module(state),
-                in_module(task),
-                bare(&seam.task),
-                bare(&seam.task),
-                bare(&seam.started)
-            )));
-            continue;
-        }
-        jobs.push(Job {
-            capability: seam.capability.clone(),
-            task: seam.task.clone(),
-            started: seam.started.clone(),
-            landed: seam.landed.clone(),
-            task_field: field_name(task_owner),
-            landed_field: field_name(owner(&seam.landed)),
-            seam_state: crate::capability::canonicalize_type_names(state.clone(), task_owner)
-                .display(),
-            task_option: crate::capability::canonicalize_type_names(
-                task_result.clone(),
-                task_owner,
-            )
-            .display(),
-            task_type: crate::capability::canonicalize_type_names(task.clone(), task_owner)
-                .display(),
-            payload_type: crate::capability::canonicalize_type_names(
-                payload.clone(),
-                owner(&seam.landed),
-            )
-            .display(),
-        });
-    }
-    if errors.is_empty() {
-        Ok(jobs)
-    } else {
-        Err(errors)
-    }
-}
-
-/// The three policies exist, are pure, and read the view the manifest names.
-fn check_policies(plan: &RunPlan, fn_sigs: &FnSigs, line: usize) -> Vec<TypeError> {
-    let view = plan.policies.view.clone();
-    let expected: [(&str, &str, &str); 3] = [
-        ("order", plan.policies.order.as_str(), "List<Int>"),
-        ("admit", plan.policies.admit.as_str(), "Bool"),
-        ("stop", plan.policies.stop.as_str(), "Bool"),
-    ];
-    let mut errors = Vec::new();
-    for (key, name, result) in expected {
-        let wanted = if key == "admit" {
-            format!("{}(view: {view}, id: Int) -> {result}", bare(name))
-        } else {
-            format!("{}(view: {view}) -> {result}", bare(name))
-        };
-        let Some((params, actual, effects)) = fn_sigs.get(name) else {
-            errors.push(error(line, format!(
-                "aver.toml: [run] names {key} = \"{name}\", but this program has no function '{name}'; it must be '{wanted}'"
-            )));
-            continue;
-        };
-        let module = plan.policies.module();
-        let rendered: Vec<String> = params
-            .iter()
-            .map(|param| {
-                crate::capability::canonicalize_type_names(param.clone(), module).display()
-            })
-            .collect();
-        let actual = crate::capability::canonicalize_type_names(actual.clone(), module).display();
-        let wants: Vec<String> = if key == "admit" {
-            vec![view.clone(), "Int".to_string()]
-        } else {
-            vec![view.clone()]
-        };
-        if rendered != wants || actual != result {
-            errors.push(error(line, format!(
-                "aver.toml: [run] names {key} = \"{name}\", so it must be '{wanted}'; it is '{}({}) -> {actual}'",
-                bare(name),
-                rendered.join(", ")
-            )));
-        }
-        if !effects.is_empty() {
-            errors.push(error(line, format!(
-                "aver.toml: [run] names {key} = \"{name}\", and that function declares effects [{}]; a policy reads the view and answers, so it is pure",
-                effects.join(", ")
-            )));
-        }
-    }
-    errors
-}
-
-/// The `view-shape` check: the record the three policies read, and the sum it
-/// keys its pending table by.
-///
-/// The view is declared by the program rather than generated because a law
-/// about a policy has to name it, and a program cannot name a generated type
-/// it never wrote. So the generator fills a shape the program declares, and
-/// this is where the two are held to the same shape — exactly as `WorkShape`
-/// holds a job kind to `begin` and `take`.
-fn check_view(
-    items: &[TopLevel],
-    protocols: &[ProcessProtocol],
-    plan: &RunPlan,
-    line: usize,
-) -> (String, Vec<TypeError>) {
-    let view_name = plan.policies.view_name();
-    let expected = expected_view(view_name, protocols);
-    let Some(fields) = items.iter().find_map(|item| match item {
-        TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) if name == view_name => {
-            Some(fields)
-        }
-        _ => None,
-    }) else {
-        return (
-            String::new(),
-            vec![error(
-                line,
-                format!(
-                    "aver.toml: [run] names view = \"{}\", but module '{}' declares no record '{view_name}'. The generated loop fills it, so it declares exactly:\n{expected}",
-                    plan.policies.view,
-                    plan.policies.module()
-                ),
-            )],
-        );
-    };
-    let Some((_, pending)) = fields.iter().find(|(name, _)| name == "pending") else {
-        return (
-            String::new(),
-            vec![error(
-                line,
-                format!(
-                    "record '{view_name}' declares no field 'pending', and the generated loop fills one marker per seated process into it. The view the loop fills is exactly:\n{expected}"
-                ),
-            )],
-        );
-    };
-    let Some(marker) = pending
-        .strip_prefix("Map<Int, ")
-        .and_then(|rest| rest.strip_suffix('>'))
-    else {
-        return (
-            String::new(),
-            vec![error(
-                line,
-                format!(
-                    "field 'pending' of record '{view_name}' is '{pending}', and the generated loop fills one marker per seated process keyed by slot id. The view the loop fills is exactly:\n{expected}"
-                ),
-            )],
-        );
-    };
-    let marker = marker.trim().to_string();
-    let mut errors = Vec::new();
-    for (name, ty) in VIEW_FIELDS {
-        match fields.iter().find(|(field, _)| field == name) {
-            Some((_, actual)) if actual == ty => {}
-            Some((_, actual)) => errors.push(error(line, format!(
-                "field '{name}' of record '{view_name}' is '{actual}', and the generated loop fills a '{ty}'. The view the loop fills is exactly:\n{expected}"
-            ))),
-            None => errors.push(error(line, format!(
-                "record '{view_name}' declares no field '{name}', and the generated loop fills one. The view the loop fills is exactly:\n{expected}"
-            ))),
-        }
-    }
-    if fields.len() != VIEW_FIELDS.len() + 1 {
-        errors.push(error(line, format!(
-            "record '{view_name}' declares {} fields, and the generated loop fills {}; it has nothing to put in another one. The view the loop fills is exactly:\n{expected}",
-            fields.len(),
-            VIEW_FIELDS.len() + 1
-        )));
-    }
-
-    let Some(variants) = items.iter().find_map(|item| match item {
-        TopLevel::TypeDef(TypeDef::Sum { name, variants, .. }) if name == &marker => Some(variants),
-        _ => None,
-    }) else {
-        errors.push(error(line, format!(
-            "field 'pending' of record '{view_name}' is keyed by '{marker}', but module '{}' declares no sum '{marker}'. The view the loop fills is exactly:\n{expected}",
-            plan.policies.module()
-        )));
-        return (marker, errors);
-    };
-    for protocol in protocols {
-        let wanted = marker_variant(&protocol.fn_name);
-        match variants.iter().find(|variant| variant.name == wanted) {
-            Some(variant) if variant.fields == vec!["Int".to_string(), "Wait.Wake".to_string()] => {}
-            Some(variant) => errors.push(error(line, format!(
-                "constructor '{marker}.{wanted}' carries ({}), and the generated loop fills it with the instance number of the request process '{}' is waiting on and what would wake it. The view the loop fills is exactly:\n{expected}",
-                variant.fields.join(", "),
-                protocol.fn_name
-            ))),
-            None => errors.push(error(line, format!(
-                "sum '{marker}' has no constructor '{wanted}', and the generated loop seats process '{}'. The view the loop fills is exactly:\n{expected}",
-                protocol.fn_name
-            ))),
-        }
-    }
-    for variant in variants {
-        if !protocols
-            .iter()
-            .any(|protocol| marker_variant(&protocol.fn_name) == variant.name)
-        {
-            errors.push(error(line, format!(
-                "sum '{marker}' declares constructor '{}', and this program writes no process of that name; the generated loop fills one constructor per process. The view the loop fills is exactly:\n{expected}",
-                variant.name
-            )));
-        }
-    }
-    (marker, errors)
-}
-
-/// The declaration the `view-shape` diagnostic prints: what this program's
-/// view and marker sum have to be, spelled out.
-fn expected_view(view_name: &str, protocols: &[ProcessProtocol]) -> String {
-    let mut out = "    type Pending\n".to_string();
-    for protocol in protocols {
-        out.push_str(&format!(
-            "        {}(Int, Wait.Wake)\n",
-            marker_variant(&protocol.fn_name)
-        ));
-    }
-    out.push_str(&format!("\n    record {view_name}\n"));
-    out.push_str("        pending: Map<Int, Pending>\n");
-    for (name, ty) in VIEW_FIELDS {
-        out.push_str(&format!("        {name}: {ty}\n"));
-    }
-    out.trim_end().to_string()
-}
-
-/// `peer` → `Peer`: the constructor of the marker sum that stands for one
-/// process.
+/// `peer` → `Peer`: the constructor that stands for one process.
 fn marker_variant(fn_name: &str) -> String {
     super::build::capitalize(fn_name)
 }
@@ -640,6 +120,14 @@ fn field_name(module: &str) -> String {
     }
 }
 
+fn bare(name: &str) -> &str {
+    name.rsplit_once('.').map(|(_, bare)| bare).unwrap_or(name)
+}
+
+fn owner(name: &str) -> &str {
+    name.rsplit_once('.').map(|(owner, _)| owner).unwrap_or("")
+}
+
 /// How a wrong `fresh` reads back, so the diagnostic shows it rather than
 /// describing it.
 fn render_fresh(params: &[Type], state: &str, effects: &[String], module: &str) -> String {
@@ -655,342 +143,743 @@ fn render_fresh(params: &[Type], state: &str, effects: &[String], module: &str) 
     format!("fresh({}) -> {state}{effects}", rendered.join(", "))
 }
 
-fn bare(name: &str) -> &str {
-    name.rsplit_once('.').map(|(_, bare)| bare).unwrap_or(name)
+/// The policies an entry may write, found by name.
+struct Policies {
+    stop: bool,
+    admit: bool,
+}
+
+/// Generate the loop for `protocols` into the module `items` declares.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn generate(
+    items: &[TopLevel],
+    generated: &[TopLevel],
+    protocols: &[ProcessProtocol],
+    seatings: &[ProcessSeating],
+    plan: &RunPlan,
+    fn_sigs: &FnSigs,
+    coordinator_stop: CoordinatorStop,
+) -> Result<GeneratedLoop, Vec<TypeError>> {
+    let module = items.iter().find_map(|item| match item {
+        TopLevel::Module(module) => Some(module),
+        _ => None,
+    });
+    let line = module.map(|module| module.line).unwrap_or(1);
+    let module_name = module.map(|module| module.name.as_str()).unwrap_or("");
+    let mut errors = Vec::new();
+
+    let answers = resolve_answers(plan, fn_sigs, line)?;
+    let mut procs = Vec::new();
+    for protocol in protocols {
+        let seating = seatings
+            .iter()
+            .find(|seating| seating.process == protocol.fn_name);
+        if protocol.return_type != "Unit" {
+            errors.push(error(
+                seating.map(|seating| seating.line).unwrap_or(line),
+                format!(
+                    "process '{}' is seated by the generated loop and its result goes nowhere; a process answers Unit, and it is '{}'",
+                    protocol.fn_name, protocol.return_type
+                ),
+            ));
+        }
+        let keyed = match seating {
+            Some(seating) => {
+                match resolve_seating(seating, protocol, &answers, fn_sigs, module_name) {
+                    Ok(keyed) => Some(keyed),
+                    Err(found) => {
+                        errors.push(found);
+                        continue;
+                    }
+                }
+            }
+            None => {
+                if !protocol.params.is_empty() {
+                    errors.push(error(line, format!(
+                        "the generated loop seats one '{0}' and has nothing to hand it; a process that takes a key is declared with the function that lists the keys, for example `process {0} seated by Sockets.peers`, and a process without one takes no parameters",
+                        protocol.fn_name
+                    )));
+                    continue;
+                }
+                None
+            }
+        };
+        procs.push(Proc {
+            protocol,
+            upper: marker_variant(&protocol.fn_name),
+            keyed,
+        });
+    }
+    let policies = check_policies(items, &mut errors);
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    let process_effects = process_effect_lists(&procs, generated, &answers, fn_sigs);
+    let serve_effects = sorted(
+        process_effects
+            .iter()
+            .flat_map(|process| process.serve.iter().cloned())
+            .collect(),
+    );
+    let family_effects = sorted(
+        procs
+            .iter()
+            .zip(&process_effects)
+            .filter(|(proc, _)| proc.keyed.is_some())
+            .flat_map(|(_, effects)| effects.seat.iter().cloned())
+            .collect(),
+    );
+    let turn_effects = turn_effect_list(&serve_effects, &family_effects, coordinator_stop);
+    let main_effects =
+        main_effect_list(&turn_effects, &process_effects, !plan.job_kinds.is_empty());
+    let source = write_loop(
+        &procs,
+        &answers,
+        &policies,
+        &process_effects,
+        &serve_effects,
+        &family_effects,
+        &turn_effects,
+        &main_effects,
+        coordinator_stop,
+        !plan.job_kinds.is_empty(),
+    );
+    match parse_generated(&source) {
+        Ok(items) => Ok(GeneratedLoop {
+            source,
+            items,
+            module_effects: main_effects,
+        }),
+        Err(parse) => Err(vec![error(
+            line,
+            format!(
+                "internal error generating the loop of this program: {parse}; please report this program"
+            ),
+        )]),
+    }
+}
+
+/// Parse what the generator wrote. The compiler-generated entry point is the
+/// one that accepts the `__` namespace the loop lives in; a source file still
+/// cannot write those names.
+fn parse_generated(source: &str) -> Result<Vec<TopLevel>, String> {
+    let tokens = crate::lexer::Lexer::new(source)
+        .tokenize()
+        .map_err(|error| error.to_string())?;
+    crate::parser::Parser::new_compiler_generated(tokens)
+        .parse()
+        .map_err(|error| error.to_string())
+}
+
+/// One entry per answer module of the program: which state it threads, and
+/// which field of the run holds it.
+fn resolve_answers(
+    plan: &RunPlan,
+    fn_sigs: &FnSigs,
+    line: usize,
+) -> Result<Vec<Answer>, Vec<TypeError>> {
+    let mut answers: Vec<Answer> = Vec::new();
+    let mut errors = Vec::new();
+    for (_, module) in &plan.answers {
+        if answers.iter().any(|answer| &answer.module == module) {
+            continue;
+        }
+        // The state is what `fresh` answers, not what some parameter happens
+        // to be: the loop starts every answer module from `fresh`, so that
+        // one function is where the state is named once and read once.
+        let fresh = format!("{module}.fresh");
+        let Some((params, result, effects)) = fn_sigs.get(&fresh) else {
+            errors.push(error(line, format!(
+                "the generated loop starts answer module '{module}' from '{fresh}'; this program has no such function. Add 'fn fresh() -> State' to '{module}', the state it holds before anything has happened"
+            )));
+            continue;
+        };
+        let state = crate::capability::canonicalize_type_names(result.clone(), module).display();
+        if !params.is_empty() || !effects.is_empty() || !state.starts_with(&format!("{module}.")) {
+            errors.push(error(line, format!(
+                "the generated loop starts answer module '{module}' from '{fresh}', which takes nothing, is pure, and answers a type '{module}' declares; it is '{}'",
+                render_fresh(params, &state, effects, module)
+            )));
+            continue;
+        }
+        let field = field_name(module);
+        if RUN_FIELDS.contains(&field.as_str())
+            || field.starts_with("seated")
+            || field.starts_with("retired")
+        {
+            errors.push(error(line, format!(
+                "the generated run table holds the state of answer module '{module}' in a field named '{field}', and the loop writes a field of its own by that name. Rename the module"
+            )));
+            continue;
+        }
+        if let Some(other) = answers.iter().find(|answer| answer.field == field) {
+            errors.push(error(line, format!(
+                "the generated run table holds the state of answer module '{module}' in a field named '{field}', and it already holds the state of module '{}' there. Rename one of them",
+                other.module
+            )));
+            continue;
+        }
+        answers.push(Answer {
+            module: module.clone(),
+            field,
+            state,
+            capabilities: plan
+                .answers
+                .iter()
+                .filter(|(_, owner)| owner == module)
+                .map(|(capability, _)| capability.clone())
+                .collect(),
+            index: answers.len() + 1,
+        });
+    }
+    if errors.is_empty() {
+        Ok(answers)
+    } else {
+        Err(errors)
+    }
+}
+
+/// `process peer seated by Sockets.peers`: the key the process takes, and
+/// the pure function of the answer module that lists the keys.
+fn resolve_seating(
+    seating: &ProcessSeating,
+    protocol: &ProcessProtocol,
+    answers: &[Answer],
+    fn_sigs: &FnSigs,
+    entry: &str,
+) -> Result<Keyed, TypeError> {
+    let line = seating.line;
+    let process = &protocol.fn_name;
+    if protocol.params.len() != 1 {
+        return Err(error(
+            line,
+            format!(
+                "`process {process} seated by {}` seats one '{process}' per key, so '{process}' takes exactly one parameter, the key; it takes {}",
+                seating.by,
+                protocol.params.len()
+            ),
+        ));
+    }
+    let module = owner(&seating.by);
+    let Some(answer) = answers.iter().find(|answer| answer.module == module) else {
+        return Err(error(
+            line,
+            format!(
+                "`process {process} seated by {}` names a function of module '{module}', which answers no capability of this program; the keys come from the state of an answer module, so name a function of a module whose header says `answers [...]`",
+                seating.by
+            ),
+        ));
+    };
+    let Some((params, result, effects)) = fn_sigs.get(&seating.by) else {
+        return Err(error(
+            line,
+            format!(
+                "`process {process} seated by {}` names a function this program does not have",
+                seating.by
+            ),
+        ));
+    };
+    let key = crate::capability::canonicalize_type_names(
+        crate::types::parse_type_str(&protocol.params[0].1),
+        entry,
+    );
+    let wanted = format!(
+        "{}({}) -> List<{}>",
+        bare(&seating.by),
+        answer.state,
+        key.display()
+    );
+    let param_ok = params.len() == 1
+        && crate::capability::canonicalize_type_names(params[0].clone(), module).display()
+            == answer.state;
+    let listed = match crate::capability::canonicalize_type_names(result.clone(), module) {
+        Type::List(inner) => Some(*inner),
+        _ => None,
+    };
+    let key_ok = listed
+        .as_ref()
+        .is_some_and(|inner| inner.display() == key.display());
+    if !param_ok || !key_ok {
+        let rendered: Vec<String> = params
+            .iter()
+            .map(|param| {
+                crate::capability::canonicalize_type_names(param.clone(), module).display()
+            })
+            .collect();
+        return Err(error(
+            line,
+            format!(
+                "`process {process} seated by {}` reads the keys to seat '{process}' with from the state of '{module}', so it must be '{wanted}'; it is '{}({}) -> {}'",
+                seating.by,
+                bare(&seating.by),
+                rendered.join(", "),
+                crate::capability::canonicalize_type_names(result.clone(), module).display()
+            ),
+        ));
+    }
+    if !effects.is_empty() {
+        return Err(error(
+            line,
+            format!(
+                "`process {process} seated by {}` names a function that declares effects [{}]; the loop reads the keys between waits, so it is pure",
+                seating.by,
+                effects.join(", ")
+            ),
+        ));
+    }
+    Ok(Keyed {
+        key: protocol.params[0].1.clone(),
+        by: seating.by.clone(),
+        field: answer.field.clone(),
+    })
+}
+
+/// `stop` and `admit` are the entry's own functions, found by name, and each
+/// is held to the one shape the loop calls it with.
+fn check_policies(items: &[TopLevel], errors: &mut Vec<TypeError>) -> Policies {
+    let mut found = Policies {
+        stop: false,
+        admit: false,
+    };
+    for item in items {
+        let TopLevel::FnDef(fd) = item else { continue };
+        let (wanted_params, slot): (&[&str], &mut bool) = match fd.name.as_str() {
+            "stop" => (&["Run.View"], &mut found.stop),
+            "admit" => (&["Run.View", "Int"], &mut found.admit),
+            _ => continue,
+        };
+        *slot = true;
+        let params: Vec<&str> = fd.params.iter().map(|(_, ty)| ty.as_str()).collect();
+        let wanted = match fd.name.as_str() {
+            "stop" => "stop(view: Run.View) -> Bool",
+            _ => "admit(view: Run.View, id: Int) -> Bool",
+        };
+        if params != wanted_params || fd.return_type != "Bool" {
+            errors.push(error(fd.line, format!(
+                "the generated loop calls '{}' of the entry module as its policy, so it must be '{wanted}'; it is '{}({}) -> {}'",
+                fd.name,
+                fd.name,
+                fd.params
+                    .iter()
+                    .map(|(name, ty)| format!("{name}: {ty}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                fd.return_type
+            )));
+        }
+        if !fd.effects.is_empty() {
+            errors.push(error(fd.line, format!(
+                "the generated loop calls '{}' of the entry module as its policy, and it declares effects [{}]; a policy reads the view and answers, so it is pure",
+                fd.name,
+                fd.effects
+                    .iter()
+                    .map(|effect| effect.node.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    }
+    found
 }
 
 /// The whole generated loop, as Aver source.
 ///
 /// Source rather than AST: every line of it is a line a reader of
-/// `AVER_YIELD_DUMP=1` has to be able to read back, and the shapes here are
-/// the proposal's own text. The parse that follows is the one check that the
-/// generator wrote Aver rather than something that looks like it.
+/// `AVER_YIELD_DUMP=1` has to be able to read back. The parse that follows is
+/// the one check that the generator wrote Aver rather than something that
+/// looks like it.
 #[allow(clippy::too_many_arguments)]
 fn write_loop(
-    protocols: &[ProcessProtocol],
-    plan: &RunPlan,
+    procs: &[Proc<'_>],
     answers: &[Answer],
-    jobs: &[Job],
-    marker: &str,
+    policies: &Policies,
     process_effects: &[ProcessEffects],
     serve_effects: &[String],
+    family_effects: &[String],
     turn_effects: &[String],
     main_effects: &[String],
     coordinator_stop: CoordinatorStop,
+    cancels_waited: bool,
 ) -> String {
     let mut out = String::new();
-    let view = plan.policies.view_name().to_string();
-    let has_jobs = !jobs.is_empty();
 
-    if plan.policies.defaults {
-        out.push_str(
-            &expected_view("__View", protocols)
-                .replace("Pending", "__Pending")
-                .lines()
-                .map(|line| line.strip_prefix("    ").unwrap_or(line))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
-        out.push_str("\n\nfn __order(view: __View) -> List<Int>\n    ? \"Seated ids in slot order.\"\n    Map.keys(view.pending)\n\nfn __admit(view: __View, id: Int) -> Bool\n    ? \"Every askable id is admitted.\"\n    List.contains(view.askable, id)\n\nfn __stop(view: __View) -> Bool\n    ? \"Stop on the flag, or once no process is seated and no job runs.\"\n    Bool.or(view.stopping, Bool.and(Map.len(view.pending) == 0, view.jobs == 0))\n\n");
+    // ── What the policies read ─────────────────────────────────────
+    out.push_str("type __Pending\n");
+    for proc in procs {
+        match &proc.keyed {
+            Some(keyed) => out.push_str(&format!(
+                "    {}({}, Int, Run.Wake)\n",
+                proc.upper, keyed.key
+            )),
+            None => out.push_str(&format!("    {}(Int, Run.Wake)\n", proc.upper)),
+        }
     }
-
-    out.push_str(&then_reply::declarations(protocols));
+    out.push_str("\nrecord __View\n    pending: Map<Int, __Pending>\n    ready: List<Int>\n    askable: List<Int>\n    dropped: Int\n    stopping: Bool\n");
 
     // ── The table ──────────────────────────────────────────────────
-    out.push_str("type __Process\n");
-    for protocol in protocols {
-        out.push_str(&format!(
-            "    {}({})\n",
-            marker_variant(&protocol.fn_name),
-            protocol.request
-        ));
-    }
-    out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Wait.Wake\n    due: Int\n    ms: Int\n    answer: Option<__ThenAnswer>\n");
-    // One table holds every job kind, so the job count the room limit reads
-    // is the count across all of them and the wait watches each entry once.
-    // The variant is how the entry remembers which seam takes and lands it.
-    if has_jobs {
-        out.push_str("\ntype __Job\n");
-        for job in jobs {
-            out.push_str(&format!(
-                "    {}(Work.Job)\n",
-                marker_variant(&job.capability)
-            ));
+    out.push_str("\ntype __Process\n");
+    for proc in procs {
+        match &proc.keyed {
+            Some(keyed) => out.push_str(&format!(
+                "    {}({}, {})\n",
+                proc.upper, keyed.key, proc.protocol.request
+            )),
+            None => out.push_str(&format!("    {}({})\n", proc.upper, proc.protocol.request)),
         }
     }
+    out.push_str("\nrecord __Slot\n    seq: Int\n    pending: __Process\n    waiting: Run.Wake\n    due: Int\n    ms: Int\n    owner: Int\n    version: Int\n");
     out.push_str("\nrecord __Run\n    slots: Map<Int, __Slot>\n");
     for answer in answers {
-        out.push_str(&format!("    {}: {}\n", answer.field, answer.state));
+        out.push_str(&format!("    {}: Option<{}>\n", answer.field, answer.state));
     }
-    if has_jobs {
-        out.push_str(&format!("    {JOBS_FIELD}: Map<Int, __Job>\n"));
-    }
-    out.push_str("    dropped: Int\n    stopping: Bool\n    now: Int\n    nextId: Int\n");
-
-    out.push_str(&format!(
-        "\nfn __maxJobs() -> Int\n    ? \"The job limit this program was built with, from [work] max-jobs in aver.toml.\"\n    {}\n",
-        plan.max_jobs
-    ));
-    if has_jobs {
-        out.push_str(&format!(
-            "\nfn __roomLeft(run: __Run) -> Int\n    ? \"How many more jobs this run may hold: the limit, minus every entry of the one table, of every kind.\"\n    __maxJobs() - Map.len(run.{JOBS_FIELD})\n"
-        ));
-        out.push_str(
-            "\nfn __jobHandle(job: __Job) -> Work.Job\n    ? \"The runtime handle one table entry wraps, so the wait and the cancel name the job and never the kind.\"\n    match job\n",
-        );
-        for job in jobs {
+    for proc in procs {
+        if let Some(keyed) = &proc.keyed {
             out.push_str(&format!(
-                "        __Job.{upper}(handle) -> handle\n",
-                upper = marker_variant(&job.capability)
+                "    seated{0}: Map<{1}, Int>\n    retired{0}: Map<{1}, Bool>\n",
+                proc.upper, keyed.key
             ));
         }
     }
+    out.push_str("    versions: Map<Int, Int>\n    late: Int\n    dropped: Int\n    stopping: Bool\n    now: Int\n    nextId: Int\n");
 
-    out.push_str("\nfn __fresh() -> __Run\n    ? \"The run before anything has happened: no slot seated, every answer module at its own empty state.\"\n    __Run(slots = {}");
+    out.push_str("\nfn __fresh() -> __Run\n    ? \"The run before anything has happened: nothing seated, every answer module at its own empty state.\"\n    __Run(slots = {}");
     for answer in answers {
-        out.push_str(&format!(", {} = {}.fresh()", answer.field, answer.module));
+        out.push_str(&format!(
+            ", {} = Option.Some({}.fresh())",
+            answer.field, answer.module
+        ));
     }
-    if has_jobs {
-        out.push_str(", jobs = {}");
+    for proc in procs {
+        if proc.keyed.is_some() {
+            out.push_str(&format!(
+                ", seated{0} = {{}}, retired{0} = {{}}",
+                proc.upper
+            ));
+        }
     }
-    out.push_str(", dropped = 0, stopping = false, now = 0, nextId = 1)\n");
+    out.push_str(
+        ", versions = {}, late = 0, dropped = 0, stopping = false, now = 0, nextId = 1)\n",
+    );
+    out.push_str("\nfn __asked(pending: __Process, seq: Int) -> __Slot\n    ? \"A slot whose request is to be asked in the next turn: a process just seated, or one whose last request was just answered.\"\n    __Slot(seq = seq, pending = pending, waiting = Run.Wake.Until([], Option.Some(0)), due = 0, ms = 0, owner = 0, version = 0)\n");
+
+    // ── Handing a state out ────────────────────────────────────────
+    for answer in answers {
+        out.push_str(&format!(
+            "\nfn __take{0}(run: __Run) -> Tuple<__Run, Option<{1}>>\n    ? \"Hands the state of '{2}' out of the run and leaves none behind, so the answer function it goes to holds the only reference to it and can update it in place. The state comes back with the answer.\"\n    (__Run.update(run, {3} = Option.None), run.{3})\n",
+            super::build::capitalize(&answer.field),
+            answer.state,
+            answer.module,
+            answer.field
+        ));
+    }
 
     // ── Seating ────────────────────────────────────────────────────
-    for (protocol, performs) in protocols.iter().zip(process_effects) {
-        let upper = marker_variant(&protocol.fn_name);
-        out.push_str(&format!(
-            "\nfn __seat{upper}(run: __Run) -> __Run\n    ? \"Seats the '{}' process under its own slot id, at its first request.\"\n{}    __seated{upper}(run, {}())\n",
-            protocol.fn_name, effects(&performs.seat), protocol.start
-        ));
-        out.push_str(&format!(
-            "\nfn __seated{upper}(run: __Run, outcome: {}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {}.Done(_) -> run\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __Slot(seq = 1, pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0, ms = 0, answer = Option.None)), nextId = run.nextId + 1)\n",
-            protocol.outcome, protocol.outcome, protocol.outcome
-        ));
+    for (proc, performs) in procs.iter().zip(process_effects) {
+        write_seating(&mut out, proc, performs);
     }
+    let unkeyed = procs
+        .iter()
+        .filter(|proc| proc.keyed.is_none())
+        .fold("__fresh()".to_string(), |inner, proc| {
+            format!("__seat{}({inner})", proc.upper)
+        });
+    let start_effects = sorted(
+        procs
+            .iter()
+            .zip(process_effects)
+            .flat_map(|(_, effects)| effects.seat.iter().cloned())
+            .collect(),
+    );
+    out.push_str(&format!(
+        "\nfn __start() -> __Run\n    ? \"Seats one of every process that takes no key, then every keyed process its answer module lists.\"\n{}    __seatFamilies({unkeyed})\n",
+        effects(&start_effects)
+    ));
+    let families = procs
+        .iter()
+        .filter(|proc| proc.keyed.is_some())
+        .fold("run".to_string(), |inner, proc| {
+            format!("__seatFamily{0}({inner}, __keysOf{0}({inner}))", proc.upper)
+        });
+    let families = if procs.iter().filter(|proc| proc.keyed.is_some()).count() > 1 {
+        // Each family reads the run the one before it left.
+        let mut body = String::new();
+        let mut run_of = "run".to_string();
+        for (index, proc) in procs.iter().filter(|proc| proc.keyed.is_some()).enumerate() {
+            let name = format!("seated{index}");
+            body.push_str(&format!(
+                "    {name} = __seatFamily{0}({run_of}, __keysOf{0}({run_of}))\n",
+                proc.upper
+            ));
+            run_of = name;
+        }
+        body.push_str(&format!("    {run_of}\n"));
+        body
+    } else {
+        format!("    {families}\n")
+    };
+    out.push_str(&format!(
+        "\nfn __seatFamilies(run: __Run) -> __Run\n    ? \"The turn boundary: every keyed process is seated once per key its answer module lists, in list order, and an instance whose key has left that list is dropped.\"\n{}{families}",
+        effects(family_effects)
+    ));
 
     // ── The slot table and its two invariants ──────────────────────
     out.push_str("\nfn __current(run: __Run, id: Int) -> Int\n    ? \"The instance number of the request one process is waiting on, or -1 when nothing is seated under that id.\"\n    match Map.get(run.slots, id)\n        Option.None -> 0 - 1\n        Option.Some(slot) -> slot.seq\n");
     out.push_str("\nfn __nextInstance(seq: Int) -> Int\n    ? \"The instance number an answer for the current one leaves behind. It rises, so the instance just answered can never be current again.\"\n    seq + 1\n");
-    out.push_str("\nfn __parked(slot: __Slot, wake: Wait.Wake, now: Int) -> __Slot\n    ? \"The slot a Later leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, because ms is how long from now and the turn asks against the clock; the ms that was asked for is kept beside it, so a clock that steps backwards cannot strand the request behind a due it will never reach.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(wake, now), ms = __msOf(wake), answer = Option.None)\n");
-    out.push_str("\nfn __dueOf(wake: Wait.Wake, now: Int) -> Int\n    ? \"The clock reading a request parked on a deadline may be asked again at. A request parked on an item and a deadline at once carries the deadline half's. A request parked on a socket, on a job, or on the next turn carries none.\"\n    match wake\n        Wait.Wake.After(ms) -> now + ms\n        Wait.Wake.Either(_, ms) -> now + ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
-    out.push_str("\nfn __msOf(wake: Wait.Wake) -> Int\n    ? \"How long the request asked to be left alone for. A request parked on an item and a deadline at once asked for the deadline half's. A request parked on a socket, on a job, or on the next turn asked for nothing.\"\n    match wake\n        Wait.Wake.After(ms) -> ms\n        Wait.Wake.Either(_, ms) -> ms\n        Wait.Wake.Item(_) -> 0\n        Wait.Wake.NextTurn -> 0\n");
-    out.push_str("\nfn __park(run: __Run, id: Int, wake: Wait.Wake) -> __Run\n    ? \"A Later: the request stays where it is with the same instance number. The state the answer module returned was already written back, because a Later is where a module records its own progress.\"\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __Run.update(run, slots = Map.set(run.slots, id, __parked(slot, wake, run.now)))\n");
+    out.push_str("\nfn __versionOf(run: __Run, owner: Int) -> Int\n    ? \"How many times this answer module has answered other than Settled. A request parked on Settled is asked again once this has moved past the number it was parked at.\"\n    match Map.get(run.versions, owner)\n        Option.None -> 0\n        Option.Some(version) -> version\n");
+    out.push_str("\nfn __bump(run: __Run, owner: Int) -> __Run\n    ? \"One answer of this module that was not Settled: its state may have moved, so every request parked on Settled with it may be worth asking again.\"\n    __Run.update(run, versions = Map.set(run.versions, owner, __versionOf(run, owner) + 1))\n");
+    out.push_str("\nfn __deadlineOf(wake: Run.Wake) -> Option<Int>\n    ? \"The deadline half of a wake, if it has one.\"\n    match wake\n        Run.Wake.Until(_, deadline) -> deadline\n        Run.Wake.Settled(deadline) -> deadline\n");
+    out.push_str("\nfn __dueOf(deadline: Option<Int>, now: Int) -> Int\n    ? \"The clock reading a deadline falls due at. A negative deadline is due now; no deadline carries none.\"\n    match deadline\n        Option.None -> 0\n        Option.Some(ms) -> now + Int.max(ms, 0)\n");
+    out.push_str("\nfn __msOf(deadline: Option<Int>) -> Int\n    ? \"How long the request asked to be left alone for, never less than nothing.\"\n    match deadline\n        Option.None -> 0\n        Option.Some(ms) -> Int.max(ms, 0)\n");
+    out.push_str("\nfn __parked(slot: __Slot, wake: Run.Wake, now: Int, owner: Int, version: Int) -> __Slot\n    ? \"The slot an Err leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, and the ms that was asked for is kept beside it, so a clock that steps backwards cannot strand the request.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(__deadlineOf(wake), now), ms = __msOf(__deadlineOf(wake)), owner = owner, version = version)\n");
+    out.push_str("\nfn __park(run: __Run, id: Int, wake: Run.Wake, owner: Int) -> __Run\n    ? \"An Err: the request stays where it is with the same instance number. The state the answer module returned was already written back. An answer that is not Settled moves the module's version first; a Settled one does not, so a request cannot wake itself.\"\n    moved = __moved(run, wake, owner)\n    match Map.get(moved.slots, id)\n        Option.None -> moved\n        Option.Some(slot) -> __Run.update(moved, slots = Map.set(moved.slots, id, __parked(slot, wake, moved.now, owner, __versionOf(moved, owner))))\n");
+    out.push_str("\nfn __moved(run: __Run, wake: Run.Wake, owner: Int) -> __Run\n    ? \"The versions after one Err: Until moves its module's version, Settled leaves it.\"\n    match wake\n        Run.Wake.Until(_, _) -> __bump(run, owner)\n        Run.Wake.Settled(_) -> run\n");
     out.push_str("\nfn __staleInstance(run: __Run, id: Int, seq: Int) -> Bool\n    ? \"Why an answer carrying this instance number changes nothing: it is not the number the slot under this id is waiting on.\"\n    seq != __current(run, id)\n");
 
-    for protocol in protocols {
-        let upper = marker_variant(&protocol.fn_name);
-        out.push_str(&format!(
-            "\nfn __settle{upper}(run: __Run, id: Int, seq: Int, outcome: {}) -> __Run\n    ? \"An answer for the current instance replaces that process's one slot and raises its number; an answer for an older instance changes nothing and is counted.\"\n    match seq == __current(run, id)\n        false -> __Run.update(run, dropped = run.dropped + 1)\n        true -> __settled{upper}(run, id, seq, outcome)\n",
-            protocol.outcome
-        ));
-        out.push_str(&format!(
-            "\nfn __settled{upper}(run: __Run, id: Int, seq: Int, outcome: {}) -> __Run\n    ? \"What an answer for the current instance leaves behind: an empty slot when the process is done, the next request under the next instance number otherwise.\"\n    match outcome\n        {}.Done(_) -> __Run.update(run, slots = Map.remove(run.slots, id))\n        {}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, id, __settledSlot{upper}(seq, request)))\n",
-            protocol.outcome, protocol.outcome, protocol.outcome
-        ));
-        out.push_str(&format!(
-            "\nfn __settledSlot{upper}(seq: Int, request: {}) -> __Slot\n    ? \"The slot an answer for instance 'seq' writes back under that id: the next request of '{}', under the instance number after 'seq'.\"\n    __Slot(seq = __nextInstance(seq), pending = __Process.{upper}(request), waiting = Wait.Wake.NextTurn, due = 0, ms = 0, answer = Option.None)\n",
-            protocol.request, protocol.fn_name
-        ));
-        out.push_str(&format!(
-            "\nfn __settleKeepsOrShrinks{upper}(run: __Run, id: Int) -> Bool\n    ? \"Why settling never seats a second process: this id is already seated, so every arm either counts a late answer, or removes that one slot, or replaces it.\"\n    Map.has(run.slots, id)\n"
-        ));
+    for proc in procs {
+        write_settle(&mut out, proc);
     }
 
     // ── The view ───────────────────────────────────────────────────
-    out.push_str(&format!(
-        "\nfn __view(run: __Run, ready: List<Int>) -> {view}\n    ? \"The resource-free summary of a run that the three policies read, and the only shape a law about them can sample. It is built again for every id the turn asks about, deliberately: a policy reads the seating this turn has already changed, not the seating the turn began with.\"\n    __viewOf(run, ready, {}, Map.keys(run.slots))\n",
-        if has_jobs {
-            format!("Map.len(run.{JOBS_FIELD})")
-        } else {
-            "0".to_string()
+    out.push_str("\nfn __view(run: __Run, ready: List<Int>) -> __View\n    ? \"The resource-free summary of a run that stop and admit read. It is built again for every id the turn asks admit about, so a policy reads the seating this turn has already changed.\"\n    ids = Map.keys(run.slots)\n    __View(pending = __pendingOf(run, ids, {}), ready = ready, askable = __askableOf(run, ready, ids, []), dropped = run.dropped, stopping = run.stopping)\n");
+    out.push_str("\nfn __pendingOf(run: __Run, ids: List<Int>, acc: Map<Int, __Pending>) -> Map<Int, __Pending>\n    ? \"One marker per seated process, in key order.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __pendingOf(run, rest, __pendingAt(run, id, acc))\n");
+    out.push_str("\nfn __pendingAt(run: __Run, id: Int, acc: Map<Int, __Pending>) -> Map<Int, __Pending>\n    ? \"The marker for one id, if that id is still seated.\"\n    match Map.get(run.slots, id)\n        Option.None -> acc\n        Option.Some(slot) -> Map.set(acc, id, __markerOf(slot))\n");
+    out.push_str("\nfn __markerOf(slot: __Slot) -> __Pending\n    ? \"Which process one slot holds, its key when it has one, the instance it is waiting on, and what would wake it.\"\n    match slot.pending\n");
+    for proc in procs {
+        match &proc.keyed {
+            Some(_) => out.push_str(&format!(
+                "        __Process.{0}(key, _) -> __Pending.{0}(key, slot.seq, slot.waiting)\n",
+                proc.upper
+            )),
+            None => out.push_str(&format!(
+                "        __Process.{0}(_) -> __Pending.{0}(slot.seq, slot.waiting)\n",
+                proc.upper
+            )),
         }
-    ));
-    out.push_str(&format!(
-        "\nfn __viewOf(run: __Run, ready: List<Int>, jobs: Int, ids: List<Int>) -> {view}\n    ? \"The view, once the turn has counted the jobs it is running and the ids it is summarising. The ids are handed in rather than read twice, so a program that asks for a loop is never warned about a repetition it did not write.\"\n    {view}(pending = __pendingOf(run, ids, {{}}), ready = ready, askable = __askableOf(run, ready, ids, []), jobs = jobs, room = __maxJobs() - jobs, stopping = run.stopping)\n"
-    ));
-    out.push_str(&format!(
-        "\nfn __pendingOf(run: __Run, ids: List<Int>, acc: Map<Int, {marker}>) -> Map<Int, {marker}>\n    ? \"One marker per seated process, in key order.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __pendingOf(run, rest, __pendingAt(run, id, acc))\n"
-    ));
-    out.push_str(&format!(
-        "\nfn __pendingAt(run: __Run, id: Int, acc: Map<Int, {marker}>) -> Map<Int, {marker}>\n    ? \"The marker for one id, if that id is still seated.\"\n    match Map.get(run.slots, id)\n        Option.None -> acc\n        Option.Some(slot) -> Map.set(acc, id, __markerOf(slot))\n"
-    ));
-    out.push_str(&format!(
-        "\nfn __markerOf(slot: __Slot) -> {marker}\n    ? \"Which process one slot holds, the instance it is waiting on, and what would wake it.\"\n    match slot.pending\n"
-    ));
-    for protocol in protocols {
-        let upper = marker_variant(&protocol.fn_name);
-        out.push_str(&format!(
-            "        __Process.{upper}(_) -> {marker}.{upper}(slot.seq, slot.waiting)\n"
-        ));
     }
+    out.push_str("\nfn __askableOf(run: __Run, ready: List<Int>, ids: List<Int>, acc: List<Int>) -> List<Int>\n    ? \"The ids this turn may ask, in slot order.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __askableOf(run, ready, rest, __askableAt(run, ready, id, acc))\n");
+    out.push_str("\nfn __askableAt(run: __Run, ready: List<Int>, id: Int, acc: List<Int>) -> List<Int>\n    ? \"One id, kept when its wake has fired.\"\n    match __askable(run, ready, id)\n        false -> acc\n        true -> List.concat(acc, [id])\n");
 
     // ── The gate: which slots this turn may ask ────────────────────
-    out.push_str("\nfn __askableOf(run: __Run, ready: List<Int>, ids: List<Int>, acc: List<Int>) -> List<Int>\n    ? \"The ids this turn may ask, in slot order. A wake gates the ask: the turn asks a slot when what that slot is waiting for has happened, and never otherwise.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __askableOf(run, ready, rest, __askableAt(run, ready, id, acc))\n");
-    out.push_str("\nfn __askableAt(run: __Run, ready: List<Int>, id: Int, acc: List<Int>) -> List<Int>\n    ? \"One id, kept when its wake has fired.\"\n    match __askable(run, ready, id)\n        false -> acc\n        true -> List.concat(acc, [id])\n");
-    out.push_str("\nfn __askable(run: __Run, ready: List<Int>, id: Int) -> Bool\n    ? \"Whether the turn may ask the request seated under this id. Nothing is seated there, nothing to ask.\"\n    match Map.get(run.slots, id)\n        Option.None -> false\n        Option.Some(slot) -> __askableSlot(slot, ready, id, run.now)\n");
-    out.push_str("\nfn __eitherDue(due: Int, now: Int) -> Bool\n    ? \"Whether the deadline half of a request parked on an item and a deadline at once has passed: the turn's clock reading has reached the moment that request falls due at.\"\n    due <= now\n");
-    out.push_str("\nfn __eitherAskable(due: Int, ms: Int, now: Int, reported: Bool) -> Bool\n    ? \"What a wake parked on an item and a deadline at once gates: whichever of the two comes first. The wait reporting the item's key makes the request askable, and so does the deadline passing; a clock reading that has fallen further back than the deadline asked for makes it askable too, exactly as it does for a deadline on its own.\"\n    Bool.or(reported, Bool.or(__eitherDue(due, now), now < due - ms))\n");
-    out.push_str("\nfn __askableSlot(slot: __Slot, ready: List<Int>, id: Int, now: Int) -> Bool\n    ? \"What one wake gates. A request to be asked again next turn is askable at once, which is also where a freshly seated process and one whose request was just answered stand. A request parked on a socket or a job is asked in a turn whose wait reported its key, and false readiness is allowed: the module may answer Later again. A request parked on a deadline is asked once the turn's clock reading has reached it, or once that reading has fallen further back than the deadline asked for: a wall clock that steps backwards would otherwise leave the request waiting for a reading that never comes. A request parked on an item and a deadline at once is asked on whichever of the two comes first.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> true\n        Wait.Wake.Item(_) -> List.contains(ready, id)\n        Wait.Wake.After(_) -> Bool.or(slot.due <= now, now < slot.due - slot.ms)\n        Wait.Wake.Either(_, _) -> __eitherAskable(slot.due, slot.ms, now, List.contains(ready, id))\n");
+    out.push_str("\nfn __askable(run: __Run, ready: List<Int>, id: Int) -> Bool\n    ? \"Whether the turn may ask the request seated under this id. Nothing is seated there, nothing to ask.\"\n    match Map.get(run.slots, id)\n        Option.None -> false\n        Option.Some(slot) -> __askableSlot(run, slot, ready, id)\n");
+    out.push_str("\nfn __deadlinePassed(deadline: Option<Int>, due: Int, ms: Int, now: Int) -> Bool\n    ? \"Whether the deadline half of a wake has fired: the turn's clock reading has reached the moment it falls due at, or has fallen further back than the deadline asked for, because a wall clock that steps backwards would otherwise leave the request waiting for a reading that never comes. No deadline never fires.\"\n    match deadline\n        Option.None -> false\n        Option.Some(_) -> Bool.or(due <= now, now < due - ms)\n");
+    out.push_str("\nfn __askableSlot(run: __Run, slot: __Slot, ready: List<Int>, id: Int) -> Bool\n    ? \"What one wake gates. Until is asked once the wait reported one of its items or its deadline passed; false readiness is allowed, and the module may answer Err again. Settled is asked once its module has answered anything other than Settled since, or its deadline passed.\"\n    match slot.waiting\n        Run.Wake.Until(_, deadline) -> Bool.or(List.contains(ready, id), __deadlinePassed(deadline, slot.due, slot.ms, run.now))\n        Run.Wake.Settled(deadline) -> Bool.or(__versionOf(run, slot.owner) > slot.version, __deadlinePassed(deadline, slot.due, slot.ms, run.now))\n");
 
     // ── The wait and the timeout ───────────────────────────────────
-    out.push_str(&format!(
-        "\nfn __waitSet(run: __Run, ids: List<Int>, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"The one wait of a turn, keyed by slot id: what each parked request is waiting on{}.\"\n    match ids\n        [] -> {}\n        [id, ..rest] -> __waitSet(run, rest, __waitAt(run, id, acc))\n",
-        if has_jobs { ", plus one key per running job" } else { "" },
-        if has_jobs { format!("__jobItems(run, Map.keys(run.{JOBS_FIELD}), acc)") } else { "acc".to_string() },
-    ));
-    out.push_str("\nfn __waitAt(run: __Run, id: Int, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"What the request seated under one id is waiting on, if anything is seated there.\"\n    match Map.get(run.slots, id)\n        Option.None -> acc\n        Option.Some(slot) -> __waitOn(acc, id, slot.waiting)\n");
-    out.push_str("\nfn __waitOn(acc: Map<Int, Wait.Item>, id: Int, wake: Wait.Wake) -> Map<Int, Wait.Item>\n    ? \"Only a request parked on a socket or a job is waited for; a deadline is the poll's own timeout, and a NextTurn is asked again rather than woken. A request parked on an item and a deadline at once is in the wait set for its item and counts its deadline in the timeout, exactly as each half does on its own.\"\n    match wake\n        Wait.Wake.Item(item) -> Map.set(acc, id, item)\n        Wait.Wake.Either(item, _) -> Map.set(acc, id, item)\n        Wait.Wake.After(_) -> acc\n        Wait.Wake.NextTurn -> acc\n");
-    if has_jobs {
-        out.push_str(
-            "\nfn __jobItems(run: __Run, keys: List<Int>, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One wait-set key per running job.\"\n    match keys\n        [] -> acc\n        [key, ..rest] -> __jobItems(run, rest, __jobItem(run, key, acc))\n",
-        );
-        out.push_str(&format!(
-            "\nfn __jobItem(run: __Run, key: Int, acc: Map<Int, Wait.Item>) -> Map<Int, Wait.Item>\n    ? \"One running job, as the thing the wait watches for it.\"\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> acc\n        Option.Some(job) -> Map.set(acc, key, Wait.Item.Job(__jobHandle(job)))\n"
-        ));
-    }
-    out.push_str("\nfn __timeout(run: __Run) -> Int\n    ? \"How long this turn may wait: nothing at all while some request is to be asked again, the soonest deadline still ahead of the turn's clock reading when one is pending, and one second when neither.\"\n    __deadline(run, Map.keys(run.slots), 0 - 1)\n");
+    out.push_str("\nrecord __WaitPlan\n    items: Map<Int, Wait.Item>\n    owners: Map<Int, Int>\n    next: Int\n");
+    out.push_str("\nfn __waitPlan(run: __Run) -> __WaitPlan\n    ? \"The one wait of a turn: every item every parked request waits on, each under a key of its own, and which slot each key belongs to.\"\n    __waitPlanOf(run, Map.keys(run.slots), __WaitPlan(items = {}, owners = {}, next = 0))\n");
+    out.push_str("\nfn __waitPlanOf(run: __Run, ids: List<Int>, acc: __WaitPlan) -> __WaitPlan\n    ? \"Every seated slot's items, in slot order.\"\n    match ids\n        [] -> acc\n        [id, ..rest] -> __waitPlanOf(run, rest, __waitPlanAt(run, id, acc))\n");
+    out.push_str("\nfn __waitPlanAt(run: __Run, id: Int, acc: __WaitPlan) -> __WaitPlan\n    ? \"What the request seated under one id waits on, if anything is seated there. Settled waits on no item: its module's version is the loop's own to watch.\"\n    match Map.get(run.slots, id)\n        Option.None -> acc\n        Option.Some(slot) -> match slot.waiting\n            Run.Wake.Until(items, _) -> __waitItems(acc, id, items)\n            Run.Wake.Settled(_) -> acc\n");
+    out.push_str("\nfn __waitItems(acc: __WaitPlan, id: Int, items: List<Wait.Item>) -> __WaitPlan\n    ? \"One key per item, all owned by this slot.\"\n    match items\n        [] -> acc\n        [item, ..rest] -> __waitItems(__WaitPlan(items = Map.set(acc.items, acc.next, item), owners = Map.set(acc.owners, acc.next, id), next = acc.next + 1), id, rest)\n");
+    out.push_str("\nfn __readySlots(owners: Map<Int, Int>, keys: List<Int>, acc: List<Int>) -> List<Int>\n    ? \"The slots the keys the wait reported belong to.\"\n    match keys\n        [] -> acc\n        [key, ..rest] -> __readySlots(owners, rest, __readySlot(owners, key, acc))\n");
+    out.push_str("\nfn __readySlot(owners: Map<Int, Int>, key: Int, acc: List<Int>) -> List<Int>\n    ? \"One reported key, as the slot that owns it.\"\n    match Map.get(owners, key)\n        Option.None -> acc\n        Option.Some(id) -> List.concat(acc, [id])\n");
+    out.push_str("\nfn __timeout(run: __Run) -> Int\n    ? \"How long this turn may wait: nothing at all while some request can be asked already, the soonest deadline still ahead of the turn's clock reading when one is pending, and one second when neither.\"\n    __deadline(run, Map.keys(run.slots), 0 - 1)\n");
     out.push_str("\nfn __deadline(run: __Run, ids: List<Int>, best: Int) -> Int\n    ? \"The soonest deadline across every seated slot, or -1 when none carries one.\"\n    match ids\n        [] -> __tick(best)\n        [id, ..rest] -> __deadline(run, rest, __deadlineAt(run, id, best))\n");
-    out.push_str("\nfn __deadlineAt(run: __Run, id: Int, best: Int) -> Int\n    ? \"What one id contributes to the turn's wait.\"\n    match Map.get(run.slots, id)\n        Option.None -> best\n        Option.Some(slot) -> __soonest(best, slot, run.now)\n");
-    out.push_str("\nfn __eitherWait(due: Int, now: Int, ms: Int) -> Int\n    ? \"What a request parked on an item and a deadline at once contributes to the turn's wait: what is left of its deadline, exactly as a deadline on its own contributes. The item half contributes nothing, because the wait watches for it rather than sleeping until it.\"\n    __remaining(due, now, ms)\n");
-    out.push_str("\nfn __soonest(best: Int, slot: __Slot, now: Int) -> Int\n    ? \"A request to be asked again next turn wins outright; two deadlines keep the nearer; a socket or a job carries none. A request parked on an item and a deadline at once counts its deadline.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> 0\n        Wait.Wake.Item(_) -> best\n        Wait.Wake.After(_) -> __nearer(best, __remaining(slot.due, now, slot.ms))\n        Wait.Wake.Either(_, _) -> __nearer(best, __eitherWait(slot.due, now, slot.ms))\n");
-    out.push_str("\nfn __remaining(due: Int, now: Int, ms: Int) -> Int\n    ? \"How much of one deadline is left: never less than nothing, because a deadline the clock has already reached is asked again in this turn rather than waited on, and never more than the ms that was asked for, because a clock that stepped backwards would otherwise put the turn to sleep for longer than any request in the program asked for.\"\n    Int.min(Int.max(due - now, 0), ms)\n");
-    out.push_str("\nfn __nearer(best: Int, ms: Int) -> Int\n    ? \"The nearer of two deadlines, where -1 means none yet.\"\n    match best < 0\n        true -> ms\n        false -> __smaller(best, ms)\n");
-    out.push_str("\nfn __smaller(left: Int, right: Int) -> Int\n    ? \"The smaller of two whole numbers.\"\n    match left < right\n        true -> left\n        false -> right\n");
+    out.push_str("\nfn __deadlineAt(run: __Run, id: Int, best: Int) -> Int\n    ? \"What one id contributes to the turn's wait. A request parked on Settled whose module has moved since is askable now, so the turn does not wait at all.\"\n    match Map.get(run.slots, id)\n        Option.None -> best\n        Option.Some(slot) -> match __settledMoved(run, slot)\n            true -> 0\n            false -> __soonest(best, slot, run.now)\n");
+    out.push_str("\nfn __settledMoved(run: __Run, slot: __Slot) -> Bool\n    ? \"A request parked on Settled whose module has answered since.\"\n    match slot.waiting\n        Run.Wake.Settled(_) -> __versionOf(run, slot.owner) > slot.version\n        Run.Wake.Until(_, _) -> false\n");
+    out.push_str("\nfn __soonest(best: Int, slot: __Slot, now: Int) -> Int\n    ? \"Two deadlines keep the nearer; a wake without a deadline carries none.\"\n    match __deadlineOf(slot.waiting)\n        Option.None -> best\n        Option.Some(_) -> __nearer(best, __remaining(slot.due, now, slot.ms))\n");
+    out.push_str("\nfn __remaining(due: Int, now: Int, ms: Int) -> Int\n    ? \"How much of one deadline is left: never less than nothing, and never more than the ms that was asked for, because a clock that stepped backwards would otherwise put the turn to sleep for longer than any request in the program asked for.\"\n    Int.min(Int.max(due - now, 0), ms)\n");
+    out.push_str("\nfn __nearer(best: Int, ms: Int) -> Int\n    ? \"The nearer of two deadlines, where -1 means none yet.\"\n    match best < 0\n        true -> ms\n        false -> Int.min(best, ms)\n");
     out.push_str("\nfn __tick(best: Int) -> Int\n    ? \"The wait of a turn with no deadline in it: one second.\"\n    match best < 0\n        true -> 1000\n        false -> best\n");
-
-    out.push_str(&then_reply::dispatch(protocols, serve_effects));
 
     // ── The serve path ─────────────────────────────────────────────
     out.push_str(&format!(
-        "\nfn __serve(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"Serves one slot: asks the module that answers its request, then either replaces the slot with what the process does next, or leaves it parked.\"\n{}    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> __serveSlot(run, ready, id, slot)\n",
+        "\nfn __serve(run: __Run, id: Int) -> __Run\n    ? \"Serves one slot: asks the module that answers its request, then either replaces the slot with what the process does next, or leaves it parked.\"\n{}    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> match slot.pending\n",
         effects(serve_effects)
     ));
-    out.push_str(&format!(
-        "\nfn __retrySlot(run: __Run, id: Int, slot: __Slot) -> __Run\n    ? \"Which process the slot holds decides which dispatch answers it.\"\n{}    match slot.pending\n",
-        effects(serve_effects)
-    ));
-    for protocol in protocols {
-        let upper = marker_variant(&protocol.fn_name);
-        out.push_str(&format!(
-            "        __Process.{upper}(request) -> __serve{upper}(run, id, slot.seq, request)\n"
-        ));
+    for proc in procs {
+        match &proc.keyed {
+            Some(_) => out.push_str(&format!(
+                "            __Process.{0}(key, request) -> __serve{0}(run, id, slot.seq, key, request)\n",
+                proc.upper
+            )),
+            None => out.push_str(&format!(
+                "            __Process.{0}(request) -> __serve{0}(run, id, slot.seq, request)\n",
+                proc.upper
+            )),
+        }
     }
-    for (protocol, performs) in protocols.iter().zip(process_effects) {
-        out.push_str(&write_serve(protocol, answers, performs));
-    }
-
-    // ── The job seam ───────────────────────────────────────────────
-    for job in jobs {
-        out.push_str(&write_job(job, jobs));
+    for (proc, performs) in procs.iter().zip(process_effects) {
+        out.push_str(&write_serve(proc, answers, performs));
     }
 
     let stop_observation = match coordinator_stop {
         CoordinatorStop::HostSignal => "Process.stopRequested()",
         CoordinatorStop::PolicyOnly => "false",
     };
-    out.push_str(&host_driver::write_step(plan, jobs, turn_effects));
+    out.push_str(&host_driver::write_step(turn_effects));
     out.push_str(&format!(
-        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"Observe stopping, wait once, then perform the same turn as the external host driver.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    ready = Wait.poll(__waitSet(observed, Map.keys(observed.slots), {{}}), __timeout(observed))?\n    Result.Ok(__workHostStep(observed, ready))\n",
+        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"Observe stopping, wait once, then perform the same turn as the external host driver.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    plan = __waitPlan(observed)\n    keys = Wait.poll(plan.items, __timeout(observed))?\n    Result.Ok(__workHostStep(observed, keys))\n",
         effects(turn_effects),
     ));
     out.push_str(&format!(
-        "\nfn __serveEach(run: __Run, ready: List<Int>, ids: List<Int>) -> __Run\n    ? \"Every id the policy ordered, once, if the policy admits it in this turn.\"\n{}    match ids\n        [] -> run\n        [id, ..rest] -> __serveEach(__serveIf(run, ready, id), ready, rest)\n",
+        "\nfn __serveEach(run: __Run, ready: List<Int>, ids: List<Int>) -> __Run\n    ? \"Every seated id, in slot order, once, if its wake has fired{}.\"\n{}    match ids\n        [] -> run\n        [id, ..rest] -> __serveEach(__serveIf(run, ready, id), ready, rest)\n",
+        if policies.admit { " and admit lets it" } else { "" },
         effects(serve_effects)
     ));
-    out.push_str(&format!(
-        "\nfn __serveIf(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One id, asked only when its wake has fired. The policy orders the whole view and is asked about the askable ids only; a slot that is not askable is not asked whatever the order said.\"\n{}    match __askable(run, ready, id)\n        false -> run\n        true -> __serveAdmitted(run, ready, id)\n",
-        effects(serve_effects)
-    ));
-    out.push_str(&format!(
-        "\nfn __serveAdmitted(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One askable id, served only if the policy admits it. The view it is admitted against is taken again here, so a slot an earlier id of this turn removed is already gone from it.\"\n{}    match {}(__view(run, ready), id)\n        false -> run\n        true -> __serve(run, ready, id)\n",
-        effects(serve_effects),
-        bare(&plan.policies.admit)
-    ));
-    let stopping = if plan.policies.defaults {
-        "__stop(__view(run, []))".to_string()
+    let admitted = if policies.admit {
+        "match admit(__view(run, ready), id)\n            false -> run\n            true -> __serve(run, id)"
     } else {
-        format!(
-            "Bool.or({}(__view(run, [])), Map.len(run.slots) == 0)",
-            bare(&plan.policies.stop)
-        )
+        "__serve(run, id)"
     };
     out.push_str(&format!(
-        "\nfn __runAll(run: __Run) -> Result<__Run, String>\n    ? \"Turns until the run's stopping rule is satisfied.\"\n{}    match {stopping}\n        true -> Result.Ok(run)\n        false -> __runAll(__turn(run)?)\n",
+        "\nfn __serveIf(run: __Run, ready: List<Int>, id: Int) -> __Run\n    ? \"One id, asked only when its wake has fired. A slot that is not askable is not asked{}.\"\n{}    match __askable(run, ready, id)\n        false -> run\n        true -> {admitted}\n",
+        if policies.admit { ", and one that is is asked only if admit lets it" } else { "" },
+        effects(serve_effects)
+    ));
+    let stopping = if policies.stop {
+        "Bool.or(stop(__view(run, [])), Map.len(run.slots) == 0)"
+    } else {
+        "Bool.or(run.stopping, Map.len(run.slots) == 0)"
+    };
+    out.push_str(&format!(
+        "\nfn __stopped(run: __Run) -> Bool\n    ? \"The run is over once nothing is seated{}.\"\n    {stopping}\n",
+        if policies.stop { ", or once the entry's stop says so" } else { ", or once a stop was requested" }
+    ));
+    out.push_str(&format!(
+        "\nfn __runAll(run: __Run) -> Result<__Run, String>\n    ? \"Turns until the run is over.\"\n{}    match __stopped(run)\n        true -> Result.Ok(run)\n        false -> __runAll(__turn(run)?)\n",
         effects(turn_effects)
     ));
-    let seated = protocols
-        .iter()
-        .fold("__fresh()".to_string(), |inner, protocol| {
-            format!("__seat{}({inner})", marker_variant(&protocol.fn_name))
-        });
     out.push_str(&host_driver::write_exports(
-        &seated,
-        &stopping,
         main_effects,
-        has_jobs,
+        cancels_waited,
         coordinator_stop,
     ));
     out.push_str(&format!(
-        "\nfn main() -> Result<Unit, String>\n    ? \"Seats one of every process this program writes and turns until the policy stops the run.\"\n{}    __over(__runAll({seated})?)\n",
+        "\nfn __all() -> Result<Unit, String>\n    ? \"Seats every process, turns until the run is over, and ends it.\"\n{}    __over(__runAll(__start())?)\n",
         effects(main_effects)
     ));
-    if has_jobs {
+
+    // ── The end of a run ───────────────────────────────────────────
+    // A request parked on a job its answer module began itself holds a
+    // handle the loop never put anywhere else. It is over with the run, so
+    // its job is cancelled rather than left running.
+    if cancels_waited {
         out.push_str(&format!(
-            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, whatever is still seated stays where it is, and every job still running is cancelled rather than abandoned.\"\n    ! [{CANCEL}]\n    __cancelEach(run, Map.keys(run.{JOBS_FIELD}))\n"
+            "\nfn __cancelWaited(run: __Run, ids: List<Int>) -> __Run\n    ? \"Every job a parked request is waiting on, cancelled, in slot order.\"\n    ! [{CANCEL}]\n    match ids\n        [] -> run\n        [id, ..rest] -> __cancelWaited(__cancelWaitedAt(run, id), rest)\n"
         ));
         out.push_str(&format!(
-            "\nfn __cancelEach(run: __Run, keys: List<Int>) -> Result<Unit, String>\n    ? \"Every job the run still holds a handle for, in key order.\"\n    ! [{CANCEL}]\n    match keys\n        [] -> Result.Ok(Unit)\n        [key, ..rest] -> __cancelEach(__cancelOne(run, key), rest)\n"
+            "\nfn __cancelWaitedAt(run: __Run, id: Int) -> __Run\n    ? \"The jobs the request seated under one id waits on, if it waits on any.\"\n    ! [{CANCEL}]\n    match Map.get(run.slots, id)\n        Option.None -> run\n        Option.Some(slot) -> match slot.waiting\n            Run.Wake.Until(items, _) -> __cancelItems(run, items)\n            Run.Wake.Settled(_) -> run\n"
         ));
         out.push_str(&format!(
-            "\nfn __cancelOne(run: __Run, key: Int) -> __Run\n    ? \"One running job, cancelled and dropped from the table. A job that finished before the cancel is not this path's business; it shows up in take.\"\n    ! [{CANCEL}]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> run\n        Option.Some(job) -> __cancelled(run, key, {CANCEL}(__jobHandle(job)))\n"
+            "\nfn __cancelItems(run: __Run, items: List<Wait.Item>) -> __Run\n    ? \"A job is cancelled; a socket belongs to its answer module and is left alone.\"\n    ! [{CANCEL}]\n    match items\n        [] -> run\n        [item, ..rest] -> __cancelItems(__cancelItem(run, item), rest)\n"
         ));
         out.push_str(&format!(
-            "\nfn __cancelled(run: __Run, key: Int, cancelled: Unit) -> __Run\n    ? \"The table once one job has been cancelled: the handle is gone, so nothing cancels it twice.\"\n    __Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key))\n"
+            "\nfn __cancelItem(run: __Run, item: Wait.Item) -> __Run\n    ? \"One item of a parked request.\"\n    ! [{CANCEL}]\n    match item\n        Wait.Item.Job(job) -> __cancelledWaited(run, {CANCEL}(job))\n        Wait.Item.Socket(_) -> run\n"
+        ));
+        out.push_str("\nfn __cancelledWaited(run: __Run, cancelled: Unit) -> __Run\n    ? \"The run once one waited-on job has been cancelled; the slot itself stays as it was.\"\n    run\n");
+        out.push_str(&format!(
+            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: whatever is still seated stays where it is, and every job a parked request waits on is cancelled rather than abandoned.\"\n    ! [{CANCEL}]\n    _parked = __cancelWaited(run, Map.keys(run.slots))\n    Result.Ok(Unit)\n"
         ));
     } else {
-        out.push_str("\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: every process that finished left its slot, and whatever is still seated stays where it is.\"\n    Result.Ok(Unit)\n");
-    }
-
-    // ── The invariants ─────────────────────────────────────────────
-    out.push_str(&write_laws(protocols, jobs));
-    out.push_str(&history::write(protocols, answers, jobs));
-    if protocols
-        .iter()
-        .any(|protocol| sample_request(protocol).is_some())
-    {
-        out.push_str(then_reply::laws());
-    }
-    if plan.policies.defaults {
-        out.push_str("\nverify __order law seatedIdsInSlotOrder\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    __order(view) => Map.keys(view.pending)\n\nverify __admit law everyAskableIdIsAdmitted\n    given view: __View = [__view(__fresh(), []), __view(__sampleRun(), [])]\n    given id: Int = [0, 1, 2]\n    __admit(view, id) => List.contains(view.askable, id)\n\nverify __stop law runningJobsKeepAnEmptyRunAlive\n    given jobs: Int = [1, 2, 7]\n    when jobs > 0\n    __stop(__View(pending = {}, ready = [], askable = [], jobs = jobs, room = 0, stopping = false)) => false\n");
+        out.push_str("\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: whatever is still seated stays where it is.\"\n    Result.Ok(Unit)\n");
     }
     out
 }
 
+/// Seating one process: once for a process without a key, once per key for
+/// a keyed one.
+fn write_seating(out: &mut String, proc: &Proc<'_>, performs: &ProcessEffects) {
+    let upper = &proc.upper;
+    let protocol = proc.protocol;
+    let seat = effects(&performs.seat);
+    let Some(keyed) = &proc.keyed else {
+        out.push_str(&format!(
+            "\nfn __seat{upper}(run: __Run) -> __Run\n    ? \"Seats the '{}' process under its own slot id, at its first request.\"\n{seat}    __seated{upper}(run, {}())\n",
+            protocol.fn_name, protocol.start
+        ));
+        out.push_str(&format!(
+            "\nfn __seated{upper}(run: __Run, outcome: {0}) -> __Run\n    ? \"A process that is already done is not seated; one that is waiting takes the next free slot id.\"\n    match outcome\n        {0}.Done(_) -> run\n        {0}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __asked(__Process.{upper}(request), 1)), nextId = run.nextId + 1)\n",
+            protocol.outcome
+        ));
+        return;
+    };
+    let key = &keyed.key;
+    out.push_str(&format!(
+        "\nfn __keysOf{upper}(run: __Run) -> List<{key}>\n    ? \"The keys '{0}' lists for the '{1}' family. Its state is in the run at every turn boundary; it is out only while one answer function holds it.\"\n    match run.{2}\n        Option.Some(state) -> {0}(state)\n        Option.None -> []\n",
+        keyed.by, protocol.fn_name, keyed.field
+    ));
+    out.push_str(&format!(
+        "\nfn __seatFamily{upper}(run: __Run, keys: List<{key}>) -> __Run\n    ? \"The '{0}' family at the turn boundary: instances whose key has left the list are dropped, retired keys that have left it may come back later, and every listed key that is neither seated nor retired is seated, in list order.\"\n{seat}    present = __keySet{upper}(keys, {{}})\n    kept = __dropLeft{upper}(run, Map.keys(run.seated{upper}), present)\n    back = __Run.update(kept, retired{upper} = __unretire{upper}(kept.retired{upper}, Map.keys(kept.retired{upper}), present))\n    __seatKeys{upper}(back, keys)\n",
+        protocol.fn_name
+    ));
+    out.push_str(&format!(
+        "\nfn __keySet{upper}(keys: List<{key}>, acc: Map<{key}, Bool>) -> Map<{key}, Bool>\n    ? \"The listed keys, as a set.\"\n    match keys\n        [] -> acc\n        [key, ..rest] -> __keySet{upper}(rest, Map.set(acc, key, true))\n"
+    ));
+    out.push_str(&format!(
+        "\nfn __dropLeft{upper}(run: __Run, seated: List<{key}>, present: Map<{key}, Bool>) -> __Run\n    ? \"Every seated instance whose key is no longer listed is dropped: its slot goes, and the run counts it.\"\n    match seated\n        [] -> run\n        [key, ..rest] -> __dropLeft{upper}(__dropIfLeft{upper}(run, key, Map.has(present, key)), rest, present)\n"
+    ));
+    out.push_str(&format!(
+        "\nfn __dropIfLeft{upper}(run: __Run, key: {key}, listed: Bool) -> __Run\n    ? \"One seated key: kept while it is listed, dropped once it is not.\"\n    match listed\n        true -> run\n        false -> __drop{upper}(run, key)\n"
+    ));
+    out.push_str(&format!(
+        "\nfn __drop{upper}(run: __Run, key: {key}) -> __Run\n    ? \"The instance seated for this key is gone: its slot and its seat are removed, and the run counts one more dropped instance.\"\n    match Map.get(run.seated{upper}, key)\n        Option.None -> run\n        Option.Some(id) -> __Run.update(run, slots = Map.remove(run.slots, id), seated{upper} = Map.remove(run.seated{upper}, key), dropped = run.dropped + 1)\n"
+    ));
+    out.push_str(&format!(
+        "\nfn __unretire{upper}(retired: Map<{key}, Bool>, keys: List<{key}>, present: Map<{key}, Bool>) -> Map<{key}, Bool>\n    ? \"A retired key stays retired while it is listed, and may be seated again once it has been absent.\"\n    match keys\n        [] -> retired\n        [key, ..rest] -> __unretire{upper}(__unretireIf{upper}(retired, key, Map.has(present, key)), rest, present)\n"
+    ));
+    out.push_str(&format!(
+        "\nfn __unretireIf{upper}(retired: Map<{key}, Bool>, key: {key}, listed: Bool) -> Map<{key}, Bool>\n    ? \"One retired key.\"\n    match listed\n        true -> retired\n        false -> Map.remove(retired, key)\n"
+    ));
+    out.push_str(&format!(
+        "\nfn __seatKeys{upper}(run: __Run, keys: List<{key}>) -> __Run\n    ? \"Every listed key that is neither seated nor retired gets an instance, in list order.\"\n{seat}    match keys\n        [] -> run\n        [key, ..rest] -> __seatKeys{upper}(__seatKey{upper}(run, key), rest)\n"
+    ));
+    out.push_str(&format!(
+        "\nfn __seatKey{upper}(run: __Run, key: {key}) -> __Run\n    ? \"One listed key.\"\n{seat}    match Bool.or(Map.has(run.seated{upper}, key), Map.has(run.retired{upper}, key))\n        true -> run\n        false -> __seated{upper}(run, key, {}(key))\n",
+        protocol.start
+    ));
+    out.push_str(&format!(
+        "\nfn __seated{upper}(run: __Run, key: {key}, outcome: {0}) -> __Run\n    ? \"An instance that is already done retires its key; one that is waiting takes the next free slot id.\"\n    match outcome\n        {0}.Done(_) -> __Run.update(run, retired{upper} = Map.set(run.retired{upper}, key, true))\n        {0}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, run.nextId, __asked(__Process.{upper}(key, request), 1)), seated{upper} = Map.set(run.seated{upper}, key, run.nextId), nextId = run.nextId + 1)\n",
+        protocol.outcome
+    ));
+}
+
+/// Settling one process's request: the instance check, and what the answer
+/// leaves behind.
+fn write_settle(out: &mut String, proc: &Proc<'_>) {
+    let upper = &proc.upper;
+    let protocol = proc.protocol;
+    let (key_param, key_arg, key_in) = match &proc.keyed {
+        Some(keyed) => (format!(", key: {}", keyed.key), ", key", "key, "),
+        None => (String::new(), "", ""),
+    };
+    out.push_str(&format!(
+        "\nfn __settle{upper}(run: __Run, id: Int, seq: Int{key_param}, outcome: {0}) -> __Run\n    ? \"An answer for the current instance replaces that process's one slot and raises its number; an answer for an older instance changes nothing and is counted.\"\n    match seq == __current(run, id)\n        false -> __Run.update(run, late = run.late + 1)\n        true -> __settled{upper}At(run, id, seq{key_arg}, outcome)\n",
+        protocol.outcome
+    ));
+    let done = match &proc.keyed {
+        Some(_) => format!(
+            "__Run.update(run, slots = Map.remove(run.slots, id), seated{upper} = Map.remove(run.seated{upper}, key), retired{upper} = Map.set(run.retired{upper}, key, true))"
+        ),
+        None => "__Run.update(run, slots = Map.remove(run.slots, id))".to_string(),
+    };
+    out.push_str(&format!(
+        "\nfn __settled{upper}At(run: __Run, id: Int, seq: Int{key_param}, outcome: {0}) -> __Run\n    ? \"What an answer for the current instance leaves behind: an empty slot when the process is done{1}, the next request under the next instance number otherwise.\"\n    match outcome\n        {0}.Done(_) -> {done}\n        {0}.Waiting(request) -> __Run.update(run, slots = Map.set(run.slots, id, __asked(__Process.{upper}({key_in}request), __nextInstance(seq))))\n",
+        protocol.outcome,
+        if proc.keyed.is_some() { ", with its key retired" } else { "" }
+    ));
+}
+
 /// The dispatch of one process: one arm per request kind, and one function
 /// per kind that reads the reply the answer module gave.
-fn write_serve(
-    protocol: &ProcessProtocol,
-    answers: &[Answer],
-    performs: &ProcessEffects,
-) -> String {
-    let upper = marker_variant(&protocol.fn_name);
-    let list = |effects: &[String]| {
-        if effects.is_empty() {
-            String::new()
-        } else {
-            format!("    ! [{}]\n", effects.join(", "))
-        }
+fn write_serve(proc: &Proc<'_>, answers: &[Answer], performs: &ProcessEffects) -> String {
+    let upper = &proc.upper;
+    let protocol = proc.protocol;
+    let (key_param, key_arg) = match &proc.keyed {
+        Some(keyed) => (format!(", key: {}", keyed.key), ", key"),
+        None => (String::new(), ""),
     };
-    let effects = list(&performs.serve);
     let mut out = format!(
-        "\nfn __serve{upper}(run: __Run, id: Int, seq: Int, request: {}) -> __Run\n    ? \"One arm per request kind of '{}'. This is the match a program writes by hand today.\"\n{effects}    match request\n",
-        protocol.request, protocol.fn_name
+        "\nfn __serve{upper}(run: __Run, id: Int, seq: Int{key_param}, request: {}) -> __Run\n    ? \"One arm per request kind of '{}'.\"\n{}    match request\n",
+        protocol.request,
+        protocol.fn_name,
+        effects(&performs.serve)
     );
     let mut bodies = String::new();
     for (kind, resumes) in protocol.kinds.iter().zip(&performs.kinds) {
         let Some(operation) = &kind.operation else {
             out.push_str(&format!(
-                "        {}.{}(state) -> __settle{upper}(run, id, seq, {}(state))\n",
+                "        {}.{}(state) -> __settle{upper}(run, id, seq{key_arg}, {}(state))\n",
                 protocol.request, kind.name, kind.answer_fn
             ));
             continue;
@@ -1003,342 +892,43 @@ fn write_serve(
         let binders: Vec<String> = (0..kind.arg_types.len())
             .map(|index| format!("__a{index}"))
             .collect();
-        let mut call_args = vec![format!("run.{}", answer.field)];
+        // The state is handed out of the run before the answer function sees
+        // it, so the run does not share it while the answer updates it.
+        let mut call_args = vec!["__taken".to_string()];
         call_args.extend(binders.iter().cloned());
         let mut pattern = binders.clone();
         pattern.push("state".to_string());
         out.push_str(&format!(
-            "        {}.{}({}) -> __serve{upper}{}(run, id, seq, state, {}.{op}({}))\n",
+            "        {}.{}({}) -> match __take{}(run)\n            (__rest, __held) -> match __held\n                Option.Some(__taken) -> __serve{upper}{}(__rest, id, seq{key_arg}, state, {}.{op}({}))\n                Option.None -> __rest\n",
             protocol.request,
             kind.name,
             pattern.join(", "),
+            super::build::capitalize(&answer.field),
             kind.name,
             answer.module,
             call_args.join(", ")
         ));
-        let reply = crate::capability::answer::reply_type_name(capability, op);
-        let resume = match kind.answer_type.as_deref() {
-            Some("Unit") | None => format!("{}(state)", kind.answer_fn),
-            Some(_) => format!("{}(state, __answer)", kind.answer_fn),
-        };
-        let now_binder = match kind.answer_type.as_deref() {
-            Some("Unit") | None => "_",
-            Some(_) => "__answer",
+        let result = kind.answer_type.as_deref().unwrap_or("Unit");
+        let (binder, resume) = match kind.answer_type.as_deref() {
+            Some("Unit") | None => ("_", format!("{}(state)", kind.answer_fn)),
+            Some(_) => ("__answer", format!("{}(state, __answer)", kind.answer_fn)),
         };
         bodies.push_str(&format!(
-            "\nfn __serve{upper}{}(run: __Run, id: Int, seq: Int, state: {}, answered: Tuple<{}, {reply}>) -> __Run\n    ? \"A Now settles the slot with the answer function of this kind; a Later keeps the state the module returned and parks the request, so a Later records the module's progress and leaves the request alone.\"\n{}    match answered\n        (__next, __reply) -> match __reply\n            {reply}.Later(__wake) -> __park(__Run.update(run, {} = __next), id, __wake)\n            {reply}.Then(__wake, __answer) -> __parkThen(__Run.update(run, {field} = __next), id, __wake, __ThenAnswer.{upper}{kind}(state, __answer))\n            {reply}.Now({now_binder}) -> __settle{upper}(__Run.update(run, {} = __next), id, seq, {resume})\n",
-            kind.name,
-            kind.state,
-            answer.state,
-            list(resumes),
-            answer.field,
-            answer.field,
+            "\nfn __serve{upper}{kind_name}(run: __Run, id: Int, seq: Int{key_param}, state: {state}, answered: Tuple<{module_state}, Result<{result}, Run.Wake>>) -> __Run\n    ? \"An Ok answers the request with the answer function of this kind; an Err keeps the state the module returned and parks the request on the wake it named.\"\n{resumes}    match answered\n        (__next, __reply) -> match __reply\n            Result.Ok({binder}) -> __settle{upper}(__bump(__Run.update(run, {field} = Option.Some(__next)), {index}), id, seq{key_arg}, {resume})\n            Result.Err(__wake) -> __park(__Run.update(run, {field} = Option.Some(__next)), id, __wake, {index})\n",
+            kind_name = kind.name,
+            state = kind.state,
+            module_state = answer.state,
+            resumes = effects(resumes),
             field = answer.field,
-            kind = kind.name
+            index = answer.index,
         ));
     }
     out.push_str(&bodies);
     out
 }
 
-/// The three ends of one job kind's seam, as the turn crosses them: the
-/// take, and the ask-begin-record start that runs while there is room.
-fn write_job(job: &Job, jobs: &[Job]) -> String {
-    let upper = marker_variant(&job.capability);
-    let task_field = &job.task_field;
-    let landed_field = &job.landed_field;
-    let mut out = String::new();
-    out.push_str(&format!(
-        "\nfn __takeEach{upper}(run: __Run, ready: List<Int>) -> __Run\n    ? \"A job outcome is a coordinator event, not an answer to a request: it goes to the answer state through the manifest's `landed` function and resumes nobody.\"\n    ! [{}.take]\n    match ready\n        [] -> run\n        [key, ..rest] -> __takeEach{upper}(__taken{upper}(run, key), rest)\n",
-        job.capability
-    ));
-    let mut taken_arms = String::new();
-    for other in jobs {
-        let variant = marker_variant(&other.capability);
-        if other.capability == job.capability {
-            taken_arms.push_str(&format!(
-                "            __Job.{variant}(handle) -> __reported{upper}(run, key, {}.take(handle))\n",
-                job.capability
-            ));
-        } else {
-            taken_arms.push_str(&format!("            __Job.{variant}(_) -> run\n"));
-        }
-    }
-    out.push_str(&format!(
-        "\nfn __taken{upper}(run: __Run, key: Int) -> __Run\n    ? \"One reported key: a key that is not a running job of this kind is not this seam's business. The job stays in the table until its own outcome says it is over, because a wait may report a job ready before it has finished.\"\n    ! [{}.take]\n    match Map.get(run.{JOBS_FIELD}, key)\n        Option.None -> run\n        Option.Some(job) -> match job\n{taken_arms}",
-        job.capability
-    ));
-    out.push_str(&format!(
-        "\nfn __reported{upper}(run: __Run, key: Int, taken: Result<Option<{}>, String>) -> __Run\n    ? \"What one take answered. A job that was cancelled, whose body stopped, or whose id the engine has forgotten will never land a payload: it leaves the table and reaches `landed` as the error it is, and the run goes on.\"\n    match taken\n        Result.Err(reason) -> __landed{upper}(run, key, Result.Err(reason))\n        Result.Ok(payload) -> __finished{upper}(run, key, payload)\n",
-        job.payload_type
-    ));
-    out.push_str(&format!(
-        "\nfn __finished{upper}(run: __Run, key: Int, payload: Option<{}>) -> __Run\n    ? \"A job reported ready that has not finished answers nothing, and keeps both its handle and the run it was taken from, so a later turn collects it.\"\n    match payload\n        Option.None -> run\n        Option.Some(value) -> __landed{upper}(run, key, Result.Ok(value))\n",
-        job.payload_type
-    ));
-    out.push_str(&format!(
-        "\nfn __landed{upper}(run: __Run, key: Int, outcome: Result<{}, String>) -> __Run\n    ? \"Where a job that is over goes: the `landed` function of the answer state, which resumes nobody. The handle leaves the table either way, because this job has no second outcome to give.\"\n    __Run.update(run, {JOBS_FIELD} = Map.remove(run.{JOBS_FIELD}, key), {landed_field} = {}(run.{landed_field}, outcome))\n",
-        job.payload_type, job.landed
-    ));
-    // The ask is one step of its own, so the room check and the answer live
-    // in one place a law can name; the record is `started`, applied through
-    // `__jobSeated` the moment `begin` has said this task is running. The
-    // name is kind-first because `__seated<P>` is a process's, and a process
-    // named `job<K>` would otherwise be seated twice under one name.
-    out.push_str(&format!(
-        "\nfn __startable{upper}(room: Int, state: {}) -> {}\n    ? \"The next task this kind may start, while the one job table has this much room for it. No room asks nothing, so no task is ever offered twice to make room it cannot use. This is the pure half of the room bound: the loop that starts while there is room performs begin, so no law can sample it, and the bound is stated here, where each ask is decided.\"\n    match room <= 0\n        true -> Option.None\n        false -> {}(state)\n",
-        job.seam_state, job.task_option, job.task
-    ));
-    out.push_str(&format!(
-        "\nfn __startJobs{upper}(run: __Run) -> __Run\n    ? \"While there is room under [work] max-jobs and the answer state has a task, start one: ask, begin, then record the start. A begin the engine answers Err starts nothing this turn — at the engine's own limit that answer is how the limit is honoured — and the task stays in the answer state to be offered again, because `started` runs only after a begin that answered Ok.\"\n    ! [{}.begin]\n    match __startable{upper}(__roomLeft(run), run.{task_field})\n        Option.None -> run\n        Option.Some(task) -> __began{upper}(run, task, {}.begin(task))\n",
-        job.capability, job.capability
-    ));
-    out.push_str(&format!(
-        "\nfn __began{upper}(run: __Run, task: {}, began: Result<Work.Job, String>) -> __Run\n    ? \"What one begin answered. An Err starts nothing: the task was never recorded, so the next ask offers it again once there is room to take it.\"\n    ! [{}.begin]\n    match began\n        Result.Err(_) -> run\n        Result.Ok(job) -> __startJobs{upper}(__jobSeated{upper}(run, task, job))\n",
-        job.task_type, job.capability
-    ));
-    out.push_str(&format!(
-        "\nfn __jobSeated{upper}(run: __Run, task: {}, job: Work.Job) -> __Run\n    ? \"The run once this task's job has begun: the handle sits under the next free key for the wait to watch, and the task is consumed from the answer state, which is what makes two starts in one turn start two different tasks.\"\n    __Run.update(run, {JOBS_FIELD} = Map.set(run.{JOBS_FIELD}, run.nextId, __Job.{upper}(job)), nextId = run.nextId + 1, {task_field} = __consumed{upper}(run.{task_field}, task))\n",
-        job.task_type
-    ));
-    out.push_str(&format!(
-        "\nfn __consumed{upper}(state: {}, task: {}) -> {}\n    ? \"The answer state once this task's job has been recorded as started. `started` is where the program writes that a task was taken, so the task the seam next offers is a different one.\"\n    {}(state, task)\n",
-        job.seam_state, job.task_type, job.seam_state, job.started
-    ));
-    out
-}
-
-/// The invariants of the loop, as `verify` laws over the generated
-/// functions, so the program does not write them either.
-///
-/// I2 (an answer applies only to the current instance, and a late one is
-/// dropped and counted) and I3 (an answer for the current instance raises
-/// that instance, so the same one can never be answered twice) are stated
-/// here. I4 is now about the request rather than the state: a `Later` keeps
-/// whatever state the answer module returned, because that is where a module
-/// records its own progress, and what it leaves alone is the request — the
-/// same instance number and the same request value. The two laws below say
-/// exactly that, one for the instance and one for the request. I1 is the size
-/// comparison the proposal expected to stay open, written with its `because`
-/// so the report can say where it stands.
-///
-/// The deadline gate is stated twice over, because a wake carries a deadline
-/// in two shapes. `After` is sampled on a slot; `Either` cannot be — its
-/// constructor carries a `Wait.Item`, which carries a socket or a job handle,
-/// and a program can write neither into a `given` domain. So the two `Either`
-/// laws are stated over the gate's own arithmetic instead: askable once the
-/// deadline has passed, and a wait no longer than the deadline asked for.
-///
-/// TODO(owner): decision 5 asks for the first of those two laws over a slot,
-/// and a slot parked on `Either` is not writable in a `given` domain for the
-/// reason above, so the law is stated one unfolding below it. `__askableSlot`'s
-/// `Either` arm is `__eitherAskable(slot.due, slot.ms, now, ...)` and nothing
-/// else, so the slot-level claim follows from this one by unfolding that arm;
-/// what is not stated is that step itself. Decide whether that is the shape to
-/// keep or whether the `given` domain should grow a way to name such a slot.
-fn write_laws(protocols: &[ProcessProtocol], jobs: &[Job]) -> String {
-    let mut out = String::new();
-    // The sample seats each process at the request it re-enters itself with.
-    // A process takes no parameters, so that request carries nothing, which
-    // is what makes the sample — and every law below it — pure even when the
-    // process performs something in place on its way to its first stop.
-    let mut sampled: Vec<(&ProcessProtocol, String)> = Vec::new();
-    for protocol in protocols {
-        let Some(kind) = protocol.kinds.iter().find(|kind| kind.operation.is_none()) else {
-            continue;
-        };
-        let Some((variant, _)) = kind.variants.iter().find(|(_, live)| live.is_empty()) else {
-            continue;
-        };
-        let upper = marker_variant(&protocol.fn_name);
-        let waiting = format!(
-            "{}.Waiting({}.{}({}.{variant}))",
-            protocol.outcome, protocol.request, kind.name, kind.state
-        );
-        out.push_str(&format!(
-            "\nfn __sampleSeat{upper}(run: __Run) -> __Run\n    ? \"The '{}' process, seated at the request it re-enters itself with. Pure, so the laws below can sample it.\"\n    __seated{upper}(run, {waiting})\n",
-            protocol.fn_name
-        ));
-        sampled.push((protocol, waiting));
-    }
-    let seated = sampled
-        .iter()
-        .fold("__fresh()".to_string(), |inner, (protocol, _)| {
-            format!("__sampleSeat{}({inner})", marker_variant(&protocol.fn_name))
-        });
-    out.push_str(&format!(
-        "\nfn __sampleRun() -> __Run\n    ? \"One run with one of every process seated: the sample the laws below are stated over.\"\n    {seated}\n"
-    ));
-    out.push_str("\nfn __slotIsSeated(run: __Run, id: Int) -> Bool\n    ? \"Why a Later moves the request nowhere: the slot written back is the slot that was already there, carrying the instance number and the request it already had.\"\n    Map.has(run.slots, id)\n");
-    // One slot a law can write down: the first sampled process's own next
-    // request, as the slot an answer for instance 1 wrote back.
-    let sample_slot = sampled.first().and_then(|(protocol, _)| {
-        let request = sample_request(protocol)?;
-        Some(format!(
-            "__settledSlot{}(1, {request})",
-            marker_variant(&protocol.fn_name)
-        ))
-    });
-    if let Some(sample) = &sample_slot {
-        out.push_str(&format!(
-            "\nfn __sampleSlot() -> __Slot\n    ? \"One seated slot the laws below sample: the next request of the first process this program writes.\"\n    {sample}\n"
-        ));
-    }
-
-    let ids: Vec<String> = (1..=sampled.len() + 1).map(|id| id.to_string()).collect();
-    let wake_domain = "    given wake: Wait.Wake = [Wait.Wake.NextTurn, Wait.Wake.After(5)]\n";
-    let park_domain = format!(
-        "    given run: __Run = [__sampleRun()]\n    given id: Int = [{}]\n{wake_domain}    when Map.has(run.slots, id)\n    because __slotIsSeated(run, id)\n",
-        ids.join(", ")
-    );
-    out.push_str(&format!(
-        "\nverify __park law laterKeepsTheInstance\n{park_domain}    __current(__park(run, id, wake), id) => __current(run, id)\n"
-    ));
-    if sample_slot.is_some() {
-        out.push_str(&format!(
-            "\nverify __parked law laterKeepsTheRequest\n    given slot: __Slot = [__sampleSlot()]\n{wake_domain}    given now: Int = [0, 7]\n    __parked(slot, wake, now).pending => slot.pending\n"
-        ));
-        // The wake gates the ask, and the half a law can carry is the
-        // deadline: an `Int` comparison the wall closes over a sampled
-        // domain. The socket-and-job half is `List.contains(ready, id)`,
-        // which says nothing a law can check without the wait itself.
-        out.push_str("\nfn __parkedAfter(slot: __Slot, now: Int) -> Bool\n    ? \"Why a parked request is not asked yet: it is waiting on a deadline this clock reading has not reached, and the reading has not fallen back behind the moment the request was parked either. A request parked on an item and a deadline at once is not this premise's business, because the wait may report its item whatever the clock says.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> false\n        Wait.Wake.Item(_) -> false\n        Wait.Wake.Either(_, _) -> false\n        Wait.Wake.After(_) -> Bool.and(now < slot.due, now >= slot.due - slot.ms)\n");
-        out.push_str(&format!(
-            "\nverify __askableSlot law aDeadlineGatesTheAsk\n    given slot: __Slot = [__parked(__sampleSlot(), Wait.Wake.After(5), 0), __parked(__sampleSlot(), Wait.Wake.NextTurn, 0)]\n    given ready: List<Int> = [[], [{}]]\n    given id: Int = [{}]\n    given now: Int = [0, 1, 4, 5, 9]\n    when __parkedAfter(slot, now)\n    because __parkedAfter(slot, now)\n    __askableSlot(slot, ready, id, now) => false\n",
-            ids.join(", "),
-            ids.join(", ")
-        ));
-        // The other side of the same gate: a reading that has fallen back
-        // further than the request asked for makes the slot askable again.
-        // Without this the branch that keeps a backwards clock from
-        // stranding a request is asserted by no law at all — the law above
-        // guards it out, because its premise is exactly its negation.
-        out.push_str("\nfn __steppedBack(slot: __Slot, now: Int) -> Bool\n    ? \"Why a parked request is asked again although its deadline has not been reached: the clock reading has fallen back behind the moment the request was parked, so the reading the deadline was set against will never come. A request parked on an item and a deadline at once carries the same rule, and the law below it states that half over the gate's own arithmetic instead.\"\n    match slot.waiting\n        Wait.Wake.NextTurn -> false\n        Wait.Wake.Item(_) -> false\n        Wait.Wake.Either(_, _) -> false\n        Wait.Wake.After(_) -> now < slot.due - slot.ms\n");
-        out.push_str(&format!(
-            "\nverify __askableSlot law aBackwardsClockNeverStrandsARequest\n    given slot: __Slot = [__parked(__sampleSlot(), Wait.Wake.After(5), 0), __parked(__sampleSlot(), Wait.Wake.NextTurn, 0)]\n    given ready: List<Int> = [[], [{}]]\n    given id: Int = [{}]\n    given now: Int = [0 - 5000, 0 - 1, 0, 4]\n    when __steppedBack(slot, now)\n    because __steppedBack(slot, now)\n    __askableSlot(slot, ready, id, now) => true\n",
-            ids.join(", "),
-            ids.join(", ")
-        ));
-    }
-    // The two halves of `Either`, stated over the gate's own arithmetic
-    // rather than over a sampled slot. A slot parked on `Either` cannot be
-    // written down in a `given` domain at all: the constructor carries a
-    // `Wait.Item`, which carries a socket or a job handle, and a program
-    // cannot construct either. So the deadline half of the gate is stated
-    // where it is decided: a request parked on an item and a deadline at once
-    // is asked once that deadline has passed, whatever the wait reported.
-    out.push_str("\nverify __eitherAskable law anEitherIsAskableOnceItsDeadlineHasPassed\n    given due: Int = [0, 5, 50]\n    given ms: Int = [0, 5, 50]\n    given now: Int = [0 - 5000, 0, 5, 50]\n    given reported: Bool = [false, true]\n    when __eitherDue(due, now)\n    because __eitherDue(due, now)\n    __eitherAskable(due, ms, now, reported) => true\n");
-    out.push_str("\nverify __nextInstance law theNextInstanceIsHigher\n    given seq: Int = [0, 1, 7]\n    __nextInstance(seq) > seq holds\n");
-    // The wait a deadline contributes is never longer than the deadline asked
-    // for. That is the half of the backwards-clock story a law can carry: a
-    // reading that jumped back makes `due - now` larger than the request, and
-    // the turn would sleep past every other deadline in the program.
-    out.push_str("\nverify __remaining law theWaitNeverExceedsTheRequest\n    given due: Int = [0, 5, 50]\n    given now: Int = [0 - 5000, 0, 5, 50]\n    given ms: Int = [0, 5, 50]\n    __remaining(due, now, ms) <= ms holds\n");
-    // The other half of `Either`, stated where a reader looks for it: the
-    // wait a request parked on an item and a deadline at once contributes is
-    // never longer than the deadline it asked for. It is the law above read
-    // through the function the `Either` arm calls, so it cites that law
-    // rather than proving the same arithmetic a second time.
-    out.push_str("\nverify __eitherWait law theEitherWaitNeverExceedsItsDeadline\n    given due: Int = [0, 5, 50]\n    given now: Int = [0 - 5000, 0, 5, 50]\n    given ms: Int = [0, 5, 50]\n    using [__remaining.theWaitNeverExceedsTheRequest]\n    __eitherWait(due, now, ms) <= ms holds\n");
-    // I3 per call, in the two halves the wall can carry. The first is about
-    // the slot table's contents: the slot an answer for the current instance
-    // writes back under that id carries a strictly higher instance number
-    // than the one it answered, so the instance just answered is never
-    // current again and a second answer to it is the late answer the two
-    // laws above drop. The second is the read-back: the slot written under an
-    // id is the slot read from it, which is the one-key `Map.set` fact.
-    for (protocol, _) in &sampled {
-        let upper = marker_variant(&protocol.fn_name);
-        let Some(request) = sample_request(protocol) else {
-            continue;
-        };
-        out.push_str(&format!(
-            "\nverify __settledSlot{upper} law nowRaisesTheInstance\n    given seq: Int = [0, 1, 7]\n    given request: {} = [{request}]\n    __settledSlot{upper}(seq, request).seq > seq holds\n",
-            protocol.request
-        ));
-    }
-    if sample_slot.is_some() {
-        out.push_str(&format!(
-            "\nverify __current law theSlotWrittenIsTheSlotRead\n    given slots: Map<Int, __Slot> = [{{}}, __sampleRun().slots]\n    given id: Int = [{}]\n    given slot: __Slot = [__sampleSlot()]\n    Map.get(Map.set(slots, id, slot), id) => Option.Some(slot)\n",
-            ids.join(", ")
-        ));
-    }
-    for protocol in protocols {
-        let upper = marker_variant(&protocol.fn_name);
-        let domain = format!(
-            "    given run: __Run = [__sampleRun()]\n    given id: Int = [{}]\n    given stale: Int = [0, {}]\n    given outcome: {} = [{}.Done(Unit)]\n",
-            ids.join(", "),
-            sampled.len() + 2,
-            protocol.outcome,
-            protocol.outcome
-        );
-        out.push_str(&format!(
-            "\nverify __settle{upper} law lateAnswerIsDropped\n{domain}    when stale != __current(run, id)\n    because __staleInstance(run, id, stale)\n    __settle{upper}(run, id, stale, outcome).slots => run.slots\n"
-        ));
-        out.push_str(&format!(
-            "\nverify __settle{upper} law lateAnswerIsRecorded\n{domain}    when stale != __current(run, id)\n    because __staleInstance(run, id, stale)\n    __settle{upper}(run, id, stale, outcome).dropped => run.dropped + 1\n"
-        ));
-        out.push_str(&format!(
-            "\nverify __settle{upper} law oneSlotPerProcess\n    given run: __Run = [__sampleRun()]\n    given id: Int = [{}]\n    given outcome: {} = [{}.Done(Unit)]\n    when Map.has(run.slots, id)\n    because __settleKeepsOrShrinks{upper}(run, id)\n    Map.len(__settle{upper}(run, id, __current(run, id), outcome).slots) <= Map.len(run.slots) holds\n",
-            ids.join(", "),
-            protocol.outcome,
-            protocol.outcome
-        ));
-    }
-    // The two halves of "n starts in one turn take n distinct tasks". The
-    // first is the program's own law about its answer module — `started`
-    // consumes the task it was handed, so `task` never offers it again —
-    // which this generated law cites: `__consumed<K>` is `started` under a
-    // generated name. The second is the room gate itself: a full table asks
-    // nothing, so a start can never be offered a task it has no slot for.
-    for job in jobs {
-        let upper = marker_variant(&job.capability);
-        let owner = job
-            .task
-            .rsplit_once('.')
-            .map(|(module, _)| module)
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "\nfn __offered{upper}(state: {}, offered: {}) -> Bool\n    ? \"Whether 'offered' names the task this kind's seam offers from this answer state; no offer offers nothing.\"\n    match offered\n        Option.None -> false\n        Option.Some(task) -> {}(state) == Option.Some(task)\n",
-            job.seam_state, job.task_option, job.task
-        ));
-        out.push_str(&format!(
-            "\nfn __reoffered{upper}(state: {}, offered: {}) -> Bool\n    ? \"Whether the task this seam offered is still offered once its start has been recorded; the law the program writes about `started` is what makes the answer no.\"\n    match offered\n        Option.None -> true\n        Option.Some(task) -> {}(__consumed{upper}(state, task)) != Option.Some(task)\n",
-            job.seam_state, job.task_option, job.task
-        ));
-        out.push_str(&format!(
-            "\nverify __consumed{upper} law aStartedTaskIsNotAskedAgain\n    given state: {} = [{}.fresh()]\n    given offered: {} = [Option.None, {}({}.fresh())]\n    when __offered{upper}(state, offered)\n    using [{}.aStartedTaskIsNotAskedAgain]\n    __reoffered{upper}(state, offered) => true\n",
-            job.seam_state,
-            owner,
-            job.task_option,
-            job.task,
-            owner,
-            job.started
-        ));
-        out.push_str(&format!(
-            "\nverify __startable{upper} law aFullTableAsksNothing\n    given room: Int = [0 - 1, 0, 1]\n    given state: {} = [{}.fresh()]\n    when room <= 0\n    because room <= 0\n    __startable{upper}(room, state) => Option.None\n",
-            job.seam_state, owner
-        ));
-    }
-    out
-}
-
-/// One request of a process that a law can write down: the one it re-enters
-/// itself with, which carries nothing but the segment it resumes at.
-fn sample_request(protocol: &ProcessProtocol) -> Option<String> {
-    let kind = protocol
-        .kinds
-        .iter()
-        .find(|kind| kind.operation.is_none())?;
-    let (variant, _) = kind.variants.iter().find(|(_, live)| live.is_empty())?;
-    Some(format!(
-        "{}.{}({}.{variant})",
-        protocol.request, kind.name, kind.state
-    ))
-}
-
 /// The module answering one capability, matched the way an effect entry is:
-/// a manifest names the capability as the program writes it in `depends`.
+/// a header names the capability as the program writes it in `depends`.
 fn answering_module<'a>(answers: &'a [Answer], capability: &str) -> Option<&'a Answer> {
     answers.iter().find(|answer| {
         answer
@@ -1351,32 +941,27 @@ fn answering_module<'a>(answers: &'a [Answer], capability: &str) -> Option<&'a A
 /// What the generated functions of one process perform, each one carrying its
 /// own path rather than the program's.
 ///
-/// Decision 4's rule is per segment — a generated protocol function carries
-/// exactly the unmarked operations on its own segment's path — and the loop's
-/// own functions are held to the same rule: seating a process performs what
-/// that process performs on its way to its first request, and serving one
-/// request kind performs what the answer module performs plus what the
-/// segment the answer resumes performs. A process that touches nothing keeps
-/// every function the loop generates for it pure, however loud its neighbour
-/// is, so one generative effect anywhere does not oracle-lift the whole loop.
+/// Seating a process performs what that process performs on its way to its
+/// first request, and serving one request kind performs what the answer
+/// module performs plus what the segment the answer resumes performs. A
+/// process that touches nothing keeps every function the loop generates for
+/// it pure, however loud its neighbour is.
 struct ProcessEffects {
-    /// What `__seat<P>` performs: the start function's own segment.
+    /// What seating performs: the start function's own segment.
     seat: Vec<String>,
     /// What `__serve<P>` performs: every kind of this process.
     serve: Vec<String>,
-    /// What `__serve<P><Kind>` performs, aligned with `protocol.kinds`: the
-    /// answer function of that kind, because its caller performed the answer
-    /// module's operation already.
+    /// What `__serve<P><Kind>` performs, aligned with `protocol.kinds`.
     kinds: Vec<Vec<String>>,
 }
 
-fn sorted(found: std::collections::BTreeSet<String>) -> Vec<String> {
+fn sorted(found: BTreeSet<String>) -> Vec<String> {
     found.into_iter().collect()
 }
 
-/// One entry per process, in the order the protocols are given.
+/// One entry per process, in the order the processes are given.
 fn process_effect_lists(
-    protocols: &[ProcessProtocol],
+    procs: &[Proc<'_>],
     generated: &[TopLevel],
     answers: &[Answer],
     fn_sigs: &FnSigs,
@@ -1407,15 +992,16 @@ fn process_effect_lists(
             .map(|(_, _, effects)| effects.clone())
             .unwrap_or_default()
     };
-    protocols
+    procs
         .iter()
-        .map(|protocol| {
+        .map(|proc| {
+            let protocol = proc.protocol;
             let kinds: Vec<Vec<String>> = protocol
                 .kinds
                 .iter()
                 .map(|kind| declared(&kind.answer_fn))
                 .collect();
-            let mut serve: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let mut serve: BTreeSet<String> = BTreeSet::new();
             for (kind, resumed) in protocol.kinds.iter().zip(&kinds) {
                 serve.extend(resumed.iter().cloned());
                 serve.extend(answered(kind));
@@ -1429,49 +1015,204 @@ fn process_effect_lists(
         .collect()
 }
 
-/// What the whole serve path performs: the dispatch reaches every process, so
-/// `__serve`, `__serveSlot`, `__serveEach`, `__serveIf` and `__serveAdmitted`
-/// carry the union of what the processes carry — and nothing else.
-fn serve_effect_list(effects: &[ProcessEffects]) -> Vec<String> {
-    sorted(
-        effects
-            .iter()
-            .flat_map(|process| process.serve.iter().cloned())
-            .collect(),
-    )
-}
-
 /// What a whole turn performs: the stop observation, the clock reading the
-/// wake gate is measured against, the one wait, the serve path, and both ends
-/// of every job kind.
+/// wake gate is measured against, the one wait, the serve path, and the
+/// seating of keyed processes at the turn boundary.
 fn turn_effect_list(
     serve: &[String],
-    jobs: &[Job],
+    families: &[String],
     coordinator_stop: CoordinatorStop,
 ) -> Vec<String> {
-    let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut found: BTreeSet<String> = BTreeSet::new();
     if coordinator_stop == CoordinatorStop::HostSignal {
         found.insert("Process.stopRequested".to_string());
     }
     found.insert("Time.unixMs".to_string());
     found.insert("Wait.poll".to_string());
     found.extend(serve.iter().cloned());
-    for job in jobs {
-        found.insert(format!("{}.begin", job.capability));
-        found.insert(format!("{}.take", job.capability));
+    found.extend(families.iter().cloned());
+    found.into_iter().collect()
+}
+
+/// What the loop's entry performs: it seats every process, turns, and
+/// cancels whatever job a parked request still waits on when the run is
+/// over.
+fn main_effect_list(turn: &[String], effects: &[ProcessEffects], cancels: bool) -> Vec<String> {
+    let mut found: BTreeSet<String> = turn.iter().cloned().collect();
+    for process in effects {
+        found.extend(process.seat.iter().cloned());
+    }
+    if cancels {
+        found.insert(CANCEL.to_string());
     }
     found.into_iter().collect()
 }
 
-/// What the generated entry point performs: it seats every process, turns,
-/// and cancels whatever job is still running when the run is over.
-fn main_effect_list(turn: &[String], effects: &[ProcessEffects], jobs: &[Job]) -> Vec<String> {
-    let mut found: std::collections::BTreeSet<String> = turn.iter().cloned().collect();
-    for process in effects {
-        found.extend(process.seat.iter().cloned());
+/// Rewrite what the entry module writes in the loop's vocabulary into the
+/// generated names: `Run.View` and `Run.Pending` are the generated view and
+/// marker sum, and `Run.all()` runs the generated loop. The names are the
+/// program's way to reach generated items it cannot spell.
+pub(super) fn rewrite_run_names(items: &mut [TopLevel]) {
+    use crate::ast::{Expr, Pattern, Spanned, Stmt, TypeDef};
+    fn ty(annotation: &mut String) {
+        for (from, to) in [("Run.View", "__View"), ("Run.Pending", "__Pending")] {
+            let mut out = String::new();
+            let mut rest = annotation.as_str();
+            while let Some(at) = rest.find(from) {
+                let before_ok = out.is_empty() && at == 0
+                    || rest[..at]
+                        .chars()
+                        .last()
+                        .or_else(|| out.chars().last())
+                        .is_none_or(|c| !c.is_alphanumeric() && c != '_' && c != '.');
+                let after = &rest[at + from.len()..];
+                let after_ok = after
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+                out.push_str(&rest[..at]);
+                if before_ok && after_ok {
+                    out.push_str(to);
+                } else {
+                    out.push_str(from);
+                }
+                rest = after;
+            }
+            out.push_str(rest);
+            *annotation = out;
+        }
     }
-    if !jobs.is_empty() {
-        found.insert(CANCEL.to_string());
+    fn pattern(pat: &mut Pattern) {
+        match pat {
+            Pattern::Constructor(name, _) => {
+                if let Some(rest) = name.strip_prefix("Run.Pending.") {
+                    *name = format!("__Pending.{rest}");
+                }
+            }
+            Pattern::Tuple(items) => items.iter_mut().for_each(pattern),
+            _ => {}
+        }
     }
-    found.into_iter().collect()
+    fn expr(e: &mut Spanned<Expr>) {
+        match &mut e.node {
+            Expr::Attr(inner, field) => {
+                if let Expr::Ident(name) = &inner.node
+                    && name == "Run"
+                {
+                    match field.as_str() {
+                        "Pending" => {
+                            e.node = Expr::Ident("__Pending".to_string());
+                            return;
+                        }
+                        "View" => {
+                            e.node = Expr::Ident("__View".to_string());
+                            return;
+                        }
+                        "all" => {
+                            e.node = Expr::Ident("__all".to_string());
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Expr::Constructor(name, _) => {
+                if let Some(rest) = name.strip_prefix("Run.Pending.") {
+                    *name = format!("__Pending.{rest}");
+                }
+            }
+            Expr::RecordCreate { type_name, .. } | Expr::RecordUpdate { type_name, .. } => {
+                if type_name == "Run.View" {
+                    *type_name = "__View".to_string();
+                }
+            }
+            Expr::Match { arms, .. } => {
+                for arm in arms.iter_mut() {
+                    pattern(&mut arm.pattern);
+                }
+            }
+            _ => {}
+        }
+        crate::codegen::expr_walk::for_each_child_mut(e, &mut |child| expr(child));
+    }
+    for item in items.iter_mut() {
+        match item {
+            TopLevel::FnDef(fd) => {
+                for (_, annotation) in fd.params.iter_mut() {
+                    ty(annotation);
+                }
+                ty(&mut fd.return_type);
+                let body = std::sync::Arc::make_mut(&mut fd.body);
+                for stmt in body.stmts_mut() {
+                    match stmt {
+                        Stmt::Binding(_, annotation, value) => {
+                            if let Some(annotation) = annotation {
+                                ty(annotation);
+                            }
+                            expr(value);
+                        }
+                        Stmt::Expr(value) => expr(value),
+                    }
+                }
+            }
+            TopLevel::Verify(vb) => {
+                for (left, right) in vb.cases.iter_mut() {
+                    expr(left);
+                    expr(right);
+                }
+                for givens in vb.case_givens.iter_mut() {
+                    for (_, value) in givens.iter_mut() {
+                        expr(value);
+                    }
+                }
+                let mut givens: Vec<&mut crate::ast::VerifyGiven> =
+                    vb.cases_givens.iter_mut().collect();
+                if let crate::ast::VerifyKind::Law(law) = &mut vb.kind {
+                    let law = law.as_mut();
+                    for value in law
+                        .when
+                        .iter_mut()
+                        .chain(law.because.iter_mut())
+                        .chain(law.sample_guards.iter_mut())
+                        .chain([&mut law.lhs, &mut law.rhs])
+                    {
+                        expr(value);
+                    }
+                    givens.extend(law.givens.iter_mut());
+                }
+                for given in givens {
+                    ty(&mut given.type_name);
+                    if let crate::ast::VerifyGivenDomain::Explicit(values) = &mut given.domain {
+                        values.iter_mut().for_each(expr);
+                    }
+                }
+            }
+            TopLevel::TypeDef(TypeDef::Product { fields, .. }) => {
+                for (_, annotation) in fields.iter_mut() {
+                    ty(annotation);
+                }
+            }
+            TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
+                for variant in variants.iter_mut() {
+                    for annotation in variant.fields.iter_mut() {
+                        ty(annotation);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Whether a function body calls `Run.all()`.
+pub(super) fn calls_run_all(fd: &crate::ast::FnDef) -> bool {
+    use crate::ast::{Expr, Stmt};
+    fd.body.stmts().iter().any(|stmt| {
+        let value = match stmt {
+            Stmt::Binding(_, _, value) | Stmt::Expr(value) => value,
+        };
+        crate::codegen::expr_walk::any(value, &mut |e| {
+            matches!(&e.node, Expr::FnCall(callee, _) if super::build::dotted_name(callee).as_deref() == Some("Run.all"))
+        })
+    })
 }

@@ -3,13 +3,14 @@ module Ledger
     depends [Pool, Wait]
     exposes [State, claim]
     effects []
+    answers [Pool]
 
 record State
     tip: Int
 
-fn claim(state: State, key: Int) -> Tuple<State, Pool.ClaimReply>
+fn claim(state: State, key: Int) -> Tuple<State, Result<Pool.Assignment, Run.Wake>>
     ? "Hands this peer the height after the tip."
-    (state, Pool.ClaimReply.Now(Pool.Assignment.Height(state.tip + key)))
+    (state, Result.Ok(Pool.Assignment.Height(state.tip + key)))
 
 verify claim
-    claim(State(tip = 1), 2) => (State(tip = 1), Pool.ClaimReply.Now(Pool.Assignment.Height(3)))
+    claim(State(tip = 1), 2) => (State(tip = 1), Result.Ok(Pool.Assignment.Height(3)))

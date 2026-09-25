@@ -1,18 +1,6 @@
 module Node
     intent = "The stop policy ends the run while its process is still seated."
-    depends [Wait]
     effects [Console.print, yield]
-
-type Pending
-    Ticking(Int, Wait.Wake)
-
-record View
-    pending: Map<Int, Pending>
-    ready: List<Int>
-    askable: List<Int>
-    jobs: Int
-    room: Int
-    stopping: Bool
 
 fn ticking() -> Unit
     ? "Print once when seated; the policy stops before the next iteration."
@@ -20,11 +8,9 @@ fn ticking() -> Unit
     Console.print("seated")
     ticking()
 
-fn order(view: View) -> List<Int>
-    Map.keys(view.pending)
-
-fn admit(view: View, id: Int) -> Bool
-    List.contains(view.askable, id)
-
-fn stop(view: View) -> Bool
+fn stop(view: Run.View) -> Bool
+    ? "The run is over as soon as anything is seated."
     Map.len(view.pending) > 0
+
+verify stop
+    stop(Run.View(pending = {}, ready = [], askable = [], dropped = 0, stopping = false)) => false

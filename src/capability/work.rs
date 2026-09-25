@@ -242,6 +242,39 @@ pub fn job_kinds(
         .collect()
 }
 
+/// The standard operations that answer at once, whatever the world does: the
+/// non-blocking half of `Tcp`, the clock, randomness, the stop flag and a
+/// job's cancel. An answer function that performs only these, or the
+/// `begin`/`take` of a job kind, cannot stall the turn, so the answer-shape
+/// warning does not name them.
+const ANSWERS_AT_ONCE: [&str; 14] = [
+    "Tcp.readNow",
+    "Tcp.writeNow",
+    "Tcp.accept",
+    "Tcp.dialled",
+    "Tcp.beginConnect",
+    "Tcp.listen",
+    "Tcp.close",
+    "Tcp.closeListener",
+    "Time.unixMs",
+    "Time.now",
+    "Random.int",
+    "Random.float",
+    "Process.stopRequested",
+    "Work.cancel",
+];
+
+/// Whether one effect of an answer function returns at once.
+fn answers_at_once(registry: &CapabilityRegistry, effect: &str) -> bool {
+    if ANSWERS_AT_ONCE.contains(&effect) {
+        return true;
+    }
+    match effect.rsplit_once('.') {
+        Some((capability, "begin" | "take")) => is_job_kind(registry, capability),
+        _ => false,
+    }
+}
+
 /// Whether `module` is a job kind of `registry`.
 ///
 /// Naming `Work.Job` at the boundary is the whole test, so this is the same
@@ -347,11 +380,18 @@ pub type FnSignature = (Vec<Type>, Type, Vec<String>);
 /// `entry_module` is the module the command was pointed at: a capability
 /// module checked on its own still declares its own shape, but it is not yet
 /// a program, so it does not need a binding.
+///
+/// `whole_program` says whether `fn_sigs` is the whole program. A dependency
+/// checked as its own unit sees only its own cone, so a module the manifest
+/// names that lies outside that cone is not missing from the program; only
+/// the entry, whose cone is the program, can say it is.
 pub fn gate(
     registry: &CapabilityRegistry,
     manifest: Option<&crate::config::ProviderPackageManifest>,
+    answered: &[(String, String)],
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
     entry_module: Option<&str>,
+    whole_program: bool,
 ) -> Vec<WorkDiagnostic> {
     let mut errors = Vec::new();
     let mut shapes = Vec::new();
@@ -366,21 +406,29 @@ pub fn gate(
     let work_bindings = manifest
         .map(|manifest| manifest.work_bindings.as_slice())
         .unwrap_or(&[]);
-    let answer_bindings = manifest
-        .map(|manifest| manifest.answer_bindings.as_slice())
-        .unwrap_or(&[]);
-    let (answers, answer_errors) = check_answers(registry, answer_bindings, fn_sigs, entry_module);
+    let answer_bindings: Vec<ProviderAnswerBinding> = answered
+        .iter()
+        .enumerate()
+        .map(|(index, (capability, module))| ProviderAnswerBinding {
+            capability: capability.clone(),
+            module: module.clone(),
+            index,
+        })
+        .collect();
+    let (answers, answer_errors) = check_answers(
+        registry,
+        &answer_bindings,
+        fn_sigs,
+        entry_module,
+        whole_program,
+    );
     errors.extend(answer_errors);
     errors.extend(requests_outside_a_process(registry, &answers, fn_sigs));
     errors.extend(check_bindings(
         registry,
         &shapes,
         &declared,
-        ManifestBindings {
-            work: work_bindings,
-            answer: answer_bindings,
-        },
-        &answers,
+        work_bindings,
         fn_sigs,
         entry_module,
     ));
@@ -444,7 +492,7 @@ fn requests_outside_a_process(
             findings.push(WorkDiagnostic::new(
                 INTERCEPT_OUTSIDE_YIELD,
                 format!(
-                    "'{effect}' is answered by this program — aver.toml binds capability \"{capability}\" to module '{module}' — so it is a request, and a request is only legal in a function whose effect list names `yield`. Add `yield` to '{name}', or call '{module}.{operation}({})' directly if what you wanted was the answer itself",
+                    "'{effect}' is answered by this program — module '{module}' says `answers [{capability}]` — so it is a request, and a request is only legal in a function whose effect list names `yield`. Add `yield` to '{name}', or call '{module}.{operation}({})' directly if what you wanted was the answer itself",
                     answer_call_arguments(registry, capability, operation)
                 ),
             ));
@@ -498,16 +546,6 @@ fn answer_call_arguments(
     names.join(", ")
 }
 
-/// The two binding kinds of the manifest that name a function or a module of
-/// the program, carried together because the job seam is checked against both:
-/// `work` says which function runs off the turn, `answer` which module holds
-/// the state its three ends reach.
-#[derive(Debug, Clone, Copy)]
-pub struct ManifestBindings<'a> {
-    pub work: &'a [ProviderWorkBinding],
-    pub answer: &'a [ProviderAnswerBinding],
-}
-
 /// Check every job kind of the program against the manifest's `work` bindings
 /// and the functions those bindings name. The returned strings are complete
 /// `work-binding` diagnostics, in capability order.
@@ -515,20 +553,12 @@ pub fn check_bindings(
     registry: &CapabilityRegistry,
     shapes: &[WorkShape],
     declared: &BTreeSet<String>,
-    bindings: ManifestBindings<'_>,
-    answers: &[AnswerShape],
+    work: &[ProviderWorkBinding],
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
     entry_module: Option<&str>,
 ) -> Vec<WorkDiagnostic> {
     let mut errors = Vec::new();
-    errors.extend(check_job_seam(
-        shapes,
-        bindings,
-        answers,
-        fn_sigs,
-        entry_module,
-    ));
-    for binding in bindings.work {
+    for binding in work {
         if registry.contract(&binding.capability).is_none() {
             continue;
         }
@@ -549,8 +579,7 @@ pub fn check_bindings(
         if entry_module == Some(shape.capability.as_str()) {
             continue;
         }
-        let Some(binding) = bindings
-            .work
+        let Some(binding) = work
             .iter()
             .find(|binding| binding.capability == shape.capability)
         else {
@@ -703,30 +732,31 @@ fn binding_error(message: String) -> WorkDiagnostic {
 //
 // The second shape whose provider is the program itself. A `work` binding
 // says "the runtime answers this capability by running that pure function off
-// the turn"; an `answer` binding says "the program answers it, inside the
-// turn, from one state". Both are checked here so every front door agrees
-// about what a binding means before anything is lowered against it.
+// the turn"; an `answers [...]` header says "this module answers it, inside
+// the turn, from one state". Both are checked here so every front door
+// agrees about what a binding means before anything is lowered against it.
 
 /// The checked surface of one answer module.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnswerShape {
-    /// The module named by `answer`, e.g. `Ledger`.
+    /// The module whose header answers the capabilities, e.g. `Ledger`.
     pub module: String,
     /// The one state every answer function of this module threads, read off
     /// the first parameter of its first answer function exactly as
     /// [`WorkShape`] reads the task off `begin`.
     pub state: Type,
-    /// The capabilities this module answers, in manifest order.
+    /// The capabilities this module answers, in header order.
     pub capabilities: Vec<String>,
 }
 
-/// Every `answer = "Module"` binding of the manifest, checked against the
-/// capability it marks and the module it names.
+/// Every capability a module's `answers [...]` header names, checked against
+/// the capability it marks and the module answering it.
 pub fn check_answers(
     registry: &CapabilityRegistry,
     answer_bindings: &[ProviderAnswerBinding],
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
     entry_module: Option<&str>,
+    whole_program: bool,
 ) -> (Vec<AnswerShape>, Vec<WorkDiagnostic>) {
     let mut findings = Vec::new();
     let mut modules: Vec<(String, Vec<&ProviderAnswerBinding>)> = Vec::new();
@@ -739,13 +769,13 @@ pub fn check_answers(
         }
         if let Some(reason) = compiler_shipped_reason(&binding.capability) {
             findings.push(answer_binding_error(format!(
-                "aver.toml: [[providers.bindings]] index {} binds capability '{}' with `answer`, but {reason}, and the generated turn calls it itself; only a capability this program declares may be answered by a module of it",
-                binding.index, binding.capability
+                "module '{}' says `answers [{}]`, but {reason}, and the generated turn calls it itself; only a capability this program declares may be answered by a module of it",
+                binding.module, binding.capability
             )));
             continue;
         }
-        // A manifest may carry bindings for capabilities this particular
-        // program does not depend on; the `work` gate reads them the same way.
+        // An answer module may name a capability the part of the program
+        // this check can see does not declare; whoever sees it checks it.
         if registry.contract(&binding.capability).is_none() {
             continue;
         }
@@ -756,16 +786,22 @@ pub fn check_answers(
         // answer functions that perform themselves.
         if registry.contract(&binding.module).is_some() {
             findings.push(answer_binding_error(format!(
-                "aver.toml: [[providers.bindings]] index {} binds capability '{}' to answer = \"{}\", but '{}' is a capability module; an answer module is an ordinary module of the program that computes the answer",
-                binding.index, binding.capability, binding.module, binding.module
+                "module '{}' says `answers [{}]`, but '{}' is a capability module; an answer module is an ordinary module of the program that computes the answer",
+                binding.module, binding.capability, binding.module
             )));
             continue;
         }
         if !module_has_functions(fn_sigs, &binding.module) {
-            findings.push(answer_binding_error(format!(
-                "aver.toml: [[providers.bindings]] index {} binds capability '{}' to answer = \"{}\", but this program has no module '{}'",
-                binding.index, binding.capability, binding.module, binding.module
-            )));
+            // A dependency checked as its own unit sees only its own cone;
+            // the answer module may lie outside it and still be part of the
+            // program. The entry, whose cone is the program, is the one that
+            // can say the module is missing.
+            if whole_program {
+                findings.push(answer_binding_error(format!(
+                    "module '{}' says `answers [{}]`, but this program has no functions in module '{}'",
+                    binding.module, binding.capability, binding.module
+                )));
+            }
             continue;
         }
         match modules
@@ -780,7 +816,15 @@ pub fn check_answers(
     let mut shapes = Vec::new();
     for (module, group) in &modules {
         let (shape, module_findings) = check_answer_module(registry, module, group, fn_sigs);
-        findings.extend(module_findings);
+        // A warning about an answer function is the answer module's own: it
+        // is reported when that module is checked, not again by every module
+        // of the program that can see it under its imported name.
+        let foreign = entry_module.is_some_and(|entry| entry != module.as_str());
+        findings.extend(
+            module_findings
+                .into_iter()
+                .filter(|finding| !(foreign && finding.severity == WorkSeverity::Warning)),
+        );
         if let Some(shape) = shape {
             shapes.push(shape);
         }
@@ -861,24 +905,13 @@ fn check_answer_module(
             continue;
         }
         let key = answer_key(module, operation);
-        // The reply sum is the capability's to declare, beside the operation;
-        // an answer function is read through it, so a sum of another shape
-        // is reported here and the signature is not held to a type that is
-        // not there.
-        let reply_faulty = match reply_fault(registry, capability, module, operation) {
-            Some(fault) => {
-                findings.push(fault);
-                true
-            }
-            None => false,
-        };
         let Some((params, result, effects)) = fn_sigs.get(&key) else {
             // A `yield` function is cut into generated pieces before any
             // signature is read, so its own name is gone by the time the gate
             // looks; the pieces it left behind are how the gate knows.
             if lowered_yield_function(fn_sigs, module, &operation.name) {
                 findings.push(answer_shape_error(format!(
-                    "aver.toml marks capability '{capability}' as answered by '{module}', and '{key}' declares `yield`; an answer is computed inside the turn, so it cannot itself be a process the turn has to drive"
+                    "module '{module}' answers capability '{capability}', and '{key}' declares `yield`; an answer is computed inside the turn, so it cannot itself be a process the turn has to drive"
                 )));
                 continue;
             }
@@ -892,20 +925,25 @@ fn check_answer_module(
             .any(|effect| effect == crate::yield_lowering::YIELD_EFFECT)
         {
             findings.push(answer_shape_error(format!(
-                "aver.toml marks capability '{capability}' as answered by '{module}', and '{key}' declares `yield`; an answer is computed inside the turn, so it cannot itself be a process the turn has to drive"
+                "module '{module}' answers capability '{capability}', and '{key}' declares `yield`; an answer is computed inside the turn, so it cannot itself be a process the turn has to drive"
             )));
             continue;
         }
-        if !effects.is_empty() {
+        let blocking: Vec<&String> = effects
+            .iter()
+            .filter(|effect| !answers_at_once(registry, effect))
+            .collect();
+        if !blocking.is_empty() {
             findings.push(answer_shape_warning(format!(
-                "aver.toml marks capability '{capability}' as answered by '{module}', and '{key}' declares effects [{}]; an answer runs inside the turn, so this is allowed, but it can stall every other process",
-                effects.join(", ")
+                "module '{module}' answers capability '{capability}', and '{key}' declares effects [{}]; an answer runs inside the turn, so this is allowed, but it can stall every other process",
+                blocking
+                    .iter()
+                    .map(|effect| effect.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )));
         }
         let Some(state) = &state else { continue };
-        if reply_faulty {
-            continue;
-        }
         let mut expected_params = vec![state.clone()];
         expected_params.extend(
             operation
@@ -913,10 +951,7 @@ fn check_answer_module(
                 .iter()
                 .map(|(_, ty)| canonicalize_type_names(ty.clone(), capability)),
         );
-        let expected_result = Type::Tuple(vec![
-            state.clone(),
-            Type::named(super::answer::reply_type_name(capability, &operation.name)),
-        ]);
+        let expected_result = super::answer::answer_result(state, capability, operation);
         let actual_params = params
             .iter()
             .map(|ty| canonicalize_type_names(ty.clone(), module))
@@ -1007,171 +1042,6 @@ fn declared_by(ty: &Type, module: &str) -> bool {
     }
 }
 
-/// The three ends of a job kind's seam: where the turn takes the next task
-/// from, where a start of that task is recorded, and where a finished job's
-/// result lands. All three are pure functions of an answer module, because
-/// the state they read and write is the state the turn already holds.
-fn check_job_seam(
-    shapes: &[WorkShape],
-    bindings: ManifestBindings<'_>,
-    answers: &[AnswerShape],
-    fn_sigs: &std::collections::HashMap<String, FnSignature>,
-    entry_module: Option<&str>,
-) -> Vec<WorkDiagnostic> {
-    let mut errors = Vec::new();
-    for binding in bindings.work {
-        // A capability module checked on its own is not yet a program, so the
-        // seam between the turn and an answer state is not its business.
-        if entry_module == Some(binding.capability.as_str()) {
-            continue;
-        }
-        let Some(shape) = shapes
-            .iter()
-            .find(|shape| shape.capability == binding.capability)
-        else {
-            continue;
-        };
-        if let Some(task) = &binding.task {
-            let expected = |state: &Type| {
-                (
-                    vec![state.clone()],
-                    Type::Option(Box::new(shape.task.clone())),
-                )
-            };
-            errors.extend(check_seam_function(
-                binding,
-                "task",
-                task,
-                bindings.answer,
-                answers,
-                fn_sigs,
-                &expected,
-            ));
-        }
-        if let Some(started) = &binding.started {
-            // A task whose job has just begun is consumed from the answer
-            // state, so the next `task` ask offers a different one while the
-            // job table still has room.
-            let expected = |state: &Type| (vec![state.clone(), shape.task.clone()], state.clone());
-            errors.extend(check_seam_function(
-                binding,
-                "started",
-                started,
-                bindings.answer,
-                answers,
-                fn_sigs,
-                &expected,
-            ));
-        }
-        // The ask and the record are one seam: `task` reads the state a start
-        // is consumed from, so `started` has to write that same state back.
-        // Two modules would give the turn a second state it never asks, and
-        // each end would type-check on its own against its own module.
-        if let (Some(task), Some(started)) = (&binding.task, &binding.started)
-            && seam_module(task) != seam_module(started)
-        {
-            errors.push(binding_error(format!(
-                "job kind '{}' binds task = \"{task}\" and started = \"{started}\", but those are functions of two modules, '{}' and '{}'; the task is consumed from the state that offered it, so `task` and `started` name functions of one answer module",
-                binding.capability,
-                seam_module(task),
-                seam_module(started)
-            )));
-        }
-        if let Some(landed) = &binding.landed {
-            // A job that was cancelled, whose body stopped, or whose id the
-            // engine has forgotten has no payload to land, and the run goes
-            // on: the outcome reaches the answer state as the error it is.
-            let expected = |state: &Type| {
-                (
-                    vec![
-                        state.clone(),
-                        Type::Result(Box::new(shape.payload.clone()), Box::new(Type::Str)),
-                    ],
-                    state.clone(),
-                )
-            };
-            errors.extend(check_seam_function(
-                binding,
-                "landed",
-                landed,
-                bindings.answer,
-                answers,
-                fn_sigs,
-                &expected,
-            ));
-        }
-    }
-    errors
-}
-
-/// The module a seam value names: the manifest has already held the value to
-/// `Module.function`, so the part before the last dot is the module.
-fn seam_module(value: &str) -> &str {
-    value
-        .rsplit_once('.')
-        .map(|(module, _)| module)
-        .unwrap_or("")
-}
-
-fn check_seam_function(
-    binding: &ProviderWorkBinding,
-    field: &str,
-    value: &str,
-    answer_bindings: &[ProviderAnswerBinding],
-    answers: &[AnswerShape],
-    fn_sigs: &std::collections::HashMap<String, FnSignature>,
-    expected: &dyn Fn(&Type) -> (Vec<Type>, Type),
-) -> Vec<WorkDiagnostic> {
-    let capability = &binding.capability;
-    let module = seam_module(value);
-    let Some(answer) = answers.iter().find(|answer| answer.module == module) else {
-        // The manifest may bind that module with `answer` for a capability
-        // outside the closure now being analysed, and then this analysis
-        // simply cannot see the state. Only a module the manifest never binds
-        // is a mistake the manifest can be told about.
-        if answer_bindings
-            .iter()
-            .any(|binding| binding.module == module)
-        {
-            return Vec::new();
-        }
-        return vec![binding_error(format!(
-            "job kind '{capability}' binds {field} = \"{value}\", but no `answer` binding in aver.toml names module '{module}'; the seam reaches the state the turn holds, so it names a function of a module bound with `answer`"
-        ))];
-    };
-    let Some((params, result, effects)) = fn_sigs.get(value) else {
-        return vec![binding_error(format!(
-            "job kind '{capability}' binds {field} = \"{value}\", but this program has no function '{value}'"
-        ))];
-    };
-    if !effects.is_empty() {
-        return vec![binding_error(format!(
-            "job kind '{capability}' binds {field} = \"{value}\", but that function declares effects [{}]; the turn reads the seam between waits, so all three of its ends are pure",
-            effects.join(", ")
-        ))];
-    }
-    let (expected_params, expected_result) = expected(&answer.state);
-    let actual_params = params
-        .iter()
-        .map(|ty| canonicalize_type_names(ty.clone(), module))
-        .collect::<Vec<_>>();
-    let actual_result = canonicalize_type_names(result.clone(), module);
-    let agrees = actual_params.len() == expected_params.len()
-        && actual_params
-            .iter()
-            .zip(&expected_params)
-            .all(|(left, right)| same_type(left, right))
-        && same_type(&actual_result, &expected_result);
-    if agrees {
-        return Vec::new();
-    }
-    vec![binding_error(format!(
-        "job kind '{capability}' binds {field} = \"{value}\", so that function must be {}; it is {}",
-        render_signature(&expected_params, &expected_result),
-        render_signature(&actual_params, &actual_result)
-    ))]
-}
-
 fn operations_of<'a>(
     registry: &'a CapabilityRegistry,
     capability: &str,
@@ -1249,57 +1119,6 @@ fn module_has_functions(
     fn_sigs.keys().any(|key| key.starts_with(&prefix))
 }
 
-/// The reply sum `capability` declares for `operation`, held to the shape
-/// the seam reads an answer through, as the `answer-shape` error names it.
-fn reply_fault(
-    registry: &CapabilityRegistry,
-    capability: &str,
-    module: &str,
-    operation: &crate::capability::CapabilityOperation,
-) -> Option<WorkDiagnostic> {
-    let fault = super::answer::reply_sum_fault(registry, capability, operation)?;
-    Some(answer_shape_error(format!(
-        "capability '{capability}' is answered by module '{module}', and {fault}"
-    )))
-}
-
-/// The reply sums of every answered capability, checked against the
-/// registry alone.
-///
-/// This is the part of the answer check that reads no signature, so a door
-/// whose typecheck failed can still say it: the natural way to miss a
-/// declaration is to write the answer function first, `-> Tuple<S,
-/// Clock.TickReply>`, and that program has an unknown type before it has a
-/// gate. The full [`gate`] reports the same faults through the same words,
-/// so a door uses this only in place of it, never beside it.
-pub fn reply_sums(
-    registry: &CapabilityRegistry,
-    manifest: Option<&crate::config::ProviderPackageManifest>,
-    entry_module: Option<&str>,
-) -> Vec<WorkDiagnostic> {
-    let mut findings = Vec::new();
-    let answer_bindings = manifest
-        .map(|manifest| manifest.answer_bindings.as_slice())
-        .unwrap_or(&[]);
-    for binding in answer_bindings {
-        if entry_module == Some(binding.capability.as_str())
-            || compiler_shipped_reason(&binding.capability).is_some()
-            || registry.contract(&binding.capability).is_none()
-        {
-            continue;
-        }
-        for operation in operations_of(registry, &binding.capability) {
-            findings.extend(reply_fault(
-                registry,
-                &binding.capability,
-                &binding.module,
-                operation,
-            ));
-        }
-    }
-    findings
-}
-
 fn answer_binding_error(message: String) -> WorkDiagnostic {
     WorkDiagnostic::new(ANSWER_BINDING, message)
 }
@@ -1322,27 +1141,17 @@ module Pool
     kind = capability
     semantics = effectful
     intent = \"Which height a peer should fetch next.\"
-    exposes [Assignment, ClaimReply, GoneReply, claim, gone]
+    exposes [Assignment, claim, gone]
 
 type Assignment
     Height(Int)
     Idle
     Stop
 
-type ClaimReply
-    Now(Pool.Assignment)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Pool.Assignment)
-
 operation claim(key: Int) -> Pool.Assignment
     ? \"The next height this peer should fetch.\"
     oracle = generative
     replay = recorded
-
-type GoneReply
-    Now(Unit)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Unit)
 
 operation gone(key: Int) -> Unit
     ? \"This peer is finished; free whatever it held.\"
@@ -1384,6 +1193,13 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
         Type::named("State".to_string())
     }
 
+    fn reply(result: Type) -> Type {
+        Type::Result(
+            Box::new(result),
+            Box::new(Type::named(super::super::answer::WAKE_TYPE.to_string())),
+        )
+    }
+
     /// The answer functions a well-shaped `Ledger` declares, as the type
     /// checker hands them over: types written in the module's own scope.
     fn ledger_sigs() -> HashMap<String, FnSignature> {
@@ -1392,7 +1208,10 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             "Ledger.claim".to_string(),
             (
                 vec![state(), Type::Int],
-                Type::Tuple(vec![state(), Type::named("Pool.ClaimReply".to_string())]),
+                Type::Tuple(vec![
+                    state(),
+                    reply(Type::named("Pool.Assignment".to_string())),
+                ]),
                 Vec::new(),
             ),
         );
@@ -1400,7 +1219,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             "Ledger.gone".to_string(),
             (
                 vec![state(), Type::Int],
-                Type::Tuple(vec![state(), Type::named("Pool.GoneReply".to_string())]),
+                Type::Tuple(vec![state(), reply(Type::Unit)]),
                 Vec::new(),
             ),
         );
@@ -1419,7 +1238,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
     fn a_well_shaped_answer_module_passes_and_reports_its_state() {
         let registry = registry_of(&[("Pool", POOL)]);
         let (shapes, findings) =
-            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None);
+            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None, true);
         assert!(findings.is_empty(), "unexpected findings: {findings:?}");
         assert_eq!(shapes.len(), 1);
         assert_eq!(shapes[0].module, "Ledger");
@@ -1428,98 +1247,41 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
     }
 
     #[test]
-    fn a_capability_without_its_reply_sum_is_an_answer_shape_error() {
-        let pool = POOL.replace(
-            "type GoneReply\n    Now(Unit)\n    Later(Wait.Wake)\n    Then(Wait.Wake, Unit)\n\n",
-            "",
-        );
-        let registry = registry_of(&[("Pool", pool.as_str())]);
-        let (shapes, findings) =
-            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None);
-        assert_eq!(shapes.len(), 1, "the state is still read: {findings:?}");
-        assert_eq!(findings.len(), 1, "unexpected findings: {findings:?}");
-        assert_eq!(findings[0].slug, ANSWER_SHAPE);
-        assert!(
-            findings[0].message.starts_with(
-                "capability 'Pool' is answered by module 'Ledger', and it declares no type 'Pool.GoneReply' beside operation 'gone'"
-            ),
-            "{}",
-            findings[0].message
-        );
-        assert!(
-            findings[0]
-                .message
-                .ends_with("    type GoneReply\n        Now(Unit)\n        Later(Wait.Wake)\n        Then(Wait.Wake, Unit)"),
-            "{}",
-            findings[0].message
-        );
-    }
-
-    #[test]
-    fn the_reply_sums_are_checked_without_a_signature() {
-        let pool = POOL.replace(
-            "type GoneReply\n    Now(Unit)\n    Later(Wait.Wake)\n    Then(Wait.Wake, Unit)\n\n",
-            "",
-        );
-        let registry = registry_of(&[("Pool", pool.as_str())]);
-        let manifest = crate::config::ProviderPackageManifest {
-            schema: crate::config::PROVIDER_MANIFEST_SCHEMA,
-            bindings: Vec::new(),
-            work_bindings: Vec::new(),
-            answer_bindings: vec![answer_binding()],
-        };
-        let findings = reply_sums(&registry, Some(&manifest), None);
-        assert_eq!(findings.len(), 1, "unexpected findings: {findings:?}");
-        let (_, gate_findings) =
-            check_answers(&registry, &[answer_binding()], &ledger_sigs(), None);
-        assert_eq!(
-            findings[0].message, gate_findings[0].message,
-            "the door without a signature says what the gate says"
-        );
-        // The capability module checked on its own answers nothing yet.
-        assert!(reply_sums(&registry, Some(&manifest), Some("Pool")).is_empty());
+    fn an_answer_function_returning_something_else_is_named_with_the_shape_it_needs() {
         let registry = registry_of(&[("Pool", POOL)]);
-        assert!(reply_sums(&registry, Some(&manifest), None).is_empty());
-    }
-
-    #[test]
-    fn a_well_shaped_job_seam_passes_against_the_answer_state() {
-        let registry = registry_of(&[("Pool", POOL), ("Validation", VALIDATION)]);
         let mut sigs = ledger_sigs();
         sigs.insert(
-            "Ledger.nextTask".to_string(),
-            (vec![state()], Type::Option(Box::new(Type::Str)), Vec::new()),
-        );
-        sigs.insert(
-            "Ledger.taskStarted".to_string(),
-            (vec![state(), Type::Str], state(), Vec::new()),
-        );
-        sigs.insert(
-            "Ledger.validated".to_string(),
+            "Ledger.gone".to_string(),
             (
-                vec![
-                    state(),
-                    Type::Result(Box::new(Type::Int), Box::new(Type::Str)),
-                ],
-                state(),
+                vec![state(), Type::Int],
+                Type::Tuple(vec![state(), Type::Unit]),
                 Vec::new(),
             ),
         );
+        let (_, findings) = check_answers(&registry, &[answer_binding()], &sigs, None, true);
+        assert_eq!(findings.len(), 1, "unexpected findings: {findings:?}");
+        assert_eq!(findings[0].slug, ANSWER_BINDING);
+        assert!(
+            findings[0]
+                .message
+                .contains("so 'Ledger.gone' must be (Ledger.State, Int) -> Tuple<Ledger.State, Result<Unit, Run.Wake>>"),
+            "{}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    fn a_work_binding_with_its_pure_function_passes() {
+        let registry = registry_of(&[("Validation", VALIDATION)]);
+        let mut sigs = ledger_sigs();
         sigs.insert(
             "Node.validate".to_string(),
             (vec![Type::Str], Type::Int, Vec::new()),
         );
-        let answer_bindings = vec![answer_binding()];
-        let (answers, findings) = check_answers(&registry, &answer_bindings, &sigs, None);
-        assert!(findings.is_empty(), "unexpected findings: {findings:?}");
-
         let work_bindings = vec![ProviderWorkBinding {
             capability: "Validation".to_string(),
             function: "Node.validate".to_string(),
             index: 1,
-            task: Some("Ledger.nextTask".to_string()),
-            started: Some("Ledger.taskStarted".to_string()),
-            landed: Some("Ledger.validated".to_string()),
         }];
         let mut shapes = Vec::new();
         let mut declared = BTreeSet::new();
@@ -1527,19 +1289,8 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             declared.insert(module);
             shapes.push(outcome.expect("Validation is a job kind"));
         }
-        let errors = check_bindings(
-            &registry,
-            &shapes,
-            &declared,
-            ManifestBindings {
-                work: &work_bindings,
-                answer: &answer_bindings,
-            },
-            &answers,
-            &sigs,
-            None,
-        );
-        assert!(errors.is_empty(), "unexpected seam errors: {errors:?}");
+        let errors = check_bindings(&registry, &shapes, &declared, &work_bindings, &sigs, None);
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     }
 
     #[test]
@@ -1554,9 +1305,6 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             capability: "Validation".to_string(),
             function: "Main.validate".to_string(),
             index: 0,
-            task: None,
-            started: None,
-            landed: None,
         }];
         let mut shapes = Vec::new();
         let mut declared = BTreeSet::new();
@@ -1568,11 +1316,7 @@ operation take(job: Work.Job) -> Result<Option<Int>, String>
             &registry,
             &shapes,
             &declared,
-            ManifestBindings {
-                work: &work_bindings,
-                answer: &[],
-            },
-            &[],
+            &work_bindings,
             &sigs,
             Some("Main"),
         );

@@ -96,9 +96,8 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
         // (`recursion::rewrite_native_guarded_calls`) to mark a position
         // where Lean needs an `(by omega)` proof obligation for the
         // recursive-call precondition. Stays a plain Aver `ResolvedExpr::Ident`
-        // through the AST so Dafny's emit path (which doesn't inject this
-        // sentinel) and the type checker (already done before codegen)
-        // never see it.
+        // through the AST so the type checker (already done before codegen)
+        // never sees it.
         ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. }
             if name == crate::codegen::recursion::OMEGA_PROOF_SENTINEL =>
         {
@@ -316,20 +315,35 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             //     by … simp [Bytes.allInRange]⟩`): the emitted proof
             //     re-establishes, in Lean, exactly the fact the
             //     discharge gate claimed.
+            // The anonymous constructor carries its type as an
+            // ascription: a sample substituted into a law's `when`
+            // (`(⟨0, …⟩ : Natural).val`) has no expected type to
+            // elaborate against otherwise.
             if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
                 && fields.len() == 1
             {
+                let lean_type_name = match type_id {
+                    Some(type_id) => user_type_path(*type_id, ctx),
+                    None => super::types::lean_named_type_name(type_name),
+                };
                 let (_, value_expr) = &fields[0];
                 if let Some((value, evidence)) = packed_refinement_evidence(value_expr, decl, ctx) {
-                    return format!("⟨{value}, by exact {evidence}⟩");
+                    return format!("(⟨{value}, by exact {evidence}⟩ : {lean_type_name})");
                 }
                 let value_str = emit_expr(value_expr, ctx);
-                let mut ladder =
-                    "first | omega | decide | (simp_all; omega) | assumption".to_string();
+                // A literal value is checked by `decide` first. `omega` and
+                // `simp_all` read every hypothesis in scope, so inside a law
+                // statement their proof mentions the quantified variables, and
+                // a sample `d = ⟨0, proof(d)⟩` can then never be substituted.
+                let mut ladder = if matches!(value_expr.node, ResolvedExpr::Literal(_)) {
+                    "first | decide | omega | (simp_all; omega) | assumption".to_string()
+                } else {
+                    "first | omega | decide | (simp_all; omega) | assumption".to_string()
+                };
                 if let Some(predicate) = invariant_head_name(&decl.invariant.expr, ctx) {
                     ladder.push_str(&format!(" | simp [{predicate}]"));
                 }
-                return format!("⟨{value_str}, by {ladder}⟩");
+                return format!("(⟨{value_str}, by {ladder}⟩ : {lean_type_name})");
             }
             let parts: Vec<String> = fields
                 .iter()

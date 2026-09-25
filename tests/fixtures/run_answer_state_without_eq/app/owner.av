@@ -1,0 +1,23 @@
+module Owner
+    intent = "Answers Clock from a state that holds a List and a Map, and an open store."
+    depends [App.Clock, App.Store]
+    exposes [State, fresh, tick]
+    effects []
+    answers [App.Clock]
+
+record State
+    seen: List<Int>
+    counts: Map<String, Int>
+    store: Option<App.Store.Handle>
+
+fn fresh() -> State
+    ? "Nothing yet."
+    State(seen = [], counts = {}, store = Option.None)
+
+fn tick(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Ticks at once and remembers the tick."
+    next = List.len(state.seen) + 1
+    (State(seen = List.prepend(next, state.seen), counts = Map.set(state.counts, "ticks", next), store = state.store), Result.Ok(next))
+
+verify tick
+    tick(fresh()) => (State(seen = [1], counts = {"ticks" => 1}, store = Option.None), Result.Ok(1))

@@ -1,0 +1,72 @@
+module LawSignFacts
+    intent =
+        "Guarded claims whose truth rests on the sign of a product of two"
+        "non-constant terms: opposite signs keep a sum small, a product of"
+        "differences is nonpositive, and a square is never negative."
+    effects []
+
+fn absInt(n: Int) -> Int
+    ? "Integer absolute value."
+    match n < 0
+        true -> 0 - n
+        false -> n
+
+verify absInt
+    absInt(-3) => 3
+    absInt(4) => 4
+
+fn maxInt(a: Int, b: Int) -> Int
+    ? "The larger of two integers."
+    match a >= b
+        true -> a
+        false -> b
+
+verify maxInt
+    maxInt(1, 2) => 2
+    maxInt(3, 2) => 3
+
+fn oppositeSignSumBounded(alpha: Int, beta: Int) -> Bool
+    ? "Two numbers of opposite signs do not reinforce: their sum is at most the larger magnitude."
+    absInt(alpha + beta) <= maxInt(absInt(alpha), absInt(beta))
+
+verify oppositeSignSumBounded
+    oppositeSignSumBounded(5, -2) => true
+    oppositeSignSumBounded(0, 7) => true
+
+verify oppositeSignSumBounded law guarded
+    given alpha: Int = [-5, 0, 5]
+    given beta: Int = [-2, 0, 2]
+    when alpha * beta <= 0
+    oppositeSignSumBounded(alpha, beta) holds
+
+fn signsDifferent(x: Int, y: Int, z: Int) -> Bool
+    ? "x - y and y - z have different signs, as a nonpositive product."
+    (x - y) * (y - z) <= 0
+
+verify signsDifferent
+    signsDifferent(3, 1, 2) => true
+    signsDifferent(-3, -1, -2) => true
+
+verify signsDifferent law branchNonpositive
+    given x: Int = [-3, -1, 0]
+    given y: Int = [-1, 0]
+    given z: Int = [-2, -1]
+    when x <= 0
+    when y <= 0
+    when z <= 0
+    when absInt(y) <= absInt(x)
+    when absInt(y) <= absInt(z)
+    signsDifferent(x, y, z) holds
+
+fn squareLeSumOfSquares(a: Int, b: Int) -> Bool
+    ? "A square never exceeds itself plus another square."
+    a * a <= a * a + b * b
+
+verify squareLeSumOfSquares
+    squareLeSumOfSquares(3, 4) => true
+
+verify squareLeSumOfSquares law amgmSquareBound
+    given a: Int = [-7, 0, 3, 5]
+    given b: Int = [-2, 0, 4]
+    when 0 <= a * a
+    squareLeSumOfSquares(a, b) holds

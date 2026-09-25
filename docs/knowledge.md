@@ -88,8 +88,8 @@ over, even though an Aver program cannot build those map representations.
 ## A running provider and coordinator
 
 The model now sits next to its consumer in `examples/knowledge/`. Run the
-whole program, generated coordinator included, from that project root. Its
-proof checks all 62 laws universally, with no bounded or open obligations:
+whole program, generated loop included, from that project root. Its proof
+checks every law universally, with no bounded or open obligations:
 
 ```sh
 cd examples/knowledge
@@ -101,95 +101,67 @@ aver run main.av --record /tmp/knowledge-recording
 aver replay /tmp/knowledge-recording --test --diff
 ```
 
-`Content` declares the peer and reader operations, and `aver.toml` binds them
-to `Stored`. A peer offers two hash/body pairs. `Stored.offer` checks both
-hashes with `(admitted(first), admitted(second))!` before it changes any
-state. One bad hash rejects the whole batch. Accepted bodies go into the
-**same** `Knowledge` model proved above and then join the ordered work queue.
-Reversing an admitted, agreeing pair leaves Knowledge unchanged; the queue's
-order is kept separate on purpose. When a task starts, all duplicate queue
-entries are removed.
+`Content` declares the peer and reader operations, and `Stored` answers them:
+its header says `answers [Content]`. A peer offers two hash/body pairs.
+`Stored.offer` checks both hashes with `(admitted(first), admitted(second))!`
+before it changes any state. One bad hash rejects the whole batch. Accepted
+bodies go into the **same** `Knowledge` model proved above. Reversing an
+admitted, agreeing pair leaves Knowledge unchanged.
 
-The `Validation` job kind binds `Stored.validate`, a pure rule for
+The `Validation` job kind runs `Stored.validate`, a pure rule for
 illustration: a nonempty body is valid in the fixed `nonempty-v1` context. It
-is not Bitcoin block validation. `Work.take` delivers the body hash and the
-Boolean result to `Stored.validated`, which turns it into the model's verdict.
-No peer operation accepts a verdict. A worker failure records a control error
-and adds nothing to Knowledge. Capability boundary layouts stay local to their
-contracts, and the internal model's nominal types never cross the job ABI
-implicitly.
+is not Bitcoin block validation. A read of a body whose verdict is unknown
+begins that body's validation job in `Stored.read` and parks the request on
+the job. The ask after the job settles takes it and hands the body hash and
+the Boolean result to `Stored.validated`, which turns it into the model's
+verdict. No peer operation accepts a verdict. A worker failure records a
+control error and adds nothing to Knowledge. Capability boundary layouts stay
+local to their contracts, and the internal model's nominal types never cross
+the job ABI implicitly.
 
-`Stored.read` uses `!` for the body and verdict lookups. It answers
-`Now(Ok(snapshot))` only once both are known. Otherwise it answers
-`Later(NextTurn)` or a worker error. Its stable-answer law is about the actual
-answer function: under admitted, consistent growth, a successful `Now` keeps
-its value. `read.stableHistory` applies this to every finite consistent update
-sequence, of any length. `observed` projects exactly that successful `Now`
-payload and returns `None` for `Later`, `Then` and errors, so the premise
-never compares wake handles. Errors, and the moment an answer becomes known,
-carry no stability claim.
+`Stored.lookup` answers from the knowledge alone and uses `!` for the body
+and verdict lookups. It answers `Ok(Ok(snapshot))` only once both are known.
+Otherwise it answers a wait for the module's state to move, or a worker
+error. `Stored.read` is `lookup` plus the job: it runs `lookup` whenever no
+validation is left to run. The stable-answer law is about `lookup`: under
+admitted, consistent growth, a successful answer keeps its value.
+`lookup.stableHistory` applies this to every finite consistent update
+sequence, of any length. `observed` projects exactly that successful payload
+and returns `None` for a wait or an error, so the premise never compares wake
+handles. Errors, and the moment an answer becomes known, carry no stability
+claim.
 
 The example has two producers and a reader. It rejects a forged hash, handles
 duplicates through local Work, and gets the same settled answer after another
 delivery. Integration tests run this program on the native VM, as generated
 Rust and as wasm. The VM recording is replayed with local work recomputed.
 
-The independent products run inside the answer functions. The generated
-coordinator still orders requests, queue updates and result visibility. This
-example does not add parallel yielding calls, and it does not make control
-decisions commute.
+The independent products run inside the answer functions. The generated loop
+still orders requests and result visibility. This example does not add
+parallel yielding calls, and it does not make control decisions commute.
 
-## Generated coordinator laws
+## The generated loop's laws
 
-The coordinator generator emits proof obligations for its own pure
-transitions. A stale answer leaves slots alone and increments the dropped
-counter. `Later` preserves the request and the instance. Fresh instances
-increase. A full job table offers no new task. When the proof report says
-`universal`, these laws already quantify over every state and argument that
-satisfies their premises. The `given` values also feed sampled VM
-verification; they do not restrict the domain of a successful universal proof.
+The loop generates no laws into a program. Its invariants are laws over its
+own generated functions, stated once in `tests/fixtures/run_schedule_cases/`
+and checked there on the VM and on the Lean wall: a stale answer leaves the
+slots alone and is counted, an `Err` keeps the request's instance, instance
+numbers increase, a deadline that has passed fires and no deadline never
+fires, the wait never exceeds the deadline it was asked for, and a `Settled`
+answer moves no version. When the proof report says `universal`, these laws
+quantify over every state and argument that satisfies their premises. The
+`given` values also feed sampled VM verification; they do not restrict the
+domain of a successful universal proof.
 
-Generating the laws proves nothing by itself. `aver proof --check` runs the
-checker, and the report separates universal proofs from bounded or failed
-obligations. Some generated laws cite laws from the program's answer module,
-such as `aStartedTaskIsNotAskedAgain`, and that dependency must also prove
-universally. Green proofs on the examples do not give a theorem about every
-program the generator might be handed.
-
-The generator also emits `__HistoryEvent`, `__historyStep`,
-`__historyAdmissible`, and `__historyRun` into this program. Events use the
-program's concrete request, answer-state and job-result types. The fold calls
-the same pure transitions as the live coordinator: parking, saving an answer,
-settling an instance, seating a worker, reporting its result, and
-cancellation. Observations of the clock, of stop and of returned answer states
-are explicit events. These helpers exist for proof and verification. Normal
-execution does not record or allocate a history.
-
-The three generated `__historyRun` laws quantify over arbitrary finite lists:
-
-- `noNewProcesses`: after initial seating, the slot count never increases.
-- `jobsStayWithinLimit`: a run that starts within `max-jobs` stays within it,
-  counting all job kinds in the same table.
-- `retiredInstanceNeverReturns`: once an instance is retired (its process is
-  gone or its number has moved on), it stays retired. The per-process
-  `answeringRetiresTheInstance` law establishes this premise after a current
-  answer is accepted, including a completion that removes the slot.
-
-Each statement holds for any finite prefix, of any length. The admissibility
-predicate checks each event against the state left by the events before it. A
-start needs positive room. A settlement needs a nonnegative instance, and a
-seated slot if that instance is current. It does **not** assume the three
-conclusions. The history model deliberately allows more observations than the
-live driver can produce, including arbitrary returned answer states, arbitrary
-tasks and spurious job reports. That is why these structural properties need
-no premise about a provider being honest or consistent. Semantic properties of
-a provider's answers still need the provider's own laws, such as
-`Stored.read.stableHistory`.
+Green proofs on that fixture do not give a theorem about every program the
+generator might be handed: the laws are stated over one program's generated
+functions. Semantic properties of a provider's answers still need the
+provider's own laws, such as `Stored.lookup.stableHistory`.
 
 The [source request-trace observers](yield-request-traces.md) check a
-supported subset of lowering independently. Recursive helper composition,
-tail-entry alignment and correspondence with the effectful driver are still
-open. These history laws prove the composed pure transitions. They do not
-establish that correspondence, or termination. `runBatches.anySchedule` covers
-Knowledge contributions separately. Automatic schedule enumeration remains an
-optional execution test.
+supported subset of lowering independently. They are generated into an entry
+module only when one of its own laws cites them. Recursive helper
+composition, tail-entry alignment and correspondence with the effectful
+driver are still open. `runBatches.anySchedule` covers Knowledge
+contributions separately. Automatic schedule enumeration remains an optional
+execution test.

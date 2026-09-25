@@ -2,12 +2,7 @@ module Inbox
     intent = "Each process asks to record its own id once."
     kind = capability
     semantics = effectful
-    exposes [ArriveReply, arrive]
-
-type ArriveReply
-    Now(Unit)
-    Later(Wait.Wake)
-    Then(Wait.Wake, Unit)
+    exposes [arrive]
 
 operation arrive(id: Int) -> Unit
     ? "Record which process was served."

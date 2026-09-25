@@ -8,8 +8,7 @@
 //! Every detector here is **syntax-discovery-only** and deliberately
 //! NARROW: exactly the hand-validated figures are recognized (the
 //! proof templates the backends render were validated end-to-end on
-//! the emitted artifacts — Lean 4.15 core kernel-genuine, Dafny
-//! fully verified), and everything else declines at zero cost. The
+//! the emitted artifacts — Lean core kernel-genuine), and everything else declines at zero cost. The
 //! termination side is NOT re-derived here: the binary-exponent fn
 //! must already carry the guard-validated
 //! [`crate::ir::RecursionContract::WellFoundedToNat`] floor-division

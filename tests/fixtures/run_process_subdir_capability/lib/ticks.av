@@ -1,0 +1,20 @@
+module Ticks
+    intent = "Answers Clock."
+    depends [Lib.Clock]
+    exposes [State, fresh, tick]
+    effects []
+    answers [Lib.Clock]
+
+record State
+    count: Int
+
+fn fresh() -> State
+    ? "Nothing yet."
+    State(count = 0)
+
+fn tick(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Ticks at once."
+    (State(count = state.count + 1), Result.Ok(state.count + 1))
+
+verify tick
+    tick(fresh()) => (State(count = 1), Result.Ok(1))

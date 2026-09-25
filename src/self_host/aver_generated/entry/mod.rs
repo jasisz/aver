@@ -86,7 +86,7 @@ pub fn run(source @ _: AverStr) -> Result<crate::aver_generated::domain::value::
     let prog @ _ = crate::aver_generated::domain::parser::parse(&tokens)?;
     let resolved @ _ = crate::aver_generated::domain::resolver::resolveProgram(prog);
     runGuestProgram(
-        &resolved,
+        resolved,
         &aver_rt::AverList::empty(),
         &aver_rt::AverList::empty(),
     )
@@ -101,7 +101,7 @@ pub fn runWithModules(
     let prepared @ _ = prepareProgramWithModules(source, moduleRoot)?;
     {
         let (prog, moduleFns) = prepared;
-        runGuestProgram(&prog, &moduleFns, &aver_rt::AverList::empty())
+        runGuestProgram(prog, &moduleFns, &aver_rt::AverList::empty())
     }
 }
 
@@ -134,23 +134,20 @@ pub fn prepareProgramWithModules(
 
 /// Execute an already-loaded guest program. guestArgs marks the guest input boundary for scoped replay and policy in generated Rust.
 pub fn runGuestProgram(
-    prog @ _: &crate::aver_generated::domain::ast::Program,
+    mut prog @ _: crate::aver_generated::domain::ast::Program,
     moduleFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     guestArgs @ _: &aver_rt::AverList<AverStr>,
 ) -> Result<crate::aver_generated::domain::value::Val, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::evalProgramWithFns(
-        &shiftFnIdsInProgram(
-            prog.clone(),
-            aver_rt::AverInt::from_i64(moduleFns.len() as i64),
-        ),
+        &shiftFnIdsInProgram(prog, aver_rt::AverInt::from_i64(moduleFns.len() as i64)),
         moduleFns,
     )
 }
 
 /// Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary. Returns the user main()'s return Val so the replay scope can serialise it as recording.output (and replay-mode output comparison sees the live value), instead of dropping it to Unit before the wrapping aver_replay scope captures the result.
 pub fn runGuestCliProgram(
-    prog @ _: &crate::aver_generated::domain::ast::Program,
+    mut prog @ _: crate::aver_generated::domain::ast::Program,
     moduleFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     localFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     guestArgs @ _: &aver_rt::AverList<AverStr>,
@@ -166,7 +163,7 @@ pub fn runGuestCliProgram(
                 moduleFns.clone(),
                 || {
                     crate::cancel_checkpoint();
-                    match runGuestProgram(prog, moduleFns, guestArgs) {
+                    match runGuestProgram(prog.clone(), moduleFns, guestArgs) {
                         Ok(result @ _) => finishCliRun(localFns, &result),
                         Err(e @ _) => Err((AverStr::from("Runtime error: ") + &e)),
                     }
@@ -236,11 +233,7 @@ pub fn findModulePath(dep @ _: AverStr, root @ _: AverStr, depth @ _: aver_rt::A
 #[inline(always)]
 pub fn modulePathFromName(name @ _: AverStr, moduleRoot @ _: AverStr) -> AverStr {
     crate::cancel_checkpoint();
-    modulePathFromName__indexed(
-        name.clone(),
-        moduleRoot,
-        &aver_rt::string_index_build(&name),
-    )
+    modulePathFromName__indexed(name.clone(), moduleRoot, aver_rt::string_index_build(&name))
 }
 
 /// Replace dots with slashes and lowercase first char of each segment.
@@ -773,7 +766,7 @@ pub fn runFile(path @ _: AverStr, moduleRoot @ _: AverStr) -> Result<AverStr, Av
     match loadProgramFromFile(path, moduleRoot) {
         Ok(pair @ _) => {
             let (prog, moduleFns) = pair;
-            runFileLoaded(&prog, &moduleFns)
+            runFileLoaded(prog, &moduleFns)
         }
         Err(e @ _) => Err(e),
     }
@@ -781,7 +774,7 @@ pub fn runFile(path @ _: AverStr, moduleRoot @ _: AverStr) -> Result<AverStr, Av
 
 /// Turn a loaded guest program into a representation string.
 pub fn runFileLoaded(
-    prog @ _: &crate::aver_generated::domain::ast::Program,
+    mut prog @ _: crate::aver_generated::domain::ast::Program,
     moduleFns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
 ) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
@@ -847,7 +840,7 @@ pub fn runCliFile(
     let prepared @ _ = loadProgramFromFile(path, moduleRoot)?;
     {
         let (prog, moduleFns) = prepared;
-        runGuestCliProgram(&prog, &moduleFns, &prog.fns, guestArgs)
+        runGuestCliProgram(prog.clone(), &moduleFns, &prog.fns, guestArgs)
     }
 }
 
@@ -1249,7 +1242,8 @@ pub fn findModulePath__indexed(
     let __str_index @ _ = std::sync::Arc::new(__str_index);
     loop {
         crate::cancel_checkpoint();
-        let path @ _ = modulePathFromName__indexed(dep.clone(), root.clone(), &*__str_index);
+        let path @ _ =
+            modulePathFromName__indexed(dep.clone(), root.clone(), (*__str_index).clone());
         if {
             let __provider_arg0: AverStr = path.clone();
             crate::cancel_checkpoint();
@@ -1293,7 +1287,7 @@ pub fn findModulePath__indexed(
 pub fn modulePathFromName__indexed(
     name @ _: AverStr,
     moduleRoot @ _: AverStr,
-    __str_index @ _: &aver_rt::StringIndex,
+    mut __str_index @ _: aver_rt::StringIndex,
 ) -> AverStr {
     crate::cancel_checkpoint();
     (((moduleRoot + &AverStr::from("/"))
@@ -1302,7 +1296,7 @@ pub fn modulePathFromName__indexed(
             aver_rt::AverInt::from_i64(0),
             aver_rt::AverInt::from_i64(name.chars().count() as i64),
             AverStr::from(""),
-            __str_index.clone(),
+            __str_index,
         ))
         + &AverStr::from(".av"))
 }

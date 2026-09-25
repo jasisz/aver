@@ -1,0 +1,22 @@
+module Ledger
+    intent = "An answer module whose effects return at once, beside one that prints."
+    depends [Pool]
+    exposes [State, claim, gone]
+    effects [Console.print, Time.unixMs]
+    answers [Pool]
+
+record State
+    free: List<Int>
+    stopping: Bool
+
+fn claim(state: State, key: Int) -> Tuple<State, Result<Pool.Assignment, Run.Wake>>
+    ? "The next height for this peer; reading the clock returns at once, so it cannot stall the turn."
+    ! [Time.unixMs]
+    _now = Time.unixMs()
+    (state, Result.Ok(Pool.Assignment.Idle))
+
+fn gone(state: State, key: Int) -> Tuple<State, Result<Unit, Run.Wake>>
+    ? "A peer that left gives its height back, and says so."
+    ! [Console.print, Time.unixMs]
+    _now = Time.unixMs()
+    (state, Result.Ok(Console.print("gone {key}")))

@@ -93,39 +93,3 @@ fn proof_wide_domain_law_partitions_and_builds_green() {
     );
     let _ = std::fs::remove_dir_all(&output_dir);
 }
-
-/// Dafny side of the nonlinear-wall fixture: `when`-law samples come
-/// from the UNFILTERED given cartesian product, so premise-violating
-/// combinations (square-monotonicity at e=1, b=0) were asserted
-/// unguarded and failed verification on a file whose universal lemmas
-/// Z3 fully proves. Post-fix the samples are checked under
-/// `if <instantiated premise> { … }` (mirroring Lean's `_sample_N`
-/// premise-as-hypothesis form) and the whole file verifies: 0 errors,
-/// 0 axioms.
-///
-/// Deliberately budget-only (no `passed` assert): this fixture's
-/// genuinely nonlinear universal lemmas have platform-sensitive
-/// verification wall-clock — a slower Z3 build can time an obligation
-/// out (exit 4) without erroring, which is jitter, not the regression
-/// under test. The when-filter regression itself surfaces as ERRORS
-/// (reverting the guard yields 2 "assertion might not hold"), so the
-/// error budget catches it on every platform.
-#[test]
-fn proof_dafny_when_filtered_samples() {
-    assert_dafny_verifies("tests/fixtures/nr_wall.av", "aver-dafny-nr-wall");
-}
-
-/// Rationals fixture (`tests/fixtures/rational_probe.av`):
-/// concrete-literal sample asserts over record arguments pushed Z3
-/// into symbolic fuel unfolding — 150 s+ timeouts (`dafny verify`
-/// exit 4) on a file whose universal lemmas verify in ~1 s, so the
-/// exit-status gate failed an otherwise-proven file. Post-fix each
-/// sample assert is seeded with the universal lemma instantiated at
-/// the sample values and the file verifies end-to-end in seconds.
-/// `passed` is asserted explicitly: a timeout leaves the parsed error
-/// count at 0 and surfaces ONLY in the exit status, so an errors-only
-/// assert cannot catch this regression.
-#[test]
-fn proof_dafny_rational_samples_no_timeout() {
-    assert_dafny_verifies_and_passes("tests/fixtures/rational_probe.av", "aver-dafny-rational");
-}

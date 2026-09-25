@@ -5,6 +5,7 @@
 mod applications;
 mod clique_mono;
 mod container_induction;
+mod core_kit;
 mod decimal;
 mod floor_arith;
 mod floor_window;
@@ -329,6 +330,12 @@ pub fn emit_verify_law_forall_auto_proof(
     // first alternative, so grind can do NEW work — guaranteed closers
     // like `omega`/`rfl` are left byte-identical).
     let mut proof = maybe_wrap_with_grind_rung(vb, law, ctx, inner);
+    // A literal bit mask (`Bits.and(x, 128)`) is a closed form no portfolio
+    // arm reaches; its arm is a fixed rewrite chain that closes or fails
+    // fast, so it goes first.
+    if let Some(arm) = core_kit::mask_arm(vb, law, ctx) {
+        proof = prepend_arm(proof, arm);
+    }
     // Every structured, still-open portfolio can compose the same earlier
     // laws. Keeping this at the common exit prevents an earlier strategy from
     // hiding composition merely by supplying its own `sorry` floor.
@@ -347,6 +354,46 @@ pub fn emit_verify_law_forall_auto_proof(
         }
     }
     Some(proof)
+}
+
+/// Put `arm` in front of an open proof: `intro …` then `first | (arm) | (the
+/// rest of the proof)`. A proof that replaces its theorem, whose first
+/// alternative is already a guaranteed closer, or that is not the canonical
+/// `intro` + body shape is left as it is.
+fn prepend_arm(proof: AutoProof, arm: String) -> AutoProof {
+    use crate::codegen::lean::tactic_ir::Tactic;
+    if proof.replaces_theorem || proof.first_arm_is_guaranteed_closer {
+        return proof;
+    }
+    let lines = proof.body.render();
+    if !lines
+        .first()
+        .is_some_and(|l| l.trim_start().starts_with("intro "))
+    {
+        return proof;
+    }
+    let AutoProof {
+        support_lines,
+        body,
+        replaces_theorem,
+        first_arm_is_guaranteed_closer,
+    } = proof;
+    let body = match body {
+        Tactic::Seq(mut steps) if !steps.is_empty() => {
+            let intro = steps.remove(0);
+            Tactic::Seq(vec![
+                Tactic::Leaf(intro.render().join("\n").trim().to_string()),
+                Tactic::First(vec![Tactic::Leaf(arm), Tactic::Seq(steps)]),
+            ])
+        }
+        other => other,
+    };
+    AutoProof {
+        support_lines,
+        body,
+        replaces_theorem,
+        first_arm_is_guaranteed_closer,
+    }
 }
 
 /// Whether the additive `grind` rung is SHAPE-AMENABLE for this law:
@@ -1432,11 +1479,10 @@ fn emit_verify_law_forall_auto_proof_inner(
     // to the existing emit which renders the Nat-helper + shift
     // lemma + helper-seed bridge (heavy ~50-line support_lines stay
     // in the legacy module). The IR pin makes the algebraic decision
-    // observable in `proof_ir.law_theorems` and provides the integration
-    // point for a future Dafny consumer (issue #116).
+    // observable in `proof_ir.law_theorems`.
     if matches!(
         law_strategy_for(ctx, &vb.fn_name, &law.name),
-        Some(crate::ir::ProofStrategy::LinearRecurrence2SpecEquivalence { .. })
+        Some(crate::ir::ProofStrategy::LinearRecurrence2SpecEquivalence)
     ) && let Some(proof) = spec::emit_second_order_linear_recurrence_spec_equivalence_law(
         vb,
         law,
@@ -1786,9 +1832,9 @@ fn emit_verify_law_forall_auto_proof_inner(
             None
         })
         .or_else(|| {
-            emit_guarded_domain_law(law).map(|proof_lines| AutoProof {
+            emit_guarded_domain_law(law).map(|body| AutoProof {
                 support_lines: Vec::new(),
-                body: crate::codegen::lean::tactic_ir::Tactic::raw(proof_lines),
+                body,
                 replaces_theorem: false,
                 first_arm_is_guaranteed_closer: false,
             })
@@ -2318,10 +2364,29 @@ fn emit_simp_over_prelude_lemmas_law(
     // over the same set. Shape-gated on the cone touching a map and on the
     // given's type being a user sum; tried after the flat simp, so a law the
     // flat simp closes keeps its proof.
-    if builtins.iter().any(|b| b.starts_with("Map."))
-        && let Some(split) = shared::first_user_sum_given(ctx, law)
-    {
-        branches.push(format!("cases {split} <;> simp [{simp_set}]; done"));
+    if let Some(split) = shared::first_user_sum_given(ctx, law) {
+        if builtins.iter().any(|b| b.starts_with("Map.")) {
+            branches.push(format!("cases {split} <;> simp [{simp_set}]; done"));
+        } else {
+            // Any other claim over a sum-typed given, fieldless variants
+            // or ones with a payload: split it by constructor, unfold the
+            // whole cone of both sides in each case and finish the
+            // arithmetic with `omega`. Tried after the flat simp.
+            let mut case_set: Vec<String> = shared::law_simp_defs_blind(ctx, vb, law)
+                .into_iter()
+                .collect();
+            let unfold_names: Vec<String> =
+                unfold_fns.iter().map(|f| aver_name_to_lean(f)).collect();
+            for name in simp_set.split(", ") {
+                if !unfold_names.iter().any(|n| n == name) && !case_set.iter().any(|n| n == name) {
+                    case_set.push(name.to_string());
+                }
+            }
+            branches.push(format!(
+                "cases {split} <;> simp [{}] <;> omega",
+                case_set.join(", ")
+            ));
+        }
     }
     Some(AutoProof {
         support_lines: Vec::new(),
@@ -2340,7 +2405,7 @@ fn emit_simp_over_prelude_lemmas_law(
 /// therefore stays `BackendDispatch`, where Dafny's Z3 already discharges
 /// the law via the sequence-length axiom (`|s + t| = |s| + |t|`) but the
 /// Lean side fell to a bare `sorry`. This Lean-only rung closes it
-/// without touching the IR strategy or the Dafny path.
+/// without touching the IR strategy.
 ///
 /// Mechanism: Aver's `String +` is the custom `HAdd String` instance
 /// (`⟨String.append⟩`); the prelude `rfl` lemma `String.add_eq_append :
@@ -2881,11 +2946,21 @@ fn emit_simp_omega_from_ir(
         // The floor here predates the global one and the sign-split arm is NOT a
         // guaranteed closer (a Bool-comparison identity falls through it), so the
         // frontier reading of the trailing `sorry` stands: flag stays false.
+        // A cone function that matches an `Int` on literals, compared with a
+        // range predicate: split the literal match and let `simp_all` /
+        // `omega` settle each branch. It goes ahead of the sign split, which
+        // commits on such a goal without closing it.
+        let mut arms = Vec::new();
+        if core_kit::cone_matches_int_literals(unfold_fns, ctx) {
+            arms.push(core_kit::INT_LITERAL_MATCH_ARM.to_string());
+        }
+        arms.push(format!("{by_cases_chain} <;> simp [{simp_args}]"));
+        arms.push(cmp);
         SimpOmegaProof {
             body: intro_prefix_then_first(
                 intro_names,
                 vec![format!("unfold {}", lean_names.join(" "))],
-                vec![format!("{by_cases_chain} <;> simp [{simp_args}]"), cmp],
+                arms,
             ),
             first_arm_is_guaranteed_closer: false,
         }

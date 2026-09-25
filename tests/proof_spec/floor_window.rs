@@ -176,86 +176,11 @@ fn proof_export_floor_arith_second_witness_universal() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
-/// Export-structure pin, Dafny side (no toolchain needed). Before the
-/// class existed the binary-exponent fn declined to an opaque
-/// `{:axiom}` and the significand law was omitted; the other three
-/// law lemmas emitted with empty bodies Z3 could not close (measured:
-/// 3 errors). Post-fix:
-/// - the halving fn emits with the total guarded measure
-///   (`decreases if a >= 0 then a else 0`) and NO synthesized
-///   `requires`, so total callers stay wellformed;
-/// - every law lemma carries a PROVED support stack (division-window
-///   prelude derived from the Euclidean identity, power algebra by
-///   self-call induction, branch-split significand lemmas) — no
-///   `assume {:axiom}`, no omitted universal.
-#[test]
-fn proof_export_floor_window_dafny_structure() {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let output_dir = temp_output_dir("aver-proof-floor-window-dafny-export");
-    let run = Command::new(aver_bin)
-        .current_dir(&repo_root)
-        .arg("proof")
-        .arg("tests/fixtures/floor_window.av")
-        .arg("--backend")
-        .arg("dafny")
-        .arg("-o")
-        .arg(&output_dir)
-        .output()
-        .expect("aver proof should run");
-    assert!(run.status.success(), "{}", format_output(&run));
-    let dfy = std::fs::read_to_string(output_dir.join("FloorWindow.dfy"))
-        .expect("FloorWindow.dfy must be emitted");
-
-    assert!(
-        !dfy.contains("{:axiom}"),
-        "no opaque axiom decline and no assume {{:axiom}} trust escape"
-    );
-    assert!(
-        dfy.contains("decreases if a >= 0 then a else 0"),
-        "floor-halving recursion gets the total guarded measure"
-    );
-    assert!(
-        !dfy.contains("requires a >= 0\n  decreases"),
-        "no synthesized requires on the floor-halving fn"
-    );
-    assert!(
-        !dfy.contains("universal lemma omitted"),
-        "every law must emit a real universal lemma"
-    );
-    // The proved support stack.
-    for needle in [
-        "windowSig_sigWindow__div_lower",
-        "windowSig_sigWindow__div_upper",
-        "windowSig_sigWindow__div_window",
-        "windowSig_sigWindow__exp_window",
-        "windowSig_sigWindow__sig_pos",
-        "windowSig_sigWindow__sig_neg",
-        "widthsAdd_productWindow__pow_add",
-    ] {
-        assert!(dfy.contains(needle), "missing support lemma {needle}");
-    }
-    let _ = std::fs::remove_dir_all(&output_dir);
-}
-
-/// Live Dafny gate for the same cross-domain floor-arithmetic witness as the
-/// Lean structure test above. This pins the Dafny templates as shape-keyed:
-/// a differently named floor wrapper plus commuted factor/remainder layouts
-/// must verify without an axiom escape or sampled-domain fallback.
-#[test]
-fn proof_floor_arith_witness_dafny_verifies() {
-    assert_dafny_verifies(
-        "tests/fixtures/floor_arith_witness.av",
-        "aver-dafny-floor-arith-witness",
-    );
-}
-
 /// The soundness boundary of the recursion class: a floor-division
 /// self-call whose guard chain does NOT imply the shrinking param is
 /// positive must DECLINE (the measure would be wrong at p = 0 —
 /// `0 / 2 == 0` does not decrease), keeping the prior honest
-/// emissions: Lean `partial def`, Dafny opaque `{:axiom}`, laws
-/// omitted. Never guess.
+/// emissions: Lean `partial def`, laws omitted. Never guess.
 #[test]
 fn proof_floor_div_without_positive_guard_declines() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -402,52 +327,6 @@ fn proof_floor_arith_witness_lean_closes_kernel_genuine() {
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&output_dir);
-}
-
-/// Live Dafny gate: the floor-window fixture verifies end-to-end —
-/// 0 errors, 0 `assume {:axiom}` escapes, 0 omitted universals, and
-/// `passed` (an exit-status timeout would surface only there).
-/// Before the fix: 3 errors (positivity, sum homomorphism and the
-/// product window all unprovable from empty bodies) plus the omitted
-/// significand law.
-/// Deliberately budget-only (no `passed` assert): a genuinely broken
-/// support stack surfaces as ERRORS (a false lemma fails its
-/// obligation on every platform), which this catches; prover
-/// wall-clock/resource use is platform-sensitive — this exact file
-/// verifies 156/156 obligations in <= 0.11 s each on macOS while
-/// Linux CI's Z3 build times out, with zero errors either way (same
-/// policy as the nonlinear-wall fixture and the quicksort ceiling).
-/// The platform-independent pin for the feature is the Lean side:
-/// kernel-genuine universal credit, asserted in
-/// `proof_floor_window_lean_closes_kernel_genuine`.
-#[test]
-fn proof_floor_window_dafny_verifies() {
-    assert_dafny_verifies("tests/fixtures/floor_window.av", "aver-dafny-floor-window");
-}
-
-/// The base-10⁹ digit decomposition (`examples/refinement/bigint`)
-/// rides the same validated-measure path: its `digitsOf` floor-div
-/// recursion now emits WITHOUT the synthesized `requires n >= 0`
-/// that poisoned total callers (Dafny) and as a well-founded def
-/// instead of a kernel-opaque `partial def` (Lean). Guards the only
-/// existing corpus file the new recursion class touches.
-///
-/// HONEST budget — the `add_commutative__sample_*` family (operands
-/// at and above 10⁹ — multi-digit carry chains past Z3's symbolic
-/// unfolding appetite) fails IDENTICALLY before and after this change
-/// (measured at the same declarations on the baseline export); the
-/// floor-division graduation neither adds nor removes those errors.
-/// The family is platform-sensitive: 2 fail on macOS, 4 on Linux CI's
-/// Z3 build — the ceiling is the Linux count (same rationale as the
-/// quicksort budget). A count ABOVE it is a real regression.
-#[test]
-fn proof_bigint_floor_div_graduation_dafny() {
-    assert_dafny_verifies_with_budgets(
-        "examples/refinement/bigint/bigint.av",
-        "aver-dafny-bigint-floor",
-        4,
-        0,
-    );
 }
 
 /// Divisor-shape positivity (`tests/fixtures/divisor_shape_positivity.av`): the

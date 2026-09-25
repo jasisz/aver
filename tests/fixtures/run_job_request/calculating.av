@@ -1,0 +1,38 @@
+module Calculating
+    intent = "The answers this program gives to Calc: each square is a Squares job begun here, in place, and the request parks on the job itself, so the process is woken when the job lands. There is no task, started or landed seam: the job is the request."
+    depends [Calc, Squares, Wait, Work]
+    exposes [State, fresh, square]
+    effects [Squares.begin, Squares.take]
+    answers [Calc]
+
+record State
+    jobs: Map<Int, Work.Job>
+
+fn fresh() -> State
+    ? "No job in flight."
+    State(jobs = {})
+
+fn square(state: State, n: Int) -> Tuple<State, Result<Result<Int, String>, Run.Wake>>
+    ? "The first ask for n begins its job and parks on it; every ask after that takes it."
+    ! [Squares.begin, Squares.take]
+    match Map.get(state.jobs, n)
+        Option.None -> begun(state, n, Squares.begin(n))
+        Option.Some(job) -> taken(state, n, job)
+
+fn begun(state: State, n: Int, started: Result<Work.Job, String>) -> Tuple<State, Result<Result<Int, String>, Run.Wake>>
+    ? "A job begun is parked on; a begin that failed answers why."
+    match started
+        Result.Err(why) -> (state, Result.Ok(Result.Err(why)))
+        Result.Ok(job) -> (State.update(state, jobs = Map.set(state.jobs, n, job)), Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+
+fn taken(state: State, n: Int, job: Work.Job) -> Tuple<State, Result<Result<Int, String>, Run.Wake>>
+    ? "A job reported ready that has not finished parks again; a finished one answers and leaves the table."
+    ! [Squares.take]
+    match Squares.take(job)
+        Result.Err(why) -> (State.update(state, jobs = Map.remove(state.jobs, n)), Result.Ok(Result.Err(why)))
+        Result.Ok(found) -> match found
+            Option.None -> (state, Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+            Option.Some(value) -> (State.update(state, jobs = Map.remove(state.jobs, n)), Result.Ok(Result.Ok(value)))
+
+verify begun
+    begun(fresh(), 3, Result.Err("no host")) => (fresh(), Result.Ok(Result.Err("no host")))

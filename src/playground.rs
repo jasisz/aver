@@ -294,10 +294,10 @@ fn crate_parse_entry_call(expr: &str) -> Result<(String, Vec<crate::value::Value
 //
 // Single-file source → backend project files (path → content map).
 // JS receives `{ "<path>": "<content>", ... }` as JSON and zips it
-// in the browser via `buildZip`. Same as what `aver proof --backend
-// {lean,dafny}` and `aver compile --target rust` produce on disk.
+// in the browser via `buildZip`. Same as what `aver proof` and
+// `aver compile --target rust` produce on disk.
 
-/// Single-file pipeline runner shared by proof (Lean/Dafny) and Rust
+/// Single-file pipeline runner shared by proof (Lean) and Rust
 /// target paths. `apply_traversal_lowering` is the proof-vs-runtime
 /// distinction: proof exporters consume source-level IR (interp_lower
 /// + buffer_build off), the Rust target wants the deforested form.
@@ -307,7 +307,7 @@ fn build_ctx(
     apply_traversal_lowering: bool,
 ) -> Result<codegen::CodegenContext, String> {
     let mut items = parse_source(source)?;
-    // Proof exporters (Lean / Dafny) consume source-level IR (no
+    // The proof exporter (Lean) consumes source-level IR (no
     // traversal lowering) AND need ProofIR populated. Rust target
     // wants the deforested form AND skips proof_lower. The two
     // requirements always co-vary in the playground, so the same
@@ -360,14 +360,6 @@ fn build_ctx(
 pub fn proof_lean_files(source: &str) -> Result<HashMap<String, String>, String> {
     let mut ctx = build_ctx(source, false)?;
     let output = codegen::lean::transpile(&mut ctx);
-    Ok(output.files.into_iter().collect())
-}
-
-/// Single-file Aver source → Dafny project files.
-#[cfg(feature = "runtime")]
-pub fn proof_dafny_files(source: &str) -> Result<HashMap<String, String>, String> {
-    let ctx = build_ctx(source, false)?;
-    let output = codegen::dafny::transpile(&ctx);
     Ok(output.files.into_iter().collect())
 }
 
@@ -475,17 +467,6 @@ pub fn proof_lean_files_project(
 ) -> Result<HashMap<String, String>, String> {
     let mut ctx = build_project_ctx(files, entry, false)?;
     let output = codegen::lean::transpile(&mut ctx);
-    Ok(output.files.into_iter().collect())
-}
-
-/// Multi-file Aver project → Dafny project files.
-#[cfg(feature = "runtime")]
-pub fn proof_dafny_files_project(
-    files: &HashMap<String, String>,
-    entry: &str,
-) -> Result<HashMap<String, String>, String> {
-    let ctx = build_project_ctx(files, entry, false)?;
-    let output = codegen::dafny::transpile(&ctx);
     Ok(output.files.into_iter().collect())
 }
 
@@ -975,14 +956,6 @@ mod bindgen {
         serde_json::to_string(&files).map_err(|e| JsError::new(&e.to_string()))
     }
 
-    /// Aver source → Dafny project files (JSON `{path: content}`).
-    /// Maps to `aver proof --backend dafny` on the CLI.
-    #[wasm_bindgen]
-    pub fn aver_proof_dafny(source: &str) -> Result<String, JsError> {
-        let files = super::proof_dafny_files(source).map_err(|e| JsError::new(&e))?;
-        serde_json::to_string(&files).map_err(|e| JsError::new(&e.to_string()))
-    }
-
     /// Aver source → Rust/Cargo project files (JSON `{path: content}`).
     /// Maps to `aver compile --target rust` on the CLI.
     #[wasm_bindgen]
@@ -997,15 +970,6 @@ mod bindgen {
         let files: std::collections::HashMap<String, String> =
             serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
         let out = super::proof_lean_files_project(&files, entry).map_err(|e| JsError::new(&e))?;
-        serde_json::to_string(&out).map_err(|e| JsError::new(&e.to_string()))
-    }
-
-    /// Multi-file Aver project → Dafny project files (JSON).
-    #[wasm_bindgen]
-    pub fn aver_proof_dafny_project(files_json: &str, entry: &str) -> Result<String, JsError> {
-        let files: std::collections::HashMap<String, String> =
-            serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
-        let out = super::proof_dafny_files_project(&files, entry).map_err(|e| JsError::new(&e))?;
         serde_json::to_string(&out).map_err(|e| JsError::new(&e.to_string()))
     }
 
@@ -1131,19 +1095,6 @@ mod tests {
     }
 
     #[test]
-    fn proof_dafny_emits_files_for_simple_source() {
-        let src = "module M\n    intent = \"t\"\n\n\
-                   fn add(a: Int, b: Int) -> Int\n    a + b\n\n\
-                   verify add\n    add(2, 3) => 5\n";
-        let files = proof_dafny_files(src).expect("dafny files");
-        assert!(!files.is_empty(), "Dafny export should produce files");
-        assert!(
-            files.iter().any(|(k, _)| k.ends_with(".dfy")),
-            "should include a .dfy"
-        );
-    }
-
-    #[test]
     fn compile_rust_emits_cargo_project() {
         let src = "module M\n    intent = \"t\"\n\n\
                    fn add(a: Int, b: Int) -> Int\n    a + b\n\n\
@@ -1168,15 +1119,6 @@ mod tests {
             .expect("multi-file Lean export should succeed");
         assert!(!out.is_empty(), "Lean project export should produce files");
         assert!(out.iter().any(|(k, _)| k.ends_with(".lean")));
-    }
-
-    #[test]
-    fn proof_dafny_project_handles_multi_file() {
-        let files = load_rogue_files();
-        let out = proof_dafny_files_project(&files, "main.av")
-            .expect("multi-file Dafny export should succeed");
-        assert!(!out.is_empty(), "Dafny project export should produce files");
-        assert!(out.iter().any(|(k, _)| k.ends_with(".dfy")));
     }
 
     #[test]

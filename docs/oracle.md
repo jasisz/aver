@@ -349,7 +349,7 @@ When a helper's own emissions matter, verify its trace separately.
 
 ## Proof export
 
-`aver proof` lifts classified effectful functions to pure proof functions by adding explicit oracle/capability parameters. Generated Lean and Dafny files start with a trust-assumption header for the runtime/compiler trace invariant.
+`aver proof` lifts classified effectful functions to pure proof functions by adding explicit oracle/capability parameters. Generated Lean files start with a trust-assumption header for the runtime/compiler trace invariant.
 
 Supported law shapes can become universal theorems. Concrete `given` domains still produce executable/sample checks. Unsupported proof shapes should either fail clearly or stay as checked-domain/sample obligations, depending on backend and verify mode.
 
@@ -358,7 +358,7 @@ Supported law shapes can become universal theorems. Concrete `given` domains sti
 A `verify <fn> law` block serves two commands:
 
 - `aver verify` runs it as a **finite sample check**. It enumerates the cartesian product of the `given` domains (capped at 10,000 cases, or whatever `max-cases` the project set for this function) and evaluates each case against the law's RHS with the stubs you supplied.
-- `aver proof` exports the same block as a **universally quantified theorem** in Lean / Dafny. Every classified effect becomes a function parameter, and the law is asserted *for every possible such function*, including ones outside the stubs in `given`.
+- `aver proof` exports the same block as a **universally quantified theorem** in Lean. Every classified effect becomes a function parameter, and the law is asserted *for every possible such function*, including ones outside the stubs in `given`.
 
 The two can give different answers on the same block. The standard example is `examples/formal/randomness_paradox.av`:
 
@@ -379,10 +379,7 @@ verify twoFloatsDistinct law alwaysDistinct
 
 `aver verify` passes. Under `distinctStub` the two calls return `1.0` and `2.0`, and the law's RHS holds.
 
-`aver proof` exports a theorem of the form `∀ rnd, twoFloatsDistinct rnd = true`, and both backends reject it for the same reason. Some oracles (e.g. `fun _ _ => 0.5`) return the same value for both calls, and for them the law is false.
-
-- `--backend lean` + `lake build` → `unsolved goals: (rnd BranchPath.Root 0 != rnd BranchPath.Root 1) = true`
-- `--backend dafny` + `dafny verify` → `a postcondition could not be proved on this return path: ensures twoFloatsDistinct(BranchPath_Root, rnd) == true`
+`aver proof` exports a theorem of the form `∀ rnd, twoFloatsDistinct rnd = true`, and Lean rejects it. Some oracles (e.g. `fun _ _ => 0.5`) return the same value for both calls, and for them the law is false. `lake build` reports `unsolved goals: (rnd BranchPath.Root 0 != rnd BranchPath.Root 1) = true`.
 
 This is intended. `verify` asks "does this hold for the stubs I wrote down?". `proof` asks "does this hold for every classified-effect implementation with the right signature?". The second is strictly stronger and catches what the first cannot.
 
@@ -491,7 +488,7 @@ For effect-side hostile (a `verify <fn> trace` block where an adversarial profil
 >
 > **`when` itself must be pure.** A call like `clock(root, 1)` inside a guard is a *query on the oracle* installed for this case. It is not a runtime effect call, and Aver does not look at the wall clock. The guard asks the same fn that supplies values to the law body.
 >
-> **The word "invariant" covers two different things. Keep them apart.** A user-written `when` is an *oracle assumption*: it belongs to one law, it is local, and the user states it explicitly. The axiom block that `aver proof` emits into Lean / Dafny carries *runtime invariants*: they are global and Aver guarantees them. `Random.int` respects its bounds, `Random.float ∈ [0,1]`, `Time.unixMs ≥ 0`, and `Process.stopRequested` is monotonic across calls (`i ≤ j ∧ stop(path, i) = true` implies `stop(path, j) = true`). The Process law is the first invariant that relates two oracle observations instead of constraining one result. Both kinds feed the proof side at different scopes: `when` covers one law, and axioms hold across the whole project.
+> **The word "invariant" covers two different things. Keep them apart.** A user-written `when` is an *oracle assumption*: it belongs to one law, it is local, and the user states it explicitly. The axiom block that `aver proof` emits into Lean carries *runtime invariants*: they are global and Aver guarantees them. `Random.int` respects its bounds, `Random.float ∈ [0,1]`, `Time.unixMs ≥ 0`, and `Process.stopRequested` is monotonic across calls (`i ≤ j ∧ stop(path, i) = true` implies `stop(path, j) = true`). The Process law is the first invariant that relates two oracle observations instead of constraining one result. Both kinds feed the proof side at different scopes: `when` covers one law, and axioms hold across the whole project.
 
 ```
   origin: effect profile: Time.unixMs/saturated

@@ -338,60 +338,6 @@ fn order_blind_map_laws_still_export() {
     );
 }
 
-/// The Dafny backend refuses the same laws the Lean backend refuses. Dafny's
-/// `MapEntries` is declared with no body, so it commits to no iteration order
-/// and would let an order claim through by saying nothing about it.
-#[test]
-fn dafny_refuses_the_same_iteration_order_laws() {
-    let out_dir = temp_output_dir("aver-map-order-dafny");
-    let run = run_aver(&[
-        "proof",
-        UNMODELLED_FIXTURE,
-        "--backend",
-        "dafny",
-        "-o",
-        out_dir.to_str().expect("utf-8 temp path"),
-    ]);
-    assert!(
-        run.status.success(),
-        "`aver proof --backend dafny` failed:\n{}",
-        format_output(&run)
-    );
-    let dfy = std::fs::read_to_string(out_dir.join("MapOrderUnmodelledKeys.dfy"))
-        .expect("expected the generated Dafny file to exist");
-    let _ = std::fs::remove_dir_all(&out_dir);
-    assert!(
-        dfy.contains(
-            "// Law tupleKeyedValues.valuesFollowIterationOrder: map iteration order is not \
-             exported"
-        ),
-        "Dafny must mirror the Lean refusal or the two backends disagree on the \
-         same source:\n{dfy}"
-    );
-    assert!(
-        dfy.contains(
-            "// Law tupleKeyedKeys.keysFollowIterationOrder: map iteration order is not exported"
-        ),
-        "Dafny must mirror the Lean refusal for non-scalar keys:\n{dfy}"
-    );
-
-    // Plain sampled cases have a gate on the Lean side but nothing to mirror
-    // here: `dafny::emit_verify_blocks` only ever walks `VerifyKind::Law`, so a
-    // `verify` block without a law contributes the function definition and no
-    // claim at all. Pin that, because the day Dafny starts emitting sampled
-    // cases it needs the gate the Lean emitter has.
-    assert!(
-        !dfy.contains("plainTupleKeys()) =="),
-        "Dafny emits no claim for a plain verify case today; if that changed, \
-         `verify_case_map_order_refusal` has to be wired in here too:\n{dfy}"
-    );
-    assert!(
-        dfy.contains("function plainTupleKeys()"),
-        "the plain-case function itself is still emitted — this test would pass \
-         vacuously if the fixture stopped reaching Dafny:\n{dfy}"
-    );
-}
-
 /// The compiled Rust backend emits a key-sorted `Map.values`.
 ///
 /// It used to walk `HashMap::values()` directly while its two neighbours
@@ -689,8 +635,7 @@ fn a_declined_claim_is_named_on_stdout_without_check() {
 /// `--declined-budget` is the acknowledgement, and it is per-pot.
 ///
 /// A refusal you have decided to live with is one flag in a CI file,
-/// reviewable in a diff — the same shape the Dafny omitted-universal path and
-/// `--write-baseline` already have. What it must NOT be is `--sorry-budget`:
+/// reviewable in a diff — the same shape `--write-baseline` already has. What it must NOT be is `--sorry-budget`:
 /// "we tried and failed" and "we refused to try" are different facts, and a
 /// budget granted for an open induction must not quietly license a refusal.
 #[test]

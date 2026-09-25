@@ -202,6 +202,17 @@ impl TypeChecker {
             .map(|m| (m.dep_name.clone(), m.items.clone()))
             .collect();
         self.module_type_exports = crate::visibility::collect_module_type_exports(&pairs);
+        for module in modules {
+            let Some(decl) = Self::module_decl(&module.items) else {
+                continue;
+            };
+            for capability in &decl.answers {
+                let pair = (capability.clone(), module.dep_name.clone());
+                if !self.program_answers.contains(&pair) {
+                    self.program_answers.push(pair);
+                }
+            }
+        }
     }
 
     /// Names visible at an importer boundary: explicit dependencies plus

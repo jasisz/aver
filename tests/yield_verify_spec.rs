@@ -24,8 +24,11 @@ fn invoke(dir: &Path, command: &str, args: &[&str]) -> Output {
 fn edited_fixture(edit: impl FnOnce(String) -> String) -> tempfile::TempDir {
     let source = repo_root().join("tests/fixtures/yield_verify_stubs");
     let dir = tempfile::tempdir().unwrap();
-    for name in ["main.av", "pool.av", "pooled.av", "aver.toml"] {
-        std::fs::copy(source.join(name), dir.path().join(name)).unwrap();
+    for entry in std::fs::read_dir(&source).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            std::fs::copy(&path, dir.path().join(path.file_name().unwrap())).unwrap();
+        }
     }
     let main = dir.path().join("main.av");
     std::fs::write(&main, edit(std::fs::read_to_string(&main).unwrap())).unwrap();
@@ -142,7 +145,7 @@ fn a_process_loop_obeys_the_budget_named_after_the_source_function() {
         )
     });
     let config = dir.path().join("aver.toml");
-    let original = std::fs::read_to_string(&config).unwrap();
+    let original = std::fs::read_to_string(&config).unwrap_or_default();
     std::fs::write(config, format!("{original}\n[verify]\nstep-limit = 1000\n\n[[verify.costly]]\nfn = \"forever\"\nstep-limit = 2000\nreason = \"Exercise the process case budget\"\n")).unwrap();
     let out = invoke(dir.path(), "verify", &[]);
     assert!(!out.status.success(), "{}", format_output(&out));
@@ -168,7 +171,7 @@ fn a_process_without_requests_can_finish_and_unit_results_can_be_verified() {
 }
 
 #[test]
-fn coordinator_cases_pin_service_order_turn_groups_and_late_job_observations() {
+fn coordinator_cases_pin_service_order_seating_and_the_settled_gate() {
     let dir = repo_root().join("tests/fixtures/run_schedule_cases");
     for args in [vec![], vec!["--hostile"]] {
         let out = invoke(&dir, "verify", &args);
@@ -176,10 +179,15 @@ fn coordinator_cases_pin_service_order_turn_groups_and_late_job_observations() {
         let text = String::from_utf8_lossy(&out.stdout);
         for label in [
             "serveGroups",
-            "observeJob",
-            "observeCancelled",
-            "historyObservation",
-            "historyJobLimit",
+            "seating",
+            "retiring",
+            "negativeDeadline",
+            "settledWakes",
+            "__settleLeft law lateAnswerIsDropped",
+            "__settleLeft law lateAnswerIsCounted",
+            "__park law anErrKeepsTheInstance",
+            "__deadlinePassed law aDeadlineThatHasPassedFires",
+            "__moved law aSettledAnswerMovesNoVersion",
         ] {
             assert!(text.contains(label), "{text}");
         }
@@ -195,13 +203,7 @@ fn coordinator_laws_are_universal_beside_the_vm_schedule_scenarios() {
     }
     let fixture = repo_root().join("tests/fixtures/run_schedule_cases");
     let source = tempfile::tempdir().unwrap();
-    for name in [
-        "main.av",
-        "ledger.av",
-        "inbox.av",
-        "scoring.av",
-        "aver.toml",
-    ] {
+    for name in ["main.av", "ledger.av", "inbox.av"] {
         std::fs::copy(fixture.join(name), source.path().join(name)).unwrap();
     }
     // The cases exercise VM resource stubs. Export every function and law
@@ -246,7 +248,7 @@ fn coordinator_laws_are_universal_beside_the_vm_schedule_scenarios() {
     )
     .unwrap();
     assert_eq!(summary["universal"], true, "{summary}");
-    assert_eq!(summary["universal_laws"], 25, "{summary}");
+    assert_eq!(summary["universal_laws"], 8, "{summary}");
     assert_eq!(summary["bounded_laws"], 0, "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
@@ -256,19 +258,13 @@ fn coordinator_laws_are_universal_beside_the_vm_schedule_scenarios() {
 fn proof_export_refuses_process_cases_before_emitting_a_different_oracle_model() {
     let dir = repo_root().join("tests/fixtures/yield_verify_stubs");
     let target = tempfile::tempdir().unwrap();
-    for backend in ["lean", "dafny"] {
-        let out = invoke(
-            &dir,
-            "proof",
-            &["--backend", backend, "-o", target.path().to_str().unwrap()],
-        );
-        assert!(!out.status.success(), "{}", format_output(&out));
-        assert!(
-            format_output(&out).contains("dynamic Oracle counter"),
-            "{}",
-            format_output(&out)
-        );
-    }
+    let out = invoke(&dir, "proof", &["-o", target.path().to_str().unwrap()]);
+    assert!(!out.status.success(), "{}", format_output(&out));
+    assert!(
+        format_output(&out).contains("dynamic Oracle counter"),
+        "{}",
+        format_output(&out)
+    );
 }
 
 #[test]

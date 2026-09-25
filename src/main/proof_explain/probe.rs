@@ -110,6 +110,8 @@ pub(super) fn attach(
             let end = (start + 1..lines.len())
                 .find(|&i| {
                     marker(lines[i]).is_some()
+                        || lines[i]
+                            .starts_with(aver::codegen::lean::isolate::ISOLATION_GUARD_PREFIX)
                         || lines[i].starts_with("theorem ")
                         || lines[i].starts_with("private theorem ")
                         || lines[i].starts_with("end ")

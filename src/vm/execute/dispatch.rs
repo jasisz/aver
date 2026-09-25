@@ -31,6 +31,12 @@ macro_rules! read_i16 {
     ($code:expr, $ip:expr) => {{ read_u16!($code, $ip) as i16 }};
 }
 
+/// A relative jump or match-fail offset: a big-endian `i32`, so a forward
+/// jump over a function body larger than 32 KiB is still a forward jump.
+macro_rules! read_jump {
+    ($code:expr, $ip:expr) => {{ read_u32!($code, $ip) as i32 }};
+}
+
 macro_rules! read_u32 {
     ($code:expr, $ip:expr) => {{
         let b0 = $code[$ip] as u32;
@@ -421,7 +427,7 @@ impl VM {
                     // sequence (DUP/LOAD_CONST/EQ/JUMP_IF_FALSE) it
                     // replaces.
                     let imm = read_i64!(code, ip);
-                    let offset = read_i16!(code, ip);
+                    let offset = read_jump!(code, ip);
                     let subject = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     // A literal pattern is an `i64`; a ℤ-overflow subject can
                     // never equal it, so match only when the subject's value
@@ -513,12 +519,12 @@ impl VM {
                 }
 
                 JUMP => {
-                    let offset = read_i16!(code, ip);
+                    let offset = read_jump!(code, ip);
                     ip = (ip as isize + offset as isize) as usize;
                 }
 
                 JUMP_IF_FALSE => {
-                    let offset = read_i16!(code, ip);
+                    let offset = read_jump!(code, ip);
                     let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     if val.is_bool() && !val.as_bool() {
                         ip = (ip as isize + offset as isize) as usize;
@@ -1870,7 +1876,7 @@ impl VM {
 
                 MATCH_VARIANT => {
                     let expected_ctor = read_u16!(code, ip) as u32;
-                    let offset = read_i16!(code, ip);
+                    let offset = read_jump!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     if self.variant_ctor_id_vm(top) != Some(expected_ctor) {
                         ip = (ip as isize + offset as isize) as usize;
@@ -1879,7 +1885,7 @@ impl VM {
 
                 MATCH_UNWRAP => {
                     let kind = read_u8!(code, ip);
-                    let offset = read_i16!(code, ip);
+                    let offset = read_jump!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     let matches = match kind {
                         0 => top.is_ok(),
@@ -2594,7 +2600,7 @@ impl VM {
                 }
 
                 MATCH_NIL => {
-                    let offset = read_i16!(code, ip);
+                    let offset = read_jump!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     let is_nil = top.is_list() && self.arena.list_is_empty_value(top);
                     if !is_nil {
@@ -2603,7 +2609,7 @@ impl VM {
                 }
 
                 MATCH_CONS => {
-                    let offset = read_i16!(code, ip);
+                    let offset = read_jump!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     let is_cons = top.is_list() && !self.arena.list_is_empty_value(top);
                     if !is_cons {
@@ -2641,7 +2647,7 @@ impl VM {
 
                 MATCH_TUPLE => {
                     let expected_len = read_u8!(code, ip) as usize;
-                    let offset = read_i16!(code, ip);
+                    let offset = read_jump!(code, ip);
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     let matches = top.is_tuple()
                         && self.arena.get_tuple(top.arena_index()).len() == expected_len;
@@ -2720,7 +2726,7 @@ impl VM {
                     const TAG_MASK_FULL: u64 = 0xFFFF_C000_0000_0000;
 
                     let count = read_u8!(code, ip) as usize;
-                    let default_offset = read_i16!(code, ip);
+                    let default_offset = read_jump!(code, ip);
                     let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let bits = val.bits();
 

@@ -1,7 +1,6 @@
 //! Stage 8 of #232: Lean emit for `ProofStrategy::WrapperOverRecursion`.
 //!
-//! Mirror of the Dafny support-stack emit in `dafny::toplevel`. The IR
-//! pin gives us `(wrapper_fn, inner_fn, other_fn, combine_op, driver,
+//! The IR pin gives us `(wrapper_fn, inner_fn, other_fn, combine_op, driver,
 //! combine_fn)` — enough to render the accumulator-decomposition aux
 //! lemma plus the main universal lemma.
 //!

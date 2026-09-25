@@ -33,7 +33,7 @@ research closest to Aver's design choices.
   Recursive and Impure Programs in Coq** (POPL 2020). Interaction trees model
   impure recursive programs inside a proof assistant as uninterpreted events
   plus interpreters. Aver takes a narrower route. It lifts classified effects
-  to explicit oracle parameters and structured traces for Lean/Dafny export.
+  to explicit oracle parameters and structured traces for Lean export.
   https://doi.org/10.1145/3371119
 
 ## Capabilities and External Resources
@@ -70,11 +70,6 @@ research closest to Aver's design choices.
   von Raumer, **The Lean Theorem Prover (System Description)** (CADE 2015).
   Lean is the target Aver exports proofs to for kernel checking.
   https://doi.org/10.1007/978-3-319-21401-6_26
-
-- K. Rustan M. Leino, **Dafny: An Automatic Program Verifier for Functional
-  Correctness** (LPAR 2010). Dafny is Aver's SMT-backed automated verification
-  target for `aver proof --backend dafny`.
-  https://doi.org/10.1007/978-3-642-17511-4_20
 
 ## Proof Method Lineage
 

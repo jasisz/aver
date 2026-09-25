@@ -1,0 +1,13 @@
+module OwnerNamesEntry
+    intent =
+        "A leaf entry that proves the laws of the module it depends on: those"
+        "laws must name the functions of their own module, not of the entry."
+    depends [Checked]
+    effects []
+
+fn twiceChecked(x: Int) -> Result<Int, String>
+    ? "The dependency's wrapper, called from the entry."
+    Checked.checked(x)
+
+verify twiceChecked
+    twiceChecked(2) => Result.Ok(4)

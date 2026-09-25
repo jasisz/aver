@@ -1221,15 +1221,13 @@ fn bridge_law_lean_names(
 }
 
 /// Earlier sibling laws eligible to be CITED into THIS law's tight decomposition
-/// (Engine B). The Lean sibling of the Dafny `eligible_cites`: the same
-/// `LawProofCone` ∪ subject ∪ lhs-rooted gate as [`earlier_law_lemmas`], but
+/// (Engine B): the same `LawProofCone` ∪ subject ∪ lhs-rooted gate as [`earlier_law_lemmas`], but
 /// returning the cited law's [`VerifyLaw`] alongside its Lean theorem name, so
 /// the instantiation engine ([`compute_instantiations`]) can derive the exact
 /// application arguments and the rung can name the `have`-fact. In-file siblings
 /// only — the cross-file dep pool would need namespace-qualified theorem names
 /// the tight rung does not yet render. Unconditional (`when.is_none`) universal-
-/// form laws only; the per-declaration `#print axioms` gate keeps soundness, so
-/// the dafny-only opaque/native-mutual/oracle filters are not mirrored here.
+/// form laws only; the per-declaration `#print axioms` gate keeps soundness.
 fn earlier_law_cites(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1397,7 +1395,7 @@ fn qualify_module_calls(law: &VerifyLaw, module: &crate::codegen::ModuleInfo) ->
 }
 
 /// Render a computed instantiation argument (from `cite_instantiate`) to a Lean
-/// TERM — the mirror of the Dafny `render_dafny_arg`. The induction placeholders
+/// TERM. The induction placeholders
 /// map to the `| cons head tail ih` binders, `List.concat` to `++`, and a fn
 /// call to a space-separated application; every compound form (a call, a `++`, a
 /// constructor application) is parenthesized as a whole, so each rendered arg is
@@ -1510,7 +1508,7 @@ fn render_lean_literal(lit: &crate::ast::Literal) -> String {
 /// ```
 ///
 /// instead of the fat `first | (simp…) | (induction…) | sorry` portfolio.
-/// Soundness rides on the same fail-closed guarantee as Dafny: each `have` is a
+/// Soundness rides on a fail-closed guarantee: each `have` is a
 /// type-checked instance of a kernel-proven sibling theorem, and the
 /// per-declaration `#print axioms` gate downstream flips `universal:false` on any
 /// `sorry`. Returns the two arm bodies — the `nil` simp-set and the `cons` arm
@@ -2111,11 +2109,11 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
         collect_called_dotted(when, &mut premise_fns);
     }
     guards.retain(|g| !premise_fns.contains(g));
-    let mut unfold = vec![super::shared::entry_qualified_lean_name(ctx, &vb.fn_name)];
+    let mut unfold = vec![super::shared::owner_qualified_lean_name(ctx, &vb.fn_name)];
     unfold.extend(
         guards
             .iter()
-            .map(|g| super::shared::entry_qualified_lean_name(ctx, g)),
+            .map(|g| super::shared::owner_qualified_lean_name(ctx, g)),
     );
     let unfold_set = unfold.join(", ");
     // Subject (+ derived guard predicate) unfold; the premises (decomposed by
@@ -4059,6 +4057,14 @@ fn emit_list_induction(
     // TWO ladders: ladderA over the committed-only set WITHOUT sorry (so it
     // THROWS on an open arm and `first` falls through) and ladderB over the
     // committed + Forward-sibling set WITH sorry (the honest building floor).
+    let subject_lean = super::shared::simp_def_name(ctx, &vb.fn_name);
+    // Earlier laws cited as rewrite rules (no reversed ones: those are unfold
+    // rules, not facts to apply).
+    let cited_laws: Vec<String> = fast_simp
+        .iter()
+        .filter(|e| !e.starts_with("← "))
+        .cloned()
+        .collect();
     let mk_arms = |arm_simp: &str,
                    arm_split: &str,
                    bridges: Option<&str>,
@@ -4140,6 +4146,37 @@ fn emit_list_induction(
         // arm an equality between two open Bool terms, which none of the
         // arithmetic rungs above can touch. See `super::bool_bridge_rungs`.
         let bool_bridge = super::bool_bridge_rungs("", arm_simp);
+        // Subject first: unfold the subject once at the cons cell and split
+        // its own `if` / match BEFORE anything else is simplified. Every rung
+        // above runs `simp_all` over the whole goal first, which leaves a cone
+        // fn folded around the subject's `if` and, in a branch where the
+        // condition is an equality, substitutes it into the hypotheses so the
+        // induction hypothesis no longer matches. Here each branch is rewritten
+        // with `simp only` (the cone's equations and `ih`, nothing from the
+        // context), the remaining conditionals are split and `omega` closes.
+        // Tried last, so a law that closed before keeps its proof.
+        let subject_split = format!(
+            " | (rw [{subject_lean}]; split <;> simp only [{arm_simp}, ih] <;> (repeat' split) <;> omega)"
+        );
+        // Cited laws before unfolding: unfold the subject once, then let
+        // `simp_all` use the cited laws and the induction hypothesis with
+        // every other cone fn still folded. A cited law about a
+        // non-recursive head (`ok (push x xs)` under `ok xs`) only matches
+        // while that head is folded; the rungs above unfold it first and
+        // leave the law unused. Emitted only when this ladder cites laws.
+        let arm_cites: Vec<&str> = cited_laws
+            .iter()
+            .map(String::as_str)
+            .filter(|law| arm_simp.split(", ").any(|entry| entry == *law))
+            .collect();
+        let cited_first = if arm_cites.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " | (rw [{subject_lean}]; simp_all [{}]; done)",
+                arm_cites.join(", ")
+            )
+        };
         let tail = if with_sorry { " | sorry" } else { "" };
         (
             format!(
@@ -4157,7 +4194,7 @@ fn emit_list_induction(
             // non-closing arm still degrades to the honest `sorry`. Sound, so it
             // can only ADD closures.
             format!(
-                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{second_cases_cons}{congr_cons}{bool_bridge}{tail}"
+                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){cases_extra_branch}{split_extra_branch}{second_cases_cons}{congr_cons}{bool_bridge}{subject_split}{cited_first}{tail}"
             ),
         )
     };

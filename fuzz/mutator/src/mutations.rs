@@ -770,8 +770,7 @@ fn reverse_match_arms<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
 /// preserves source order in the literal initialiser, so the
 /// rotation exercises insertion-order paths in the Map builder
 /// (hash-table chunking on the WASM/Rust backends, Finset
-/// canonicalisation on the Lean proof backend, set-literal flatten
-/// on Dafny). Strategies #2–#3 (`inject-err` / `remove-err`)
+/// canonicalisation on the Lean proof backend). Strategies #2–#3 (`inject-err` / `remove-err`)
 /// cover the Result-value shake; this one covers the Map-value
 /// shake that no current strategy touches.
 fn shift_map_literal_entries<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {

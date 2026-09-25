@@ -26,7 +26,9 @@ pub(super) fn generate(
     sources: &[FnDef],
     protocols: &mut [ProcessProtocol],
     fn_sigs: &FnSigs,
+    type_spellings: &super::TypeSpellings,
     imported: &HashMap<String, ProcessProtocol>,
+    is_entry: bool,
 ) -> Result<Vec<TopLevel>, Vec<crate::types::checker::TypeError>> {
     let mut generated = Vec::new();
     let segments: Vec<_> = items
@@ -57,11 +59,13 @@ pub(super) fn generate(
                 })
         });
         // Library processes carry their source observer in their own module,
-        // where private helpers and private layouts retain their original scope.
-        if !requested
-            && !(exposes.contains(&protocol.fn_name)
-                || (exposes.is_empty() && !protocol.fn_name.starts_with('_')))
-        {
+        // where private helpers and private layouts retain their original scope,
+        // so an importer's law can cite it. The entry module has no importer:
+        // its observers are generated only when one of its own laws cites
+        // them, which keeps them out of every program that states no such law.
+        let exported = exposes.contains(&protocol.fn_name)
+            || (exposes.is_empty() && !protocol.fn_name.starts_with('_'));
+        if !requested && (is_entry || !exported) {
             continue;
         }
         let model = Model::new(
@@ -69,6 +73,7 @@ pub(super) fn generate(
             sources,
             &segments,
             fn_sigs,
+            type_spellings,
             imported,
             &local_protocols,
             items,
@@ -114,6 +119,30 @@ pub(super) fn generate(
     Ok(generated)
 }
 
+/// The one type the checker stamped on every call of `operation` in these
+/// functions, when they all agree.
+fn stamped_answer<'f>(functions: impl Iterator<Item = &'f FnDef>, operation: &str) -> Option<Type> {
+    let mut seen: Vec<Type> = Vec::new();
+    for fd in functions {
+        for stmt in fd.body.stmts() {
+            let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
+            crate::codegen::expr_walk::walk(expr, &mut |e| {
+                if let Expr::FnCall(callee, _) = &e.node
+                    && build::dotted_name(callee).as_deref() == Some(operation)
+                    && let Some(ty) = e.ty()
+                    && !seen.contains(ty)
+                {
+                    seen.push(ty.clone());
+                }
+            });
+        }
+    }
+    match seen.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
+}
+
 struct Model<'a> {
     protocol: &'a ProcessProtocol,
     sources: &'a [FnDef],
@@ -129,11 +158,13 @@ struct Model<'a> {
 }
 
 impl<'a> Model<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         protocol: &'a ProcessProtocol,
         sources: &'a [FnDef],
         segments: &'a [FnDef],
         fn_sigs: &'a FnSigs,
+        type_spellings: &super::TypeSpellings,
         imported: &'a HashMap<String, ProcessProtocol>,
         local_protocols: &'a [ProcessProtocol],
         items: &'a [TopLevel],
@@ -163,11 +194,21 @@ impl<'a> Model<'a> {
                     while kinds.iter().any(|k| k.name == name) {
                         name.push('_');
                     }
+                    // What the source observes is what the checker stamped
+                    // on the call, which can be narrower than the operation's
+                    // declared result: `Random.int` with literal bounds is an
+                    // `Int`, not a `Result`. The declared one stands when the
+                    // calls disagree or none was stamped.
+                    let answer = stamped_answer(sources.iter().chain(segments), &effect.node)
+                        .unwrap_or_else(|| ret.clone());
                     kinds.push(super::ProtocolKind {
                         name,
                         operation: Some(effect.node.clone()),
-                        arg_types: params.iter().map(|ty| ty.display()).collect(),
-                        answer_type: Some(ret.display()),
+                        arg_types: params
+                            .iter()
+                            .map(|ty| super::spell_type(ty, type_spellings))
+                            .collect(),
+                        answer_type: Some(super::spell_type(&answer, type_spellings)),
                         state: String::new(),
                         answer_fn: String::new(),
                         variants: vec![],

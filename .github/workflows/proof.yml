@@ -1,20 +1,18 @@
 name: Proof
 
-# Nightly proof-export gate. `tests/proof_spec.rs` emits Lean
-# (`aver proof <example> --target lean` → `lake build`) and Dafny
-# (`aver proof --backend dafny` → `dafny verify`) on the real
-# `examples/formal/` corpus. The job installs both toolchains and
-# partitions proof-export test cases with nextest — the
-# Dafny arm is conditional on `dafny --version` succeeding, so
-# whether we install it here is the only thing standing between
-# "tested" and "silently skipped".
+# Proof-export gate. `tests/proof_spec.rs` emits Lean
+# (`aver proof <example>` → `lake build`) on the real
+# `examples/formal/` corpus. The job installs the Lean toolchain and
+# partitions proof-export test cases with nextest — the Lean arms are
+# conditional on `lake --version` succeeding, so whether we install it
+# here is the only thing standing between "tested" and "silently
+# skipped".
 #
-# Runs per-PR AND nightly. A proof-codegen / proof-metric drift —
-# e.g. the platform-sensitive quicksort Dafny error count (#342) —
-# is caught at PR time, not only on the next morning's nightly. The
-# per-PR run pays the Lean + Dafny toolchain install up front (the
-# reason this was nightly-only before); the nightly stays to verify
-# the tip of main against toolchain / Z3-image bumps no PR touches.
+# Runs per-PR AND nightly. A proof-codegen / proof-metric drift is
+# caught at PR time, not only on the next morning's nightly. The
+# per-PR run pays the Lean toolchain install up front (the reason
+# this was nightly-only before); the nightly stays to verify the tip
+# of main against toolchain bumps no PR touches.
 
 on:
   # Per-PR + main-push so a proof-codegen / proof-metric drift is
@@ -25,7 +23,7 @@ on:
     branches: [main]
   schedule:
     # 03:00 UTC daily — still runs against the tip of main (catches
-    # toolchain / Z3-image bumps that no PR touches), same as fuzz
+    # toolchain bumps that no PR touches), same as fuzz
     # nightly.
     - cron: '0 3 * * *'
   workflow_dispatch:
@@ -44,7 +42,7 @@ jobs:
     if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
     # The monolithic job timed out after 30 minutes on PR #1370 with no
     # failing case. Partition test cases (not files) so the large proof_spec
-    # binary spreads across runners without dropping either verifier.
+    # binary spreads across runners.
     strategy:
       fail-fast: false
       matrix:
@@ -86,8 +84,7 @@ jobs:
       - name: Verify `lake` reachable and materialize the pinned toolchain
         # The first lake/lean invocation lazily fetches a toolchain from
         # releases.lean-lang.org; that download has no built-in retry and fails
-        # on transient network blips (the same failure mode the Dafny arm
-        # already hardens against with `curl --retry`).
+        # on transient network blips.
         #
         # `lake --version` only warms the *default* toolchain that elan was
         # installed with. The reserved-token probe below runs Lean at the
@@ -120,61 +117,10 @@ jobs:
         # this job is the only place the tripwire can actually fire.
         run: cargo test -p aver-lang --lib -- reserved_snapshot_covers_pinned_lean_token_table
 
-      - name: Install Dafny
-        # Manual download of the self-contained (62 MB — bundles its own
-        # .NET runtime and Z3) Dafny release zip, replacing
-        # dafny-lang/setup-dafny-action. Two reasons:
-        #   1. Robustness. The action's internal 3x retry gave up after
-        #      ~40s on a transient GitHub-releases CDN 504 and failed the
-        #      nightly; `curl --retry 6 --retry-all-errors` rides a
-        #      multi-minute CDN blip instead.
-        #   2. Node-20 EOL. The action is pinned at v1.9.1 (no newer
-        #      release) and its internal setup-node@v4 / setup-dotnet@v4
-        #      are Node-20 only — GitHub force-migrates those to Node-24
-        #      on 2026-06-16 and removes Node-20 on 2026-09-16. A self-
-        #      contained zip needs no dotnet, so a plain download + PATH
-        #      sidesteps the whole chain.
-        # The next step double-checks the install via `dafny --version`
-        # (which `tests/proof_spec.rs` also gates the Dafny arms on). Keep
-        # the version in lockstep with the macOS Homebrew Dafny local
-        # contributors use so `cargo test --test proof_spec` behaves
-        # identically dev + CI (4.11.0 closes quicksort + rle within the
-        # 5-budget where 4.9.0 left 2 undischarged).
-        env:
-          DAFNY_VERSION: '4.11.0'
-        run: |
-          set -euo pipefail
-          url="https://github.com/dafny-lang/dafny/releases/download/v${DAFNY_VERSION}/dafny-${DAFNY_VERSION}-x64-ubuntu-22.04.zip"
-          curl -fSL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o /tmp/dafny.zip "$url"
-          unzip -q /tmp/dafny.zip -d "$HOME/dafny-install"
-          dafny_dir="$(dirname "$(find "$HOME/dafny-install" -name dafny -type f | head -1)")"
-          chmod +x "$dafny_dir/dafny" || true
-          echo "$dafny_dir" >> "$GITHUB_PATH"
-
-      - name: Verify `dafny` reachable
-        run: dafny --version
-
-      - name: Check the Dafny prelude against the installed Dafny
-        if: matrix.shard == 1
-        # Same shape as the Lean reserved-token step above: a guard test in
-        # src/codegen/dafny/mod.rs feeds every helper block to `dafny
-        # verify` at once and skips silently when `dafny` is not on PATH.
-        # No other lane runs the lib tests with Dafny installed, and no
-        # export fixture reaches the blocks nothing in the corpus triggers,
-        # so this job is the only place the tripwire can fire.
-        run: |
-          out=$(cargo test -p aver-lang --lib -- every_dafny_helper_block_verifies_together 2>&1)
-          echo "$out"
-          # `cargo test` exits 0 when the filter matches nothing, which would
-          # silently retire the only lane that runs the prelude through a real
-          # `dafny verify`. Require the test to have actually run.
-          echo "$out" | grep -q "test result: ok. 1 passed" || { echo "guard test did not run"; exit 1; }
-
       - name: Run proof-export tests
         # Restricting to these targets keeps this job short (no overlap
-        # with the lib / wasm / bench jobs). Lean and Dafny arms are
-        # interleaved inside individual #[test] fns; the test harness
-        # picks whichever toolchains are on PATH.
+        # with the lib / wasm / bench jobs). The Lean arms skip themselves
+        # when `lake` is not on PATH.
         #
         # `map_iteration_order` is here for the tests that need a real
         # verifier run: the export-refusal accounting (does a declined
@@ -188,9 +134,10 @@ jobs:
         run: cargo nextest run -p aver-lang --test proof_spec --test map_iteration_order --test yield_module_helpers_spec --partition slice:${{ matrix.shard }}/4
 
   proof-export:
-    # Keep the existing check name. A failed, cancelled or skipped shard
-    # must fail this aggregate even when its siblings passed.
-    name: Proof Export (Lean + Dafny)
+    # Keep the existing check name: branch protection requires it by name,
+    # so renaming it is a separate settings change. A failed, cancelled or
+    # skipped shard must fail this aggregate even when its siblings passed.
+    name: Proof Export (Lean)
     runs-on: ubuntu-latest
     needs: [proof-lanes]
     if: always() && (github.event_name != 'schedule' || github.repository == 'jasisz/aver')

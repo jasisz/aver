@@ -230,7 +230,7 @@ fn clear_owned_param_borrows(name: &str, mask: &mut [bool], ctx: &CodegenContext
     let Some(mir_fn) = ctx.mir_program.as_ref().and_then(|p| p.fn_by_id(fn_id)) else {
         return;
     };
-    let owned = super::from_mir::owned_collection_param_names(mir_fn, &rfd.params);
+    let owned = super::from_mir::owned_collection_param_names(mir_fn, &rfd.params, ctx);
     if owned.is_empty() {
         return;
     }

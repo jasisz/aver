@@ -725,14 +725,28 @@ pub(super) fn emit_module_with(
     // that calls into an unregistered `__eq_Item`. Keys of `Map<K,_>`
     // need the same: maps.rs `emit_eq_for(K)` reaches into
     // `__eq_<X>` helpers when K is a record/sum field-of-field.
+    //
+    // A list or vector helper dispatches its element's eq only when it has
+    // an eq slot at all, which `list_eq_kind` decides once for both. The
+    // registry also lists element types nothing compares — every tuple
+    // gets an eager `List<Tuple<..>>` in case `List.zip` builds one — and
+    // seeding such an element would demand an `__eq_` helper for a carrier
+    // whose inner type has no equality (an answer module's state holding a
+    // provider's resource), which then fails to emit. An element no helper compares is no
+    // demand; a real comparison of it still registers its own helper at the
+    // comparison and fails there.
     let mut nominal_seed: Vec<String> = Vec::new();
     for canonical in &registry.list_order {
-        if let Some(elem) = super::types::TypeRegistry::list_element_type(canonical) {
+        if let Some(elem) = super::types::TypeRegistry::list_element_type(canonical)
+            && super::lists::element_dispatches_eq(elem, &registry)
+        {
             nominal_seed.push(elem.trim().to_string());
         }
     }
     for canonical in &registry.vector_order {
-        if let Some(elem) = super::types::TypeRegistry::vector_element_type(canonical) {
+        if let Some(elem) = super::types::TypeRegistry::vector_element_type(canonical)
+            && super::lists::element_dispatches_eq(elem, &registry)
+        {
             nominal_seed.push(elem.trim().to_string());
         }
     }

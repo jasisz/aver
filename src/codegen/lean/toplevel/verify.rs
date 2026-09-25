@@ -785,8 +785,7 @@ fn emit_verify_law_block(
     };
     // Oracle v1: rewrite calls to effectful fns in the law body so
     // they target the lifted form (see commit history in
-    // `codegen/common.rs` / `codegen/dafny/toplevel.rs` for the
-    // discovery that motivated this). Lemma body uses lemma-local
+    // `codegen/common.rs` for the discovery that motivated this). Lemma body uses lemma-local
     // bindings; sample assertions use the concrete stub values.
     let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         &law.lhs,
@@ -2276,8 +2275,7 @@ pub(in crate::codegen::lean) fn law_theorem_prop(
     // of lifted givens' refinement invariants — otherwise stronger /
     // orthogonal user predicates would be silently lost from the
     // emitted theorem (e.g. `when a >= 10` over `a : Natural` whose
-    // invariant is `a.val >= 0`). Same identity check the Dafny
-    // backend uses.
+    // invariant is `a.val >= 0`).
     if let Some(when_expr) = when_template
         && !when_redundant_with_lifts
     {

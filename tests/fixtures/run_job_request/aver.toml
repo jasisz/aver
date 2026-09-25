@@ -1,0 +1,9 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Squares"
+work = "Maths.square"
+
+[work]
+max-jobs = 1

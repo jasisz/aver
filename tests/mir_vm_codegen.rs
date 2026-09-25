@@ -632,3 +632,25 @@ fn corpus_hello_compiles_through_the_mir_walker() {
         "examples/core/hello.av should compile its `main` chunk"
     );
 }
+
+/// A forward jump over more than 32 KiB of bytecode lands where it points.
+/// Offsets used to be sixteen bits: a long first arm wrapped the jump over it
+/// into a backward jump, and the VM indexed far outside the function body.
+/// Generated trace laws reach that size, so a function body is allowed to.
+#[test]
+fn a_jump_over_a_function_body_larger_than_32k_lands_correctly() {
+    let n = 30000;
+    let elems = vec!["x"; n].join(", ");
+    // The Bool match skips its long first arm with JUMP_IF_FALSE; the list
+    // match skips it with MATCH_NIL's fail offset.
+    let src = format!(
+        "fn big(x: Int) -> List<Int>\n    match x > 0\n        true -> [{elems}]\n        false -> []\n\n\
+         fn size(x: Int) -> Int\n    List.len(big(x))\n\n\
+         fn bigList(xs: List<Int>, x: Int) -> List<Int>\n    match xs\n        [] -> [{elems}]\n        [_, ..rest] -> rest\n\n\
+         fn listSize(k: Int) -> Int\n    match k > 0\n        true -> List.len(bigList([k], k))\n        false -> List.len(bigList([], k))\n"
+    );
+    assert_eq!(run_mir(&src, "size", &[0]), Value::int(0));
+    assert_eq!(run_mir(&src, "size", &[1]), Value::int(n as i64));
+    assert_eq!(run_mir(&src, "listSize", &[1]), Value::int(0));
+    assert_eq!(run_mir(&src, "listSize", &[0]), Value::int(n as i64));
+}

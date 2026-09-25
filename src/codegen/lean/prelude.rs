@@ -451,6 +451,72 @@ def low (x w : Int) : Int := x % 2 ^ w.toNat
 @[simp] theorem neg_complement_involution (x : Int) : -(-x - 1) - 1 = x := by
   omega
 
+/-! Masks. A law that masks with a literal (`Bits.and(x, 128)`) is read through
+    `Nat`: split on the sign of `x`, rewrite `and` with `and_of_nonneg` or
+    `and_of_neg`, then take the mask apart into single bits (`nat_land_bit`)
+    and low runs (`nat_land_low`), splitting a composite mask at a run
+    boundary with `nat_land_split`. What is left is `/` and `%` by literals,
+    which `omega` decides. Core Lean only. -/
+
+/-- A nonnegative number masked by a nonnegative literal mask is the `Nat`
+    conjunction of the two. -/
+theorem and_of_nonneg (a m : Int) (M : Nat) (hM : m = M) (ha : 0 ≤ a) :
+    AverBits.and a m = ((a.toNat &&& M : Nat) : Int) := by
+  subst hM
+  have hm : ¬ ((M : Int) < 0) := by omega
+  have hna : ¬ (a < 0) := by omega
+  simp only [AverBits.and, AverBits.mag, hm, hna, ite_false, Int.toNat_natCast, Nat.land_eq]
+
+/-- A negative number masked by a nonnegative literal mask: the mask minus the
+    mask bits the complement `-a - 1` carries. -/
+theorem and_of_neg (a m : Int) (M : Nat) (hM : m = M) (ha : a < 0) :
+    AverBits.and a m = ((M - ((-a - 1).toNat &&& M) : Nat) : Int) := by
+  subst hM
+  have hm : ¬ ((M : Int) < 0) := by omega
+  simp only [AverBits.and, AverBits.mag, hm, ha, ite_true, ite_false, Int.toNat_natCast, Nat.land_eq]
+
+/-- A low mask `2^k - 1` keeps the remainder by `2^k`. -/
+theorem nat_land_low (x m M k : Nat) (hM : m + 1 = M) (hk : M = 2 ^ k) : x &&& m = x % M := by
+  subst hk
+  have e : m = 2 ^ k - 1 := by omega
+  rw [e, Nat.and_two_pow_sub_one_eq_mod]
+
+/-- A single-bit mask `2^k` keeps that bit of the quotient. -/
+theorem nat_land_bit (x m k : Nat) (hm : m = 2 ^ k) : x &&& m = m * (x / m % 2) := by
+  subst hm
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_and, Nat.testBit_two_pow]
+  rcases Nat.mod_two_eq_zero_or_one (x / 2 ^ k) with h | h
+  · rw [h, Nat.mul_zero, Nat.zero_testBit]
+    by_cases hk : k = i
+    · subst hk
+      rw [Nat.testBit_eq_decide_div_mod_eq, h]
+      simp
+    · simp [hk]
+  · rw [h, Nat.mul_one, Nat.testBit_two_pow]
+    by_cases hk : k = i
+    · subst hk
+      rw [Nat.testBit_eq_decide_div_mod_eq, h]
+      simp
+    · simp [hk]
+
+/-- A mask `2^j * hi + lo` with `lo < 2^j` splits at bit `j`: the high part
+    masks the quotient, the low part the remainder. Applied repeatedly it takes
+    any literal mask apart into single bits and low runs. -/
+theorem nat_land_split (x m P j hi lo : Nat) (hP : P = 2 ^ j) (hm : m = P * hi + lo)
+    (hlo : lo < P) : x &&& m = P * ((x / P) &&& hi) + ((x % P) &&& lo) := by
+  subst hP
+  subst hm
+  have hlt : (x % 2 ^ j) &&& lo < 2 ^ j := Nat.and_lt_two_pow _ hlo
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_and, Nat.testBit_two_pow_mul_add _ hlo, Nat.testBit_two_pow_mul_add _ hlt]
+  by_cases hij : i < j
+  · simp [hij, Nat.testBit_and, Nat.testBit_mod_two_pow]
+  · simp [hij, Nat.testBit_and, Nat.testBit_div_two_pow,
+      Nat.sub_add_cancel (Nat.le_of_not_lt hij)]
+
 end AverBits"#;
 
 const LEAN_PRELUDE_AVER_MEASURE: &str = r#"namespace AverMeasure
@@ -850,8 +916,8 @@ end AverList"#;
 // Built-in record types (Header, HttpResponse, HttpRequest,
 // Tcp.Connection, Terminal.Size) used to live as hard-coded literals
 // here. They now live in `crate::codegen::builtin_records` —
-// declarative descriptions consumed by Lean, Dafny, and WASM via
-// shared `needed_records()` and `render_lean()`. Drift between
+// declarative descriptions consumed via `needed_records()` and
+// `render_lean()`. Drift between
 // backends is no longer possible.
 
 const LEAN_PRELUDE_STRING_HELPERS: &str = r#"def String.charAtAv (s : String) (i : Int) : Option String :=
@@ -1423,11 +1489,6 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(generate_string_hadd_prelude(body, include_all_helpers)),
-            // Dafny-side datatype declarations — Lean has Result/Option
-            // natively (`Except`/`Option`) and BranchPath ships as part
-            // of the BranchPath helper key, so all four are no-ops here.
-            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype"
-            | "StringOpaque" | "StringUtf8" => {}
             "StringCase" => parts.push(super::string_case::source().to_string()),
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
@@ -1654,6 +1715,10 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     parts.join("\n\n")
 }
 
+/// The library's name is a declaration in the lakefile's own environment, so
+/// it is fixed rather than taken from the module: a module called `Min` or
+/// `Max` would otherwise redeclare a core Lean name and the lakefile would not
+/// load. The roots still name the modules.
 pub(super) fn generate_lakefile_with_roots(project_name: &str, extra_roots: &[String]) -> String {
     let mut roots: Vec<String> = vec![format!("`{}", project_name)];
     for r in extra_roots {
@@ -1668,12 +1733,11 @@ package «{}» where
   version := v!"0.1.0"
 
 @[default_target]
-lean_lib «{}» where
+lean_lib «AverProof» where
   srcDir := "."
   roots := #[{}]
 "#,
         project_name.to_lowercase(),
-        project_name,
         roots_str
     )
 }
@@ -1733,8 +1797,6 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(generate_string_hadd_prelude(union_body, false)),
-            "ResultDatatype" | "OptionDatatype" | "ResultFromOption" | "BranchPathDatatype"
-            | "StringOpaque" | "StringUtf8" => {}
             "StringCase" => parts.push(super::string_case::source().to_string()),
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
@@ -1746,8 +1808,8 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
     // Nonlinear-nonnegativity closing kit — demand-driven on the tactic
     // name the `NonlinearNonneg` emit invokes, so files that never need it
     // stay byte-identical. Not a `BUILTIN_HELPERS` key: it is Lean-only
-    // proof infrastructure (Z3 carries these natively, so Dafny ships
-    // nothing), keyed on emitted tactic text rather than a builtin call.
+    // proof infrastructure, keyed on emitted tactic text rather than a
+    // builtin call.
     if needs_order_kit && !cert_model {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }

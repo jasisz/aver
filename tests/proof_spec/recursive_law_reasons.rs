@@ -122,55 +122,6 @@ fn guided_laws_see_all_nonrecursive_match_alternatives() {
 }
 
 #[test]
-fn dafny_prefers_checked_list_descent_over_a_growing_accumulator() {
-    if Command::new("dafny").arg("--version").output().is_err() {
-        return;
-    }
-    let dir = temp_output_dir("aver-dafny-singleton-list");
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("selection.av");
-    std::fs::write(
-        &file,
-        r#"module Selection
-    intent = "A computed list tail decreases while its accumulator grows."
-    effects []
-fn selected(acc: List<Int>, values: List<Int>, count: Int) -> List<Int>
-    match values
-        [] -> List.reverse(acc)
-        [head, ..tail] -> selected(List.prepend(head, acc), List.take(tail, count), count - 1)
-fn selectedAliases(acc: List<Int>, values: List<Int>, count: Int) -> List<Int>
-    source = List.drop(values, count)
-    alias = source
-    match alias
-        [] -> List.reverse(acc)
-        [head, ..tail] -> selectedAliases(List.prepend(head, acc), List.take(tail, count), count - 1)
-verify selectedAliases law emptyInput
-    given acc: List<Int> = [[], [1, 2]]
-    given count: Int = [-1, 0, 3]
-    selectedAliases(acc, [], count) => List.reverse(acc)
-verify selected law emptyInput
-    given acc: List<Int> = [[], [1, 2]]
-    given count: Int = [-1, 0, 3]
-    selected(acc, [], count) => List.reverse(acc)
-"#,
-    )
-    .unwrap();
-    let output = dir.join("out");
-    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
-        .arg("proof")
-        .arg(&file)
-        .args(["--backend", "dafny", "--check-json", "-o"])
-        .arg(&output)
-        .output()
-        .unwrap();
-    assert!(run.status.success(), "{}", format_output(&run));
-    let dafny = std::fs::read_to_string(output.join("Selection.dfy")).unwrap();
-    assert!(dafny.contains("decreases |values|"), "{dafny}");
-    assert!(!dafny.contains("decreases |acc|"), "{dafny}");
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
 fn singleton_computed_lists_reuse_checked_length_descent() {
     if Command::new("lake").arg("--version").output().is_err() {
         return;
@@ -339,109 +290,87 @@ fn slice_reasons_use_integer_counts_without_losing_their_premises() {
 }
 
 #[test]
-fn guarded_slice_explanations_pass_both_judges_and_reject_a_missing_guard() {
+fn guarded_slice_explanations_pass_and_reject_a_missing_guard() {
     let fixture = "tests/fixtures/law_reasons_slices.av";
-    for (backend, tool) in [("lean", "lake"), ("dafny", "dafny")] {
-        if Command::new(tool).arg("--version").output().is_err() {
-            continue;
-        }
-        let dir = temp_output_dir(&format!("aver-guarded-slice-{backend}"));
-        std::fs::create_dir_all(&dir).unwrap();
-        let run = |source: &std::path::Path, output: &str| {
-            Command::new(env!("CARGO_BIN_EXE_aver"))
-                .arg("proof")
-                .arg(source)
-                .args(["--backend", backend, "--check-json", "-o"])
-                .arg(dir.join(output))
-                .output()
-                .unwrap()
-        };
-        let checked = run(std::path::Path::new(fixture), "positive");
-        assert!(
-            checked.status.success(),
-            "{backend}: {}",
-            format_output(&checked)
-        );
-        if backend == "lean" {
-            let manifest: serde_json::Value = serde_json::from_str(
-                &std::fs::read_to_string(dir.join("positive/proof_manifest.json")).unwrap(),
-            )
-            .unwrap();
-            let laws = manifest["laws"].as_array().unwrap();
-            assert_eq!(laws.len(), 2);
-            for law in laws {
-                assert_eq!(law["tier"], "universal", "{law}");
-                assert!(
-                    law["axioms"].as_array().unwrap().iter().all(|a| matches!(
-                        a.as_str(),
-                        Some("propext" | "Classical.choice" | "Quot.sound")
-                    )),
-                    "{law}"
-                );
-            }
-        }
-        let source = std::fs::read_to_string(fixture)
-            .unwrap()
-            .replace("    when nonnegative(xs)\n", "")
-            .replace("[[], [0, 2], [-1]]", "[[], [0, 2]]");
-        let false_source = dir.join("unguarded.av");
-        std::fs::write(&false_source, source).unwrap();
-        let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
-            .arg("verify")
-            .arg(&false_source)
-            .output()
-            .unwrap();
-        assert!(samples.status.success(), "{}", format_output(&samples));
-        let rejected = run(&false_source, "negative");
-        assert!(
-            !rejected.status.success(),
-            "{backend} admitted a missing premise"
-        );
-        let stdout = String::from_utf8_lossy(&rejected.stdout);
-        let summary: serde_json::Value = serde_json::from_str(
-            stdout
-                .lines()
-                .rev()
-                .find(|line| line.starts_with('{'))
-                .unwrap_or_else(|| panic!("{}", format_output(&rejected))),
-        )
-        .unwrap();
-        if backend == "lean" {
-            assert_eq!(summary["build_errors"], 0, "{summary}");
-            assert_eq!(summary["universal_laws"], 0, "{summary}");
-            assert!(summary["sorries"].as_u64().unwrap() > 0, "{summary}");
-        } else {
-            for field in ["axioms", "omitted", "timeouts"] {
-                assert_eq!(summary[field], 0, "{summary}");
-            }
-            assert!(summary["errors"].as_u64().unwrap() > 0, "{summary}");
-        }
-        let _ = std::fs::remove_dir_all(dir);
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
     }
+    let dir = temp_output_dir("aver-guarded-slice-lean");
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |source: &std::path::Path, output: &str| {
+        Command::new(env!("CARGO_BIN_EXE_aver"))
+            .arg("proof")
+            .arg(source)
+            .args(["--check-json", "-o"])
+            .arg(dir.join(output))
+            .output()
+            .unwrap()
+    };
+    let checked = run(std::path::Path::new(fixture), "positive");
+    assert!(checked.status.success(), "{}", format_output(&checked));
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("positive/proof_manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let laws = manifest["laws"].as_array().unwrap();
+    assert_eq!(laws.len(), 2);
+    for law in laws {
+        assert_eq!(law["tier"], "universal", "{law}");
+        assert!(
+            law["axioms"].as_array().unwrap().iter().all(|a| matches!(
+                a.as_str(),
+                Some("propext" | "Classical.choice" | "Quot.sound")
+            )),
+            "{law}"
+        );
+    }
+    let source = std::fs::read_to_string(fixture)
+        .unwrap()
+        .replace("    when nonnegative(xs)\n", "")
+        .replace("[[], [0, 2], [-1]]", "[[], [0, 2]]");
+    let false_source = dir.join("unguarded.av");
+    std::fs::write(&false_source, source).unwrap();
+    let samples = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("verify")
+        .arg(&false_source)
+        .output()
+        .unwrap();
+    assert!(samples.status.success(), "{}", format_output(&samples));
+    let rejected = run(&false_source, "negative");
+    assert!(!rejected.status.success(), "admitted a missing premise");
+    let stdout = String::from_utf8_lossy(&rejected.stdout);
+    let summary: serde_json::Value = serde_json::from_str(
+        stdout
+            .lines()
+            .rev()
+            .find(|line| line.starts_with('{'))
+            .unwrap_or_else(|| panic!("{}", format_output(&rejected))),
+    )
+    .unwrap();
+    assert_eq!(summary["build_errors"], 0, "{summary}");
+    assert_eq!(summary["universal_laws"], 0, "{summary}");
+    assert!(summary["sorries"].as_u64().unwrap() > 0, "{summary}");
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
-fn list_descent_outlives_a_sibling_counter_in_both_proof_models() {
-    for (backend, tool) in [("lean", "lake"), ("dafny", "dafny")] {
-        if Command::new(tool).arg("--version").output().is_err() {
-            continue;
-        }
-        let dir = temp_output_dir(&format!("aver-list-counter-{backend}"));
-        let run = Command::new(env!("CARGO_BIN_EXE_aver"))
-            .args([
-                "proof",
-                "tests/fixtures/list_counter_descent.av",
-                "--backend",
-                backend,
-                "--check-json",
-                "-o",
-            ])
-            .arg(&dir)
-            .output()
-            .unwrap();
-        assert!(run.status.success(), "{backend}: {}", format_output(&run));
-        let _ = std::fs::remove_dir_all(dir);
+fn list_descent_outlives_a_sibling_counter() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        return;
     }
+    let dir = temp_output_dir("aver-list-counter-lean");
+    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .args([
+            "proof",
+            "tests/fixtures/list_counter_descent.av",
+            "--check-json",
+            "-o",
+        ])
+        .arg(&dir)
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{}", format_output(&run));
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

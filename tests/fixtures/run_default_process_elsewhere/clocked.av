@@ -1,0 +1,27 @@
+module Clocked
+    intent = "Three ticks, fifty milliseconds apart, then Closed."
+    depends [Clock]
+    exposes [State, fresh, tick]
+    effects []
+    answers [Clock]
+
+record State
+    left: Int
+    armed: Bool
+
+fn fresh() -> State
+    ? "Three ticks to give, no deadline armed."
+    State(left = 3, armed = false)
+
+fn tick(state: State) -> Tuple<State, Result<Clock.Tick, Run.Wake>>
+    ? "Closed once the ticks are given. Before that the first ask arms a fifty-millisecond deadline and waits for it, and the ask after it is the tick."
+    match state.left == 0
+        true -> (state, Result.Ok(Clock.Tick.Closed(0)))
+        false -> match state.armed
+            false -> (State.update(state, armed = true), Result.Err(Run.Wake.Until([], Option.Some(50))))
+            true -> (State.update(state, armed = false, left = state.left - 1), Result.Ok(Clock.Tick.Tock))
+
+verify tick
+    tick(fresh()) => (State(left = 3, armed = true), Result.Err(Run.Wake.Until([], Option.Some(50))))
+    tick(State(left = 3, armed = true)) => (State(left = 2, armed = false), Result.Ok(Clock.Tick.Tock))
+    tick(State(left = 0, armed = false)) => (State(left = 0, armed = false), Result.Ok(Clock.Tick.Closed(0)))

@@ -175,11 +175,11 @@ fn a_namespace_effect_entry_names_the_operation_the_segment_performs() {
 
 // ── A program that answers a capability runs on every backend ───────────
 
-/// A marked capability's generated reply types carry `Wait.Wake`, a sum that
-/// reaches `Work.Job`; the wasm-gc backend now represents the job handle,
-/// equality on a sum that carries it, and a `Unit` variant field, so the
-/// programs above run there too. What the lowering leaves behind is data and
-/// pure functions, and every backend compiles those.
+/// An answer function's result carries `Run.Wake`, a sum that reaches
+/// `Work.Job`; the wasm-gc backend represents the job handle, equality on a
+/// sum that carries it, and a `Unit` variant field, so the programs above run
+/// there too. What the lowering leaves behind is data and pure functions, and
+/// every backend compiles those.
 #[cfg(feature = "wasm")]
 #[test]
 fn spike_loop_runs_to_done_15_on_wasm_gc() {

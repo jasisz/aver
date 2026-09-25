@@ -4,13 +4,16 @@
 //! suite proves the shape runs: a coordinator starts one job per input,
 //! waits for them in one wait set, takes their results, and prints them;
 //! a recording of that turn replays to the same turn; a cancelled job
-//! refuses to be taken; a second job at the limit refuses instead of
-//! blocking the turn; and a hostile wait still leaves the law standing.
+//! refuses to be taken; a second job at the limit is queued instead of
+//! refused; and a hostile wait still leaves the law standing.
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
+#[cfg(unix)]
+#[path = "support/sigint.rs"]
+mod sigint;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -379,14 +382,80 @@ fn a_manifest_that_does_not_load_reports_its_own_error() {
 }
 
 #[test]
-fn a_second_job_at_the_limit_refuses_instead_of_blocking_the_turn() {
+fn a_second_job_at_the_limit_is_queued_instead_of_refused() {
     let out = aver("work_jobs_limit", &["run"]);
     assert!(out.status.success(), "{}", format_output(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("work: job limit 1 reached"),
+        text.contains("the second job was queued, not refused"),
         "{}",
         format_output(&out)
     );
+    assert!(
+        text.contains("the second job gave 0"),
+        "{}",
+        format_output(&out)
+    );
+}
+
+/// A copy of a fixture whose manifest says `[work] max-jobs = limit`, so a
+/// test can record under one limit and replay under another.
+fn fixture_with_limit(fixture_name: &str, name: &str, limit: usize) -> PathBuf {
+    let source = fixture(fixture_name);
+    let dir = scratch(name);
+    for entry in std::fs::read_dir(&source).expect("fixture directory") {
+        let path = entry.expect("fixture entry").path();
+        if path.is_file() {
+            std::fs::copy(&path, dir.join(path.file_name().expect("file name")))
+                .expect("fixture file copies");
+        }
+    }
+    let manifest = dir.join("aver.toml");
+    let text = std::fs::read_to_string(&manifest).expect("manifest reads");
+    std::fs::write(&manifest, format!("{text}\n[work]\nmax-jobs = {limit}\n"))
+        .expect("manifest writes");
+    dir
+}
+
+/// The job limit is a deployment knob, not part of what a recording says:
+/// a turn recorded with two jobs running at once replays on a host that runs
+/// one at a time, because a begin at the limit is queued rather than refused.
+#[test]
+fn a_recording_replays_under_a_smaller_job_limit() {
+    let wide = fixture_with_limit("work_jobs", "limit-wide", 2);
+    let recordings = scratch("limit-recordings");
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&wide);
+    command
+        .arg("run")
+        .arg("main.av")
+        .arg("--module-root")
+        .arg(&wide);
+    command.arg("--record").arg(&recordings);
+    let recorded = command.output().expect("aver runs");
+    assert!(recorded.status.success(), "{}", format_output(&recorded));
+    let recording = only_recording(&recordings);
+
+    let narrow = fixture_with_limit("work_jobs", "limit-narrow", 1);
+    let mut command = Command::new(aver_bin());
+    command.current_dir(&narrow);
+    command
+        .arg("replay")
+        .arg(&recording)
+        .arg("--test")
+        .arg("--diff");
+    let replayed = command.output().expect("aver replays");
+    let text = combined(&replayed);
+    assert!(replayed.status.success(), "{}", format_output(&replayed));
+    assert!(
+        text.contains("Output:  MATCH"),
+        "{}",
+        format_output(&replayed)
+    );
+    assert!(!text.contains("job limit"), "{}", format_output(&replayed));
+    for dir in [wide, narrow, recordings] {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[test]
@@ -588,4 +657,51 @@ fn the_proof_model_declares_a_named_dependency_type_once_in_its_own_module() {
         "the dependency layout was declared again outside its own module: {elsewhere:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A stop request wakes the wait it arrives in. The fixture watches for one
+/// and then waits thirty seconds on an empty set; SIGINT two moments into
+/// that wait ends it within a slice, not at its deadline, and the program
+/// goes on to report the stop.
+#[cfg(unix)]
+#[test]
+fn a_stop_request_ends_a_wait_within_a_moment() {
+    let (out, stopped_after) = sigint::stopped_by_sigint(
+        &fixture("wait_stop_request"),
+        "watching for a stop request: false",
+        &[],
+    );
+    assert!(out.status.success(), "{}", format_output(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("stop requested: true, ready keys: 0"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        stopped_after < std::time::Duration::from_secs(5),
+        "a stop request took {stopped_after:?} to end a thirty-second wait"
+    );
+}
+
+/// A handle whose slot the engine has forgotten answers `work: unknown job`.
+/// Past the bound on dead slots the first job's tombstone is gone; the VM used
+/// to answer that it was "not started by job kind", because the kind's own
+/// record of its ids was checked before the engine was asked. The engine now
+/// keeps which kind began a job in the job's own slot, so both answers live
+/// exactly as long as the slot.
+#[test]
+fn a_forgotten_handle_answers_unknown_job() {
+    let out = aver("work_jobs_forgotten", &["run"]);
+    assert!(out.status.success(), "{}", format_output(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("right after: Err(work: job already taken)"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("after 4100 more: Err(work: unknown job)"),
+        "{}",
+        format_output(&out)
+    );
 }

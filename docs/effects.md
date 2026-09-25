@@ -10,12 +10,12 @@ Every standard library effect has a typed signature in source and a runtime impl
 | **Rust codegen** (`aver compile`) | Cargo project + native binary | server-side Rust deployments |
 | **wasm-gc** (`--target wasm-gc`) | self-contained `.wasm` with engine GC + tail calls; per-instantiation helpers are DCE'd down to what the program calls. `--handler <fn>` synthesises a fetch-style HTTP wrapper; `--preset cloudflare --handler <fn>` packages it for Workers | Cloudflare Workers, modern browsers (Chrome 119+, Firefox 120+, Safari 18.2+), wasmtime 25+, Node 22+, Deno, Bun |
 | **wasip2** (`--target wasip2`) | `.component.wasm` + sibling `.wit`. wasm-gc core module wrapped via `wit-component`; Aver effects lower directly to canonical-ABI WASI imports, with no preview-1 adapter | wasmtime, Spin, NGINX Unit, wasmCloud, every other Component Model host |
-| **Lean / Dafny proof export** (`aver proof`) | `.lean` / `.dfy` projects | offline verification |
+| **Lean proof export** (`aver proof`) | `.lean` projects | offline verification |
 | **Self-host** (`aver run --self-host`) | Aver-in-Aver bootstrap | development sanity, replay coverage |
 
 The two WASM rows are separate compilation paths. `--target wasm-gc` serves JS hosts and embedded wasmtime through `aver/*` host imports. `--target wasip2` serves Component Model hosts through canonical-ABI WIT imports. The pre-2024 NaN-boxed `--target wasm` backend was dropped in 0.18 (Phase 1.8 of "Span"). Modern hosts run the wasm-gc pipeline and standalone runtimes use wasip2.
 
-The `Lean` / `Dafny` columns describe how **proof export** treats each effect. They do not describe runtime behavior. Effects become Oracle-style stubs with effect-list contracts and invariant lemmas, and user theorems take the per-effect bounds (`Random.int` in `[min, max]`, `Time.unixMs ≥ 0`, …) as hypotheses. The full Oracle model is in `docs/oracle.md`.
+The `Lean` column describes how **proof export** treats each effect. It does not describe runtime behavior. Effects become Oracle-style stubs with effect-list contracts and invariant lemmas, and user theorems take the per-effect bounds (`Random.int` in `[min, max]`, `Time.unixMs ≥ 0`, …) as hypotheses. The full Oracle model is in `docs/oracle.md`.
 
 ## Legend
 
@@ -30,30 +30,30 @@ The `Lean` / `Dafny` columns describe how **proof export** treats each effect. T
 
 The wasm-gc column covers the **default invocation** (`--target wasm-gc`, with the host wiring the `aver/*` imports). The HTTP-handler shape (`--handler <fn>`, `--preset cloudflare`) uses the same column, except that `Request.*` / `Response.*` host imports replace the matching effect cells while `aver_http_handle()` runs. *Notes per backend* below has the details. The wasip2 column is what `--target wasip2` produces today. An `n/a` cell means WASI 0.2 has no place for that effect, and the standard capability target manifest rejects it before code generation.
 
-| Effect | VM | Rust | **wasm-gc** | **wasip2** | Lean | Dafny |
-|---|---|---|---|---|---|---|
-| `Args.get` | ✅ | ✅ | ✅ wasmtime / host wires | ✅ `wasi:cli/environment.get-arguments` | Oracle | Oracle |
-| `Console.print` | ✅ | ✅ | ✅ wasmtime / `console.log` | ✅ `wasi:cli/stdout` + `blocking-write-and-flush` | Oracle | Oracle |
-| `Console.error` | ✅ | ✅ | ✅ wasmtime / `console.error` | ✅ `wasi:cli/stderr` + `blocking-write-and-flush` | Oracle | Oracle |
-| `Console.warn` | ✅ | ✅ | ✅ wasmtime / `console.warn` | ✅ `wasi:cli/stderr` (warn → stderr) | Oracle | Oracle |
-| `Console.readLine` | ✅ | ✅ | ✅ wasmtime / host stdin | ✅ `wasi:cli/stdin` + `blocking-read` line loop | Oracle | Oracle |
-| `Disk.readText` / `writeText` / `appendText` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/preopens` + `open-at` + via-stream | Oracle | Oracle |
-| `Disk.readBytes` / `readBytesAt` / `writeBytes` / `appendBytes` | ✅ exact octets | ✅ exact octets | ✅ wasmtime / host wires | ✅ raw WASI streams; positional reads are bounded and EOF-short | Oracle | Oracle |
-| `Disk.size` | ✅ | ✅ | ✅ wasmtime / host wires | ✅ descriptor `stat-at` metadata | Oracle | Oracle |
-| `Disk.exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/types` (stat-at / unlink-file-at / etc.) | Oracle | Oracle |
-| `Disk.sync` | ✅ `fsync` on a file or a directory; on Windows a directory sync is a no-op `Ok` (NTFS journals metadata) | ✅ same as VM | ✅ wasmtime, same as VM / ❌ in JS hosts | ✅ `open-at` + `[method]descriptor.sync` | Oracle | Oracle |
-| `Env.get` | ✅ | ✅ | ✅ wasmtime / Workers `env` | ✅ `wasi:cli/environment.get-environment` + linear search | Oracle | Oracle |
-| `Env.set` | ✅ | ✅ | ⚠️ wasmtime / no-op in JS | n/a: WASI 0.2 environment is read-only by design | Oracle | Oracle |
-| `Http.get` / `head` / `delete` / `post` / `put` / `patch` | ✅ | ✅ | ✅ wasmtime / ✅ JSPI-suspending `fetch()` | ✅ `wasi:http/outgoing-handler` | Oracle | Oracle |
-| `Random.int` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` + range scale | Oracle (`[min, max]` lemma) | Oracle |
-| `Random.float` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` → `[0.0, 1.0)` | Oracle (`[0.0, 1.0)` lemma) | Oracle |
-| `Process.stopRequested` | ✅ SIGINT/SIGTERM | ✅ SIGINT/SIGTERM | ✅ wasmtime SIGINT/SIGTERM / `false` in browser and Worker hosts | n/a: WASI 0.2 has no process-signal binding | Oracle (monotonic across calls) | Oracle (monotonic across calls) |
-| `Tcp.connect` / `close` / `writeLine` / `writeBytes` / `writeNow` / `readLine` / `readBytes` / `readSome` / `readNow` / `poll` / `send` / `sendBytes` / `ping` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:sockets`; `poll` uses input-stream and output-stream subscriptions + `wasi:io/poll`; `readNow` / `writeNow` use the non-blocking `read` / `check-write` + `write` + `flush` stream methods | Oracle | Oracle |
-| `Tcp.beginConnect` / `dialled` / `listen` / `accept` / `peerAddress` / `closeDial` / `closeListener` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | n/a: this target binds no dial, listener, or peer-address socket resource. Rejected at compile time | Oracle | Oracle |
-| `Terminal.*` (12 methods) | ✅ via `crossterm` (`terminal` feature) | ✅ via `crossterm` | ✅ wasmtime / ❌ in JS hosts | n/a: WASI 0.2 has no terminal interface | Oracle | Oracle |
-| `Time.now` (ISO string) | ✅ | ✅ | ✅ wasmtime / `new Date().toISOString()` | ✅ `wasi:clocks/wall-clock.now` + guest-side civil_from_days | Oracle | Oracle |
-| `Time.unixMs` | ✅ | ✅ | ✅ wasmtime / `Date.now()` | ✅ `wasi:clocks/wall-clock.now` → ms | Oracle (`≥ 0` lemma) | Oracle |
-| `Time.sleep` | ✅ | ✅ | ✅ wasmtime / ⚠️ blocks worker isolate | ✅ `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` | Oracle | Oracle |
+| Effect | VM | Rust | **wasm-gc** | **wasip2** | Lean |
+|---|---|---|---|---|---|
+| `Args.get` | ✅ | ✅ | ✅ wasmtime / host wires | ✅ `wasi:cli/environment.get-arguments` | Oracle |
+| `Console.print` | ✅ | ✅ | ✅ wasmtime / `console.log` | ✅ `wasi:cli/stdout` + `blocking-write-and-flush` | Oracle |
+| `Console.error` | ✅ | ✅ | ✅ wasmtime / `console.error` | ✅ `wasi:cli/stderr` + `blocking-write-and-flush` | Oracle |
+| `Console.warn` | ✅ | ✅ | ✅ wasmtime / `console.warn` | ✅ `wasi:cli/stderr` (warn → stderr) | Oracle |
+| `Console.readLine` | ✅ | ✅ | ✅ wasmtime / host stdin | ✅ `wasi:cli/stdin` + `blocking-read` line loop | Oracle |
+| `Disk.readText` / `writeText` / `appendText` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/preopens` + `open-at` + via-stream | Oracle |
+| `Disk.readBytes` / `readBytesAt` / `writeBytes` / `appendBytes` | ✅ exact octets | ✅ exact octets | ✅ wasmtime / host wires | ✅ raw WASI streams; positional reads are bounded and EOF-short | Oracle |
+| `Disk.size` | ✅ | ✅ | ✅ wasmtime / host wires | ✅ descriptor `stat-at` metadata | Oracle |
+| `Disk.exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/types` (stat-at / unlink-file-at / etc.) | Oracle |
+| `Disk.sync` | ✅ `fsync` on a file or a directory; on Windows a directory sync is a no-op `Ok` (NTFS journals metadata) | ✅ same as VM | ✅ wasmtime, same as VM / ❌ in JS hosts | ✅ `open-at` + `[method]descriptor.sync` | Oracle |
+| `Env.get` | ✅ | ✅ | ✅ wasmtime / Workers `env` | ✅ `wasi:cli/environment.get-environment` + linear search | Oracle |
+| `Env.set` | ✅ | ✅ | ⚠️ wasmtime / no-op in JS | n/a: WASI 0.2 environment is read-only by design | Oracle |
+| `Http.get` / `head` / `delete` / `post` / `put` / `patch` | ✅ | ✅ | ✅ wasmtime / ✅ JSPI-suspending `fetch()` | ✅ `wasi:http/outgoing-handler` | Oracle |
+| `Random.int` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` + range scale | Oracle (`[min, max]` lemma) |
+| `Random.float` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` → `[0.0, 1.0)` | Oracle (`[0.0, 1.0)` lemma) |
+| `Process.stopRequested` | ✅ SIGINT/SIGTERM | ✅ SIGINT/SIGTERM | ✅ wasmtime SIGINT/SIGTERM / `false` in browser and Worker hosts | n/a: WASI 0.2 has no process-signal binding | Oracle (monotonic across calls) |
+| `Tcp.connect` / `close` / `writeLine` / `writeBytes` / `writeNow` / `readLine` / `readBytes` / `readSome` / `readNow` / `poll` / `send` / `sendBytes` / `ping` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:sockets`; `poll` uses input-stream and output-stream subscriptions + `wasi:io/poll`; `readNow` / `writeNow` use the non-blocking `read` / `check-write` + `write` + `flush` stream methods | Oracle |
+| `Tcp.beginConnect` / `dialled` / `listen` / `accept` / `peerAddress` / `closeDial` / `closeListener` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | n/a: this target binds no dial, listener, or peer-address socket resource. Rejected at compile time | Oracle |
+| `Terminal.*` (12 methods) | ✅ via `crossterm` (`terminal` feature) | ✅ via `crossterm` | ✅ wasmtime / ❌ in JS hosts | n/a: WASI 0.2 has no terminal interface | Oracle |
+| `Time.now` (ISO string) | ✅ | ✅ | ✅ wasmtime / `new Date().toISOString()` | ✅ `wasi:clocks/wall-clock.now` + guest-side civil_from_days | Oracle |
+| `Time.unixMs` | ✅ | ✅ | ✅ wasmtime / `Date.now()` | ✅ `wasi:clocks/wall-clock.now` → ms | Oracle (`≥ 0` lemma) |
+| `Time.sleep` | ✅ | ✅ | ✅ wasmtime / ⚠️ blocks worker isolate | ✅ `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` | Oracle |
 
 `Print.value` / `Format.value` are no longer needed. Since 0.16 `Console.print` / `error` / `warn` take a `String`, so the call site does the stringifying (interpolation `"{x}"` for primitives, a per-type render fn for compound shapes).
 

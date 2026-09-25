@@ -783,7 +783,7 @@ pub(super) fn simp_def_name(ctx: &CodegenContext, source_name: &str) -> String {
     if is_dep_module_fn(ctx, source_name) {
         rendered
     } else {
-        entry_qualified_lean_name(ctx, source_name)
+        owner_qualified_lean_name(ctx, source_name)
     }
 }
 
@@ -811,12 +811,56 @@ pub(super) fn wf_countdown_param<'a>(ctx: &'a CodegenContext, fd: &FnDef) -> Opt
     }
 }
 
+/// The Lean name of a fn known to be declared by the entry module.
 pub(super) fn entry_qualified_lean_name(ctx: &CodegenContext, source_name: &str) -> String {
     format!(
         "{}.{}",
         super::super::lean_project_name(ctx),
         aver_name_to_lean(source_name)
     )
+}
+
+/// The fully qualified Lean name of a user fn, under the namespace of the
+/// module that declares it: `Domain.Recip.reciprocalBound` for a fn of a
+/// dependency module, `<Entry>.f` for an entry fn. A bare name resolves in the
+/// module whose laws are being emitted first, then in the entry, then in the
+/// one dependency module that declares it; a dotted name names its module.
+/// A name nothing resolves keeps the entry spelling.
+pub(super) fn owner_qualified_lean_name(ctx: &CodegenContext, source_name: &str) -> String {
+    let resolved = match source_name.rsplit_once('.') {
+        Some((prefix, bare)) => ctx
+            .symbol_table
+            .fn_id_of(&crate::ir::FnKey::in_module(prefix, bare)),
+        None => ctx.law_target_fn_id(source_name).or_else(|| {
+            let mut owners = ctx
+                .modules
+                .iter()
+                .filter(|m| m.fn_defs.iter().any(|fd| fd.name == source_name));
+            let owner = owners.next()?;
+            if owners.next().is_some() {
+                return None;
+            }
+            ctx.symbol_table.fn_id_of(&crate::ir::FnKey::in_module(
+                owner.prefix.as_str(),
+                source_name,
+            ))
+        }),
+    };
+    if let Some(id) = resolved {
+        let key = &ctx.symbol_table.fn_entry(id).key;
+        if let Some(scope) = key.scope_str() {
+            return format!(
+                "{}.{}",
+                super::super::syntax::aver_path_to_lean(scope),
+                aver_name_to_lean(&key.name)
+            );
+        }
+        return entry_qualified_lean_name(ctx, &key.name);
+    }
+    if source_name.contains('.') {
+        return aver_name_to_lean(source_name);
+    }
+    entry_qualified_lean_name(ctx, source_name)
 }
 
 pub(super) fn bare_lean_name(name: &str) -> &str {
@@ -1051,6 +1095,27 @@ pub(super) fn expr_calls_builtin(expr: &Spanned<Expr>, builtin: &str) -> bool {
         Expr::FnCall(callee, _) => callee_matches_name(callee, builtin),
         _ => false,
     })
+}
+
+/// Whether the law or any fn in its cone divides with `Int.div` or `Int.mod`.
+/// Keyed on the builtin alone: the facts it unlocks are the Euclidean
+/// quotient-remainder facts, which hold for every divisor that is not zero.
+pub(super) fn law_cone_calls_int_div_mod(
+    ctx: &CodegenContext,
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+) -> bool {
+    const DIVISION: [&str; 2] = ["Int.div", "Int.mod"];
+    let in_law = law
+        .when
+        .iter()
+        .chain([&law.lhs, &law.rhs])
+        .any(|expr| DIVISION.iter().any(|b| expr_calls_builtin(expr, b)));
+    in_law
+        || law_simp_source_names(ctx, vb, law)
+            .iter()
+            .filter_map(|name| find_fn_def(ctx, name))
+            .any(|fd| DIVISION.iter().any(|b| fn_body_calls_builtin(fd, b)))
 }
 
 /// Law givens whose declared types are user sums, with their Lean binder

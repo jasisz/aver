@@ -8,7 +8,7 @@ module EmptyMapFacts
         "  - the size is zero (`Map.len(empty) = 0`)."
         ""
         "These are pure builtin facts about the empty map — no user recursion."
-        "Dafny's Z3 discharges them directly; the Lean backend proves them by"
+        "The Lean backend proves them by"
         "reducing the `AverMap` accessor on the empty entry list."
     effects []
 

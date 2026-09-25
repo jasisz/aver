@@ -629,7 +629,7 @@ fn rf_window_law(
             continue;
         }
         let thm = format!("{}_law_{}", aver_name_to_lean(&prev.fn_name), prev_law.name);
-        let unfold = super::super::shared::entry_qualified_lean_name(ctx, &prev.fn_name);
+        let unfold = super::super::shared::owner_qualified_lean_name(ctx, &prev.fn_name);
         return Some((thm, unfold));
     }
     None

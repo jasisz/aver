@@ -11,7 +11,6 @@ pub mod cert;
 pub(crate) mod cite_instantiate;
 pub mod common;
 #[cfg(feature = "runtime")]
-pub mod dafny;
 pub mod expr_walk;
 #[cfg(feature = "runtime")]
 pub mod lean;
@@ -68,9 +67,7 @@ pub struct ModuleInfo {
     /// Every `verify` block declared by this module, in source order.
     ///
     /// This is the module's own proof surface. Lean emits it inside the
-    /// module-scoped proof file; Dafny uses the law subset and reports the
-    /// concrete-case subset with the same whole-program accounting as the
-    /// entry module. Unlike [`Self::verify_laws`], this field is deliberately
+    /// module-scoped proof file. Unlike [`Self::verify_laws`], this field is deliberately
     /// not visibility-filtered: private claims still belong to the module that
     /// declares them even though consumers may not cite them.
     pub verify_blocks: Vec<crate::ast::VerifyBlock>,
@@ -378,7 +375,7 @@ pub struct CodegenContext {
     /// smart-constructor-only construction discipline.
     pub packed_sequence_layouts: HashMap<String, crate::codegen::proof_lower::PackedSequenceLayout>,
     /// Proof-export decision IR populated by `proof_lower::lower`
-    /// during `build_context`. Backends (Lean, Dafny) read from
+    /// during `build_context`. The Lean backend reads from
     /// here to decide refinement-record lift, recursion contracts,
     /// law-theorem shape, etc. Single source of truth — both backends see the
     /// same identity-sensitive decisions.
@@ -502,6 +499,13 @@ pub struct CodegenContext {
     /// Fail-closed: empty (all-`Boxed`) for hand-assembled test contexts
     /// and for dependency-module fragments (callers unseen).
     pub bare_i64: crate::ir::mir::BareI64Facts,
+    /// Record params the Rust backend takes by value because the function
+    /// consumes them: it returns the record, updates it at its last use, or
+    /// hands it at its last use to a callee that takes it by value. Indexed
+    /// by param position. Computed once by the Rust transpile after its MIR
+    /// rewrites, so every signature and every call site read the same
+    /// decision; empty (borrow by default) everywhere else.
+    pub rust_owned_record_params: HashMap<crate::ir::FnId, Vec<bool>>,
     /// Kernel-proved lemmas parsed back from a committed
     /// `DiscoveredLemmas.lean` (the `--discover` artifact), set by the CLI
     /// on a normal `aver proof` run when the discovery-surface hash still
@@ -616,7 +620,7 @@ pub struct ProjectOutput {
     pub files: Vec<(String, String)>,
     /// What the backend substituted a `compile_error!` for while producing
     /// `files`, one entry per construct, in emit order. Empty for a
-    /// backend that has no such construct (Lean, Dafny).
+    /// backend that has no such construct (Lean).
     pub substituted_compile_errors: Vec<SubstitutedCompileError>,
     /// Verify cases the backend left out of the generated test module, one
     /// line each. Not a failure — the generated crate builds and its
@@ -630,7 +634,7 @@ pub struct ProjectOutput {
 
 impl ProjectOutput {
     /// Files from a backend that has no `compile_error!` substitution to
-    /// report (Lean, Dafny) — or none this time.
+    /// report (Lean) — or none this time.
     pub fn of(files: Vec<(String, String)>) -> Self {
         Self {
             files,
@@ -852,8 +856,8 @@ pub fn build_context(
 
     // Compute program shape before moving items / modules into ctx.
     // Once-per-compilation analysis substrate (#232 stage 4+); ad-hoc
-    // detectors in codegen (e.g. dafny's `is_directly_recursive`,
-    // future stage 6 adapters for `refinement_info_for`) read from
+    // detectors in codegen (e.g. future stage 6 adapters for
+    // `refinement_info_for`) read from
     // this instead of rewalking the AST.
     let program_shape = {
         let mut all_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
@@ -928,12 +932,13 @@ pub fn build_context(
         synthesized_buffered_fns,
         packed_sequence_layouts: HashMap::new(),
         bare_i64,
+        rust_owned_record_params: Default::default(),
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
         // Symbol table threaded through from the pipeline (or
         // built locally in fallback). The FnId-keyed `recursive_
         // fns` / `mutual_tco_members` above used it; backends
-        // (proof_lower / Lean / Rust / Dafny) read it directly off
+        // (proof_lower / Lean / Rust) read it directly off
         // ctx for opaque-ID lookups.
         symbol_table,
         current_module_scope: std::cell::RefCell::new(None),
@@ -1415,6 +1420,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         program_shape: None,
         mir_program: None,
         bare_i64: Default::default(),
+        rust_owned_record_params: Default::default(),
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),

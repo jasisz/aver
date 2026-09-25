@@ -9,7 +9,10 @@ export async function createWorkHost(module, options = {}) {
     const WorkerClass = manifest.kinds.length
         ? options.Worker ?? globalThis.Worker ?? (await import("node:worker_threads")).Worker
         : null;
-    const jobs = new Map(), slots = new Set(), listeners = new Set(), dead = [];
+    // `queue` holds the ids of jobs begun while every worker was busy, oldest
+    // first. `submit` never refuses at the limit: it queues the job and
+    // `pump` hands it to the next worker that becomes free.
+    const jobs = new Map(), slots = new Set(), listeners = new Set(), dead = [], queue = [];
     let nextId = 0n, running = 0, closed = false, stopping = false, fatal;
     let instance, codec;
     const notify = () => { for (const listener of [...listeners]) listener(); };
@@ -26,6 +29,29 @@ export async function createWorkHost(module, options = {}) {
         slot.id = null;
         notify();
         if (message.type === "failed") replace(slot);
+        else pump();
+    }
+    // Start queued jobs on free workers while fewer than maxJobs run.
+    function pump() {
+        while (queue.length && running < maxJobs && !closed && !fatal) {
+            const slot = [...slots].find(slot => slot.ready && slot.id === null);
+            if (!slot) return;
+            const id = queue.shift(), job = jobs.get(id);
+            if (!job || job.state !== "queued") continue;
+            try { slot.worker.postMessage({ type: "run", id, kind: job.kind, task: job.task }); }
+            catch (error) {
+                job.state = "finished";
+                job.outcome = { err: `work: task transport failed: ${error}` };
+                delete job.task;
+                notify();
+                continue;
+            }
+            delete job.task;
+            job.slot = slot;
+            job.state = "running";
+            slot.id = id;
+            running++;
+        }
     }
     async function replace(slot) {
         if (!slots.delete(slot)) return;
@@ -40,7 +66,7 @@ export async function createWorkHost(module, options = {}) {
         slots.add(slot);
         await new Promise((resolve, reject) => {
             const message = data => {
-                if (data.type === "ready") { slot.ready = true; resolve(); notify(); }
+                if (data.type === "ready") { slot.ready = true; resolve(); notify(); pump(); }
                 else if (data.type === "init-error") reject(new Error(data.error));
                 else settle(slot, data);
             };
@@ -79,17 +105,12 @@ export async function createWorkHost(module, options = {}) {
         submit(kind, task) {
             if (closed || fatal) return refuse(`work: host unavailable${fatal ? `: ${fatal}` : ""}`);
             if (!manifest.kinds[kind]) throw new Error("work: undeclared job kind");
-            if (running >= maxJobs) return refuse(`work: job limit ${maxJobs} reached`);
-            const slot = [...slots].find(slot => slot.ready && slot.id === null);
-            if (!slot) return refuse("work: worker is restarting");
             const id = nextId + 1n;
             const owned = codec.decode(manifest.kinds[kind].boxedTask, task).some;
-            try { slot.worker.postMessage({ type: "run", id, kind, task: owned }); }
-            catch (error) { return refuse(`work: task transport failed: ${error}`); }
             nextId = id;
-            slot.id = id;
-            running++;
-            jobs.set(id, { kind, slot, state: "running" });
+            jobs.set(id, { kind, slot: null, state: "queued", task: owned });
+            queue.push(id);
+            pump();
             return instance.exports.__work_v1_started(id, kind);
         },
         take(kind, handle) {
@@ -99,7 +120,7 @@ export async function createWorkHost(module, options = {}) {
             let value;
             if (!job) value = { err: "work: unknown job" };
             else if (job.kind !== kind) value = { err: `work: this job was not started by job kind '${manifest.kinds[kind].name}'` };
-            else if (job.state === "running") value = { ok: null };
+            else if (job.state === "running" || job.state === "queued") value = { ok: null };
             else if (job.state === "taken") value = { err: "work: job already taken" };
             else if (job.state === "cancelled") value = { err: "work: job cancelled" };
             else { value = job.outcome; delete job.outcome; job.state = "taken"; retire(id); }
@@ -112,8 +133,10 @@ export async function createWorkHost(module, options = {}) {
         const id = instance.exports.__work_v1_job_id(handle), job = jobs.get(id);
         if (!job || job.state === "taken" || job.state === "cancelled") return;
         if (job.state === "running") { running--; replace(job.slot); }
+        if (job.state === "queued") queue.splice(queue.indexOf(id), 1);
         job.state = "cancelled";
         delete job.outcome;
+        delete job.task;
         retire(id);
         notify();
     };
@@ -126,7 +149,7 @@ export async function createWorkHost(module, options = {}) {
         closed = true;
         notify();
         await Promise.all([...slots].map(slot => slot.worker.terminate()));
-        slots.clear(); jobs.clear();
+        slots.clear(); jobs.clear(); queue.length = 0;
     }
     try {
         // A program that runs no job of its own needs no workers. It still
@@ -149,14 +172,15 @@ export async function createWorkHost(module, options = {}) {
         const socketEntries = entries.filter(([, item]) => item.variant.endsWith("Socket"));
         if (socketEntries.length && !options.pollSockets) throw new Error("Wait.poll: this host needs a pollSockets adapter");
         // Awaiting an already-resolved promise only drains microtasks. A run
-        // full of NextTurn requests must still deliver worker message events.
+        // whose requests wait on nothing but the next turn must still deliver
+        // worker message events.
         await new Promise(resolve => {
             if (typeof globalThis.setImmediate === "function") globalThis.setImmediate(resolve);
             else setTimeout(resolve, 0);
         });
         for (;;) {
             if (closed || fatal) throw fatal ?? new Error("work: host closed");
-            const ready = entries.filter(([, item]) => item.variant.endsWith("Job") && jobs.get(instance.exports.__work_v1_job_id(item.fields[0]))?.state !== "running").map(([key]) => key);
+            const ready = entries.filter(([, item]) => item.variant.endsWith("Job") && !["running", "queued"].includes(jobs.get(instance.exports.__work_v1_job_id(item.fields[0]))?.state)).map(([key]) => key);
             const remaining = Math.max(0, deadline - performance.now());
             const abort = new AbortController();
             let wake, timer;

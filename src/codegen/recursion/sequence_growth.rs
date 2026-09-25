@@ -1,5 +1,5 @@
 //! Strict list/string growth under a stable length bound. This source fact feeds
-//! ProofIR, so Lean and Dafny use the same remaining-length measure.
+//! ProofIR, so the Lean export uses the same remaining-length measure.
 
 use crate::ast::{BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt};
 

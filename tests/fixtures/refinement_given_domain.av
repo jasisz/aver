@@ -1,0 +1,40 @@
+module Min
+    intent =
+        "Laws whose given ranges over a refinement record, with and without when."
+        "The module is called Min, a name core Lean already declares."
+
+record Natural
+    v: Int
+
+fn fromInt(value: Int) -> Result<Natural, String>
+    ? "A Natural from a non-negative Int."
+    match value >= 0
+        true -> Result.Ok(Natural(v = value))
+        false -> Result.Err("negative")
+
+verify fromInt
+    fromInt(3) => Result.Ok(Natural(v = 3))
+
+fn keep(x: Int, d: Natural) -> Int
+    ? "x itself."
+    x + 0 * d.v
+
+verify keep
+    keep(3, Natural(v = 1)) => 3
+
+verify keep law keepExact
+    given x: Int = [0, 1]
+    given d: Natural = [Natural(v = 0), Natural(v = 7)]
+    keep(x, d) => x
+
+verify keep law keepGuarded
+    given x: Int = [0, 1]
+    given d: Natural = [Natural(v = 0), Natural(v = 7)]
+    when x >= d.v
+    keep(x, d) => x
+
+verify keep law squareBelow
+    given x: Int = [0, 1]
+    given d: Natural = [Natural(v = 0), Natural(v = 7)]
+    when Bool.and(x >= 0, x <= d.v)
+    keep(x, d) * keep(x, d) <= d.v * d.v => true

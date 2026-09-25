@@ -5,8 +5,16 @@
 //! thread and writes its answer into the job table; `take` collects it in a
 //! later turn; `cancel` stops it at the body's next cancellation check. The
 //! engine deliberately knows nothing about Aver: a body is a closure and an
-//! answer is a [`ProviderValue`], so the same table serves the bytecode VM
-//! today and a generated artifact later.
+//! answer is a [`ProviderValue`], so the same table serves the bytecode VM,
+//! a generated artifact and the Wasmtime host.
+//!
+//! The limit is how much of the host a program uses, not something the
+//! program observes. While fewer than `limit` bodies run, a begun job starts
+//! at once; otherwise it waits in the admission queue, in the order it was
+//! begun, and starts as soon as a running body stops. `begin` never refuses
+//! at the limit, so the same program gives the same answers on a host with
+//! one core and on a host with sixty-four, and a recording made on either
+//! replays on the other.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,6 +51,8 @@ pub trait CompletionWaker: Send + Sync {
 }
 
 enum JobState {
+    /// Begun, waiting in the admission queue for a running body to stop.
+    Queued(JobBody),
     Running,
     Finished(JobOutcome),
     Cancelled,
@@ -51,14 +61,26 @@ enum JobState {
 
 struct JobSlot {
     cancel: Arc<AtomicBool>,
+    /// Which job kind began this job; see [`JobEngine::new_owner`].
+    owner: u64,
     state: JobState,
+}
+
+/// One queued job leaving the admission queue for a thread of its own.
+struct Start {
+    id: u64,
+    cancel: Arc<AtomicBool>,
+    body: JobBody,
 }
 
 #[derive(Default)]
 struct JobTable {
     next_id: u64,
+    next_owner: u64,
     jobs: BTreeMap<u64, JobSlot>,
     running: usize,
+    /// The queued jobs, in the order they were begun.
+    queue: VecDeque<u64>,
     /// Bumped whenever a job settles. A waiter that observed generation `g`
     /// and finds it unchanged knows nothing settled while it slept.
     settled: u64,
@@ -79,9 +101,37 @@ impl JobTable {
             }
         }
     }
+
+    /// Move queued jobs to running while there is room under `limit`, oldest
+    /// first. The caller starts their threads once the table is unlocked.
+    fn admit(&mut self, limit: usize) -> Vec<Start> {
+        let mut starts = Vec::new();
+        while self.running < limit {
+            let Some(id) = self.queue.pop_front() else {
+                break;
+            };
+            let Some(slot) = self.jobs.get_mut(&id) else {
+                continue;
+            };
+            if !matches!(slot.state, JobState::Queued(_)) {
+                continue;
+            }
+            let JobState::Queued(body) = std::mem::replace(&mut slot.state, JobState::Running)
+            else {
+                unreachable!("the state was just matched as queued");
+            };
+            self.running += 1;
+            starts.push(Start {
+                id,
+                cancel: slot.cancel.clone(),
+                body,
+            });
+        }
+        starts
+    }
 }
 
-/// One program's running jobs.
+/// One program's jobs.
 pub struct JobEngine {
     limit: usize,
     table: Mutex<JobTable>,
@@ -148,7 +198,7 @@ impl Job {
 }
 
 impl JobEngine {
-    /// A new engine bounded by `limit` running jobs. A zero limit is a
+    /// A new engine running at most `limit` bodies at once. A zero limit is a
     /// configuration error the manifest rejects; treat it as one here too.
     pub fn new(limit: usize) -> Arc<Self> {
         Arc::new(Self {
@@ -171,67 +221,104 @@ impl JobEngine {
         self.limit
     }
 
-    /// Start `body` off the turn and return its handle at once.
+    /// A fresh owner tag for one job kind.
     ///
-    /// The turn is never blocked: at the limit this refuses instead of
-    /// waiting, and the refusal is the `Result.Err` the program reads.
-    pub fn begin(self: &Arc<Self>, body: JobBody) -> Result<Job, String> {
-        let id = {
-            let mut table = self.lock()?;
-            if table.running >= self.limit {
-                return Err(format!("work: job limit {} reached", self.limit));
+    /// Every job kind of a program shares one engine, and `Work.Job` is one
+    /// type, so a handle begun by one kind type-checks as an argument to
+    /// another kind's `take`. The engine keeps the tag of the kind that began
+    /// each job in the job's own slot, so the answer "not started by this
+    /// kind" lives exactly as long as the slot does, and a forgotten slot
+    /// answers `work: unknown job` whoever asks.
+    pub fn new_owner(&self) -> u64 {
+        match self.table.lock() {
+            Ok(mut table) => {
+                table.next_owner += 1;
+                table.next_owner
             }
+            Err(_) => 0,
+        }
+    }
+
+    /// Start `body` off the turn and return its handle at once, under no
+    /// particular owner.
+    pub fn begin(self: &Arc<Self>, body: JobBody) -> Result<Job, String> {
+        self.begin_owned(0, body)
+    }
+
+    /// Start `body` off the turn for the job kind tagged `owner`, and return
+    /// its handle at once.
+    ///
+    /// The turn is never blocked and nothing is refused at the limit: a job
+    /// begun while `limit` bodies run waits in the admission queue, reads as
+    /// not ready, and starts when a running body stops.
+    pub fn begin_owned(self: &Arc<Self>, owner: u64, body: JobBody) -> Result<Job, String> {
+        let (id, starts) = {
+            let mut table = self.lock()?;
             table.next_id += 1;
             let id = table.next_id;
             table.jobs.insert(
                 id,
                 JobSlot {
                     cancel: Arc::new(AtomicBool::new(false)),
-                    state: JobState::Running,
+                    owner,
+                    state: JobState::Queued(body),
                 },
             );
-            table.running += 1;
-            id
+            table.queue.push_back(id);
+            (id, table.admit(self.limit))
         };
-        let cancel = {
-            let table = self.lock()?;
-            table.jobs[&id].cancel.clone()
-        };
-        let engine = Arc::downgrade(self);
-        let spawned = std::thread::Builder::new()
-            .name(format!("aver-job-{id}"))
-            .spawn(move || {
-                // A body that unwinds must still settle its slot: otherwise
-                // the job stays Running for ever, the limit keeps counting it
-                // and every `take` answers `Ok(None)` with nothing left to
-                // produce an answer.
-                let outcome =
-                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(cancel))) {
-                        Ok(outcome) => outcome,
-                        Err(_) => Err("work: the job's body stopped unexpectedly".to_string()),
-                    };
-                if let Some(engine) = engine.upgrade() {
-                    engine.settle(id, outcome);
-                }
-            });
-        match spawned {
-            Ok(_) => Ok(Job {
-                engine: self.clone(),
-                id,
-            }),
-            Err(error) => {
-                let mut table = self.lock()?;
-                table.jobs.remove(&id);
-                table.running -= 1;
-                Err(format!("work: the host could not start a job: {error}"))
+        self.launch(starts);
+        Ok(Job {
+            engine: self.clone(),
+            id,
+        })
+    }
+
+    /// Give every admitted job its thread. A thread the host cannot start
+    /// settles that job with the reason, which frees its place for the next
+    /// queued one.
+    fn launch(self: &Arc<Self>, mut starts: Vec<Start>) {
+        while let Some(Start { id, cancel, body }) = starts.pop() {
+            let engine = Arc::downgrade(self);
+            let spawned = std::thread::Builder::new()
+                .name(format!("aver-job-{id}"))
+                .spawn(move || {
+                    // A body that unwinds must still settle its slot:
+                    // otherwise the job stays Running for ever, the limit
+                    // keeps counting it and every `take` answers `Ok(None)`
+                    // with nothing left to produce an answer.
+                    let outcome =
+                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            body(cancel)
+                        })) {
+                            Ok(outcome) => outcome,
+                            Err(_) => Err("work: the job's body stopped unexpectedly".to_string()),
+                        };
+                    if let Some(engine) = engine.upgrade() {
+                        engine.settle(id, outcome);
+                    }
+                });
+            if let Err(error) = spawned {
+                starts.extend(self.finish(
+                    id,
+                    Err(format!("work: the host could not start a job: {error}")),
+                ));
             }
         }
     }
 
-    fn settle(&self, id: u64, outcome: JobOutcome) {
-        {
+    fn settle(self: &Arc<Self>, id: u64, outcome: JobOutcome) {
+        let starts = self.finish(id, outcome);
+        self.launch(starts);
+    }
+
+    /// Record that one running body stopped, and admit whatever its place
+    /// lets start. A cancelled job keeps its place until its body stops, so
+    /// this is also where a cancelled job gives its place back.
+    fn finish(&self, id: u64, outcome: JobOutcome) -> Vec<Start> {
+        let starts = {
             let Ok(mut table) = self.table.lock() else {
-                return;
+                return Vec::new();
             };
             table.running = table.running.saturating_sub(1);
             table.settled += 1;
@@ -240,9 +327,11 @@ impl JobEngine {
             {
                 slot.state = JobState::Finished(outcome);
             }
-        }
+            table.admit(self.limit)
+        };
         self.settled.notify_all();
         self.ring_wakers();
+        starts
     }
 
     fn ring_wakers(&self) {
@@ -261,9 +350,9 @@ impl JobEngine {
             .map_err(|_| "work: the job table is poisoned".to_string())
     }
 
-    /// Collect a job's answer. `Ok(None)` means it is still running, and
-    /// the handle stays usable: a job reported ready that has not finished
-    /// is collected in a later turn.
+    /// Collect a job's answer. `Ok(None)` means it is queued or still
+    /// running, and the handle stays usable: a job reported ready that has
+    /// not finished is collected in a later turn.
     ///
     /// A job whose slot was already forgotten — more than
     /// [`DEAD_SLOT_LIMIT`] jobs have died since it was collected — answers
@@ -273,35 +362,20 @@ impl JobEngine {
         let Some(slot) = table.jobs.get_mut(&id) else {
             return Err("work: unknown job".to_string());
         };
+        match &slot.state {
+            JobState::Queued(_) | JobState::Running => return Ok(None),
+            JobState::Cancelled => return Err("work: job cancelled".to_string()),
+            JobState::Taken => return Err("work: job already taken".to_string()),
+            JobState::Finished(_) => {}
+        }
+        let JobState::Finished(outcome) = std::mem::replace(&mut slot.state, JobState::Taken)
+        else {
+            unreachable!("the state was just matched as finished");
+        };
         // A job that had finished becomes a dead slot here, so this is where
         // its id joins the bounded tombstone list.
-        let mut retired = false;
-        let answer = match std::mem::replace(&mut slot.state, JobState::Taken) {
-            JobState::Running => {
-                slot.state = JobState::Running;
-                Ok(None)
-            }
-            JobState::Finished(Ok(value)) => {
-                retired = true;
-                Ok(Some(value))
-            }
-            JobState::Finished(Err(message)) => {
-                retired = true;
-                Err(message)
-            }
-            JobState::Cancelled => {
-                slot.state = JobState::Cancelled;
-                Err("work: job cancelled".to_string())
-            }
-            JobState::Taken => {
-                slot.state = JobState::Taken;
-                Err("work: job already taken".to_string())
-            }
-        };
-        if retired {
-            table.retire(id);
-        }
-        answer
+        table.retire(id);
+        outcome.map(Some)
     }
 
     /// The same answer without consuming it.
@@ -311,7 +385,7 @@ impl JobEngine {
             return Err("work: unknown job".to_string());
         };
         match &slot.state {
-            JobState::Running => Ok(None),
+            JobState::Queued(_) | JobState::Running => Ok(None),
             JobState::Finished(Ok(value)) => Ok(Some(value.clone())),
             JobState::Finished(Err(message)) => Err(message.clone()),
             JobState::Cancelled => Err("work: job cancelled".to_string()),
@@ -319,27 +393,38 @@ impl JobEngine {
         }
     }
 
-    /// Stop a job. Running work stops at its next cancellation check, a
-    /// finished job drops its answer, and cancelling twice changes nothing.
-    /// A job whose answer was already collected is left alone: its story is
-    /// that it was taken, and a later take must still say so.
+    /// Stop a job. A queued job leaves the queue and never starts. A running
+    /// body stops at its next cancellation check and keeps its place under
+    /// the limit until it does. A finished job drops its answer, and
+    /// cancelling twice changes nothing. A job whose answer was already
+    /// collected is left alone: its story is that it was taken, and a later
+    /// take must still say so.
     pub fn cancel(&self, id: u64) {
         let Ok(mut table) = self.table.lock() else {
             return;
         };
         let mut retired = false;
+        let mut dropped = None;
         if let Some(slot) = table.jobs.get_mut(&id) {
             slot.cancel.store(true, Ordering::Relaxed);
-            if !matches!(slot.state, JobState::Taken) {
-                retired = !matches!(slot.state, JobState::Cancelled);
-                slot.state = JobState::Cancelled;
+            match slot.state {
+                JobState::Taken | JobState::Cancelled => {}
+                _ => {
+                    retired = true;
+                    dropped = Some(std::mem::replace(&mut slot.state, JobState::Cancelled));
+                }
             }
             table.settled += 1;
+        }
+        if matches!(dropped, Some(JobState::Queued(_))) {
+            table.queue.retain(|queued| *queued != id);
         }
         if retired {
             table.retire(id);
         }
         drop(table);
+        // A queued body holds its task; it is dropped outside the lock.
+        drop(dropped);
         self.settled.notify_all();
         self.ring_wakers();
     }
@@ -352,20 +437,37 @@ impl JobEngine {
             return true;
         };
         match table.jobs.get(&id) {
-            Some(slot) => !matches!(slot.state, JobState::Running),
+            Some(slot) => !matches!(slot.state, JobState::Queued(_) | JobState::Running),
             None => true,
         }
     }
 
-    /// Whether the table still holds a slot for this id: a running job, or a
-    /// dead one whose tombstone has not been forgotten yet. Anything a job
-    /// kind remembers about an id is worth remembering exactly this long,
-    /// because past it every answer is `work: unknown job`.
+    /// Whether this job is still waiting in the admission queue.
+    pub fn is_queued(&self, id: u64) -> bool {
+        self.table.lock().is_ok_and(|table| {
+            table
+                .jobs
+                .get(&id)
+                .is_some_and(|slot| matches!(slot.state, JobState::Queued(_)))
+        })
+    }
+
+    /// Whether the table still holds a slot for this id: a queued or running
+    /// job, or a dead one whose tombstone has not been forgotten yet.
     pub fn knows(&self, id: u64) -> bool {
         self.table
             .lock()
             .map(|table| table.jobs.contains_key(&id))
             .unwrap_or(true)
+    }
+
+    /// The owner tag of the job kind that began this job, or `None` once the
+    /// table has forgotten the slot.
+    pub fn owner(&self, id: u64) -> Option<u64> {
+        self.table
+            .lock()
+            .ok()
+            .and_then(|table| table.jobs.get(&id).map(|slot| slot.owner))
     }
 
     /// The current settle generation. Read it before deciding nothing is
@@ -408,21 +510,25 @@ impl JobEngine {
     }
 
     /// Cancel every job and wait a bounded moment for the threads to notice.
-    /// A job that outlives the grace period is left to the process exit: the
-    /// runtime promised not to wait for it beyond a bounded join.
+    /// A queued job never starts. A job that outlives the grace period is
+    /// left to the process exit: the runtime promised not to wait for it
+    /// beyond a bounded join.
     pub fn shutdown(&self) {
+        let mut dropped = Vec::new();
         {
             let Ok(mut table) = self.table.lock() else {
                 return;
             };
+            table.queue.clear();
             for slot in table.jobs.values_mut() {
                 slot.cancel.store(true, Ordering::Relaxed);
                 if !matches!(slot.state, JobState::Taken) {
-                    slot.state = JobState::Cancelled;
+                    dropped.push(std::mem::replace(&mut slot.state, JobState::Cancelled));
                 }
             }
             table.settled += 1;
         }
+        drop(dropped);
         self.settled.notify_all();
         self.ring_wakers();
         let deadline = Instant::now() + SHUTDOWN_GRACE;
@@ -499,22 +605,118 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_limit_refuses_instead_of_blocking_the_turn() {
-        let engine = JobEngine::new(1);
-        let release = Arc::new(AtomicBool::new(false));
+    fn held_job(engine: &Arc<JobEngine>, release: &Arc<AtomicBool>, answer: i64) -> Job {
         let held = release.clone();
-        let _first = engine
+        engine
             .begin(Box::new(move |cancel| {
                 while !held.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
                     std::thread::yield_now();
                 }
-                Ok(value(1))
+                Ok(value(answer))
             }))
-            .expect("first job starts");
-        let second = engine.begin(Box::new(|_| Ok(value(2))));
-        assert_eq!(second.err(), Some("work: job limit 1 reached".to_string()));
+            .expect("begin never refuses")
+    }
+
+    /// At the limit `begin` answers a handle, never a refusal: the job waits
+    /// in the admission queue, reads as not ready, and starts once the
+    /// running body stops.
+    #[test]
+    fn the_limit_queues_instead_of_refusing() {
+        let engine = JobEngine::new(1);
+        let release = Arc::new(AtomicBool::new(false));
+        let first = held_job(&engine, &release, 1);
+        let second = engine
+            .begin(Box::new(|_| Ok(value(2))))
+            .expect("a begin at the limit is queued, not refused");
+        assert!(engine.is_queued(second.id()));
+        assert!(!second.is_ready());
+        assert!(matches!(second.take(), Ok(None)));
         release.store(true, Ordering::Relaxed);
+        settled(&engine, first.id());
+        settled(&engine, second.id());
+        assert!(matches!(second.take(), Ok(Some(ProviderValue::Int(_)))));
+        assert!(matches!(first.take(), Ok(Some(ProviderValue::Int(_)))));
+    }
+
+    /// Queued jobs start in the order they were begun.
+    #[test]
+    fn queued_jobs_start_in_the_order_they_were_begun() {
+        let engine = JobEngine::new(1);
+        let release = Arc::new(AtomicBool::new(false));
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let first = held_job(&engine, &release, 0);
+        let jobs: Vec<Job> = (1..=3)
+            .map(|n| {
+                let order = order.clone();
+                engine
+                    .begin(Box::new(move |_| {
+                        order.lock().expect("order").push(n);
+                        Ok(value(n))
+                    }))
+                    .expect("queued")
+            })
+            .collect();
+        release.store(true, Ordering::Relaxed);
+        settled(&engine, first.id());
+        for job in &jobs {
+            settled(&engine, job.id());
+        }
+        assert_eq!(*order.lock().expect("order"), vec![1, 2, 3]);
+    }
+
+    /// A queued job that is cancelled never starts, and its place in the
+    /// queue goes to the next one.
+    #[test]
+    fn a_cancelled_queued_job_never_starts() {
+        let engine = JobEngine::new(1);
+        let release = Arc::new(AtomicBool::new(false));
+        let ran = Arc::new(AtomicBool::new(false));
+        let first = held_job(&engine, &release, 1);
+        let marker = ran.clone();
+        let queued = engine
+            .begin(Box::new(move |_| {
+                marker.store(true, Ordering::Relaxed);
+                Ok(value(2))
+            }))
+            .expect("queued");
+        let after = engine.begin(Box::new(|_| Ok(value(3)))).expect("queued");
+        queued.cancel();
+        assert!(queued.is_ready(), "a cancelled job is ready at once");
+        release.store(true, Ordering::Relaxed);
+        settled(&engine, first.id());
+        settled(&engine, after.id());
+        assert!(matches!(after.take(), Ok(Some(_))));
+        assert!(!ran.load(Ordering::Relaxed), "a cancelled queued job ran");
+        assert_eq!(queued.take().err(), Some("work: job cancelled".to_string()));
+    }
+
+    /// A running job that is cancelled keeps its place until its body
+    /// stops; the stop is what lets the next queued job start.
+    #[test]
+    fn a_cancelled_running_job_frees_its_place_when_its_body_stops() {
+        let engine = JobEngine::new(1);
+        let never = Arc::new(AtomicBool::new(false));
+        let running = held_job(&engine, &never, 1);
+        let queued = engine.begin(Box::new(|_| Ok(value(2)))).expect("queued");
+        assert!(engine.is_queued(queued.id()));
+        running.cancel();
+        settled(&engine, queued.id());
+        assert!(matches!(queued.take(), Ok(Some(_))));
+    }
+
+    /// Each job kind has its own owner tag, and the tag is forgotten with
+    /// the slot.
+    #[test]
+    fn the_owner_of_a_job_is_its_kind_while_the_slot_lives() {
+        let engine = JobEngine::new(2);
+        let kind = engine.new_owner();
+        let other = engine.new_owner();
+        assert_ne!(kind, other);
+        let job = engine
+            .begin_owned(kind, Box::new(|_| Ok(value(1))))
+            .expect("begin");
+        assert_eq!(engine.owner(job.id()), Some(kind));
+        assert_eq!(engine.owner(job.id() + 1000), None);
     }
 
     #[test]
@@ -558,9 +760,11 @@ mod tests {
         settled(&engine, job.id());
         std::panic::set_hook(hook);
         assert!(job.take().is_err());
-        // The slot the stopped job held is free again, so the limit did not
-        // leak it.
-        assert!(engine.begin(Box::new(|_| Ok(value(1)))).is_ok());
+        // The place the stopped job held is free again, so the limit did not
+        // leak it: the next job starts rather than queueing for ever.
+        let next = engine.begin(Box::new(|_| Ok(value(1)))).expect("begin");
+        settled(&engine, next.id());
+        assert!(matches!(next.take(), Ok(Some(_))));
     }
 
     /// The table answers "already taken" out of a bounded number of dead

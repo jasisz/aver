@@ -1,0 +1,17 @@
+module Node
+    intent = "Fixture: a request parked on a socket that another request closes. The next wait reports the closed socket ready rather than failing, so the turn goes on and the parked request learns the socket is gone."
+    depends [Net, Netting]
+    effects [Console.print, Net.gone, Net.shut, yield]
+
+fn watcher() -> Unit
+    ? "Waits until the watched socket is gone, then says so."
+    ! [Console.print, Net.gone, yield]
+    match Net.gone()
+        true -> Console.print("the watched socket is gone")
+        false -> watcher()
+
+fn closer() -> Unit
+    ? "Closes the watched socket while the watcher is parked on it."
+    ! [Console.print, Net.shut, yield]
+    Net.shut()
+    Console.print("closed the watched socket")

@@ -1,0 +1,67 @@
+module LawBitMasks
+    intent =
+        "Bit masks with a literal mask, stated against the Int.div / Int.mod"
+        "form the rest of a program uses: a low run, single bits, a mask of"
+        "two runs, and a mask read through another function."
+    effects []
+
+fn lowFive(hashType: Int) -> Int
+    ? "The low five bits, by mask."
+    Bits.and(hashType, 31)
+
+verify lowFive law isModThirtyTwo
+    given h: Int = [-33, -1, 0, 1, 31, 32, 35, 255, 4294967295]
+    lowFive(h) => Int.mod(h, 32)
+
+fn baseOf(hashType: Int) -> Int
+    ? "The base read from the low five bits, by remainder."
+    match Int.mod(hashType, 32)
+        1 -> 1
+        2 -> 2
+        3 -> 3
+        _ -> 0
+
+verify baseOf
+    baseOf(2) => 2
+    baseOf(35) => 3
+    baseOf(7) => 0
+
+fn maskedBase(hashType: Int) -> Int
+    ? "The same base, read from the masked low five bits."
+    baseOf(Bits.and(hashType, 31))
+
+verify maskedBase law agreesWithBaseOf
+    given h: Int = [-1, 0, 1, 2, 3, 34, 35, 129, 131, 4294967267]
+    maskedBase(h) => baseOf(h)
+
+fn anyoneCanPay(hashType: Int) -> Bool
+    ? "Whether bit seven is set, by mask."
+    Bits.and(hashType, 128) == 128
+
+fn bitSeven(hashType: Int) -> Bool
+    ? "Whether bit seven is set, by quotient and remainder."
+    Int.mod(Int.div(hashType, 128), 2) == 1
+
+verify bitSeven
+    bitSeven(128) => true
+    bitSeven(127) => false
+
+verify anyoneCanPay law agreesWithBitSeven
+    given h: Int = [-1, 0, 1, 127, 128, 129, 255, 256, 384, 1601138113]
+    anyoneCanPay(h) => bitSeven(h)
+
+fn topBit(bits: Int) -> Bool
+    ? "Whether bit 31 is set, by mask."
+    Bits.and(bits, 2147483648) != 0
+
+verify topBit law isBitThirtyOne
+    given bits: Int = [-1, 0, 1, 2147483647, 2147483648, 4294967295, 6442450944]
+    topBit(bits) => Int.mod(Int.div(bits, 2147483648), 2) == 1
+
+fn compared(value: Int) -> Int
+    ? "The mask 0x0040FFFF: a low run of sixteen bits and bit 22."
+    Bits.and(value, 4259839)
+
+verify compared law isTypeBitAndCount
+    given v: Int = [-1, 0, 1, 65535, 65536, 4194303, 4194304, 4194305, 2147483648, 4294967295]
+    compared(v) => Int.mod(v, 65536) + 4194304 * Int.mod(Int.div(v, 4194304), 2)

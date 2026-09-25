@@ -144,7 +144,16 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
         return false;
     }
     // The claim goes through the subject fn (`holds`, or an equational `=> rhs`).
-    if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..)) {
+    // A claim that combines quotients and remainders arithmetically
+    // (`n * quot(a, n) + rem(a, n) => a`) is admitted too: its closer is the
+    // quotient-remainder arm below, not the subject fn.
+    // A guarded comparison or equation that goes through the subject fn
+    // (`place(s, n).state.used <= cap`, `(f(x) == Option.None) => x < k`) is
+    // admitted too; the probe decides whether its arms close it.
+    if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..))
+        && !super::super::shared::law_cone_calls_int_div_mod(ctx, vb, law)
+        && !(law.when.is_some() && super::super::core_kit::lhs_calls_subject(vb, law))
+    {
         return false;
     }
     // Fail closed on refinement-lifted givens. A `@Nat>=0`-style refined given
@@ -1528,6 +1537,38 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     let mut closes = vec![close_with(&simp_list, &grind_call)];
     if grind_call != "grind" || simp_list_full != simp_list {
         closes.push(close_with(&simp_list_full, "grind"));
+    }
+    // Division by a variable: `omega` and `grind` know nothing about `a / n`
+    // or `a % n` unless `n` is a literal. Aver's `Int.div` / `Int.mod` are
+    // Euclidean, exactly Lean's `/` and `%` on `Int`, so the core facts apply
+    // as they are: `n * (a / n) + a % n = a` and `0 <= a % n < n` for a
+    // divisor that is not zero (positive for the upper bound). `grind`
+    // discharges those side conditions from the premise, and the
+    // `Except.withDefault` wrapper of the division result unfolds so its
+    // `n == 0` branch meets the premise too. Tried last, and only when the
+    // cone divides.
+    if super::super::shared::law_cone_calls_int_div_mod(ctx, vb, law) {
+        closes.push(close_with(
+            &simp_list_full,
+            "grind [Except.withDefault, Int.mul_ediv_add_emod, Int.emod_nonneg, Int.emod_lt_of_pos]",
+        ));
+    }
+    // Products of non-constant terms: the core sign facts for each product
+    // (and the nonnegativity of each square) as hypotheses, so `omega` and
+    // `grind` read the product as an atom whose sign they know.
+    let sign_haves = super::super::core_kit::sign_fact_haves(law, ctx);
+    if !sign_haves.is_empty() {
+        closes.push(format!(
+            "  | ({}; simp only [{simp_list_full}] {simp_at} <;> first | omega | grind)",
+            sign_haves.join("; ")
+        ));
+    }
+    // A guarded claim over records and helpers that branch: `grind` handed
+    // the unfolded cone, then again after `simp` has unfolded it.
+    if law.when.is_some() {
+        for arm in super::super::core_kit::cone_grind_arms(vb, law, ctx) {
+            closes.push(format!("  | ({arm})"));
+        }
     }
     let id = format!("{}.{}", vb.fn_name, law.name);
     let floor = format!(

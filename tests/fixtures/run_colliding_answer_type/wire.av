@@ -1,0 +1,15 @@
+module Wire
+    kind = capability
+    semantics = effectful
+    depends [Wait]
+    intent = "Fixture capability: one frame at a time."
+    exposes [Heard, frame]
+
+type Heard
+    Message(String)
+    Gone(String)
+
+operation frame() -> Heard
+    ? "The next frame."
+    oracle = generative
+    replay = recorded

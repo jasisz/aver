@@ -429,7 +429,7 @@ where
 /// Maximum number of elements one `Vector.new` call may materialize.
 ///
 /// This is an element budget, not a guessed byte estimate: Aver has no
-/// portable `sizeof(T)`, and the VM, generated Rust, wasm GC, Lean, and Dafny
+/// portable `sizeof(T)`, and the VM, generated Rust, wasm GC, and Lean
 /// intentionally use different representations for the same element type.
 /// One mebielement still gives every backend one exact semantic boundary and
 /// caps the operation at a finite number of clones/slots. On the VM it is

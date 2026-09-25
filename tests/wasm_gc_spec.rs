@@ -793,7 +793,7 @@ fn main() -> Int
 // — known-failing pin, `#[ignore]`'d until the canonical-key
 // migration lands.
 //
-// Epic #180 Phase 6 PR A (#189) migrated Dafny + Rust registries
+// Epic #180 Phase 6 PR A (#189) migrated the Rust registries
 // to canonical keys (`Left.Box` vs `Right.Box`). wasm-gc's
 // `TypeRegistry` plus the `flatten_multimodule` field-type
 // stripping pass are interconnected: changing one without the

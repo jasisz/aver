@@ -688,6 +688,26 @@ pub struct Module {
     /// including private helpers. These are proof metadata, never callable
     /// declarations or additions to the module's export surface.
     pub yield_sources: Vec<FnDef>,
+    /// `answers [Wire, Pool]` in the header: the capabilities this module
+    /// answers inside the turn, one function per operation over one state.
+    /// Empty for every other module.
+    pub answers: Vec<String>,
+    pub answers_line: Option<usize>,
+    /// `process peer seated by Sockets.peers` declarations written in this
+    /// module: a process taking one key, seated once per key the named pure
+    /// function of an answer module's state lists.
+    pub seatings: Vec<ProcessSeating>,
+}
+
+/// `process peer seated by Sockets.peers`: the loop seats one instance of the
+/// yielding function `process` per key that `by` returns for the state of
+/// the answer module it belongs to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessSeating {
+    pub process: String,
+    /// Module-qualified function, e.g. `Sockets.peers`.
+    pub by: String,
+    pub line: usize,
 }
 
 /// A declaration that only a capability module may carry. Both forms
