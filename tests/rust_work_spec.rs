@@ -517,6 +517,49 @@ fn a_record_gives_up_its_fields_at_its_last_use() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A record handed to a pair of functions that tail-call each other moves
+/// into the trampoline instead of being cloned by the wrapper.
+///
+/// `turns` calls `pump` once per turn with its pool at its last use. The
+/// wrapper used to borrow the pool and clone it into the trampoline's state,
+/// so while `turns` still held its copy the first `Map.set` in the group
+/// copied the whole Map, once per turn.
+#[test]
+fn a_mutual_tail_call_member_takes_a_record_by_value() {
+    let name = "rust_mutual_tco_by_value";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["2000", "300"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for expected in [
+            "pub fn pump(pool @ _: Pool, key @ _: aver_rt::AverInt, left @ _: aver_rt::AverInt) -> Pool {\n    __mutual_tco_trampoline_1(__MutualTco1::Pump(pool, key, left))",
+            "pub fn pumped(pool @ _: Pool,",
+            "let __tco0 = pump(pool, ",
+        ] {
+            if !entry.contains(expected) {
+                return Err(format!(
+                    "{name}: missing `{expected}` in the generated entry module:\n{entry}"
+                ));
+            }
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// An update of `setting.window` inside the update of `setting` that replaces
 /// it moves what it keeps: the Map moves into `Map.set` and the rest of the
 /// window into the new `Window`, so no insert copies the Map. With the old

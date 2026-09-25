@@ -73,22 +73,19 @@ fn __mutual_tco_trampoline_1(
 pub fn parseAddExprTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    left @ _: &crate::aver_generated::domain::ast::Expr,
+    left @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::ParseAddExprTail(pos, left.clone()), &tokens)
+    __mutual_tco_trampoline_1(__MutualTco1::ParseAddExprTail(pos, left), &tokens)
 }
 
 /// Parse right side of additive op.
 pub fn parseAddExprRight(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    left @ _: &crate::aver_generated::domain::ast::Expr,
+    left @ _: crate::aver_generated::domain::ast::Expr,
     op @ _: aver_rt::AverInt,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::ParseAddExprRight(pos, left.clone(), op),
-        &tokens,
-    )
+    __mutual_tco_trampoline_1(__MutualTco1::ParseAddExprRight(pos, left, op), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -160,22 +157,19 @@ fn __mutual_tco_trampoline_2(
 pub fn parseMulExprTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    left @ _: &crate::aver_generated::domain::ast::Expr,
+    left @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_2(__MutualTco2::ParseMulExprTail(pos, left.clone()), &tokens)
+    __mutual_tco_trampoline_2(__MutualTco2::ParseMulExprTail(pos, left), &tokens)
 }
 
 /// Parse right side of mul/div op.
 pub fn parseMulExprRight(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    left @ _: &crate::aver_generated::domain::ast::Expr,
+    left @ _: crate::aver_generated::domain::ast::Expr,
     op @ _: aver_rt::AverInt,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::ParseMulExprRight(pos, left.clone(), op),
-        &tokens,
-    )
+    __mutual_tco_trampoline_2(__MutualTco2::ParseMulExprRight(pos, left, op), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -269,31 +263,28 @@ fn __mutual_tco_trampoline_3(
 pub fn parseMapEntries(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_3(__MutualTco3::ParseMapEntries(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_3(__MutualTco3::ParseMapEntries(pos, acc), &tokens)
 }
 
 /// After key, expect => then value.
 pub fn parseMapAfterKey(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    keyExpr @ _: &crate::aver_generated::domain::ast::Expr,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    keyExpr @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::ParseMapAfterKey(pos, acc.clone(), keyExpr.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_3(__MutualTco3::ParseMapAfterKey(pos, acc, keyExpr), &tokens)
 }
 
 /// After entry: , for more or } to end.
 pub fn parseMapEntryTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_3(__MutualTco3::ParseMapEntryTail(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_3(__MutualTco3::ParseMapEntryTail(pos, acc), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -388,39 +379,36 @@ fn __mutual_tco_trampoline_4(
 pub fn parseInterpParts(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_4(__MutualTco4::ParseInterpParts(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_4(__MutualTco4::ParseInterpParts(pos, acc), &tokens)
 }
 
 /// After interpolation expr: expect TkInterpEnd, then maybe more string.
 pub fn parseInterpAfterExpr(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_4(
-        __MutualTco4::ParseInterpAfterExpr(pos, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_4(__MutualTco4::ParseInterpAfterExpr(pos, acc), &tokens)
 }
 
 /// After }: next TkStr continues, or end of string.
 pub fn parseInterpContinue(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_4(__MutualTco4::ParseInterpContinue(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_4(__MutualTco4::ParseInterpContinue(pos, acc), &tokens)
 }
 
 /// After string segment: more interpolation or end.
 pub fn parseInterpAfterStr(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_4(__MutualTco4::ParseInterpAfterStr(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_4(__MutualTco4::ParseInterpAfterStr(pos, acc), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -496,33 +484,27 @@ fn __mutual_tco_trampoline_5(
 pub fn parseListItems(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_5(__MutualTco5::ParseListItems(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_5(__MutualTco5::ParseListItems(pos, acc), &tokens)
 }
 
 /// After a list item: ',' for more or ']' to end.
 pub fn parseListItemsTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos0 @ _: aver_rt::AverInt,
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    items @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_5(
-        __MutualTco5::ParseListItemsTail(pos0, items.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_5(__MutualTco5::ParseListItemsTail(pos0, items), &tokens)
 }
 
 /// Allow a trailing comma before ']' in list literals.
 pub fn parseListAfterComma(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    items @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_5(
-        __MutualTco5::ParseListAfterComma(pos, items.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_5(__MutualTco5::ParseListAfterComma(pos, items), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -600,33 +582,27 @@ fn __mutual_tco_trampoline_6(
 pub fn parseTupleRest(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_6(__MutualTco6::ParseTupleRest(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_6(__MutualTco6::ParseTupleRest(pos, acc), &tokens)
 }
 
 /// After tuple element: ',' for more or ')' to end.
 pub fn parseTupleRestTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos0 @ _: aver_rt::AverInt,
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    items @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_6(
-        __MutualTco6::ParseTupleRestTail(pos0, items.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_6(__MutualTco6::ParseTupleRestTail(pos0, items), &tokens)
 }
 
 /// Allow a trailing comma before ')' in tuples.
 pub fn parseTupleAfterComma(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    items @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_6(
-        __MutualTco6::ParseTupleAfterComma(pos, items.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_6(__MutualTco6::ParseTupleAfterComma(pos, items), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -676,21 +652,18 @@ fn __mutual_tco_trampoline_7(
 pub fn parseFieldAccess(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    obj @ _: &crate::aver_generated::domain::ast::Expr,
+    obj @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_7(__MutualTco7::ParseFieldAccess(pos, obj.clone()), &tokens)
+    __mutual_tco_trampoline_7(__MutualTco7::ParseFieldAccess(pos, obj), &tokens)
 }
 
 /// Check for chained field access.
 pub fn parseFieldAccessTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    expr @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_7(
-        __MutualTco7::ParseFieldAccessTail(pos, expr.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_7(__MutualTco7::ParseFieldAccessTail(pos, expr), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -808,12 +781,9 @@ pub fn parseRecordFields(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_8(
-        __MutualTco8::ParseRecordFields(pos, name, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_8(__MutualTco8::ParseRecordFields(pos, name, acc), &tokens)
 }
 
 /// Parse = expr after field name.
@@ -821,11 +791,11 @@ pub fn parseRecordField(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     field @ _: AverStr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_8(
-        __MutualTco8::ParseRecordField(pos, name, acc.clone(), field),
+        __MutualTco8::ParseRecordField(pos, name, acc, field),
         &tokens,
     )
 }
@@ -835,10 +805,10 @@ pub fn parseRecordFieldsTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_8(
-        __MutualTco8::ParseRecordFieldsTail(pos, name, fields.clone()),
+        __MutualTco8::ParseRecordFieldsTail(pos, name, fields),
         &tokens,
     )
 }
@@ -848,10 +818,10 @@ pub fn parseRecordAfterComma(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    fields @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    fields @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_8(
-        __MutualTco8::ParseRecordAfterComma(pos, name, fields.clone()),
+        __MutualTco8::ParseRecordAfterComma(pos, name, fields),
         &tokens,
     )
 }
@@ -961,7 +931,7 @@ fn __mutual_tco_trampoline_9(
                             pos,
                             name,
                             &args,
-                            &aver_rt::AverList::empty(),
+                            aver_rt::AverList::empty(),
                         );
                     }
                     _ => __MutualTco9::ParseCallArgsList(pos, name, args),
@@ -976,12 +946,9 @@ pub fn parseCallArgsList(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_9(
-        __MutualTco9::ParseCallArgsList(pos, name, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_9(__MutualTco9::ParseCallArgsList(pos, name, acc), &tokens)
 }
 
 /// After an argument: ',' for more or ')' to end. Detects named args (field = expr).
@@ -989,10 +956,10 @@ pub fn parseCallArgsListTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos0 @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_9(
-        __MutualTco9::ParseCallArgsListTail(pos0, name, args.clone()),
+        __MutualTco9::ParseCallArgsListTail(pos0, name, args),
         &tokens,
     )
 }
@@ -1002,10 +969,10 @@ pub fn parseCallArgsAfterComma(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_9(
-        __MutualTco9::ParseCallArgsAfterComma(pos, name, args.clone()),
+        __MutualTco9::ParseCallArgsAfterComma(pos, name, args),
         &tokens,
     )
 }
@@ -1015,11 +982,11 @@ pub fn parseCallArgsCheckNamed(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    args @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
+    args @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
     field @ _: AverStr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_9(
-        __MutualTco9::ParseCallArgsCheckNamed(pos, name, args.clone(), field),
+        __MutualTco9::ParseCallArgsCheckNamed(pos, name, args, field),
         &tokens,
     )
 }
@@ -1153,10 +1120,10 @@ pub fn parseNamedArgs(
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
     positionalArgs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    namedAcc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    namedAcc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_10(
-        __MutualTco10::ParseNamedArgs(pos, name, namedAcc.clone()),
+        __MutualTco10::ParseNamedArgs(pos, name, namedAcc),
         &tokens,
         &positionalArgs,
     )
@@ -1168,11 +1135,11 @@ pub fn parseNamedArgField(
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
     positionalArgs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    namedAcc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    namedAcc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
     field @ _: AverStr,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_10(
-        __MutualTco10::ParseNamedArgField(pos, name, namedAcc.clone(), field),
+        __MutualTco10::ParseNamedArgField(pos, name, namedAcc, field),
         &tokens,
         &positionalArgs,
     )
@@ -1184,10 +1151,10 @@ pub fn parseNamedArgsTail(
     pos0 @ _: aver_rt::AverInt,
     name @ _: AverStr,
     positionalArgs @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Expr>,
-    namedAcc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
+    namedAcc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::ast::Expr)>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_10(
-        __MutualTco10::ParseNamedArgsTail(pos0, name, namedAcc.clone()),
+        __MutualTco10::ParseNamedArgsTail(pos0, name, namedAcc),
         &tokens,
         &positionalArgs,
     )
@@ -1300,13 +1267,9 @@ pub fn parseMatchArms(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     subject @ _: &crate::aver_generated::domain::ast::Expr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_11(
-        __MutualTco11::ParseMatchArms(pos, acc.clone()),
-        &tokens,
-        &subject,
-    )
+    __mutual_tco_trampoline_11(__MutualTco11::ParseMatchArms(pos, acc), &tokens, &subject)
 }
 
 /// Parse one match arm: pattern '->' expr NEWLINE
@@ -1314,13 +1277,9 @@ pub fn parseOneArm(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     subject @ _: &crate::aver_generated::domain::ast::Expr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_11(
-        __MutualTco11::ParseOneArm(pos, acc.clone()),
-        &tokens,
-        &subject,
-    )
+    __mutual_tco_trampoline_11(__MutualTco11::ParseOneArm(pos, acc), &tokens, &subject)
 }
 
 /// Parse arrow and body of a match arm.
@@ -1328,11 +1287,11 @@ pub fn parseOneArmBody(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     subject @ _: &crate::aver_generated::domain::ast::Expr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    pat @ _: &crate::aver_generated::domain::ast::Pattern,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    pat @ _: crate::aver_generated::domain::ast::Pattern,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_11(
-        __MutualTco11::ParseOneArmBody(pos, acc.clone(), pat.clone()),
+        __MutualTco11::ParseOneArmBody(pos, acc, pat),
         &tokens,
         &subject,
     )
@@ -1428,10 +1387,10 @@ pub fn parseMatchArmsFlat(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     subject @ _: &crate::aver_generated::domain::ast::Expr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_12(
-        __MutualTco12::ParseMatchArmsFlat(pos, acc.clone()),
+        __MutualTco12::ParseMatchArmsFlat(pos, acc),
         &tokens,
         &subject,
     )
@@ -1442,13 +1401,9 @@ pub fn parseOneArmFlat(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     subject @ _: &crate::aver_generated::domain::ast::Expr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_12(
-        __MutualTco12::ParseOneArmFlat(pos, acc.clone()),
-        &tokens,
-        &subject,
-    )
+    __mutual_tco_trampoline_12(__MutualTco12::ParseOneArmFlat(pos, acc), &tokens, &subject)
 }
 
 /// Parse arrow and body, then continue flat.
@@ -1456,11 +1411,11 @@ pub fn parseOneArmFlatBody(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     subject @ _: &crate::aver_generated::domain::ast::Expr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
-    pat @ _: &crate::aver_generated::domain::ast::Pattern,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::MatchArm>,
+    pat @ _: crate::aver_generated::domain::ast::Pattern,
 ) -> Result<(crate::aver_generated::domain::ast::Expr, aver_rt::AverInt), AverStr> {
     __mutual_tco_trampoline_12(
-        __MutualTco12::ParseOneArmFlatBody(pos, acc.clone(), pat.clone()),
+        __MutualTco12::ParseOneArmFlatBody(pos, acc, pat),
         &tokens,
         &subject,
     )
@@ -1670,7 +1625,7 @@ pub fn parseAddExpr(
     let r @ _ = crate::aver_generated::domain::parser::expr::parseMulExpr(tokens, pos)?;
     {
         let (expr, pos2) = r;
-        crate::aver_generated::domain::parser::expr::parseAddExprTail(tokens, pos2, &expr)
+        crate::aver_generated::domain::parser::expr::parseAddExprTail(tokens, pos2, expr)
     }
 }
 
@@ -1683,7 +1638,7 @@ pub fn parseMulExpr(
     let r @ _ = crate::aver_generated::domain::parser::expr::parseAtom(tokens, pos)?;
     {
         let (expr, pos2) = r;
-        crate::aver_generated::domain::parser::expr::parseMulExprTail(tokens, pos2, &expr)
+        crate::aver_generated::domain::parser::expr::parseMulExprTail(tokens, pos2, expr)
     }
 }
 
@@ -1769,7 +1724,7 @@ pub fn parseMapLiteral(
         _ => crate::aver_generated::domain::parser::expr::parseMapEntries(
             tokens,
             pos2,
-            &aver_rt::AverList::empty(),
+            aver_rt::AverList::empty(),
         ),
     }
 }
@@ -1802,7 +1757,7 @@ pub fn parseStringOrInterp(
             crate::aver_generated::domain::parser::expr::parseInterpParts(
                 tokens,
                 pos.add(&aver_rt::AverInt::from_i64(1)),
-                &aver_rt::AverList::from_vec(vec![
+                aver_rt::AverList::from_vec(vec![
                     crate::aver_generated::domain::ast::Expr::ExprStr(prefix),
                 ]),
             )
@@ -1829,7 +1784,7 @@ pub fn parseListExpr(
         _ => crate::aver_generated::domain::parser::expr::parseListItems(
             tokens,
             pos,
-            &aver_rt::AverList::empty(),
+            aver_rt::AverList::empty(),
         ),
     }
 }
@@ -1848,7 +1803,7 @@ pub fn parseParenExpr(
                 crate::aver_generated::domain::parser::expr::parseTupleRest(
                     tokens,
                     pos2.add(&aver_rt::AverInt::from_i64(1)),
-                    &aver_rt::AverList::from_vec(vec![expr]),
+                    aver_rt::AverList::from_vec(vec![expr]),
                 )
             }
             crate::aver_generated::domain::token::Token::TkRParen => {
@@ -1926,7 +1881,7 @@ pub fn parseIdentOrCall(
             crate::aver_generated::domain::parser::expr::parseFieldAccess(
                 tokens,
                 nextPos,
-                &crate::aver_generated::domain::ast::Expr::ExprVar(name),
+                crate::aver_generated::domain::ast::Expr::ExprVar(name),
             )
         }
         _ => Ok((crate::aver_generated::domain::ast::Expr::ExprVar(name), pos)),
@@ -1943,7 +1898,7 @@ pub fn chainFieldAccess(
     let r @ _ = crate::aver_generated::domain::parser::expr::parseCallOrRecord(tokens, pos, name)?;
     {
         let (expr, pos2) = r;
-        crate::aver_generated::domain::parser::expr::parseFieldAccessTail(tokens, pos2, &expr)
+        crate::aver_generated::domain::parser::expr::parseFieldAccessTail(tokens, pos2, expr)
     }
 }
 
@@ -2001,7 +1956,7 @@ pub fn parseCallOrRecord(
             tokens,
             pos2,
             name,
-            &aver_rt::AverList::empty(),
+            aver_rt::AverList::empty(),
         ),
     }
 }
@@ -2023,14 +1978,14 @@ pub fn parseCallOrRecordLookahead(
                 tokens,
                 pos,
                 name,
-                &aver_rt::AverList::empty(),
+                aver_rt::AverList::empty(),
             )
         }
         _ => crate::aver_generated::domain::parser::expr::parseCallArgsList(
             tokens,
             pos,
             name,
-            &aver_rt::AverList::empty(),
+            aver_rt::AverList::empty(),
         ),
     }
 }
@@ -2062,14 +2017,14 @@ pub fn parseMatchAfterSubject(
                 tokens,
                 pos2.add(&aver_rt::AverInt::from_i64(1)),
                 subject,
-                &aver_rt::AverList::empty(),
+                aver_rt::AverList::empty(),
             )
         }
         _ => crate::aver_generated::domain::parser::expr::parseMatchArmsFlat(
             tokens,
             pos2,
             subject,
-            &aver_rt::AverList::empty(),
+            aver_rt::AverList::empty(),
         ),
     }
 }

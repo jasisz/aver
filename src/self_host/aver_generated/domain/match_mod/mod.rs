@@ -48,31 +48,23 @@ fn __mutual_tco_trampoline_1(
 
 /// Accumulate bindings from tuple pattern matching.
 pub fn matchPatTupleItemsAcc(
-    pats @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    pats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
-    __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleItemsAcc(
-        pats.clone(),
-        items.clone(),
-        acc.clone(),
-    ))
+    __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleItemsAcc(pats, items, acc))
 }
 
 /// Match one tuple element and continue with accumulated bindings.
 pub fn matchPatTupleOne(
-    pat @ _: &crate::aver_generated::domain::ast::Pattern,
-    item @ _: &crate::aver_generated::domain::value::Val,
-    restPats @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
-    restItems @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc @ _: &aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
+    pat @ _: crate::aver_generated::domain::ast::Pattern,
+    item @ _: crate::aver_generated::domain::value::Val,
+    restPats @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    restItems @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    acc @ _: aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>,
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     __mutual_tco_trampoline_1(__MutualTco1::MatchPatTupleOne(
-        pat.clone(),
-        item.clone(),
-        restPats.clone(),
-        restItems.clone(),
-        acc.clone(),
+        pat, item, restPats, restItems, acc,
     ))
 }
 
@@ -289,9 +281,9 @@ pub fn matchPatTupleItems(
 ) -> Result<aver_rt::AverList<(AverStr, crate::aver_generated::domain::value::Val)>, AverStr> {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::match_mod::matchPatTupleItemsAcc(
-        pats,
-        items,
-        &aver_rt::AverList::empty(),
+        pats.clone(),
+        items.clone(),
+        aver_rt::AverList::empty(),
     )
 }
 
