@@ -245,13 +245,14 @@ fn parse_atom(tokens: &[String], at: &mut usize) -> Option<LTy> {
 }
 
 /// One `def` of the model: its namespace, parameter types and result type,
-/// as written.
+/// as written, and its body text (the lines up to the next blank line).
 #[derive(Debug, Clone)]
 struct LeanDef {
     qualified: String,
     namespace: String,
     params: Vec<String>,
     ret: String,
+    body: String,
 }
 
 #[derive(Debug, Clone)]
@@ -437,6 +438,12 @@ impl ModelInfo {
                     && let Some((params, ret)) = parse_def_tail(&rest[name.len()..])
                 {
                     let qualified = qualify(&ns, name);
+                    let body = lines[i + 1..]
+                        .iter()
+                        .take_while(|l| !l.trim().is_empty())
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     self.defs.insert(
                         qualified.clone(),
                         LeanDef {
@@ -444,6 +451,7 @@ impl ModelInfo {
                             namespace: ns.clone(),
                             params,
                             ret,
+                            body,
                         },
                     );
                 }
@@ -459,6 +467,25 @@ impl ModelInfo {
             Some([]) | None => Err("the Lean source model has no definition for this function".into()),
             Some(_) => Err("several Lean source definitions flatten to this function's name".into()),
         }
+    }
+
+    /// The nullary definitions `def`'s body mentions, fully qualified. The
+    /// optimized plan carries such a constant as its value, so a step proof
+    /// unfolds it on the source side.
+    fn inlined_constants(&self, def: &LeanDef) -> Vec<String> {
+        let mut out = Vec::new();
+        for token in crate::bridge_statement::statement_tokens(&def.body) {
+            let found = self.resolve(&self.defs, &def.namespace, token);
+            if let Some((qualified, target)) = found
+                && target.params.is_empty()
+                && qualified != def.qualified
+                && !out.contains(&qualified)
+            {
+                out.push(qualified);
+            }
+        }
+        out.sort();
+        out
     }
 
     /// Resolve a type name as written inside namespace `ns` the way Lean
@@ -860,6 +887,13 @@ struct BridgedFn {
     fuel: bool,
     /// The decoder's argument shapes.
     shapes: Vec<DecoderShape>,
+    /// The String literals its plan mentions (literal nodes and patterns).
+    literals: BTreeSet<Vec<u8>>,
+    /// Whether its plan calls itself (self recursion).
+    recursive: bool,
+    /// Nullary source definitions its model definition mentions, fully
+    /// qualified: the plan carries them inlined as their values.
+    constants: Vec<String>,
 }
 
 /// One decoder argument shape: the atomic values it decodes, its argument
@@ -1072,14 +1106,20 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
                 .map(|p| alts(p, &mut fresh))
                 .collect::<Result<Vec<_>, _>>()?;
             let shapes = product(parts)?.iter().map(|row| join_row(row)).collect();
+            let mut literals = BTreeSet::new();
+            string_literals(&e.plan.body, &mut literals);
+            let callees = direct_callees(&e.plan.body);
             Ok(BridgedFn {
                 func_idx: e.func_idx,
                 model: def.qualified.clone(),
                 params,
                 result,
-                callees: direct_callees(&e.plan.body),
+                recursive: callees.contains(&e.func_idx),
+                callees,
                 fuel: info.defs.contains_key(&format!("{}__fuel", def.qualified)),
                 shapes,
+                literals,
+                constants: info.inlined_constants(def),
             })
         })();
         match derived {
@@ -1193,20 +1233,6 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
 
 // ---- rendering `Bridge.lean` --------------------------------------------------
 
-const EVAL_SIMPS: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, \
-     AverCert.Grammar.evalArms, AverCert.Grammar.argsEnv, AverCert.Grammar.upd, \
-     AverCert.Grammar.intBin, AverCert.Grammar.boolBin, AverCert.Grammar.floatBin, \
-     AverCert.Grammar.strBin, AverCert.Grammar.strCat, AverCert.Grammar.builtinEval, \
-     AverCert.Grammar.intrinsicEval, \
-     AverCert.Grammar.ctorVal, AverCert.Grammar.patMatch, AverCert.Grammar.bindVals, \
-     AverCert.Grammar.noSlot, AverCert.GrammarBridge.over, \
-     AverCert.GrammarBridge.decodeStr_strBytes, AverCert.GrammarBridge.strBytes_append, AverCert.GrammarBridge.strBytes_hadd, AverCert.GrammarBridge.strBytes_toString, \
-     AverCert.GrammarBridge.string_eq_iff, AverCert.GrammarBridge.string_beq";
-
-/// Bool normal forms: the plan's comparisons are `decide`, the source's `==`.
-const BOOL_SIMPS: &str = "_root_.beq_iff_eq, _root_.bne_iff_ne, _root_.Bool.beq_eq_decide_eq, \
-     _root_.decide_eq_decide, _root_.Bool.decide_eq_true, _root_.decide_not";
-
 const TYPING_SIMPS: &str = "AverCert.GrammarBridge.ArgsTyped, AverCert.Grammar.HasTyL, \
      AverCert.Grammar.HasTy, AverCert.Grammar.HasTyAll, AverCert.AcceptedArtifact.obligationOf, \
      AverCert.TypeTable.mctxOf, AverCert.TypeTable.recordOf, AverCert.TypeTable.sumOf, \
@@ -1297,7 +1323,187 @@ fn render_image_table(fns: &BTreeMap<u32, BridgedFn>, s: &mut String) {
     s.push('\n');
 }
 
-fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s: &mut String) {
+/// The fixed lemmas every step proof rewrites with, rendered once into
+/// `BridgeDefs.lean`: arm-by-arm evaluation of a match (one rewrite per
+/// pattern kind, so a symbolic subject never unfolds `patMatch`), a plan `if`
+/// as a Lean `if`, splitting an `if` without naming its condition, and the
+/// normal forms that meet the source's spelling (`==`, `!=`, String `+`,
+/// interpolation). Producer data like every bridge proof: the kernel checks
+/// each one.
+const STEP_LEMMAS: &str = r#"section StepLemmas
+open AverCert.Grammar
+
+/-! Arm-by-arm evaluation of a match: one rewrite per pattern kind, so a
+    step proof evaluates a match without unfolding `patMatch`/`bindVals`
+    under a symbolic subject. -/
+
+theorem arms_nil (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (v : SVal) :
+    evalArms F env v .nil = none := by simp [evalArms]
+
+theorem arms_wild (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (v : SVal) (b : Expr) (rest : Arms) :
+    evalArms F env v (.cons .wild b rest) = eval F env b := by simp [evalArms, patMatch, bindVals]
+
+theorem arms_bind (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (v : SVal) (s : Nat) (b : Expr) (rest : Arms) :
+    evalArms F env v (.cons (.bind s) b rest) =
+      eval F (if s = noSlot then env else upd env s v) b := by
+  by_cases h : s = noSlot <;> simp [evalArms, patMatch, bindVals, h]
+
+theorem arms_litInt (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (x k : Int) (b : Expr) (rest : Arms) :
+    evalArms F env (.i x) (.cons (.litInt k) b rest) =
+      if x = k then eval F env b else evalArms F env (.i x) rest := by
+  by_cases h : x = k <;> simp [evalArms, patMatch, bindVals, h]
+
+theorem arms_litStr (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (x k : List Nat) (b : Expr) (rest : Arms) :
+    evalArms F env (.s x) (.cons (.litStr k) b rest) =
+      if x = k then eval F env b else evalArms F env (.s x) rest := by
+  by_cases h : x = k <;> simp [evalArms, patMatch, bindVals, h]
+
+theorem arms_litBool (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (x k : Bool) (b : Expr) (rest : Arms) :
+    evalArms F env (.b x) (.cons (.litBool k) b rest) =
+      if x = k then eval F env b else evalArms F env (.b x) rest := by
+  by_cases h : x = k <;> simp [evalArms, patMatch, bindVals, h]
+
+/-- The plan decides a comparison; the source spells it with `==`/`!=`. -/
+theorem dec_eq_beq {α : Type} [DecidableEq α] (a b : α) : decide (a = b) = (a == b) := rfl
+
+theorem dec_ne_bne {α : Type} [DecidableEq α] (a b : α) : decide (a ≠ b) = (a != b) := by
+  cases h : decide (a = b) <;> simp_all [bne]
+
+/-- A plan `if` as a Lean `if` on its evaluated condition. -/
+theorem eval_ite (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (c t e : Expr) :
+    eval F env (.ifThenElse c t e) =
+      match eval F env c with
+      | some (.b b) => if b = true then eval F env t else eval F env e
+      | _ => none := by
+  simp only [eval]; split <;> simp_all
+
+/-- Split an `if` on the left of an equation without naming its condition. -/
+theorem ite_eq_of {α : Type} {c : Prop} [Decidable c] {A B R : α} (h1 : c → A = R) (h2 : ¬c → B = R) :
+    (if c then A else B) = R := by
+  by_cases h : c <;> simp [h, h1, h2]
+
+/-- Two encoded Strings are equal exactly when the Strings are. -/
+theorem strBytes_eq_iff (x y : String) :
+    AverCert.GrammarBridge.strBytes x = AverCert.GrammarBridge.strBytes y ↔ x = y :=
+  ⟨AverCert.GrammarBridge.strBytes_inj, fun h => h ▸ rfl⟩
+
+/-- A model's String interpolation renders a String part as itself. -/
+theorem str_toString (s : String) : toString s = s := rfl
+
+theorem arms_ctor (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (v : SVal) (c : CtorTag)
+    (bs : List Nat) (b : Expr) (rest : Arms) :
+    evalArms F env v (.cons (.ctor c bs) b rest) =
+      match patMatch (.ctor c bs) v with
+      | some (bs', vs) =>
+          match bindVals env bs' vs with
+          | some env' => eval F env' b
+          | none => none
+      | none => evalArms F env v rest := by
+  simp only [evalArms]; rfl
+
+theorem arms_tuple (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (v : SVal)
+    (bs : List Nat) (b : Expr) (rest : Arms) :
+    evalArms F env v (.cons (.tuple bs) b rest) =
+      match patMatch (.tuple bs) v with
+      | some (bs', vs) =>
+          match bindVals env bs' vs with
+          | some env' => eval F env' b
+          | none => none
+      | none => evalArms F env v rest := by
+  simp only [evalArms]; rfl
+
+/-- A model's `+` on Strings is `++`. The instance is spelled out: a model
+    declares it only when it uses it, and this block must elaborate in every
+    package. -/
+theorem str_hadd (a b : String) :
+    @HAdd.hAdd String String String ⟨String.append⟩ a b = a ++ b := rfl
+
+/-- A plan compares two Strings by their bytes; the source compares the Strings. -/
+theorem strBytes_beq (a b : String) :
+    (AverCert.GrammarBridge.strBytes a == AverCert.GrammarBridge.strBytes b) = (a == b) :=
+  (AverCert.GrammarBridge.string_beq a b).symm
+
+/-- `Option.withDefault` / `Result.withDefault` on an evaluated subject, as a
+    function, so an `if` in the subject can be pulled out. -/
+def optDefault (x d : Option SVal) : Option SVal :=
+  match x with
+  | some (.some _ v) => some v
+  | some (.none _) => d
+  | _ => none
+
+def resDefault (x d : Option SVal) : Option SVal :=
+  match x with
+  | some (.ok _ _ v) => some v
+  | some (.err _ _ _) => d
+  | _ => none
+
+theorem eval_optDefault (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (o d : Expr) :
+    eval F env (.call (.lazy .optWithDefault) [o, d]) = optDefault (eval F env o) (eval F env d) := by
+  simp only [eval, optDefault]; split <;> simp_all
+
+theorem eval_resDefault (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (o d : Expr) :
+    eval F env (.call (.lazy .resWithDefault) [o, d]) = resDefault (eval F env o) (eval F env d) := by
+  simp only [eval, resDefault]; split <;> simp_all
+
+theorem optDefault_ite {c : Prop} [Decidable c] (a b d : Option SVal) :
+    optDefault (if c then a else b) d = if c then optDefault a d else optDefault b d := by
+  split <;> rfl
+
+theorem resDefault_ite {c : Prop} [Decidable c] (a b d : Option SVal) :
+    resDefault (if c then a else b) d = if c then resDefault a d else resDefault b d := by
+  split <;> rfl
+
+theorem optDefault_some (t : Ty) (v : SVal) (d : Option SVal) : optDefault (some (.some t v)) d = some v := rfl
+theorem optDefault_none (t : Ty) (d : Option SVal) : optDefault (some (.none t)) d = d := rfl
+theorem resDefault_ok (t e : Ty) (v : SVal) (d : Option SVal) : resDefault (some (.ok t e v)) d = some v := rfl
+theorem resDefault_err (t e : Ty) (v : SVal) (d : Option SVal) : resDefault (some (.err t e v)) d = d := rfl
+
+end StepLemmas
+"#;
+
+/// Evaluation lemmas of a step proof: the plan's equations with a match
+/// taken arm by arm, and `if` / `withDefault` as Lean functions of their
+/// subject (pre-rewrites, so they win over `eval`'s own equations), the
+/// callee table, and the normal forms the source spells (`==`, `!=`, decided
+/// comparisons, literal indices, String parts folded into one `strBytes`).
+const STEP_EVAL: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, arms_nil, arms_wild, \
+     arms_bind, arms_litInt, arms_litStr, arms_litBool, arms_ctor, arms_tuple, ↓eval_ite, \
+     ↓eval_optDefault, ↓eval_resDefault, optDefault_ite, resDefault_ite, optDefault_some, \
+     optDefault_none, resDefault_ok, resDefault_err, AverCert.Grammar.argsEnv, \
+     AverCert.Grammar.upd, AverCert.Grammar.intBin, AverCert.Grammar.boolBin, \
+     AverCert.Grammar.strBin, AverCert.Grammar.strCat, AverCert.Grammar.builtinEval, \
+     AverCert.Grammar.intrinsicEval, AverCert.Grammar.ctorVal, AverCert.Grammar.patMatch, \
+     AverCert.Grammar.bindVals, AverCert.Grammar.noSlot, AverCert.GrammarBridge.over, \
+     _root_.decide_eq_true_eq, _root_.List.getElem?_cons_zero, _root_.List.getElem?_cons_succ, \
+     _root_.List.mem_cons, _root_.List.mem_singleton, _root_.List.not_mem_nil, \
+     _root_.Option.map_some, _root_.Option.map_none, _root_.true_or, _root_.or_true, \
+     _root_.ite_true, _root_.ite_false, ↓reduceIte, dec_eq_beq, dec_ne_bne, \
+     _root_.eq_self_iff_true, _root_.and_self, _root_.and_true, _root_.true_and, \
+     _root_.false_and, _root_.and_false, AverCert.GrammarBridge.decodeStr_strBytes, \
+     _root_.Option.bind_some, _root_.Function.comp_apply, strBytes_eq_iff, strBytes_beq, \
+     Nat.reduceEqDiff, Int.reduceEq, ← AverCert.GrammarBridge.strBytes_append, \
+     _root_.List.append_nil, str_toString, str_hadd";
+
+/// Normal forms a leaf closes with, on top of the source definition.
+const STEP_NORM: &str = "_root_.bne, dec_eq_beq, dec_ne_bne, strBytes_eq_iff, str_toString, \
+     str_hadd, _root_.String.append_assoc";
+
+/// One step lemma, proved by construction rather than by search. The
+/// decoder's argument shapes are expanded; the plan body is evaluated by
+/// `simp only` over an exact lemma list (every `if` becomes a Lean `if`,
+/// every match is taken arm by arm, every String literal is read back as the
+/// `strBytes` of its text, whole list at once); each `if` on the plan side is
+/// split without naming its condition; and each leaf meets the source
+/// function unfolded once (on the right only, for a self-recursive one). No
+/// rung searches: each is bounded by the plan's size, so a leaf that does not
+/// close fails fast and falls to `sorry`.
+fn render_step(
+    b: &BridgedFn,
+    fns: &BTreeMap<u32, BridgedFn>,
+    lit_index: &BTreeMap<Vec<u8>, usize>,
+    with_default: bool,
+    s: &mut String,
+) {
     let f = b.func_idx;
     let callees = b
         .callees
@@ -1314,13 +1520,74 @@ fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s:
             }
         }
     }
-    let unfold = if b.fuel {
-        format!("(try unfold _root_.{m})\n         (try unfold _root_.{m}__fuel)", m = b.model)
+    // Forward (`strBytes "…" = [bytes]`) for the leaves; backward, and as a
+    // pre-rewrite so a literal whose bytes end another's never rewrites
+    // inside it, for the plan's evaluation.
+    let mut forward = String::new();
+    let mut backward = String::new();
+    let mut empty = String::new();
+    for bytes in &b.literals {
+        if let Some(k) = lit_index.get(bytes) {
+            forward.push_str(&format!(", strLit_{k}"));
+            if bytes.is_empty() {
+                empty = format!(", strLit_{k}");
+            } else {
+                backward.push_str(&format!(", ↓ ← strLit_{k}"));
+            }
+        }
+    }
+    let constants: String = b
+        .constants
+        .iter()
+        .map(|c| format!(", _root_.{c}"))
+        .collect();
+    let model = format!("_root_.{}", b.model);
+    let (unfold_list, unfold_words) = if b.fuel {
+        (
+            format!("{model}, {model}__fuel"),
+            format!("{model} {model}__fuel"),
+        )
     } else {
-        format!("(try unfold _root_.{})", b.model)
+        (model.clone(), model.clone())
+    };
+    let with_default = if with_default {
+        ", _root_.Except.withDefault, withDefault_ite"
+    } else {
+        ""
+    };
+    let norm = format!("{STEP_NORM}{empty}{constants}{with_default}");
+    // A self-recursive source function is unfolded once, on the right: `simp`
+    // with its equation would unfold the recursive call on the left as well.
+    // The last rung of the other leaves meets a constant the source writes by
+    // name and the plan carries as a numeral: equal only up to the numeral's
+    // instance, which `rfl` sees and `simp` does not. A fuel wrapper's leaf
+    // meets its callee at two fuel spellings (`natAbs (n - 1) + 1` against
+    // `natAbs n` under `0 < n`): equal arguments, by `omega`.
+    let fuel = if b.fuel {
+        format!("\n           | (simp [{unfold_list}, {norm}, *] <;> congr 1 <;> omega)")
+    } else {
+        String::new()
+    };
+    let leaf = if b.recursive && !b.fuel {
+        format!(
+            "(with_reducible rfl)\n           \
+             | (symm; rw [{model}]; simp [{norm}, *]; done)\n           \
+             | (symm; rw [{model}]; simp_all [{norm}]; done)\n           \
+             | (symm; rw [{model}]; simp_all [{norm}] <;> omega)"
+        )
+    } else {
+        format!(
+            "(with_reducible rfl)\n           \
+             | (simp only [{unfold_list}{forward}{constants}]; done)\n           \
+             | (simp [{unfold_list}, {norm}, *]; done){fuel}\n           \
+             | (simp_all [{unfold_list}, {norm}]; done)\n           \
+             | (simp_all [{unfold_list}, {norm}] <;> omega)\n           \
+             | (unfold {unfold_words}; split <;> simp_all [{norm}])\n           \
+             | (simp only [{unfold_list}{forward}{constants}]; rfl)"
+        )
     };
     s.push_str(&format!(
-        "/-- One step of `{model}`: its plan body, with every call answered by the\n    \
+        "/-- One step of `{m}`: its plan body, with every call answered by the\n    \
          callees' images, returns its own image. -/\n\
          theorem step_{f} : AverCert.GrammarBridge.Step AverCert.Plans.fnPlans I [{callees}] {f} := by\n  \
          first\n  \
@@ -1334,22 +1601,16 @@ fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s:
                 reduceCtorEq, AverCert.GrammarBridge.decodeStr_eq_some] at hy\n       \
               all_goals (repeat (obtain ⟨_, rfl, hy⟩ := hy))\n       \
               all_goals (try subst hy)\n       \
+              all_goals simp only [AverCert.Plans.fn{f}, eval_ite, eval_optDefault, eval_resDefault]\n       \
+              all_goals simp only [img_{f}, {STEP_EVAL}, I_{f}{callee_simps}{backward}]\n       \
+              all_goals (repeat' (refine ite_eq_of (fun h => ?_) (fun h => ?_)))\n       \
+              all_goals (try subst_vars)\n       \
               all_goals\n         \
-                simp only [img_{f}]\n         \
-                {unfold}\n         \
-                simp [AverCert.Plans.fn{f}, {EVAL_SIMPS}{literals}, I_{f}{callee_simps}]\n       \
-              all_goals (try (repeat' split))\n       \
-              all_goals (try simp_all [{EVAL_SIMPS}{literals}, {BOOL_SIMPS}])\n       \
-              all_goals (try omega)\n       \
-              all_goals (try (repeat' (split at *)) <;> (try simp_all) <;> (try omega))\n       \
-              all_goals (try (apply _root_.Bool.eq_iff_iff.mpr; simp only [_root_.Bool.or_eq_true, \
-                _root_.Bool.and_eq_true, _root_.decide_eq_true_eq, _root_.Bool.not_eq_true']; omega))\n       \
-              all_goals (try (congr 1 <;> omega))\n       \
-              all_goals (try rfl)\n       \
-              all_goals (try decide)\n       \
+                first\n           \
+                | {leaf}\n       \
               done))\n  \
          | sorry\n\n",
-        model = b.model,
+        m = b.model,
         cap = STEP_HEARTBEATS,
     ));
 }
@@ -1357,8 +1618,10 @@ fn render_step(b: &BridgedFn, fns: &BTreeMap<u32, BridgedFn>, literals: &str, s:
 /// Per-attempt heartbeat cap. The declaration as a whole carries the file's
 /// larger budget, so a step that gives up leaves headroom for the `sorry`
 /// beside it: a not-credited bridge instead of a failed build (heartbeats
-/// count from the start of each declaration).
-const STEP_HEARTBEATS: u32 = 1_000_000;
+/// count from the start of each declaration). A step proof does no search,
+/// so its cap is small; an export theorem assembles a whole call closure.
+const STEP_HEARTBEATS: u32 = 400_000;
+const EXPORT_HEARTBEATS: u32 = 1_000_000;
 const FILE_HEARTBEATS: u32 = 4_000_000;
 
 /// The `∀ g ∈ D, ∃ Cs, … ∧ Step …` argument both engines take: one
@@ -1396,15 +1659,28 @@ fn render_export(
     };
     // Splitting every sum, option or result the encoding matches on (at any
     // depth) into its constructors lets the encoded argument reduce.
-    let split_cases: String = b
+    // Every split applies to every goal the earlier ones left (`<;>`): with
+    // `;` the second parameter was split in the first goal only.
+    let splits: Vec<String> = b
         .params
         .iter()
         .enumerate()
-        .filter_map(|(i, p)| rcases_pattern(p).map(|pat| format!("rcases x{i} with {pat}; ")))
+        .filter_map(|(i, p)| rcases_pattern(p).map(|pat| format!("rcases x{i} with {pat}")))
         .collect();
+    let split_cases = if splits.is_empty() {
+        String::new()
+    } else {
+        format!("{}; ", splits.join(" <;> "))
+    };
+    // The image may leave an equation between two copies of the encoder's
+    // match (the statement's and `img_f`'s), or a conjunction of such for a
+    // record: equal by unfolding, so `rfl` on each conjunct.
+    let image_simps = format!(
+        "I_{func_idx}, dec_{func_idx}, img_{func_idx}, AverCert.GrammarBridge.decodeStr_strBytes"
+    );
     let image = format!(
-        "(by {split_cases}all_goals first | rfl | simp [I_{func_idx}, dec_{func_idx}, img_{func_idx}, \
-         AverCert.GrammarBridge.decodeStr_strBytes])"
+        "(by {split_cases}all_goals first | rfl | (simp [{image_simps}]; done) | \
+         (simp [{image_simps}] <;> (repeat' apply And.intro) <;> rfl))"
     );
     let steps = render_steps_proof(&closure);
     let kind_proof = match bridge.kind {
@@ -1457,7 +1733,7 @@ fn render_export(
     // against every earlier export, which the kernel evaluates slowly).
     let (entry_index, entry) = &plan.entries[&func_idx];
     s.push_str(" := by\n  first\n  | (set_option maxHeartbeats ");
-    s.push_str(&STEP_HEARTBEATS.to_string());
+    s.push_str(&EXPORT_HEARTBEATS.to_string());
     s.push_str(&format!(
         " in\n      (refine ⟨_, AverCert.GrammarBridge.exportObligation_of_entry \
          (s := AverCert.subject) (tt := AverCert.Plans.types) (fns := AverCert.Plans.fnPlans) \
@@ -1555,6 +1831,8 @@ fn render_bridge_lean(
         render_fn_defs(b, &mut s);
     }
     render_image_table(&plan.fns, &mut s);
+    s.push_str(STEP_LEMMAS);
+    s.push('\n');
     // The depth of every function whose call closure has no recursion.
     s.push_str("/-- Call depth over the acyclic part of the call graph. -/\ndef depth : _root_.Nat → _root_.Nat := fun g =>\n  match g with\n");
     for (f, d) in &plan.depth {
@@ -1563,7 +1841,7 @@ fn render_bridge_lean(
     s.push_str("  | _ => 0\n\n");
     // The bytes of every String literal the plans mention, as rewrite
     // lemmas: `simp` cannot evaluate `strBytes "…"` itself.
-    let mut literal_names = String::new();
+    let mut lit_index: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
     for (index, bytes) in plan.literals.iter().enumerate() {
         let Some(text) = lean_string_literal(bytes) else {
             continue;
@@ -1577,7 +1855,7 @@ fn render_bridge_lean(
             "theorem strLit_{index} : AverCert.GrammarBridge.strBytes {text} = [{list}] := by\n  \
              first | decide | rfl | sorry\n\n"
         ));
-        literal_names.push_str(&format!(", strLit_{index}"));
+        lit_index.insert(bytes.clone(), index);
     }
     // `Result.withDefault` over an `if`: the models' `Except.withDefault`
     // does not reduce under `simp` until the `if` is pulled out.
@@ -1588,7 +1866,6 @@ fn render_bridge_lean(
              if c then d else v := by\n  \
              split <;> rfl\n\n",
         );
-        literal_names.push_str(", withDefault_ite");
     }
     s.push_str("end AverCert.Bridge\n");
     // The step lemmas, a slice per module: independent proofs, so Lake builds
@@ -1613,7 +1890,7 @@ fn render_bridge_lean(
              namespace AverCert.Bridge\n\n"
         );
         for b in slice {
-            render_step(b, &plan.fns, &literal_names, &mut part);
+            render_step(b, &plan.fns, &lit_index, plan.with_default, &mut part);
         }
         part.push_str("end AverCert.Bridge\n");
         parts.push((format!("{name}.lean"), part));
@@ -2298,6 +2575,9 @@ mod source_bridge_tests {
             callees: Vec::new(),
             fuel: false,
             shapes,
+            literals: BTreeSet::new(),
+            recursive: false,
+            constants: Vec::new(),
         };
         let mut s = String::new();
         render_fn_defs(&b, &mut s);
@@ -2323,5 +2603,46 @@ mod source_bridge_tests {
             nodup.contains("[['a', 'b'],\n       ['a', (Char.ofNat 39), (Char.ofNat 34)]]"),
             "{nodup}"
         );
+    }
+
+    /// A step lemma is proved by construction: the plan is evaluated by
+    /// `simp only` (String literals read back whole, before their bytes can
+    /// match inside a longer literal), each plan-side `if` is split by
+    /// `ite_eq_of`, and a self-recursive source unfolds on the right only.
+    /// No rung runs the default simp set over the plan.
+    #[test]
+    fn step_lemmas_are_constructive_and_self_recursion_unfolds_once() {
+        let mut literals = BTreeSet::new();
+        literals.insert(b" ".to_vec());
+        literals.insert(Vec::new());
+        let b = BridgedFn {
+            func_idx: 9,
+            model: "M.spaces".to_string(),
+            params: vec![SourceEncoder::Int, SourceEncoder::Str],
+            result: SourceEncoder::Str,
+            callees: vec![9],
+            fuel: false,
+            shapes: Vec::new(),
+            literals,
+            recursive: true,
+            constants: vec!["M.width".to_string()],
+        };
+        let lit_index: BTreeMap<Vec<u8>, usize> =
+            [(Vec::new(), 0), (b" ".to_vec(), 1)].into_iter().collect();
+        let mut fns = BTreeMap::new();
+        fns.insert(9, b.clone());
+        let mut s = String::new();
+        render_step(&b, &fns, &lit_index, false, &mut s);
+        assert!(s.contains("all_goals simp only [AverCert.Plans.fn9, eval_ite, eval_optDefault, eval_resDefault]\n"), "{s}");
+        assert!(s.contains(", ↓ ← strLit_1]"), "{s}");
+        assert!(!s.contains("↓ ← strLit_0"), "the empty literal is never read back: {s}");
+        assert!(s.contains("all_goals (repeat' (refine ite_eq_of (fun h => ?_) (fun h => ?_)))"), "{s}");
+        assert!(s.contains("| (symm; rw [_root_.M.spaces]; simp [_root_.bne"), "{s}");
+        assert!(s.contains(", strLit_0, _root_.M.width"), "{s}");
+        assert!(!s.contains("simp [_root_.M.spaces"), "a recursive source never unfolds by simp: {s}");
+        assert!(!s.contains("simp [AverCert.Plans.fn9"), "{s}");
+        assert!(s.contains("  | sorry\n"), "{s}");
+        assert!(STEP_LEMMAS.contains("theorem ite_eq_of"));
+        assert!(STEP_LEMMAS.contains("theorem arms_litInt"));
     }
 }
