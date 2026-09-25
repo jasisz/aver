@@ -309,6 +309,13 @@ impl VM {
                     self.stack.pop().ok_or(VmError::StackUnderflow)?;
                 }
 
+                POP_CONSUMED => {
+                    let subject = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    if subject.is_tuple() {
+                        self.release_consumed_tuple(subject);
+                    }
+                }
+
                 DUP => {
                     let val = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(val);
@@ -1628,11 +1635,14 @@ impl VM {
                     }
                 }
 
-                PROPAGATE_ERR => {
+                PROPAGATE_ERR | PROPAGATE_ERR_CONSUMED => {
                     let value = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     if value.is_ok() {
                         let inner = value.wrapper_inner(&self.arena);
                         *self.stack.last_mut().ok_or(VmError::StackUnderflow)? = inner;
+                        if op == PROPAGATE_ERR_CONSUMED && value.is_boxed_wrapper() {
+                            self.release_consumed_box(value, inner);
+                        }
                         continue;
                     }
                     if value.is_err() {
@@ -1954,8 +1964,10 @@ impl VM {
                 }
 
                 MATCH_UNWRAP => {
-                    let kind = read_u8!(code, ip);
+                    let raw_kind = read_u8!(code, ip);
                     let offset = read_jump!(code, ip);
+                    let consumes = raw_kind & MATCH_UNWRAP_CONSUMES != 0;
+                    let kind = raw_kind & !MATCH_UNWRAP_CONSUMES;
                     let top = *self.stack.last().ok_or(VmError::StackUnderflow)?;
                     let matches = match kind {
                         0 => top.is_ok(),
@@ -1966,6 +1978,12 @@ impl VM {
                     if matches {
                         let inner = top.wrapper_inner(&self.arena);
                         *self.stack.last_mut().unwrap() = inner;
+                        // The subject is consumed here: a box nothing else
+                        // holds is gone after this, so it stops holding its
+                        // value and a later write to that value need not copy.
+                        if consumes && top.is_boxed_wrapper() {
+                            self.release_consumed_box(top, inner);
+                        }
                     } else {
                         ip = (ip as isize + offset as isize) as usize;
                     }

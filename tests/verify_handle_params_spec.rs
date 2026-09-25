@@ -3,7 +3,8 @@
 //! A verify case cannot write a `Tcp.Connection` or a `Work.Job`: a
 //! provider mints them and no source expression denotes one. A function
 //! that needs such a value as an argument, directly or inside a tuple,
-//! record or sum that always carries one, cannot be called from a verify
+//! record or sum that always carries one (the capabilities' own
+//! `Tcp.Socket` and `Wait.Item` among them), cannot be called from a verify
 //! block, so `check` does not ask it for one. A parameter that has an empty
 //! value (`List`, `Option`, a sum with a resource-free variant) can still be
 //! written, and its function still needs its verify block.

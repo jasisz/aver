@@ -3669,6 +3669,22 @@ fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<
     Some(materialize_owned(code, &expr.node, ctx))
 }
 
+/// The value of one `let` statement in a loop or trampoline body. A named
+/// binding owns its value, so it goes through [`emit_mir_binding_value`]
+/// like every other binding: a field read moves only where `field_moves`
+/// allows it and clones otherwise, so a record the chain reads a field of
+/// stays whole for its later reads and updates. A bare `Int` binding and a
+/// discarded value render as they are.
+fn emit_mir_statement_value(
+    let_node: &crate::ir::mir::MirLet,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    if let_node.binding_name.is_empty() || ctx.bare.is_bare(let_node.binding) {
+        return emit_mir_expr(&let_node.value, ctx);
+    }
+    emit_mir_binding_value(&let_node.value, ctx)
+}
+
 /// Emit a `let` binding's value as an OWNED value.
 ///
 /// Naming a read of a borrowed param does not change what a function may do
@@ -4081,7 +4097,7 @@ fn emit_mir_tco_body(
     let mut current = body;
     while let MirExpr::Let(spanned_let) = &current.node {
         let let_node = &spanned_let.node;
-        let value = emit_mir_expr(&let_node.value, ctx)?;
+        let value = emit_mir_statement_value(let_node, ctx)?;
         if let_node.binding_name.is_empty() {
             lines.push(format!("        {};", value));
         } else {
@@ -4378,6 +4394,10 @@ pub(super) fn emit_mir_mutual_tco_block(
         // explicit restricted tags rather than the pre-rewrite whole-function
         // facts so match subjects and their literals agree on `i64`.
         policy.apply_rewritten_bare_i64(mir_fn, ctx);
+        // Each arm binds its params by value, so a field read may move out
+        // of one exactly as in any other body; the arm's updates then see
+        // which records gave a field up.
+        policy.apply_field_moves(mir_fn);
         let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
         // Mutual invariants are `rc_wrapped` for owning reads, but unlike
         // self-TCO's `Arc<T>` representation they are extra `&T` trampoline
@@ -4575,7 +4595,7 @@ fn emit_mir_trampoline_body(
     let mut current = body;
     while let MirExpr::Let(spanned_let) = &current.node {
         let let_node = &spanned_let.node;
-        let value = emit_mir_expr(&let_node.value, ctx)?;
+        let value = emit_mir_statement_value(let_node, ctx)?;
         if let_node.binding_name.is_empty() {
             // Discarded intermediate (`Stmt::Expr` / `_ = effect()`)
             // — bare statement, result dropped.

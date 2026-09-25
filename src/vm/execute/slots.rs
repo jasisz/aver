@@ -596,6 +596,75 @@ impl VM {
         true
     }
 
+    /// What giving up `value` can save a later write: the entries of a map, the
+    /// length of a vector, and those of the maps and vectors directly inside a
+    /// record, tuple or box, one level further down at most. Zero for anything
+    /// else.
+    pub(super) fn release_worth(&self, value: NanValue, depth: u8) -> usize {
+        if !value.counts_holders() {
+            return 0;
+        }
+        if let Some(map) = self.arena.map_slot(value) {
+            return map.entries;
+        }
+        if let Some(vector) = self.arena.vector_slot(value) {
+            return vector.len;
+        }
+        if depth > 1 {
+            return 0;
+        }
+        let children: &[NanValue] = if value.is_record() {
+            self.arena.get_record(value.arena_index()).1
+        } else if value.is_tuple() {
+            self.arena.get_tuple(value.arena_index())
+        } else if value.is_boxed_wrapper() {
+            return self.release_worth(value.wrapper_inner(&self.arena), depth + 1);
+        } else {
+            return 0;
+        };
+        children
+            .iter()
+            .map(|child| self.release_worth(*child, depth + 1))
+            .sum()
+    }
+
+    /// Whether a tuple or boxed wrapper just destructured, and no longer on
+    /// the operand stack as the match subject, is held by nothing at all, so
+    /// its parts may be released. Asked only when that can save a copy worth
+    /// the walk: `worth` is [`VM::release_worth`] of the parts, and the walk
+    /// is bounded by it the way a map write's is.
+    pub(super) fn destructured_is_unheld(&self, value: NanValue, worth: usize) -> bool {
+        worth != 0
+            && self.stack.len() <= worth + WALK_SLACK
+            && !self.arena.wrapper_or_tuple_is_held_elsewhere(value)
+            && self.slot_is_unheld(value)
+    }
+
+    /// A boxed wrapper a match or `?` consumed, with `inner` already on the
+    /// stack in its place: when nothing else holds the box, it stops holding
+    /// `inner`. Kept out of the dispatch loop, which it would otherwise grow.
+    #[inline(never)]
+    pub(super) fn release_consumed_box(&mut self, wrapper: NanValue, inner: NanValue) {
+        if self.destructured_is_unheld(wrapper, self.release_worth(inner, 0)) {
+            self.arena.take_boxed_value(wrapper);
+        }
+    }
+
+    /// A tuple a match consumed, already popped: when nothing else holds it,
+    /// it stops holding its items.
+    #[inline(never)]
+    pub(super) fn release_consumed_tuple(&mut self, tuple: NanValue) {
+        let worth = self
+            .arena
+            .get_tuple(tuple.arena_index())
+            .iter()
+            .map(|item| self.release_worth(*item, 0))
+            .sum();
+        if self.destructured_is_unheld(tuple, worth) {
+            self.arena.release_tuple_items(tuple);
+        }
+    }
+
     /// Whether exactly `holders` operand-stack cells hold `record`, which has
     /// just been popped or read out of another record. Zero asks the cheaper
     /// question [`VM::slot_is_unheld`] answers.

@@ -516,7 +516,15 @@ pub(super) fn compile_mir_expr(
         // ── Phase 4d: `?` propagation ───────────────────────────
         MirExpr::Try(inner) => {
             compile_mir_expr(fc, inner)?;
-            fc.emit_op(PROPAGATE_ERR);
+            // A `Result` nothing reads afterwards (a temporary, or a local at
+            // its last use) gives up the value it unwraps when nothing else
+            // holds its box, as a consumed match subject does.
+            let consumes = !matches!(&inner.node, MirExpr::Local(local) if !local.node.last_use);
+            fc.emit_op(if consumes {
+                PROPAGATE_ERR_CONSUMED
+            } else {
+                PROPAGATE_ERR
+            });
             Ok(())
         }
 
@@ -839,6 +847,13 @@ pub(super) fn compile_mir_expr(
                 return Ok(());
             }
             compile_mir_expr(fc, &m.subject)?;
+            // A subject nothing reads after the match (a temporary, or a
+            // local at its last use) is consumed by the arm that matches it:
+            // a tuple or box the arm takes apart, if nothing else holds it,
+            // gives up what it holds, so the values the arm binds are not
+            // still held by it. The runtime decides whether nothing else does.
+            let consumes =
+                !matches!(&m.subject.node, MirExpr::Local(local) if !local.node.last_use);
 
             let mut end_jumps: Vec<usize> = Vec::new();
             let last_idx = m.arms.len() - 1;
@@ -849,12 +864,16 @@ pub(super) fn compile_mir_expr(
                     // Bindings still need extracting (value on
                     // stack, shape known from preceding arm
                     // failures).
-                    emit_last_arm_bindings(fc, &arm.pattern)?;
+                    emit_last_arm_bindings(fc, &arm.pattern, consumes)?;
                     Vec::new()
                 } else {
-                    emit_pattern_check(fc, &arm.pattern)?
+                    emit_pattern_check(fc, &arm.pattern, consumes)?
                 };
-                fc.emit_op(POP);
+                fc.emit_op(if consumes && matches!(arm.pattern, MirPattern::Tuple(_)) {
+                    POP_CONSUMED
+                } else {
+                    POP
+                });
                 compile_mir_expr(fc, &arm.body)?;
                 if !is_last {
                     end_jumps.push(fc.emit_jump(JUMP));
@@ -1226,9 +1245,14 @@ fn pattern_supported(p: &MirPattern) -> bool {
 /// list of `fail_offset` patch positions the caller will fill
 /// in to point at the next arm's start. Empty `Vec` = pattern
 /// always matches (Wildcard / Bind).
+///
+/// `consumes` marks the match's own subject when the match consumes it; see
+/// `MATCH_UNWRAP_CONSUMES`. Nested subpatterns never consume: the value they
+/// look at is still held by the one around it.
 fn emit_pattern_check(
     fc: &mut FnCompiler<'_>,
     pattern: &MirPattern,
+    consumes: bool,
 ) -> Result<Vec<usize>, MirVmUnsupported> {
     match pattern {
         MirPattern::Wildcard => Ok(Vec::new()),
@@ -1388,7 +1412,7 @@ fn emit_pattern_check(
                         BuiltinCtor::OptionNone => unreachable!(),
                     };
                     fc.emit_op(MATCH_UNWRAP);
-                    fc.emit_u8(kind);
+                    fc.emit_u8(unwrap_kind(kind, consumes));
                     let patch = fc.offset();
                     fc.emit_i32(0);
                     // MATCH_UNWRAP replaces TOS with the inner
@@ -1577,14 +1601,24 @@ fn literal_dispatch_bits(fc: &mut FnCompiler<'_>, lit: &Literal) -> u64 {
     nv.bits()
 }
 
+/// `MATCH_UNWRAP`'s kind byte, marked when the match consumes its subject.
+fn unwrap_kind(kind: u8, consumes: bool) -> u8 {
+    if consumes {
+        kind | MATCH_UNWRAP_CONSUMES
+    } else {
+        kind
+    }
+}
+
 /// Last-arm exhaustive binding extraction. The pattern is
 /// guaranteed to match (preceding arms exhausted everything
 /// else) so we skip the match-check opcode and just bind
 /// whatever the pattern names. Mirror of HIR's last-arm logic
-/// in `compile_match`.
+/// in `compile_match`. `consumes` as for [`emit_pattern_check`].
 fn emit_last_arm_bindings(
     fc: &mut FnCompiler<'_>,
     pattern: &MirPattern,
+    consumes: bool,
 ) -> Result<(), MirVmUnsupported> {
     match pattern {
         MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => Ok(()),
@@ -1631,7 +1665,7 @@ fn emit_last_arm_bindings(
                     }
                 };
                 fc.emit_op(MATCH_UNWRAP);
-                fc.emit_u8(kind);
+                fc.emit_u8(unwrap_kind(kind, consumes));
                 fc.emit_i32(0); // no-fail (shape known)
                 emit_dup_and_bind(fc, *b)?;
             }
@@ -1649,7 +1683,7 @@ fn emit_last_arm_bindings(
                     i,
                     &format!("tuple pattern uses item index {i}"),
                 )?);
-                emit_last_arm_bindings(fc, sub)?;
+                emit_last_arm_bindings(fc, sub, false)?;
                 fc.emit_op(POP);
             }
             Ok(())
@@ -1685,7 +1719,7 @@ where
     F: FnOnce(&mut FnCompiler<'_>),
 {
     emit_subject(fc);
-    let inner_fail_patches = emit_pattern_check(fc, pattern)?;
+    let inner_fail_patches = emit_pattern_check(fc, pattern, false)?;
     fc.emit_op(POP);
 
     if inner_fail_patches.is_empty() {
