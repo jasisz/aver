@@ -1238,7 +1238,7 @@ fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String 
     let bridge_roots: Vec<String> = (0..candidates.source_bridges.len())
         .map(|index| format!("{BRIDGE_PIN_PREFIX}{index}"))
         .collect();
-    let (law_model_uses, law_shadows) = law_statement_audit_names(candidates);
+    let law_model_uses = law_model_uses(candidates);
     let allowed: Vec<String> = AXIOM_WHITELIST
         .iter()
         .map(|name| name.to_string())
@@ -1291,7 +1291,6 @@ fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String 
         .replace("@ALLOWED@", &lean_name_list(&allowed))
         .replace("@STRICT_ROOTS@", &lean_name_list(&strict_roots))
         .replace("@LAW_MODEL_USES@", &law_model_uses)
-        .replace("@LAW_SHADOWS@", &lean_name_list(&law_shadows))
         .replace("@LAW_ROOTS@", &lean_name_list(&law_roots))
         .replace("@BRIDGED_LAW_ROOTS@", &lean_name_list(&bridged_law_roots))
         .replace("@BRIDGE_ROOTS@", &lean_name_list(&bridge_roots))
@@ -1302,17 +1301,10 @@ fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String 
         .replace("@OK_MARKER@", AUDIT_OK_MARKER)
 }
 
-/// What the audit checks of the law statements, as Lean literals:
-///
-/// * per bridged law, `(law_statement_<i>, [models of its bridges])`: the
-///   elaborated statement must use each of those constants;
-/// * `Q.M` for every namespace prefix `Q` of any law's model namespace and
-///   every bridge model `M` any law statement names (`_root_.M`, `M`, or a
-///   name ending in `.M` that is not `_root_`-spelled): where
-///   Lean would resolve `M` if the statement were read inside that namespace.
-///   The witness reads it at the root, so these names are refused as a second
-///   layer.
-fn law_statement_audit_names(candidates: &Candidates) -> (String, Vec<String>) {
+/// Per bridged law, `(law_statement_<i>, [models of its bridges])` as a Lean
+/// literal: the audit refuses a bridged law whose elaborated statement does
+/// not use each of those constants.
+fn law_model_uses(candidates: &Candidates) -> String {
     let uses = candidates
         .laws
         .iter()
@@ -1331,40 +1323,7 @@ fn law_statement_audit_names(candidates: &Candidates) -> (String, Vec<String>) {
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let mut mentioned: Vec<&str> = Vec::new();
-    for law in &candidates.laws {
-        let tokens = bridge_statement::statement_tokens(&law.statement);
-        for bridge in &candidates.source_bridges {
-            let model = bridge.model.as_str();
-            let named = tokens.iter().any(|token| {
-                token.strip_prefix(bridge_statement::ROOT_PREFIX) == Some(model)
-                    || bridge_statement::token_names_model_unqualified(token, model)
-            });
-            if named && !mentioned.contains(&model) {
-                mentioned.push(model);
-            }
-        }
-    }
-    let mut namespaces: Vec<String> = Vec::new();
-    for law in &candidates.laws {
-        let mut prefix = String::new();
-        for segment in law.prefix.split('.').filter(|segment| !segment.is_empty()) {
-            if !prefix.is_empty() {
-                prefix.push('.');
-            }
-            prefix.push_str(segment);
-            if !namespaces.contains(&prefix) {
-                namespaces.push(prefix.clone());
-            }
-        }
-    }
-    let mut shadows = Vec::new();
-    for namespace in &namespaces {
-        for model in &mentioned {
-            shadows.push(format!("{namespace}.{model}"));
-        }
-    }
-    (format!("[{uses}]"), shadows)
+    format!("[{uses}]")
 }
 
 /// Every record and sum a bridge encoder reads, with the members it lists
@@ -2022,10 +1981,12 @@ fn read_candidates(
 /// Validate one manifest law-claim before any of its fields reach the
 /// checker-authored Lean witness. The names must be plain dotted Lean
 /// identifiers, the corollary must be exactly the label's underscore
-/// flattening, and the statement — which the witness re-elaborates verbatim
-/// inside one `example` type — must stay a single term-position line: no
-/// newline, no `:=`, no comment openers, so a crafted statement cannot
-/// terminate the pin early or smuggle in a further declaration.
+/// flattening, and the statement — which the witness re-elaborates verbatim,
+/// at the root, as the body of its own `def law_statement_<i> : Prop` — must
+/// stay a single term-position line: no newline, no `:=`, no comment openers,
+/// no `set_option` or `open`, so a crafted statement cannot terminate the
+/// definition early, smuggle in a further declaration, or change the options
+/// and names it is elaborated with.
 fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String> {
     if let Err(field) = lean_gate::law_claim_identifiers(&law.label, &law.theorem, &law.corollary) {
         return Err(format!(
@@ -2059,7 +2020,7 @@ const MAX_STATEMENT_LEN: usize = MAX_BRIDGE_STATEMENT_LEN;
 
 /// The statement gate every pinned claim surface applies: one plain
 /// term-position line — no newline or other control character, no `:=`, no
-/// comment opener — with balanced `()[]{}⟨⟩` whose depth never goes negative.
+/// comment opener, no `set_option` or `open` — with balanced `()[]{}⟨⟩` whose depth never goes negative.
 ///
 /// Balance is load-bearing, not cosmetic: the witness wraps the statement in
 /// one `(...)`, so a statement whose delimiters close more than they open could
@@ -4665,22 +4626,19 @@ mod tests {
     }
 
     /// The audit is handed, per bridged law, the model constants its
-    /// elaborated statement must use, and every name a law's namespace would
-    /// resolve a mentioned model to.
+    /// elaborated statement must use. Nothing depends on the law's namespace:
+    /// the witness reads the statement at the root.
     #[test]
-    fn the_audit_checks_what_each_law_statement_resolves_to() {
+    fn the_audit_checks_what_each_law_statement_uses() {
         let mut candidates = witness_candidates();
         candidates.laws[0].statement = "∀ (a : Int), _root_.Domain.plus a a = a".to_string();
         candidates.laws[0].prefix = "Evil.Inner".to_string();
-        let (uses, shadows) = law_statement_audit_names(&candidates);
         assert_eq!(
-            uses,
+            law_model_uses(&candidates),
             format!("[(`{LAW_STATEMENT_PREFIX}0, [`Domain.plus])]")
         );
-        assert_eq!(shadows, vec!["Evil.Domain.plus", "Evil.Inner.Domain.plus"]);
         let audit = checker_audit(&candidates, &["Laws".to_string()]);
-        assert!(audit.contains(
-            "def lawShadows : List Name := [`Evil.Domain.plus, `Evil.Inner.Domain.plus]"
-        ));
+        assert!(!audit.contains("Evil.Domain.plus"), "{audit}");
+        assert!(!audit.contains("Evil.Inner.Domain.plus"), "{audit}");
     }
 }

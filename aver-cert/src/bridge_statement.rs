@@ -759,6 +759,8 @@ pub fn render_bridge_statement_expanded(
 /// in a statement is not an opening parenthesis. What this gate cannot lex
 /// exactly, it refuses: an interpolated or raw string (`s!"…"`, `r"…"`), a
 /// backtick (name literals and quotations), and any literal left unterminated.
+/// It also refuses the words `set_option` and `open` in any identifier segment
+/// (`REFUSED_STATEMENT_WORDS`).
 ///
 /// The witness does not rely on this gate for the shape of a pin: it elaborates
 /// each statement as a definition of its own and conjoins the definition, so no
@@ -779,10 +781,14 @@ pub fn statement_is_single_plain_line(statement: &str, max_len: usize) -> bool {
     let identifier_char =
         |c: char| c.is_alphanumeric() || matches!(c, '_' | '\'' | '!' | '?' | '.');
     let mut depth: Vec<char> = Vec::new();
+    // The statement with every literal and `«…»` identifier blanked out: what
+    // Lean reads as code, for the refused-word check.
+    let mut code = chars.clone();
     let mut at = 0;
     while at < chars.len() {
         let character = chars[at];
         let previous = at.checked_sub(1).map(|p| chars[p]);
+        let start = at;
         match character {
             '"' => {
                 // `s!"…"`, `m!"…"` and `r"…"` / `r#"…"#` read their body with
@@ -802,6 +808,7 @@ pub fn statement_is_single_plain_line(statement: &str, max_len: usize) -> bool {
                         Some(_) => at += 1,
                     }
                 }
+                code[start..=at].fill(' ');
             }
             '\'' if !previous.is_some_and(identifier_char) => {
                 // A character literal: one character or one escape, then `'`.
@@ -819,6 +826,7 @@ pub fn statement_is_single_plain_line(statement: &str, max_len: usize) -> bool {
                 if chars.get(at) != Some(&'\'') {
                     return false;
                 }
+                code[start..=at].fill(' ');
             }
             '«' => {
                 at += 1;
@@ -828,6 +836,7 @@ pub fn statement_is_single_plain_line(statement: &str, max_len: usize) -> bool {
                 if at >= chars.len() {
                     return false;
                 }
+                code[start..=at].fill(' ');
             }
             '»' => return false,
             '(' | '[' | '{' | '⟨' => depth.push(character),
@@ -846,7 +855,23 @@ pub fn statement_is_single_plain_line(statement: &str, max_len: usize) -> bool {
         }
         at += 1;
     }
-    depth.is_empty()
+    depth.is_empty() && !names_refused_statement_word(&code.into_iter().collect::<String>())
+}
+
+/// Words a statement may not contain, outside its literals, as any segment of
+/// any identifier token.
+/// A term-level `set_option … in` would change elaboration options outside
+/// the package gate's option whitelist, and a term-level `open … in` would
+/// change how the statement's names resolve. The producer writes neither: a
+/// model name that spells one of them is emitted with a prime.
+const REFUSED_STATEMENT_WORDS: [&str; 2] = ["set_option", "open"];
+
+fn names_refused_statement_word(statement: &str) -> bool {
+    statement_tokens(statement).iter().any(|token| {
+        token
+            .split('.')
+            .any(|segment| REFUSED_STATEMENT_WORDS.contains(&segment))
+    })
 }
 
 /// Whether every dotted name in a statement is spelled `_root_.`-first.
@@ -1315,6 +1340,22 @@ mod tests {
         assert!(!gate("f «x = y"));
         // An identifier ending in `r` before a string is not a raw string.
         assert!(gate("ctr \"x\" = y"));
+    }
+
+    /// A term-level `set_option … in` or `open … in` would change how the
+    /// statement elaborates or what its names mean: both words are refused,
+    /// while names that merely contain them pass.
+    #[test]
+    fn the_statement_gate_refuses_set_option_and_open() {
+        let gate = |s: &str| statement_is_single_plain_line(s, MAX_BRIDGE_STATEMENT_LEN);
+        assert!(!gate("set_option maxRecDepth 100000 in _root_.M.f 0 = 0"));
+        assert!(!gate("(set_option pp.all true in True)"));
+        assert!(!gate("open _root_.Evil in _root_.M.f 0 = 0"));
+        assert!(!gate("∀ (x : Int), (open Evil in f x) = x"));
+        assert!(gate("_root_.M.openFile 0 = _root_.M.open' 0"));
+        assert!(gate("_root_.M.reopen 0 = _root_.M.set_optional 0"));
+        // Inside a literal or a `«…»` identifier the words are data, not code.
+        assert!(gate("_root_.M.f \"open set_option\" = «open» 'o'"));
     }
 
     #[test]

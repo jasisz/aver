@@ -1090,9 +1090,9 @@ fn cert_hardening_declines_a_certified_closure_reaching_a_work_import() {
 // `<prefix>.Tiny.addTwo` made the statement text `Tiny.addTwo` mean the
 // slipped-in function: the law was credited, and bridged through the real
 // `Tiny.addTwo`'s bridge, for a property the real function does not have.
-// The statements are read at the root now, a bridged model must be spelled
-// `_root_.<model>`, and the audit refuses a constant where the law's namespace
-// would resolve a mentioned model.
+// The statements are read at the root now and a bridged model must be spelled
+// `_root_.<model>`, so a constant where the law's namespace would resolve a
+// mentioned model is harmless and needs no rule of its own.
 
 /// The honest statement of the `addTwo` law, as the manifest and `Laws.lean`
 /// spell it.
@@ -1159,32 +1159,191 @@ fn cert_hardening_declines_a_bridged_law_naming_its_model_unqualified() {
     );
 }
 
-/// Bridged, `_root_`-spelled, with a slipped-in `<ns>.Tiny.addTwo` where
-/// `<ns>` is the law's namespace (`Evil`, from the theorem `Evil.law`) or the
-/// model's own (`Tiny`). The witness reads the statement at the root, so it is
-/// about the real function; the audit still refuses the shadow.
+/// Bridged, `_root_`-spelled, with a slipped-in `<ns>.Tiny.addTwo := a + 3`
+/// where `<ns>` is the law's namespace (`Evil`, from the theorem `Evil.law`)
+/// or the model's own (`Tiny`). The witness reads the statement at the root,
+/// where `_root_.Tiny.addTwo` is the real function, so the shadow is
+/// harmless: beside the honest statement it changes nothing and the law is
+/// credited about the real function; and a statement only the shadow makes
+/// true, proved against the shadow inside that namespace, does not bind.
 #[test]
-fn cert_hardening_declines_a_shadow_of_a_bridged_model_in_the_law_namespace() {
-    for (theorem, shadow) in [
-        ("Evil.law", "Evil.Tiny.addTwo"),
-        ("Tiny.addTwo_law_isPlusTwo", "Tiny.Tiny.addTwo"),
-    ] {
+fn cert_hardening_a_shadow_of_a_bridged_model_in_the_law_namespace_is_harmless() {
+    for (theorem, namespace) in [("Evil.law", "Evil"), ("Tiny.addTwo_law_isPlusTwo", "Tiny")] {
+        let shadow = format!("{namespace}.Tiny.addTwo");
         let Some((_dir, wasm, cert)) = baseline("certharden-lawns-shadow") else {
             return;
         };
         retarget_add_two_law(&cert, theorem, ADD_TWO_LAW, &["addTwo"]);
         append(
             &cert.join("Laws.lean"),
-            &format!("\ndef {shadow} (a : Int) : Int := a + 2\n"),
+            &format!("\ndef {shadow} (a : Int) : Int := a + 3\n"),
         );
+        let (ok, report) = aver_cert("verify", &wasm, &cert);
+        assert!(
+            ok,
+            "a harmless shadow `{shadow}` must not decline:\n{report}"
+        );
+        assert!(
+            report.contains("CERTIFIED")
+                && report.contains("law-claims: 2 of 2 credited")
+                && report.contains("bridged-laws: 2 of 2 credited"),
+            "{report}"
+        );
+
+        let Some((_dir, wasm, cert)) = baseline("certharden-lawns-shadow-false") else {
+            return;
+        };
+        let pinned = "∀ (a : Int), _root_.Tiny.addTwo a = (a + 3)";
+        retarget_add_two_law(&cert, theorem, pinned, &["addTwo"]);
+        slip_into_laws(
+            &cert,
+            namespace,
+            "def Tiny.addTwo (a : Int) : Int := a + 3",
+            "∀ (a : Int), Tiny.addTwo a = (a + 3)",
+            "fun _ => rfl",
+        );
+        let (ok, report) = aver_cert("check", &wasm, &cert);
+        assert_declined(ok, &report, "does not bind to this artifact");
+        assert!(
+            report.contains(&format!("{shadow} a = a + 3"))
+                && report.contains("AverCertChecker.law_statement_0"),
+            "{report}"
+        );
+    }
+}
+
+/// An entry module `Tiny` beside a dependency `Foo.Tiny`, each with an
+/// `addTwo` and a law about it.
+const TWO_TINY_ENTRY: &str = "module Tiny
+    intent = \"An entry module whose name is also the last segment of a dependency.\"
+    exposes [addTwo, viaFoo]
+    depends [Foo.Tiny]
+
+fn addTwo(x: Int) -> Int
+    ? \"Adds two.\"
+    x + 2
+
+verify addTwo law isPlusTwo
+    given a: Int = [0, 1, 2]
+    addTwo(a) => a + 2
+
+fn viaFoo(x: Int) -> Int
+    ? \"Adds three through the dependency.\"
+    Foo.Tiny.addTwo(x)
+
+verify viaFoo
+    viaFoo(1) => 4
+";
+
+const TWO_TINY_DEP: &str = "module Tiny
+    intent = \"A dependency whose function shares the entry function's name.\"
+    exposes [addTwo]
+
+fn addTwo(x: Int) -> Int
+    ? \"Adds three, despite the name.\"
+    x + 3
+
+verify addTwo law isPlusThree
+    given a: Int = [0, 1, 2]
+    addTwo(a) => a + 3
+";
+
+/// An honest program whose model declares `Foo.Tiny.addTwo` beside
+/// `Tiny.addTwo`, with a law in `Foo.Tiny` and a law naming
+/// `_root_.Tiny.addTwo`. Read at the root, every statement means the function
+/// it spells, so nothing here is a shadow and the package is accepted with
+/// every claim credited.
+#[test]
+fn cert_hardening_accepts_a_model_named_inside_another_laws_namespace() {
+    if !lake_available() {
+        return;
+    }
+    let dir = temp_dir("certharden-two-tiny");
+    std::fs::create_dir_all(dir.join("foo")).unwrap();
+    std::fs::write(dir.join("tiny.av"), TWO_TINY_ENTRY).unwrap();
+    std::fs::write(dir.join("foo").join("tiny.av"), TWO_TINY_DEP).unwrap();
+    let out = dir.join("out");
+    let compile = aver_command()
+        .current_dir(&*dir)
+        .arg("compile")
+        .arg("tiny.av")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = out.join("tiny.wasm");
+    let cert = out.join("cert");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let laws = manifest["laws"].as_array().unwrap();
+    // The shape a namespace-prefix shadow rule would refuse: a law in
+    // `Foo.Tiny`, a law naming `_root_.Tiny.addTwo`, and a model constant
+    // `Foo.Tiny.addTwo`.
+    assert!(
+        laws.iter()
+            .any(|law| law["theorem"] == "Foo.Tiny.addTwo_law_isPlusThree"),
+        "{manifest}"
+    );
+    assert!(
+        laws.iter().any(|law| law["statement"]
+            .as_str()
+            .unwrap()
+            .contains("_root_.Tiny.addTwo a")),
+        "{manifest}"
+    );
+    assert!(
+        manifest["sourceBridges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|bridge| bridge["model"] == "Foo.Tiny.addTwo"),
+        "{manifest}"
+    );
+    let (ok, report) = aver_cert("verify", &wasm, &cert);
+    assert!(ok, "the honest two-Tiny certificate must verify:\n{report}");
+    assert!(
+        report.contains("CERTIFIED")
+            && report.contains("law-claims: 2 of 2 credited")
+            && report.contains("bridged-laws: 2 of 2 credited")
+            && report.contains("source-bridges: 3 of 3 credited"),
+        "{report}"
+    );
+}
+
+/// A term-level `set_option … in` or `open … in` inside a law statement is
+/// refused by the statement gate before Lean runs: the first would bypass the
+/// package gate's option whitelist, the second change what the statement's
+/// names mean. The producer writes neither.
+#[test]
+fn cert_hardening_declines_set_option_and_open_in_a_law_statement() {
+    for (prefix, statement) in [
+        (
+            "certharden-law-set-option",
+            "set_option maxRecDepth 100 in ∀ (a : Int), _root_.Tiny.addTwo a = (a + 2)",
+        ),
+        (
+            "certharden-law-open",
+            "open _root_.Tiny in ∀ (a : Int), _root_.Tiny.addTwo a = (a + 2)",
+        ),
+    ] {
+        let Some((_dir, wasm, cert)) = baseline(prefix) else {
+            return;
+        };
+        retarget_add_two_law(&cert, "Tiny.addTwo_law_isPlusTwo", statement, &["addTwo"]);
         let (ok, report) = aver_cert("check", &wasm, &cert);
         assert_declined(
             ok,
             &report,
-            &format!(
-                "declares {shadow}, where a law's namespace would resolve the name of a model \
-                 it mentions"
-            ),
+            "statement is not a single plain term-position line",
         );
     }
 }

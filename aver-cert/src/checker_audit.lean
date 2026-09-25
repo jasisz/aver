@@ -132,11 +132,6 @@ def leanAuxiliary (env : Environment) (inPkg : Name → Bool) (n : Name) : Bool 
     constants its bridges are about. -/
 def lawModelUses : List (Name × List Name) := @LAW_MODEL_USES@
 
-/-- `Q ++ M` for every namespace prefix `Q` of a law's model namespace and
-    every model `M` a law statement names: where Lean would resolve `M`
-    inside that namespace. No package constant may have one of these names. -/
-def lawShadows : List Name := @LAW_SHADOWS@
-
 def lawRoots : List Name := @LAW_ROOTS@
 def bridgedLawRoots : List Name := @BRIDGED_LAW_ROOTS@
 def bridgeRoots : List Name := @BRIDGE_ROOTS@
@@ -341,14 +336,10 @@ def main : IO UInt32 := do
     if let some reason ← sumRefusal env ty ctors then
       return ← decline reason
   -- 3b. The law statements. The witness elaborates them at the root, where a
-  --     `_root_.`-spelled model name is the root constant; this re-checks the
-  --     outcome on the elaborated terms. No package constant may sit where a
-  --     law's model namespace would resolve a mentioned model's name, and
-  --     each bridged law's statement must use every model constant its
-  --     bridges are about.
-  for shadow in lawShadows do
-    if env.contains shadow then
-      return ← decline s!"a certificate module declares {shadow}, where a law's namespace would resolve the name of a model it mentions"
+  --     `_root_.`-spelled model name is exactly the root constant, whatever
+  --     else the package declares; this re-checks the outcome on the
+  --     elaborated terms: each bridged law's statement must use every model
+  --     constant its bridges are about.
   for (stmt, models) in lawModelUses do
     let some info := env.find? stmt
       | return ← decline s!"the witness does not declare {stmt}"
