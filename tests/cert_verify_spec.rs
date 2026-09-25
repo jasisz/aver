@@ -4936,21 +4936,15 @@ fn cert_verify_declines_tampered_int_dispatch_plan() {
     );
 }
 
-/// End-to-end acceptance and fail-closed tamper coverage for the fused
-/// `Option.withDefault(Vector.get(vec, idx), d)` read: a `cellAt`-shaped export
-/// reaches CERTIFIED, and each of the three holes an attacker could try to
-/// move — the literal default, the declared vector array type, and the
-/// to-index/box helper wiring — is pinned, so a consistent rewrite of the
-/// attacker-editable package data is DECLINED, never re-credited.
+/// A function that reads a Vector is declined, and says why. A `Vector<T>`
+/// value is a version struct over its array on wasm-gc, and a read may reroot
+/// the versions sharing that array; the wall models a Vector as the plain
+/// array of its elements, so `cellAt` (the fused
+/// `Option.withDefault(Vector.get(vec, idx), d)` read) must not be offered.
 #[test]
-fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
-    if !lean_required::lake_available() {
-        eprintln!("skipping fused vector-read verify test: `lake` not available");
-        return;
-    }
-
+fn cert_declines_a_function_that_reads_a_vector() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = temp_dir("cert-fused-vector-read");
+    let out_dir = temp_dir("cert-vector-declined");
     let compile = aver_command()
         .current_dir(&repo_root)
         .arg("compile")
@@ -4968,102 +4962,27 @@ fn cert_verify_accepts_fused_vector_read_and_declines_three_tampers() {
         String::from_utf8_lossy(&compile.stdout),
         String::from_utf8_lossy(&compile.stderr)
     );
-    let wasm = out_dir.join("cell_at.wasm");
-    let cert = out_dir.join("cert");
-
-    let (ok, report) = aver_verify(&wasm, &cert);
-    assert!(ok, "fused vector read must verify CERTIFIED:\n{report}");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let certified = manifest["certified"].as_array().expect("certified list");
     assert!(
-        report.contains("CERTIFIED") && report.contains("cellAt"),
-        "verdict must credit cellAt:\n{report}"
+        certified.iter().all(|entry| entry["name"] != "cellAt"),
+        "cellAt must not be certified: {certified:?}"
     );
-
-    let manifest: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
-            .unwrap();
-    let to_index_idx = manifest["hostRoleTable"]["toIndex"]
-        .as_u64()
-        .expect("cell_at declares the index helper");
-    let box_idx = manifest["hostRoleTable"]["box"]
-        .as_u64()
-        .expect("cell_at declares the box helper");
-    assert_ne!(to_index_idx, box_idx, "helper roles must be distinct");
-    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
-    let vecs_at = plans
-        .find("vecs := [(.int, ")
-        .expect("cell_at declares Vector<Int>")
-        + "vecs := [(.int, ".len();
-    let arr_ty: u32 = plans[vecs_at..]
-        .split(')')
-        .next()
-        .unwrap()
-        .parse()
-        .expect("the Vector<Int> array index");
-
-    // (1) the literal default `0` becomes `1`; (2) the declared Vector<Int>
-    //     array type index moves; (3) the index and box helpers swap in the
-    //     subject's role table.
-    let helper_swap_from = format!("box := some {box_idx}, add := ");
-    let helper_swap_to = format!("box := some {to_index_idx}, add := ");
-    let vec_from = format!("vecs := [(.int, {arr_ty})]");
-    let vec_to = format!("vecs := [(.int, {})]", arr_ty + 1);
-    let to_index_from = format!("toIndex := some {to_index_idx}");
-    let to_index_to = format!("toIndex := some {box_idx}");
-    for (label, file, from, to) in [
-        (
-            "default literal",
-            "plan:cellAt",
-            "(.literal (.int 0))",
-            "(.literal (.int 1))",
-        ),
-        (
-            "array type",
-            "Plans.lean",
-            vec_from.as_str(),
-            vec_to.as_str(),
-        ),
-        (
-            "helper swap",
-            "Manifest.lean",
-            helper_swap_from.as_str(),
-            helper_swap_to.as_str(),
-        ),
-    ] {
-        let dir = temp_dir(&format!(
-            "cert-fused-vector-read-{}",
-            label.replace(' ', "-")
-        ));
-        copy_dir(&out_dir, &dir);
-        let tampered = dir.join("cert");
-        if let Some(export) = file.strip_prefix("plan:") {
-            tamper_export_plan(&tampered.join("Plans.lean"), export, from, to);
-        } else {
-            replace_once(&tampered.join(file), from, to);
-        }
-        if label == "helper swap" {
-            replace_once(
-                &tampered.join("Manifest.lean"),
-                &to_index_from,
-                &to_index_to,
-            );
-            let mf = tampered.join("cert-manifest.json");
-            let mut m: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(&mf).unwrap()).unwrap();
-            m["hostRoleTable"]["box"] = serde_json::json!(to_index_idx);
-            m["hostRoleTable"]["toIndex"] = serde_json::json!(box_idx);
-            std::fs::write(&mf, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-        }
-        let (ok, out) = aver_verify(&dir.join("cell_at.wasm"), &tampered);
-        assert!(!ok, "tamper `{label}` must be DECLINED:\n{out}");
-        assert!(
-            out.contains("DECLINED"),
-            "tamper `{label}` must report a decline verdict, not an error:\n{out}"
-        );
-        assert!(
-            !out.contains("CERTIFIED"),
-            "tamper `{label}` must never re-credit the export:\n{out}"
-        );
-    }
+    let reason = manifest["declaredUncertified"]
+        .as_array()
+        .expect("declaredUncertified list")
+        .iter()
+        .find(|entry| entry["name"] == "cellAt")
+        .and_then(|entry| entry["reason"].as_str())
+        .expect("cellAt is declared uncertified with a reason")
+        .to_string();
+    assert!(
+        reason.contains("Vector<Int>") && reason.contains("versioned struct"),
+        "the reason names the Vector representation: {reason}"
+    );
 }
 
 /// The five real source functions the Int value-comparison faces were built

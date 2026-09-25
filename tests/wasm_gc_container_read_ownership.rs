@@ -24,9 +24,11 @@
 //! asserted against the same hand-computed literal — three backends
 //! agreeing on a wrong value still fails. The two green-by-design cells
 //! (fresh local, fresh chain) pin that the conservative fix did not
-//! swallow the owned fast path, and `fresh_local_set_stays_in_place`
-//! additionally pins the *emitted code*: the clone (`array.new_default`)
-//! exists only in the container-read variant.
+//! swallow the owned fast path. A `Vector.set` no longer clones in either
+//! case: it writes the cell and keeps the old one with the vector it was
+//! given (`src/codegen/wasm_gc/vectors.rs`), so the map's vector stays what
+//! it was without a copy, and `neither_a_fresh_nor_a_container_read_set_copies` pins that
+//! neither variant allocates an array for the set.
 
 #![cfg(feature = "wasm")]
 
@@ -852,13 +854,10 @@ fn wat_of(source: &str) -> String {
 /// The two programs are identical except for `held`'s provenance —
 /// fresh `Vector.fromList` vs a read out of the map — so their type /
 /// helper sets match and the WAT `array.new_default` count isolates the
-/// ownership decision at the `Vector.set` site. The container-read
-/// variant must carry exactly one more (its clone-before-mutate); if
-/// the fresh variant ever gains one, the fast path was silently
-/// pessimized, and if the read variant loses its extra one, the copy
-/// guard regressed.
+/// `Vector.set` site. Neither variant clones: the set is versioned, and
+/// the map's vector keeps its old cell through the version it is.
 #[test]
-fn fresh_local_set_stays_in_place_while_container_read_copies() {
+fn neither_a_fresh_nor_a_container_read_set_copies() {
     let fresh = r#"
 fn probe(x: Int) -> Int
     ? "Fresh receiver: the set may mutate in place."
@@ -892,11 +891,8 @@ fn main() -> Unit
     let fresh_clones = wat_of(fresh).matches("array.new_default").count();
     let read_clones = wat_of(read).matches("array.new_default").count();
     assert_eq!(
-        read_clones,
-        fresh_clones + 1,
-        "expected the container-read variant to carry exactly one more \
-         array.new_default (the clone-before-mutate) than the fresh \
-         variant ({read_clones} vs {fresh_clones}) — either the fresh \
-         fast path was pessimized or the copy guard regressed"
+        read_clones, fresh_clones,
+        "expected neither variant to clone for the set ({read_clones} vs \
+         {fresh_clones} array.new_default)"
     );
 }

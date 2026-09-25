@@ -278,16 +278,16 @@ impl TypeTableBuilder {
                 }
                 Ok(PlanTy::Result(Box::new(t), Box::new(e)))
             }
-            ("Vector", 1) => {
-                let t = arg(self, 0)?;
-                let idx = layout
-                    .vector(&canon)
-                    .ok_or_else(|| format!("type `{canon}` is not registered"))?;
-                if !self.table.vecs.iter().any(|v| v.0 == t) {
-                    self.table.vecs.push((t.clone(), idx));
-                }
-                Ok(PlanTy::Vec(Box::new(t)))
-            }
+            // A `Vector<T>` value is a version struct over its array on
+            // wasm-gc (`codegen::wasm_gc::vectors`), and reading it may
+            // reroot the versions sharing that array. The wall models a
+            // Vector as the plain array of its elements, so a function that
+            // touches one is declined rather than certified against the
+            // wrong representation.
+            ("Vector", 1) => Err(format!(
+                "type `{canon}`: a Vector is a versioned struct on wasm-gc, and the wall \
+                 models it as a plain array"
+            )),
             ("List", 1) => {
                 let t = arg(self, 0)?;
                 let idx = layout

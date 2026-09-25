@@ -168,13 +168,13 @@ pub(super) fn sum_or_record_eq_fn(ty: &crate::types::Type, ctx: &EmitCtx<'_>) ->
                 .collect();
             ctx.fn_map.list_ops.get(&canonical).and_then(|ops| ops.eq)
         }
-        crate::types::Type::Vector(_) => {
-            let canonical: String = ty
-                .display()
+        // The vector helpers are registered per `List<T>` pair.
+        crate::types::Type::Vector(inner) => {
+            let canonical: String = format!("List<{}>", inner.display())
                 .chars()
                 .filter(|c| !c.is_whitespace())
                 .collect();
-            ctx.fn_map.vfl_ops.get(&canonical).and_then(|ops| ops.eq)
+            ctx.fn_map.vfl_ops_lookup(&canonical).and_then(|ops| ops.eq)
         }
         // Map<K,V> structural eq — `__eq_Map<K,V>` slot lives in
         // MapHelperRegistry but we mirror the fn idx into

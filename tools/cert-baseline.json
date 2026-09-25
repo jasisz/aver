@@ -303,9 +303,7 @@
  },
  "tools/certkit/fixtures/cell_at.av": {
   "bridges": [],
-  "certified": {
-   "cellAt": "L1"
-  },
+  "certified": {},
   "laws": []
  },
  "tools/certkit/fixtures/cert_goals.av": {
