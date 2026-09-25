@@ -230,7 +230,7 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 | `LexerError` | lexer.rs | Carry `msg`, `line`, `col`; formatted as `"Lexer error [L:C]: msg"` |
 | `Literal` | ast.rs | `Int(i64)`, `Float(f64)`, `Str(String)`, `Bool(bool)` |
 | `BinOp` | ast.rs | Arithmetic and comparison operators as enum variants |
-| `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `EmptyList`, `Cons`, `Constructor` |
+| `Pattern` | ast.rs | Match arm pattern: `Wildcard`, `Literal`, `Ident`, `EmptyList`, `Cons`, `Tuple`, `Constructor`, plus the source-only `ConstructorNested` and `List` that `src/ir/nested_patterns.rs` compiles into nested flat matches inside the front door (after the program is checked as written), so no backend or proof exporter sees them |
 | `StrPart` | ast.rs | Piece of an interpolated string: `Literal(String)` or `Parsed(Box<Expr>)` |
 | `Expr` | ast.rs | Every expression form: `Literal`, `Ident`, `Resolved(u16)`, `Attr`, `FnCall`, `BinOp`, `Match`, `Constructor`, `ErrorProp`, `InterpolatedStr`, `List(Vec<Expr>)`, `Tuple(Vec<Expr>)`, `MapLiteral(Vec<(Expr, Expr)>)`, `RecordCreate { type_name, fields }`, `RecordUpdate { type_name, base, updates }`, `TailCall(Box<(String, Vec<Expr>)>)` |
 | `Stmt` | ast.rs | `Binding(name, Option<type_ann>, expr)`, `Expr(expr)` |

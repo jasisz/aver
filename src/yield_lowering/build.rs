@@ -143,6 +143,13 @@ pub(super) fn pattern_binders(pattern: &Pattern, out: &mut Vec<String>) {
         Pattern::Constructor(_, names) => {
             out.extend(names.iter().filter(|n| *n != "_").cloned());
         }
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => out.extend(
+            pattern
+                .binder_names()
+                .into_iter()
+                .filter(|n| *n != "_")
+                .map(str::to_string),
+        ),
     }
 }
 

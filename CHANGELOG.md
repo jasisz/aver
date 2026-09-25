@@ -4,6 +4,18 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Added — literal, constructor and list patterns at any depth
+
+- **A constructor pattern takes patterns in its fields.** `Option.Some(0)`, `Result.Ok("x")`, `Result.Err(404)`, `Shape.Rect(0, h)`, `Option.Some(true)`, `Option.Some(Option.None)` and `Option.Some((0, _))` are patterns now; before, each field had to be a name or `_`. The literals are the ones a top-level arm accepts: `Int`, `String`, `Float` and `Bool`.
+- **List patterns name any number of leading elements.** `[a]` and `[a, b]` match lists of exactly that length, `[a, b, ..rest]` a list of at least two, `[..all]` any list. Elements are patterns: `[0, ..rest]`, `[Option.Some(x), ..rest]`. `[]` and `[h, ..t]` are unchanged.
+- **The checker reads them.** A literal field never covers its constructor, so `Option.Some(0)` and `Option.None` alone are reported as `Non-exhaustive match: missing pattern Option.Some(_)`. List patterns cover by length (`missing pattern [_, _, _, .._]`). An arm no value can reach is an error, including one that several earlier arms cover only together, such as `Option.Some(_)` after `Option.Some(true)` and `Option.Some(false)`. A literal of the wrong type (`Option.Some("x")` on an `Option<Int>`) and a list pattern on a value that is not a list are errors.
+- **Every backend runs the same match.** The compiler turns such a match into nested ordinary matches right after checking it, so the VM, generated Rust, wasm-gc, `wasip2` and the Lean export all read the same program. A `match` that uses these patterns inside a `yield` function is refused for now; move it into a helper function.
+- **`aver format` prints match patterns in one spelling:** `[a, b, ..rest]`, `Option.Some(0)`, `(x, _)`.
+
+### Fixed — a spliced call no longer reads a slot of the function it came from
+
+- **A one-parameter function whose body matches, called with a literal record or constructor, runs right on every backend.** The compiler copies such a body into the caller; when the body held another `match` that binds a name, the copy used a local slot of the original function, which crashed the VM (`index out of bounds`), failed wasm-gc validation, or overwrote an unrelated local of the caller. Such a body is now called instead of copied.
+
 ### Migration — the process layer, version 2
 
 The generated loop is now written from the program's source alone, and the manifest keeps only deployment. Every program that used `answer =`, the job seam or `[run]` has to be migrated; a manifest that still has any of them is refused with the repair. A program that writes its own loop over `Work` and `Wait.poll` is unaffected.

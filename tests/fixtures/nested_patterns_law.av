@@ -1,0 +1,33 @@
+module NestedLaw
+    intent = "A law over a function that matches a nested literal pattern."
+
+fn score(o: Option<Int>) -> Int
+    ? "Zero scores ten, any other present value scores itself, absence scores zero."
+    match o
+        Option.Some(0) -> 10
+        Option.Some(n) -> n
+        Option.None -> 0
+
+verify score
+    score(Option.Some(0)) => 10
+    score(Option.Some(4)) => 4
+    score(Option.None) => 0
+
+verify score law presentZero
+    given n: Int = [0, 1, 5]
+    score(Option.Some(0)) => 10
+
+verify score law absent
+    given n: Int = [0, 1]
+    score(Option.None) => 0
+
+fn headOrZero(xs: List<Int>) -> Int
+    ? "First element when the list starts with a known shape."
+    match xs
+        [0, ..rest] -> 100
+        [x, ..rest] -> x
+        [] -> 0
+
+verify headOrZero law leadingZero
+    given k: Int = [1, 2, 3]
+    headOrZero([0, k]) => 100

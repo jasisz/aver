@@ -457,6 +457,72 @@ pub enum Pattern {
     /// Built-ins: Result.Ok(x), Result.Err(x), Option.Some(x), Option.None.
     /// User-defined: Shape.Circle(r), Shape.Rect(w, h), Shape.Point.
     Constructor(String, Vec<String>),
+    /// Constructor pattern with at least one field that is not a plain
+    /// binder: `Option.Some(0)`, `Result.Ok("x")`, `Pair.Of(1, x)`,
+    /// `Option.Some(Option.Some(y))`. A constructor whose fields are all
+    /// binders or `_` stays [`Pattern::Constructor`].
+    ///
+    /// Source-level only: the front door checks the match as written
+    /// and then compiles it into nested flat matches
+    /// (`crate::ir::nested_patterns`), so no backend, proof exporter or
+    /// later pass ever sees this form.
+    ConstructorNested(String, Vec<Pattern>),
+    /// General list pattern: `[a, b]`, `[a, b, ..rest]`, `[0, ..rest]`,
+    /// `[Option.Some(x), ..rest]`, `[..rest]`. `rest` is the binder after
+    /// `..` (`_` allowed); `None` means the list has exactly
+    /// `items.len()` elements. `[]` stays [`Pattern::EmptyList`] and
+    /// `[head, ..tail]` with two binders stays [`Pattern::Cons`].
+    ///
+    /// Source-level only, like [`Pattern::ConstructorNested`].
+    List {
+        items: Vec<Pattern>,
+        rest: Option<String>,
+    },
+}
+
+impl Pattern {
+    /// Every name this pattern spells in a binder position, in source
+    /// order and at any depth — `_` included wherever the flat forms
+    /// store it as a name, exactly as the per-form walks always did.
+    pub fn binder_names(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        self.push_binder_names(&mut out);
+        out
+    }
+
+    fn push_binder_names<'a>(&'a self, out: &mut Vec<&'a str>) {
+        match self {
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+            Pattern::Ident(name) => out.push(name),
+            Pattern::Cons(head, tail) => out.extend([head.as_str(), tail.as_str()]),
+            Pattern::Constructor(_, names) => out.extend(names.iter().map(String::as_str)),
+            Pattern::Tuple(items) | Pattern::ConstructorNested(_, items) => {
+                items.iter().for_each(|item| item.push_binder_names(out))
+            }
+            Pattern::List { items, rest } => {
+                items.iter().for_each(|item| item.push_binder_names(out));
+                if let Some(rest) = rest {
+                    out.push(rest);
+                }
+            }
+        }
+    }
+
+    /// True for the source-level forms the front door compiles away
+    /// ([`Pattern::ConstructorNested`], [`Pattern::List`]), anywhere
+    /// inside this pattern.
+    pub fn has_nested_form(&self) -> bool {
+        match self {
+            Pattern::ConstructorNested(_, _) | Pattern::List { .. } => true,
+            Pattern::Tuple(items) => items.iter().any(Pattern::has_nested_form),
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::Ident(_)
+            | Pattern::EmptyList
+            | Pattern::Cons(_, _)
+            | Pattern::Constructor(_, _) => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
