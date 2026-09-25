@@ -18,7 +18,7 @@ use super::factories::{
 use super::model::{AnalysisReport, Diagnostic, Severity, Span};
 use crate::ast::TopLevel;
 use crate::checker::{
-    CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
+    CheckFinding, check_module_intent_with_capabilities_in, collect_cse_warnings_in,
     collect_independence_warnings_in, collect_module_effects_warnings_in,
     collect_naming_warnings_in, collect_perf_warnings_in, collect_serve_path_warnings_in,
     collect_traversal_warnings_in, collect_verify_coverage_warnings_in,
@@ -340,9 +340,10 @@ fn analyze_prechecked_items_impl(
     }
 
     let findings = if options.include_intent_warnings {
-        Some(check_module_intent_with_sigs_in(
+        Some(check_module_intent_with_capabilities_in(
             items,
             Some(&tc_result.fn_sigs),
+            Some(&tc_result.capabilities),
             None,
         ))
     } else {

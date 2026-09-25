@@ -32,6 +32,7 @@ The generated loop is now written from the program's source alone, and the manif
 
 ### Fixed
 
+- **`check` no longer asks a verify block of a function no verify case can call.** A parameter of a capability resource type (`Tcp.Connection`, `Work.Job`, a job kind's handle), or of a tuple, record or sum of the module that always carries one, has no value a case can write, so such a pure branching helper failed `error[missing-verify]` with no way to satisfy it. It is now exempt, the way effectful functions are. A parameter with an empty value (`List`, `Option`, a sum with a resource-free variant) still needs its verify block.
 - **A wait over sockets and jobs keeps watching its sockets after a job outside its set settles.** The wake from that job used to end the socket poll, and the wait then slept out the rest of its timeout on the job engine alone, missing sockets that became ready meanwhile and never reporting them. The VM, generated Rust and the wasm-gc native host now share one wait loop that polls the whole set again.
 - **A handle whose slot the engine has forgotten answers `work: unknown job` on the VM**, as it already did elsewhere, instead of claiming another job kind started it. Which kind began a job is now kept in the job's own slot, so nothing a job kind keeps grows with the number of jobs it starts.
 - **The VM runs a function whose bytecode is larger than 32 KiB.** Jump offsets were sixteen bits and a longer forward jump wrapped into a backward one, which crashed `aver verify` on large generated trace laws.

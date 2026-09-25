@@ -289,7 +289,7 @@ A plain case may call a function with a non-empty effect declaration, as long as
 
 Effects outside Oracle's classified set still belong in record/replay, in particular ambient state, persistent protocol sessions, terminal modes and server loops. See [oracle.md](oracle.md) for the supported effect set, stub signatures and trace API.
 
-`aver check` expects every pure, non-trivial function other than `main` to have a `verify` block next to it.
+`aver check` expects every pure, non-trivial function other than `main` to have a `verify` block next to it. The exception is a function no case can call: one with a parameter whose every value carries a capability resource (`Tcp.Connection`, `Work.Job`), because a provider mints those and no source expression writes one. A `List`, `Option` or other type with an empty value can still be written, so a parameter of `List<Tcp.Connection>` does not exempt its function.
 
 ## Decision blocks
 

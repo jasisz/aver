@@ -33,7 +33,7 @@ Source of truth: `src/diagnostics/classify.rs` (classifier) and `src/checker/*.r
 
 | Slug | Severity | Fires when | Repair |
 |---|---|---|---|
-| `missing-verify` | error | A pure, non-trivial function has no `verify` block. | Add a `verify` block with representative cases. |
+| `missing-verify` | error | A pure, non-trivial function has no `verify` block. A function with a parameter no verify case can write (a capability resource, or a type that always carries one) is exempt. | Add a `verify` block with representative cases. |
 | `missing-description` | warning | A function has no `? "..."` description. | Add a `? "description"` line after the signature. |
 | `verify-coverage` | warning | Verify block has too few cases for a reachable return or input shape. | Add a case for the missing shape. If the shape really is uninhabited, use a function-scoped `[[check.suppress]]` with a reason. |
 | `verify-law` | warning | `verify law` names a function it never actually calls. | Use the named function in the law body or rename the law. |
