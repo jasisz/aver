@@ -63,3 +63,19 @@ fn optional(connection: Option<Tcp.Connection>, extra: Int) -> Int
     match connection
         Option.Some(_) -> 1 + extra
         Option.None -> extra
+
+fn socketKind(socket: Tcp.Socket, loud: Bool) -> String
+    ? "What a socket is watched for; every Tcp.Socket holds a handle."
+    match socket
+        Tcp.Socket.Listening(_) -> match loud
+            true -> "LISTENING"
+            false -> "listening"
+        _ -> "other"
+
+fn itemKind(item: Wait.Item, loud: Bool) -> String
+    ? "What a wait item is; every Wait.Item holds a handle."
+    match item
+        Wait.Item.Socket(_) -> match loud
+            true -> "SOCKET"
+            false -> "socket"
+        Wait.Item.Job(_) -> "job"
