@@ -594,7 +594,7 @@ fn write_loop(
     // ── Handing a state out ────────────────────────────────────────
     for answer in answers {
         out.push_str(&format!(
-            "\nfn __take{0}(run: __Run) -> Tuple<__Run, Option<{1}>>\n    ? \"Hands the state of '{2}' out of the run and leaves none behind, so the answer function it goes to holds the only reference to it and can update it in place. The state comes back with the answer.\"\n    (__Run.update(run, {3} = Option.None), run.{3})\n",
+            "\nfn __take{0}(run: __Run) -> Tuple<Option<{1}>, __Run>\n    ? \"Hands the state of '{2}' out of the run and leaves none behind, so the answer function it goes to holds the only reference to it and can update it in place. The state is read first and the run is updated at its last use, so the run it came from gives up its other fields instead of still holding them. The state comes back with the answer.\"\n    (run.{3}, __Run.update(run, {3} = Option.None))\n",
             super::build::capitalize(&answer.field),
             answer.state,
             answer.module,
@@ -670,12 +670,12 @@ fn write_loop(
     out.push_str("\nfn __current(run: __Run, id: Int) -> Int\n    ? \"The instance number of the request one process is waiting on, or -1 when nothing is seated under that id.\"\n    match Map.get(run.slots, id)\n        Option.None -> 0 - 1\n        Option.Some(slot) -> slot.seq\n");
     out.push_str("\nfn __nextInstance(seq: Int) -> Int\n    ? \"The instance number an answer for the current one leaves behind. It rises, so the instance just answered can never be current again.\"\n    seq + 1\n");
     out.push_str("\nfn __versionOf(run: __Run, owner: Int) -> Int\n    ? \"How many times this answer module has answered other than Settled. A request parked on Settled is asked again once this has moved past the number it was parked at.\"\n    match Map.get(run.versions, owner)\n        Option.None -> 0\n        Option.Some(version) -> version\n");
-    out.push_str("\nfn __bump(run: __Run, owner: Int) -> __Run\n    ? \"One answer of this module that was not Settled: its state may have moved, so every request parked on Settled with it may be worth asking again.\"\n    __Run.update(run, versions = Map.set(run.versions, owner, __versionOf(run, owner) + 1))\n");
+    out.push_str("\nfn __bump(run: __Run, owner: Int) -> __Run\n    ? \"One answer of this module that was not Settled: its state may have moved, so every request parked on Settled with it may be worth asking again. The version is read first, so the versions Map is handed to Map.set at the run's last use.\"\n    version = __versionOf(run, owner)\n    __Run.update(run, versions = Map.set(run.versions, owner, version + 1))\n");
     out.push_str("\nfn __deadlineOf(wake: Run.Wake) -> Option<Int>\n    ? \"The deadline half of a wake, if it has one.\"\n    match wake\n        Run.Wake.Until(_, deadline) -> deadline\n        Run.Wake.Settled(deadline) -> deadline\n");
     out.push_str("\nfn __dueOf(deadline: Option<Int>, now: Int) -> Int\n    ? \"The clock reading a deadline falls due at. A negative deadline is due now; no deadline carries none.\"\n    match deadline\n        Option.None -> 0\n        Option.Some(ms) -> now + Int.max(ms, 0)\n");
     out.push_str("\nfn __msOf(deadline: Option<Int>) -> Int\n    ? \"How long the request asked to be left alone for, never less than nothing.\"\n    match deadline\n        Option.None -> 0\n        Option.Some(ms) -> Int.max(ms, 0)\n");
     out.push_str("\nfn __parked(slot: __Slot, wake: Run.Wake, now: Int, owner: Int, version: Int) -> __Slot\n    ? \"The slot an Err leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, and the ms that was asked for is kept beside it, so a clock that steps backwards cannot strand the request.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(__deadlineOf(wake), now), ms = __msOf(__deadlineOf(wake)), owner = owner, version = version)\n");
-    out.push_str("\nfn __park(run: __Run, id: Int, wake: Run.Wake, owner: Int) -> __Run\n    ? \"An Err: the request stays where it is with the same instance number. The state the answer module returned was already written back. An answer that is not Settled moves the module's version first; a Settled one does not, so a request cannot wake itself.\"\n    moved = __moved(run, wake, owner)\n    match Map.get(moved.slots, id)\n        Option.None -> moved\n        Option.Some(slot) -> __Run.update(moved, slots = Map.set(moved.slots, id, __parked(slot, wake, moved.now, owner, __versionOf(moved, owner))))\n");
+    out.push_str("\nfn __park(run: __Run, id: Int, wake: Run.Wake, owner: Int) -> __Run\n    ? \"An Err: the request stays where it is with the same instance number. The state the answer module returned was already written back. An answer that is not Settled moves the module's version first; a Settled one does not, so a request cannot wake itself. The clock and the version are read first, so the slots Map is handed to Map.set at the last use of the run.\"\n    moved = __moved(run, wake, owner)\n    now = moved.now\n    version = __versionOf(moved, owner)\n    match Map.get(moved.slots, id)\n        Option.None -> moved\n        Option.Some(slot) -> __Run.update(moved, slots = Map.set(moved.slots, id, __parked(slot, wake, now, owner, version)))\n");
     out.push_str("\nfn __moved(run: __Run, wake: Run.Wake, owner: Int) -> __Run\n    ? \"The versions after one Err: Until moves its module's version, Settled leaves it.\"\n    match wake\n        Run.Wake.Until(_, _) -> __bump(run, owner)\n        Run.Wake.Settled(_) -> run\n");
     out.push_str("\nfn __staleInstance(run: __Run, id: Int, seq: Int) -> Bool\n    ? \"Why an answer carrying this instance number changes nothing: it is not the number the slot under this id is waiting on.\"\n    seq != __current(run, id)\n");
 
@@ -858,7 +858,7 @@ fn write_seating(out: &mut String, proc: &Proc<'_>, performs: &ProcessEffects) {
         keyed.by, protocol.fn_name, keyed.field
     ));
     out.push_str(&format!(
-        "\nfn __seatFamily{upper}(run: __Run, keys: List<{key}>) -> __Run\n    ? \"The '{0}' family at the turn boundary: instances whose key has left the list are dropped, retired keys that have left it may come back later, and every listed key that is neither seated nor retired is seated, in list order.\"\n{seat}    present = __keySet{upper}(keys, {{}})\n    kept = __dropLeft{upper}(run, Map.keys(run.seated{upper}), present)\n    back = __Run.update(kept, retired{upper} = __unretire{upper}(kept.retired{upper}, Map.keys(kept.retired{upper}), present))\n    __seatKeys{upper}(back, keys)\n",
+        "\nfn __seatFamily{upper}(run: __Run, keys: List<{key}>) -> __Run\n    ? \"The '{0}' family at the turn boundary: instances whose key has left the list are dropped, retired keys that have left it may come back later, and every listed key that is neither seated nor retired is seated, in list order. The retired keys are listed first, so the retired Map is handed on at the last use of the run.\"\n{seat}    present = __keySet{upper}(keys, {{}})\n    kept = __dropLeft{upper}(run, Map.keys(run.seated{upper}), present)\n    retiredKeys = Map.keys(kept.retired{upper})\n    back = __Run.update(kept, retired{upper} = __unretire{upper}(kept.retired{upper}, retiredKeys, present))\n    __seatKeys{upper}(back, keys)\n",
         protocol.fn_name
     ));
     out.push_str(&format!(
@@ -957,7 +957,7 @@ fn write_serve(proc: &Proc<'_>, answers: &[Answer], performs: &ProcessEffects) -
         let mut pattern = binders.clone();
         pattern.push("state".to_string());
         out.push_str(&format!(
-            "        {}.{}({}) -> match __take{}(run)\n            (__rest, __held) -> match __held\n                Option.Some(__taken) -> __serve{upper}{}(__rest, id, seq{key_arg}, state, {}.{op}({}))\n                Option.None -> __rest\n",
+            "        {}.{}({}) -> match __take{}(run)\n            (__held, __rest) -> match __held\n                Option.Some(__taken) -> __serve{upper}{}(__rest, id, seq{key_arg}, state, {}.{op}({}))\n                Option.None -> __rest\n",
             protocol.request,
             kind.name,
             pattern.join(", "),
