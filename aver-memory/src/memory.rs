@@ -371,13 +371,25 @@ impl<T: ArenaTypes> Arena<T> {
             ArenaEntry::String(s) => ArenaEntry::String(s),
             ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
             ArenaEntry::Fn(f) => ArenaEntry::Fn(f),
-            ArenaEntry::Boxed(inner) => ArenaEntry::Boxed(rewrite(self, inner)),
+            ArenaEntry::Boxed {
+                value,
+                holder_count,
+            } => ArenaEntry::Boxed {
+                value: rewrite(self, value),
+                holder_count,
+            },
             ArenaEntry::List(list) => ArenaEntry::List(self.rewrite_list_with(list, rewrite)),
-            ArenaEntry::Tuple(mut items) => {
+            ArenaEntry::Tuple {
+                mut items,
+                holder_count,
+            } => {
                 for value in &mut items {
                     *value = rewrite(self, *value);
                 }
-                ArenaEntry::Tuple(items)
+                ArenaEntry::Tuple {
+                    items,
+                    holder_count,
+                }
             }
             ArenaEntry::Vector {
                 mut items,
@@ -2281,7 +2293,7 @@ impl<T: ArenaTypes> Arena<T> {
             } => {
                 return entry;
             }
-            ArenaEntry::Vector { items, .. } | ArenaEntry::Tuple(items)
+            ArenaEntry::Vector { items, .. } | ArenaEntry::Tuple { items, .. }
                 if !items.is_empty()
                     && !items
                         .iter()

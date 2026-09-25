@@ -179,8 +179,10 @@ pub struct VectorSlot {
 pub fn entry_holds_slot<T: ArenaTypes>(entry: &ArenaEntry<T>, index: u32) -> bool {
     let holds = |value: &NanValue| value.heap_index() == Some(index);
     match entry {
-        ArenaEntry::Boxed(value) => holds(value),
-        ArenaEntry::Tuple(items) | ArenaEntry::Vector { items, .. } => items.iter().any(holds),
+        ArenaEntry::Boxed { value, .. } => holds(value),
+        ArenaEntry::Tuple { items, .. } | ArenaEntry::Vector { items, .. } => {
+            items.iter().any(holds)
+        }
         ArenaEntry::Record { fields, .. } | ArenaEntry::Variant { fields, .. } => {
             fields.iter().any(holds)
         }
@@ -1088,6 +1090,29 @@ impl NanValue {
         self.is_nan_boxed() && self.tag() == TAG_TUPLE
     }
 
+    /// An `Option.Some`, `Result.Ok` or `Result.Err` whose value lives in an
+    /// arena box rather than inline in the wrapper.
+    #[inline]
+    pub fn is_boxed_wrapper(self) -> bool {
+        self.is_nan_boxed()
+            && matches!(self.tag(), TAG_SOME | TAG_OK | TAG_ERR)
+            && self.payload() & ARENA_REF_BIT != 0
+    }
+
+    /// Whether this value is an arena entry that counts its off-stack holders:
+    /// a heap map, a heap vector, a record, a tuple, or a boxed wrapper. These
+    /// are the entries the runtime may empty in place once nothing else holds
+    /// them, so every entry, root and table that stores one has to register
+    /// itself as a holder.
+    #[inline]
+    pub fn counts_holders(self) -> bool {
+        self.is_heap_map()
+            || (self.is_vector() && !self.is_empty_vector_immediate())
+            || self.is_record()
+            || self.is_tuple()
+            || self.is_boxed_wrapper()
+    }
+
     #[inline]
     pub fn is_builtin(self) -> bool {
         self.is_nan_boxed() && self.tag() == TAG_SYMBOL && self.symbol_kind() == SYMBOL_BUILTIN
@@ -1525,9 +1550,11 @@ pub struct Arena<T: ArenaTypes> {
     /// job: no vector entry means no value here can carry a vector's index,
     /// so the per-push marking pass has nothing to find.
     holds_any_vector: bool,
-    /// Whether this arena has ever stored a record. Records can be consumed by
-    /// the VM's last-use field projection, so an aggregate that stores one has
-    /// to register itself as an off-stack holder just like it does for maps and
+    /// Whether this arena has ever stored a record, a tuple or a boxed
+    /// wrapper. Records can be consumed by the VM's last-use field projection,
+    /// and tuples and boxes give up what they hold when they are destructured
+    /// with nothing else holding them, so an aggregate that stores one has to
+    /// register itself as an off-stack holder just like it does for maps and
     /// vectors.
     holds_any_record: bool,
     /// Which out-of-region slots the descent above has already rewritten, one
@@ -1577,7 +1604,13 @@ pub enum ArenaEntry<T: ArenaTypes> {
     BigInt(Box<num_bigint::BigInt>),
     String(Rc<str>),
     List(ArenaList),
-    Tuple(Vec<NanValue>),
+    Tuple {
+        items: Vec<NanValue>,
+        /// Registered off-stack holders of this tuple. A tuple destructured
+        /// where nothing else holds it gives its items up; see
+        /// [`Arena::release_tuple_items`].
+        holder_count: u32,
+    },
     /// A map, plus the same claim [`ListBody::all_immediate`] makes about a
     /// list body: `all_immediate` is `true` only when every key and every value
     /// in `map` is [`NanValue::is_immediate`], which makes relocating the table
@@ -1716,7 +1749,15 @@ pub enum ArenaEntry<T: ArenaTypes> {
         name: Rc<str>,
         members: Vec<(Rc<str>, NanValue)>,
     },
-    Boxed(NanValue),
+    /// The value inside an `Option.Some`, `Result.Ok` or `Result.Err` that
+    /// is not stored inline in the wrapper itself.
+    Boxed {
+        value: NanValue,
+        /// Registered off-stack holders of this box. A box unwrapped where
+        /// nothing else holds it gives its value up; see
+        /// [`Arena::take_boxed_value`].
+        holder_count: u32,
+    },
 }
 
 /// A borrowed view of an arena-stored integer, discriminating the
@@ -1767,8 +1808,7 @@ impl ListBody {
         let mut holds_takeable = false;
         for value in &items {
             all_immediate &= value.is_immediate();
-            holds_takeable |=
-                (value.is_map() || value.is_vector() || value.is_record()) && !value.is_immediate();
+            holds_takeable |= value.counts_holders();
         }
         Self {
             items,
