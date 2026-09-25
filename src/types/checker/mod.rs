@@ -136,6 +136,20 @@ fn build_symbols_for_items(items: &[TopLevel], base_dir: Option<&str>) -> Symbol
     SymbolTable::build(items, &dep_modules)
 }
 
+/// The symbol table a check of `items` resolves against: the module and the
+/// dependencies it loads, from `loaded` when the caller has them, else from
+/// `base_dir`. Checks that lower the module the way it compiles read it.
+pub(crate) fn program_symbols(
+    items: &[TopLevel],
+    loaded: Option<&[crate::source::LoadedModule]>,
+    base_dir: Option<&str>,
+) -> SymbolTable {
+    match loaded {
+        Some(loaded) => build_symbols_with_loaded(items, loaded),
+        None => build_symbols_for_items(items, base_dir),
+    }
+}
+
 /// Pre-loaded variant of [`build_symbols_for_items`] for the
 /// `WithLoaded` typecheck driver (playground virtual FS).
 fn build_symbols_with_loaded(

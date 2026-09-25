@@ -517,6 +517,45 @@ fn a_record_gives_up_its_fields_at_its_last_use() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// An update of `setting.window` inside the update of `setting` that replaces
+/// it moves what it keeps: the Map moves into `Map.set` and the rest of the
+/// window into the new `Window`, so no insert copies the Map. With the old
+/// window read after the update, both are cloned instead.
+#[test]
+fn a_nested_update_moves_the_rest_of_the_inner_record() {
+    let name = "rust_nested_update_moves";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["3000"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for expected in [
+            "Setting { window: Window { created: setting.window.created.insert_owned(left.clone(), left.clone()), ..setting.window }, height: setting.height.add(",
+            "Window { created: setting.window.created.clone().insert_owned(left.clone(), left.clone()), ..setting.window.clone() }, &setting.window, left)",
+        ] {
+            if !entry.contains(expected) {
+                return Err(format!(
+                    "{name}: missing `{expected}` in the generated entry module:\n{entry}"
+                ));
+            }
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// Runs one backend against a loopback peer, on a port nobody else holds.
 fn with_peer(run: impl FnOnce(&str) -> Result<String, String>) -> Result<String, String> {
     let port = free_port();
