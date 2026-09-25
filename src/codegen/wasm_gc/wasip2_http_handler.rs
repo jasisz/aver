@@ -99,6 +99,10 @@ pub(super) struct ServerHandlerIndices {
     pub headers_values_array_type_idx: u32,
     pub headers_hashes_array_type_idx: u32,
     pub headers_map_type_idx: u32,
+    /// The map's `$diff` struct: a fresh map carries a null one.
+    pub headers_map_diff_type_idx: u32,
+    /// The map's `reroot` helper, called before its buckets are read.
+    pub headers_map_reroot_fn: u32,
     /// `List<String>` cons-cell type idx — head = String ref, tail
     /// = list ref.
     pub list_string_type_idx: u32,
@@ -699,6 +703,9 @@ pub(super) fn emit_aver_http_handle(
     f.instruction(&Instruction::ArrayNewDefault(values_arr_idx));
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(hashes_arr_idx));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(
+        indices.headers_map_diff_type_idx,
+    )));
     f.instruction(&Instruction::StructNew(map_idx));
     f.instruction(&Instruction::LocalSet(l_req_headers_map));
 
@@ -1167,6 +1174,12 @@ pub(super) fn emit_aver_http_handle(
     }
 
     // Walk response headers map → fields.append.
+    super::maps::emit_reroot_local(
+        &mut f,
+        map_idx,
+        indices.headers_map_reroot_fn,
+        l_resp_headers_map,
+    );
     f.instruction(&Instruction::LocalGet(l_resp_headers_map));
     f.instruction(&Instruction::StructGet {
         struct_type_index: map_idx,

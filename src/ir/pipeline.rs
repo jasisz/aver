@@ -1081,30 +1081,48 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
                 ..phase_one
             },
         }
-    } else if crate::ir::nested_patterns::has_nested_patterns(items) {
-        // Checked as written first, so exhaustiveness, redundancy, type
-        // and shadowing errors name the patterns the user wrote; then the
-        // nested patterns are compiled to flat matches and the lowered
-        // program is checked again, which stamps the nodes the
-        // compilation made.
-        let phase_one = typecheck_gate(items, mode, &items[..user_program_len]);
-        if !phase_one.errors.is_empty() {
-            phase_one
-        } else {
-            let errors = crate::ir::nested_patterns::lower_nested_patterns(
-                items,
-                &phase_one.pattern_ctor_families,
-            );
+    } else if crate::ir::nested_patterns::has_nested_patterns(items)
+        || (!marked.is_empty() && crate::yield_lowering::calls_wait_poll(items))
+    {
+        // A module with no process of its own. Checked as written first, so
+        // exhaustiveness, redundancy, type and shadowing errors name the
+        // patterns the user wrote. Its nested patterns are then compiled to
+        // flat matches and the lowered module is checked again, which stamps
+        // the nodes the compilation made. Last, in a module of a program that
+        // answers a capability of its own, its waits keyed by another type
+        // than `Int` are carried through an `Int`-keyed one, the same way the
+        // entry's are, so they can meet the generated loop's wait in one
+        // program. The keys are read off the lowered module as the last check
+        // stamped it, and what the carrying wrote is checked once more.
+        let carries = !marked.is_empty() && crate::yield_lowering::calls_wait_poll(items);
+        let mut tc = typecheck_gate(items, mode, &items[..user_program_len]);
+        if tc.errors.is_empty() && crate::ir::nested_patterns::has_nested_patterns(items) {
+            let errors =
+                crate::ir::nested_patterns::lower_nested_patterns(items, &tc.pattern_ctor_families);
             fire(PipelineStage::PatternLower, items);
-            if errors.is_empty() {
+            tc = if errors.is_empty() {
                 typecheck(items, mode)
             } else {
-                TypeCheckResult {
-                    errors,
-                    ..phase_one
+                TypeCheckResult { errors, ..tc }
+            };
+        }
+        if tc.errors.is_empty() && carries {
+            let stamped = items.clone();
+            match crate::yield_lowering::carry_waits(items, &stamped, &tc.type_spellings) {
+                Ok(Some(source)) => {
+                    if std::env::var_os("AVER_YIELD_DUMP").is_some() {
+                        eprintln!("{source}");
+                    }
+                    if run_tco {
+                        tco(items);
+                    }
+                    tc = typecheck(items, mode);
                 }
+                Ok(None) => {}
+                Err(errors) => tc = TypeCheckResult { errors, ..tc },
             }
         }
+        tc
     } else {
         typecheck_gate(items, mode, &items[..user_program_len])
     };

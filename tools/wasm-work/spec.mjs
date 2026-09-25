@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createWorkHost } from "./host.mjs";
 
-const [parallelFile, guideFile, recordFile, unitFile, unitResultFile, socketOnlyFile] = process.argv.slice(2);
+const [parallelFile, guideFile, recordFile, unitFile, unitResultFile, socketOnlyFile, runFailFile] = process.argv.slice(2);
 const host = await createWorkHost(await WebAssembly.compile(await readFile(parallelFile)), { maxJobs: 2 });
 try {
     const { exports: e } = host.instance, c = host.codec;
@@ -55,6 +55,19 @@ const lines = [];
 const guide = await createWorkHost(await WebAssembly.compile(await readFile(guideFile)), { maxJobs: 2, onPrint: line => lines.push(line) });
 assert.deepEqual(await guide.runCoordinator(), { ok: null });
 assert.deepEqual(lines, ["scored 60"]);
+
+// A turn that calls Run.fail ends the run, and the coordinator answers the
+// first reason the turn gave. The module keeps the reason; this host only
+// hands the loop's reading of it through.
+{
+    const printed = [];
+    const failing = await createWorkHost(await WebAssembly.compile(await readFile(runFailFile)), { maxJobs: 1, onPrint: line => printed.push(line) });
+    try {
+        assert.deepEqual(await failing.runCoordinator(), { err: "first gave up in turn 3" });
+        assert.deepEqual(printed.at(-1), "second saw tick 6 in turn 3");
+    } finally { await failing.close(); }
+    console.log("Run.fail coordinator passed");
+}
 
 // Both sides reconstruct their own records; no GC object can be cloned into
 // another instance. Also exercise the zero-argument Unit factory convention.

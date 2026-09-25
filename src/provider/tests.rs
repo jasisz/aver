@@ -969,7 +969,7 @@ fn target_manifest_is_total_and_standard_capabilities_have_explicit_rows() {
     .into_iter()
     .collect();
     let manifest = CapabilityTargetManifest::build(&registry, &required).expect("manifest");
-    assert_eq!(manifest.rows().len(), 48);
+    assert_eq!(manifest.rows().len(), 52);
     for (capability, operations, required_operation, native, wasm_gc, wasip2, fingerprint) in [
         (
             "Disk",
@@ -1132,8 +1132,8 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
         let expected_capabilities = match target {
             CapabilityTarget::Wasip2 => {
                 vec![
-                    "Args", "Console", "Disk", "Env", "Http", "Random", "Tcp", "Time", "Wait",
-                    "Work",
+                    "Args", "Console", "Disk", "Env", "Http", "Random", "Run", "Tcp", "Time",
+                    "Wait", "Work",
                 ]
             }
             // Every target answers the job handle and the one wait of a turn
@@ -1141,13 +1141,13 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
             // the Rust backend, inline at `begin` on the two wasm targets.
             CapabilityTarget::Vm | CapabilityTarget::Rust => {
                 vec![
-                    "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
+                    "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Run", "Tcp",
                     "Terminal", "Time", "Wait", "Work",
                 ]
             }
             CapabilityTarget::WasmGc => {
                 vec![
-                    "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Tcp",
+                    "Args", "Console", "Disk", "Env", "Http", "Process", "Random", "Run", "Tcp",
                     "Terminal", "Time", "Wait", "Work",
                 ]
             }
@@ -1168,6 +1168,7 @@ fn shipped_provenance_projects_only_provided_manifest_rows() {
                 "Http" => aver_rt::provider::STANDARD_HTTP_FINGERPRINT,
                 "Process" => aver_rt::provider::STANDARD_PROCESS_FINGERPRINT,
                 "Random" => aver_rt::provider::STANDARD_RANDOM_FINGERPRINT,
+                "Run" => aver_rt::provider::STANDARD_RUN_FINGERPRINT,
                 "Tcp" => aver_rt::provider::STANDARD_TCP_FINGERPRINT,
                 "Terminal" => aver_rt::provider::STANDARD_TERMINAL_FINGERPRINT,
                 "Time" => aver_rt::provider::STANDARD_TIME_FINGERPRINT,

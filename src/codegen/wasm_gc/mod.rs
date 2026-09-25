@@ -72,6 +72,7 @@ mod maps;
 mod module;
 mod optimize;
 mod packed_sequences;
+mod run_fail;
 #[cfg(test)]
 mod tests;
 mod types;

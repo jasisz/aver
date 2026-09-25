@@ -23,10 +23,11 @@ pub(crate) enum StandardCapabilityBinding {
     Time,
     Wait,
     Work,
+    Run,
 }
 
 impl StandardCapabilityBinding {
-    pub(crate) const ALL: [Self; 12] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::Args,
         Self::Console,
         Self::Disk,
@@ -39,6 +40,7 @@ impl StandardCapabilityBinding {
         Self::Time,
         Self::Wait,
         Self::Work,
+        Self::Run,
     ];
 
     pub(crate) const fn module(self) -> &'static str {
@@ -55,6 +57,7 @@ impl StandardCapabilityBinding {
             Self::Time => "Time",
             Self::Wait => "Wait",
             Self::Work => "Work",
+            Self::Run => "Run",
         }
     }
 
@@ -72,6 +75,7 @@ impl StandardCapabilityBinding {
             Self::Time => Arc::new(aver_rt::provider::StandardTimeProvider),
             Self::Wait => Arc::new(aver_rt::provider::StandardWaitProvider),
             Self::Work => Arc::new(aver_rt::provider::StandardWorkProvider),
+            Self::Run => Arc::new(aver_rt::provider::StandardRunProvider::default()),
         }
     }
 
@@ -89,6 +93,7 @@ impl StandardCapabilityBinding {
             Self::Time => "aver_rt::provider::StandardTimeProvider",
             Self::Wait => "aver_rt::provider::StandardWaitProvider",
             Self::Work => "aver_rt::provider::StandardWorkProvider",
+            Self::Run => "aver_rt::provider::StandardRunProvider::default()",
         }
     }
 
@@ -106,6 +111,7 @@ impl StandardCapabilityBinding {
             Self::Time => aver_rt::provider::STANDARD_TIME_FINGERPRINT,
             Self::Wait => aver_rt::provider::STANDARD_WAIT_FINGERPRINT,
             Self::Work => aver_rt::provider::STANDARD_WORK_FINGERPRINT,
+            Self::Run => aver_rt::provider::STANDARD_RUN_FINGERPRINT,
         }
     }
 
@@ -186,6 +192,14 @@ impl StandardCapabilityBinding {
             (Self::Wait, CapabilityTarget::Wasip2) => Some("aver.standard.Wait/wasip2-wasi"),
             (Self::Work, CapabilityTarget::WasmGc) => Some("aver.standard.Work/wasm-gc-imports"),
             (Self::Work, CapabilityTarget::Wasip2) => Some("aver.standard.Work/wasip2-inline"),
+            (Self::Run, CapabilityTarget::Vm | CapabilityTarget::Rust) => {
+                Some(aver_rt::provider::STANDARD_RUN_NATIVE_IDENTITY)
+            }
+            // The reason a run failed is the module's own state on both wasm
+            // targets: a global the module writes and reads back. The wasm-gc
+            // imports beside it are what the recorder sees, as with a cancel.
+            (Self::Run, CapabilityTarget::WasmGc) => Some("aver.standard.Run/wasm-gc-imports"),
+            (Self::Run, CapabilityTarget::Wasip2) => Some("aver.standard.Run/wasip2-inline"),
         }
     }
 

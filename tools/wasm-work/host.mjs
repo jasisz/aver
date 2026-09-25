@@ -100,6 +100,10 @@ export async function createWorkHost(module, options = {}) {
         console_print: value => (options.onPrint ?? console.log)(codec.stringOut(value)),
         time_unix_ms: () => BigInt(Date.now()),
         process_stop_requested: () => stopping ? 1 : 0,
+        // The module keeps the reason a run failed itself; these two only
+        // let a recording host see Run.fail and the loop's reading of it.
+        run_fail: () => {},
+        run_failure: reason => reason,
     })) if (!options.imports?.aver?.[name]) aver[name] = value;
     imports["aver:work/v1"] = {
         submit(kind, task) {

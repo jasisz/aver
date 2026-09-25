@@ -16,18 +16,25 @@
 //!   mut (ref null $keys_array)   keys;
 //!   mut (ref null $values_array) values;
 //!   mut (ref null $hashes_array) hashes;
+//!   mut (ref null $diff_KV)      diff;
 //! }
 //! ```
+//!
+//! `set` and `remove` write into the arrays in place and return a new
+//! struct over them; the map they were given stays a valid value through
+//! the `diff` the write leaves on it. Several versions of one map share
+//! its arrays, and a helper makes the version it was handed current
+//! (`reroot`) before it reads them. See `maps/versions.rs`.
 //!
 //! Empty slot marker = `keys[i] == null` (only valid for `K` that
 //! cannot legitimately be null, which Aver guarantees for ref types
 //! since the type system rejects null at the source level).
 //!
-//! The table grows. Both insert helpers check, before they probe,
-//! whether the entry they are about to add would push occupancy past
+//! The table grows. The insert helper checks, before it probes,
+//! whether the entry it is about to add would push occupancy past
 //! three quarters of capacity (see [`LOAD_SHIFT`]); when it would,
-//! they allocate keys/values/hashes arrays at twice the capacity, rehash every
-//! live entry into the wider mask using its cached hash, and probe there
+//! it allocates keys/values/hashes arrays at twice the capacity, rehashes every
+//! live entry into the wider mask using its cached hash, and probes there
 //! instead. `Map.set`
 //! is therefore total up to memory exhaustion, the same promise the
 //! VM and the Rust backend make. Capacity is per-map state in the
@@ -37,7 +44,7 @@
 //! What the growth buys is an invariant: **a map never fills**. After
 //! any insert, occupancy is at most three quarters of capacity, so
 //! some slot is always free and every probe loop terminates on it.
-//! The two insert helpers still carry their wrap guard,
+//! The insert helper still carries its wrap guard,
 //! and it is now a backstop rather than a limit — reaching it means
 //! the growth above it did not happen, which is a compiler bug, and
 //! trapping is how that bug surfaces instead of hanging. The rehash
@@ -69,6 +76,10 @@ use super::types::{MapSlots, TypeRegistry};
 use super::wat_helper;
 
 mod order;
+mod versions;
+
+use versions::{VersionedWrite, emit_versioned_write};
+pub(super) use versions::{emit_no_diff, emit_reroot_local};
 
 /// Initial bucket count — power of two so masking with `cap-1`
 /// instead of `i32.rem_u` works, and every doubling keeps it one.
@@ -78,9 +89,7 @@ mod order;
 /// fresh header map per `Http.get` call and per inbound request.
 /// Sixteen buckets cost two 16-element arrays; the old fixed 16384
 /// cost two 16384-element ones, roughly 128 KB of zeroes per empty
-/// map. It also bounds the clone-on-write `set`, which copies `cap`
-/// slots on every call — a three-key map used to pay 16384 element
-/// copies per insert. Doubling makes the total cost of reaching `n`
+/// map. Doubling makes the total cost of reaching `n`
 /// entries linear in `n`, so starting small costs a few extra
 /// rehashes early and nothing after that.
 ///
@@ -124,15 +133,15 @@ pub(super) struct KeyHelpers {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct MapKVHelpers {
     pub(super) empty: u32,
-    /// Clone-on-write `set` — allocates fresh keys/values/hashes arrays,
-    /// `array.copy`s them, mutates the copies. Used when `ir::alias`
-    /// flags the call site's map slot as alias-prone.
+    /// `set(m, k, v) -> m'`. Writes the bucket in place and returns a new
+    /// version over the same arrays; `m` stays valid through the diff the
+    /// write leaves on it (see `maps/versions.rs`). A grow writes into new
+    /// arrays instead and leaves `m` untouched.
     pub(super) set: u32,
-    /// In-place `set` — probes the source map's keys/values/hashes arrays
-    /// directly, `array.set`s into them, returns a struct.new wrapping
-    /// the same arrays with the updated size. Sound only when the IR
-    /// alias pass + last-use proves the map slot is uniquely owned.
-    pub(super) set_in_place: u32,
+    /// `reroot(m) -> m`. Makes `m` the version that owns its arrays'
+    /// contents. Every helper that reads a map's arrays calls it first, and
+    /// so must any code outside this module that reads them.
+    pub(super) reroot: u32,
     pub(super) get: u32,
     pub(super) len: u32,
     /// `get_or_default(m, k, default) -> V`. Fused shape that backs
@@ -157,12 +166,11 @@ pub(super) struct MapKVHelpers {
     pub(super) keys: u32,
     /// `values(m) -> List<V>` in the same key-derived order as `keys`.
     pub(super) values: u32,
-    /// `remove(m, k) -> m`. Linear-probe locate of `k`, then a
+    /// `remove(m, k) -> m'`. Linear-probe locate of `k`, then a
     /// backwards-shift scan over the rest of the probe run so every
     /// entry that probed past the emptied slot is still found by a
-    /// later `get` — see `emit_map_remove`. Mutates `m` in place
-    /// and returns the same handle (Aver semantics: same shape as
-    /// `set`, the returned ref is structurally equal).
+    /// later `get` — see `emit_map_remove`. Each bucket it writes is a
+    /// versioned write, so `m` keeps its entries, as it does for `set`.
     pub(super) remove: u32,
     /// `entries(m) -> List<Tuple<K, V>>` in canonical key order.
     pub(super) entries: u32,
@@ -206,12 +214,8 @@ pub(super) struct MapHelperRegistry {
 #[derive(Debug, Clone, Copy)]
 struct MapKVTypeIdx {
     empty: u32,
-    /// Same wasm-fn type as `set_in_place` — `(map, k, v) -> map`.
-    /// Two distinct type entries because the fn-type table is
-    /// indexed by type-idx, not shape, and `assign_slots` writes
-    /// each helper to its own slot.
     set: u32,
-    set_in_place: u32,
+    reroot: u32,
     get: u32,
     len: u32,
     get_or_default: u32,
@@ -537,7 +541,7 @@ impl MapHelperRegistry {
             *next_type_idx += 1;
             let set_type_idx = *next_type_idx;
             *next_type_idx += 1;
-            let set_in_place_type_idx = *next_type_idx;
+            let reroot_type_idx = *next_type_idx;
             *next_type_idx += 1;
             let get_type_idx = *next_type_idx;
             *next_type_idx += 1;
@@ -569,7 +573,7 @@ impl MapHelperRegistry {
             *next_wasm_fn_idx += 1;
             let set_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
-            let set_in_place_fn = *next_wasm_fn_idx;
+            let reroot_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let get_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
@@ -632,7 +636,7 @@ impl MapHelperRegistry {
                 MapKVHelpers {
                     empty: empty_fn,
                     set: set_fn,
-                    set_in_place: set_in_place_fn,
+                    reroot: reroot_fn,
                     get: get_fn,
                     len: len_fn,
                     get_or_default: god_fn,
@@ -653,7 +657,7 @@ impl MapHelperRegistry {
                 MapKVTypeIdx {
                     empty: empty_type_idx,
                     set: set_type_idx,
-                    set_in_place: set_in_place_type_idx,
+                    reroot: reroot_type_idx,
                     get: get_type_idx,
                     len: len_type_idx,
                     get_or_default: god_type_idx,
@@ -682,9 +686,9 @@ impl MapHelperRegistry {
         self.kv.get(canonical).copied()
     }
 
-    /// `(wasm fn idx, name)` for the two insert helpers of every
-    /// registered `Map<K, V>`, ascending by index — the shape the
-    /// `name` section's function subsection wants.
+    /// `(wasm fn idx, name)` for the insert helper of every registered
+    /// `Map<K, V>`, ascending by index — the shape the `name` section's
+    /// function subsection wants.
     ///
     /// These are the only helpers that can trap, and they can only do
     /// it on a broken invariant: the table grows before it fills, so a
@@ -693,7 +697,7 @@ impl MapHelperRegistry {
     /// which map's insert stopped and that a stop there is a bug, and
     /// the engine's backtrace reads it back.
     pub(super) fn capacity_helper_names(&self) -> Vec<(u32, String)> {
-        let mut named = Vec::with_capacity(self.kv_order.len() * 2);
+        let mut named = Vec::with_capacity(self.kv_order.len());
         for canonical in &self.kv_order {
             let Some(h) = self.kv.get(canonical) else {
                 continue;
@@ -701,12 +705,6 @@ impl MapHelperRegistry {
             named.push((
                 h.set,
                 format!("{CAPACITY_HELPER_NAME_PREFIX}{canonical} (table grows; a stop here is a resize bug)"),
-            ));
-            named.push((
-                h.set_in_place,
-                format!(
-                    "{CAPACITY_HELPER_NAME_PREFIX}{canonical} in place (table grows; a stop here is a resize bug)"
-                ),
             ));
         }
         named.sort_by_key(|(idx, _)| *idx);
@@ -777,10 +775,10 @@ impl MapHelperRegistry {
 
             // empty : () -> Map
             types.ty().function([], [map_ref]);
-            // set : (Map, K, V) -> Map (clone-on-write)
+            // set : (Map, K, V) -> Map
             types.ty().function([map_ref, k_val, v_val], [map_ref]);
-            // set_in_place : (Map, K, V) -> Map (alias-free fast path)
-            types.ty().function([map_ref, k_val, v_val], [map_ref]);
+            // reroot : (Map) -> Map
+            types.ty().function([map_ref], [map_ref]);
             // get : (Map, K) -> Option<V>
             types.ty().function([map_ref, k_val], [opt_ref]);
             // len : (Map) -> i64
@@ -874,7 +872,7 @@ impl MapHelperRegistry {
             let t = self.kv_type_indices[canonical];
             funcs.function(t.empty);
             funcs.function(t.set);
-            funcs.function(t.set_in_place);
+            funcs.function(t.reroot);
             funcs.function(t.get);
             funcs.function(t.len);
             funcs.function(t.get_or_default);
@@ -977,28 +975,47 @@ impl MapHelperRegistry {
                 ))
             })?;
             let helpers = self.kv[canonical];
+            let reroot = helpers.reroot;
             codes.function(&emit_map_empty(canonical, registry)?);
-            codes.function(&emit_map_set(canonical, registry, key_h)?);
-            codes.function(&emit_map_set_in_place(canonical, registry, key_h)?);
-            codes.function(&emit_map_get(canonical, registry, key_h)?);
+            codes.function(&emit_map_set(canonical, registry, key_h, reroot)?);
+            codes.function(&versions::emit_map_reroot(
+                canonical,
+                registry,
+                slots_for(canonical, registry)?,
+            )?);
+            codes.function(&emit_map_get(canonical, registry, key_h, reroot)?);
             codes.function(&emit_map_len(canonical, registry)?);
-            codes.function(&emit_map_get_or_default(canonical, registry, key_h)?);
-            codes.function(&emit_map_get_pair(canonical, registry, key_h)?);
+            codes.function(&emit_map_get_or_default(
+                canonical, registry, key_h, reroot,
+            )?);
+            codes.function(&emit_map_get_pair(canonical, registry, key_h, reroot)?);
             codes.function(&emit_map_order_sift(canonical, registry, cmp_fn)?);
             codes.function(&emit_map_order_slots(
                 canonical,
                 registry,
                 helpers.order_sift,
+                reroot,
             )?);
-            codes.function(&emit_map_keys(canonical, registry, helpers.order_slots)?);
-            codes.function(&emit_map_values(canonical, registry, helpers.order_slots)?);
-            codes.function(&emit_map_remove(canonical, registry, key_h)?);
-            codes.function(&emit_map_entries(canonical, registry, helpers.order_slots)?);
-            codes.function(&emit_map_from_list(
+            codes.function(&emit_map_keys(
                 canonical,
                 registry,
-                helpers.set_in_place,
+                helpers.order_slots,
+                reroot,
             )?);
+            codes.function(&emit_map_values(
+                canonical,
+                registry,
+                helpers.order_slots,
+                reroot,
+            )?);
+            codes.function(&emit_map_remove(canonical, registry, key_h, reroot)?);
+            codes.function(&emit_map_entries(
+                canonical,
+                registry,
+                helpers.order_slots,
+                reroot,
+            )?);
+            codes.function(&emit_map_from_list(canonical, registry, helpers.set)?);
             // Structural eq + commutative hash for `Map<K, V>`. V's
             // hash + eq fn idxs come from `all_key_helpers` (same
             // table that drives K dispatch — V is just another
@@ -1011,8 +1028,11 @@ impl MapHelperRegistry {
                 key_h,
                 v_helpers,
                 helpers.get,
+                reroot,
             )?);
-            codes.function(&emit_map_hash(canonical, registry, key_h, v_helpers)?);
+            codes.function(&emit_map_hash(
+                canonical, registry, key_h, v_helpers, reroot,
+            )?);
         }
         Ok(())
     }
@@ -1499,65 +1519,27 @@ fn emit_map_empty(canonical: &str, registry: &TypeRegistry) -> Result<Function, 
     f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
+    emit_no_diff(&mut f, slots);
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::End);
     Ok(f)
 }
 
-/// Where an insert helper's probe writes: into a private copy of the
-/// map's arrays, or into the map's own.
-#[derive(Debug, Clone, Copy)]
-enum TableSource {
-    /// Clone-on-write. The helper allocates fresh keys/values/hashes arrays,
-    /// copies the map's contents in, and probes the copies, so nobody
-    /// holding an alias of the input map ever observes it mutated.
-    /// Without this, `Vector.new(n, m)` produced N aliases of `m` and a
-    /// `Map.set(row, …)` on a row fetched via `Vector.get(outer, i)`
-    /// silently rewrote every alias of that map.
-    Clone,
-    /// In place. `ir::alias` plus last-use proved the caller's map slot
-    /// is uniquely owned, so the helper probes the map's own arrays and
-    /// writes into them — three `array.new_default` and three `array.copy`
-    /// per call saved.
-    Owned,
-}
-
-/// `set(map, k, v) -> map`. Linear-probing open-addressing insert over
-/// a clone of the map's arrays. Returns a fresh map struct wrapping
-/// them; the input map is never observed mutated.
+/// `set(map, k, v) -> map'`. Linear-probing open-addressing insert.
+///
+/// Settles which arrays to probe (growing first if this entry would
+/// overfill the table), then linear-probes from the key's home bucket —
+/// an empty slot inserts, a matching key updates. Into the map's own
+/// arrays the write is a versioned one (`maps/versions.rs`): the bucket's
+/// old contents go on `map`'s diff and the result is a new version over the
+/// same arrays, so `map` is unchanged as a value and nothing is copied. A
+/// grow has already moved every entry into new arrays, which only the
+/// result sees, so it writes into them directly.
 fn emit_map_set(
     canonical: &str,
     registry: &TypeRegistry,
     keyh: KeyHelpers,
-) -> Result<Function, WasmGcError> {
-    emit_map_insert(canonical, registry, keyh, TableSource::Clone)
-}
-
-/// `set_in_place(map, k, v) -> map`. Same insert as [`emit_map_set`]
-/// without the entry-time copy of `keys` / `values` / `hashes` — the caller has
-/// proven the map's arrays are uniquely owned. The returned struct
-/// still re-wraps the arrays with the updated size; callers expect a
-/// fresh map handle either way, which is also what lets a grow swap
-/// the arrays out from under the old one.
-fn emit_map_set_in_place(
-    canonical: &str,
-    registry: &TypeRegistry,
-    keyh: KeyHelpers,
-) -> Result<Function, WasmGcError> {
-    emit_map_insert(canonical, registry, keyh, TableSource::Owned)
-}
-
-/// The body both insert helpers share: settle which arrays to probe
-/// (growing first if this entry would overfill the table), then
-/// linear-probe from the key's home bucket — empty slot inserts,
-/// matching key updates. The two differ only in [`TableSource`], which
-/// the prologue reads; every instruction after it is the same, so it
-/// is written once.
-fn emit_map_insert(
-    canonical: &str,
-    registry: &TypeRegistry,
-    keyh: KeyHelpers,
-    source: TableSource,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -1577,17 +1559,25 @@ fn emit_map_insert(
         nullable: true,
         heap_type: HeapType::Concrete(slots.hashes_array),
     });
-    // params: 0=map, 1=k, 2=v
+    let map_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.map),
+    });
+    let diff_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.diff),
+    });
+    // params: 0=map (then the new version, after a versioned write),
+    //         1=k, 2=v
     // locals: 3=cap, 4=mask, 5=idx, 6=keys, 7=values, 8=cur_key,
     //         9=home, 10=src_keys, 11=src_values, 12=i,
-    //         13=hashes, 14=src_hashes, 15=query_hash
+    //         13=hashes, 14=src_hashes, 15=query_hash, 16=diff, 17=next
     //
-    // 6/7 are the arrays the probe writes to — a clone, the map's own,
-    // or a wider set a grow just filled. 10/11 are the map's arrays as
-    // handed in, which the grow rehashes out of and the clone copies
-    // from. 13/14 are their parallel cached-hash arrays. 12 walks them;
-    // 15 carries a stored hash during growth, then the query hash.
-    // 5/8/9 are reused by both probe loops.
+    // 6/7/13 are the arrays the probe writes to — the map's own, or a
+    // wider set a grow just filled. 10/11/14 are the map's arrays as
+    // handed in, which the grow rehashes out of. 12 walks them; 15
+    // carries a stored hash during growth, then the query hash. 5/8/9 are
+    // reused by both probe loops.
     let mut f = Function::new([
         (1, ValType::I32),                            // 3: cap
         (1, ValType::I32),                            // 4: mask
@@ -1598,13 +1588,16 @@ fn emit_map_insert(
         (1, ValType::I32),                            // 9: home (probe start bucket)
         (1, keys_ref),                                // 10: src_keys (the map's own)
         (1, values_ref),                              // 11: src_values (the map's own)
-        (1, ValType::I32),                            // 12: i (rehash / copy cursor)
+        (1, ValType::I32),                            // 12: i (rehash cursor)
         (1, hashes_ref),                              // 13: hashes (probe target)
         (1, hashes_ref),                              // 14: src_hashes (the map's own)
         (1, ValType::I32),                            // 15: stored/query hash
+        (1, diff_ref),                                // 16: diff
+        (1, map_ref),                                 // 17: next version
     ]);
 
-    emit_insert_prologue(&mut f, slots, source);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
+    emit_insert_prologue(&mut f, slots);
 
     // query_hash = hash(k); idx = query_hash & mask; home = idx
     f.instruction(&Instruction::LocalGet(1));
@@ -1632,36 +1625,25 @@ fn emit_map_insert(
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::If(BlockType::Empty));
-    // keys[idx] = box(k)  (primitive K) or k (ref K)
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(1));
-    emit_box_key(&mut f, k_aver, registry);
-    f.instruction(&Instruction::ArraySet(slots.keys_array));
-    // values[idx] = v
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArraySet(slots.values_array));
-    // hashes[idx] = query_hash
-    f.instruction(&Instruction::LocalGet(13));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(15));
-    f.instruction(&Instruction::ArraySet(slots.hashes_array));
-    // return struct.new $map (map.size + 1, cap, keys, values, hashes)
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(13));
-    f.instruction(&Instruction::StructNew(slots.map));
-    f.instruction(&Instruction::Return);
+    let insert = |f: &mut Function| {
+        // keys[idx] = box(k)  (primitive K) or k (ref K)
+        f.instruction(&Instruction::LocalGet(6));
+        f.instruction(&Instruction::LocalGet(5));
+        f.instruction(&Instruction::LocalGet(1));
+        emit_box_key(f, k_aver, registry);
+        f.instruction(&Instruction::ArraySet(slots.keys_array));
+        // values[idx] = v
+        f.instruction(&Instruction::LocalGet(7));
+        f.instruction(&Instruction::LocalGet(5));
+        f.instruction(&Instruction::LocalGet(2));
+        f.instruction(&Instruction::ArraySet(slots.values_array));
+        // hashes[idx] = query_hash
+        f.instruction(&Instruction::LocalGet(13));
+        f.instruction(&Instruction::LocalGet(5));
+        f.instruction(&Instruction::LocalGet(15));
+        f.instruction(&Instruction::ArraySet(slots.hashes_array));
+    };
+    emit_insert_write(&mut f, slots, 1, insert);
     f.instruction(&Instruction::End);
 
     // else if cached_hash == query_hash && eq(unbox(cur_key), k): update
@@ -1678,22 +1660,13 @@ fn emit_map_insert(
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.eq));
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArraySet(slots.values_array));
-    // return struct.new $map (map.size, cap, keys, values, hashes)
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: slots.map,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(13));
-    f.instruction(&Instruction::StructNew(slots.map));
-    f.instruction(&Instruction::Return);
+    let update = |f: &mut Function| {
+        f.instruction(&Instruction::LocalGet(7));
+        f.instruction(&Instruction::LocalGet(5));
+        f.instruction(&Instruction::LocalGet(2));
+        f.instruction(&Instruction::ArraySet(slots.values_array));
+    };
+    emit_insert_write(&mut f, slots, 0, update);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
@@ -1713,15 +1686,81 @@ fn emit_map_insert(
     Ok(f)
 }
 
+/// Write bucket `idx` (local 5) of an insert with `write`, then return the
+/// map it makes, `size_delta` entries larger than `map`.
+///
+/// When the probe wrote into `map`'s own arrays (6 is 10), the write is a
+/// versioned one and the result is the new version. After a grow the
+/// arrays are new and only the result holds them, so it writes directly.
+fn emit_insert_write(
+    f: &mut Function,
+    slots: MapSlots,
+    size_delta: i32,
+    write: impl Fn(&mut Function),
+) {
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::RefEq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_versioned_write(
+        f,
+        slots,
+        &VersionedWrite {
+            version: 0,
+            diff: 16,
+            next: 17,
+            idx: 5,
+            cap: 3,
+            keys: 6,
+            values: 7,
+            hashes: 13,
+        },
+        &write,
+    );
+    if size_delta != 0 {
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: slots.map,
+            field_index: 0,
+        });
+        f.instruction(&Instruction::I32Const(size_delta));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::StructSet {
+            struct_type_index: slots.map,
+            field_index: 0,
+        });
+    }
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    write(f);
+    // return struct.new $map (map.size + delta, cap, keys, values, hashes)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    if size_delta != 0 {
+        f.instruction(&Instruction::I32Const(size_delta));
+        f.instruction(&Instruction::I32Add);
+    }
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(13));
+    emit_no_diff(f, slots);
+    f.instruction(&Instruction::StructNew(slots.map));
+    f.instruction(&Instruction::Return);
+}
+
 /// Settle `cap` (3), `mask` (4) and the arrays the probe will write to
 /// (6, 7, 13) for one insert, growing the table first when the entry about
 /// to be added would push occupancy past three quarters of capacity.
 ///
-/// Growing and copying are the same act, so they are one branch each
-/// and never both: a clone-on-write insert that grows allocates the
-/// wider arrays and rehashes straight into them, which copies every
-/// live entry exactly once. The `array.copy` in the other branch is
-/// the cheaper move for the far more common insert that does not grow.
+/// A grow allocates the wider arrays and rehashes straight into them,
+/// which copies every live entry exactly once. Without a grow the probe
+/// writes into the map's own arrays (see [`emit_insert_write`]).
 ///
 /// Rehashing rather than copying is what the wider mask requires: a
 /// key's bucket is `hash & (cap - 1)`, so doubling `cap` exposes one
@@ -1732,7 +1771,7 @@ fn emit_map_insert(
 /// The map's own arrays are read out first (10, 11, 14) because both
 /// branches need them, and because reading them before the branch
 /// keeps the grow path from re-reading struct fields per entry.
-fn emit_insert_prologue(f: &mut Function, slots: MapSlots, source: TableSource) {
+fn emit_insert_prologue(f: &mut Function, slots: MapSlots) {
     // cap = map.cap; src_keys/src_values/src_hashes = map arrays
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
@@ -1891,57 +1930,12 @@ fn emit_insert_prologue(f: &mut Function, slots: MapSlots, source: TableSource) 
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalSet(4));
-    match source {
-        TableSource::Clone => {
-            // keys = array.new_default cap; array.copy keys 0 src_keys 0 cap
-            f.instruction(&Instruction::LocalGet(3));
-            f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
-            f.instruction(&Instruction::LocalSet(6));
-            f.instruction(&Instruction::LocalGet(6));
-            f.instruction(&Instruction::I32Const(0));
-            f.instruction(&Instruction::LocalGet(10));
-            f.instruction(&Instruction::I32Const(0));
-            f.instruction(&Instruction::LocalGet(3));
-            f.instruction(&Instruction::ArrayCopy {
-                array_type_index_dst: slots.keys_array,
-                array_type_index_src: slots.keys_array,
-            });
-            // values = array.new_default cap; array.copy values 0 src_values 0 cap
-            f.instruction(&Instruction::LocalGet(3));
-            f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
-            f.instruction(&Instruction::LocalSet(7));
-            f.instruction(&Instruction::LocalGet(7));
-            f.instruction(&Instruction::I32Const(0));
-            f.instruction(&Instruction::LocalGet(11));
-            f.instruction(&Instruction::I32Const(0));
-            f.instruction(&Instruction::LocalGet(3));
-            f.instruction(&Instruction::ArrayCopy {
-                array_type_index_dst: slots.values_array,
-                array_type_index_src: slots.values_array,
-            });
-            // hashes = array.new_default cap; array.copy hashes 0 src_hashes 0 cap
-            f.instruction(&Instruction::LocalGet(3));
-            f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
-            f.instruction(&Instruction::LocalSet(13));
-            f.instruction(&Instruction::LocalGet(13));
-            f.instruction(&Instruction::I32Const(0));
-            f.instruction(&Instruction::LocalGet(14));
-            f.instruction(&Instruction::I32Const(0));
-            f.instruction(&Instruction::LocalGet(3));
-            f.instruction(&Instruction::ArrayCopy {
-                array_type_index_dst: slots.hashes_array,
-                array_type_index_src: slots.hashes_array,
-            });
-        }
-        TableSource::Owned => {
-            f.instruction(&Instruction::LocalGet(10));
-            f.instruction(&Instruction::LocalSet(6));
-            f.instruction(&Instruction::LocalGet(11));
-            f.instruction(&Instruction::LocalSet(7));
-            f.instruction(&Instruction::LocalGet(14));
-            f.instruction(&Instruction::LocalSet(13));
-        }
-    }
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::LocalSet(13));
     f.instruction(&Instruction::End); // grow if/else
 }
 
@@ -2009,6 +2003,7 @@ fn emit_map_get(
     canonical: &str,
     registry: &TypeRegistry,
     keyh: KeyHelpers,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -2052,6 +2047,7 @@ fn emit_map_get(
     ]);
     let _ = k_val;
     // cap, mask, keys, values
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -2156,6 +2152,7 @@ fn emit_map_get_or_default(
     canonical: &str,
     registry: &TypeRegistry,
     keyh: KeyHelpers,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -2196,6 +2193,7 @@ fn emit_map_get_or_default(
     ]);
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -2298,6 +2296,7 @@ fn emit_map_get_pair(
     canonical: &str,
     registry: &TypeRegistry,
     keyh: KeyHelpers,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -2337,6 +2336,7 @@ fn emit_map_get_pair(
         (1, ValType::I32), // 10: query_hash
     ]);
 
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -2819,6 +2819,7 @@ fn emit_map_order_slots(
     canonical: &str,
     registry: &TypeRegistry,
     sift_fn: u32,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let order_idx = registry
@@ -2837,6 +2838,7 @@ fn emit_map_order_slots(
     // params: 0=map. locals: 1=keys, 2=indices, 3=count, 4=cap,
     // 5=slot, 6=used, 7=start, 8=end, 9=tmp.
     let mut f = Function::new([(1, keys_ref), (1, order_ref), (7, ValType::I32)]);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -2966,6 +2968,7 @@ fn emit_map_keys(
     canonical: &str,
     registry: &TypeRegistry,
     order_slots_fn: u32,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, _) = super::types::parse_map_kv(canonical).unwrap();
@@ -2975,7 +2978,7 @@ fn emit_map_keys(
         .ok_or(WasmGcError::Validation(format!(
             "Map.keys: `{list_canonical}` not registered"
         )))?;
-    emit_map_walk_keys_to_list(slots, list_idx, k_aver, registry, order_slots_fn)
+    emit_map_walk_keys_to_list(slots, list_idx, k_aver, registry, order_slots_fn, reroot_fn)
 }
 
 /// `values(m) -> List<V>`. Same shape as `keys` but pulls from
@@ -2984,6 +2987,7 @@ fn emit_map_values(
     canonical: &str,
     registry: &TypeRegistry,
     order_slots_fn: u32,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (_, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -2993,7 +2997,7 @@ fn emit_map_values(
         .ok_or(WasmGcError::Validation(format!(
             "Map.values: `{list_canonical}` not registered"
         )))?;
-    emit_map_walk_values_to_list(slots, registry, list_idx, order_slots_fn)
+    emit_map_walk_values_to_list(slots, registry, list_idx, order_slots_fn, reroot_fn)
 }
 
 /// Real impl for `Map.keys` walking the keys array. Per primitive
@@ -3005,6 +3009,7 @@ fn emit_map_walk_keys_to_list(
     k_aver: &str,
     registry: &TypeRegistry,
     order_slots_fn: u32,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let order_idx = registry
         .map_order_indices_type_idx
@@ -3031,6 +3036,7 @@ fn emit_map_walk_keys_to_list(
         (1, list_ref),
     ]);
     // keys = map.keys
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3090,6 +3096,7 @@ fn emit_map_walk_values_to_list(
     registry: &TypeRegistry,
     list_idx: u32,
     order_slots_fn: u32,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let order_idx = registry
         .map_order_indices_type_idx
@@ -3115,6 +3122,7 @@ fn emit_map_walk_values_to_list(
         (1, ValType::I32),
         (1, list_ref),
     ]);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3170,6 +3178,7 @@ fn emit_map_eq(
     keyh: KeyHelpers,
     v_helpers: Option<KeyHelpers>,
     get_fn_idx: u32,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -3200,7 +3209,8 @@ fn emit_map_eq(
         heap_type: HeapType::Concrete(opt_idx),
     });
     // Locals: 2=typed map_a, 3=typed map_b, 4=cap, 5=i, 6=keys_a,
-    // 7=values_a, 8=cur_key (boxed), 9=opt result, 10=v_a, 11=v_b
+    // 7=values_a, 8=cur_key (boxed), 9=opt result, 10=v_a, 11=v_b,
+    // 12=copy of keys_a, 13=copy of values_a
     let mut f = Function::new(vec![
         (1, map_ref),
         (1, map_ref),
@@ -3212,6 +3222,8 @@ fn emit_map_eq(
         (1, opt_ref),
         (1, v_val),
         (1, v_val),
+        (1, keys_ref),
+        (1, values_ref),
     ]);
     let map_heap = HeapType::Concrete(slots.map);
     f.instruction(&Instruction::LocalGet(0));
@@ -3237,6 +3249,7 @@ fn emit_map_eq(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
     // cap = a.cap; keys_a = a.keys; values_a = a.values; i = 0
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 2);
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3255,6 +3268,33 @@ fn emit_map_eq(
         field_index: 3,
     });
     f.instruction(&Instruction::LocalSet(7));
+    // Two versions of one lineage share their arrays, and every `get` on
+    // `b` below makes `b` the current one. Walk a copy of `a`'s buckets
+    // then, so `a` reads as itself throughout.
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::RefEq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    for (local, copy, array_type) in [(6, 12, slots.keys_array), (7, 13, slots.values_array)] {
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::ArrayNewDefault(array_type));
+        f.instruction(&Instruction::LocalTee(copy));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalGet(local));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::ArrayCopy {
+            array_type_index_dst: array_type,
+            array_type_index_src: array_type,
+        });
+        f.instruction(&Instruction::LocalGet(copy));
+        f.instruction(&Instruction::LocalSet(local));
+    }
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(5));
     // for i in 0..cap
@@ -3403,6 +3443,7 @@ fn emit_map_hash(
     registry: &TypeRegistry,
     keyh: KeyHelpers,
     v_helpers: Option<KeyHelpers>,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -3434,6 +3475,7 @@ fn emit_map_hash(
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::RefCastNonNull(map_heap));
     f.instruction(&Instruction::LocalSet(1));
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 1);
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(7));
     f.instruction(&Instruction::LocalGet(1));
@@ -3506,16 +3548,18 @@ fn emit_map_hash(
     Ok(f)
 }
 
-/// `remove(map, k) -> map`. Linear-probe locate the entry; if not
+/// `remove(map, k) -> map'`. Linear-probe locate the entry; if not
 /// found, return the map unchanged. If found, empty its slot and walk
 /// the rest of the probe run, pulling back every entry that the new
 /// hole would otherwise hide from its own lookup — the backwards-shift
-/// deletion for linear probing. Decrements `map.size`. Same-handle
-/// return (mutates in place).
+/// deletion for linear probing. Every bucket it writes is a versioned
+/// write (`maps/versions.rs`), so `map` keeps its entries and the last
+/// version, one entry smaller, is the result.
 fn emit_map_remove(
     canonical: &str,
     registry: &TypeRegistry,
     keyh: KeyHelpers,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -3525,7 +3569,7 @@ fn emit_map_remove(
     // params: 0=map, 1=k.
     // locals: 2=cap, 3=mask, 4=keys, 5=values, 6=h, 7=i, 8=j,
     //         9=cur_key, 10=natural, 11=gap, 12=disp, 13=hole,
-    //         14=hashes, 15=query_hash.
+    //         14=hashes, 15=query_hash, 16=version, 17=diff, 18=next.
     // `7=i` is the probe index while the entry is being located, then
     // the hole the shift is filling — which travels as entries move.
     // `13=hole` keeps the slot the removed key vacated, unchanged, as
@@ -3563,9 +3607,41 @@ fn emit_map_remove(
             }),
         ), // 14: hashes
         (1, ValType::I32), // 15: query_hash
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.map),
+            }),
+        ), // 16: version
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.diff),
+            }),
+        ), // 17: diff
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.map),
+            }),
+        ), // 18: next version
     ]);
+    let versioned = VersionedWrite {
+        version: 16,
+        diff: 17,
+        next: 18,
+        idx: 7,
+        cap: 2,
+        keys: 4,
+        values: 5,
+        hashes: 14,
+    };
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3675,7 +3751,11 @@ fn emit_map_remove(
     // there. Those are exactly the entries a stop would strand.
     //
     // `hole` (local 13) keeps the slot the removal emptied — the scan's
-    // wrap guard, see below. The live hole travels in `i`.
+    // wrap guard, see below. The live hole travels in `i`. `version`
+    // (local 16) starts at `map` and moves to each new version a write
+    // makes.
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(16));
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::LocalSet(13));
     f.instruction(&Instruction::LocalGet(7));
@@ -3732,22 +3812,24 @@ fn emit_map_remove(
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::If(BlockType::Empty));
     // shift: keys[i] = next; values[i] = values[j]; hashes[i] = hashes[j]
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(9));
-    f.instruction(&Instruction::ArraySet(slots.keys_array));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::ArrayGet(slots.values_array));
-    f.instruction(&Instruction::ArraySet(slots.values_array));
-    f.instruction(&Instruction::LocalGet(14));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::LocalGet(14));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::ArrayGet(slots.hashes_array));
-    f.instruction(&Instruction::ArraySet(slots.hashes_array));
+    emit_versioned_write(&mut f, slots, &versioned, |f| {
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::LocalGet(7));
+        f.instruction(&Instruction::LocalGet(9));
+        f.instruction(&Instruction::ArraySet(slots.keys_array));
+        f.instruction(&Instruction::LocalGet(5));
+        f.instruction(&Instruction::LocalGet(7));
+        f.instruction(&Instruction::LocalGet(5));
+        f.instruction(&Instruction::LocalGet(8));
+        f.instruction(&Instruction::ArrayGet(slots.values_array));
+        f.instruction(&Instruction::ArraySet(slots.values_array));
+        f.instruction(&Instruction::LocalGet(14));
+        f.instruction(&Instruction::LocalGet(7));
+        f.instruction(&Instruction::LocalGet(14));
+        f.instruction(&Instruction::LocalGet(8));
+        f.instruction(&Instruction::ArrayGet(slots.hashes_array));
+        f.instruction(&Instruction::ArraySet(slots.hashes_array));
+    });
     // i = j — the slot just vacated is the new hole. Its stale key stays
     // in the array until the next move overwrites it or the `keys[i] =
     // null` below clears it, and no lookup can reach it in between.
@@ -3770,17 +3852,20 @@ fn emit_map_remove(
     // box / String / record / carrier / List / Vector concrete idx,
     // nominal root for sum K).
     let null_heap = key_storage_null_heap(k_aver, registry);
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::RefNull(null_heap));
-    f.instruction(&Instruction::ArraySet(slots.keys_array));
-    f.instruction(&Instruction::LocalGet(14));
-    f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::ArraySet(slots.hashes_array));
+    emit_versioned_write(&mut f, slots, &versioned, |f| {
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::LocalGet(7));
+        f.instruction(&Instruction::RefNull(null_heap));
+        f.instruction(&Instruction::ArraySet(slots.keys_array));
+        f.instruction(&Instruction::LocalGet(14));
+        f.instruction(&Instruction::LocalGet(7));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::ArraySet(slots.hashes_array));
+    });
 
-    // map.size = map.size - 1
-    f.instruction(&Instruction::LocalGet(0));
+    // The last version is new and nobody else holds it yet:
+    // version.size = map.size - 1
+    f.instruction(&Instruction::LocalGet(16));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3793,8 +3878,8 @@ fn emit_map_remove(
         field_index: 0,
     });
 
-    // return map
-    f.instruction(&Instruction::LocalGet(0));
+    // return the last version
+    f.instruction(&Instruction::LocalGet(16));
     f.instruction(&Instruction::End);
     Ok(f)
 }
@@ -3804,6 +3889,7 @@ fn emit_map_entries(
     canonical: &str,
     registry: &TypeRegistry,
     order_slots_fn: u32,
+    reroot_fn: u32,
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
@@ -3849,6 +3935,7 @@ fn emit_map_entries(
         (1, ValType::I32),
         (1, lt_ref),
     ]);
+    emit_reroot_local(&mut f, slots.map, reroot_fn, 0);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: slots.map,
@@ -3910,17 +3997,10 @@ fn emit_map_entries(
 
 /// `from_list(l) -> Map<K, V>`. Walks `l` from head to tail,
 /// struct.get's the (K, V) from each tuple, calls the per-(K, V)
-/// `set_in_place` helper to insert. Allocates a fresh empty map (via
-/// the per-(K, V) `empty` shape inlined: cap = INITIAL_CAP, fresh keys
-/// and values arrays) and returns it.
-///
-/// In place rather than clone-on-write because the map is allocated
-/// here, is held only by this frame's local, and is not handed to
-/// anyone until the walk finishes — the uniqueness the alias pass
-/// proves at a `Map.set` call site is a fact of this body's shape.
-/// Copying instead would make `Map.fromList` quadratic: one full array
-/// copy per pair. With growth in the insert helper that would be the
-/// only remaining size cliff a map has.
+/// `set` helper to insert. Allocates a fresh empty map (via the
+/// per-(K, V) `empty` shape inlined: cap = INITIAL_CAP, fresh keys
+/// and values arrays) and returns it. `set` writes in place, so the
+/// walk is linear in the list.
 fn emit_map_from_list(
     canonical: &str,
     registry: &TypeRegistry,
@@ -3969,6 +4049,7 @@ fn emit_map_from_list(
     f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(slots.hashes_array));
+    emit_no_diff(&mut f, slots);
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::LocalSet(2));
     // cur = l

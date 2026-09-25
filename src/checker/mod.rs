@@ -314,8 +314,8 @@ pub use cse::{collect_cse_warnings, collect_cse_warnings_in};
 pub use independence::{collect_independence_warnings, collect_independence_warnings_in};
 pub(crate) use intent::collect_used_effects;
 pub use intent::{
-    check_module_intent, check_module_intent_with_sigs, check_module_intent_with_sigs_in,
-    index_decisions,
+    check_module_intent, check_module_intent_with_capabilities_in, check_module_intent_with_sigs,
+    check_module_intent_with_sigs_in, index_decisions,
 };
 #[cfg(feature = "runtime")]
 pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_dependency_warnings_in};
@@ -323,6 +323,6 @@ pub use module_effects::{collect_module_effects_warnings, collect_module_effects
 pub use naming::{collect_naming_warnings, collect_naming_warnings_in};
 pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
 pub use serve_path::{collect_serve_path_warnings, collect_serve_path_warnings_in};
-pub use shared_update::{ModuleSource, collect_shared_update_warnings};
+pub use shared_update::{ModuleSource, ProgramSymbols, collect_shared_update_warnings};
 pub use traversal::collect_traversal_warnings_in;
 pub use verify::{expr_to_str, merge_verify_blocks, verify_block_label};

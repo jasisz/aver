@@ -16,31 +16,34 @@
 //!   `Map.remove` or `Vector.set`, or at a parameter position of a function
 //!   that hands that parameter, directly or through further calls, to one of
 //!   them (followed into the dependencies the call names).
-//! - **A value the compiler can see is shared.** Either it is read out of a
-//!   record — `setting.window.created` — while the record stays reachable
-//!   (the local is read again later, or it was already passed whole to the
-//!   call or record the update is an argument of), or it is a local
-//!   collection that is read again after the update.
+//! - **A copy the backends make.** The value is a field read out of a record
+//!   local — `setting.window.created`, or a local bound to one by a `let` or
+//!   a `match` and handed on at its last use — and the read does not move
+//!   the field out of the record. The module is lowered the way it compiles
+//!   and the answer is `field_moves`, the analysis generated Rust moves
+//!   fields by: a field read moves when every other read of the record runs
+//!   in another branch, finished earlier, or reads a disjoint part (the rest
+//!   of the record handed on to the update that replaces the field), and the
+//!   record is not used after. Any other field read is a copy, and the record
+//!   keeps the original. A record a loop hands on unchanged keeps every
+//!   field.
 //! - **Repeated.** The function doing it is recursive, is reached from a
 //!   recursive function of its module, or belongs to an answer module, whose
 //!   functions run once per request.
 //!
-//! One shape is left alone on purpose: a record literal or `T.update(x, …)`
-//! that reads the field it replaces once and otherwise only other fields of
-//! `x`, with `x` dead afterwards. The VM takes that field out of the record
-//! before the update, so the collection is not shared when the update runs.
-//!
 //! What it misses: a caller that keeps a record it passed to the function
-//! doing the update (the function cannot see its callers), aliases made
-//! through a binding (`kept = state`), a collection shared by two records, and
-//! calls through function values. Each of those still copies; none of them is
-//! visible in one function's body without the whole-program ownership facts.
+//! doing the update (the function cannot see its callers), a callee that
+//! borrows the value and copies it itself, aliases made through a binding
+//! (`kept = state`), a collection shared by two records, and calls through
+//! function values.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::ast::{Expr, FnDef, Spanned, Stmt, StrPart, TopLevel};
 
 use super::CheckFinding;
+use crate::ir::mir::expr::walk_children;
+use crate::ir::mir::{LocalId, MirCallee, MirExpr, MirFn, MirPattern, MirProgram};
 
 /// The builtins that update their first argument in place when they own it.
 const UPDATES: [(&str, Kind); 3] = [
@@ -364,189 +367,256 @@ fn repeated_fns(items: &[TopLevel]) -> HashSet<String> {
     repeated
 }
 
-/// A record literal or update the VM may take a field out of: the fields of
-/// each local it may take. Mirrors the VM's rule: every read of the local in
-/// the values is a projection, the field is projected once, the local dies
-/// there, and an update of the local itself writes the field.
-#[derive(Default)]
-struct Scope {
-    takes: HashMap<u16, HashSet<String>>,
+/// Where a value handed to an update comes from: a field of a record local,
+/// read either at the update itself or earlier into the local handed on.
+struct Origin<'m> {
+    /// The field read, `s.window.created`: the node the backends move or
+    /// copy.
+    read: &'m MirExpr,
+    /// The record local's name and the path read out of it.
+    record: String,
+    path: Vec<String>,
 }
 
-#[derive(Default)]
-struct SlotReads {
-    bare: bool,
-    projected: HashMap<String, usize>,
-    last_use: bool,
+/// One function's lowered body, with what the backends decide about it.
+struct Body<'m> {
+    /// Field reads that move their field out of the record
+    /// (`field_moves::movable_projections`); every other field read copies
+    /// it, and the record keeps the original.
+    movable: HashSet<usize>,
+    /// Params a self tail call hands on unchanged: the loop keeps them whole,
+    /// so no field of one ever moves.
+    carried: HashSet<LocalId>,
+    /// Locals bound to a field read, by a `let` or by a `match` on it.
+    bound: HashMap<LocalId, Origin<'m>>,
 }
 
-fn collect_reads(expr: &Spanned<Expr>, reads: &mut HashMap<u16, SlotReads>) {
-    match &expr.node {
-        Expr::Attr(base, field) => {
-            if let Expr::Resolved { slot, last_use, .. } = &base.node {
-                let entry = reads.entry(*slot).or_default();
-                *entry.projected.entry(field.clone()).or_default() += 1;
-                entry.last_use |= last_use.0;
-                return;
-            }
-            collect_reads(base, reads);
-        }
-        Expr::Resolved { slot, last_use, .. } => {
-            let entry = reads.entry(*slot).or_default();
-            entry.bare = true;
-            entry.last_use |= last_use.0;
-        }
-        other => children(other, &mut |child| collect_reads(child, reads)),
-    }
-}
-
-fn scope_of<'e>(
-    base_slot: Option<u16>,
-    written: &HashSet<&str>,
-    values: impl Iterator<Item = &'e Spanned<Expr>>,
-) -> Scope {
-    let mut reads: HashMap<u16, SlotReads> = HashMap::new();
-    for value in values {
-        collect_reads(value, &mut reads);
-    }
-    let mut scope = Scope::default();
-    for (slot, slot_reads) in reads {
-        if slot_reads.bare || !slot_reads.last_use {
-            continue;
-        }
-        let fields: HashSet<String> = slot_reads
-            .projected
-            .into_iter()
-            .filter(|(field, count)| {
-                *count == 1 && (base_slot != Some(slot) || written.contains(field.as_str()))
-            })
-            .map(|(field, _)| field)
-            .collect();
-        if !fields.is_empty() {
-            scope.takes.insert(slot, fields);
-        }
-    }
-    scope
-}
-
-/// Whether the last read of local `slot` is inside `args`.
-fn last_read_within(slot: u16, args: &[Spanned<Expr>]) -> bool {
-    fn visit(expr: &Spanned<Expr>, slot: u16, found: &mut bool) {
-        if let Expr::Resolved {
-            slot: read,
-            last_use,
-            ..
-        } = &expr.node
-            && *read == slot
-            && last_use.0
-        {
-            *found = true;
-        }
-        children(&expr.node, &mut |child| visit(child, slot, found));
-    }
-    let mut found = false;
-    for arg in args {
-        visit(arg, slot, &mut found);
-    }
-    found
-}
-
-/// The locals an evaluated value holds whole: a bare read, or one inside a
-/// tuple, list, constructor or record built right there.
-fn held_locals(expr: &Expr, out: &mut Vec<(u16, String)>) {
+/// `local.f1.….fn` as `(local, name, [f1, …, fn])`.
+fn projection_path(expr: &MirExpr) -> Option<(LocalId, String, Vec<String>)> {
     match expr {
-        Expr::Resolved { slot, name, .. } => out.push((*slot, name.clone())),
-        Expr::Tuple(items) | Expr::List(items) => {
-            items.iter().for_each(|item| held_locals(&item.node, out))
+        MirExpr::Local(local) if !local.node.name.is_empty() => {
+            Some((local.node.slot, local.node.name.clone(), Vec::new()))
         }
-        Expr::Constructor(_, Some(inner)) => held_locals(&inner.node, out),
-        Expr::RecordCreate { fields, .. } => fields
-            .iter()
-            .for_each(|(_, value)| held_locals(&value.node, out)),
-        Expr::RecordUpdate { base, updates, .. } => {
-            held_locals(&base.node, out);
-            updates
-                .iter()
-                .for_each(|(_, value)| held_locals(&value.node, out));
+        MirExpr::Project(project) => {
+            let (slot, name, mut path) = projection_path(&project.node.base.node)?;
+            path.push(project.node.field.clone());
+            Some((slot, name, path))
+        }
+        _ => None,
+    }
+}
+
+fn field_read(expr: &MirExpr) -> Option<Origin<'_>> {
+    let (_, record, path) = projection_path(expr)?;
+    (!path.is_empty()).then_some(Origin {
+        read: expr,
+        record,
+        path,
+    })
+}
+
+/// Every local a pattern binds, with the part of the subject it binds when
+/// that part is a field read.
+fn bind_pattern<'m>(
+    pattern: &MirPattern,
+    subject: &'m MirExpr,
+    bound: &mut HashMap<LocalId, Origin<'m>>,
+) {
+    match pattern {
+        MirPattern::Bind(slot, _) => {
+            if let Some(origin) = field_read(subject) {
+                bound.insert(*slot, origin);
+            }
+        }
+        MirPattern::Tuple(items) => {
+            if let MirExpr::Tuple(parts) = subject {
+                for (item, part) in items.iter().zip(parts) {
+                    bind_pattern(item, &part.node, bound);
+                }
+            } else {
+                for item in items {
+                    bind_pattern(item, subject, bound);
+                }
+            }
+        }
+        // A payload or a list element is part of the field it was matched
+        // out of, and shares its backing with it.
+        MirPattern::Ctor { bindings, .. } => {
+            for slot in bindings {
+                if let Some(origin) = field_read(subject) {
+                    bound.insert(*slot, origin);
+                }
+            }
+        }
+        MirPattern::Cons { head, tail, .. } => {
+            for slot in [head, tail] {
+                if let Some(origin) = field_read(subject) {
+                    bound.insert(*slot, origin);
+                }
+            }
+        }
+        MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => {}
+    }
+}
+
+fn collect_bound<'m>(expr: &'m MirExpr, bound: &mut HashMap<LocalId, Origin<'m>>) {
+    match expr {
+        MirExpr::Let(binding) => {
+            let value = &binding.node.value.node;
+            if let Some(origin) = field_read(value) {
+                bound.insert(binding.node.binding, origin);
+            }
+        }
+        MirExpr::Match(matched) => {
+            for arm in &matched.node.arms {
+                bind_pattern(&arm.pattern, &matched.node.subject.node, bound);
+            }
         }
         _ => {}
     }
+    walk_children(expr, &mut |child| collect_bound(child, bound));
 }
 
-struct Walk<'s, 'd> {
+/// The params every self tail call of `f` hands on as they are.
+fn carried_params(f: &MirFn) -> HashSet<LocalId> {
+    fn visit(expr: &MirExpr, f: &MirFn, kept: &mut Vec<bool>, calls: &mut usize) {
+        if let MirExpr::TailCall(call) = expr
+            && call.node.target == f.fn_id
+        {
+            *calls += 1;
+            for (index, param) in f.params.iter().enumerate() {
+                let same = call.node.args.get(index).is_some_and(|arg| {
+                    matches!(&arg.node, MirExpr::Local(local) if local.node.slot == param.local)
+                });
+                kept[index] &= same;
+            }
+        }
+        walk_children(expr, &mut |child| visit(child, f, kept, calls));
+    }
+    let mut kept = vec![true; f.params.len()];
+    let mut calls = 0;
+    visit(&f.body.node, f, &mut kept, &mut calls);
+    if calls == 0 {
+        return HashSet::new();
+    }
+    f.params
+        .iter()
+        .zip(kept)
+        .filter_map(|(param, kept)| kept.then_some(param.local))
+        .collect()
+}
+
+struct Walk<'s, 'd, 'm> {
     own: &'s Summary,
     deps: &'s mut Dependencies<'d>,
+    program: &'m MirProgram,
+    symbols: &'s crate::ir::SymbolTable,
+    body: &'s Body<'m>,
     fn_name: String,
     module: Option<String>,
-    /// Locals whose whole value an enclosing call or constructor has already
-    /// evaluated and still holds, innermost last. The flag marks the base of
-    /// an enclosing record update.
-    pending: Vec<(u16, String, bool)>,
-    scopes: Vec<Scope>,
     findings: Vec<CheckFinding>,
 }
 
-impl Walk<'_, '_> {
-    /// Whether the VM takes field `field` out of local `slot` before the
-    /// update: an enclosing literal or update plans it.
-    fn taken_first(&self, slot: u16, field: &str) -> bool {
-        self.scopes
-            .iter()
-            .find(|scope| scope.takes.contains_key(&slot))
-            .is_some_and(|scope| scope.takes[&slot].contains(field))
+impl Walk<'_, '_, '_> {
+    /// The name a call spells its callee by, as the summaries key it: the
+    /// builtin's name, a function of this module by its own name, one of a
+    /// dependency as `Module.fn`.
+    fn callee_name(&self, callee: &MirCallee) -> Option<String> {
+        match callee {
+            MirCallee::Builtin(id) => Some(self.program.builtin_name(*id).to_string()),
+            MirCallee::Fn(id) => self.fn_name_of(*id),
+            _ => None,
+        }
     }
 
-    fn check_site(&mut self, callee: &str, index: usize, args: &[Spanned<Expr>]) {
-        let arg = &args[index];
+    fn fn_name_of(&self, id: crate::ir::FnId) -> Option<String> {
+        let key = &self.symbols.fn_entry(id).key;
+        Some(match &key.scope {
+            Some(scope) if Some(scope.as_str()) != self.module.as_deref() => {
+                format!("{scope}.{}", key.name)
+            }
+            _ => key.name.clone(),
+        })
+    }
+
+    /// Whether the backends copy the field `origin` reads, leaving the
+    /// original in the record: the read does not move it, or the record is
+    /// a param the loop carries whole.
+    fn copies(&self, origin: &Origin<'_>) -> bool {
+        let moved = self
+            .body
+            .movable
+            .contains(&(origin.read as *const MirExpr as usize));
+        let carried = projection_path(origin.read)
+            .is_some_and(|(slot, _, _)| self.body.carried.contains(&slot));
+        !moved || carried
+    }
+
+    fn check_site(&mut self, callee: &str, index: usize, arg: &Spanned<MirExpr>) {
         let Some(kind) = update_at(callee, index, self.own, self.deps) else {
             return;
         };
-        // The record the value is read out of, and its first field.
-        let mut fields: Vec<&str> = Vec::new();
-        let mut root = &arg.node;
-        while let Expr::Attr(base, field) = root {
-            fields.push(field);
-            root = &base.node;
-        }
-        let Expr::Resolved { slot, name, .. } = root else {
-            return;
+        let body = self.body;
+        // The value is a field read here, or a local bound to one earlier
+        // and read here for the last time. A local read again later is left
+        // alone: the caller keeping both versions is usually the point (a
+        // scope, an undo). A record field is different: the record is the
+        // only reason the old one lives.
+        let found;
+        let (origin, via) = match &arg.node {
+            MirExpr::Local(local) => {
+                let Some(origin) = body.bound.get(&local.node.slot) else {
+                    return;
+                };
+                if !local.node.last_use {
+                    return;
+                }
+                (origin, Some(local.node.name.clone()))
+            }
+            _ => {
+                let Some(origin) = field_read(&arg.node) else {
+                    return;
+                };
+                found = origin;
+                (&found, None)
+            }
         };
-        // A bare local read again later is left alone: the caller keeping
-        // both versions is usually the point (a scope, an undo). A record
-        // field is different: the record is the only reason the old one lives.
-        if fields.is_empty() {
-            return;
+        if self.copies(origin) {
+            self.report(callee, index, kind, origin, via, arg.line);
         }
-        fields.reverse();
-        let first = fields.first().copied();
-        let exempt = first.is_some_and(|first| fields.len() == 1 && self.taken_first(*slot, first));
-        let held_by_pending = self
-            .pending
-            .iter()
-            .any(|(pending, _, is_base)| pending == slot && !(*is_base && exempt));
-        // The update runs once every argument of its call is evaluated, so
-        // a read in a later argument is over by then; only a read after the
-        // whole call keeps the local holding the value.
-        let read_later = !last_read_within(*slot, args) && !exempt;
-        if !(held_by_pending || read_later) {
-            return;
-        }
-        let shown = format!("{name}.{}", fields.join("."));
+    }
+
+    fn report(
+        &mut self,
+        callee: &str,
+        index: usize,
+        kind: Kind,
+        origin: &Origin<'_>,
+        via: Option<String>,
+        line: usize,
+    ) {
+        let name = &origin.record;
+        let read = format!("{name}.{}", origin.path.join("."));
         let what = kind.name();
         let repair = format!(
-            "take it out of `{name}` first (bind the parts with a match and carry on with a `{name}` that no longer holds them), or read it at the last use of `{name}`"
+            "read it where nothing reads that part of `{name}` again, for example in the update of `{name}` that replaces it, so the {what} moves out of `{name}` instead of being shared with it"
         );
-        let message = if builtin_update(callee, index).is_some() {
-            format!(
-                "`{callee}` on `{shown}` updates a {what} that is still held by `{name}`; each update copies the whole {what} — {repair}"
-            )
-        } else {
-            format!(
-                "`{callee}` updates `{shown}`, a {what} that is still held by `{name}`; each call copies the whole {what} — {repair}"
-            )
+        let message = match (builtin_update(callee, index).is_some(), &via) {
+            (true, None) => format!(
+                "`{callee}` on `{read}` updates a {what} that is still held by `{name}`; each update copies the whole {what} — {repair}"
+            ),
+            (true, Some(local)) => format!(
+                "`{callee}` on `{local}`, read from `{read}`, updates a {what} that is still held by `{name}`; each update copies the whole {what} — {repair}"
+            ),
+            (false, None) => format!(
+                "`{callee}` updates `{read}`, a {what} that is still held by `{name}`; each call copies the whole {what} — {repair}"
+            ),
+            (false, Some(local)) => format!(
+                "`{callee}` updates `{local}`, read from `{read}`, a {what} that is still held by `{name}`; each call copies the whole {what} — {repair}"
+            ),
         };
         self.findings.push(CheckFinding {
-            line: arg.line,
+            line,
             module: self.module.clone(),
             file: None,
             fn_name: Some(self.fn_name.clone()),
@@ -555,93 +625,72 @@ impl Walk<'_, '_> {
         });
     }
 
-    /// Walk the arguments of one call: each sees the whole values the earlier
-    /// ones hold, and each is checked as an update site.
-    fn walk_call(&mut self, callee: Option<&str>, args: &[Spanned<Expr>]) {
-        let mark = self.pending.len();
-        for (index, item) in args.iter().enumerate() {
-            if let Some(callee) = callee {
-                self.check_site(callee, index, args);
+    fn walk(&mut self, expr: &MirExpr) {
+        match expr {
+            MirExpr::Call(call) => {
+                if let Some(name) = self.callee_name(&call.node.callee) {
+                    for (index, arg) in call.node.args.iter().enumerate() {
+                        self.check_site(&name, index, arg);
+                    }
+                }
             }
-            self.walk(item);
-            let mut held = Vec::new();
-            held_locals(&item.node, &mut held);
-            self.pending
-                .extend(held.into_iter().map(|(slot, name)| (slot, name, false)));
+            MirExpr::TailCall(call) => {
+                if let Some(name) = self.fn_name_of(call.node.target) {
+                    for (index, arg) in call.node.args.iter().enumerate() {
+                        self.check_site(&name, index, arg);
+                    }
+                }
+            }
+            _ => {}
         }
-        self.pending.truncate(mark);
-    }
-
-    /// Walk the items of one aggregate in evaluation order: each sees the
-    /// whole values the earlier ones hold.
-    fn walk_in_order<'e>(&mut self, items: impl Iterator<Item = &'e Spanned<Expr>>) {
-        let mark = self.pending.len();
-        for item in items {
-            self.walk(item);
-            let mut held = Vec::new();
-            held_locals(&item.node, &mut held);
-            self.pending
-                .extend(held.into_iter().map(|(slot, name)| (slot, name, false)));
-        }
-        self.pending.truncate(mark);
-    }
-
-    fn walk(&mut self, expr: &Spanned<Expr>) {
-        match &expr.node {
-            Expr::FnCall(callee, args) => {
-                let name = dotted(&callee.node);
-                self.walk_call(name.as_deref(), args);
-            }
-            Expr::TailCall(tail) => {
-                let target = tail.target.clone();
-                self.walk_call(Some(&target), &tail.args);
-            }
-            Expr::Tuple(items) | Expr::List(items) | Expr::IndependentProduct(items, _) => {
-                self.walk_in_order(items.iter())
-            }
-            Expr::RecordCreate { fields, .. } => {
-                let written: HashSet<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
-                self.scopes.push(scope_of(
-                    None,
-                    &written,
-                    fields.iter().map(|(_, value)| value),
-                ));
-                self.walk_in_order(fields.iter().map(|(_, value)| value));
-                self.scopes.pop();
-            }
-            Expr::RecordUpdate { base, updates, .. } => {
-                self.walk(base);
-                let base_slot = match &base.node {
-                    Expr::Resolved { slot, .. } => Some(*slot),
-                    _ => None,
-                };
-                let written: HashSet<&str> = updates.iter().map(|(n, _)| n.as_str()).collect();
-                self.scopes.push(scope_of(
-                    base_slot,
-                    &written,
-                    updates.iter().map(|(_, value)| value),
-                ));
-                let mark = self.pending.len();
-                let mut held = Vec::new();
-                held_locals(&base.node, &mut held);
-                self.pending.extend(
-                    held.into_iter()
-                        .map(|(slot, name)| (slot, name, Some(slot) == base_slot)),
-                );
-                self.walk_in_order(updates.iter().map(|(_, value)| value));
-                self.pending.truncate(mark);
-                self.scopes.pop();
-            }
-            other => children(other, &mut |child| self.walk(child)),
-        }
+        walk_children(expr, &mut |child| self.walk(child));
     }
 }
 
+/// Whether some repeated function of `items` hands anything to an update at
+/// all. Lowering the module is only worth it then.
+fn has_update_site(
+    items: &[TopLevel],
+    repeated: &HashSet<String>,
+    own: &Summary,
+    deps: &mut Dependencies<'_>,
+) -> bool {
+    let mut found = false;
+    for fd in fn_defs(items)
+        .into_iter()
+        .filter(|fd| repeated.contains(&fd.name))
+    {
+        for expr in body_exprs(fd) {
+            each_call(expr, &mut |callee, args| {
+                found = found
+                    || (0..args.len()).any(|index| update_at(callee, index, own, deps).is_some());
+            });
+        }
+    }
+    found
+}
+
+/// The module lowered the way every backend lowers it, so the check reads
+/// the same field moves they make.
+fn lowered(items: &[TopLevel], symbols: &crate::ir::SymbolTable) -> MirProgram {
+    let mut items = items.to_vec();
+    crate::resolver::resolve_program(&mut items);
+    crate::ir::last_use::annotate_program_last_use(&mut items);
+    let resolved = crate::ir::hir::resolve_program(symbols, &items);
+    crate::ir::mir::optimize(crate::ir::mir::lower_program(&resolved))
+}
+
+/// The symbol table of the program a module is checked in: the module and
+/// the dependencies it loads.
+pub type ProgramSymbols<'a> = dyn Fn(&[TopLevel]) -> crate::ir::SymbolTable + 'a;
+
 /// Warnings for one module. `items` is the module as the checker saw it;
-/// `source` finds the dependencies its calls name.
+/// `source` finds the dependencies its calls name and `symbols` builds the
+/// program's symbol table, so the module lowers the way it compiles.
 pub fn collect_shared_update_warnings(
     items: &[TopLevel],
     source: &ModuleSource<'_>,
+    symbols: &ProgramSymbols<'_>,
 ) -> Vec<CheckFinding> {
     let repeated = repeated_fns(items);
     if repeated.is_empty() {
@@ -649,41 +698,42 @@ pub fn collect_shared_update_warnings(
     }
     let mut deps = Dependencies::new(source);
     let own = summarize(items, &mut deps);
+    if !has_update_site(items, &repeated, &own, &mut deps) {
+        return Vec::new();
+    }
     let module = super::module_name_for_items(items);
-
-    // Last use needs slots; resolve a copy of the repeated functions only.
-    let mut resolved: Vec<TopLevel> = items
-        .iter()
-        .filter(|item| match item {
-            TopLevel::FnDef(fd) => repeated.contains(&fd.name),
-            TopLevel::TypeDef(_) => true,
-            _ => false,
-        })
-        .cloned()
-        .collect();
-    crate::resolver::resolve_program(&mut resolved);
-    crate::ir::last_use::annotate_program_last_use(&mut resolved);
+    let symbols = symbols(items);
+    let program = lowered(items, &symbols);
 
     let mut findings = Vec::new();
+    let mut fns: Vec<&MirFn> = program.iter().map(|(_, f)| f).collect();
+    fns.sort_by_key(|f| f.fn_id.0);
     // Functions the compiler generated (the loop's `__…` helpers) are not the
     // author's to change, so they are not reported at the author's file.
-    for fd in fn_defs(&resolved)
+    for f in fns
         .into_iter()
-        .filter(|fd| !fd.name.starts_with("__"))
+        .filter(|f| repeated.contains(&f.name) && !f.name.starts_with("__"))
     {
+        let mut bound = HashMap::new();
+        collect_bound(&f.body.node, &mut bound);
+        let body = Body {
+            movable: crate::ir::mir::field_moves::movable_projections(&f.body.node),
+            carried: carried_params(f),
+            bound,
+        };
         let mut walk = Walk {
             own: &own,
             deps: &mut deps,
-            fn_name: fd.name.clone(),
+            program: &program,
+            symbols: &symbols,
+            body: &body,
+            fn_name: f.name.clone(),
             module: module.clone(),
-            pending: Vec::new(),
-            scopes: Vec::new(),
             findings: Vec::new(),
         };
-        for expr in body_exprs(fd) {
-            walk.walk(expr);
-        }
+        walk.walk(&f.body.node);
         findings.extend(walk.findings);
     }
+    findings.sort_by_key(|finding| finding.line);
     findings
 }

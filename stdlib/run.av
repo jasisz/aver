@@ -1,10 +1,36 @@
 module Run
     intent =
-        "The vocabulary of the generated loop. Wake says when a request that an answer module did not answer yet is asked again."
+        "The vocabulary of the generated loop. Wake says when a request that an answer module did not answer yet is asked again, and fail ends the run with a reason Run.all() answers."
+    kind = capability
+    semantics = effectful
     depends [Wait]
-    exposes [Wake]
-    effects []
+    exposes [Wake, fail, failure]
 
 type Wake
     Until(List<Wait.Item>, Option<Int>)
     Settled(Option<Int>)
+
+operation fail(message: String) -> Unit
+    ? "Ends the run with this reason. The turn it is called in is finished first; then the loop stops every process the way a stop does, cancelling the jobs parked requests wait on, and Run.all() answers Err(message). Only the first call of a run counts: a later one, in the same turn or after it, changes nothing."
+    oracle = output
+    replay = reissued
+
+operation failure() -> Option<String>
+    ? "The reason the first Run.fail of this run gave, or None while nothing has failed. The generated loop reads it once after every turn; it never forgets a reason once one is given."
+    oracle = generative
+    replay = recorded
+    hostile = [failureNever, failureAtOnce, failureAfterOne]
+
+fn failureNever(path: BranchPath, call: Int) -> Option<String>
+    ? "Hostile profile: nothing ever fails the run."
+    Option.None
+
+fn failureAtOnce(path: BranchPath, call: Int) -> Option<String>
+    ? "Hostile profile: the run has already failed at the first reading."
+    Option.Some("hostile: the run failed")
+
+fn failureAfterOne(path: BranchPath, call: Int) -> Option<String>
+    ? "Hostile profile: one reading finds nothing, and every later one finds the run failed."
+    match call >= 1
+        true -> Option.Some("hostile: the run failed")
+        false -> Option.None

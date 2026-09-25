@@ -2188,6 +2188,15 @@ pub(super) fn emit_module_with(
             headers_values_array_type_idx: map_slots.values_array,
             headers_hashes_array_type_idx: map_slots.hashes_array,
             headers_map_type_idx: map_slots.map,
+            headers_map_diff_type_idx: map_slots.diff,
+            headers_map_reroot_fn: map_helpers
+                .kv_helpers("Map<String,List<String>>")
+                .ok_or_else(|| {
+                    WasmGcError::Validation(
+                        "Http headers need the Map<String,List<String>> helpers".into(),
+                    )
+                })?
+                .reroot,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
             aint_from_i64_fn_idx: registry.aint_from_i64_fn_idx,
@@ -2883,6 +2892,36 @@ pub(super) fn emit_module_with(
         next_global_idx += 1;
         Some(idx)
     };
+    // The reason the first `Run.fail` of a run gave: module state on both
+    // wasm targets, read back by the generated loop through `Run.failure`.
+    // Appended after every other global so each keeps its index, and only
+    // for a program that names either operation.
+    let run_failure_global: Option<u32> = if effect_registry
+        .iter()
+        .any(|effect| matches!(effect, EffectName::RunFail | EffectName::RunFailure))
+    {
+        let string_idx = registry.string_array_type_idx.ok_or_else(|| {
+            WasmGcError::Validation(
+                "Run.fail and Run.failure need the String slot to be allocated".into(),
+            )
+        })?;
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::Ref(wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+                }),
+                mutable: true,
+                shared: false,
+            },
+            &wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Concrete(string_idx)),
+        );
+        let idx = next_global_idx;
+        next_global_idx += 1;
+        Some(idx)
+    } else {
+        None
+    };
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -3119,6 +3158,7 @@ pub(super) fn emit_module_with(
         eq_helpers: eq_helpers_lookup,
         funcref_table,
         call_indirect_types,
+        run_failure_global,
         ..FnMap::default()
     };
 
@@ -3556,6 +3596,15 @@ pub(super) fn emit_module_with(
             headers_values_array_type_idx: map_slots.values_array,
             headers_hashes_array_type_idx: map_slots.hashes_array,
             headers_map_type_idx: map_slots.map,
+            headers_map_diff_type_idx: map_slots.diff,
+            headers_map_reroot_fn: map_helpers
+                .kv_helpers("Map<String,List<String>>")
+                .ok_or_else(|| {
+                    WasmGcError::Validation(
+                        "Http headers need the Map<String,List<String>> helpers".into(),
+                    )
+                })?
+                .reroot,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
             aint_to_i64_checked_fn_idx: registry.aint_to_i64_checked_fn_idx,
@@ -3654,15 +3703,33 @@ pub(super) fn emit_module_with(
         ));
     } else {
         let mut start = Function::new([]);
+        // A command whose `main` answers `Err` fails the `wasi:cli/run`
+        // call, so the component exits non-zero the way the VM, a native
+        // binary and the wasm-gc runner do.
+        let mut exit_code_on_stack = false;
         if let Some(idx) = main_idx {
             let main_idx_wasm = import_count + 1 + (idx as u32);
-            let main_returns_value = !fn_defs[idx].return_type.trim().eq("Unit");
+            let return_type = fn_defs[idx].return_type.trim();
+            let main_returns_value = !return_type.eq("Unit");
             start.instruction(&Instruction::Call(main_idx_wasm));
-            if main_returns_value {
+            let main_result_idx = if start_returns_i32 && return_type.starts_with("Result<") {
+                registry.result_type_idx(return_type)
+            } else {
+                None
+            };
+            if let Some(result_idx) = main_result_idx {
+                start.instruction(&Instruction::StructGet {
+                    struct_type_index: result_idx,
+                    field_index: 0,
+                });
+                start.instruction(&Instruction::I32Const(super::types::RESULT_OK_TAG));
+                start.instruction(&Instruction::I32Ne);
+                exit_code_on_stack = true;
+            } else if main_returns_value {
                 start.instruction(&Instruction::Drop);
             }
         }
-        if start_returns_i32 {
+        if start_returns_i32 && !exit_code_on_stack {
             start.instruction(&Instruction::I32Const(0));
         }
         start.instruction(&Instruction::End);
@@ -6717,6 +6784,48 @@ fn emit_user_types(
                 },
                 wasm_encoder::FieldType {
                     element_type: wasm_encoder::StorageType::Val(hashes_ref),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Concrete(slots.diff),
+                        },
+                    )),
+                    mutable: true,
+                },
+            ]),
+        ));
+        // One bucket of an older version: the version it leads to, the
+        // bucket, and the key, value and hash that bucket held before the
+        // newer version wrote over it (see `maps.rs`).
+        entries.push((
+            slots.diff,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::Ref(
+                        wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Concrete(slots.map),
+                        },
+                    )),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(key_storage_val),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(v_val),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
                     mutable: true,
                 },
             ]),
@@ -10561,6 +10670,7 @@ fn emit_factory_map_string_list_string_empty(
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         slots.hashes_array,
     )));
+    super::maps::emit_no_diff(&mut f, slots);
     f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -10812,6 +10922,13 @@ fn emit_handler_wrapper(
         field_index: 2,
     });
     f.instruction(&Instruction::LocalSet(9));
+    let headers_reroot = fn_map
+        .map_helpers_lookup("Map<String,List<String>>")
+        .ok_or(WasmGcError::Validation(
+            "aver_http_handle wrapper requires the Map<String,List<String>> helpers".into(),
+        ))?
+        .reroot;
+    super::maps::emit_reroot_local(&mut f, map_slots.map, headers_reroot, 9);
 
     // Read map cap + arrays into iteration slots.
     f.instruction(&Instruction::LocalGet(9));

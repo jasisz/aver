@@ -1966,11 +1966,34 @@ pub(crate) fn emit_mir_result_from_option(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
+/// With a `Map` argument of `arg`'s type on the stack, make it the current
+/// version of its map (`maps/versions.rs`). A host import reads the map's
+/// buckets directly and cannot do it itself. Any other type is left alone.
+pub(crate) fn emit_map_arg_current(
+    func: &mut Function,
+    arg: &Spanned<MirExpr>,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let aver = aver_type_str_of(arg);
+    let canonical: String = aver.chars().filter(|c| !c.is_whitespace()).collect();
+    if !canonical.starts_with("Map<") {
+        return Ok(());
+    }
+    let helpers = ctx
+        .fn_map
+        .map_helpers_lookup(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "a `{aver}` argument crosses to the host but no Map helpers are registered for it"
+        )))?;
+    func.instruction(&Instruction::Call(helpers.reroot));
+    Ok(())
+}
+
 /// Mirror of `emit_map_kv_call`: the `Map.*` methods dispatch to the
 /// per-`Map<K,V>` helpers (`fn_map.map_helpers_lookup`). `has` reuses
-/// the `get_pair` helper and drops the value; `set` picks `set_in_place`
-/// vs the clone-on-write `set` by `mir_arg_uniquely_owned` (the MIR
-/// analogue of the oracle's `arg_uniquely_owned`). The canonical comes
+/// the `get_pair` helper and drops the value. `set` and `remove` need no
+/// ownership fact: they write in place and leave the map they were given
+/// valid as an older version (`maps/versions.rs`). The canonical comes
 /// from the map arg's stamped type; every arg recurses `emit_mir_expr`.
 pub(crate) fn emit_mir_map_builtin(
     func: &mut Function,
@@ -2062,13 +2085,7 @@ pub(crate) fn emit_mir_map_builtin(
                 "Map.{method}: map argument has type `{map_aver}` but no helpers are registered"
             )))?;
         match method {
-            "set" => {
-                if mir_arg_uniquely_owned(&args[0], ctx) {
-                    helpers.set_in_place
-                } else {
-                    helpers.set
-                }
-            }
+            "set" => helpers.set,
             "get" => helpers.get,
             "len" => helpers.len,
             "keys" => helpers.keys,

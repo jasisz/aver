@@ -187,7 +187,10 @@ pub(super) fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenCont
             .params
             .iter()
             .take(arg_count)
-            .map(|(_, ty)| should_borrow_param(ty))
+            .enumerate()
+            .map(|(i, (_, ty))| {
+                should_borrow_param(ty) && !super::from_mir::mutual_param_by_value(ctx, fn_id, i)
+            })
             .collect()
     };
 

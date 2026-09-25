@@ -701,6 +701,7 @@ pub(super) fn compute_owned_record_params(
     let Some(program) = ctx.mir_program.as_ref() else {
         return owned;
     };
+    owned.extend(mutual_tco_value_params(ctx));
     let mut candidates: Vec<(crate::ir::FnId, Vec<usize>)> = Vec::new();
     for (id, mir_fn) in program.iter() {
         let Some(resolved) = ctx.resolved_program.fn_by_id(*id) else {
@@ -772,6 +773,59 @@ pub(super) fn compute_owned_record_params(
         }
     }
     owned
+}
+
+/// Which params of each mutual tail-call member its wrapper takes by value.
+///
+/// Every arm of the trampoline holds its params by value, so a wrapper that
+/// borrows a record or collection has to clone it into the trampoline's
+/// state, and while the caller's copy lives every in-place update of a Map
+/// in it copies the Map. Taken by value, a caller at its last use moves the
+/// value in and nothing is cloned; a caller that keeps it clones at the call
+/// instead of in the wrapper, which costs the same. The group's invariants
+/// (params every member hands on unchanged) stay borrowed: the trampoline
+/// reads them through `&T` for the whole run and never needs its own copy.
+fn mutual_tco_value_params(ctx: &CodegenContext) -> HashMap<crate::ir::FnId, Vec<bool>> {
+    let members: Vec<&crate::ir::hir::ResolvedFnDef> = ctx
+        .mutual_tco_members
+        .iter()
+        .filter_map(|id| ctx.resolved_program.fn_by_id(*id))
+        .collect();
+    let mut out = HashMap::new();
+    for group in crate::call_graph::tailcall_scc_components_resolved(&members) {
+        let invariants = super::toplevel::compute_resolved_rc_params(&group);
+        let invariant_names: HashSet<&str> = invariants
+            .iter()
+            .filter_map(|&i| group[0].params.get(i).map(|(name, _)| name.as_str()))
+            .collect();
+        for fd in &group {
+            let by_value = fd
+                .params
+                .iter()
+                .map(|(name, ty)| {
+                    should_borrow_param(ty) && !invariant_names.contains(name.as_str())
+                })
+                .collect();
+            out.insert(fd.fn_id, by_value);
+        }
+    }
+    out
+}
+
+/// Whether mutual tail-call member `fn_id` takes param `index`, which would
+/// otherwise be borrowed, by value (see [`mutual_tco_value_params`]).
+pub(super) fn mutual_param_by_value(
+    ctx: &CodegenContext,
+    fn_id: crate::ir::FnId,
+    index: usize,
+) -> bool {
+    ctx.mutual_tco_members.contains(&fn_id)
+        && ctx
+            .rust_owned_record_params
+            .get(&fn_id)
+            .and_then(|params| params.get(index))
+            .copied()
+            .unwrap_or(false)
 }
 
 /// What [`consumes_local`] reads besides the expression: the by-value
@@ -2350,7 +2404,8 @@ fn adapt_first_class_fn_ref(name: &str, static_ref: String, ctx: &MirEmitCtx<'_>
     let borrow_mask: Vec<bool> = resolved
         .params
         .iter()
-        .map(|(_, ty)| should_borrow_param(ty))
+        .enumerate()
+        .map(|(i, (_, ty))| should_borrow_param(ty) && !mutual_param_by_value(cg, fn_id, i))
         .collect();
     if !borrow_mask.iter().any(|borrowed| *borrowed) {
         return static_ref;
@@ -3669,6 +3724,22 @@ fn emit_mir_tail_value(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<
     Some(materialize_owned(code, &expr.node, ctx))
 }
 
+/// The value of one `let` statement in a loop or trampoline body. A named
+/// binding owns its value, so it goes through [`emit_mir_binding_value`]
+/// like every other binding: a field read moves only where `field_moves`
+/// allows it and clones otherwise, so a record the chain reads a field of
+/// stays whole for its later reads and updates. A bare `Int` binding and a
+/// discarded value render as they are.
+fn emit_mir_statement_value(
+    let_node: &crate::ir::mir::MirLet,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    if let_node.binding_name.is_empty() || ctx.bare.is_bare(let_node.binding) {
+        return emit_mir_expr(&let_node.value, ctx);
+    }
+    emit_mir_binding_value(&let_node.value, ctx)
+}
+
 /// Emit a `let` binding's value as an OWNED value.
 ///
 /// Naming a read of a borrowed param does not change what a function may do
@@ -4081,7 +4152,7 @@ fn emit_mir_tco_body(
     let mut current = body;
     while let MirExpr::Let(spanned_let) = &current.node {
         let let_node = &spanned_let.node;
-        let value = emit_mir_expr(&let_node.value, ctx)?;
+        let value = emit_mir_statement_value(let_node, ctx)?;
         if let_node.binding_name.is_empty() {
             lines.push(format!("        {};", value));
         } else {
@@ -4378,6 +4449,10 @@ pub(super) fn emit_mir_mutual_tco_block(
         // explicit restricted tags rather than the pre-rewrite whole-function
         // facts so match subjects and their literals agree on `i64`.
         policy.apply_rewritten_bare_i64(mir_fn, ctx);
+        // Each arm binds its params by value, so a field read may move out
+        // of one exactly as in any other body; the arm's updates then see
+        // which records gave a field up.
+        policy.apply_field_moves(mir_fn);
         let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
         // Mutual invariants are `rc_wrapped` for owning reads, but unlike
         // self-TCO's `Arc<T>` representation they are extra `&T` trampoline
@@ -4453,14 +4528,18 @@ pub(super) fn emit_mir_mutual_tco_block(
     for fd in group_fns {
         let fn_name = aver_name_to_rust(&fd.name);
         let variant = fn_name_to_variant(&fd.name);
-        let params = emit_resolved_fn_params(&fd.params, ctx, scope);
+        let by_value: Vec<bool> = (0..fd.params.len())
+            .map(|i| mutual_param_by_value(ctx, fd.fn_id, i))
+            .collect();
+        let params = emit_resolved_fn_params(&fd.params, &by_value, ctx, scope);
         let variant_arg_names: Vec<String> = fd
             .params
             .iter()
-            .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(name, ty)| {
+            .enumerate()
+            .filter(|(_, (name, _))| !rc_names.contains(name))
+            .map(|(i, (name, ty))| {
                 let rust_name = aver_name_to_rust(name);
-                if should_borrow_param(ty) {
+                if should_borrow_param(ty) && !by_value[i] {
                     format!("{}.clone()", rust_name)
                 } else {
                     rust_name
@@ -4539,16 +4618,20 @@ fn mutual_rc_param_sig(
     }
 }
 
+/// A mutual tail-call wrapper's params: borrowed by default, by value where
+/// `by_value` says so.
 fn emit_resolved_fn_params(
     params: &[(String, crate::types::Type)],
+    by_value: &[bool],
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
     params
         .iter()
-        .map(|(name, ty)| {
+        .enumerate()
+        .map(|(i, (name, ty))| {
             let rust_type = super::types::type_to_rust_scoped(ty, ctx, scope);
-            if should_borrow_param(ty) {
+            if should_borrow_param(ty) && !by_value.get(i).copied().unwrap_or(false) {
                 format!("{}: &{rust_type}", explicit_parameter_pattern(name, false))
             } else {
                 format!("{}: {rust_type}", explicit_parameter_pattern(name, false))
@@ -4575,7 +4658,7 @@ fn emit_mir_trampoline_body(
     let mut current = body;
     while let MirExpr::Let(spanned_let) = &current.node {
         let let_node = &spanned_let.node;
-        let value = emit_mir_expr(&let_node.value, ctx)?;
+        let value = emit_mir_statement_value(let_node, ctx)?;
         if let_node.binding_name.is_empty() {
             // Discarded intermediate (`Stmt::Expr` / `_ = effect()`)
             // — bare statement, result dropped.

@@ -63,6 +63,16 @@ fn run(name: &str, target: &[&str], program_args: &[&str]) -> Result<String, Str
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// The wasm targets this build can run: wasm-gc always, wasip2 only when the
+/// `wasip2` feature is on (the wasm-gc CI job builds without it).
+fn wasm_targets() -> Vec<&'static [&'static str]> {
+    let mut targets: Vec<&'static [&'static str]> = vec![&["--wasm-gc"]];
+    if cfg!(feature = "wasip2") {
+        targets.push(&["--wasip2"]);
+    }
+    targets
+}
+
 fn target_name(target: &[&str]) -> &'static str {
     match target.first() {
         Some(&"--wasm-gc") => "wasm-gc",
@@ -618,4 +628,128 @@ fn one_recording(dir: &Path) -> Result<PathBuf, String> {
         1 => Ok(sessions.remove(0)),
         other => Err(format!("expected exactly one recording, found {other}")),
     }
+}
+
+// ── Waits keyed by a type of the program's own beside the loop ──────────
+
+/// The generated loop keys its wait by `Int`, and the program's own waits,
+/// in the entry and in a dependency, are keyed by a sum. Both wasm targets
+/// run both paths and do the same work as the VM. The jobs land in whatever
+/// order they finish, so the lines are compared as a multiset. The second
+/// fixture also matches the waits' answers with nested patterns, in the entry
+/// and in a dependency function that waits.
+#[test]
+fn waits_keyed_by_a_sum_beside_the_generated_loop_match_the_vm_on_both_wasm_targets() {
+    for name in ["run_wait_own_key", "run_wait_own_key_nested"] {
+        for target in wasm_targets() {
+            for args in [&[][..], &["manual"][..]] {
+                let vm = run(name, &[], args).unwrap_or_else(|error| panic!("{error}"));
+                let wasm = run(name, target, args).unwrap_or_else(|error| panic!("{error}"));
+                same_lines(name, &vm, &wasm).unwrap_or_else(|error| panic!("{error}"));
+            }
+        }
+    }
+}
+
+// ── Run.fail ────────────────────────────────────────────────────────────
+
+/// `aver run <fixture> [target] [program args]`, whatever it exits with.
+fn run_any(name: &str, target: &[&str], extra: &[&str]) -> std::process::Output {
+    let dir = fixture(name);
+    Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("run")
+        .arg(dir.join("main.av"))
+        .arg("--module-root")
+        .arg(&dir)
+        .args(target)
+        .args(extra)
+        .output()
+        .expect("expected `aver run` to execute")
+}
+
+/// A turn that calls `Run.fail` ends the run on both wasm targets the way it
+/// ends on the VM: the same turns, then an exit status that fails and the
+/// first reason on stderr. The module keeps the reason in a global of its own,
+/// and a component's generated `main` writes it to stderr itself.
+#[test]
+fn run_fail_ends_the_run_as_the_vm_does_on_both_wasm_targets() {
+    let vm = run_any("run_fail", &[], &[]);
+    assert!(!vm.status.success(), "{}", format_output(&vm));
+    for target in wasm_targets() {
+        let wasm = run_any("run_fail", target, &[]);
+        assert!(
+            !wasm.status.success(),
+            "{}: a failed run exited zero:\n{}",
+            target_name(target),
+            format_output(&wasm)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&vm.stdout),
+            String::from_utf8_lossy(&wasm.stdout),
+            "{}",
+            target_name(target)
+        );
+        assert!(
+            String::from_utf8_lossy(&wasm.stderr).contains("first gave up in turn 3"),
+            "{}: {}",
+            target_name(target),
+            format_output(&wasm)
+        );
+        for mode in ["late", "quit"] {
+            let vm = run("run_fail_answer", &[], &[mode]).unwrap_or_else(|error| panic!("{error}"));
+            let wasm =
+                run("run_fail_answer", target, &[mode]).unwrap_or_else(|error| panic!("{error}"));
+            assert_eq!(
+                vm,
+                wasm,
+                "run_fail_answer {mode} on {}",
+                target_name(target)
+            );
+        }
+    }
+}
+
+/// A failed run recorded on either the VM or wasm-gc replays on the other:
+/// both write `Run.fail` and the loop's `Run.failure` readings into the same
+/// entries, and the replay answers the same `Err`.
+#[test]
+fn a_failed_run_recording_interchanges_between_the_vm_and_wasm_gc() {
+    let ws = temp_dir("run-fail-interchange");
+    let result = (|| -> Result<(), String> {
+        for (recorded_on, replayed_on) in
+            [(&[][..], &["--wasm-gc"][..]), (&["--wasm-gc"][..], &[][..])]
+        {
+            let dir = ws.join(target_name(recorded_on).replace(' ', "-"));
+            fs::create_dir_all(&dir).expect("create recordings dir");
+            let mut target = recorded_on.to_vec();
+            target.extend(["--record", dir.to_str().expect("utf-8 scratch path")]);
+            let out = run_any("run_fail", &target, &[]);
+            if out.status.success() {
+                return Err(format!(
+                    "a failed run exited zero:\n{}",
+                    format_output(&out)
+                ));
+            }
+            let text = fs::read_to_string(one_recording(&dir)?)
+                .map_err(|error| format!("cannot read the recording: {error}"))?;
+            if !text.contains("\"Run.fail\"") || !text.contains("\"Run.failure\"") {
+                return Err(format!(
+                    "the recording made on {} does not carry the failure:\n{text}",
+                    target_name(recorded_on)
+                ));
+            }
+            let report = replay(&dir, replayed_on)?;
+            if !report.contains("Output:  MATCH") {
+                return Err(format!(
+                    "a failed run recorded on {} did not replay on {}:\n{report}",
+                    target_name(recorded_on),
+                    target_name(replayed_on)
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
 }

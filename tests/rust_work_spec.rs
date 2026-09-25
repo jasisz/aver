@@ -446,7 +446,7 @@ fn an_answer_modules_state_reaches_its_answer_function_uniquely_owned() {
             "pub fn __serve(mut run @ _: __Run,",
             "pub fn __serveTicker(mut run @ _: __Run,",
             "pub fn __takeOwner(mut run @ _: __Run)",
-            "let (__rest, __held) = __takeOwner(run);",
+            "let (__held, __rest) = __takeOwner(run);",
             "crate::aver_generated::owner::bump(__taken, __a0)",
         ] {
             if !entry.contains(by_value) {
@@ -502,6 +502,144 @@ fn a_record_gives_up_its_fields_at_its_last_use() {
                     "{name}: the record no longer gives up its fields at its last use; missing `{moved}` in:\n{entry}"
                 ));
             }
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// A record handed to a pair of functions that tail-call each other moves
+/// into the trampoline instead of being cloned by the wrapper.
+///
+/// `turns` calls `pump` once per turn with its pool at its last use. The
+/// wrapper used to borrow the pool and clone it into the trampoline's state,
+/// so while `turns` still held its copy the first `Map.set` in the group
+/// copied the whole Map, once per turn.
+#[test]
+fn a_mutual_tail_call_member_takes_a_record_by_value() {
+    let name = "rust_mutual_tco_by_value";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["2000", "300"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for expected in [
+            "pub fn pump(pool @ _: Pool, key @ _: aver_rt::AverInt, left @ _: aver_rt::AverInt) -> Pool {\n    __mutual_tco_trampoline_1(__MutualTco1::Pump(pool, key, left))",
+            "pub fn pumped(pool @ _: Pool,",
+            "let __tco0 = pump(pool, ",
+        ] {
+            if !entry.contains(expected) {
+                return Err(format!(
+                    "{name}: missing `{expected}` in the generated entry module:\n{entry}"
+                ));
+            }
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// An update of `setting.window` inside the update of `setting` that replaces
+/// it moves what it keeps: the Map moves into `Map.set` and the rest of the
+/// window into the new `Window`, so no insert copies the Map. With the old
+/// window read after the update, both are cloned instead.
+#[test]
+fn a_nested_update_moves_the_rest_of_the_inner_record() {
+    let name = "rust_nested_update_moves";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["3000"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for expected in [
+            "Setting { window: Window { created: setting.window.created.insert_owned(left.clone(), left.clone()), ..setting.window }, height: setting.height.add(",
+            "Window { created: setting.window.created.clone().insert_owned(left.clone(), left.clone()), ..setting.window.clone() }, &setting.window, left)",
+        ] {
+            if !entry.contains(expected) {
+                return Err(format!(
+                    "{name}: missing `{expected}` in the generated entry module:\n{entry}"
+                ));
+            }
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// An update that replaces a field read earlier builds, and the read moves.
+///
+/// `progress = flight.progress` followed by
+/// `Flight.update(flight, progress = grow(progress, key))` moved the field
+/// out in the `let` of a mutual tail-call arm and then moved the whole
+/// `flight` into the update, which rustc rejects (E0382). The arm now sees
+/// the same field-move facts as any other body, so the update keeps the
+/// other fields with `..flight`. The field read inside the update
+/// (`grow(flight.progress, ...)`) and the one bound by a `let` both move into
+/// `grow`, which then takes its Map by value and inserts in place. A loop
+/// that reads a field and later hands on the whole record clones the field.
+#[test]
+fn an_update_after_a_field_read_of_the_replaced_field_builds_and_moves() {
+    let name = "rust_update_after_field_move";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["300"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for moved in [
+            "pub fn grow(mut progress @ _: aver_rt::AverMap<",
+            "let progress @ _ = flight.progress;\n",
+            "__MutualTco1::Pong(Flight { progress: grow(progress, left.clone()), ..flight }",
+            "__MutualTco1::Ping(Flight { progress: grow(flight.progress, ",
+            "Flight { progress: grow(progress, key), ..flight }",
+            "Flight { progress: grow(flight.progress, key), ..flight }",
+            "let progress @ _ = flight.progress.clone();",
+        ] {
+            if !entry.contains(moved) {
+                return Err(format!(
+                    "{name}: missing `{moved}` in the generated entry module:\n{entry}"
+                ));
+            }
+        }
+        if entry.contains("let mut __updated = flight; __updated.progress") {
+            return Err(format!(
+                "{name}: an update moves a record whose field was already moved out:\n{entry}"
+            ));
         }
         let vm = run_vm_with(name, &args)?;
         let bin = cargo_build(&project, name)?;
@@ -1070,3 +1208,98 @@ mod map_replay_regression {
 
 #[path = "rust_work_spec/native_transfer.rs"]
 mod native_transfer;
+
+/// A program whose generated loop keys its wait by `Int` and whose own waits
+/// are keyed by a sum, in the entry and in a dependency, compiles to Rust and
+/// does the same work as the VM on both of its paths: the loop, and the two
+/// jobs it collects by hand. The jobs land in whatever order they finish, so
+/// the lines are compared as a multiset. The second fixture also matches the
+/// waits' answers with nested patterns, in the entry and in a dependency
+/// function that waits.
+#[test]
+fn waits_keyed_by_a_sum_beside_the_generated_loop_match_the_vm() {
+    for name in ["run_wait_own_key", "run_wait_own_key_nested"] {
+        let ws = temp_dir(name);
+        let project = ws.join("project");
+        fs::create_dir_all(&project).expect("create project dir");
+        let result = (|| -> Result<(), String> {
+            compile_rust(name, &project, name, &[])?;
+            let bin = cargo_build(&project, name)?;
+            for args in [&[][..], &["manual"][..]] {
+                let vm = run_vm_with(name, args)?;
+                let rust = run_binary_with(&bin, args)?;
+                same_lines(name, &vm, &rust)?;
+            }
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&ws);
+        result.unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+// ── Run.fail ────────────────────────────────────────────────────────────
+
+/// A run that a turn failed ends the same way on the Rust backend as on the
+/// VM: the same turns, the first reason of the failing turn, and a binary
+/// that exits non-zero with that reason on stderr. The answer-module form,
+/// where the failure and the entry's `stop` meet in one turn, answers the
+/// failure from `Run.all()` on both.
+#[test]
+fn run_fail_ends_the_run_as_the_vm_does() {
+    let vm = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("run")
+        .arg(fixture("run_fail").join("main.av"))
+        .arg("--module-root")
+        .arg(fixture("run_fail"))
+        .output()
+        .expect("expected `aver run` to execute");
+    assert!(!vm.status.success(), "{}", format_output(&vm));
+
+    let ws = temp_dir("run_fail");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust("run_fail", &project, "run_fail", &[])?;
+        let bin = cargo_build(&project, "run_fail")?;
+        let rust = Command::new(&bin)
+            .output()
+            .map_err(|error| format!("failed to run {}: {error}", bin.display()))?;
+        if rust.status.success() {
+            return Err(format!(
+                "a failed run exited zero:\n{}",
+                format_output(&rust)
+            ));
+        }
+        if rust.stdout != vm.stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{}\n--- Rust ---\n{}",
+                format_output(&vm),
+                format_output(&rust)
+            ));
+        }
+        if !String::from_utf8_lossy(&rust.stderr).contains("first gave up in turn 3") {
+            return Err(format!(
+                "the reason is not on stderr:\n{}",
+                format_output(&rust)
+            ));
+        }
+
+        let answering = ws.join("answering");
+        fs::create_dir_all(&answering).expect("create project dir");
+        compile_rust("run_fail_answer", &answering, "run_fail_answer", &[])?;
+        let bin = cargo_build(&answering, "run_fail_answer")?;
+        for mode in ["late", "quit"] {
+            let vm = run_vm_with("run_fail_answer", &[mode])?;
+            let rust = run_binary_with(&bin, &[mode])?;
+            if vm != rust {
+                return Err(format!(
+                    "run_fail_answer {mode}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}

@@ -17,17 +17,182 @@ fn fn_needs_desc(f: &FnDef) -> bool {
 /// Missing verify warning policy:
 /// - skip `main`
 /// - skip effectful functions (covered either by Oracle trace/laws or replay)
+/// - skip functions no verify case can call, because a parameter takes only
+///   values that contain a capability resource (see [`Unwritable`])
 /// - skip trivial pure pass-through wrappers
 /// - skip trivial single-expression bodies without branching/arithmetic
 /// - require verify for the rest (pure, non-trivial logic)
-fn fn_needs_verify(f: &FnDef) -> bool {
+fn fn_needs_verify(f: &FnDef, unwritable: &Unwritable<'_>, sigs: Option<&FnSigMap>) -> bool {
     if f.name == "main" {
         return false;
     }
     if !f.effects.is_empty() {
         return false;
     }
+    if unwritable.any_param(f, sigs) {
+        return false;
+    }
     !is_trivial_passthrough_wrapper(f) && !is_trivial_body(f)
+}
+
+/// Which parameter types no verify case can supply a value of.
+///
+/// A capability resource (`Tcp.Connection`, `Work.Job`, a job kind's handle)
+/// is minted only by its provider. It has no constructor, no literal and no
+/// `given` domain, so no source expression denotes one. A function that
+/// needs one as an argument cannot be called from a verify case at all, so
+/// requiring a verify block of it asks for something that cannot be written.
+/// The same holds for any type every value of which carries a resource: a
+/// tuple with such a component, a `Result` both of whose sides are such
+/// types, and a record or sum of this module whose every constructor has
+/// such a field. `Option`, `List`, `Map` and `Vector` always have an empty
+/// value, so a parameter of those types can still be written and the
+/// function still needs its verify block. A capability's own record or sum
+/// (`Tcp.Socket`, `Wait.Item`) is looked into the same way. A record or sum
+/// of another ordinary module is not looked into and counts as writable.
+struct Unwritable<'a> {
+    resources: std::collections::HashSet<&'a str>,
+    module: Option<&'a str>,
+    local_types: std::collections::HashMap<&'a str, &'a TypeDef>,
+    capabilities: Option<&'a crate::capability::CapabilityRegistry>,
+}
+
+impl<'a> Unwritable<'a> {
+    fn new(
+        items: &'a [TopLevel],
+        module: Option<&'a str>,
+        capabilities: Option<&'a crate::capability::CapabilityRegistry>,
+    ) -> Self {
+        let resources = capabilities
+            .into_iter()
+            .flat_map(|registry| registry.resource_types())
+            .map(String::as_str)
+            .collect();
+        let local_types = items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::TypeDef(def @ TypeDef::Sum { name, .. })
+                | TopLevel::TypeDef(def @ TypeDef::Product { name, .. }) => {
+                    Some((name.as_str(), def))
+                }
+                _ => None,
+            })
+            .collect();
+        Self {
+            resources,
+            module,
+            local_types,
+            capabilities,
+        }
+    }
+
+    /// Does `f` take a parameter no verify case can write? Reads the
+    /// checker's resolved parameter types when there are any, else parses
+    /// the annotations as written.
+    fn any_param(&self, f: &FnDef, sigs: Option<&FnSigMap>) -> bool {
+        if self.resources.is_empty() {
+            return false;
+        }
+        match sigs.and_then(|sigs| sigs.get(&f.name)) {
+            Some((params, _, _)) if params.len() == f.params.len() => params
+                .iter()
+                .any(|ty| self.type_is_unwritable(ty, None, &mut Vec::new())),
+            _ => f.params.iter().any(|(_, annotation)| {
+                self.type_is_unwritable(
+                    &crate::types::parse_type_str(annotation),
+                    None,
+                    &mut Vec::new(),
+                )
+            }),
+        }
+    }
+
+    /// `owner` is the capability whose own type is being looked into: a
+    /// field it spells without a module (`Listener`) is that capability's.
+    fn type_is_unwritable(
+        &self,
+        ty: &crate::types::Type,
+        owner: Option<&str>,
+        visiting: &mut Vec<String>,
+    ) -> bool {
+        use crate::types::Type;
+        match ty {
+            Type::Named { name, .. } => match owner {
+                Some(owner) if !name.contains('.') => {
+                    self.named_is_unwritable(&format!("{owner}.{name}"), visiting)
+                }
+                _ => self.named_is_unwritable(name, visiting),
+            },
+            Type::Tuple(items) => items
+                .iter()
+                .any(|item| self.type_is_unwritable(item, owner, visiting)),
+            Type::Result(ok, err) => {
+                self.type_is_unwritable(ok, owner, visiting)
+                    && self.type_is_unwritable(err, owner, visiting)
+            }
+            _ => false,
+        }
+    }
+
+    fn named_is_unwritable(&self, name: &str, visiting: &mut Vec<String>) -> bool {
+        if self.resources.contains(name)
+            || self
+                .module
+                .is_some_and(|module| self.resources.contains(format!("{module}.{name}").as_str()))
+        {
+            return true;
+        }
+        let bare = match self.module {
+            Some(module) => name
+                .strip_prefix(module)
+                .and_then(|rest| rest.strip_prefix('.'))
+                .unwrap_or(name),
+            None => name,
+        };
+        // A type of this module, or a capability's own type such as
+        // `Tcp.Socket`, looked into by the same rule.
+        let (key, def, owner) = if let Some(def) = self.local_types.get(bare) {
+            (bare.to_string(), *def, None)
+        } else if let Some((owner, def)) = self.capabilities.and_then(|registry| {
+            let (owner, _) = name.rsplit_once('.')?;
+            Some((owner, registry.boundary_type(name)?))
+        }) {
+            (name.to_string(), def, Some(owner))
+        } else {
+            return false;
+        };
+        // A type met again while it is being examined is assumed writable,
+        // so a recursive type never exempts a function by itself.
+        if visiting.contains(&key) {
+            return false;
+        }
+        visiting.push(key);
+        let unwritable = match def {
+            TypeDef::Product { fields, .. } => fields
+                .iter()
+                .any(|(_, field)| self.field_is_unwritable(field, owner, visiting)),
+            TypeDef::Sum { variants, .. } => {
+                !variants.is_empty()
+                    && variants.iter().all(|variant| {
+                        variant
+                            .fields
+                            .iter()
+                            .any(|field| self.field_is_unwritable(field, owner, visiting))
+                    })
+            }
+        };
+        visiting.pop();
+        unwritable
+    }
+
+    fn field_is_unwritable(
+        &self,
+        annotation: &str,
+        owner: Option<&str>,
+        visiting: &mut Vec<String>,
+    ) -> bool {
+        self.type_is_unwritable(&crate::types::parse_type_str(annotation), owner, visiting)
+    }
 }
 
 /// A function body is trivial when it is a single expression that contains
@@ -307,6 +472,18 @@ pub fn check_module_intent_with_sigs_in(
     fn_sigs: Option<&FnSigMap>,
     source_file: Option<&str>,
 ) -> ModuleCheckFindings {
+    check_module_intent_with_capabilities_in(items, fn_sigs, None, source_file)
+}
+
+/// [`check_module_intent_with_sigs_in`] that also knows the program's
+/// capability resources, so a function taking one is not asked for a verify
+/// block no case could call (see [`Unwritable`]).
+pub fn check_module_intent_with_capabilities_in(
+    items: &[TopLevel],
+    fn_sigs: Option<&FnSigMap>,
+    capabilities: Option<&crate::capability::CapabilityRegistry>,
+    source_file: Option<&str>,
+) -> ModuleCheckFindings {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
     let declared_symbols = collect_declared_symbols(items);
@@ -332,6 +509,11 @@ pub fn check_module_intent_with_sigs_in(
             None
         }
     });
+    let module_decl_name = items.iter().find_map(|item| match item {
+        TopLevel::Module(m) => Some(m.name.as_str()),
+        _ => None,
+    });
+    let unwritable = Unwritable::new(items, module_decl_name, capabilities);
 
     // Aver files are module-scoped. A file with top-level declarations
     // (fn, type, verify, decision) but no `module Name` header is not
@@ -602,7 +784,7 @@ pub fn check_module_intent_with_sigs_in(
                         }
                     }
                 }
-                if fn_needs_verify(f)
+                if fn_needs_verify(f, &unwritable, fn_sigs)
                     && !verified_fns.contains(f.name.as_str())
                     && !spec_fns.contains(&f.name)
                     && !empty_verify_fns.contains(f.name.as_str())

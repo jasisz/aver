@@ -27,7 +27,7 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::ParseIdentPatternDotted(nextPos, name)
         },
         crate::aver_generated::domain::token::Token::TkLParen => {
-            return crate::aver_generated::domain::parser_match::parseConstructorPatternBindings(&*tokens, nextPos, name, &aver_rt::AverList::empty())
+            return crate::aver_generated::domain::parser_match::parseConstructorPatternBindings(&*tokens, nextPos, name, aver_rt::AverList::empty())
         },
         _ => {
             if name.contains(".") { return Ok((crate::aver_generated::domain::ast::Pattern::PatConstructor(name, aver_rt::AverList::empty()), pos)) } else { return Ok((crate::aver_generated::domain::ast::Pattern::PatVar(name), pos)) }
@@ -162,7 +162,7 @@ pub fn parseConstructorPatternBindings(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    acc @ _: &aver_rt::AverList<AverStr>,
+    acc @ _: aver_rt::AverList<AverStr>,
 ) -> Result<
     (
         crate::aver_generated::domain::ast::Pattern,
@@ -171,7 +171,7 @@ pub fn parseConstructorPatternBindings(
     AverStr,
 > {
     __mutual_tco_trampoline_2(
-        __MutualTco2::ParseConstructorPatternBindings(pos, name, acc.clone()),
+        __MutualTco2::ParseConstructorPatternBindings(pos, name, acc),
         &tokens,
     )
 }
@@ -181,7 +181,7 @@ pub fn parseConstructorPatternTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
     name @ _: AverStr,
-    acc @ _: &aver_rt::AverList<AverStr>,
+    acc @ _: aver_rt::AverList<AverStr>,
 ) -> Result<
     (
         crate::aver_generated::domain::ast::Pattern,
@@ -190,7 +190,7 @@ pub fn parseConstructorPatternTail(
     AverStr,
 > {
     __mutual_tco_trampoline_2(
-        __MutualTco2::ParseConstructorPatternTail(pos, name, acc.clone()),
+        __MutualTco2::ParseConstructorPatternTail(pos, name, acc),
         &tokens,
     )
 }
@@ -273,7 +273,7 @@ fn __mutual_tco_trampoline_3(
 pub fn parseTuplePatternElements(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
 ) -> Result<
     (
         crate::aver_generated::domain::ast::Pattern,
@@ -281,17 +281,14 @@ pub fn parseTuplePatternElements(
     ),
     AverStr,
 > {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::ParseTuplePatternElements(pos, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_3(__MutualTco3::ParseTuplePatternElements(pos, acc), &tokens)
 }
 
 /// Parse one pattern element and continue.
 pub fn parseTuplePatternElement(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
 ) -> Result<
     (
         crate::aver_generated::domain::ast::Pattern,
@@ -299,17 +296,14 @@ pub fn parseTuplePatternElement(
     ),
     AverStr,
 > {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::ParseTuplePatternElement(pos, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_3(__MutualTco3::ParseTuplePatternElement(pos, acc), &tokens)
 }
 
 /// After element: ',' for more or ')' to end.
 pub fn parseTuplePatternElementTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Pattern>,
 ) -> Result<
     (
         crate::aver_generated::domain::ast::Pattern,
@@ -318,7 +312,7 @@ pub fn parseTuplePatternElementTail(
     AverStr,
 > {
     __mutual_tco_trampoline_3(
-        __MutualTco3::ParseTuplePatternElementTail(pos, acc.clone()),
+        __MutualTco3::ParseTuplePatternElementTail(pos, acc),
         &tokens,
     )
 }
@@ -449,18 +443,18 @@ fn __mutual_tco_trampoline_5(
 pub fn parseParamList(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<AverStr>,
+    acc @ _: aver_rt::AverList<AverStr>,
 ) -> Result<(aver_rt::AverList<AverStr>, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_5(__MutualTco5::ParseParamList(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_5(__MutualTco5::ParseParamList(pos, acc), &tokens)
 }
 
 /// After a param name: ',' for more or ')' to end.
 pub fn parseParamListTail(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<AverStr>,
+    acc @ _: aver_rt::AverList<AverStr>,
 ) -> Result<(aver_rt::AverList<AverStr>, aver_rt::AverInt), AverStr> {
-    __mutual_tco_trampoline_5(__MutualTco5::ParseParamListTail(pos, acc.clone()), &tokens)
+    __mutual_tco_trampoline_5(__MutualTco5::ParseParamListTail(pos, acc), &tokens)
 }
 
 /// Token at position, or TkEof if past end.
@@ -690,7 +684,7 @@ pub fn parseTuplePattern(
     crate::aver_generated::domain::parser_match::parseTuplePatternElements(
         tokens,
         pos,
-        &aver_rt::AverList::empty(),
+        aver_rt::AverList::empty(),
     )
 }
 

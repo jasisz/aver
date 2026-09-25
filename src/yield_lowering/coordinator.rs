@@ -30,13 +30,20 @@ mod host_driver;
 /// The fields the generated run table writes itself. An answer module whose
 /// name would take one of them is refused rather than generating a record
 /// with the field declared twice.
-const RUN_FIELDS: [&str; 7] = [
-    "slots", "versions", "late", "dropped", "stopping", "now", "nextId",
+const RUN_FIELDS: [&str; 8] = [
+    "slots", "versions", "late", "dropped", "stopping", "now", "nextId", "failed",
 ];
 
 /// The operation the end of a run performs on a job a parked request waits
 /// on.
 const CANCEL: &str = "Work.cancel";
+
+/// The operation a process or an answer module ends the run with.
+const FAIL: &str = "Run.fail";
+
+/// The operation the loop reads the reason back with, once after it seats
+/// and once after every turn.
+const FAILURE: &str = "Run.failure";
 
 /// What the generator resolved about one answer module.
 struct Answer {
@@ -230,9 +237,23 @@ pub(super) fn generate(
             .flat_map(|(_, effects)| effects.seat.iter().cloned())
             .collect(),
     );
-    let turn_effects = turn_effect_list(&serve_effects, &family_effects, coordinator_stop);
-    let main_effects =
-        main_effect_list(&turn_effects, &process_effects, !plan.job_kinds.is_empty());
+    // The loop reads a failure back only when something it runs can give
+    // one: a program that never calls `Run.fail` from a process or an
+    // answer module keeps the loop it had, effects and bytes alike.
+    let fails = process_effects.iter().any(|process| {
+        process
+            .seat
+            .iter()
+            .chain(&process.serve)
+            .any(|effect| effect == FAIL)
+    });
+    let turn_effects = turn_effect_list(&serve_effects, &family_effects, coordinator_stop, fails);
+    let main_effects = main_effect_list(
+        &turn_effects,
+        &process_effects,
+        !plan.job_kinds.is_empty(),
+        fails,
+    );
     let source = write_loop(
         &procs,
         &answers,
@@ -244,6 +265,7 @@ pub(super) fn generate(
         &main_effects,
         coordinator_stop,
         !plan.job_kinds.is_empty(),
+        fails,
     );
     match parse_generated(&source) {
         Ok(items) => Ok(GeneratedLoop {
@@ -501,6 +523,7 @@ fn write_loop(
     main_effects: &[String],
     coordinator_stop: CoordinatorStop,
     cancels_waited: bool,
+    fails: bool,
 ) -> String {
     let mut out = String::new();
 
@@ -542,6 +565,9 @@ fn write_loop(
         }
     }
     out.push_str("    versions: Map<Int, Int>\n    late: Int\n    dropped: Int\n    stopping: Bool\n    now: Int\n    nextId: Int\n");
+    if fails {
+        out.push_str("    failed: Option<String>\n");
+    }
 
     out.push_str("\nfn __fresh() -> __Run\n    ? \"The run before anything has happened: nothing seated, every answer module at its own empty state.\"\n    __Run(slots = {}");
     for answer in answers {
@@ -558,15 +584,17 @@ fn write_loop(
             ));
         }
     }
-    out.push_str(
-        ", versions = {}, late = 0, dropped = 0, stopping = false, now = 0, nextId = 1)\n",
-    );
+    out.push_str(if fails {
+        ", versions = {}, late = 0, dropped = 0, stopping = false, now = 0, nextId = 1, failed = Option.None)\n"
+    } else {
+        ", versions = {}, late = 0, dropped = 0, stopping = false, now = 0, nextId = 1)\n"
+    });
     out.push_str("\nfn __asked(pending: __Process, seq: Int) -> __Slot\n    ? \"A slot whose request is to be asked in the next turn: a process just seated, or one whose last request was just answered.\"\n    __Slot(seq = seq, pending = pending, waiting = Run.Wake.Until([], Option.Some(0)), due = 0, ms = 0, owner = 0, version = 0)\n");
 
     // ── Handing a state out ────────────────────────────────────────
     for answer in answers {
         out.push_str(&format!(
-            "\nfn __take{0}(run: __Run) -> Tuple<__Run, Option<{1}>>\n    ? \"Hands the state of '{2}' out of the run and leaves none behind, so the answer function it goes to holds the only reference to it and can update it in place. The state comes back with the answer.\"\n    (__Run.update(run, {3} = Option.None), run.{3})\n",
+            "\nfn __take{0}(run: __Run) -> Tuple<Option<{1}>, __Run>\n    ? \"Hands the state of '{2}' out of the run and leaves none behind, so the answer function it goes to holds the only reference to it and can update it in place. The state is read first and the run is updated at its last use, so the run it came from gives up its other fields instead of still holding them. The state comes back with the answer.\"\n    (run.{3}, __Run.update(run, {3} = Option.None))\n",
             super::build::capitalize(&answer.field),
             answer.state,
             answer.module,
@@ -584,17 +612,32 @@ fn write_loop(
         .fold("__fresh()".to_string(), |inner, proc| {
             format!("__seat{}({inner})", proc.upper)
         });
-    let start_effects = sorted(
-        procs
-            .iter()
-            .zip(process_effects)
-            .flat_map(|(_, effects)| effects.seat.iter().cloned())
-            .collect(),
-    );
+    let mut start_effects: BTreeSet<String> = procs
+        .iter()
+        .zip(process_effects)
+        .flat_map(|(_, effects)| effects.seat.iter().cloned())
+        .collect();
+    let seated_at_start = if fails {
+        start_effects.insert(FAILURE.to_string());
+        format!("__failedAfter(__seatFamilies({unkeyed}))")
+    } else {
+        format!("__seatFamilies({unkeyed})")
+    };
     out.push_str(&format!(
-        "\nfn __start() -> __Run\n    ? \"Seats one of every process that takes no key, then every keyed process its answer module lists.\"\n{}    __seatFamilies({unkeyed})\n",
-        effects(&start_effects)
+        "\nfn __start() -> __Run\n    ? \"Seats one of every process that takes no key, then every keyed process its answer module lists{}.\"\n{}    {seated_at_start}\n",
+        if fails {
+            ", and reads whether seating them already failed the run"
+        } else {
+            ""
+        },
+        effects(&sorted(start_effects))
     ));
+    if fails {
+        out.push_str(&format!(
+            "\nfn __failedAfter(run: __Run) -> __Run\n    ? \"The run once a turn is over: the first reason a process or an answer module gave Run.fail, kept from the first turn that saw one.\"\n    ! [{FAILURE}]\n    match run.failed\n        Option.Some(_) -> run\n        Option.None -> __Run.update(run, failed = {FAILURE}())\n"
+        ));
+        out.push_str("\nfn __hasFailed(run: __Run) -> Bool\n    ? \"Whether some turn of this run called Run.fail.\"\n    match run.failed\n        Option.Some(_) -> true\n        Option.None -> false\n");
+    }
     let families = procs
         .iter()
         .filter(|proc| proc.keyed.is_some())
@@ -627,12 +670,12 @@ fn write_loop(
     out.push_str("\nfn __current(run: __Run, id: Int) -> Int\n    ? \"The instance number of the request one process is waiting on, or -1 when nothing is seated under that id.\"\n    match Map.get(run.slots, id)\n        Option.None -> 0 - 1\n        Option.Some(slot) -> slot.seq\n");
     out.push_str("\nfn __nextInstance(seq: Int) -> Int\n    ? \"The instance number an answer for the current one leaves behind. It rises, so the instance just answered can never be current again.\"\n    seq + 1\n");
     out.push_str("\nfn __versionOf(run: __Run, owner: Int) -> Int\n    ? \"How many times this answer module has answered other than Settled. A request parked on Settled is asked again once this has moved past the number it was parked at.\"\n    match Map.get(run.versions, owner)\n        Option.None -> 0\n        Option.Some(version) -> version\n");
-    out.push_str("\nfn __bump(run: __Run, owner: Int) -> __Run\n    ? \"One answer of this module that was not Settled: its state may have moved, so every request parked on Settled with it may be worth asking again.\"\n    __Run.update(run, versions = Map.set(run.versions, owner, __versionOf(run, owner) + 1))\n");
+    out.push_str("\nfn __bump(run: __Run, owner: Int) -> __Run\n    ? \"One answer of this module that was not Settled: its state may have moved, so every request parked on Settled with it may be worth asking again. The version is read first, so the versions Map is handed to Map.set at the run's last use.\"\n    version = __versionOf(run, owner)\n    __Run.update(run, versions = Map.set(run.versions, owner, version + 1))\n");
     out.push_str("\nfn __deadlineOf(wake: Run.Wake) -> Option<Int>\n    ? \"The deadline half of a wake, if it has one.\"\n    match wake\n        Run.Wake.Until(_, deadline) -> deadline\n        Run.Wake.Settled(deadline) -> deadline\n");
     out.push_str("\nfn __dueOf(deadline: Option<Int>, now: Int) -> Int\n    ? \"The clock reading a deadline falls due at. A negative deadline is due now; no deadline carries none.\"\n    match deadline\n        Option.None -> 0\n        Option.Some(ms) -> now + Int.max(ms, 0)\n");
     out.push_str("\nfn __msOf(deadline: Option<Int>) -> Int\n    ? \"How long the request asked to be left alone for, never less than nothing.\"\n    match deadline\n        Option.None -> 0\n        Option.Some(ms) -> Int.max(ms, 0)\n");
     out.push_str("\nfn __parked(slot: __Slot, wake: Run.Wake, now: Int, owner: Int, version: Int) -> __Slot\n    ? \"The slot an Err leaves behind: the same instance and the same request, now remembering what would make asking again worth it. A deadline is turned into the clock reading it falls due at, and the ms that was asked for is kept beside it, so a clock that steps backwards cannot strand the request.\"\n    __Slot(seq = slot.seq, pending = slot.pending, waiting = wake, due = __dueOf(__deadlineOf(wake), now), ms = __msOf(__deadlineOf(wake)), owner = owner, version = version)\n");
-    out.push_str("\nfn __park(run: __Run, id: Int, wake: Run.Wake, owner: Int) -> __Run\n    ? \"An Err: the request stays where it is with the same instance number. The state the answer module returned was already written back. An answer that is not Settled moves the module's version first; a Settled one does not, so a request cannot wake itself.\"\n    moved = __moved(run, wake, owner)\n    match Map.get(moved.slots, id)\n        Option.None -> moved\n        Option.Some(slot) -> __Run.update(moved, slots = Map.set(moved.slots, id, __parked(slot, wake, moved.now, owner, __versionOf(moved, owner))))\n");
+    out.push_str("\nfn __park(run: __Run, id: Int, wake: Run.Wake, owner: Int) -> __Run\n    ? \"An Err: the request stays where it is with the same instance number. The state the answer module returned was already written back. An answer that is not Settled moves the module's version first; a Settled one does not, so a request cannot wake itself. The clock and the version are read first, so the slots Map is handed to Map.set at the last use of the run.\"\n    moved = __moved(run, wake, owner)\n    now = moved.now\n    version = __versionOf(moved, owner)\n    match Map.get(moved.slots, id)\n        Option.None -> moved\n        Option.Some(slot) -> __Run.update(moved, slots = Map.set(moved.slots, id, __parked(slot, wake, now, owner, version)))\n");
     out.push_str("\nfn __moved(run: __Run, wake: Run.Wake, owner: Int) -> __Run\n    ? \"The versions after one Err: Until moves its module's version, Settled leaves it.\"\n    match wake\n        Run.Wake.Until(_, _) -> __bump(run, owner)\n        Run.Wake.Settled(_) -> run\n");
     out.push_str("\nfn __staleInstance(run: __Run, id: Int, seq: Int) -> Bool\n    ? \"Why an answer carrying this instance number changes nothing: it is not the number the slot under this id is waiting on.\"\n    seq != __current(run, id)\n");
 
@@ -707,7 +750,7 @@ fn write_loop(
         CoordinatorStop::HostSignal => "Process.stopRequested()",
         CoordinatorStop::PolicyOnly => "false",
     };
-    out.push_str(&host_driver::write_step(turn_effects));
+    out.push_str(&host_driver::write_step(turn_effects, fails));
     out.push_str(&format!(
         "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"Observe stopping, wait once, then perform the same turn as the external host driver.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    plan = __waitPlan(observed)\n    keys = Wait.poll(plan.items, __timeout(observed))?\n    Result.Ok(__workHostStep(observed, keys))\n",
         effects(turn_effects),
@@ -732,9 +775,15 @@ fn write_loop(
     } else {
         "Bool.or(run.stopping, Map.len(run.slots) == 0)"
     };
+    let stopping = if fails {
+        format!("Bool.or(__hasFailed(run), {stopping})")
+    } else {
+        stopping.to_string()
+    };
     out.push_str(&format!(
-        "\nfn __stopped(run: __Run) -> Bool\n    ? \"The run is over once nothing is seated{}.\"\n    {stopping}\n",
-        if policies.stop { ", or once the entry's stop says so" } else { ", or once a stop was requested" }
+        "\nfn __stopped(run: __Run) -> Bool\n    ? \"The run is over once nothing is seated{}{}.\"\n    {stopping}\n",
+        if policies.stop { ", or once the entry's stop says so" } else { ", or once a stop was requested" },
+        if fails { ", or once a turn called Run.fail" } else { "" }
     ));
     out.push_str(&format!(
         "\nfn __runAll(run: __Run) -> Result<__Run, String>\n    ? \"Turns until the run is over.\"\n{}    match __stopped(run)\n        true -> Result.Ok(run)\n        false -> __runAll(__turn(run)?)\n",
@@ -769,10 +818,19 @@ fn write_loop(
         ));
         out.push_str("\nfn __cancelledWaited(run: __Run, cancelled: Unit) -> __Run\n    ? \"The run once one waited-on job has been cancelled; the slot itself stays as it was.\"\n    run\n");
         out.push_str(&format!(
-            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: whatever is still seated stays where it is, and every job a parked request waits on is cancelled rather than abandoned.\"\n    ! [{CANCEL}]\n    _parked = __cancelWaited(run, Map.keys(run.slots))\n    Result.Ok(Unit)\n"
+            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: whatever is still seated stays where it is, and every job a parked request waits on is cancelled rather than abandoned{}.\"\n    ! [{CANCEL}]\n    _parked = __cancelWaited(run, Map.keys(run.slots))\n    {}\n",
+            if fails { ". A run some turn failed answers the reason it was given" } else { "" },
+            if fails { "__outcome(run)" } else { "Result.Ok(Unit)" }
         ));
     } else {
-        out.push_str("\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: whatever is still seated stays where it is.\"\n    Result.Ok(Unit)\n");
+        out.push_str(&format!(
+            "\nfn __over(run: __Run) -> Result<Unit, String>\n    ? \"The run is over: whatever is still seated stays where it is{}.\"\n    {}\n",
+            if fails { ". A run some turn failed answers the reason it was given" } else { "" },
+            if fails { "__outcome(run)" } else { "Result.Ok(Unit)" }
+        ));
+    }
+    if fails {
+        out.push_str("\nfn __outcome(run: __Run) -> Result<Unit, String>\n    ? \"What Run.all() answers: the reason the first Run.fail gave, or Unit when nothing failed.\"\n    match run.failed\n        Option.Some(reason) -> Result.Err(reason)\n        Option.None -> Result.Ok(Unit)\n");
     }
     out
 }
@@ -800,7 +858,7 @@ fn write_seating(out: &mut String, proc: &Proc<'_>, performs: &ProcessEffects) {
         keyed.by, protocol.fn_name, keyed.field
     ));
     out.push_str(&format!(
-        "\nfn __seatFamily{upper}(run: __Run, keys: List<{key}>) -> __Run\n    ? \"The '{0}' family at the turn boundary: instances whose key has left the list are dropped, retired keys that have left it may come back later, and every listed key that is neither seated nor retired is seated, in list order.\"\n{seat}    present = __keySet{upper}(keys, {{}})\n    kept = __dropLeft{upper}(run, Map.keys(run.seated{upper}), present)\n    back = __Run.update(kept, retired{upper} = __unretire{upper}(kept.retired{upper}, Map.keys(kept.retired{upper}), present))\n    __seatKeys{upper}(back, keys)\n",
+        "\nfn __seatFamily{upper}(run: __Run, keys: List<{key}>) -> __Run\n    ? \"The '{0}' family at the turn boundary: instances whose key has left the list are dropped, retired keys that have left it may come back later, and every listed key that is neither seated nor retired is seated, in list order. The retired keys are listed first, so the retired Map is handed on at the last use of the run.\"\n{seat}    present = __keySet{upper}(keys, {{}})\n    kept = __dropLeft{upper}(run, Map.keys(run.seated{upper}), present)\n    retiredKeys = Map.keys(kept.retired{upper})\n    back = __Run.update(kept, retired{upper} = __unretire{upper}(kept.retired{upper}, retiredKeys, present))\n    __seatKeys{upper}(back, keys)\n",
         protocol.fn_name
     ));
     out.push_str(&format!(
@@ -899,7 +957,7 @@ fn write_serve(proc: &Proc<'_>, answers: &[Answer], performs: &ProcessEffects) -
         let mut pattern = binders.clone();
         pattern.push("state".to_string());
         out.push_str(&format!(
-            "        {}.{}({}) -> match __take{}(run)\n            (__rest, __held) -> match __held\n                Option.Some(__taken) -> __serve{upper}{}(__rest, id, seq{key_arg}, state, {}.{op}({}))\n                Option.None -> __rest\n",
+            "        {}.{}({}) -> match __take{}(run)\n            (__held, __rest) -> match __held\n                Option.Some(__taken) -> __serve{upper}{}(__rest, id, seq{key_arg}, state, {}.{op}({}))\n                Option.None -> __rest\n",
             protocol.request,
             kind.name,
             pattern.join(", "),
@@ -1022,6 +1080,7 @@ fn turn_effect_list(
     serve: &[String],
     families: &[String],
     coordinator_stop: CoordinatorStop,
+    fails: bool,
 ) -> Vec<String> {
     let mut found: BTreeSet<String> = BTreeSet::new();
     if coordinator_stop == CoordinatorStop::HostSignal {
@@ -1031,14 +1090,25 @@ fn turn_effect_list(
     found.insert("Wait.poll".to_string());
     found.extend(serve.iter().cloned());
     found.extend(families.iter().cloned());
+    if fails {
+        found.insert(FAILURE.to_string());
+    }
     found.into_iter().collect()
 }
 
 /// What the loop's entry performs: it seats every process, turns, and
 /// cancels whatever job a parked request still waits on when the run is
 /// over.
-fn main_effect_list(turn: &[String], effects: &[ProcessEffects], cancels: bool) -> Vec<String> {
+fn main_effect_list(
+    turn: &[String],
+    effects: &[ProcessEffects],
+    cancels: bool,
+    fails: bool,
+) -> Vec<String> {
     let mut found: BTreeSet<String> = turn.iter().cloned().collect();
+    if fails {
+        found.insert(FAILURE.to_string());
+    }
     for process in effects {
         found.extend(process.seat.iter().cloned());
     }

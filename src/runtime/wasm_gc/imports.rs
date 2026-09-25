@@ -46,6 +46,8 @@ mod numeric;
 mod process;
 #[path = "imports/replay_glue.rs"]
 mod replay_glue;
+#[path = "imports/run.rs"]
+mod run;
 #[path = "imports/tcp.rs"]
 mod tcp;
 #[path = "imports/terminal.rs"]
@@ -146,6 +148,9 @@ pub(super) fn dispatch_aver_import(
         return Ok(true);
     }
     if process::dispatch(name, caller, params, results, caller_fn_ref)? {
+        return Ok(true);
+    }
+    if run::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
     if tcp::dispatch(name, caller, params, results, caller_fn_ref)? {
