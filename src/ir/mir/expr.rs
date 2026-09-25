@@ -214,7 +214,7 @@ pub enum MirExpr {
 ///
 /// The exhaustive match makes adding a `MirExpr` variant a compile error here,
 /// keeping read-only MIR traversals on one canonical child enumeration.
-pub(crate) fn walk_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
+pub(crate) fn walk_children<'a>(e: &'a MirExpr, f: &mut dyn FnMut(&'a MirExpr)) {
     match e {
         MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
         MirExpr::Let(l) => {

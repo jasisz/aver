@@ -163,6 +163,14 @@ pub struct MirEmitCtx<'a> {
     /// derived record/sum types), which makes the Debug-format conversion
     /// total. False everywhere except `emit_mir_verify_expr`.
     pub try_err_to_string: bool,
+    /// Projection nodes (by address) that may move their field out of
+    /// their root local — see [`crate::ir::mir::field_moves`]. A move
+    /// happens only where the root local is also an owned Rust value.
+    /// Empty on every path without per-fn facts.
+    pub movable_projections: &'a HashSet<usize>,
+    /// Locals some movable projection takes a field out of; see
+    /// [`crate::ir::mir::field_moves::moved_roots`].
+    pub moved_roots: &'a HashSet<crate::ir::mir::LocalId>,
 }
 
 impl<'a> MirEmitCtx<'a> {
@@ -194,6 +202,8 @@ impl<'a> MirEmitCtx<'a> {
             mir_builtins: &[],
             bare: empty_bare_facts(),
             try_err_to_string: false,
+            movable_projections: empty_addr_set(),
+            moved_roots: empty_slot_set(),
         }
     }
 
@@ -239,6 +249,8 @@ impl<'a> MirEmitCtx<'a> {
             mir_builtins,
             bare: &policy.bare,
             try_err_to_string: false,
+            movable_projections: &policy.movable_projections,
+            moved_roots: &policy.moved_roots,
         }
     }
 
@@ -271,6 +283,8 @@ impl<'a> MirEmitCtx<'a> {
                 .unwrap_or(&[]),
             bare: &policy.bare,
             try_err_to_string: false,
+            movable_projections: &policy.movable_projections,
+            moved_roots: &policy.moved_roots,
         }
     }
 
@@ -294,6 +308,17 @@ impl<'a> MirEmitCtx<'a> {
     fn is_owned_param(&self, name: &str) -> bool {
         self.owned_params.contains(name)
     }
+}
+
+fn empty_slot_set() -> &'static HashSet<crate::ir::mir::LocalId> {
+    static EMPTY: std::sync::OnceLock<HashSet<crate::ir::mir::LocalId>> =
+        std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashSet::new)
+}
+
+fn empty_addr_set() -> &'static HashSet<usize> {
+    static EMPTY: std::sync::OnceLock<HashSet<usize>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashSet::new)
 }
 
 fn empty_string_set() -> &'static HashSet<String> {
@@ -396,6 +421,12 @@ pub(super) struct MirFnEmitPolicy {
     /// `BareI64Facts`.
     pub bare: crate::ir::mir::FnBareFacts,
     pub current_module_scope: Option<String>,
+    /// The body's movable projections — see
+    /// [`MirEmitCtx::movable_projections`]. Empty until
+    /// [`Self::apply_field_moves`] runs.
+    pub movable_projections: HashSet<usize>,
+    /// See [`MirEmitCtx::moved_roots`].
+    pub moved_roots: HashSet<crate::ir::mir::LocalId>,
 }
 
 impl MirFnEmitPolicy {
@@ -411,6 +442,8 @@ impl MirFnEmitPolicy {
             owned_params: HashSet::new(),
             bare: crate::ir::mir::FnBareFacts::default(),
             current_module_scope: None,
+            movable_projections: HashSet::new(),
+            moved_roots: HashSet::new(),
         }
     }
 
@@ -446,7 +479,19 @@ impl MirFnEmitPolicy {
             owned_params: HashSet::new(),
             bare: crate::ir::mir::FnBareFacts::default(),
             current_module_scope: scope.map(String::from),
+            movable_projections: HashSet::new(),
+            moved_roots: HashSet::new(),
         }
+    }
+
+    /// Record which field reads in `mir_fn`'s body may move their field
+    /// out of the record local they read. The facts are addresses into
+    /// this very body, so the policy must emit `mir_fn.body` itself.
+    pub(super) fn apply_field_moves(&mut self, mir_fn: &crate::ir::mir::MirFn) {
+        self.movable_projections =
+            crate::ir::mir::field_moves::movable_projections(&mir_fn.body.node);
+        self.moved_roots =
+            crate::ir::mir::field_moves::moved_roots(&mir_fn.body.node, &self.movable_projections);
     }
 
     /// Apply the Int "unboxing" facts to this policy: clone the per-fn
@@ -637,8 +682,10 @@ pub(super) fn owned_collection_param_names(
 /// clones it first, and while that clone is alive the caller's copy still
 /// holds every Map and Vector the record carries. A later in-place update of
 /// one of them then copies it whole. A function consumes a param when it
-/// updates it at its last use or hands it at its last use to a callee that
-/// takes it by value; taking such a param by value lets a chain
+/// updates it at its last use, hands it at its last use to a callee that
+/// takes it by value, or moves a field out of it into such a callee or into
+/// an in-place collection update (see [`consumes_local`]); taking such a
+/// param by value lets a chain
 /// of calls move one record from caller to callee, which is what keeps the
 /// state a generated loop hands an answer module uniquely owned.
 ///
@@ -681,6 +728,18 @@ pub(super) fn compute_owned_record_params(
             candidates.push((*id, open));
         }
     }
+    let movable: HashMap<crate::ir::FnId, HashSet<usize>> = candidates
+        .iter()
+        .filter_map(|(id, _)| {
+            program.fn_by_id(*id).map(|mir_fn| {
+                (
+                    *id,
+                    crate::ir::mir::field_moves::movable_projections(&mir_fn.body.node),
+                )
+            })
+        })
+        .collect();
+    let in_place = crate::ir::mir::field_moves::in_place_collection_params(program);
     loop {
         let mut graduated = Vec::new();
         for (id, open) in &candidates {
@@ -691,8 +750,14 @@ pub(super) fn compute_owned_record_params(
                 if owned[id][i] {
                     continue;
                 }
-                let slot = mir_fn.params[i].local;
-                if consumes_local(&mir_fn.body.node, slot, &owned) {
+                let consumption = Consumption {
+                    slot: mir_fn.params[i].local,
+                    owned: &owned,
+                    movable: &movable[id],
+                    in_place: &in_place,
+                    builtins: &program.builtins,
+                };
+                if consumes_local(&mir_fn.body.node, &consumption) {
                     graduated.push((*id, i));
                 }
             }
@@ -709,66 +774,98 @@ pub(super) fn compute_owned_record_params(
     owned
 }
 
-/// Whether `expr` consumes the local in `slot`: updates it as the base of a
-/// record update at its last use, or passes it at its last use to a callee
-/// position `owned` says is by value. Returning it bare is not a consumption:
-/// a function that only hands its param back keeps borrowing it.
-fn consumes_local(
-    expr: &MirExpr,
+/// What [`consumes_local`] reads besides the expression: the by-value
+/// callee positions so far, the body's movable projections, the Map/Vector
+/// params updated in place and the builtin names.
+struct Consumption<'a> {
     slot: LocalId,
-    owned: &HashMap<crate::ir::FnId, Vec<bool>>,
-) -> bool {
+    owned: &'a HashMap<crate::ir::FnId, Vec<bool>>,
+    movable: &'a HashSet<usize>,
+    in_place: &'a HashMap<crate::ir::FnId, Vec<bool>>,
+    builtins: &'a [String],
+}
+
+/// Whether `expr` consumes the local in `slot`: updates it as the base of a
+/// record update that reads it for the last time, passes it at its last use
+/// to a callee position `owned` says is by value, or moves a field out of it
+/// into a by-value record param, a Map/Vector param updated in place, or the
+/// target of `Map.set`, `Map.remove` or `Vector.set`. Returning it bare is not a
+/// consumption: a function that only hands its param back keeps borrowing
+/// it.
+fn consumes_local(expr: &MirExpr, cx: &Consumption<'_>) -> bool {
+    let slot = cx.slot;
     let last_use_of =
         |arg: &MirExpr| local_of(arg).is_some_and(|local| local.slot == slot && local.last_use);
-    let by_value = |callee: crate::ir::FnId, index: usize| {
-        owned
+    let moves_field = |arg: &Spanned<MirExpr>| {
+        matches!(arg.node, MirExpr::Project(_))
+            && cx.movable.contains(&(&arg.node as *const MirExpr as usize))
+            && super::ownership::projection_root_local(&arg.node)
+                .is_some_and(|root| root.slot == slot)
+    };
+    let fact = |facts: &HashMap<crate::ir::FnId, Vec<bool>>, callee, index: usize| {
+        facts
             .get(&callee)
             .and_then(|abi| abi.get(index))
             .copied()
             .unwrap_or(false)
     };
+    // A field is worth moving into a record param the callee consumes, or
+    // into a Map/Vector param it updates in place; a param that only reads
+    // the field gains nothing from owning it.
+    let takes_field = |callee, index: usize, arg: &Spanned<MirExpr>| match arg.ty() {
+        Some(Type::Named { .. }) => fact(cx.owned, callee, index),
+        Some(Type::Map(..) | Type::Vector(_)) => {
+            fact(cx.owned, callee, index) && fact(cx.in_place, callee, index)
+        }
+        _ => false,
+    };
+    let hands_over = |callee: crate::ir::FnId, args: &[Spanned<MirExpr>]| {
+        args.iter().enumerate().any(|(index, arg)| {
+            (last_use_of(&arg.node) && fact(cx.owned, callee, index))
+                || (moves_field(arg) && takes_field(callee, index, arg))
+        })
+    };
     match expr {
         MirExpr::Call(call) => {
-            if let MirCallee::Fn(callee) = call.node.callee
-                && call
-                    .node
-                    .args
-                    .iter()
-                    .enumerate()
-                    .any(|(index, arg)| last_use_of(&arg.node) && by_value(callee, index))
-            {
-                return true;
-            }
-            call.node
-                .args
-                .iter()
-                .any(|arg| consumes_local(&arg.node, slot, owned))
-        }
-        MirExpr::TailCall(call) => {
-            call.node
-                .args
-                .iter()
-                .enumerate()
-                .any(|(index, arg)| last_use_of(&arg.node) && by_value(call.node.target, index))
+            let handed = match call.node.callee {
+                MirCallee::Fn(callee) => hands_over(callee, &call.node.args),
+                MirCallee::Builtin(id) => {
+                    matches!(
+                        cx.builtins.get(id.0 as usize).map(String::as_str),
+                        Some("Map.set" | "Map.remove" | "Vector.set")
+                    ) && call.node.args.first().is_some_and(moves_field)
+                }
+                _ => false,
+            };
+            handed
                 || call
                     .node
                     .args
                     .iter()
-                    .any(|arg| consumes_local(&arg.node, slot, owned))
+                    .any(|arg| consumes_local(&arg.node, cx))
+        }
+        MirExpr::TailCall(call) => {
+            hands_over(call.node.target, &call.node.args)
+                || call
+                    .node
+                    .args
+                    .iter()
+                    .any(|arg| consumes_local(&arg.node, cx))
         }
         MirExpr::RecordUpdate(update) => {
-            last_use_of(&update.node.base.node)
-                || consumes_local(&update.node.base.node, slot, owned)
+            (local_of(&update.node.base.node).is_some_and(|base| base.slot == slot)
+                && crate::ir::mir::field_moves::update_base_is_final(&update.node))
+                || consumes_local(&update.node.base.node, cx)
                 || update
                     .node
                     .updates
                     .iter()
-                    .any(|field| consumes_local(&field.value.node, slot, owned))
+                    .any(|field| consumes_local(&field.value.node, cx))
         }
         _ => {
             let mut found = false;
             crate::ir::mir::expr::walk_children(expr, &mut |child| {
-                found = found || consumes_local(child, slot, owned);
+                found = found || consumes_local(child, cx);
             });
             found
         }
@@ -1711,18 +1808,46 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     }
                 };
                 let val = if packed_u8 { pack_u8_list(val) } else { val };
-                parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
+                parts.push((aver_name_to_rust(&f.name), val));
             }
             // A specialized field successor partially moves the replaced
             // field from an owned record. The `..base` update then moves only
             // the remaining fields, which Rust permits. Cloning `base` here
             // would both be unnecessary and fail after the partial move.
             let emitted_base = emit_mir_expr(&upd.base, emit_ctx)?;
-            let base = if moved_replaced_field {
+            let owned_final_base = local_of(&upd.base.node)
+                .is_some_and(|base| super::ownership::root_is_owned(base, emit_ctx))
+                && crate::ir::mir::field_moves::update_base_is_final(upd);
+            if owned_final_base
+                && !moved_replaced_field
+                && local_of(&upd.base.node)
+                    .is_some_and(|base| base.last_use && !emit_ctx.moved_roots.contains(&base.slot))
+            {
+                // The base read is the record's last use, so no new field
+                // value reads it, and no field read moved any of it. Move
+                // the record, then assign each field: the replaced value
+                // drops at once instead of staying in a partially moved
+                // local until the end of the function.
+                let assigns: String = parts
+                    .iter()
+                    .map(|(field, value)| format!("__updated.{field} = {value}; "))
+                    .collect();
+                return Some(format!(
+                    "{{ let mut __updated = {emitted_base}; {assigns}__updated }}"
+                ));
+            }
+            // A final base whose new field values move fields out of it
+            // (`T.update(s, window = f(s.window.created))`) moves after them;
+            // those values only ever move fields this update replaces.
+            let base = if moved_replaced_field || owned_final_base {
                 emitted_base
             } else {
                 mir_clone_arg(emitted_base, &upd.base.node, emit_ctx)
             };
+            let parts: Vec<String> = parts
+                .iter()
+                .map(|(field, value)| format!("{field}: {value}"))
+                .collect();
             Some(format!(
                 "{} {{ {}, ..{} }}",
                 rust_type,
@@ -3727,6 +3852,7 @@ pub(super) fn emit_mir_fn_body_routed(
     // `bare_fn_facts`), so body and signature agree on which params /
     // return are bare.
     policy.apply_bare_i64(mir_fn.fn_id, ctx);
+    policy.apply_field_moves(mir_fn);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
     let body = emit_mir_fn_body(&mir_fn.body, &emit_ctx)?;
     let Some(prologue) = post_checkpoint_prologue else {
@@ -3835,6 +3961,7 @@ pub(super) fn emit_mir_tco_fn(
     for n in &rc_names {
         policy.owned_params.remove(n);
     }
+    policy.apply_field_moves(mir_fn);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
 
     // Render the body in tail position FIRST — bail before emitting any
@@ -5990,6 +6117,8 @@ mod tests {
             mir_builtins: BUILTINS.get_or_init(Vec::new),
             bare: &policy.bare,
             try_err_to_string: false,
+            movable_projections: &policy.movable_projections,
+            moved_roots: &policy.moved_roots,
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         assert_eq!(
@@ -7092,6 +7221,8 @@ mod tests {
             mir_builtins: BUILTINS.get_or_init(Vec::new),
             bare: &policy.bare,
             try_err_to_string: false,
+            movable_projections: &policy.movable_projections,
+            moved_roots: &policy.moved_roots,
         }
     }
 
