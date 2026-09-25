@@ -12,6 +12,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **Every backend runs the same match.** The compiler turns such a match into nested ordinary matches right after checking it, so the VM, generated Rust, wasm-gc, `wasip2` and the Lean export all read the same program. A `match` that uses these patterns inside a `yield` function is refused for now; move it into a helper function.
 - **`aver format` prints match patterns in one spelling:** `[a, b, ..rest]`, `Option.Some(0)`, `(x, _)`.
 
+### Fixed — `aver proof --gate` passes a law that became universal
+
+- **A law promoted from bounded to universal no longer fails the gate.** A bounded law records no axioms, and its universal proof usually depends on Lean's standard axioms, so the gate reported `REGRESSION <law>: axioms grew {} -> {Classical.choice,Quot.sound,propext}`. It now prints `promoted <law>: bounded -> universal, now uses …` and lists the law under `Promoted:` in the summary. The gate still fails when a law newly depends on any other axiom (`sorryAx`, `Lean.ofReduceBool`, a user `axiom`) at any tier, when it newly depends on one of the standard three at the same tier, and on a missing law, a lower tier or a changed backend.
+
 ### Fixed — a spliced call no longer reads a slot of the function it came from
 
 - **A one-parameter function whose body matches, called with a literal record or constructor, runs right on every backend.** The compiler copies such a body into the caller; when the body held another `match` that binds a name, the copy used a local slot of the original function, which crashed the VM (`index out of bounds`), failed wasm-gc validation, or overwrote an unrelated local of the caller. Such a body is now called instead of copied.

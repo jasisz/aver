@@ -9685,6 +9685,11 @@ struct GateReport {
     lines: Vec<String>,
 }
 
+/// Lean's three standard axioms. A law credited universal may depend on these
+/// and nothing else; any other axiom (`sorryAx`, `Lean.ofReduceBool`, a
+/// user `axiom`) means the proof is not a proof.
+const STANDARD_LEAN_AXIOMS: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
+
 /// THE RATCHET comparator (pure — unit-tested on recorded fixtures, no lake).
 ///
 /// Iterate the BASELINE law set (Risk 5: keying on the baseline is the core
@@ -9696,18 +9701,21 @@ struct GateReport {
 ///   is universal, then bounded, then sampled, then failed). This is the
 ///   subtle case the ratchet exists for — a silent slide from a universal to a
 ///   bounded proof.
-/// - AXIOM SET GREW: `current.axioms` is NOT a subset of `baseline.axioms` for
-///   that law. EVERY axiom present now but absent from the law's OWN baseline
-///   record is a regression — whitelisted or not. The whitelist governs
-///   whether a law is *credited* universal in the first place (that decision
-///   already happened upstream in the audit / lane); the ratchet here compares
-///   each law against ITS OWN recorded axiom set, so a law that moves from
-///   `propext`-only to ALSO leaning on `Classical.choice` (or `Quot.sound`,
-///   `Lean.ofReduceBool`, `sorryAx`, …) is flagged even at an unchanged tier.
-///   A SHRINKING axiom set (a strict subset) is fine — that is strengthening.
+/// - NEW NON-STANDARD AXIOM: `current.axioms` holds an axiom outside
+///   `STANDARD_LEAN_AXIOMS` that the law's own baseline record does not. This
+///   fails at every tier, a promotion included.
+/// - STANDARD AXIOMS GREW WITHOUT A PROMOTION: at the same tier (or lower),
+///   `current.axioms` is not a subset of the law's own baseline axioms. A law
+///   that moves from `propext`-only to also leaning on `Classical.choice` at
+///   an unchanged tier is flagged.
 /// - BACKEND CHANGED: a baseline `lean` law that now records a different
 ///   backend is a regression (the proof no longer holds under the backend it
 ///   was certified by).
+///
+/// A PROMOTION (current tier above the baseline tier) is a gain, reported as
+/// INFO. It may bring new standard axioms: a bounded law is checked on a finite
+/// domain and records none, and the universal proof that replaces it normally
+/// depends on some of Lean's standard three. A SHRINKING axiom set is fine too.
 ///
 /// New laws in `current` but not `baseline` are OK (additions allowed),
 /// reported as INFO.
@@ -9720,6 +9728,7 @@ fn gate_manifest(baseline: &ProofManifest, current: &ProofManifest) -> GateRepor
 
     let mut lines = Vec::new();
     let mut regressions = 0usize;
+    let mut promoted: Vec<&str> = Vec::new();
 
     for bl in &baseline.laws {
         match current_by.get(bl.law.as_str()) {
@@ -9732,6 +9741,7 @@ fn gate_manifest(baseline: &ProofManifest, current: &ProofManifest) -> GateRepor
                 ));
             }
             Some(cur) => {
+                let is_promotion = cur.tier.rank() > bl.tier.rank();
                 if cur.tier.rank() < bl.tier.rank() {
                     regressions += 1;
                     lines.push(format!(
@@ -9752,27 +9762,52 @@ fn gate_manifest(baseline: &ProofManifest, current: &ProofManifest) -> GateRepor
                         bl.law, bl.backend, cur.backend
                     ));
                 }
-                // Axiom-set GROWTH = current axioms NOT a subset of the law's
-                // OWN baseline axioms. ANY axiom present now but not in the
-                // baseline record is a new trust dependency for THIS law —
-                // whitelisted or not. A new `Classical.choice`/`Quot.sound`/
-                // `propext` at an unchanged tier is still a regression here; the
-                // whitelist only decided whether the law was credited universal
-                // upstream, it does NOT excuse a law from growing its own
-                // recorded axiom set.
-                let grown: Vec<&String> = cur
+                // Axioms present now but not in the law's own baseline record.
+                let grown: Vec<&str> = cur
                     .axioms
                     .iter()
                     .filter(|a| !bl.axioms.contains(*a))
+                    .map(String::as_str)
                     .collect();
-                if !grown.is_empty() {
+                let non_standard: Vec<&str> = grown
+                    .iter()
+                    .copied()
+                    .filter(|a| !STANDARD_LEAN_AXIOMS.contains(a))
+                    .collect();
+                if !non_standard.is_empty() {
                     regressions += 1;
                     lines.push(format!(
-                        "--gate: REGRESSION {}: axioms grew {{{}}} -> {{{}}}",
+                        "--gate: REGRESSION {}: axioms grew {{{}}} -> {{{}}}; {} is not one of Lean's standard axioms ({})",
                         bl.law,
                         bl.axioms.join(","),
-                        cur.axioms.join(",")
+                        cur.axioms.join(","),
+                        non_standard.join(", "),
+                        STANDARD_LEAN_AXIOMS.join(", ")
                     ));
+                } else if !grown.is_empty() && !is_promotion {
+                    regressions += 1;
+                    lines.push(format!(
+                        "--gate: REGRESSION {}: axioms grew {{{}}} -> {{{}}} while the tier stayed {}",
+                        bl.law,
+                        bl.axioms.join(","),
+                        cur.axioms.join(","),
+                        cur.tier.as_str()
+                    ));
+                }
+                if is_promotion {
+                    let axioms_note = if grown.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", now uses {}", cur.axioms.join(", "))
+                    };
+                    lines.push(format!(
+                        "--gate: promoted {}: {} -> {}{}",
+                        bl.law,
+                        bl.tier.as_str(),
+                        cur.tier.as_str(),
+                        axioms_note
+                    ));
+                    promoted.push(bl.law.as_str());
                 }
             }
         }
@@ -9785,17 +9820,20 @@ fn gate_manifest(baseline: &ProofManifest, current: &ProofManifest) -> GateRepor
         .map(|l| l.law.as_str())
         .collect();
 
-    let new_desc = if new_laws.is_empty() {
-        "<none>".to_string()
-    } else {
-        new_laws.join(", ")
+    let list_or_none = |names: &[&str]| {
+        if names.is_empty() {
+            "<none>".to_string()
+        } else {
+            names.join(", ")
+        }
     };
     lines.push(format!(
-        "--gate: {} regression(s) vs baseline ({} baseline laws, {} current). New laws OK: {}",
+        "--gate: {} regression(s) vs baseline ({} baseline laws, {} current). Promoted: {}. New laws OK: {}",
         regressions,
         baseline.laws.len(),
         current.laws.len(),
-        new_desc
+        list_or_none(&promoted),
+        list_or_none(&new_laws)
     ));
 
     GateReport { regressions, lines }
@@ -11286,9 +11324,10 @@ fn parse_axiom_bracket(tail: &str) -> Vec<String> {
 }
 
 fn theorem_credit_from_axioms(output: &str, theorem: &str) -> bool {
-    const ALLOWED: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
     match axioms_for_theorem(output, theorem) {
-        Some(axioms) => axioms.iter().all(|a| ALLOWED.contains(&a.as_str())),
+        Some(axioms) => axioms
+            .iter()
+            .all(|a| STANDARD_LEAN_AXIOMS.contains(&a.as_str())),
         None => false,
     }
 }
@@ -11328,14 +11367,13 @@ fn axioms_for_theorem(output: &str, theorem: &str) -> Option<Vec<String>> {
 /// `depends on axioms: […]` shape is ignored — the caller's blacklist probes
 /// remain the floor for those.
 fn lean_axiom_lines_whitelisted(output: &str) -> bool {
-    const ALLOWED: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
     const MARK: &str = "depends on axioms:";
     let mut search = output;
     while let Some(idx) = search.find(MARK) {
         let tail = &search[idx + MARK.len()..];
         if parse_axiom_bracket(tail)
             .iter()
-            .any(|a| !ALLOWED.contains(&a.as_str()))
+            .any(|a| !STANDARD_LEAN_AXIOMS.contains(&a.as_str()))
         {
             return false;
         }
@@ -12694,32 +12732,107 @@ mod tests {
     }
 
     #[test]
-    fn gate_promotion_that_adds_axioms_fails_until_rebaselined() {
-        // A promotion that GAINS axioms is NOT silently clean: the ratchet
-        // compares each law against its OWN baseline axiom set, so a bounded
-        // law recorded with no axioms that newly leans on `propext`/`Quot.sound`
-        // grows its set and FAILS — even though the tier strengthened. The
-        // honest path is to re-baseline (`--write-baseline`), which makes the
-        // new axioms a reviewable diff. This is the inverse of the old behavior,
-        // which locked whitelisted additions as clean and let new trust axioms
-        // slip in unnoticed.
-        let base = manifest(vec![law("f.law", super::LawTier::Bounded, &[])]);
+    fn gate_promotion_with_standard_axioms_is_a_gain() {
+        // btc-listener #361: two laws went from bounded (checked on a finite
+        // domain, no axioms recorded) to universal, whose proof depends on
+        // Lean's standard three. That is an improvement, not a regression.
+        let base = manifest(vec![law(
+            "Domain.ScriptParse.parse.directPushRunsPastTheEnd",
+            super::LawTier::Bounded,
+            &[],
+        )]);
         let cur = manifest(vec![law(
-            "f.law",
+            "Domain.ScriptParse.parse.directPushRunsPastTheEnd",
             super::LawTier::Universal,
-            &["propext", "Quot.sound"],
+            &["Classical.choice", "Quot.sound", "propext"],
         )]);
         let report = super::gate_manifest(&base, &cur);
-        assert_eq!(
-            report.regressions, 1,
-            "a promotion that adds axioms must FAIL until re-baselined"
+        assert_eq!(report.regressions, 0, "{:?}", report.lines);
+        assert!(
+            report.lines.iter().any(|l| l.contains(
+                "promoted Domain.ScriptParse.parse.directPushRunsPastTheEnd: bounded -> universal"
+            )),
+            "the promotion must be reported: {:?}",
+            report.lines
         );
         assert!(
             report
                 .lines
                 .iter()
-                .any(|l| l.contains("f.law") && l.contains("axioms grew")),
-            "must name the law and its grown axiom set: {:?}",
+                .any(|l| l
+                    .contains("Promoted: Domain.ScriptParse.parse.directPushRunsPastTheEnd.")),
+            "the summary must list the promotion: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_promotion_with_sorry_fails() {
+        // A promotion never excuses an axiom outside Lean's standard three.
+        let base = manifest(vec![law("f.law", super::LawTier::Bounded, &[])]);
+        let cur = manifest(vec![law(
+            "f.law",
+            super::LawTier::Universal,
+            &["propext", "sorryAx"],
+        )]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 1, "{:?}", report.lines);
+        assert!(
+            report.lines.iter().any(|l| l.contains("REGRESSION f.law")
+                && l.contains("sorryAx is not one of Lean's standard axioms")),
+            "must name the law and the non-standard axiom: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_sorry_at_same_tier_fails() {
+        let base = manifest(vec![law("f.law", super::LawTier::Universal, &["propext"])]);
+        let cur = manifest(vec![law(
+            "f.law",
+            super::LawTier::Universal,
+            &["propext", "sorryAx"],
+        )]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 1, "{:?}", report.lines);
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|l| l.contains("f.law") && l.contains("sorryAx is not one of")),
+            "{:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_bounded_law_gaining_axioms_at_same_tier_fails() {
+        // Same tier, new standard axioms: no promotion to explain them.
+        let base = manifest(vec![law("f.law", super::LawTier::Bounded, &[])]);
+        let cur = manifest(vec![law("f.law", super::LawTier::Bounded, &["propext"])]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 1, "{:?}", report.lines);
+        assert!(
+            report.lines.iter().any(|l| l.contains("f.law")
+                && l.contains("axioms grew {} -> {propext} while the tier stayed bounded")),
+            "{:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_promotion_with_backend_change_still_fails() {
+        let base = manifest(vec![law("f.law", super::LawTier::Bounded, &[])]);
+        let mut cur_law = law("f.law", super::LawTier::Universal, &["propext"]);
+        cur_law.backend = "other".to_string();
+        let report = super::gate_manifest(&base, &manifest(vec![cur_law]));
+        assert_eq!(report.regressions, 1, "{:?}", report.lines);
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|l| l.contains("backend lean -> other")),
+            "{:?}",
             report.lines
         );
     }
