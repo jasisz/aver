@@ -1765,6 +1765,44 @@ impl VM {
                     self.stack.push(NanValue::new_record(idx));
                 }
 
+                RECORD_TAKE_PATH => {
+                    let depth = read_u8!(code, ip);
+                    let root_holders = read_u8!(code, ip);
+                    let mut field_symbol_id = read_u32!(code, ip);
+                    let mut record = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    // Whether every record from the root down to `record` is
+                    // held only where the compiler accounted for: the root by
+                    // nothing off the stack, and exactly the cells it counted.
+                    let mut unique = !self.arena.record_is_held_elsewhere(record)
+                        && self.record_stack_holders_are(record, root_holders);
+                    for _ in 1..depth {
+                        let detach = read_u8!(code, ip) != 0;
+                        let holders = read_u8!(code, ip);
+                        let field_idx = self.record_field_index(record, field_symbol_id)?;
+                        let take = unique && detach;
+                        let child = if take {
+                            self.arena.take_nested_record_field(record, field_idx)
+                        } else {
+                            self.arena.get_record(record.arena_index()).1[field_idx]
+                        };
+                        // Off the stack, a record still in its parent is held
+                        // by that parent alone, one taken out of it by nothing.
+                        unique = unique
+                            && child.is_record()
+                            && self.arena.record_holder_count(child) == u32::from(!take)
+                            && self.record_stack_holders_are(child, holders);
+                        record = child;
+                        field_symbol_id = read_u32!(code, ip);
+                    }
+                    let field_idx = self.record_field_index(record, field_symbol_id)?;
+                    let value = if unique {
+                        self.arena.take_nested_record_field(record, field_idx)
+                    } else {
+                        self.arena.get_record(record.arena_index()).1[field_idx]
+                    };
+                    self.stack.push(value);
+                }
+
                 RECORD_GET_NAMED | RECORD_TAKE_NAMED => {
                     let field_symbol_id = read_u32!(code, ip);
                     let known_holders = if op == RECORD_TAKE_NAMED {

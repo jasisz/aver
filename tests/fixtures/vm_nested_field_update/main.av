@@ -1,0 +1,53 @@
+module Main
+    intent = "A record whose Maps, one record down, every request updates, on the VM."
+    effects [Console.print]
+
+record Window
+    created: Map<Int, Int>
+    spent: Map<Int, Int>
+
+record Setting
+    window: Window
+    rounds: Int
+
+fn fill(counts: Map<Int, Int>, left: Int) -> Map<Int, Int>
+    ? "Counts keys 1 to left once."
+    match left <= 0
+        true -> counts
+        false -> fill(Map.set(counts, left, 1), left - 1)
+
+verify fill
+    fill({}, 0) => {}
+    fill({}, 2) => {1 => 1, 2 => 1}
+
+fn created(setting: Setting, key: Int) -> Setting
+    ? "One more created key, set through an update of the window inside an"
+      "update of the setting."
+    Setting.update(setting, window = Window.update(setting.window, created = Map.set(setting.window.created, key, setting.rounds)), rounds = setting.rounds + 1)
+
+verify created
+    created(Setting(window = Window(created = {}, spent = {}), rounds = 0), 7) => Setting(window = Window(created = {7 => 0}, spent = {}), rounds = 1)
+
+fn spent(setting: Setting, key: Int) -> Setting
+    ? "Both Maps of the window handed to a new window, with the setting read"
+      "again for its counter."
+    Setting(window = Window(created = Map.remove(setting.window.created, key), spent = Map.set(setting.window.spent, key, 1)), rounds = setting.rounds + 1)
+
+verify spent
+    spent(Setting(window = Window(created = {7 => 0}, spent = {}), rounds = 1), 7) => Setting(window = Window(created = {}, spent = {7 => 1}), rounds = 2)
+
+fn serve(setting: Setting, left: Int) -> Setting
+    ? "Creates and then spends one key per request, from left down to 1."
+    match left <= 0
+        true -> setting
+        false -> serve(spent(created(setting, left), left), left - 1)
+
+verify serve
+    serve(Setting(window = Window(created = {}, spent = {}), rounds = 0), 0) => Setting(window = Window(created = {}, spent = {}), rounds = 0)
+
+fn main() -> Unit
+    ? "Two thousand requests against a hundred thousand keys in each Map."
+    ! [Console.print]
+    start = Setting(window = Window(created = fill({}, 100000), spent = fill({}, 100000)), rounds = 0)
+    done = serve(start, 2000)
+    Console.print("rounds {done.rounds}, {Map.len(done.window.created)} created, {Map.len(done.window.spent)} spent")
