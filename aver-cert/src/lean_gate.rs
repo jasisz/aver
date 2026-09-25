@@ -683,6 +683,9 @@ fn first_refused(chars: &[char], tokens: &[Token]) -> Option<&'static str> {
                                 if COMMAND_WORDS.contains(&opened.as_str()) {
                                     break;
                                 }
+                                // `open _root_.Lean` opens `Lean` too.
+                                let opened =
+                                    opened.strip_prefix("_root_.").unwrap_or(opened.as_str());
                                 let root = opened.split('.').next().unwrap_or_default();
                                 if REFUSED_OPEN_ROOTS.contains(&root) {
                                     return Some("open Lean");
@@ -784,6 +787,9 @@ mod tests {
             "open /- c -/ Lean\n",
             "open Foo\n  Lean\n",
             "open Foo (bar) Lake\n",
+            "open _root_.Lean\n",
+            "open _root_.Lean.Elab in\n",
+            "open Foo _root_.Lake\n",
         ] {
             assert_eq!(refused(text), Some("open Lean"), "{text:?}");
         }

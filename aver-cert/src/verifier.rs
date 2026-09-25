@@ -1041,38 +1041,63 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     // the artifact data. Each is a THEOREM the audit walks with the accepted
     // root: a pin closed by `decide +kernel` through a package-declared
     // decision procedure carries that procedure's axioms into the audit.
+    //
+    // Every field is read through the wall structure's own projection
+    // function, applied to a package constant named in full, never as a
+    // dotted path past a package constant. Lean resolves `A.b.c` to the
+    // longest prefix that is a declared constant, so
+    // `_root_.AverCert.manifest.subject.contracts` meant a package constant
+    // `AverCert.manifest.subject`, when one was declared, instead of the real
+    // manifest's field. A projection such as
+    // `_root_.AverCert.Schema.Subject.contracts` is a wall constant under a
+    // wall namespace, where the audit refuses every package constant.
     let data = "_root_.AverCert.Artifact.data";
     let manifest = "_root_.AverCert.manifest";
+    let datum =
+        |field: &str| format!("(_root_.AverCert.AcceptedArtifact.ArtifactData.{field} {data})");
+    let subject = |field: &str| {
+        format!(
+            "(_root_.AverCert.Schema.Subject.{field} \
+             (_root_.AverCert.Schema.Manifest.subject {manifest}))"
+        )
+    };
+    let obligations = |field: &str| {
+        format!(
+            "_root_.List.map _root_.AverCert.Schema.Obligation.{field} \
+             (_root_.AverCert.Schema.Manifest.obligations {manifest})"
+        )
+    };
     let report_pins: Vec<(String, &str)> = vec![
         (
-            format!("{data}.modBytes = _root_.AverCert.ArtifactBytes.modBytes"),
-            "rfl",
-        ),
-        (
-            format!("{data}.modLen = _root_.AverCert.ArtifactBytes.modLen"),
-            "rfl",
-        ),
-        (format!("{data}.manifest = {manifest}"), "rfl"),
-        (
-            format!("{data}.wasip2ComponentEnvelope = {wasip2_component_envelope}"),
-            "rfl",
-        ),
-        (
-            format!("{manifest}.subject.artifactHash = \"{sha}\""),
-            "rfl",
-        ),
-        (
             format!(
-                "{manifest}.subject.artifactRoot = \"{}\"",
-                format::ARTIFACT_CERTIFICATE_ROOT
+                "{} = _root_.AverCert.ArtifactBytes.modBytes",
+                datum("modBytes")
             ),
             "rfl",
         ),
         (
-            format!("{manifest}.obligations.map (fun o => o.export_) = {names}"),
+            format!("{} = _root_.AverCert.ArtifactBytes.modLen", datum("modLen")),
             "rfl",
         ),
-        (format!("{manifest}.subject.exports = {names}"), "rfl"),
+        (format!("{} = {manifest}", datum("manifest")), "rfl"),
+        (
+            format!(
+                "{} = {wasip2_component_envelope}",
+                datum("wasip2ComponentEnvelope")
+            ),
+            "rfl",
+        ),
+        (format!("{} = \"{sha}\"", subject("artifactHash")), "rfl"),
+        (
+            format!(
+                "{} = \"{}\"",
+                subject("artifactRoot"),
+                format::ARTIFACT_CERTIFICATE_ROOT
+            ),
+            "rfl",
+        ),
+        (format!("{} = {names}", obligations("export_")), "rfl"),
+        (format!("{} = {names}", subject("exports")), "rfl"),
         (
             format!("_root_.AverCert.ClaimAxes.reportEntries {data} = {report_entries}"),
             KERNEL_REPORT_PROOF,
@@ -1082,38 +1107,38 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             KERNEL_REPORT_PROOF,
         ),
         (
-            format!("{manifest}.obligations.map (fun o => o.policy) = {policies}"),
+            format!("{} = {policies}", obligations("policy")),
             KERNEL_REPORT_PROOF,
         ),
         (
-            format!("{manifest}.obligations.map (fun o => o.termination?) = {terminations}"),
+            format!("{} = {terminations}", obligations("termination?")),
             KERNEL_REPORT_PROOF,
         ),
-        (format!("{manifest}.subject.contracts = {contracts}"), "rfl"),
+        (format!("{} = {contracts}", subject("contracts")), "rfl"),
         (
-            format!("{manifest}.subject.declaredUncertified = {declared}"),
+            format!("{} = {declared}", subject("declaredUncertified")),
             "rfl",
         ),
         (
-            format!("{manifest}.subject.capabilities = {capabilities}"),
+            format!("{} = {capabilities}", subject("capabilities")),
             "rfl",
         ),
-        (format!("{manifest}.subject.start = {start}"), "rfl"),
-        (format!("{manifest}.subject.hostRoleTable = {roles}"), "rfl"),
+        (format!("{} = {start}", subject("start")), "rfl"),
+        (format!("{} = {roles}", subject("hostRoleTable")), "rfl"),
         (
-            format!("{manifest}.subject.stringHostRoles = {string_roles}"),
-            "rfl",
-        ),
-        (
-            format!("{manifest}.subject.target = \"{}\"", candidates.target),
+            format!("{} = {string_roles}", subject("stringHostRoles")),
             "rfl",
         ),
         (
-            format!("{manifest}.subject.profile = \"{}\"", candidates.profile),
+            format!("{} = \"{}\"", subject("target"), candidates.target),
             "rfl",
         ),
         (
-            format!("{manifest}.subject.abi = \"{}\"", candidates.abi),
+            format!("{} = \"{}\"", subject("profile"), candidates.profile),
+            "rfl",
+        ),
+        (
+            format!("{} = \"{}\"", subject("abi"), candidates.abi),
             "rfl",
         ),
     ];
@@ -1187,7 +1212,9 @@ fn lean_name_list(names: &[String]) -> String {
 /// 1. walks the axioms of the accepted root and of every report pin; any name
 ///    outside the whitelist declines the package;
 /// 2. refuses a package that declares anything under the reserved
-///    `AverCertChecker` prefix, any scoped instance, any parser extension
+///    `AverCertChecker` prefix or a wall namespace, a name under `AverCert`
+///    outside the producer's exact shapes or extending another declared
+///    constant's name, any scoped instance, any parser extension
 ///    entry (notation, syntax, mixfix operators), or an instance outside the
 ///    admitted forms (see [`AUDIT_INSTANCE_RULES`]);
 /// 3. logs one line per law, bridged-law and bridge pin with its own axiom
@@ -1251,6 +1278,10 @@ fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String 
         .replace(
             "@PACKAGE_AVERCERT_CHILDREN@",
             &lean_name_list(&PACKAGE_AVERCERT_CHILDREN.map(str::to_string)),
+        )
+        .replace(
+            "@PACKAGE_AVERCERT_LEAVES@",
+            &lean_name_list(&PACKAGE_AVERCERT_LEAVES.map(str::to_string)),
         )
         .replace("@ALLOWED@", &lean_name_list(&allowed))
         .replace("@STRICT_ROOTS@", &lean_name_list(&strict_roots))
@@ -1346,11 +1377,15 @@ const WALL_NAMESPACE_ROOTS: [&str; 9] = [
 ];
 
 /// The namespaces under `AverCert` that the producer declares in (`Plans`,
-/// the `Artifact*` byte facts, `Final`, `Bridge*`, `Laws`) and the manifest's
-/// two definitions. Every other `AverCert.*` name belongs to the wall.
-const PACKAGE_AVERCERT_CHILDREN: [&str; 7] = [
-    "Artifact", "Bridge", "Final", "Laws", "Plans", "manifest", "subject",
-];
+/// the `Artifact*` byte facts, `Final`, `Bridge*`, `Laws`). A package name
+/// under one of them is at least one component deeper; every other
+/// `AverCert.*` name belongs to the wall.
+const PACKAGE_AVERCERT_CHILDREN: [&str; 5] = ["Artifact", "Bridge", "Final", "Laws", "Plans"];
+
+/// The manifest's two definitions, the only package constants directly under
+/// `AverCert`. Nothing is declared under them: the audit refuses a package
+/// name that extends a declared constant.
+const PACKAGE_AVERCERT_LEAVES: [&str; 2] = ["manifest", "subject"];
 
 /// The audit program's source; `@…@` placeholders are filled by
 /// [`checker_audit`].
@@ -4417,6 +4452,28 @@ mod tests {
         for index in 0..REPORT_PIN_COUNT {
             assert!(witness.contains(&format!("theorem _root_.{REPORT_PIN_PREFIX}{index} :")));
         }
+        // No name continues past a package constant: a package constant
+        // `AverCert.manifest.subject` would be what such a path resolves to.
+        // Fields are read through the wall structures' projection functions.
+        for package_constant in [
+            "_root_.AverCert.manifest.",
+            "_root_.AverCert.subject.",
+            "_root_.AverCert.Artifact.data.",
+            "_root_.AverCert.Artifact.certificate.",
+        ] {
+            assert!(
+                !witness.contains(package_constant),
+                "a dotted path past {package_constant}: {witness}"
+            );
+        }
+        assert!(witness.contains(
+            "(_root_.AverCert.Schema.Subject.contracts \
+             (_root_.AverCert.Schema.Manifest.subject _root_.AverCert.manifest)) = [\"c\"]"
+        ));
+        assert!(witness.contains(
+            "(_root_.AverCert.AcceptedArtifact.ArtifactData.manifest \
+             _root_.AverCert.Artifact.data) = _root_.AverCert.manifest"
+        ));
         assert!(witness.contains("(_root_.Option.some (nat_lit 7))"));
         assert!(witness.contains("(_root_.Int.negSucc (nat_lit 2))"));
         assert!(witness.contains("((nat_lit 21), .eq)"));

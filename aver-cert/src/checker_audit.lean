@@ -32,16 +32,21 @@ def sumShapes : List (Name × List (Name × Nat)) := @SUMS@
     declares nothing under them. -/
 def wallRoots : List Name := @WALL_ROOTS@
 
+/-- The only constants a package declares directly under `AverCert`: the
+    manifest's `subject` and `manifest`. -/
+def packageAverCertLeaves : List Name := @PACKAGE_AVERCERT_LEAVES@
+
 /-- The only namespaces under `AverCert` a package declares in: its plans,
-    byte facts, final theorem, bridges and law corollaries, and the manifest's
-    `subject` and `manifest`. -/
+    byte facts, final theorem, bridges and law corollaries. -/
 def packageAverCertChildren : List Name := @PACKAGE_AVERCERT_CHILDREN@
 
 /-- Why the package constant `n` is refused for where it is declared, if it
     is. A package name under a wall namespace, or one nesting `AverCert`
     below its first component, is where a dotted reference in the wall or the
     witness could resolve first, since Lean tries the innermost enclosing
-    namespace before the root. -/
+    namespace before the root. Under `AverCert` the admitted names are exact
+    shapes: `AverCert.manifest`, `AverCert.subject`, and names at least one
+    component deep in a producer namespace. -/
 def namespaceRefusal (n : Name) : Option String :=
   match n.eraseMacroScopes.components with
   | [] => none
@@ -50,13 +55,59 @@ def namespaceRefusal (n : Name) : Option String :=
       some s!"a certificate module declares {n}, which nests a checker namespace"
     else if first == `AverCert then
       match rest with
-      | second :: _ =>
+      | [leaf] =>
+        if packageAverCertLeaves.contains leaf then none
+        else some s!"a certificate module declares {n} inside the checker's AverCert namespace"
+      | second :: _ :: _ =>
         if packageAverCertChildren.contains second then none
         else some s!"a certificate module declares {n} inside the checker's AverCert namespace"
       | [] => some s!"a certificate module declares {n} inside the checker's AverCert namespace"
     else if wallRoots.contains first then
       some s!"a certificate module declares {n} inside the checker's {first} namespace"
     else none
+
+/-- The longest proper prefix of `n` that is itself a declared constant, if
+    any. Lean resolves a dotted identifier to the longest prefix that is a
+    constant and reads the rest as fields, so a package constant
+    `AverCert.manifest.subject` is what `AverCert.manifest.subject.contracts`
+    would mean. The witness reads every field through a wall projection
+    function; this refusal keeps a second layer under that. -/
+def extendedConstant (env : Environment) (n : Name) : Option Name := Id.run do
+  let mut p := n.getPrefix
+  for _ in [0:n.getNumParts] do
+    if p.isAnonymous then return none
+    if env.contains p then return some p
+    p := p.getPrefix
+  return none
+
+/-- Whether `s` is `<stem><k>`, where `k` is digits, possibly joined by
+    underscores (`match_1_1`), and starts with a digit. -/
+def numberedAs (stem s : String) : Bool :=
+  let rest := s.toList.drop stem.length
+  s.startsWith stem &&
+    (match rest with
+     | c :: _ => c.isDigit
+     | [] => false) &&
+    rest.all (fun c => c.isDigit || c == '_')
+
+/-- Whether the last component of `n` is `proof_<k>`, `match_<k>` or
+    `eq_<k>`, the names Lean gives an abstracted proof, a matcher and an
+    equation lemma. (The environment the audit imports does not rebuild the
+    matcher extension's state, so a matcher is recognised by its name.) -/
+def numberedAuxiliary : Name → Bool
+  | .str _ s => numberedAs "proof_" s || numberedAs "match_" s || numberedAs "eq_" s
+  | _ => false
+
+/-- Whether `n` is an auxiliary Lean itself declares beside the constant
+    `n.getPrefix`: an equation lemma or other reserved name, or, beside a
+    constant the package itself declares, an internal (`_`-prefixed)
+    compiler constant or an abstracted `proof_<k>`, matcher `match_<k>` or
+    equation `eq_<k>`. None of these is a field name a wall structure has,
+    so no field read can land on one. -/
+def leanAuxiliary (env : Environment) (inPkg : Name → Bool) (n : Name) : Bool :=
+  let parent := n.getPrefix
+  env.contains parent &&
+    (isReservedName env n || (inPkg parent && (n.isInternal || numberedAuxiliary n)))
 
 def lawRoots : List Name := @LAW_ROOTS@
 def bridgedLawRoots : List Name := @BRIDGED_LAW_ROOTS@
@@ -219,19 +270,22 @@ def main : IO UInt32 := do
   --     Two kinds of package constant are not names a reference resolves
   --     to and are not refused: a private one (a match splitter or other
   --     auxiliary Lean builds while a package proof unfolds a wall
-  --     definition), which no other module can name, and an equation lemma
-  --     or other reserved auxiliary of a wall definition, which Lean realizes
-  --     on demand in the package module that first unfolds it and which
-  --     states the wall's own fact.
+  --     definition), which no other module can name, and an auxiliary Lean
+  --     declares beside a constant (`leanAuxiliary`): an equation lemma of a
+  --     wall definition, realized on demand in the package module that first
+  --     unfolds it, states the wall's own fact.
+  --     A package constant under `AverCert` must also not extend another
+  --     declared constant's name, since a dotted reference to that constant's
+  --     fields would resolve to it.
   for (name, _) in env.constants.map₁.toList do
     if inPackage env name then
-      let wallAuxiliary :=
-        isPrivateName name ||
-          (isReservedName env name && (env.find? name.getPrefix).isSome &&
-            !inPackage env name.getPrefix)
-      unless wallAuxiliary do
+      let auxiliary := isPrivateName name || leanAuxiliary env (inPackage env) name
+      unless auxiliary do
         if let some reason := namespaceRefusal name then
           return ← decline reason
+        if name.getRoot == `AverCert then
+          if let some parent := extendedConstant env name then
+            return ← decline s!"a certificate module declares {name}, which extends the declared constant {parent}, so a field read of {parent} could resolve to it"
   -- 2. Parser extensions and instances declared by package modules.
   for m in packageModules do
     match env.getModuleIdx? m with

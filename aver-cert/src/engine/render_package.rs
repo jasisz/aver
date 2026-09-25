@@ -260,7 +260,9 @@ fn render_manifest_lean(analysis: &Analysis, sha: &str, target: &str, abi: &str)
         None => "none".to_string(),
     };
     // A big module's export lists do not fit one declaration: they are
-    // written in pieces (`lean_list_in_pieces`) ahead of `subject`.
+    // written in pieces (`lean_list_in_pieces`) ahead of `subject`. The pieces
+    // live under `AverCert.Plans`, not under `AverCert.subject`: the checker's
+    // audit refuses a package name that extends another declared constant.
     let mut pieces = String::new();
     let string_items = |items: &[String]| items.iter().map(|x| lean_str(x)).collect::<Vec<_>>();
     let pair_items = |items: &[(String, String)]| {
@@ -271,25 +273,25 @@ fn render_manifest_lean(analysis: &Analysis, sha: &str, target: &str, abi: &str)
     };
     let exports = lean_list_in_pieces(
         &mut pieces,
-        "subject.exports",
+        "Plans.subject_exports",
         "String",
         &string_items(&analysis.certified_names()),
     );
     let declared = lean_list_in_pieces(
         &mut pieces,
-        "subject.declaredUncertified",
+        "Plans.subject_declaredUncertified",
         "String × String",
         &pair_items(&declared_uncertified(analysis)),
     );
     let capabilities = lean_list_in_pieces(
         &mut pieces,
-        "subject.capabilities",
+        "Plans.subject_capabilities",
         "String × String",
         &pair_items(&analysis.module_envelope.capabilities),
     );
     let contracts = lean_list_in_pieces(
         &mut pieces,
-        "subject.contracts",
+        "Plans.subject_contracts",
         "String",
         &string_items(&analysis.contracts),
     );

@@ -24,7 +24,17 @@
 //! * a law statement whose literals hide a parenthesis that re-associates the
 //!   witness's conjunction;
 //! * a section cut (the producer's declared entry lengths) that moves one
-//!   byte between two exports, or between two code entries.
+//!   byte between two exports, or between two code entries, or one of the
+//!   type section;
+//! * a package constant a report pin used to read as a dotted path
+//!   (`AverCert.manifest.obligations`, `AverCert.manifest.subject.contracts`,
+//!   `AverCert.Artifact.data.manifest`, and `.modBytes` on wasip2), with and
+//!   without the JSON forged to match it;
+//! * a declared layout that lies about a code entry's offset or length, a
+//!   function's type index or type, or an export's position;
+//! * a closure claim hiding a helper, `__aint_divmod` at a supertype
+//!   signature, a renamed `aver:work` import, and a certified closure that
+//!   reaches a work import.
 //!
 //! Gated behind `wasm` and skipped when `lake` is unavailable, like the other
 //! certificate suites.
@@ -482,4 +492,581 @@ fn cert_hardening_declines_a_lying_code_cut() {
     shift_first_cut(&cert.join("ArtifactLayout.lean"), "codeCuts");
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
+}
+
+// ---- package constants that extend a name the witness reads ----------------
+//
+// Lean resolves a dotted identifier to the longest prefix that is a declared
+// constant and reads the rest as fields. The report pins used to read dotted
+// paths such as `_root_.AverCert.manifest.subject.contracts`, so a package
+// constant `AverCert.manifest.subject.contracts` was what that pin meant. The
+// pins now read every field through a wall projection function, and the audit
+// refuses a package constant under `AverCert` outside the exact producer shapes
+// or extending another declared constant. The first two tests below forge the
+// JSON the way the attack did and are refused by the pins; the rest keep the
+// JSON honest and are refused by the audit.
+
+fn edit_json(cert: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
+    let path = cert.join("cert-manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    edit(&mut json);
+    std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+}
+
+/// (a) A false L3: a package constant `AverCert.manifest.obligations` whose
+/// policies are all `simulatesModelTotally`, and a JSON that claims them. The
+/// policy pin reads the real obligations, so the forged report does not bind.
+#[test]
+fn cert_hardening_declines_forged_policies_behind_a_shadowed_obligations() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-l3") else {
+        return;
+    };
+    // Appended to `Laws.lean`, which the witness imports after the byte
+    // facts, so the package's own proofs keep reading the real manifest.
+    append(
+        &cert.join("Laws.lean"),
+        "\ndef AverCert.manifest.obligations : List AverCert.Schema.Obligation :=\n  \
+         (_root_.AverCert.Schema.Manifest.obligations _root_.AverCert.manifest).map fun o =>\n    \
+         { o with policy := AverCert.Schema.Policy.simulatesModelTotally, termination? := \
+         some (AverCert.Schema.TerminationWitness.mk (.intNatAbs 0) (-1)) }\n",
+    );
+    edit_json(&cert, |json| {
+        json["level"] = serde_json::json!("L3");
+        for entry in json["certified"].as_array_mut().unwrap() {
+            entry["policy"] = serde_json::json!("simulatesModelTotally");
+            entry["level"] = serde_json::json!("L3");
+            entry["termination_witness"] = serde_json::json!({
+                "measure": {"kind": "intNatAbs", "param_index": 0},
+                "descent": -1
+            });
+        }
+    });
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "does not bind to this artifact");
+    assert!(report.contains("Obligation.policy"), "{report}");
+}
+
+/// (b) Hidden runtime contracts: a package constant
+/// `AverCert.manifest.subject.contracts := []` and a JSON with no contracts.
+/// The contracts pin reads the real subject's, so the report does not bind.
+#[test]
+fn cert_hardening_declines_hidden_contracts_behind_a_shadowed_subject_field() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-contracts") else {
+        return;
+    };
+    append(
+        &cert.join("Manifest.lean"),
+        "\ndef AverCert.manifest.subject.contracts : List String := []\n",
+    );
+    edit_json(&cert, |json| {
+        json["runtime_contracts"] = serde_json::json!([]);
+    });
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "does not bind to this artifact");
+    assert!(report.contains("contracts"), "{report}");
+}
+
+/// The same kind of constant with the JSON left honest: the pins elaborate
+/// against the real subject, and the audit refuses a package constant under
+/// `AverCert` outside the producer's exact shapes.
+#[test]
+fn cert_hardening_declines_a_constant_under_the_manifest() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-subject") else {
+        return;
+    };
+    // In `Manifest.lean` the constant would already redirect the package's
+    // own `AverCert.manifest.subject.hostRoleTable` rewrite in `Artifact.lean`
+    // and break the build; `Laws.lean` is imported after the byte facts.
+    append(
+        &cert.join("Laws.lean"),
+        "\ndef AverCert.manifest.subject : AverCert.Schema.Subject := AverCert.subject\n",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(
+        ok,
+        &report,
+        "declares AverCert.manifest.subject inside the checker's AverCert namespace",
+    );
+}
+
+/// (c) A package constant `AverCert.Artifact.data.manifest` is what the
+/// dotted pin `data.manifest = manifest` used to read: pointed at a manifest
+/// of the package's choosing, laws and bridges were credited against it
+/// while the accepted `data` carried the honest one. `AverCert.Artifact.*` is
+/// a producer namespace, so the audit refuses it as an extension of the
+/// declared constant `AverCert.Artifact.data`.
+#[test]
+fn cert_hardening_declines_a_constant_extending_the_artifact_data() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-datamanifest") else {
+        return;
+    };
+    append(
+        &cert.join("Artifact.lean"),
+        "\nnoncomputable def AverCert.Artifact.data.manifest : AverCert.Schema.Manifest := \
+         AverCert.manifest\n",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(
+        ok,
+        &report,
+        "declares AverCert.Artifact.data.manifest, which extends the declared constant \
+         AverCert.Artifact.data",
+    );
+}
+
+/// The wasip2 form: `report_pin_0` ties the checker's `ArtifactBytes` to
+/// `data.modBytes`, and a package constant `AverCert.Artifact.data.modBytes`
+/// was what it read.
+#[cfg(feature = "wasip2")]
+#[test]
+fn cert_hardening_declines_a_wasip2_constant_extending_the_artifact_data() {
+    if !lake_available() {
+        return;
+    }
+    let dir = temp_dir("certharden-wasip2");
+    let compile = aver_command()
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("compile")
+        .arg("tests/fixtures/wasip2_carrierless.av")
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&*dir)
+        .output()
+        .expect("aver compile --target wasip2 --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let component = dir.join("wasip2_carrierless.component.wasm");
+    let cert = dir.join("cert");
+    append(
+        &cert.join("Artifact.lean"),
+        "\nnoncomputable def AverCert.Artifact.data.modBytes : Nat := \
+         AverCert.ArtifactBytes.modBytes\n",
+    );
+    let (ok, report) = aver_cert("check", &component, &cert);
+    assert_declined(
+        ok,
+        &report,
+        "declares AverCert.Artifact.data.modBytes, which extends the declared constant \
+         AverCert.Artifact.data",
+    );
+}
+
+// ---- late trust points: the declared layout, the closure, the helpers ------
+
+/// The type section's cut, like the export and code cuts.
+#[test]
+fn cert_hardening_declines_a_lying_type_cut() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-typecut") else {
+        return;
+    };
+    shift_first_cut(&cert.join("ArtifactLayout.lean"), "typeCuts");
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("decodeTypesCut"), "{report}");
+}
+
+/// Add one to the entry of function 0 in the packed layout table `field`
+/// (the lowest 32 bits of its hex numeral).
+fn bump_first_layout_entry(layout: &Path, field: &str) {
+    let text = std::fs::read_to_string(layout).unwrap();
+    let head = format!("{field} := 0x");
+    let start = text.find(&head).expect("the layout declares the table") + head.len();
+    let end = start
+        + text[start..]
+            .find(|c: char| !c.is_ascii_hexdigit())
+            .unwrap();
+    let digits = &text[start..end];
+    assert!(digits.len() > 8, "{field}: {digits}");
+    let (high, low) = digits.split_at(digits.len() - 8);
+    let low = u32::from_str_radix(low, 16).unwrap() + 1;
+    std::fs::write(
+        layout,
+        format!("{}{high}{low:08x}{}", &text[..start], &text[end..]),
+    )
+    .unwrap();
+}
+
+/// A declared code-entry offset one byte off: `layoutConfirmed` reads every
+/// declared slice and requires it to be the entry the decoder reads.
+#[test]
+fn cert_hardening_declines_a_lying_code_offset() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-offset") else {
+        return;
+    };
+    bump_first_layout_entry(&cert.join("ArtifactLayout.lean"), "offsets");
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("ArtifactLayout"), "{report}");
+}
+
+/// A declared code-entry length one byte long.
+#[test]
+fn cert_hardening_declines_a_lying_code_length() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-length") else {
+        return;
+    };
+    bump_first_layout_entry(&cert.join("ArtifactLayout.lean"), "lengths");
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("ArtifactLayout"), "{report}");
+}
+
+/// A declared function type index naming the next type.
+#[test]
+fn cert_hardening_declines_a_lying_function_type_index() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-typeidx") else {
+        return;
+    };
+    bump_first_layout_entry(&cert.join("ArtifactLayout.lean"), "types");
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("ArtifactLayout"), "{report}");
+}
+
+/// A declared function type whose result is not the type section's:
+/// `fnTypesConfirmed` compares each declaration with the entry at its index.
+#[test]
+fn cert_hardening_declines_a_lying_function_type() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-fntype") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let start = text.find("def fnTypes : List FnType :=\n  [(").unwrap();
+    // `(index, [params], [results])`: the first `])` closes the first
+    // entry's results; they become `[i64]`.
+    let close = start + text[start..].find("])").unwrap() + 1;
+    let results = start + text[start..close].rfind(", [").unwrap();
+    std::fs::write(
+        &layout,
+        format!("{}, [.numeric 126]{}", &text[..results], &text[close..]),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(
+        report.contains("typesMatch 0 info.entries fnTypes"),
+        "{report}"
+    );
+}
+
+/// Two planned exports whose declared export positions are swapped: each
+/// declaration's position must hold the export of its own name.
+#[test]
+fn cert_hardening_declines_a_lying_export_position() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-exportpos") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let start = text.find("def fnDecls : List FnDecl :=").unwrap();
+    let end = start + text[start..].find("\n\n").unwrap();
+    // `⟨name, exportPos, sigPos⟩`, one per planned export.
+    let decls = &text[start..end];
+    let positions: Vec<&str> = decls
+        .split('⟩')
+        .filter_map(|decl| decl.rsplit_once("], ").map(|(_, rest)| rest))
+        .collect();
+    assert!(positions.len() >= 2, "{decls}");
+    let first = positions[0].split(", ").next().unwrap();
+    let second = positions[1].split(", ").next().unwrap();
+    assert_ne!(first, second);
+    let swapped = decls
+        .replacen(&format!("], {first}, "), "], @SWAP@, ", 1)
+        .replacen(&format!("], {second}, "), &format!("], {first}, "), 1)
+        .replacen("@SWAP@", second, 1);
+    std::fs::write(
+        &layout,
+        format!("{}{swapped}{}", &text[..start], &text[end..]),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("exportsLazy"), "{report}");
+}
+
+/// The closure claim with one reachable helper left out. The claim is checked
+/// on the `SortedKeys` path (`closureIsolationL_of_S`) against the closure it
+/// recomputes from the code section.
+#[test]
+fn cert_hardening_declines_a_closure_claim_hiding_a_helper() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-closure") else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let text = std::fs::read_to_string(&artifact).unwrap();
+    assert!(text.contains("closureIsolationL_of_S"), "{text}");
+    let head = "closureClaim := ⟨";
+    let start = text.find(head).unwrap() + head.len();
+    let end = start + text[start..].find('⟩').unwrap();
+    let lists: Vec<Vec<u32>> = text[start..end]
+        .split("], ")
+        .map(|list| {
+            list.trim_matches(|c| c == '[' || c == ']')
+                .split(", ")
+                .map(|x| x.parse().unwrap())
+                .collect()
+        })
+        .collect();
+    let (roots, mut helpers, admitted) = (lists[0].clone(), lists[1].clone(), lists[2].clone());
+    let hidden = helpers.pop().expect("the closure has a helper");
+    let admitted: Vec<u32> = admitted.into_iter().filter(|x| *x != hidden).collect();
+    let show = |xs: &[u32]| {
+        format!(
+            "[{}]",
+            xs.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
+        )
+    };
+    std::fs::write(
+        &artifact,
+        format!(
+            "{}{}, {}, {}{}",
+            &text[..start],
+            show(&roots),
+            show(&helpers),
+            show(&admitted),
+            &text[end..]
+        ),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("closureIsolationS"), "{report}");
+}
+
+/// Replace the delivered artifact with `bytes` and restamp the package with
+/// their hash, so the only lie left is the one in the bytes.
+fn restamp(wasm: &Path, cert: &Path, bytes: &[u8]) {
+    use sha2::{Digest, Sha256};
+    let hex = |digest: &[u8]| {
+        digest
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let old = hex(&Sha256::digest(std::fs::read(wasm).unwrap()));
+    let new = hex(&Sha256::digest(bytes));
+    std::fs::write(wasm, bytes).unwrap();
+    for file in ["cert-manifest.json", "Manifest.lean"] {
+        let path = cert.join(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(&old), "{file} names the artifact hash");
+        std::fs::write(&path, text.replace(&old, &new)).unwrap();
+    }
+}
+
+/// The body range of the defined function at absolute index `func` (empty
+/// when it is not a defined function) and the byte range of the import
+/// section.
+fn code_body_and_imports(
+    bytes: &[u8],
+    func: u32,
+) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+    let mut imports = 0u32;
+    let mut import_range = 0..0;
+    let mut defined = 0u32;
+    let mut body = None;
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.expect("parses") {
+            wasmparser::Payload::ImportSection(reader) => {
+                import_range = reader.range();
+                for group in reader {
+                    for import in group.expect("import group") {
+                        if let wasmparser::TypeRef::Func(_) = import.expect("import").1.ty {
+                            imports += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(entry) => {
+                if imports + defined == func {
+                    body = Some(entry.range());
+                }
+                defined += 1;
+            }
+            _ => {}
+        }
+    }
+    (body.unwrap_or(0..0), import_range)
+}
+
+fn validate(bytes: &[u8]) {
+    wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all())
+        .validate_all(bytes)
+        .expect("the tampered module stays valid WebAssembly");
+}
+
+/// The module's type of `__aint_divmod` widened to a supertype result
+/// (`anyref` for the carrier). The body is unchanged, so its template still
+/// matches and the module stays valid (nothing in it calls the helper);
+/// `roleTypesPinned` fixes the exact type `carrier carrier i32 -> carrier`.
+#[test]
+fn cert_hardening_declines_divmod_at_a_supertype_signature() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-divmod") else {
+        return;
+    };
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let carrier = manifest["carrier_type_index"].as_u64().unwrap() as u8;
+    assert!(
+        manifest["hostRoleTable"]["divmod"].is_u64(),
+        "the tiny module has a divmod helper: {manifest:#}"
+    );
+    // `func (param carrier carrier i32) (result carrier)`, with the
+    // nullable reference `0x63 carrier`; the result becomes `0x63 0x6e`,
+    // `(ref null any)`, of the same length.
+    let exact = [
+        0x60, 3, 0x63, carrier, 0x63, carrier, 0x7f, 1, 0x63, carrier,
+    ];
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let at: Vec<usize> = bytes
+        .windows(exact.len())
+        .enumerate()
+        .filter(|(_, w)| *w == exact)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(at.len(), 1, "one divmod function type");
+    bytes[at[0] + exact.len() - 1] = 0x6e;
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("indicesDistinct"), "{report}");
+}
+
+/// Compile the work-job fixture, whose module imports `aver:work/v1`.
+fn work_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
+    if !lake_available() {
+        return None;
+    }
+    let dir = temp_dir(prefix);
+    let compile = aver_command()
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("compile")
+        .arg("tests/fixtures/cert_work_job/main.av")
+        .arg("--module-root")
+        .arg("tests/fixtures/cert_work_job")
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&*dir)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let wasm = dir.join("main.wasm");
+    let cert = dir.join("cert");
+    Some((dir, wasm, cert))
+}
+
+/// The job imports renamed to `aver:work/v2` in the module and everywhere
+/// the package declares them: only the capability registry, which admits
+/// exactly `aver:work/v1`, stands between them and acceptance.
+#[test]
+fn cert_hardening_declines_a_renamed_work_import() {
+    let Some((_dir, wasm, cert)) = work_baseline("certharden-workv2") else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let (_, imports) = code_body_and_imports(&bytes, 0);
+    let (from, to) = (b"aver:work/v1", b"aver:work/v2");
+    let mut renamed = 0;
+    let mut at = imports.start;
+    while at + from.len() <= imports.end {
+        if &bytes[at..at + from.len()] == from {
+            bytes[at..at + from.len()].copy_from_slice(to);
+            renamed += 1;
+        }
+        at += 1;
+    }
+    assert_eq!(renamed, 4, "submit, take, task and complete");
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    for file in ["cert-manifest.json", "Manifest.lean"] {
+        let path = cert.join(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("aver:work/v1").count(), 4, "{file}");
+        std::fs::write(&path, text.replace("aver:work/v1", "aver:work/v2")).unwrap();
+    }
+    let chars = "['a', 'v', 'e', 'r', ':', 'w', 'o', 'r', 'k', '/', 'v', '1']";
+    let artifact = cert.join("Artifact.lean");
+    let text = std::fs::read_to_string(&artifact).unwrap();
+    assert_eq!(text.matches(chars).count(), 4, "Artifact.lean");
+    std::fs::write(&artifact, text.replace(chars, &chars.replace("'1'", "'2'"))).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(
+        report.contains("importsWithinCapabilitiesChars"),
+        "{report}"
+    );
+}
+
+/// A certified closure that reaches a work import. The bignum `strip`
+/// sub-routine is in the closure of the certified exports and its body is not
+/// pinned by a template, so five of its bytes (`local.get 1; i32.const 1;
+/// i32.sub`) become `i32.const 0; call task; ref.is_null`, of the same length
+/// and stack effect. The closure scan finds the reachable import.
+#[test]
+fn cert_hardening_declines_a_certified_closure_reaching_a_work_import() {
+    let Some((_dir, wasm, cert)) = work_baseline("certharden-workreach") else {
+        return;
+    };
+    let manifest_lean = std::fs::read_to_string(cert.join("Manifest.lean")).unwrap();
+    let strip: u32 = manifest_lean
+        .split("strip := ")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|n| n.parse().ok())
+        .expect("the manifest declares the strip sub-routine");
+    let artifact = std::fs::read_to_string(cert.join("Artifact.lean")).unwrap();
+    assert!(
+        artifact.contains(&format!(", {strip},")),
+        "strip is in the certified closure"
+    );
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    // The absolute index of the `task` import.
+    let mut task = None;
+    let mut index = 0u32;
+    for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+        if let wasmparser::Payload::ImportSection(reader) = payload.expect("parses") {
+            for group in reader {
+                for import in group.expect("import group") {
+                    let (_, import) = import.expect("import");
+                    if let wasmparser::TypeRef::Func(_) = import.ty {
+                        if import.module == "aver:work/v1" && import.name == "task" {
+                            task = Some(index);
+                        }
+                        index += 1;
+                    }
+                }
+            }
+        }
+    }
+    let task = u8::try_from(task.expect("the module imports task")).unwrap();
+    assert!(task < 0x80, "a one-byte LEB index");
+    let (body, _) = code_body_and_imports(&bytes, strip);
+    assert!(!body.is_empty(), "strip is a defined function");
+    let pattern = [0x20, 0x01, 0x41, 0x01, 0x6b];
+    let at = body.start
+        + bytes[body.clone()]
+            .windows(pattern.len())
+            .position(|w| w == pattern)
+            .expect("strip decrements its index");
+    bytes[at..at + pattern.len()].copy_from_slice(&[0x41, 0x00, 0x10, task, 0xd1]);
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("closureIsolationS"), "{report}");
 }
