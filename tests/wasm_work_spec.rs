@@ -63,6 +63,16 @@ fn run(name: &str, target: &[&str], program_args: &[&str]) -> Result<String, Str
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// The wasm targets this build can run: wasm-gc always, wasip2 only when the
+/// `wasip2` feature is on (the wasm-gc CI job builds without it).
+fn wasm_targets() -> Vec<&'static [&'static str]> {
+    let mut targets: Vec<&'static [&'static str]> = vec![&["--wasm-gc"]];
+    if cfg!(feature = "wasip2") {
+        targets.push(&["--wasip2"]);
+    }
+    targets
+}
+
 fn target_name(target: &[&str]) -> &'static str {
     match target.first() {
         Some(&"--wasm-gc") => "wasm-gc",
@@ -629,7 +639,7 @@ fn one_recording(dir: &Path) -> Result<PathBuf, String> {
 #[test]
 fn waits_keyed_by_a_sum_beside_the_generated_loop_match_the_vm_on_both_wasm_targets() {
     let name = "run_wait_own_key";
-    for target in [&["--wasm-gc"][..], &["--wasip2"][..]] {
+    for target in wasm_targets() {
         for args in [&[][..], &["manual"][..]] {
             let vm = run(name, &[], args).unwrap_or_else(|error| panic!("{error}"));
             let wasm = run(name, target, args).unwrap_or_else(|error| panic!("{error}"));
