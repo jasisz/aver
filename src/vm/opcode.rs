@@ -402,6 +402,19 @@ pub const VECTOR_SET: u8 = 0x84;
 /// Stack: [vector, index, value] → [vector]
 pub const VECTOR_SET_OR_KEEP: u8 = 0x85;
 
+/// `Vector.set(record.field, index, value)` as the subject of a match whose
+/// `None` arm may read the record whole (`field_moves::vector_set_match`).
+/// Stack: [record, index, value] → [option_vector].
+///
+/// An index out of range answers `None` and leaves the record as it was. An
+/// index in range takes the Vector out of the record and writes it in place
+/// when nothing off the stack holds the record, exactly `holders` cells on
+/// the stack hold it besides the operand, and nothing but the record holds
+/// the Vector; otherwise the Vector is copied, as `VECTOR_SET` does. The
+/// compiler emits it only where no read after the write can see the field
+/// (`vm::compiler::field_take`).
+pub const VECTOR_SET_FIELD: u8 = 0xB3; // field_symbol_id:u32, holders:u8
+
 // -- Deforestation buffer (0.15 Traversal) -----------------------------------
 //
 // Mutable byte-buffer scratch backing the synthesizer's `__buf_*` intrinsics.
@@ -705,6 +718,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         VECTOR_GET_OR => "VECTOR_GET_OR",
         VECTOR_SET => "VECTOR_SET",
         VECTOR_SET_OR_KEEP => "VECTOR_SET_OR_KEEP",
+        VECTOR_SET_FIELD => "VECTOR_SET_FIELD",
         BUFFER_NEW => "BUFFER_NEW",
         BUFFER_APPEND_STR => "BUFFER_APPEND_STR",
         BUFFER_APPEND_SEP_UNLESS_FIRST => "BUFFER_APPEND_SEP_UNLESS_FIRST",
@@ -850,7 +864,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         RECORD_GET_NAMED | LIST_NEW | TUPLE_NEW => 4,
 
         // 5-byte
-        CALL_BUILTIN | VARIANT_NEW | RECORD_TAKE_NAMED => 5,
+        CALL_BUILTIN | VARIANT_NEW | RECORD_TAKE_NAMED | VECTOR_SET_FIELD => 5,
 
         // u8 + fail_offset:i32
         MATCH_UNWRAP | MATCH_TUPLE => 5,

@@ -1,0 +1,49 @@
+module Main
+    intent = "A record whose Vector field every step sets, the way an answer module's state holds one."
+    effects [Args.get, Console.print]
+
+record State
+    cells: Vector<Int>
+    count: Int
+
+fn step(s: State, i: Int) -> State
+    ? "Writes i at i modulo the Vector's size. The None arm hands the state"
+      "back whole, so the Vector must still be in it when the index misses."
+    match Vector.set(s.cells, Int.mod(i, 100000), i)
+        Option.Some(updated) -> State.update(s, cells = updated, count = s.count + 1)
+        Option.None -> s
+
+verify step
+    step(State(cells = Vector.fromList([0, 0]), count = 0), 1).count => 1
+    step(State(cells = Vector.fromList([]), count = 0), 1).count => 0
+
+fn run(s: State, i: Int, n: Int) -> State
+    ? "Runs step for i from i up to n."
+    match i >= n
+        true -> s
+        false -> run(step(s, i), i + 1, n)
+
+verify run
+    run(State(cells = Vector.fromList([0]), count = 0), 0, 3).count => 3
+
+fn total(s: State) -> Int
+    ? "The last cell plus the number of steps that wrote."
+    match Vector.get(s.cells, 99999)
+        Option.Some(v) -> v + s.count
+        Option.None -> s.count
+
+verify total
+    total(State(cells = Vector.fromList([]), count = 2)) => 2
+
+fn arg(index: Int, fallback: Int) -> Int
+    ? "The index-th argument as an Int, or the fallback."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), index)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), fallback)
+        Option.None -> fallback
+
+fn main() -> Unit
+    ? "Sets a hundred-thousand-cell Vector held by a record, 2000 times by default."
+    ! [Args.get, Console.print]
+    ended = run(State(cells = Vector.new(100000, 0), count = 0), 0, arg(0, 2000))
+    Console.print("total {total(ended)}")

@@ -24,11 +24,120 @@
 //! and one of the reads that can run with `q` is the local's last use, so
 //! nothing reads `s` after them. A read inside an independent product is
 //! never movable: its branches run on their own threads.
+//!
+//! ## The target of a matched `Vector.set`
+//!
+//! In
+//!
+//! ```text
+//! match Vector.set(s.cells, i, x)
+//!     Option.Some(updated) -> State.update(s, cells = updated)
+//!     Option.None -> s
+//! ```
+//!
+//! the `None` arm reads the whole of `s`, so a read of `s.cells` in the
+//! subject could never move: the `None` arm still needs the field. But the
+//! `None` arm is taken exactly when the index is out of range, and then the
+//! set changes nothing. A backend that evaluates the index and the value,
+//! checks the index against the length, and only then reads the target, in
+//! the `Some` arm, needs the target in the `Some` arm alone
+//! ([`vector_set_match`]). The analysis places that read there, so it
+//! moves when nothing else in the `Some` arm or after the match needs the
+//! field.
 
 use std::collections::{HashMap, HashSet};
 
-use super::expr::{MirExpr, MirRecordUpdate, walk_children};
+use super::expr::{
+    MirCallee, MirCtor, MirExpr, MirMatch, MirPattern, MirRecordUpdate, walk_children,
+};
 use super::program::LocalId;
+use crate::ast::Spanned;
+use crate::ir::hir::BuiltinCtor;
+
+/// A `match` on `Vector.set(target, index, value)` with one arm for
+/// `Option.Some` and one for `Option.None` (or a wildcard after the `Some`
+/// arm), whose target is a field path of a local (`s.cells`, `s.a.cells`).
+///
+/// The `None` arm runs exactly when the index is out of range, and then the
+/// set has changed nothing: whatever the arm reads of the target's record
+/// is what was there before. A backend that evaluates `index` and `value`,
+/// checks the index, and reads `target` only once the `Some` arm is chosen
+/// never needs the target in the `None` arm, so the target read belongs to
+/// the `Some` arm. Generated Rust emits the match that way when the read may
+/// move ([`movable_projections`]); the VM takes the field under the same
+/// shape.
+pub struct VectorSetMatch<'a> {
+    pub target: &'a Spanned<MirExpr>,
+    pub index: &'a Spanned<MirExpr>,
+    pub value: &'a Spanned<MirExpr>,
+    /// Arm positions in `arms`.
+    pub some_arm: usize,
+    pub none_arm: usize,
+    /// The local the `Some` arm binds the updated Vector to, if any.
+    pub updated: Option<(LocalId, &'a str)>,
+    /// Address of the subject call.
+    pub call: usize,
+}
+
+/// See [`VectorSetMatch`]. `builtins` names the program's builtin ids.
+pub fn vector_set_match<'a>(m: &'a MirMatch, builtins: &[String]) -> Option<VectorSetMatch<'a>> {
+    let MirExpr::Call(call) = &m.subject.node else {
+        return None;
+    };
+    let MirCallee::Builtin(id) = call.node.callee else {
+        return None;
+    };
+    if builtins.get(id.0 as usize).map(String::as_str) != Some("Vector.set")
+        || call.node.args.len() != 3
+    {
+        return None;
+    }
+    let target = &call.node.args[0];
+    if !projection_root(&target.node).is_some_and(|(_, _, path)| !path.is_empty()) {
+        return None;
+    }
+    if m.arms.len() != 2 {
+        return None;
+    }
+    let some = |pattern: &'a MirPattern| match pattern {
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+            bindings,
+            binding_names,
+        } if bindings.len() == 1 => Some(Some((
+            bindings[0],
+            binding_names.first().map(String::as_str).unwrap_or("_"),
+        ))),
+        _ => None,
+    };
+    let none = |pattern: &MirPattern| {
+        matches!(
+            pattern,
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
+                ..
+            }
+        )
+    };
+    let (some_arm, none_arm, updated) = match (some(&m.arms[0].pattern), some(&m.arms[1].pattern)) {
+        (Some(updated), None)
+            if none(&m.arms[1].pattern) || matches!(m.arms[1].pattern, MirPattern::Wildcard) =>
+        {
+            (0, 1, updated)
+        }
+        (None, Some(updated)) if none(&m.arms[0].pattern) => (1, 0, updated),
+        _ => return None,
+    };
+    Some(VectorSetMatch {
+        target,
+        index: &call.node.args[1],
+        value: &call.node.args[2],
+        some_arm,
+        none_arm,
+        updated,
+        call: &call.node as *const _ as usize,
+    })
+}
 
 /// The part of a local one read observes.
 #[derive(Debug, Clone)]
@@ -82,10 +191,12 @@ enum Branching {
 /// is in the set too when it may move what the update keeps: the rest of
 /// `s.window` then moves into the new record instead of being cloned, and
 /// the fields it replaces may move out before it.
-pub fn movable_projections(body: &MirExpr) -> HashSet<usize> {
+///
+/// `builtins` names the program's builtin ids, for [`vector_set_match`].
+pub fn movable_projections(body: &MirExpr, builtins: &[String]) -> HashSet<usize> {
     let mut reads: HashMap<LocalId, Vec<Read>> = HashMap::new();
     let mut trail = Vec::new();
-    collect(body, &mut trail, false, &mut reads);
+    collect(body, &mut trail, false, builtins, &mut reads);
     let mut out = HashSet::new();
     // A chain base is final once nothing outside its own update reads what
     // it keeps; a base further in may depend on one further out, so this
@@ -208,6 +319,7 @@ fn collect(
     expr: &MirExpr,
     trail: &mut Vec<(usize, usize, Branching)>,
     in_product: bool,
+    builtins: &[String],
     reads: &mut HashMap<LocalId, Vec<Read>>,
 ) {
     let addr = expr as *const MirExpr as usize;
@@ -264,7 +376,31 @@ fn collect(
                 });
                 for (index, field) in update.node.updates.iter().enumerate() {
                     trail.push((addr, index + 1, Branching::Other));
-                    collect(&field.value.node, trail, in_product, reads);
+                    collect(&field.value.node, trail, in_product, builtins, reads);
+                    trail.pop();
+                }
+                return;
+            }
+        }
+        MirExpr::Match(m) => {
+            if let Some(set) = vector_set_match(&m.node, builtins) {
+                // The index and the value run in the subject; the target is
+                // read in the `Some` arm (see `VectorSetMatch`).
+                trail.push((addr, 0, Branching::Alternatives));
+                for (index, arg) in [(1, set.index), (2, set.value)] {
+                    trail.push((set.call, index, Branching::Call));
+                    collect(&arg.node, trail, in_product, builtins, reads);
+                    trail.pop();
+                }
+                trail.pop();
+                trail.push((addr, set.some_arm + 1, Branching::Alternatives));
+                trail.push((set.call, 0, Branching::Call));
+                collect(&set.target.node, trail, in_product, builtins, reads);
+                trail.pop();
+                trail.pop();
+                for (index, arm) in m.node.arms.iter().enumerate() {
+                    trail.push((addr, index + 1, Branching::Alternatives));
+                    collect(&arm.body.node, trail, in_product, builtins, reads);
                     trail.pop();
                 }
                 return;
@@ -282,7 +418,7 @@ fn collect(
     let mut index = 0;
     walk_children(expr, &mut |child| {
         trail.push((addr, index, branching));
-        collect(child, trail, in_product, reads);
+        collect(child, trail, in_product, builtins, reads);
         trail.pop();
         index += 1;
     });
@@ -512,7 +648,7 @@ mod tests {
             project(project(local(0, false), "window"), "created"),
             project(project(local(0, true), "window"), "spent"),
         ]);
-        let movable = movable_projections(&body.node);
+        let movable = movable_projections(&body.node, &[]);
         assert!(movable.contains(&addr(&args(&body)[0])));
         assert!(movable.contains(&addr(&args(&body)[1])));
     }
@@ -523,7 +659,7 @@ mod tests {
             project(project(local(0, false), "window"), "created"),
             project(local(0, true), "window"),
         ]);
-        let movable = movable_projections(&body.node);
+        let movable = movable_projections(&body.node, &[]);
         assert!(movable.is_empty());
     }
 
@@ -535,7 +671,7 @@ mod tests {
             value: Box::new(call(vec![project(local(0, false), "window")])),
             body: Box::new(call(vec![project(local(0, true), "window")])),
         })));
-        let movable = movable_projections(&body.node);
+        let movable = movable_projections(&body.node, &[]);
         let MirExpr::Let(chain) = &body.node else {
             unreachable!()
         };
@@ -572,7 +708,7 @@ mod tests {
                 },
             ],
         })));
-        let movable = movable_projections(&body.node);
+        let movable = movable_projections(&body.node, &[]);
         let MirExpr::RecordUpdate(outer) = &body.node else {
             unreachable!()
         };
@@ -596,11 +732,11 @@ mod tests {
             }],
         })));
         let body = call(vec![update, project(local(0, true), "window")]);
-        assert!(movable_projections(&body.node).len() <= 1);
+        assert!(movable_projections(&body.node, &[]).len() <= 1);
         let MirExpr::RecordUpdate(update) = &args(&body)[0].node else {
             unreachable!()
         };
-        let movable = movable_projections(&body.node);
+        let movable = movable_projections(&body.node, &[]);
         assert!(!movable.contains(&addr(&update.node.base)));
         assert!(!movable.contains(&addr(&args(&update.node.updates[0].value)[0])));
     }
@@ -634,7 +770,7 @@ mod tests {
                 body: update,
             }],
         })));
-        let movable = movable_projections(&body.node);
+        let movable = movable_projections(&body.node, &[]);
         assert!(movable.contains(&arm_read));
         assert!(!movable.contains(&subject_read));
     }
@@ -653,7 +789,7 @@ mod tests {
                 body: arm,
             }],
         })));
-        assert!(!movable_projections(&body.node).contains(&arm_read));
+        assert!(!movable_projections(&body.node, &[]).contains(&arm_read));
     }
 
     #[test]
@@ -667,6 +803,91 @@ mod tests {
                 value: call(vec![project(project(local(0, true), "window"), "created")]),
             }],
         })));
-        assert_eq!(movable_projections(&body.node).len(), 1);
+        assert_eq!(movable_projections(&body.node, &[]).len(), 1);
+    }
+
+    /// `match Vector.set(s.cells, 0, 1)` with `some_arm` as the `Some` arm and
+    /// `none_arm` as the `None` arm; returns the body and the target's address.
+    fn vector_set_match_body(
+        some_arm: Spanned<MirExpr>,
+        none_arm: Spanned<MirExpr>,
+    ) -> (Spanned<MirExpr>, usize) {
+        use crate::ir::BuiltinId;
+        use crate::ir::mir::expr::{MirMatch, MirMatchArm};
+        let subject = sp(MirExpr::Call(Spanned::bare(MirCall {
+            callee: MirCallee::Builtin(BuiltinId(0)),
+            args: vec![
+                project(local(0, false), "cells"),
+                sp(MirExpr::Literal(Spanned::bare(crate::ast::Literal::Int(0)))),
+                sp(MirExpr::Literal(Spanned::bare(crate::ast::Literal::Int(1)))),
+            ],
+        })));
+        let target = addr(&args(&subject)[0]);
+        let body = sp(MirExpr::Match(Spanned::bare(MirMatch {
+            subject: Box::new(subject),
+            arms: vec![
+                MirMatchArm {
+                    pattern: MirPattern::Ctor {
+                        ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+                        bindings: vec![LocalId(1)],
+                        binding_names: vec!["updated".to_string()],
+                    },
+                    body: some_arm,
+                },
+                MirMatchArm {
+                    pattern: MirPattern::Ctor {
+                        ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
+                        bindings: vec![],
+                        binding_names: vec![],
+                    },
+                    body: none_arm,
+                },
+            ],
+        })));
+        (body, target)
+    }
+
+    fn update_cells(count: Spanned<MirExpr>) -> Spanned<MirExpr> {
+        sp(MirExpr::RecordUpdate(Spanned::bare(MirRecordUpdate {
+            type_id: Some(TypeId(0)),
+            type_name: "State".to_string(),
+            base: Box::new(local(0, false)),
+            updates: vec![
+                MirRecordField {
+                    name: "cells".to_string(),
+                    value: local(1, true),
+                },
+                MirRecordField {
+                    name: "count".to_string(),
+                    value: count,
+                },
+            ],
+        })))
+    }
+
+    #[test]
+    fn a_matched_vector_set_target_moves_past_a_none_arm_that_reads_the_record() {
+        // match Vector.set(s.cells, 0, 1)
+        //     Option.Some(updated) -> State.update(s, cells = updated, count = s.count)
+        //     Option.None -> s
+        let (body, target) = vector_set_match_body(
+            update_cells(project(local(0, true), "count")),
+            local(0, true),
+        );
+        let builtins = ["Vector.set".to_string()];
+        assert!(movable_projections(&body.node, &builtins).contains(&target));
+        // Without knowing the call is `Vector.set`, the None arm blocks it.
+        assert!(!movable_projections(&body.node, &[]).contains(&target));
+    }
+
+    #[test]
+    fn a_matched_vector_set_target_read_again_in_the_some_arm_does_not_move() {
+        // Option.Some(updated) -> f(s.cells, updated)
+        let (body, target) = vector_set_match_body(
+            call(vec![project(local(0, true), "cells"), local(1, true)]),
+            local(0, true),
+        );
+        let builtins = ["Vector.set".to_string()];
+        assert!(!movable_projections(&body.node, &builtins).contains(&target));
     }
 }

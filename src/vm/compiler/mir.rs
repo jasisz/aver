@@ -846,7 +846,9 @@ pub(super) fn compile_mir_expr(
             if try_emit_match_dispatch_const(fc, &m.subject, &m.arms)?.is_some() {
                 return Ok(());
             }
-            compile_mir_expr(fc, &m.subject)?;
+            if !compile_vector_set_field(fc, m)? {
+                compile_mir_expr(fc, &m.subject)?;
+            }
             // A subject nothing reads after the match (a temporary, or a
             // local at its last use) is consumed by the arm that matches it:
             // a tuple or box the arm takes apart, if nothing else holds it,
@@ -1092,6 +1094,12 @@ pub(super) fn compile_mir_fn_body(
     fc: &mut FnCompiler<'_>,
     mir_fn: &MirFn,
 ) -> Result<(), MirVmUnsupported> {
+    fc.movable_projections = fc
+        .mir_program
+        .map(|program| {
+            crate::ir::mir::field_moves::movable_projections(&mir_fn.body.node, &program.builtins)
+        })
+        .unwrap_or_default();
     compile_mir_expr(fc, &mir_fn.body)?;
     fc.emit_op(RETURN);
     Ok(())
@@ -1735,6 +1743,49 @@ where
     let outer_fail = fc.emit_jump(JUMP);
     fc.patch_jump(success_skip);
     Ok(vec![outer_fail])
+}
+
+/// Compile the subject of `match Vector.set(local.field, index, value)` as one
+/// `VECTOR_SET_FIELD` when nothing after the write reads the field again
+/// (`field_moves::vector_set_match`, `field_moves::movable_projections`): the
+/// record, the index and the value go on the stack, and the runtime takes the
+/// Vector out of the record once the index is in range and nothing it cannot
+/// account for holds the record or the Vector. Returns `false`, having emitted
+/// nothing, for any other subject; a path more than one field below the local
+/// is compiled as an ordinary `Vector.set`.
+fn compile_vector_set_field(
+    fc: &mut FnCompiler<'_>,
+    m: &crate::ir::mir::MirMatch,
+) -> Result<bool, MirVmUnsupported> {
+    let Some(program) = fc.mir_program else {
+        return Ok(false);
+    };
+    let Some(set) = crate::ir::mir::field_moves::vector_set_match(m, &program.builtins) else {
+        return Ok(false);
+    };
+    if !fc
+        .movable_projections
+        .contains(&(&set.target.node as *const MirExpr as usize))
+    {
+        return Ok(false);
+    }
+    let MirExpr::Project(project) = &set.target.node else {
+        return Ok(false);
+    };
+    let MirExpr::Local(local) = &project.node.base.node else {
+        return Ok(false);
+    };
+    // The local's own cell still holds the record unless this read moves it
+    // onto the stack.
+    let holders = u8::from(!local.node.last_use);
+    compile_mir_expr(fc, &project.node.base)?;
+    compile_mir_expr(fc, set.index)?;
+    compile_mir_expr(fc, set.value)?;
+    let field_symbol_id = fc.symbols.intern_name(&project.node.field);
+    fc.emit_op(VECTOR_SET_FIELD);
+    fc.emit_u32(field_symbol_id);
+    fc.emit_u8(holders);
+    Ok(true)
 }
 
 /// Compile `local.f1.….fn`, `n >= 2`, as one `RECORD_TAKE_PATH` when a record

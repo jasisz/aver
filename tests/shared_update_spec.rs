@@ -377,3 +377,54 @@ fn step(setting: Setting, left: Int) -> Setting
         found[0]
     );
 }
+
+const CELLS: &str = r#"module Main
+    intent = "shared vector updates"
+    effects []
+
+record State
+    cells: Vector<Int>
+    count: Int
+"#;
+
+/// `match Vector.set(s.cells, …)` whose `None` arm hands the record back: the
+/// Vector moves out in the `Some` arm, so nothing is copied and nothing warns.
+#[test]
+fn a_matched_vector_set_whose_none_arm_keeps_the_record_does_not_warn() {
+    let found = warnings(&format!(
+        r#"{CELLS}
+fn run(s: State, i: Int, n: Int) -> State
+    ? "Sets each index below n."
+    match i >= n
+        true -> s
+        false -> match Vector.set(s.cells, i, i)
+            Option.Some(updated) -> run(State.update(s, cells = updated, count = s.count + 1), i + 1, n)
+            Option.None -> run(s, i + 1, n)
+"#
+    ));
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// The `Some` arm reads the old Vector again: it stays in the record, and the
+/// set copies it.
+#[test]
+fn a_matched_vector_set_whose_some_arm_reads_the_old_vector_warns() {
+    let found = warnings(&format!(
+        r#"{CELLS}
+fn run(s: State, i: Int, n: Int) -> State
+    ? "Sets each index below n, counting the old length."
+    match i >= n
+        true -> s
+        false -> match Vector.set(s.cells, i, i)
+            Option.Some(updated) -> run(State.update(s, cells = updated, count = Vector.len(s.cells)), i + 1, n)
+            Option.None -> run(s, i + 1, n)
+"#
+    ));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0]
+            .starts_with("`Vector.set` on `s.cells` updates a Vector that is still held by `s`"),
+        "{}",
+        found[0]
+    );
+}

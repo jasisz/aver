@@ -517,6 +517,78 @@ fn a_record_gives_up_its_fields_at_its_last_use() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+/// A matched `Vector.set` of a record field whose `None` arm hands the record
+/// back whole moves the Vector out once the index is known to be in range.
+///
+/// `step` used to clone `s.cells` into `set_owned`, because the `None` arm
+/// still needed the field, so every step copied the whole Vector. The index is
+/// now checked first and the field moves only in the `Some` arm.
+#[test]
+fn a_matched_vector_set_moves_the_field_out_in_the_some_arm() {
+    let name = "vector_field_set";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let args = ["3000"];
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let entry = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+            .map_err(|error| format!("read the generated entry module: {error}"))?;
+        for moved in [
+            "pub fn step(mut s @ _: State,",
+            "match __idx.filter(|__idx| *__idx < s.cells.len()) { Some(__idx) => { let updated = s.cells.set_unchecked(__idx, __value); State { cells: updated, ",
+            "None => { s } }",
+        ] {
+            if !entry.contains(moved) {
+                return Err(format!(
+                    "{name}: the Vector no longer moves out in the Some arm; missing `{moved}` in:\n{entry}"
+                ));
+            }
+        }
+        let vm = run_vm_with(name, &args)?;
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary_with(&bin, &args)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Shapes around a matched `Vector.set` of a record field: the record or the
+/// Vector still held by someone else, the old Vector read after the set, the
+/// record kept whole, the Vector two records down, a value that holds the
+/// record. Each must build and answer as the VM does.
+#[test]
+fn matched_vector_set_shapes_build_and_match_the_vm() {
+    let name = "vector_field_set_shapes";
+    let ws = temp_dir(name);
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(name, &project, name, &[])?;
+        let vm = run_vm(name)?;
+        let expected = "loop 12 6 18 10\ncaller 0 4\nshared 0 7 0\nkept 3 old 9 read 9\nsplit 0 9\ncounted 9 0\nnested 10 5 0\nadopt 305 6";
+        if vm.trim() != expected {
+            return Err(format!("{name}: the VM answered\n{vm}"));
+        }
+        let bin = cargo_build(&project, name)?;
+        let rust = run_binary(&bin)?;
+        if vm != rust {
+            return Err(format!(
+                "{name}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// A record handed to a pair of functions that tail-call each other moves
 /// into the trampoline instead of being cloned by the wrapper.
 ///

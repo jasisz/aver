@@ -2043,6 +2043,7 @@ impl VM {
                     if let Some(i) = idx {
                         let mut items = self.arena.clone_vector_value(vec);
                         if i < items.len() {
+                            self.arena.note_vector_elements_copied(items.len());
                             items[i] = value;
                             let new_idx = self.arena.push_vector(items);
                             let new_vec = NanValue::new_vector(new_idx);
@@ -2084,71 +2085,14 @@ impl VM {
                     let vec_owned = static_grant
                         && self.runtime_confirms_fused_vector_grant(vec, bp + target_slot);
                     if vec_owned && !vec.is_empty_vector_immediate() {
-                        // Owned path: modify vector in-place at the same arena slot.
-                        // No new allocation, no promotion needed.
-                        //
-                        // This is the VM's only true in-place arena write, and
-                        // therefore the only way an arena slot the return
-                        // boundary keeps can come to hold an index into a
-                        // region the boundary drops: the vector may live below
-                        // this frame's marks while `value` was allocated above
-                        // them. Record that so the boundary does not take the
-                        // return path that truncates young with no rewrite.
-                        //
-                        // The region test is the boundary's own predicate
-                        // (`yard_mark`, matching `result_uses_frame_local_heap`)
-                        // rather than the `yard_base` one `STORE_GLOBAL` uses.
-                        // That is the conservative half of the pair — `yard_base
-                        // <= yard_mark`, so `yard_mark` counts fewer slots as
-                        // this frame's own and flags strictly more writes — and
-                        // it is the line the guarded boundary actually draws.
-                        //
-                        // Two things the flag deliberately does NOT ask about.
-                        // It is armed on the TARGET alone, never on where the
-                        // value came from: the frame that wrote and the frame
-                        // whose region holds the value need not be the same one
-                        // (`an_inherited_in_place_write_survives_the_callers_boundary`
-                        // is exactly that shape), so a value-side test would
-                        // stay silent in the frame that must hear about it. And
-                        // it is armed only for a write that actually happened —
-                        // an index past the end stores nothing, and an
-                        // immediate leaves no arena reference behind, so
-                        // neither can leave a slot pointing anywhere.
-                        let target_outside_frame = value.heap_index().is_some()
-                            && self.frames.last().is_some_and(|frame| {
-                                !vec.heap_index().is_some_and(|index| {
-                                    self.arena.is_frame_local_index(
-                                        index,
-                                        frame.arena_mark,
-                                        frame.yard_mark,
-                                        frame.handoff_mark,
-                                    )
-                                })
-                            });
-                        // The one place in the VM where a value enters an arena
-                        // entry without going through `Arena::push`, so it is
-                        // the one place the choke point does not cover: after
-                        // this store the vector holds `value`, and if that is a
-                        // map, the vector is a holder of its slot.
-                        self.arena.note_held_elsewhere(value);
-                        // Through the arena's own write rather than the raw
-                        // element slice: it knows what `value` is, so a loop
-                        // writing integers keeps the collector's escape.
-                        let stored = self
-                            .arena
-                            .vector_store_in_place(vec.arena_index(), i, value);
-                        if stored
-                            && target_outside_frame
-                            && let Some(frame) = self.frames.last_mut()
-                        {
-                            frame.inplace_write_escaped = true;
-                        }
+                        self.store_vector_element_in_place(vec, i, value);
                         // Return the same NanValue — same slot, same space.
                         self.stack.push(vec);
                     } else {
                         let items = self.arena.vector_ref_value(vec);
                         if i < items.len() {
                             let mut updated = items.to_vec();
+                            self.arena.note_vector_elements_copied(updated.len());
                             updated[i] = value;
                             let new_idx = self.arena.push_vector(updated);
                             self.stack.push(NanValue::new_vector(new_idx));
@@ -2156,6 +2100,12 @@ impl VM {
                             self.stack.push(vec);
                         }
                     }
+                }
+
+                VECTOR_SET_FIELD => {
+                    let field_symbol_id = read_u32!(code, ip);
+                    let holders = read_u8!(code, ip);
+                    self.vector_set_field(field_symbol_id, holders)?;
                 }
 
                 BUFFER_NEW => {
@@ -2912,6 +2862,77 @@ const BYTE_BUILDER_POOL_SLOTS: usize = LIST_BUILDER_POOL_SLOTS;
 const LIST_BUILDER_CAPACITY_HINT_CAP: usize = 1 << 16;
 
 impl VM {
+    /// Write `value` at `i` of the vector `vec` in its own arena slot, for a
+    /// write the caller has established nothing else can observe.
+    ///
+    /// Shared by `VECTOR_SET_OR_KEEP`'s owned branch and `VECTOR_SET_FIELD`.
+    pub(super) fn store_vector_element_in_place(
+        &mut self,
+        vec: NanValue,
+        i: usize,
+        value: NanValue,
+    ) {
+        // Owned path: modify vector in-place at the same arena slot.
+        // No new allocation, no promotion needed.
+        //
+        // This is the VM's only true in-place arena write, and
+        // therefore the only way an arena slot the return
+        // boundary keeps can come to hold an index into a
+        // region the boundary drops: the vector may live below
+        // this frame's marks while `value` was allocated above
+        // them. Record that so the boundary does not take the
+        // return path that truncates young with no rewrite.
+        //
+        // The region test is the boundary's own predicate
+        // (`yard_mark`, matching `result_uses_frame_local_heap`)
+        // rather than the `yard_base` one `STORE_GLOBAL` uses.
+        // That is the conservative half of the pair — `yard_base
+        // <= yard_mark`, so `yard_mark` counts fewer slots as
+        // this frame's own and flags strictly more writes — and
+        // it is the line the guarded boundary actually draws.
+        //
+        // Two things the flag deliberately does NOT ask about.
+        // It is armed on the TARGET alone, never on where the
+        // value came from: the frame that wrote and the frame
+        // whose region holds the value need not be the same one
+        // (`an_inherited_in_place_write_survives_the_callers_boundary`
+        // is exactly that shape), so a value-side test would
+        // stay silent in the frame that must hear about it. And
+        // it is armed only for a write that actually happened —
+        // an index past the end stores nothing, and an
+        // immediate leaves no arena reference behind, so
+        // neither can leave a slot pointing anywhere.
+        let target_outside_frame = value.heap_index().is_some()
+            && self.frames.last().is_some_and(|frame| {
+                !vec.heap_index().is_some_and(|index| {
+                    self.arena.is_frame_local_index(
+                        index,
+                        frame.arena_mark,
+                        frame.yard_mark,
+                        frame.handoff_mark,
+                    )
+                })
+            });
+        // The one place in the VM where a value enters an arena
+        // entry without going through `Arena::push`, so it is
+        // the one place the choke point does not cover: after
+        // this store the vector holds `value`, and if that is a
+        // map, the vector is a holder of its slot.
+        self.arena.note_held_elsewhere(value);
+        // Through the arena's own write rather than the raw
+        // element slice: it knows what `value` is, so a loop
+        // writing integers keeps the collector's escape.
+        let stored = self
+            .arena
+            .vector_store_in_place(vec.arena_index(), i, value);
+        if stored
+            && target_outside_frame
+            && let Some(frame) = self.frames.last_mut()
+        {
+            frame.inplace_write_escaped = true;
+        }
+    }
+
     /// Append `value` to `builder`, returning the builder that holds it.
     ///
     /// Pooled while the elements stay immediate. The first element with

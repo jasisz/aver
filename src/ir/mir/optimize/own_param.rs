@@ -389,7 +389,8 @@ fn own_param_refine_for_model(mut program: MirProgram, model: OwnershipModel) ->
     // field read counts only for a param updated in place.
     if model.owned_carriers_are_cow_protected() {
         for (id, f) in program.iter() {
-            let movable = crate::ir::mir::field_moves::movable_projections(&f.body.node);
+            let movable =
+                crate::ir::mir::field_moves::movable_projections(&f.body.node, &program.builtins);
             if !movable.is_empty() {
                 let mut slots = HashSet::new();
                 collect_movable_let_slots(&f.body.node, &movable, &mut slots);

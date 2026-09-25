@@ -717,7 +717,10 @@ pub fn collect_shared_update_warnings(
         let mut bound = HashMap::new();
         collect_bound(&f.body.node, &mut bound);
         let body = Body {
-            movable: crate::ir::mir::field_moves::movable_projections(&f.body.node),
+            movable: crate::ir::mir::field_moves::movable_projections(
+                &f.body.node,
+                &program.builtins,
+            ),
             carried: carried_params(f),
             bound,
         };
