@@ -487,9 +487,13 @@ impl MirFnEmitPolicy {
     /// Record which field reads in `mir_fn`'s body may move their field
     /// out of the record local they read. The facts are addresses into
     /// this very body, so the policy must emit `mir_fn.body` itself.
-    pub(super) fn apply_field_moves(&mut self, mir_fn: &crate::ir::mir::MirFn) {
+    pub(super) fn apply_field_moves(
+        &mut self,
+        mir_fn: &crate::ir::mir::MirFn,
+        builtins: &[String],
+    ) {
         self.movable_projections =
-            crate::ir::mir::field_moves::movable_projections(&mir_fn.body.node);
+            crate::ir::mir::field_moves::movable_projections(&mir_fn.body.node, builtins);
         self.moved_roots =
             crate::ir::mir::field_moves::moved_roots(&mir_fn.body.node, &self.movable_projections);
     }
@@ -735,7 +739,10 @@ pub(super) fn compute_owned_record_params(
             program.fn_by_id(*id).map(|mir_fn| {
                 (
                     *id,
-                    crate::ir::mir::field_moves::movable_projections(&mir_fn.body.node),
+                    crate::ir::mir::field_moves::movable_projections(
+                        &mir_fn.body.node,
+                        &program.builtins,
+                    ),
                 )
             })
         })
@@ -3102,6 +3109,37 @@ fn emit_mir_match_with(
             .unwrap_or_default()
     };
 
+    // `match Vector.set(s.cells, i, x)` whose target may move out of `s`
+    // (`field_moves::vector_set_match`): evaluate the index and the value,
+    // check the index, and read the target only in the `Some` arm. The
+    // `None` arm, which may read `s` whole, then still finds the field there,
+    // and the `Some` arm hands `set_unchecked` the only reference.
+    if let Some(set) = crate::ir::mir::field_moves::vector_set_match(m, emit_ctx.mir_builtins)
+        && super::ownership::projection_root_local(&set.target.node).is_some_and(|root| {
+            super::ownership::projection_moves(&set.target.node, root, emit_ctx)
+        })
+    {
+        let index = emit_mir_expr(set.index, emit_ctx)?;
+        let value = mir_clone_arg(
+            emit_mir_expr(set.value, emit_ctx)?,
+            &set.value.node,
+            emit_ctx,
+        );
+        let target = emit_mir_expr(set.target, emit_ctx)?;
+        let moved = mir_clone_arg(target.clone(), &set.target.node, emit_ctx);
+        let updated = match set.updated {
+            Some((_, name)) if name != "_" => aver_name_to_rust(name),
+            _ => "_".to_string(),
+        };
+        let index_temp = generated_ident("idx");
+        let value_temp = generated_ident("value");
+        let some = &arm_bodies[set.some_arm];
+        let none = &arm_bodies[set.none_arm];
+        return Some(format!(
+            "{{ let {index_temp} = ({index}).to_usize(); let {value_temp} = {value}; match {index_temp}.filter(|{index_temp}| *{index_temp} < {target}.len()) {{ Some({index_temp}) => {{ let {updated} = {moved}.set_unchecked({index_temp}, {value_temp}); {some} }} None => {{ {none} }} }} }}"
+        ));
+    }
+
     // ── 1. Single-arm irrefutable → `let` destructuring. ──
     // Mirror of `emit_match`'s first branch.
     if arms.len() == 1 && resolved_pattern_is_irrefutable(&arms[0].pattern) {
@@ -3923,7 +3961,13 @@ pub(super) fn emit_mir_fn_body_routed(
     // `bare_fn_facts`), so body and signature agree on which params /
     // return are bare.
     policy.apply_bare_i64(mir_fn.fn_id, ctx);
-    policy.apply_field_moves(mir_fn);
+    policy.apply_field_moves(
+        mir_fn,
+        ctx.mir_program
+            .as_ref()
+            .map(|p| p.builtins.as_slice())
+            .unwrap_or(&[]),
+    );
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
     let body = emit_mir_fn_body(&mir_fn.body, &emit_ctx)?;
     let Some(prologue) = post_checkpoint_prologue else {
@@ -4032,7 +4076,13 @@ pub(super) fn emit_mir_tco_fn(
     for n in &rc_names {
         policy.owned_params.remove(n);
     }
-    policy.apply_field_moves(mir_fn);
+    policy.apply_field_moves(
+        mir_fn,
+        ctx.mir_program
+            .as_ref()
+            .map(|p| p.builtins.as_slice())
+            .unwrap_or(&[]),
+    );
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
 
     // Render the body in tail position FIRST — bail before emitting any
@@ -4452,7 +4502,13 @@ pub(super) fn emit_mir_mutual_tco_block(
         // Each arm binds its params by value, so a field read may move out
         // of one exactly as in any other body; the arm's updates then see
         // which records gave a field up.
-        policy.apply_field_moves(mir_fn);
+        policy.apply_field_moves(
+            mir_fn,
+            ctx.mir_program
+                .as_ref()
+                .map(|p| p.builtins.as_slice())
+                .unwrap_or(&[]),
+        );
         let mut arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
         // Mutual invariants are `rc_wrapped` for owning reads, but unlike
         // self-TCO's `Arc<T>` representation they are extra `&T` trampoline

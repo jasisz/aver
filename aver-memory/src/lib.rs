@@ -1491,6 +1491,10 @@ pub struct Arena<T: ArenaTypes> {
     /// and [`Arena::absorb_copy_counters`] folds a child's total back into its
     /// parent when the branch rejoins.
     map_entries_copied: u64,
+    /// Total vector elements `Vector.set` duplicated because it was not
+    /// allowed to write its target in place. Per-arena like
+    /// `map_entries_copied`.
+    vector_elements_copied: u64,
     /// Total map entries the collector has *read* while deciding whether a live
     /// map needs rewriting. A map whose `all_immediate` flag is set is
     /// returned unread and adds nothing here; a map holding anything

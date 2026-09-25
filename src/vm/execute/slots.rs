@@ -934,6 +934,93 @@ impl VM {
     fn nothing_else_holds_slot(&self, _index: u32, _exempt: Option<usize>) -> Option<bool> {
         None
     }
+
+    /// `VECTOR_SET_FIELD`: `Vector.set(record.field, index, value)` with
+    /// `[record, index, value]` on top of the stack.
+    ///
+    /// The compiler emits it only where nothing after the write reads the
+    /// field again: the match's `None` arm may read the record whole, which is
+    /// why nothing is taken before the index is known to be in range. What the
+    /// compiler cannot see is who else holds the record or the Vector. So the
+    /// Vector leaves the record only when nothing off the stack holds the
+    /// record and exactly `holders` cells on it do besides the operand (the
+    /// local's own cell while a later read still needs it), and it is then
+    /// written in place only under the fence every in-place vector write
+    /// passes ([`VM::runtime_confirms_vector_grant`]). Otherwise the Vector is
+    /// copied, exactly as `VECTOR_SET` does.
+    pub(super) fn vector_set_field(
+        &mut self,
+        field_symbol_id: u32,
+        holders: u8,
+    ) -> Result<(), VmError> {
+        let len = self.stack.len();
+        if len < 3 {
+            return Err(VmError::StackUnderflow);
+        }
+        let (record, index, value) = (
+            self.stack[len - 3],
+            self.stack[len - 2],
+            self.stack[len - 1],
+        );
+        if !record.is_record() {
+            return Err(VmError::runtime(
+                "Vector.set on a field of a value that is not a record".to_string(),
+            ));
+        }
+        let (type_id, fields) = self.arena.get_record(record.arena_index());
+        let Some(&field_idx) = self
+            .code
+            .record_field_slots
+            .get(&(type_id, field_symbol_id))
+        else {
+            let field_name = self
+                .code
+                .symbols
+                .get(field_symbol_id)
+                .map(|info| info.name.as_str())
+                .unwrap_or("<unknown>");
+            return Err(VmError::runtime(format!(
+                "record has no field '{}'",
+                field_name
+            )));
+        };
+        let field_idx = field_idx as usize;
+        let vec = fields[field_idx];
+        let len_of_vec = self.arena.vector_slot(vec).map_or(0, |slot| slot.len);
+        let in_range = self.int_to_index(index).filter(|i| *i < len_of_vec);
+        let Some(i) = in_range else {
+            self.stack.truncate(len - 3);
+            self.stack.push(NanValue::NONE);
+            return Ok(());
+        };
+        // Counted with the index and the value still on the stack: a value
+        // that holds the record is one more cell, or makes the record held
+        // elsewhere.
+        let takes = !self.arena.record_is_held_elsewhere(record)
+            && record.heap_index().is_some_and(|record_index| {
+                self.stack_holders_excluding(record_index, None) == u32::from(holders) + 1
+            });
+        if takes {
+            self.arena.take_record_field(record, field_idx);
+        }
+        self.stack.truncate(len - 3);
+        // Out of the record, the Vector is written in place under the same
+        // fence as every other in-place vector write: nothing off the stack
+        // and no stack cell may hold it.
+        if takes && self.confirm_vector_grant(vec, None) {
+            self.store_vector_element_in_place(vec, i, value);
+            let some = NanValue::new_some_value(vec, &mut self.arena);
+            self.stack.push(some);
+            return Ok(());
+        }
+        let mut items = self.arena.clone_vector_value(vec);
+        self.arena.note_vector_elements_copied(items.len());
+        items[i] = value;
+        let copied = NanValue::new_vector(self.arena.push_vector(items));
+        let some = NanValue::new_some_value(copied, &mut self.arena);
+        self.stack.push(some);
+        Ok(())
+    }
 }
 
 /// Grants this thread took whose arena half the mirror could not afford to

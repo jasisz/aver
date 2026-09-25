@@ -166,6 +166,7 @@ fn vec_set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
     if uidx >= items.len() {
         return Ok(NanValue::NONE);
     }
+    arena.note_vector_elements_copied(items.len());
     items[uidx] = args[2];
     let new_vec_idx = arena.push_vector(items);
     Ok(NanValue::new_some_value(

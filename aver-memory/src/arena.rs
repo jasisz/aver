@@ -20,6 +20,7 @@ impl<T: ArenaTypes> Arena<T> {
             list_elements_scanned: 0,
             list_elements_flattened: SharedCount::default(),
             map_entries_copied: 0,
+            vector_elements_copied: 0,
             map_entries_scanned: 0,
             vector_elements_scanned: 0,
             out_of_region_entries_read: 0,
@@ -75,6 +76,7 @@ impl<T: ArenaTypes> Arena<T> {
             list_elements_scanned: 0,
             list_elements_flattened: SharedCount::default(),
             map_entries_copied: 0,
+            vector_elements_copied: 0,
             map_entries_scanned: 0,
             vector_elements_scanned: 0,
             out_of_region_entries_read: 0,
@@ -742,6 +744,20 @@ impl<T: ArenaTypes> Arena<T> {
         self.map_entries_copied += entries as u64;
     }
 
+    /// Vector elements `Vector.set` duplicated to preserve a target it was not
+    /// allowed to write in place. Per-arena, as [`Arena::map_entries_copied`].
+    #[inline]
+    pub fn vector_elements_copied(&self) -> u64 {
+        self.vector_elements_copied
+    }
+
+    /// Record that `elements` vector elements were duplicated to preserve a
+    /// target the caller was not allowed to write in place.
+    #[inline]
+    pub fn note_vector_elements_copied(&mut self, elements: usize) {
+        self.vector_elements_copied += elements as u64;
+    }
+
     /// Add `child`'s copy / scan totals to this arena's.
     ///
     /// A child arena counts from zero ([`Arena::clone_static`]), so work an
@@ -756,6 +772,7 @@ impl<T: ArenaTypes> Arena<T> {
         self.list_elements_flattened
             .add(child.list_elements_flattened.get());
         self.map_entries_copied += child.map_entries_copied;
+        self.vector_elements_copied += child.vector_elements_copied;
         self.map_entries_scanned += child.map_entries_scanned;
         self.vector_elements_scanned += child.vector_elements_scanned;
         self.out_of_region_entries_read += child.out_of_region_entries_read;

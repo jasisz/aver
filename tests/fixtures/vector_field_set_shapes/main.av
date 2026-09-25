@@ -1,0 +1,179 @@
+module Main
+    intent = "Shapes around a matched Vector.set of a record field that must keep Aver's value semantics."
+    effects [Console.print]
+
+record State
+    cells: Vector<Int>
+    count: Int
+
+record Outer
+    inner: State
+    turns: Int
+
+record Pair
+    left: State
+    right: Vector<Int>
+
+record Node
+    kids: Vector<Option<Node>>
+    label: Int
+
+fn at(v: Vector<Int>, i: Int) -> Int
+    ? "The cell at i, or -1."
+    Option.withDefault(Vector.get(v, i), 0 - 1)
+
+verify at
+    at(Vector.fromList([4]), 0) => 4
+    at(Vector.fromList([]), 0) => 0 - 1
+
+fn fresh() -> State
+    ? "Ten zero cells."
+    State(cells = Vector.new(10, 0), count = 0)
+
+verify fresh
+    fresh().count => 0
+
+fn step(s: State, i: Int) -> State
+    ? "Writes i + 1 at i; the None arm hands s back whole."
+    match Vector.set(s.cells, i, i + 1)
+        Option.Some(updated) -> State.update(s, cells = updated, count = s.count + 1)
+        Option.None -> s
+
+verify step
+    step(fresh(), 1).count => 1
+    step(fresh(), 10).count => 0
+
+fn stepNoneFirst(s: State, i: Int) -> State
+    ? "step with the None arm first."
+    match Vector.set(s.cells, i, 7)
+        Option.None -> s
+        Option.Some(updated) -> State.update(s, cells = updated, count = s.count + 1)
+
+verify stepNoneFirst
+    stepNoneFirst(fresh(), 1).count => 1
+
+fn loop(s: State, i: Int, n: Int) -> State
+    ? "Sets each index below n in a loop that hands the state on itself."
+    match i >= n
+        true -> s
+        false -> match Vector.set(s.cells, i, i * 2)
+            Option.Some(updated) -> loop(State.update(s, cells = updated, count = s.count + 1), i + 1, n)
+            Option.None -> loop(s, i + 1, n)
+
+verify loop
+    loop(fresh(), 0, 12).count => 10
+
+fn kept(s: State, i: Int) -> Int
+    ? "Another local names the record."
+    other = s
+    after = step(s, i)
+    at(other.cells, i) * 100 + at(after.cells, i)
+
+verify kept
+    kept(fresh(), 2) => 3
+
+fn oldCells(s: State, i: Int) -> Int
+    ? "A local bound to the Vector before the set."
+    old = s.cells
+    after = match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> State.update(s, cells = updated, count = s.count + 1)
+        Option.None -> s
+    at(old, i) * 100 + at(after.cells, i)
+
+verify oldCells
+    oldCells(fresh(), 2) => 9
+
+fn readBack(s: State, i: Int) -> Int
+    ? "The Some arm reads the old Vector."
+    match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> at(s.cells, i) * 100 + at(updated, i)
+        Option.None -> 0 - 1
+
+verify readBack
+    readBack(fresh(), 2) => 9
+
+fn split(s: State, i: Int) -> Pair
+    ? "The Some arm keeps the record whole beside the new Vector."
+    match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> Pair(left = s, right = updated)
+        Option.None -> Pair(left = s, right = s.cells)
+
+verify split
+    at(split(fresh(), 2).right, 2) => 9
+
+fn counted(s: State, i: Int) -> State
+    ? "The update keeps the base's Vector."
+    match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> State.update(s, count = at(updated, i))
+        Option.None -> s
+
+verify counted
+    counted(fresh(), 2).count => 9
+
+fn nested(o: Outer, i: Int) -> Outer
+    ? "The Vector two records down."
+    match Vector.set(o.inner.cells, i, 5)
+        Option.Some(updated) -> Outer.update(o, inner = State.update(o.inner, cells = updated), turns = o.turns + 1)
+        Option.None -> o
+
+verify nested
+    nested(Outer(inner = fresh(), turns = 0), 1).turns => 1
+
+fn nestedLoop(o: Outer, i: Int, n: Int) -> Outer
+    ? "nested in a loop."
+    match i >= n
+        true -> o
+        false -> nestedLoop(nested(o, i), i + 1, n)
+
+verify nestedLoop
+    nestedLoop(Outer(inner = fresh(), turns = 0), 0, 3).turns => 3
+
+fn noKid() -> Option<Node>
+    ? "No child."
+    Option.None
+
+verify noKid
+    noKid() => Option.None
+
+fn adopt(n: Node) -> Node
+    ? "The value written holds the record the Vector comes from."
+    match Vector.set(n.kids, 0, Option.Some(n))
+        Option.Some(updated) -> Node.update(n, kids = updated, label = n.label + 1)
+        Option.None -> n
+
+verify adopt
+    adopt(Node(kids = Vector.new(1, noKid()), label = 1)).label => 2
+
+fn childSize(n: Node) -> Int
+    ? "The first child's kid count and label."
+    match Vector.get(n.kids, 0)
+        Option.Some(Option.Some(child)) -> Vector.len(child.kids) * 100 + child.label
+        Option.Some(Option.None) -> 0 - 1
+        Option.None -> 0 - 2
+
+verify childSize
+    childSize(Node(kids = Vector.new(1, noKid()), label = 1)) => 0 - 1
+
+fn main() -> Unit
+    ? "Prints what every shape answers."
+    ! [Console.print]
+    ran = loop(step(stepNoneFirst(step(fresh(), 3), 4), 99), 0, 12)
+    Console.print("loop {ran.count} {at(ran.cells, 3)} {at(ran.cells, 9)} {Vector.len(ran.cells)}")
+    before = fresh()
+    after = step(before, 3)
+    Console.print("caller {at(before.cells, 3)} {at(after.cells, 3)}")
+    shared = Vector.new(10, 0)
+    first = State(cells = shared, count = 0)
+    second = State(cells = shared, count = 0)
+    moved = step(first, 6)
+    Console.print("shared {at(second.cells, 6)} {at(moved.cells, 6)} {at(shared, 6)}")
+    Console.print("kept {kept(fresh(), 2)} old {oldCells(fresh(), 2)} read {readBack(fresh(), 2)}")
+    pair = split(fresh(), 4)
+    Console.print("split {at(pair.left.cells, 4)} {at(pair.right, 4)}")
+    c = counted(fresh(), 4)
+    Console.print("counted {c.count} {at(c.cells, 4)}")
+    holder = Outer(inner = fresh(), turns = 0)
+    grown = nestedLoop(holder, 0, 12)
+    Console.print("nested {grown.turns} {at(grown.inner.cells, 5)} {at(holder.inner.cells, 5)}")
+    adopted = adopt(Node(kids = Vector.new(3, noKid()), label = 5))
+    Console.print("adopt {childSize(adopted)} {adopted.label}")

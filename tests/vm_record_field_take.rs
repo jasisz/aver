@@ -837,3 +837,310 @@ fn main() -> Int
     assert_eq!(answer, 100 + 5);
     assert!(copied > 0, "the shared Map was written in place");
 }
+
+// ── A Vector field set through a match on `Vector.set` ───────────────────
+//
+// `match Vector.set(s.cells, i, x)` whose `None` arm hands `s` back whole: the
+// field can only leave the record once the index is known to be in range
+// (`VECTOR_SET_FIELD`). The refusals below are every way the record or the
+// Vector can still be seen by someone else; each must copy and answer what
+// Aver's immutable values mandate.
+
+const VECTOR_PRELUDE: &str = r#"module Cells
+    intent = "Vector fields set through a match"
+    effects []
+
+record State
+    cells: Vector<Int>
+    count: Int
+
+record Holder
+    inner: State
+
+fn fresh() -> State
+    State(cells = Vector.new(50, 0), count = 0)
+
+fn at(v: Vector<Int>, i: Int) -> Int
+    Option.withDefault(Vector.get(v, i), 0 - 1)
+"#;
+
+fn cells(body: &str) -> String {
+    format!("{VECTOR_PRELUDE}\n{body}")
+}
+
+/// What the program answered and how many vector elements it copied.
+fn run_cells(src: &str) -> (i64, u64) {
+    let mut machine = compiled_vm(src);
+    let result = machine.run().expect("program should run");
+    (
+        result.as_int(&machine.arena),
+        machine.arena.vector_elements_copied(),
+    )
+}
+
+const STEP: &str = r#"
+fn step(s: State, i: Int) -> State
+    match Vector.set(s.cells, i, i + 1)
+        Option.Some(updated) -> State.update(s, cells = updated, count = s.count + 1)
+        Option.None -> s
+
+fn run(s: State, i: Int, n: Int) -> State
+    match i >= n
+        true -> s
+        false -> run(step(s, i), i + 1, n)
+"#;
+
+/// The measured fixture: two thousand sets of a hundred-thousand-cell Vector
+/// copy no element. Before, each set copied all of them.
+#[test]
+fn the_vector_fixture_sets_its_field_in_place() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/vector_field_set/main.av"
+    );
+    let src = std::fs::read_to_string(path).expect("read the fixture");
+    let mut machine = compiled_vm(&src);
+    machine.run().expect("the fixture should run");
+    assert_eq!(
+        machine.arena.vector_elements_copied(),
+        0,
+        "a step copied the Vector its state holds"
+    );
+}
+
+/// A loop over the record copies nothing, and an index past the end leaves
+/// the Vector in the record the `None` arm hands back.
+#[test]
+fn a_vector_field_set_in_a_loop_copies_nothing() {
+    let src = cells(&format!(
+        r#"{STEP}
+fn main() -> Int
+    done = step(run(fresh(), 0, 50), 70)
+    done.count * 10000 + at(done.cells, 49) * 100 + Vector.len(done.cells)
+"#
+    ));
+    let (answer, copied) = run_cells(&src);
+    assert_eq!(answer, 50 * 10000 + 50 * 100 + 50);
+    assert_eq!(copied, 0, "a step copied the Vector it set");
+}
+
+/// The `None` arm first: the same take.
+#[test]
+fn a_vector_field_set_with_the_none_arm_first_copies_nothing() {
+    let src = cells(
+        r#"
+fn step(s: State, i: Int) -> State
+    match Vector.set(s.cells, i, 7)
+        Option.None -> s
+        Option.Some(updated) -> State.update(s, cells = updated, count = s.count + 1)
+
+fn run(s: State, i: Int, n: Int) -> State
+    match i >= n
+        true -> s
+        false -> run(step(s, i), i + 1, n)
+
+fn main() -> Int
+    done = run(fresh(), 0, 60)
+    done.count * 100 + at(done.cells, 3)
+"#,
+    );
+    let (answer, copied) = run_cells(&src);
+    assert_eq!(answer, 50 * 100 + 7);
+    assert_eq!(copied, 0, "a step copied the Vector it set");
+}
+
+/// The caller keeps the record it passed: its Vector must not change.
+#[test]
+fn a_vector_record_the_caller_still_holds_is_not_taken() {
+    let src = cells(&format!(
+        r#"{STEP}
+fn main() -> Int
+    before = fresh()
+    after = step(before, 3)
+    at(before.cells, 3) * 100 + at(after.cells, 3) * 10 + Vector.len(before.cells)
+"#
+    ));
+    let (answer, copied) = run_cells(&src);
+    assert_eq!(answer, 0 + 4 * 10 + 50);
+    assert!(copied > 0, "the caller's Vector was written in place");
+}
+
+/// A second local names the same record inside the function.
+#[test]
+fn a_vector_record_another_local_holds_is_not_taken() {
+    let src = cells(
+        r#"
+fn step(s: State, i: Int) -> Int
+    kept = s
+    after = match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> State.update(s, cells = updated, count = s.count + 1)
+        Option.None -> s
+    at(kept.cells, i) * 100 + at(after.cells, i)
+
+fn main() -> Int
+    step(fresh(), 4)
+"#,
+    );
+    let (answer, copied) = run_cells(&src);
+    assert_eq!(answer, 9);
+    assert!(
+        copied > 0,
+        "a Vector another local sees was written in place"
+    );
+}
+
+/// Another record holds the record.
+#[test]
+fn a_vector_record_held_by_another_record_is_not_taken() {
+    let src = cells(&format!(
+        r#"{STEP}
+fn main() -> Int
+    holder = Holder(inner = fresh())
+    after = step(holder.inner, 5)
+    at(holder.inner.cells, 5) * 100 + at(after.cells, 5)
+"#
+    ));
+    let (answer, copied) = run_cells(&src);
+    assert_eq!(answer, 6);
+    assert!(
+        copied > 0,
+        "a Vector another record sees was written in place"
+    );
+}
+
+/// One Vector in two records: taking it out of the first leaves the second
+/// holding it.
+#[test]
+fn a_vector_two_records_share_is_not_written_in_place() {
+    let src = cells(&format!(
+        r#"{STEP}
+fn main() -> Int
+    shared = Vector.new(50, 0)
+    first = State(cells = shared, count = 0)
+    second = State(cells = shared, count = 0)
+    after = step(first, 6)
+    at(second.cells, 6) * 100 + at(after.cells, 6) * 10 + at(shared, 6)
+"#
+    ));
+    let (answer, copied) = run_cells(&src);
+    assert_eq!(answer, 7 * 10);
+    assert!(copied > 0, "a shared Vector was written in place");
+}
+
+/// A local bound to the Vector before the set still sees the old one.
+#[test]
+fn a_vector_another_local_holds_is_not_written_in_place() {
+    let src = cells(
+        r#"
+fn step(s: State, i: Int) -> Int
+    old = s.cells
+    after = match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> State.update(s, cells = updated, count = s.count + 1)
+        Option.None -> s
+    at(old, i) * 100 + at(after.cells, i)
+
+fn main() -> Int
+    step(fresh(), 4)
+"#,
+    );
+    let (answer, copied) = run_cells(&src);
+    assert_eq!(answer, 9);
+    assert!(
+        copied > 0,
+        "a Vector another local sees was written in place"
+    );
+}
+
+/// The `Some` arm reads the old Vector after the set: nothing is taken.
+#[test]
+fn the_old_vector_read_after_the_set_is_not_taken() {
+    let src = cells(
+        r#"
+fn step(s: State, i: Int) -> Int
+    match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> at(s.cells, i) * 100 + at(updated, i)
+        Option.None -> 0 - 1
+
+fn main() -> Int
+    step(fresh(), 4)
+"#,
+    );
+    let (answer, _) = run_cells(&src);
+    assert_eq!(answer, 9);
+}
+
+/// The `Some` arm hands on the record whole beside the new Vector.
+#[test]
+fn a_record_kept_whole_beside_the_new_vector_is_not_taken() {
+    let src = cells(
+        r#"
+record Pair
+    left: State
+    right: Vector<Int>
+
+fn split(s: State, i: Int) -> Pair
+    match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> Pair(left = s, right = updated)
+        Option.None -> Pair(left = s, right = s.cells)
+
+fn main() -> Int
+    pair = split(fresh(), 4)
+    at(pair.left.cells, 4) * 100 + at(pair.right, 4)
+"#,
+    );
+    let (answer, _) = run_cells(&src);
+    assert_eq!(answer, 9);
+}
+
+/// The update keeps the base's Vector: it does not write `cells`.
+#[test]
+fn an_update_that_keeps_the_vector_field_is_not_taken() {
+    let src = cells(
+        r#"
+fn step(s: State, i: Int) -> State
+    match Vector.set(s.cells, i, 9)
+        Option.Some(updated) -> State.update(s, count = at(updated, i))
+        Option.None -> s
+
+fn main() -> Int
+    after = step(fresh(), 4)
+    after.count * 100 + at(after.cells, 4) + 1
+"#,
+    );
+    let (answer, _) = run_cells(&src);
+    assert_eq!(answer, 9 * 100 + 1);
+}
+
+/// The value written holds the record the Vector is taken from.
+#[test]
+fn a_value_holding_the_record_is_not_written_into_it() {
+    let src = r#"module Nodes
+    intent = "a node whose children include itself"
+    effects []
+
+record Node
+    kids: Vector<Option<Node>>
+    label: Int
+
+fn adopt(n: Node) -> Node
+    match Vector.set(n.kids, 0, Option.Some(n))
+        Option.Some(updated) -> Node.update(n, kids = updated, label = n.label + 1)
+        Option.None -> n
+
+fn size(n: Node) -> Int
+    match Vector.get(n.kids, 0)
+        Option.Some(Option.Some(child)) -> Vector.len(child.kids) * 100 + child.label
+        Option.Some(Option.None) -> 0 - 1
+        Option.None -> 0 - 2
+
+fn noKid() -> Option<Node>
+    Option.None
+
+fn main() -> Int
+    adopted = adopt(Node(kids = Vector.new(3, noKid()), label = 5))
+    size(adopted) * 10 + adopted.label
+"#;
+    let (answer, _) = run_cells(src);
+    // The child is the node before adoption: three kids, label 5.
+    assert_eq!(answer, (3 * 100 + 5) * 10 + 6);
+}
