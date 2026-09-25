@@ -814,7 +814,7 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::EvalMatch(mut v @ _, mut arms @ _, mut env @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, &v) { Ok(bindings @ _) => { __MutualTco1::EvalExpr(arm.body.clone(), crate::aver_generated::domain::eval::store::mergeBindings(bindings, env)) }, Err(_) => { __MutualTco1::EvalMatch(v, rest, env) } })
+                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, &v) { Ok(bindings @ _) => { __MutualTco1::EvalExpr(arm.body, crate::aver_generated::domain::eval::store::mergeBindings(bindings, env)) }, Err(_) => { __MutualTco1::EvalMatch(v, rest, env) } })
             }
         };
     }
@@ -1208,7 +1208,7 @@ fn __mutual_tco_trampoline_2(
                 mut env @ _,
             ) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, &v) { Ok(bindings @ _) => { __MutualTco2::EvalTailExprSlot(selfId, arm.body.clone(), slotCount, crate::aver_generated::domain::eval::core::mergeBindingsSlot(&bindings, &arm.bindingSlots, &env)) }, Err(_) => { __MutualTco2::EvalTailMatchSlot(selfId, v, rest, slotCount, env) } })
+                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, &v) { Ok(bindings @ _) => { __MutualTco2::EvalTailExprSlot(selfId, arm.body, slotCount, crate::aver_generated::domain::eval::core::mergeBindingsSlot(&bindings, &arm.bindingSlots, &env)) }, Err(_) => { __MutualTco2::EvalTailMatchSlot(selfId, v, rest, slotCount, env) } })
             }
         };
     }
@@ -1984,7 +1984,7 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::EvalMatchSlot(mut v @ _, mut arms @ _, mut env @ _) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, &v) { Ok(bindings @ _) => { __MutualTco3::EvalExprSlot(arm.body.clone(), crate::aver_generated::domain::eval::core::mergeBindingsSlot(&bindings, &arm.bindingSlots, &env)) }, Err(_) => { __MutualTco3::EvalMatchSlot(v, rest, env) } })
+                aver_list_match!(arms, [] => { return Err(AverStr::from("no matching arm")) }, [arm, rest] => match crate::aver_generated::domain::match_mod::matchPattern(&arm.pattern, &v) { Ok(bindings @ _) => { __MutualTco3::EvalExprSlot(arm.body, crate::aver_generated::domain::eval::core::mergeBindingsSlot(&bindings, &arm.bindingSlots, &env)) }, Err(_) => { __MutualTco3::EvalMatchSlot(v, rest, env) } })
             }
         };
     }

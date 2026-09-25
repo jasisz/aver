@@ -1,0 +1,80 @@
+module Main
+    intent = "A record update after a field read of the field it replaces, in plain bodies, loops and mutual tail calls."
+    effects [Args.get, Console.print]
+
+record Flight
+    progress: Map<Int, Int>
+    name: String
+
+fn grow(progress: Map<Int, Int>, key: Int) -> Map<Int, Int>
+    ? "One more key."
+    Map.set(progress, key, key)
+
+verify grow
+    grow({}, 1) => {1 => 1}
+
+fn bumpLet(flight: Flight, key: Int) -> Flight
+    ? "Reads the field in a let, then replaces it."
+    progress = flight.progress
+    Flight.update(flight, progress = grow(progress, key))
+
+verify bumpLet
+    bumpLet(Flight(progress = {}, name = "a"), 1) => Flight(progress = {1 => 1}, name = "a")
+
+fn bumpInline(flight: Flight, key: Int) -> Flight
+    ? "Reads the field inside the update that replaces it."
+    Flight.update(flight, progress = grow(flight.progress, key))
+
+verify bumpInline
+    bumpInline(Flight(progress = {}, name = "a"), 1) => Flight(progress = {1 => 1}, name = "a")
+
+fn plain(flight: Flight, left: Int) -> Flight
+    ? "Calls both bumps left times."
+    match left <= 0
+        true -> flight
+        false -> plain(bumpInline(bumpLet(flight, left), left + 1000), left - 1)
+
+verify plain
+    plain(Flight(progress = {}, name = "a"), 0) => Flight(progress = {}, name = "a")
+
+fn selfKeep(flight: Flight, left: Int) -> Flight
+    ? "A loop whose let reads a field, then hands on the whole record."
+    progress = flight.progress
+    match left <= 0
+        true -> flight
+        false -> selfKeep(Flight.update(flight, name = "n{Map.len(progress)}"), left - 1)
+
+verify selfKeep
+    selfKeep(Flight(progress = {}, name = "a"), 1) => Flight(progress = {}, name = "n0")
+
+fn ping(flight: Flight, left: Int) -> Flight
+    ? "One half of a mutual tail call: reads the field in a let, then replaces it."
+    progress = flight.progress
+    pong(Flight.update(flight, progress = grow(progress, left)), left - 1)
+
+verify ping
+    ping(Flight(progress = {}, name = "a"), 0) => Flight(progress = {0 => 0}, name = "a")
+
+fn pong(flight: Flight, left: Int) -> Flight
+    ? "The other half: reads the field inside the update that replaces it."
+    match left <= 0
+        true -> flight
+        false -> ping(Flight.update(flight, progress = grow(flight.progress, left + 1000)), left - 1)
+
+verify pong
+    pong(Flight(progress = {}, name = "a"), 0) => Flight(progress = {}, name = "a")
+
+fn arg(index: Int, fallback: Int) -> Int
+    ? "The index-th argument as an Int, or the fallback."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), index)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), fallback)
+        Option.None -> fallback
+
+fn main() -> Unit
+    ! [Args.get, Console.print]
+    size = arg(0, 1000)
+    a = plain(Flight(progress = {}, name = "plain"), size)
+    b = selfKeep(Flight(progress = {1 => 1}, name = "keep"), 3)
+    c = ping(Flight(progress = {}, name = "mutual"), size)
+    Console.print("{Map.len(a.progress)} {a.name} {Map.len(b.progress)} {b.name} {Map.len(c.progress)} {c.name}")
