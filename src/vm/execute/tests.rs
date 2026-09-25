@@ -51,7 +51,7 @@ fn assert_no_young_refs(value: NanValue, arena: &Arena, context: &str) {
                     }
                 }
             },
-            ArenaEntry::Tuple(items) | ArenaEntry::Vector { items, .. } => {
+            ArenaEntry::Tuple { items, .. } | ArenaEntry::Vector { items, .. } => {
                 for item in items.iter().copied() {
                     assert_no_young_refs(item, arena, context);
                 }
@@ -77,7 +77,7 @@ fn assert_no_young_refs(value: NanValue, arena: &Arena, context: &str) {
                     assert_no_young_refs(*member, arena, context);
                 }
             }
-            ArenaEntry::Boxed(inner) => assert_no_young_refs(*inner, arena, context),
+            ArenaEntry::Boxed { value, .. } => assert_no_young_refs(*value, arena, context),
             ArenaEntry::Int(_)
             | ArenaEntry::BigInt(_)
             | ArenaEntry::String(_)

@@ -1579,6 +1579,10 @@ pub(super) fn cmd_run_vm(
             "  refused, something off the stack holds it:{} not examined, walk dearer than the copy:{}",
             owned.refused_off_stack_holder, owned.unexamined_walk_too_costly
         );
+        eprintln!(
+            "  map entries copied by the writes that were not in place:{}",
+            machine.arena.map_entries_copied()
+        );
         let fence = &report.vector_ownership;
         eprintln!("\nVector writes the compiler granted, confirmed at run time:");
         eprintln!(

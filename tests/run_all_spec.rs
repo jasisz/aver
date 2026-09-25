@@ -448,10 +448,15 @@ fn the_dump_shows_the_loop_that_was_generated() {
         "fn __servePeer(run: __Run, id: Int, seq: Int, request: __PeerRequest) -> __Run",
         // The answer module's state is handed out of the run for the one
         // answer, so the answer function holds the only reference to it.
-        "fn __takeLedger(run: __Run) -> Tuple<__Run, Option<Ledger.State>>",
+        "fn __takeLedger(run: __Run) -> Tuple<Option<Ledger.State>, __Run>",
         "Ledger.claim(__taken)",
         // An Ok settles the request, an Err parks it on the wake it named.
         "Result.Err(__wake) -> __park(",
+        // The run's own Maps are handed to Map.set at the run's last use,
+        // with everything else read first, so no answer copies them.
+        "    version = __versionOf(run, owner)\n    __Run.update(run, versions = Map.set(run.versions, owner, version + 1))",
+        "__Run.update(moved, slots = Map.set(moved.slots, id, __parked(slot, wake, now, owner, version)))",
+        "(run.ledger, __Run.update(run, ledger = Option.None))",
         "Run.Wake.Settled(deadline) -> Bool.or(__versionOf(run, slot.owner) > slot.version",
         // The entry's own policies are called by name.
         "match admit(__view(run, ready), id)",
