@@ -1,0 +1,65 @@
+module Wakes
+    intent = "Helpers over handles."
+    depends [Wait, Work]
+    effects []
+
+record Peer
+    connection: Tcp.Connection
+    name: String
+
+type Held
+    Open(Tcp.Connection)
+    Running(Work.Job)
+
+type Maybe
+    Known(Tcp.Connection)
+    Unknown
+
+fn onSocket(connection: Tcp.Connection, dueMs: Int) -> Wait.Item
+    ? "The socket to wait on, readable or writable by the deadline."
+    match dueMs <= 0
+        true -> Wait.Item.Socket(Tcp.Socket.Connected(connection))
+        false -> Wait.Item.Socket(Tcp.Socket.Sending(connection))
+
+fn onJob(job: Work.Job, keep: Bool) -> List<Work.Job>
+    ? "The job, when it is kept."
+    match keep
+        true -> [job]
+        false -> []
+
+fn peerName(peer: Peer, fallback: String) -> String
+    ? "The peer's name, or the fallback when it has none."
+    match peer.name == ""
+        true -> fallback
+        false -> peer.name
+
+fn heldKind(held: Held, loud: Bool) -> String
+    ? "What a held handle is."
+    match held
+        Held.Open(_) -> match loud
+            true -> "OPEN"
+            false -> "open"
+        Held.Running(_) -> "running"
+
+fn pairFirst(pair: Tuple<Tcp.Connection, Int>, bump: Int) -> Int
+    ? "The number beside a connection, bumped."
+    match pair
+        (_, n) -> n + bump
+
+fn maybeKind(maybe: Maybe, loud: Bool) -> String
+    ? "Whether a connection is known; Unknown can be written."
+    match maybe
+        Maybe.Known(_) -> match loud
+            true -> "KNOWN"
+            false -> "known"
+        Maybe.Unknown -> "unknown"
+
+fn owedCount(owed: List<Tcp.Connection>, extra: Int) -> Int
+    ? "How many are owed; the empty list can be written."
+    List.len(owed) + extra
+
+fn optional(connection: Option<Tcp.Connection>, extra: Int) -> Int
+    ? "Option.None can be written."
+    match connection
+        Option.Some(_) -> 1 + extra
+        Option.None -> extra
