@@ -1,0 +1,77 @@
+module Main
+    intent = "A record whose Maps move out through field reads at the record's last use."
+    effects [Args.get, Console.print]
+
+record Window
+    created: Map<Int, Int>
+    spent: Map<Int, Int>
+
+record Setting
+    window: Window
+    rounds: Int
+
+fn fill(counts: Map<Int, Int>, left: Int) -> Map<Int, Int>
+    ? "Keys 1 to left, each mapped to itself."
+    match left <= 0
+        true -> counts
+        false -> fill(Map.set(counts, left, left), left - 1)
+
+verify fill
+    fill({}, 0) => {}
+    fill({}, 2) => {1 => 1, 2 => 2}
+
+fn absorbed(created: Map<Int, Int>, spent: Map<Int, Int>, key: Int) -> Window
+    ? "Both maps with one more key."
+    Window(created = Map.set(created, key, 1), spent = Map.set(spent, key, 2))
+
+verify absorbed
+    absorbed({}, {}, 3) => Window(created = {3 => 1}, spent = {3 => 2})
+
+fn step(setting: Setting, key: Int) -> Setting
+    ? "One round: the window's maps go to absorbed at the setting's last use."
+    Setting(window = absorbed(setting.window.created, setting.window.spent, key), rounds = setting.rounds + 1)
+
+verify step
+    step(Setting(window = Window(created = {}, spent = {}), rounds = 0), 1) => Setting(window = Window(created = {1 => 1}, spent = {1 => 2}), rounds = 1)
+
+fn rounds(setting: Setting, left: Int) -> Setting
+    ? "Runs step left times."
+    match left <= 0
+        true -> setting
+        false -> rounds(step(setting, left), left - 1)
+
+verify rounds
+    rounds(Setting(window = Window(created = {}, spent = {}), rounds = 0), 0) => Setting(window = Window(created = {}, spent = {}), rounds = 0)
+
+fn refilled(setting: Setting, size: Int) -> Setting
+    ? "The window rebuilt from nothing."
+    Setting.update(setting, window = Window(created = fill({}, size), spent = fill({}, size)))
+
+verify refilled
+    refilled(Setting(window = Window(created = {9 => 9}, spent = {}), rounds = 0), 1) => Setting(window = Window(created = {1 => 1}, spent = {1 => 1}), rounds = 0)
+
+fn restarts(setting: Setting, size: Int, left: Int) -> Setting
+    ? "Rebuilds the window left times, after emptying it at the setting's last use."
+    match left <= 0
+        true -> setting
+        false -> restarts(refilled(Setting.update(setting, window = Window(created = {}, spent = {})), size), size, left - 1)
+
+verify restarts
+    restarts(Setting(window = Window(created = {}, spent = {}), rounds = 0), 1, 0) => Setting(window = Window(created = {}, spent = {}), rounds = 0)
+
+fn arg(index: Int, fallback: Int) -> Int
+    ? "The index-th argument as an Int, or the fallback."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), index)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), fallback)
+        Option.None -> fallback
+
+fn main() -> Unit
+    ! [Args.get, Console.print]
+    size = arg(0, 100000)
+    moves = arg(1, 1000)
+    start = Setting(window = Window(created = fill({}, size), spent = fill({}, size)), rounds = 0)
+    done = rounds(start, moves)
+    Console.print("rounds {done.rounds} created {Map.len(done.window.created)} spent {Map.len(done.window.spent)}")
+    again = restarts(done, size, arg(2, 0))
+    Console.print("restarted {Map.len(again.window.created)}")

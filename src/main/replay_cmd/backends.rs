@@ -228,17 +228,12 @@ pub(super) fn run_vm_replay(
     machine.provider_registry().shutdown_jobs();
     let run_out = run_out?;
 
-    let actual = if run_out.is_err() {
-        let inner = run_out.wrapper_inner(&machine.arena);
-        RecordedOutcome::RuntimeError(format!(
-            "{} returned error: {}",
-            recording.entry_fn,
-            inner.repr(&machine.arena)
-        ))
-    } else {
-        let val = run_out.to_value(&machine.arena);
-        RecordedOutcome::Value(value_to_json(&val)?)
-    };
+    // An entry that answers `Err` is recorded as the value it answered, by
+    // `aver run --record` and by the wasm-gc recorder alike, so the replay
+    // compares that value too. A run of the generated loop that some turn
+    // failed answers `Err(reason)`, and its replay has to reproduce it.
+    let val = run_out.to_value(&machine.arena);
+    let actual = RecordedOutcome::Value(value_to_json(&val)?);
 
     machine
         .ensure_replay_consumed()

@@ -1232,6 +1232,11 @@ fn pattern_bindings(pattern: &Pattern) -> Vec<String> {
         Pattern::Cons(head, tail) => vec![head.clone(), tail.clone()],
         Pattern::Tuple(items) => items.iter().flat_map(pattern_bindings).collect(),
         Pattern::Constructor(_, bindings) => bindings.clone(),
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => pattern
+            .binder_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
     }
 }
 

@@ -98,7 +98,9 @@ impl TypeChecker {
             let witness_msg = if let Some(first) = witness_vec.first() {
                 if is_catch_all_witness(first) {
                     "missing catch-all (_) pattern".to_string()
-                } else if matches!(first, CoverPat::Cons(_, _)) {
+                } else if matches!(first, CoverPat::Cons(h, t)
+                    if matches!((&**h, &**t), (CoverPat::Wild, CoverPat::Wild)))
+                {
                     "missing pattern [h, ..t]".to_string()
                 } else {
                     format!("missing pattern {}", format_cover_pattern(first))
@@ -120,6 +122,12 @@ impl TypeChecker {
     ) -> Option<Vec<CoverPat>> {
         if types.is_empty() {
             return if rows.is_empty() { Some(vec![]) } else { None };
+        }
+        // Nothing left to cover these columns: every value is missing, and
+        // `_` says so. Drilling into the first constructor would name one
+        // arbitrary shape (`[_]`) instead of the whole gap (`[_, .._]`).
+        if rows.is_empty() {
+            return Some(vec![CoverPat::Wild; types.len()]);
         }
         if depth >= EXHAUSTIVENESS_MAX_DEPTH {
             return None;
@@ -314,6 +322,21 @@ fn normalize_pattern(pattern: &Pattern) -> CoverPat {
         Pattern::Constructor(name, bindings) => {
             CoverPat::Constructor(name.clone(), vec![CoverPat::Wild; bindings.len()])
         }
+        Pattern::ConstructorNested(name, fields) => {
+            CoverPat::Constructor(name.clone(), fields.iter().map(normalize_pattern).collect())
+        }
+        // `[a, b, ..rest]` is `a :: b :: rest`; without `..rest` the
+        // chain ends in `[]`, so list patterns cover by length.
+        Pattern::List { items, rest } => {
+            let tail = if rest.is_some() {
+                CoverPat::Wild
+            } else {
+                CoverPat::EmptyList
+            };
+            items.iter().rev().fold(tail, |tail, item| {
+                CoverPat::Cons(Box::new(normalize_pattern(item)), Box::new(tail))
+            })
+        }
     }
 }
 
@@ -437,11 +460,24 @@ fn format_cover_pattern(pat: &CoverPat) -> String {
         CoverPat::Lit(Literal::Unit) => "Unit".to_string(),
         CoverPat::EmptyList => "[]".to_string(),
         CoverPat::Cons(head, tail) => {
-            format!(
-                "[{}, ..{}]",
-                format_cover_pattern(head),
-                format_cover_pattern(tail)
-            )
+            // Print a cons chain as the list pattern that spells it:
+            // `[_, _]`, `[0, .._]`.
+            let mut parts = vec![format_cover_pattern(head)];
+            let mut cursor = &**tail;
+            loop {
+                match cursor {
+                    CoverPat::Cons(h, t) => {
+                        parts.push(format_cover_pattern(h));
+                        cursor = t;
+                    }
+                    CoverPat::EmptyList => break,
+                    other => {
+                        parts.push(format!("..{}", format_cover_pattern(other)));
+                        break;
+                    }
+                }
+            }
+            format!("[{}]", parts.join(", "))
         }
         CoverPat::Tuple(items) => {
             let parts = items.iter().map(format_cover_pattern).collect::<Vec<_>>();

@@ -1,5 +1,30 @@
 use super::*;
 
+/// Read the head of one match-arm line: `line` (indentation stripped) is
+/// `pattern -> body`; the result is the arm's pattern and the char index
+/// where `->` starts. `None` for anything else — a line with no `->`, or
+/// whose text before `->` is not exactly one pattern. The formatter uses
+/// it to print arm patterns in their canonical spelling.
+pub fn parse_match_arm_head(line: &str) -> Option<(Pattern, usize)> {
+    let tokens = crate::lexer::Lexer::new(line).tokenize().ok()?;
+    let arrow = tokens
+        .iter()
+        .position(|token| token.kind == TokenKind::Arrow)?;
+    let arrow_col = tokens[arrow].col;
+    let mut head: Vec<Token> = tokens[..arrow].to_vec();
+    head.push(Token {
+        kind: TokenKind::Eof,
+        line: tokens[arrow].line,
+        col: arrow_col,
+    });
+    let mut parser = Parser::new(head);
+    let pattern = parser.parse_pattern().ok()?;
+    if !parser.is_eof() {
+        return None;
+    }
+    Some((pattern, arrow_col.checked_sub(1)?))
+}
+
 impl Parser {
     pub(super) fn parse_match(&mut self) -> Result<Expr, ParseError> {
         self.expect_exact(&TokenKind::Match)?;
@@ -70,22 +95,48 @@ impl Parser {
                     return Ok(Pattern::EmptyList);
                 }
 
-                let head = self.expect_user_identifier(
-                    "Expected identifier for list head in [head, ..tail] pattern",
-                    "pattern binders",
-                )?;
-
-                self.expect_exact(&TokenKind::Comma)?;
-                self.expect_exact(&TokenKind::Dot)?;
-                self.expect_exact(&TokenKind::Dot)?;
-
-                let tail = self.expect_user_identifier(
-                    "Expected identifier for list tail in [head, ..tail] pattern",
-                    "pattern binders",
-                )?;
-
+                // `[p1, p2, ..rest]`, `[p1, p2]`, `[..rest]`: element
+                // patterns separated by commas, optionally closed by one
+                // `..binder` for the remaining list.
+                let mut items = Vec::new();
+                let mut rest = None;
+                loop {
+                    if self.check_exact(&TokenKind::Dot) {
+                        self.advance();
+                        self.expect_exact(&TokenKind::Dot)?;
+                        rest = Some(self.expect_user_identifier(
+                            "Expected identifier after '..' in list pattern like [head, ..tail]",
+                            "pattern binders",
+                        )?);
+                        if !self.check_exact(&TokenKind::RBracket) {
+                            return Err(self.error(
+                                "'..rest' must be the last part of a list pattern, like [a, b, ..rest]"
+                                    .to_string(),
+                            ));
+                        }
+                        break;
+                    }
+                    items.push(self.parse_pattern()?);
+                    if self.check_exact(&TokenKind::Comma) {
+                        self.advance();
+                        continue;
+                    }
+                    break;
+                }
                 self.expect_exact(&TokenKind::RBracket)?;
-                Ok(Pattern::Cons(head, tail))
+
+                // `[head, ..tail]` with two binders keeps its original flat
+                // form; every other shape is the general list pattern.
+                if let (Some(tail), [single]) = (&rest, items.as_slice()) {
+                    match single {
+                        Pattern::Ident(head) => return Ok(Pattern::Cons(head.clone(), tail.clone())),
+                        Pattern::Wildcard => {
+                            return Ok(Pattern::Cons("_".to_string(), tail.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Pattern::List { items, rest })
             }
             TokenKind::LParen => {
                 self.advance(); // '('
@@ -116,26 +167,33 @@ impl Parser {
                         name
                     )));
                 }
-                let mut bindings = vec![];
+                let mut fields = vec![];
                 if self.check_exact(&TokenKind::LParen) {
                     self.advance();
                     while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
-                        if self.check_exact(&TokenKind::Comma) {
-                            self.advance();
-                            continue;
-                        }
-                        if matches!(self.current().kind, TokenKind::Ident(_)) {
-                            bindings.push(self.expect_user_identifier(
-                                "Expected constructor pattern binding",
-                                "pattern binders",
-                            )?);
-                        } else {
+                        fields.push(self.parse_pattern()?);
+                        if !self.check_exact(&TokenKind::Comma) {
                             break;
                         }
+                        self.advance();
                     }
                     self.expect_exact(&TokenKind::RParen)?;
                 }
-                Ok(Pattern::Constructor(name, bindings))
+                // Fields that are all binders (or `_`) keep the flat form
+                // every backend reads; any literal, constructor, tuple or
+                // list field makes it a nested constructor pattern.
+                let binders: Option<Vec<String>> = fields
+                    .iter()
+                    .map(|field| match field {
+                        Pattern::Ident(name) => Some(name.clone()),
+                        Pattern::Wildcard => Some("_".to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                match binders {
+                    Some(bindings) => Ok(Pattern::Constructor(name, bindings)),
+                    None => Ok(Pattern::ConstructorNested(name, fields)),
+                }
             }
             TokenKind::Ident(_) => Ok(Pattern::Ident(self.expect_user_identifier(
                 "Expected match pattern identifier",
@@ -162,7 +220,7 @@ impl Parser {
                 Ok(Pattern::Literal(Literal::Bool(b)))
             }
             _ => Err(self.error(format!(
-                "Expected match pattern (identifier, literal, '[]', tuple, or constructor), found {}",
+                "Expected match pattern (identifier, literal, list, tuple, or constructor), found {}",
                 self.current().kind
             ))),
         }

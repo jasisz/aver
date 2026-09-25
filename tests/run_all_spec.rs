@@ -1210,3 +1210,142 @@ fn a_recording_of_carried_waits_replays() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Two processes each call `Run.fail` on their third tick, in the same turn.
+/// The turn is finished, the run answers the reason of the process the turn
+/// served first, and the loop's own `main` exits non-zero with it on stderr.
+#[test]
+fn a_turn_that_calls_run_fail_ends_the_run_with_the_first_reason() {
+    let out = aver_within("run_fail", &["run"], 60);
+    assert!(!out.status.success(), "{}", format_output(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "first saw tick 1 in turn 1",
+            "second saw tick 2 in turn 1",
+            "first saw tick 3 in turn 2",
+            "second saw tick 4 in turn 2",
+            "first saw tick 5 in turn 3",
+            "second saw tick 6 in turn 3",
+        ],
+        "{}",
+        format_output(&out)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("first gave up in turn 3"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        !stderr.contains("second gave up"),
+        "a later Run.fail in the same turn changes nothing:\n{}",
+        format_output(&out)
+    );
+}
+
+/// An answer module fails the run in the turn a process ends and the entry's
+/// `stop` would end it too: the failure is what `Run.all()` answers. When
+/// `stop` ends the run a turn earlier, before anything failed, it answers Ok.
+#[test]
+fn run_fail_from_an_answer_module_wins_over_a_stop_in_the_same_turn() {
+    let late = aver_within("run_fail_answer", &["run", "--", "late"], 60);
+    assert!(late.status.success(), "{}", format_output(&late));
+    let text = String::from_utf8_lossy(&late.stdout);
+    assert!(
+        text.trim_end()
+            .ends_with("the run failed: the clock broke at tick 3"),
+        "{}",
+        format_output(&late)
+    );
+    assert!(!text.contains("in turn 3"), "{}", format_output(&late));
+
+    let quit = aver_within("run_fail_answer", &["run", "--", "quit"], 60);
+    assert!(quit.status.success(), "{}", format_output(&quit));
+    let text = String::from_utf8_lossy(&quit.stdout);
+    assert!(
+        text.trim_end().ends_with("the run ended cleanly"),
+        "{}",
+        format_output(&quit)
+    );
+    assert!(!text.contains("broke"), "{}", format_output(&quit));
+}
+
+/// A recorded failed run replays to the same failure: the recording carries
+/// `Run.fail` and every reading the loop made of it, and the replay answers
+/// the same `Err` the run did.
+#[test]
+fn a_recorded_failed_run_replays_to_the_same_failure() {
+    for (name, args) in [
+        ("run_fail", &[][..]),
+        ("run_fail_answer", &["--", "late"][..]),
+    ] {
+        let dir = scratch(&format!("{name}-replay"));
+        let mut recorded = Command::new(aver_bin());
+        recorded
+            .current_dir(fixture(name))
+            .arg("run")
+            .arg("main.av")
+            .arg("--module-root")
+            .arg(fixture(name))
+            .arg("--record")
+            .arg(&dir)
+            .args(args);
+        let out = recorded.output().expect("aver runs");
+        let recording = only_recording(&dir);
+        let written = std::fs::read_to_string(&recording).expect("recording is readable");
+        assert!(
+            written.contains("\"Run.fail\"") && written.contains("\"Run.failure\""),
+            "{name}: the recording does not carry the failure:\n{}",
+            format_output(&out)
+        );
+
+        let mut command = Command::new(aver_bin());
+        command.current_dir(fixture(name));
+        command.arg("replay").arg(&recording).arg("--check-args");
+        let replayed = command.output().expect("aver replays");
+        assert!(replayed.status.success(), "{}", format_output(&replayed));
+        assert!(
+            combined(&replayed).contains("Output:  MATCH"),
+            "{name}: {}",
+            format_output(&replayed)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A program whose processes and answer modules never call `Run.fail` gets
+/// the loop it had: no failure field, no reading of one, no new effect.
+#[test]
+fn a_loop_that_cannot_fail_reads_no_failure() {
+    let dump = |name: &str| {
+        let dir = fixture(name);
+        let out = Command::new(aver_bin())
+            .current_dir(&dir)
+            .env("AVER_YIELD_DUMP", "1")
+            .arg("check")
+            .arg("main.av")
+            .arg("--module-root")
+            .arg(&dir)
+            .output()
+            .expect("aver runs");
+        combined(&out)
+    };
+    let quiet = dump("run_all_from_main");
+    assert!(quiet.contains("fn __over"), "{quiet}");
+    assert!(!quiet.contains("Run.failure"), "{quiet}");
+    assert!(!quiet.contains("failed:"), "{quiet}");
+
+    let failing = dump("run_fail");
+    for line in [
+        "failed: Option<String>",
+        "fn __failedAfter(run: __Run) -> __Run",
+        "__failedAfter(__seatFamilies(served))",
+        "Bool.or(__hasFailed(run), ",
+        "fn __outcome(run: __Run) -> Result<Unit, String>",
+    ] {
+        assert!(failing.contains(line), "missing `{line}`:\n{failing}");
+    }
+}

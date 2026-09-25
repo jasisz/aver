@@ -668,6 +668,12 @@ fn resolve_pattern(ctx: &ResolveCtx<'_>, pat: &Pattern) -> ResolvedPattern {
         Pattern::Constructor(name, bindings) => {
             ResolvedPattern::Ctor(classify_ctor(ctx, name), bindings.clone())
         }
+        // The front door compiles every match holding one of these into
+        // nested flat matches (`crate::ir::nested_patterns`) before any
+        // door resolves the program, so the HIR has no form for them.
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => panic!(
+            "nested pattern reached HIR resolve without the front door compiling it: {pat:?}"
+        ),
     }
 }
 

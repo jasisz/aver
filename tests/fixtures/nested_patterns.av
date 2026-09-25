@@ -1,0 +1,122 @@
+module Nested
+    intent = "Nested literal, constructor and list patterns, run the same on every backend."
+    effects [Console.print]
+
+type Shape
+    Circle(Int)
+    Rect(Int, Int)
+    Dot
+
+fn classify(o: Option<Int>) -> String
+    ? "Literal inside a constructor."
+    match o
+        Option.Some(0) -> "zero"
+        Option.Some(1) -> "one"
+        Option.Some(n) -> "many {n}"
+        Option.None -> "none"
+
+verify classify
+    classify(Option.Some(0)) => "zero"
+    classify(Option.Some(7)) => "many 7"
+    classify(Option.None) => "none"
+
+fn okText(r: Result<String, Int>) -> Int
+    ? "String literal inside Result.Ok."
+    match r
+        Result.Ok("x") -> 1
+        Result.Ok(s) -> String.len(s)
+        Result.Err(0) -> 0 - 1
+        Result.Err(e) -> e
+
+fn flags(p: Option<Bool>) -> Int
+    ? "Bool literals nested."
+    match p
+        Option.Some(true) -> 1
+        Option.Some(false) -> 2
+        Option.None -> 3
+
+fn area(s: Shape) -> Int
+    ? "Literals in user constructor fields."
+    match s
+        Shape.Rect(0, _) -> 0
+        Shape.Rect(_, 0) -> 0
+        Shape.Rect(w, h) -> w * h
+        Shape.Circle(0) -> 0
+        Shape.Circle(r) -> 3 * r * r
+        Shape.Dot -> 1
+
+fn deep(o: Option<Option<Int>>) -> Int
+    ? "Constructors inside constructors."
+    match o
+        Option.Some(Option.Some(7)) -> 70
+        Option.Some(Option.Some(x)) -> x
+        Option.Some(Option.None) -> 0 - 1
+        Option.None -> 0 - 2
+
+fn pairs(t: Tuple<Int, Option<Int>>) -> Int
+    ? "Tuple with a nested constructor."
+    match t
+        (0, Option.Some(1)) -> 100
+        (a, Option.Some(b)) -> a + b
+        (a, Option.None) -> a
+
+fn size(xs: List<Int>) -> String
+    ? "List patterns by length."
+    match xs
+        [] -> "empty"
+        [a] -> "one {a}"
+        [a, b] -> "two {a} {b}"
+        [0, ..rest] -> "zero then {List.len(rest)}"
+        [a, b, ..rest] -> "many {a} {b} +{List.len(rest)}"
+
+verify size
+    size([]) => "empty"
+    size([0, 1, 2]) => "zero then 2"
+    size([5, 6, 7, 8]) => "many 5 6 +2"
+
+fn firstSome(xs: List<Option<Int>>) -> Int
+    ? "Constructor pattern as a list element."
+    match xs
+        [Option.Some(x), ..rest] -> x
+        [Option.None, ..rest] -> firstSome(rest)
+        [] -> 0
+
+fn whole(xs: List<Int>) -> Int
+    ? "Rest binder alone."
+    match xs
+        [..all] -> List.len(all)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{classify(Option.Some(0))}")
+    Console.print("{classify(Option.Some(1))}")
+    Console.print("{classify(Option.Some(5))}")
+    Console.print("{classify(Option.None)}")
+    Console.print("{okText(Result.Ok("x"))}")
+    Console.print("{okText(Result.Ok("hello"))}")
+    Console.print("{okText(Result.Err(0))}")
+    Console.print("{okText(Result.Err(9))}")
+    Console.print("{flags(Option.Some(true))}")
+    Console.print("{flags(Option.Some(false))}")
+    Console.print("{flags(Option.None)}")
+    Console.print("{area(Shape.Rect(0, 5))}")
+    Console.print("{area(Shape.Rect(4, 0))}")
+    Console.print("{area(Shape.Rect(4, 5))}")
+    Console.print("{area(Shape.Circle(0))}")
+    Console.print("{area(Shape.Circle(2))}")
+    Console.print("{area(Shape.Dot)}")
+    Console.print("{deep(Option.Some(Option.Some(7)))}")
+    Console.print("{deep(Option.Some(Option.Some(3)))}")
+    Console.print("{deep(Option.Some(Option.None))}")
+    Console.print("{deep(Option.None)}")
+    Console.print("{pairs((0, Option.Some(1)))}")
+    Console.print("{pairs((2, Option.Some(3)))}")
+    Console.print("{pairs((4, Option.None))}")
+    Console.print("{size([])}")
+    Console.print("{size([1])}")
+    Console.print("{size([1, 2])}")
+    Console.print("{size([0, 2, 3])}")
+    Console.print("{size([1, 2, 3, 4])}")
+    Console.print("{firstSome([Option.None, Option.None, Option.Some(4)])}")
+    Console.print("{firstSome([Option.None])}")
+    Console.print("{whole([1, 2, 3])}")

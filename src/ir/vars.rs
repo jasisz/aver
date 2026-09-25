@@ -171,6 +171,13 @@ pub fn pattern_bindings(pat: &Pattern) -> HashSet<String> {
                 bindings.extend(pattern_bindings(p));
             }
         }
+        Pattern::ConstructorNested(..) | Pattern::List { .. } => {
+            for name in pat.binder_names() {
+                if name != "_" {
+                    bindings.insert(name.to_string());
+                }
+            }
+        }
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
     }
     bindings

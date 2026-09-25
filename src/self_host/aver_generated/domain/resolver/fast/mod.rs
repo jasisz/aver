@@ -122,7 +122,7 @@ pub fn armsNeedTailLoop(
 ) -> bool {
     loop {
         crate::cancel_checkpoint();
-        aver_list_match!(arms, [] => { return false; }, [arm, rest] => { if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(selfId.clone(), arm.body.clone()) { return true; } else { {
+        aver_list_match!(arms, [] => { return false; }, [arm, rest] => { if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(selfId.clone(), arm.body) { return true; } else { {
             let __tco1 = rest;
             arms = __tco1;
             continue;

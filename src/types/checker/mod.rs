@@ -91,6 +91,12 @@ pub struct TypeCheckResult {
     /// whose source spelling would not name them here; see
     /// [`SymbolTable::generated_type_spellings`].
     pub type_spellings: HashMap<TypeId, String>,
+    /// For every constructor spelled in a pattern of a user sum type,
+    /// the variant names of that type (`"Shape.Circle"` →
+    /// `["Circle", "Rect"]`). The nested-pattern compiler
+    /// ([`crate::ir::nested_patterns`]) reads it to tell a switch that
+    /// covers the whole type from one that needs a default arm.
+    pub pattern_ctor_families: HashMap<String, Vec<String>>,
 }
 
 pub fn run_type_check(items: &[TopLevel]) -> Vec<TypeError> {
@@ -374,6 +380,7 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         imported_processes: checker.imported_processes,
         answers,
         type_spellings,
+        pattern_ctor_families: checker.pattern_ctor_families,
     }
 }
 
@@ -724,6 +731,8 @@ struct TypeChecker {
     /// Variant names for sum types: "Shape" → ["Circle", "Rect", "Point"].
     /// Pre-populated for Result and Option; extended by user-defined sum types.
     type_variants: HashMap<String, Vec<String>>,
+    /// See [`TypeCheckResult::pattern_ctor_families`].
+    pattern_ctor_families: HashMap<String, Vec<String>>,
     /// Module prefix of the items currently being checked. `None`
     /// while checking entry-scope items. Per-module sub-checkers
     /// (`check_loaded_module_bodies`) set this to the dep module's
@@ -819,6 +828,7 @@ impl TypeChecker {
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
             type_variants,
+            pattern_ctor_families: HashMap::new(),
             current_module_prefix: None,
             available_laws: std::collections::BTreeSet::new(),
             imported_processes: HashMap::new(),
