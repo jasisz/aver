@@ -173,6 +173,10 @@ pub(in crate::codegen::wasm_gc) struct SlotTable {
     /// Lazily allocated for the same reason the record scratch above is: a
     /// program with no job reserves nothing and its bytes are untouched.
     job_handle_scratch: RefCell<Option<u32>>,
+    /// The one `(ref null $string)` local `Run.fail` parks its reason in and
+    /// `Run.failure` parks the reading in: both read it more than once.
+    /// Lazily allocated like the job handle above.
+    run_reason_scratch: RefCell<Option<u32>>,
     /// One local per job kind this fn starts a job of. See
     /// `job_task_scratch`.
     job_task_scratch: RefCell<HashMap<i32, u32>>,
@@ -465,6 +469,7 @@ impl SlotTable {
             record_field_scratch: RefCell::new(HashMap::new()),
             record_base_scratch: RefCell::new(HashMap::new()),
             job_handle_scratch: RefCell::new(None),
+            run_reason_scratch: RefCell::new(None),
             job_task_scratch: RefCell::new(HashMap::new()),
             lazy_locals: RefCell::new(Vec::new()),
         })
@@ -489,6 +494,19 @@ impl SlotTable {
         }
         let idx = self.push_lazy_local(struct_ref(job_struct_idx));
         *self.job_handle_scratch.borrow_mut() = Some(idx);
+        idx
+    }
+
+    /// Reserve (once per fn) the local a run's failure reason is parked in.
+    pub(in crate::codegen::wasm_gc) fn run_reason_scratch(&self, string_idx: u32) -> u32 {
+        if let Some(found) = *self.run_reason_scratch.borrow() {
+            return found;
+        }
+        let idx = self.push_lazy_local(ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        }));
+        *self.run_reason_scratch.borrow_mut() = Some(idx);
         idx
     }
 

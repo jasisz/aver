@@ -116,6 +116,10 @@ pub(super) struct FnMap {
     /// for `begin`, `take` and `Work.cancel` lower inline, on both wasm
     /// targets, and no import is involved.
     pub(super) jobs: Option<super::jobs::JobLowering>,
+    /// The `(ref null $string)` global holding the reason the first
+    /// `Run.fail` of this run gave, when the program calls `Run.fail` or
+    /// `Run.failure`. `None` otherwise, so every other module keeps its bytes.
+    pub(super) run_failure_global: Option<u32>,
 }
 
 impl FnMap {

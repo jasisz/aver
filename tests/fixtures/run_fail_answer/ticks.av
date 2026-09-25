@@ -1,0 +1,27 @@
+module Ticks
+    intent = "Answers Clock at once, and breaks on its third tick: it fails the run with a reason and still answers the tick, so the turn it broke in is finished."
+    depends [Clock]
+    exposes [State, fresh, tick]
+    effects [Run.fail]
+    answers [Clock]
+
+record State
+    count: Int
+
+fn fresh() -> State
+    ? "No tick given yet."
+    State(count = 0)
+
+fn tick(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The next tick. The third one fails the run first."
+    ! [Run.fail]
+    next = state.count + 1
+    _broken = brokenAt(next)
+    (State(count = next), Result.Ok(next))
+
+fn brokenAt(count: Int) -> Unit
+    ? "The clock breaks on its third tick."
+    ! [Run.fail]
+    match count == 3
+        true -> Run.fail("the clock broke at tick {count}")
+        false -> Unit
