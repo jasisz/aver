@@ -352,7 +352,7 @@ Lean export modes:
 - `sorry`
 - `theorem-skeleton`
 
-`--check` builds the export with `lake` and gates on the result (`--check-json` gives a machine-readable summary). `--gate <baseline>` / `--write-baseline` are the proof ratchet. `--compare-manifest <earlier proof_manifest.json>` (Lean, check mode) says, for each law that did not close, whether its own script changed and which definitions it opens changed since that manifest. `--minimize` (Lean, implies `--check`) collapses each auto-proof to the single tactic that actually closed it. See [docs/lean.md](lean.md) for the proof workflow, the `--check` summary fields, `--compare-manifest` and `--minimize`.
+`--check` builds the export with `lake` and gates on the result (`--check-json` gives a machine-readable summary). `--gate <baseline>` / `--write-baseline` are the proof ratchet. `--gate` fails when a law of the baseline is gone, drops to a lower tier, changes backend, newly depends on an axiom other than Lean's standard three (`propext`, `Classical.choice`, `Quot.sound`), or newly depends on one of the standard three while staying at the same tier. A law that moves to a higher tier, such as bounded to universal, is reported as `promoted` and passes, even when its universal proof uses the standard axioms. `--compare-manifest <earlier proof_manifest.json>` (Lean, check mode) says, for each law that did not close, whether its own script changed and which definitions it opens changed since that manifest. `--minimize` (Lean, implies `--check`) collapses each auto-proof to the single tactic that actually closed it. See [docs/lean.md](lean.md) for the proof workflow, the `--check` summary fields, `--compare-manifest` and `--minimize`.
 
 ### Replay
 

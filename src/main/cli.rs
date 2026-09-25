@@ -770,10 +770,13 @@ pub(super) enum Commands {
         /// THE RATCHET. Compare the freshly recomputed per-law proof
         /// manifest against this committed baseline and exit non-zero on
         /// any regression: a previously-proven law that is removed, demoted
-        /// in tier (universal > bounded > sampled > failed), whose recorded
-        /// kernel-axiom set grew (any axiom present now but not in that law's
-        /// own baseline record — whitelisted or not), or whose backend
-        /// changed. New laws are allowed. Implies a verifier run. Exit 0
+        /// in tier (universal > bounded > sampled > failed), that newly
+        /// depends on an axiom other than Lean's standard three (propext,
+        /// Classical.choice, Quot.sound) at any tier, that newly depends on
+        /// one of the standard three without moving to a higher tier, or
+        /// whose backend changed. A law promoted to a higher tier (bounded to
+        /// universal) is reported as a gain and may bring the standard
+        /// axioms with it. New laws are allowed. Implies a verifier run. Exit 0
         /// clean, 1 on regression,
         /// 2 on harness failure (unreadable/corrupt baseline, duplicate law
         /// identity, verifier absent).
