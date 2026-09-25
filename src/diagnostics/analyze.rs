@@ -488,7 +488,14 @@ fn analyze_prechecked_items_impl(
             let text = std::fs::read_to_string(path).ok()?;
             crate::source::parse_source(&text).ok()
         };
-        for w in collect_shared_update_warnings(transformed, &source) {
+        let symbols = |items: &[TopLevel]| {
+            crate::types::checker::program_symbols(
+                items,
+                options.loaded_modules.as_deref(),
+                options.module_base_dir.as_deref(),
+            )
+        };
+        for w in collect_shared_update_warnings(transformed, &source, &symbols) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,

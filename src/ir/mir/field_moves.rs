@@ -35,18 +35,28 @@ use super::program::LocalId;
 enum Part {
     /// `s` (empty path) or `s.a.b`.
     Path(Vec<String>),
-    /// The base of `T.update(s, a = ...)`: every field of `s` except the
-    /// replaced ones.
-    AllExcept(Vec<String>),
+    /// The base of `T.update(s, a = ...)` (empty prefix) or of
+    /// `T.update(s.window, a = ...)` (prefix `window`): every field under
+    /// the prefix except the replaced ones.
+    AllExcept {
+        prefix: Vec<String>,
+        replaced: Vec<String>,
+    },
 }
 
 #[derive(Debug)]
 struct Read {
     part: Part,
+    /// For the base of an update: the update node's address, so the reads
+    /// inside its own field values can be told apart.
+    update: Option<usize>,
     /// Address of the read's outermost node (the projection chain or the
     /// local itself).
     addr: usize,
     last_use: bool,
+    /// Whether the local read under this part is the local's last use (for
+    /// a field chain base, `last_use` is whether the base may move).
+    root_last_use: bool,
     in_product: bool,
     /// Each ancestor on the way down from the body: its address and the
     /// index of the child the read sits under.
@@ -60,16 +70,42 @@ enum Branching {
     Alternatives,
     /// `let`: child 0 is the value, child 1 the body.
     Sequence,
+    /// A call: its value holds nothing of what its arguments read.
+    Call,
     Other,
 }
 
 /// Addresses (`&MirExpr as *const _ as usize`) of the projection nodes in
 /// `body` that may move their field out of their root local.
+///
+/// The base of an update of a field chain (`T.update(s.window, a = ...)`)
+/// is in the set too when it may move what the update keeps: the rest of
+/// `s.window` then moves into the new record instead of being cloned, and
+/// the fields it replaces may move out before it.
 pub fn movable_projections(body: &MirExpr) -> HashSet<usize> {
     let mut reads: HashMap<LocalId, Vec<Read>> = HashMap::new();
     let mut trail = Vec::new();
     collect(body, &mut trail, false, &mut reads);
     let mut out = HashSet::new();
+    // A chain base is final once nothing outside its own update reads what
+    // it keeps; a base further in may depend on one further out, so this
+    // runs until nothing changes.
+    loop {
+        let mut changed = false;
+        for group in reads.values_mut() {
+            for bi in 0..group.len() {
+                if group[bi].last_use || !base_is_final(group, bi) {
+                    continue;
+                }
+                group[bi].last_use = true;
+                out.insert(group[bi].addr);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
     for group in reads.values() {
         for (qi, q) in group.iter().enumerate() {
             let Part::Path(path) = &q.part else {
@@ -96,6 +132,36 @@ pub fn movable_projections(body: &MirExpr) -> HashSet<usize> {
         }
     }
     out
+}
+
+/// Whether the base `group[bi]` of an update of a field chain may move what
+/// the update keeps: every other read of the local either sits inside the
+/// update's own field values (they run first), cannot run together with
+/// it, or reads a disjoint part; and one of the reads that can run with it
+/// is the local's last use.
+fn base_is_final(group: &[Read], bi: usize) -> bool {
+    let b = &group[bi];
+    let (Part::AllExcept { prefix, .. }, Some(update)) = (&b.part, b.update) else {
+        return false;
+    };
+    if prefix.is_empty() || b.in_product {
+        return false;
+    }
+    let mut ends_here = b.root_last_use;
+    for (oi, o) in group.iter().enumerate() {
+        if oi == bi || apart(o, b) {
+            continue;
+        }
+        let inside = o
+            .trail
+            .iter()
+            .any(|(addr, child, _)| *addr == update && *child >= 1);
+        if !inside && !disjoint(&o.part, o.last_use, prefix) {
+            return false;
+        }
+        ends_here |= o.last_use || o.root_last_use;
+    }
+    ends_here
 }
 
 /// The locals under `body` that give up a field through one of the
@@ -149,8 +215,10 @@ fn collect(
         MirExpr::Local(local) => {
             reads.entry(local.node.slot).or_default().push(Read {
                 part: Part::Path(Vec::new()),
+                update: None,
                 addr,
                 last_use: local.node.last_use,
+                root_last_use: local.node.last_use,
                 in_product,
                 trail: trail.clone(),
             });
@@ -160,8 +228,10 @@ fn collect(
             if let Some((slot, last_use, path)) = projection_root(expr) {
                 reads.entry(slot).or_default().push(Read {
                     part: Part::Path(path),
+                    update: None,
                     addr,
                     last_use,
+                    root_last_use: last_use,
                     in_product,
                     trail: trail.clone(),
                 });
@@ -169,17 +239,22 @@ fn collect(
             }
         }
         MirExpr::RecordUpdate(update) => {
-            if let MirExpr::Local(local) = &update.node.base.node {
+            if let Some((slot, root_last_use, prefix)) = projection_root(&update.node.base.node) {
                 let replaced = update
                     .node
                     .updates
                     .iter()
                     .map(|field| field.name.clone())
                     .collect();
-                reads.entry(local.node.slot).or_default().push(Read {
-                    part: Part::AllExcept(replaced),
+                // A local base is final by its last-use flags; a field chain
+                // base is decided once every read is known.
+                let last_use = prefix.is_empty() && update_base_is_final(&update.node);
+                reads.entry(slot).or_default().push(Read {
+                    part: Part::AllExcept { prefix, replaced },
+                    update: Some(addr),
                     addr: &update.node.base.node as *const MirExpr as usize,
-                    last_use: update_base_is_final(&update.node),
+                    last_use,
+                    root_last_use,
                     in_product,
                     trail: {
                         let mut t = trail.clone();
@@ -200,6 +275,7 @@ fn collect(
     let branching = match expr {
         MirExpr::Match(_) | MirExpr::IfThenElse(_) => Branching::Alternatives,
         MirExpr::Let(_) => Branching::Sequence,
+        MirExpr::Call(_) => Branching::Call,
         _ => Branching::Other,
     };
     let in_product = in_product || matches!(expr, MirExpr::IndependentProduct(_));
@@ -338,31 +414,49 @@ fn final_reads(
 /// Whether `o` never runs together with `q`, or finishes before `q` starts
 /// without holding a borrow of the local.
 fn apart(o: &Read, q: &Read) -> bool {
-    for (a, b) in o.trail.iter().zip(q.trail.iter()) {
+    for (depth, (a, b)) in o.trail.iter().zip(q.trail.iter()).enumerate() {
         if a == b {
             continue;
         }
         let (_, o_child, branching) = *a;
         let q_child = b.1;
         return match branching {
-            Branching::Alternatives => o_child >= 1 && q_child >= 1,
+            // Two arms never run together. A read inside a call in the
+            // subject or condition is over once that call returns, before
+            // any arm runs: the call's value holds nothing of it.
+            Branching::Alternatives => {
+                (o_child >= 1 && q_child >= 1)
+                    || (o_child == 0
+                        && q_child >= 1
+                        && o.trail[depth + 1..]
+                            .iter()
+                            .any(|(_, _, below)| *below == Branching::Call))
+            }
             Branching::Sequence => o_child == 0 && q_child == 1,
-            Branching::Other => false,
+            Branching::Call | Branching::Other => false,
         };
     }
     false
 }
 
 /// Whether a read of `part` leaves `path` untouched. The base of an update
-/// that is not the local's last use is cloned whole, so it overlaps
-/// everything.
+/// that may not move is cloned whole, so it overlaps everything under its
+/// prefix.
 fn disjoint(part: &Part, last_use: bool, path: &[String]) -> bool {
     match part {
         Part::Path(other) => {
             let common = other.len().min(path.len());
             other[..common] != path[..common]
         }
-        Part::AllExcept(replaced) => last_use && replaced.iter().any(|field| *field == path[0]),
+        Part::AllExcept { prefix, replaced } => {
+            let common = prefix.len().min(path.len());
+            if prefix[..common] != path[..common] {
+                return true;
+            }
+            last_use
+                && path.len() > prefix.len()
+                && replaced.iter().any(|field| *field == path[prefix.len()])
+        }
     }
 }
 
@@ -447,6 +541,119 @@ mod tests {
         };
         assert_eq!(movable.len(), 1);
         assert!(movable.contains(&addr(&args(&chain.node.body)[0])));
+    }
+
+    #[test]
+    fn a_field_chain_base_moves_what_its_update_keeps() {
+        // Setting.update(s, window = Window.update(s.window,
+        //     created = f(s.window.created)), height = g(s.height))
+        let inner_base = project(local(0, false), "window");
+        let inner = sp(MirExpr::RecordUpdate(Spanned::bare(MirRecordUpdate {
+            type_id: Some(TypeId(1)),
+            type_name: "Window".to_string(),
+            base: Box::new(inner_base),
+            updates: vec![MirRecordField {
+                name: "created".to_string(),
+                value: call(vec![project(project(local(0, false), "window"), "created")]),
+            }],
+        })));
+        let body = sp(MirExpr::RecordUpdate(Spanned::bare(MirRecordUpdate {
+            type_id: Some(TypeId(0)),
+            type_name: "Setting".to_string(),
+            base: Box::new(local(0, false)),
+            updates: vec![
+                MirRecordField {
+                    name: "window".to_string(),
+                    value: inner,
+                },
+                MirRecordField {
+                    name: "height".to_string(),
+                    value: call(vec![project(local(0, true), "height")]),
+                },
+            ],
+        })));
+        let movable = movable_projections(&body.node);
+        let MirExpr::RecordUpdate(outer) = &body.node else {
+            unreachable!()
+        };
+        let MirExpr::RecordUpdate(inner) = &outer.node.updates[0].value.node else {
+            unreachable!()
+        };
+        assert!(movable.contains(&addr(&inner.node.base)));
+        assert!(movable.contains(&addr(&args(&inner.node.updates[0].value)[0])));
+    }
+
+    #[test]
+    fn a_field_chain_base_read_again_after_its_update_is_cloned() {
+        // f(Window.update(s.window, created = g(s.window.created)), s.window)
+        let update = sp(MirExpr::RecordUpdate(Spanned::bare(MirRecordUpdate {
+            type_id: Some(TypeId(1)),
+            type_name: "Window".to_string(),
+            base: Box::new(project(local(0, false), "window")),
+            updates: vec![MirRecordField {
+                name: "created".to_string(),
+                value: call(vec![project(project(local(0, false), "window"), "created")]),
+            }],
+        })));
+        let body = call(vec![update, project(local(0, true), "window")]);
+        assert!(movable_projections(&body.node).len() <= 1);
+        let MirExpr::RecordUpdate(update) = &args(&body)[0].node else {
+            unreachable!()
+        };
+        let movable = movable_projections(&body.node);
+        assert!(!movable.contains(&addr(&update.node.base)));
+        assert!(!movable.contains(&addr(&args(&update.node.updates[0].value)[0])));
+    }
+
+    #[test]
+    fn a_read_inside_a_call_in_the_subject_is_over_before_the_arms() {
+        use crate::ir::mir::expr::{MirMatch, MirMatchArm, MirPattern};
+        // match f(s.jobs)
+        //     _ -> T.update(s, jobs = g(s.jobs))
+        let update = sp(MirExpr::RecordUpdate(Spanned::bare(MirRecordUpdate {
+            type_id: Some(TypeId(0)),
+            type_name: "State".to_string(),
+            base: Box::new(local(0, false)),
+            updates: vec![MirRecordField {
+                name: "jobs".to_string(),
+                value: call(vec![project(local(0, true), "jobs")]),
+            }],
+        })));
+        let arm_read = addr(
+            &args(match &update.node {
+                MirExpr::RecordUpdate(update) => &update.node.updates[0].value,
+                _ => unreachable!(),
+            })[0],
+        );
+        let subject = call(vec![project(local(0, false), "jobs")]);
+        let subject_read = addr(&args(&subject)[0]);
+        let body = sp(MirExpr::Match(Spanned::bare(MirMatch {
+            subject: Box::new(subject),
+            arms: vec![MirMatchArm {
+                pattern: MirPattern::Wildcard,
+                body: update,
+            }],
+        })));
+        let movable = movable_projections(&body.node);
+        assert!(movable.contains(&arm_read));
+        assert!(!movable.contains(&subject_read));
+    }
+
+    #[test]
+    fn a_subject_bound_whole_is_not_over_before_the_arms() {
+        use crate::ir::mir::expr::{MirMatch, MirMatchArm, MirPattern};
+        // match s.jobs
+        //     _ -> g(s.jobs)
+        let arm = call(vec![project(local(0, true), "jobs")]);
+        let arm_read = addr(&args(&arm)[0]);
+        let body = sp(MirExpr::Match(Spanned::bare(MirMatch {
+            subject: Box::new(project(local(0, false), "jobs")),
+            arms: vec![MirMatchArm {
+                pattern: MirPattern::Wildcard,
+                body: arm,
+            }],
+        })));
+        assert!(!movable_projections(&body.node).contains(&arm_read));
     }
 
     #[test]
