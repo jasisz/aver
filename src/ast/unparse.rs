@@ -611,6 +611,15 @@ fn write_literal(out: &mut String, lit: &Literal) -> Result<()> {
     Ok(())
 }
 
+/// A match pattern spelled as source, for diagnostics.
+pub fn pattern_to_source(pattern: &Pattern) -> String {
+    let mut out = String::new();
+    match write_pattern(&mut out, pattern) {
+        Ok(()) => out,
+        Err(_) => format!("{pattern:?}"),
+    }
+}
+
 fn write_pattern(out: &mut String, pattern: &Pattern) -> Result<()> {
     match pattern {
         Pattern::Wildcard => {
@@ -648,6 +657,35 @@ fn write_pattern(out: &mut String, pattern: &Pattern) -> Result<()> {
                 out.push_str(&bindings.join(", "));
                 out.push(')');
             }
+            Ok(())
+        }
+        Pattern::ConstructorNested(name, fields) => {
+            out.push_str(name);
+            out.push('(');
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_pattern(out, field)?;
+            }
+            out.push(')');
+            Ok(())
+        }
+        Pattern::List { items, rest } => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                write_pattern(out, item)?;
+            }
+            if let Some(rest) = rest {
+                if !items.is_empty() {
+                    out.push_str(", ");
+                }
+                write!(out, "..{rest}")?;
+            }
+            out.push(']');
             Ok(())
         }
     }

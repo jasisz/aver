@@ -56,6 +56,7 @@ pub(crate) fn spell_type(ty: &crate::ast::Type, spellings: &TypeSpellings) -> St
 }
 
 mod build;
+mod carried_waits;
 mod coordinator;
 mod lower;
 mod trace;
@@ -210,6 +211,31 @@ impl YieldLoweringReport {
 pub const YIELD_EFFECT: &str = "yield";
 
 /// Whether a function body calls `Run.all()`, which runs the generated loop.
+/// Whether a module calls `Wait.poll` anywhere, read off its source.
+pub fn calls_wait_poll(items: &[TopLevel]) -> bool {
+    carried_waits::calls_wait_poll(items)
+}
+
+/// Carry the waits of a module with no process through an `Int`-keyed wait;
+/// see `carried_waits`. `stamped` is the module after a type check. Answers
+/// the generated source when anything was carried.
+pub fn carry_waits(
+    items: &mut Vec<TopLevel>,
+    stamped: &[TopLevel],
+    spellings: &TypeSpellings,
+) -> Result<Option<String>, Vec<TypeError>> {
+    carried_waits::carry(items, stamped, spellings, &|_| false)
+        .map(|carried| carried.map(|carried| carried.source))
+        .map_err(|parse| {
+            vec![error_at(
+                1,
+                format!(
+                    "internal error carrying this module's waits through an Int-keyed wait: {parse}; please report this program"
+                ),
+            )]
+        })
+}
+
 pub fn calls_run_all(fd: &FnDef) -> bool {
     coordinator::calls_run_all(fd)
 }
@@ -525,7 +551,7 @@ pub fn lower(
             return Err(vec![error_at(line, "this module declares a seated process, and a seated process runs under the generated loop; its own 'main' does not call Run.all(). Call Run.all() from 'main', or remove 'main' and let the loop's own be generated".to_string())]);
         }
         if generate {
-            let generated = coordinator::generate(
+            let mut generated = coordinator::generate(
                 items,
                 &report.generated,
                 &seated,
@@ -539,10 +565,35 @@ pub fn lower(
             coordinator::rewrite_run_names(items);
             items.extend(generated.items);
             if main.is_none() {
-                let main_source = format!(
-                    "fn main() -> Result<Unit, String>\n    ? \"Runs the generated loop until it is over.\"\n    ! [{}]\n    __all()\n",
-                    generated.module_effects.join(", ")
-                );
+                // Every other door reports what `main` answered. A WASI 0.2
+                // component has no host that does, so when a turn can fail
+                // the run, its generated `main` writes the reason to stderr
+                // itself before answering it.
+                let reports = coordinator_stop == CoordinatorStop::PolicyOnly
+                    && generated
+                        .module_effects
+                        .iter()
+                        .any(|effect| effect == "Run.failure");
+                if reports
+                    && !generated
+                        .module_effects
+                        .iter()
+                        .any(|effect| effect == "Console.error")
+                {
+                    generated.module_effects.push("Console.error".to_string());
+                    generated.module_effects.sort();
+                }
+                let main_source = if reports {
+                    format!(
+                        "fn main() -> Result<Unit, String>\n    ? \"Runs the generated loop until it is over, and writes the reason a failed run gave to stderr.\"\n    ! [{}]\n    __reported(__all())\n\nfn __reported(ran: Result<Unit, String>) -> Result<Unit, String>\n    ? \"What the run answered, with the reason of a failed one written to stderr first.\"\n    ! [Console.error]\n    match ran\n        Result.Ok(_) -> ran\n        Result.Err(reason) -> __failedWith(reason)\n\nfn __failedWith(reason: String) -> Result<Unit, String>\n    ? \"A failed run's reason, written to stderr and answered.\"\n    ! [Console.error]\n    Console.error(reason)\n    Result.Err(reason)\n",
+                        generated.module_effects.join(", ")
+                    )
+                } else {
+                    format!(
+                        "fn main() -> Result<Unit, String>\n    ? \"Runs the generated loop until it is over.\"\n    ! [{}]\n    __all()\n",
+                        generated.module_effects.join(", ")
+                    )
+                };
                 let tokens = crate::lexer::Lexer::new(&main_source)
                     .tokenize()
                     .expect("generated main lexes");
@@ -581,6 +632,31 @@ pub fn lower(
                     }
                     _ => {}
                 }
+            }
+        }
+    }
+
+    // The generated loop keys its wait by `Int`. A program that answers a
+    // capability of its own carries every other wait it writes through an
+    // `Int`-keyed one, so the loop's wait and the program's own can meet in
+    // one program.
+    if !marked.is_empty() {
+        let carried = carried_waits::carry(items, stamped, type_spellings, &|name| {
+            yield_fns.contains(name)
+        })
+        .map_err(|parse| {
+            vec![error_at(
+                1,
+                format!(
+                    "internal error carrying this module's waits through an Int-keyed wait: {parse}; please report this program"
+                ),
+            )]
+        })?;
+        if let Some(carried) = carried {
+            report.generated.extend(carried.items);
+            match report.loop_source.as_mut() {
+                Some(source) => source.push_str(&carried.source),
+                None => report.loop_source = Some(carried.source),
             }
         }
     }

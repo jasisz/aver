@@ -161,10 +161,21 @@ fn classify_fn(fd: &FnDef) -> Option<InlineCandidate> {
     if contains_tail_call(&body.node) {
         return None;
     }
+    // The splice copies the body into the CALLER's frame, where only the
+    // substituted parameter (and, for shape B, the top-level arm
+    // binders) are accounted for. A `match` whose pattern binds a name
+    // owns a slot of the callee's frame that the caller never allocated:
+    // the spliced body would read and write a slot index the caller does
+    // not have, or one the caller uses for something else (VM slot-index
+    // panic, wasm-gc validation error, a clobbered caller local). Such a
+    // body stays a call.
+    if binds_below_top(&body.node) {
+        return None;
+    }
 
     // Shape A: body uses param only via Attr(p, field). Inline at
     // call sites where arg is RecordCreate.
-    if body_uses_param_only_via_attr(&body.node, param_slot) {
+    if body_uses_param_only_via_attr(&body.node, param_slot) && !binds_at_top(&body.node) {
         return Some(InlineCandidate::RecordAccess {
             param_slot,
             body: body.clone(),
@@ -315,6 +326,36 @@ fn walk_expr_with_context(expr: &Expr, in_attr_obj: bool, visit: &mut dyn FnMut(
         }
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
     }
+}
+
+/// True when `expr` is a `match` whose own arms bind a name.
+fn binds_at_top(expr: &Expr) -> bool {
+    matches!(expr, Expr::Match { arms, .. }
+        if arms.iter().any(|arm| arm.pattern.binder_names().iter().any(|name| *name != "_")))
+}
+
+/// True when a `match` anywhere below the top-level expression — or in
+/// the arm bodies of a top-level `match` — binds a name.
+fn binds_below_top(expr: &Expr) -> bool {
+    let binds = |pattern: &Pattern| pattern.binder_names().iter().any(|name| *name != "_");
+    let mut found = false;
+    let mut visit = |e: &Expr, _| {
+        if let Expr::Match { arms, .. } = e
+            && arms.iter().any(|arm| binds(&arm.pattern))
+        {
+            found = true;
+        }
+    };
+    match expr {
+        Expr::Match { subject, arms } => {
+            walk_expr_with_context(&subject.node, false, &mut visit);
+            for arm in arms {
+                walk_expr_with_context(&arm.body.node, false, &mut visit);
+            }
+        }
+        other => walk_expr_with_context(other, false, &mut visit),
+    }
+    found
 }
 
 fn contains_tail_call(expr: &Expr) -> bool {

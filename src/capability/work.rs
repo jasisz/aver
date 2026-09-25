@@ -244,10 +244,10 @@ pub fn job_kinds(
 
 /// The standard operations that answer at once, whatever the world does: the
 /// non-blocking half of `Tcp`, the clock, randomness, the stop flag and a
-/// job's cancel. An answer function that performs only these, or the
-/// `begin`/`take` of a job kind, cannot stall the turn, so the answer-shape
-/// warning does not name them.
-const ANSWERS_AT_ONCE: [&str; 14] = [
+/// job's cancel, and ending the run with a reason. An answer function that
+/// performs only these, or the `begin`/`take` of a job kind, cannot stall the
+/// turn, so the answer-shape warning does not name them.
+const ANSWERS_AT_ONCE: [&str; 16] = [
     "Tcp.readNow",
     "Tcp.writeNow",
     "Tcp.accept",
@@ -262,6 +262,8 @@ const ANSWERS_AT_ONCE: [&str; 14] = [
     "Random.float",
     "Process.stopRequested",
     "Work.cancel",
+    "Run.fail",
+    "Run.failure",
 ];
 
 /// Whether one effect of an answer function returns at once.
@@ -1652,7 +1654,7 @@ fn wait_set_key(annotation: &str) -> Option<Type> {
 ///
 /// The generic contract's own `Map<K, Wait.Item>` is the signature rather
 /// than a choice a program made, so a type variable is not an answer.
-fn wait_set_key_of_type(ty: &Type) -> Option<Type> {
+pub(crate) fn wait_set_key_of_type(ty: &Type) -> Option<Type> {
     fn walk(ty: &Type, out: &mut Option<Type>) {
         match ty {
             Type::Map(key, value) if is_wait_item(value) => *out = Some((**key).clone()),

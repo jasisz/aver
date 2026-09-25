@@ -247,7 +247,7 @@ pub fn fnsToIdMap(
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc; }, [f, rest] => { {
             let __tco0 = rest;
-            let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
+            let __tco1 = acc.insert_owned(f.name, idx.clone());
             let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
             fns = __tco0;
             acc = __tco1;

@@ -239,6 +239,18 @@ pub(super) enum EffectName {
     /// answers `None` here too.
     #[allow(dead_code)] // Retained in the legacy import/certificate registry.
     WorkTake,
+    // ── The reason a run of the generated loop failed. The module keeps
+    //    the reason itself, in a global, on both wasm targets; these two
+    //    imports exist so the recorder sees `Run.fail` and the loop's
+    //    `Run.failure` reading in the turn they happened in, exactly as the
+    //    VM records them, and so a replay hands back the recorded reading.
+    /// `(message: String) -> Unit` — the module has already kept the reason
+    /// if it was the first; this is what the recording sees.
+    RunFail,
+    /// `(reason: String or null) -> String or null` — the reason the module
+    /// holds, handed through the host: a live host answers it unchanged, a
+    /// replay answers the recorded one.
+    RunFailure,
 }
 
 impl EffectName {
@@ -332,6 +344,8 @@ impl EffectName {
         Self::WorkCancel,
         Self::WorkBegin,
         Self::WorkTake,
+        Self::RunFail,
+        Self::RunFailure,
     ];
 
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
@@ -425,6 +439,8 @@ impl EffectName {
             "Http.patch" => Some(Self::HttpPatch),
             "Wait.poll" => Some(Self::WaitPoll),
             "Work.cancel" => Some(Self::WorkCancel),
+            "Run.fail" => Some(Self::RunFail),
+            "Run.failure" => Some(Self::RunFailure),
             _ => None,
         }
     }
@@ -530,6 +546,8 @@ impl EffectName {
             // recorder's view of them.
             Self::WorkBegin => "__work_begin",
             Self::WorkTake => "__work_take",
+            Self::RunFail => "Run.fail",
+            Self::RunFailure => "Run.failure",
         }
     }
 
@@ -623,6 +641,8 @@ impl EffectName {
             Self::RecordExitGroup => ("aver", "record_exit_group"),
             Self::WaitPoll => ("aver", "wait_poll"),
             Self::WorkCancel => ("aver", "work_cancel"),
+            Self::RunFail => ("aver", "run_fail"),
+            Self::RunFailure => ("aver", "run_failure"),
             Self::WorkBegin => ("aver", "work_begin"),
             Self::WorkTake => ("aver", "work_take"),
         }
@@ -748,6 +768,7 @@ impl EffectName {
             // rest crosses as `anyref` because one import serves every kind.
             Self::WorkBegin => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
             Self::WorkTake => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
+            Self::RunFail | Self::RunFailure => Ok(vec![any_ref_ty()]),
             Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpWriteNow => {
                 Ok(vec![any_ref_ty(), any_ref_ty()])
             }
@@ -912,6 +933,8 @@ impl EffectName {
             }
             Self::WorkCancel | Self::WorkBegin => Ok(vec![]),
             Self::WorkTake => Ok(vec![any_ref_ty()]),
+            Self::RunFail => Ok(vec![]),
+            Self::RunFailure => Ok(vec![any_ref_ty()]),
         }
     }
 }
@@ -920,10 +943,16 @@ impl EffectName {
 /// effect-name list and `import_pair` mapping used by wasm-gc emission.  This
 /// keeps certificate interface accounting synchronized with the actual host
 /// import ABI instead of maintaining a second Rust-side registry.
+///
+/// `Run.fail` and the loop's `Run.failure` reading are the exception: the
+/// verifier does not admit their two recorder imports, so a module that ends
+/// its run with a reason is refused at the certificate envelope, fail-closed,
+/// until the wall admits them.
 #[cfg(test)]
 fn capability_registry() -> Vec<(&'static str, &'static str)> {
     EffectName::ALL
         .iter()
+        .filter(|effect| !matches!(effect, EffectName::RunFail | EffectName::RunFailure))
         .map(|effect| effect.import_pair())
         .collect()
 }
@@ -986,7 +1015,10 @@ mod certificate_format_tests {
             // the manifest binds it because the target really does answer it.
             // It is the one operation on either side of this partition that
             // names no canonical-ABI slot.
-            if *effect == EffectName::WorkCancel {
+            if matches!(
+                effect,
+                EffectName::WorkCancel | EffectName::RunFail | EffectName::RunFailure
+            ) {
                 assert!(effect.lowers_on_wasip2());
                 assert!(effect.wasip2_slots().is_empty());
                 continue;
@@ -1495,6 +1527,11 @@ impl EffectName {
             // manifest binds on wasip2 that names no canonical-ABI slot; see
             // `wasip2_slots_and_wasip2_lowering_partition_the_effects_the_same_way`.
             | Self::WorkCancel
+            // The reason a run failed is a global of the module on this
+            // target too, and a component records nothing, so neither needs
+            // an import.
+            | Self::RunFail
+            | Self::RunFailure
             // A component records nothing, so its job kinds reach no import
             // at all: `--record` is refused on wasip2.
             | Self::WorkBegin

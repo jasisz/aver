@@ -5911,3 +5911,148 @@ fn a_shadowing_arm_does_not_type_a_live_variables_state_field() {
         errs.join("\n  ")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Nested literal / constructor patterns and list patterns
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nested_literal_patterns_with_a_binder_fallback_are_exhaustive() {
+    let errs = errors(
+        "fn f(o: Option<Int>) -> Int\n    match o\n        Option.Some(0) -> 1\n        Option.Some(n) -> n\n        Option.None -> 0\n\nfn g(r: Result<String, Int>) -> Int\n    match r\n        Result.Ok(\"x\") -> 1\n        Result.Ok(_) -> 2\n        Result.Err(0) -> 3\n        Result.Err(e) -> e\n",
+    );
+    assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
+}
+
+#[test]
+fn a_nested_literal_never_covers_its_constructor() {
+    let errs = errors(
+        "fn f(o: Option<Int>) -> Int\n    match o\n        Option.Some(0) -> 1\n        Option.None -> 0\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e == "Non-exhaustive match: missing pattern Option.Some(_)"),
+        "{:?}",
+        errs
+    );
+}
+
+#[test]
+fn nested_bool_literals_cover_by_value() {
+    assert!(
+        errors(
+            "fn f(o: Option<Bool>) -> Int\n    match o\n        Option.Some(true) -> 1\n        Option.Some(false) -> 2\n        Option.None -> 0\n",
+        )
+        .is_empty()
+    );
+    let errs = errors(
+        "fn f(o: Option<Bool>) -> Int\n    match o\n        Option.Some(true) -> 1\n        Option.None -> 0\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e == "Non-exhaustive match: missing pattern Option.Some(false)"),
+        "{:?}",
+        errs
+    );
+}
+
+#[test]
+fn nested_user_constructor_fields_are_checked() {
+    let errs = errors(
+        "type Shape\n    Rect(Int, Int)\n    Dot\n\nfn f(s: Shape) -> Int\n    match s\n        Shape.Rect(0, _) -> 0\n        Shape.Dot -> 1\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.starts_with("Non-exhaustive match: missing pattern Shape.Rect(")),
+        "{:?}",
+        errs
+    );
+}
+
+#[test]
+fn list_patterns_cover_by_length() {
+    assert!(
+        errors(
+            "fn f(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [a] -> a\n        [a, b, ..rest] -> a + b\n",
+        )
+        .is_empty()
+    );
+    let errs = errors(
+        "fn f(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [a] -> a\n        [a, b] -> a + b\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e == "Non-exhaustive match: missing pattern [_, _, _, .._]"),
+        "{:?}",
+        errs
+    );
+    let errs = errors(
+        "fn f(xs: List<Int>) -> Int\n    match xs\n        [0, ..rest] -> 0\n        [] -> 1\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e == "Non-exhaustive match: missing pattern [h, ..t]"),
+        "{:?}",
+        errs
+    );
+}
+
+#[test]
+fn a_nested_arm_under_a_binder_arm_is_unreachable() {
+    let errs = errors(
+        "fn f(o: Option<Int>) -> Int\n    match o\n        Option.Some(n) -> n\n        Option.Some(0) -> 1\n        Option.None -> 0\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e
+                .starts_with("Unreachable match arm: pattern Option.Some(0) is already covered")),
+        "{:?}",
+        errs
+    );
+    let errs = errors(
+        "fn f(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [_, ..rest] -> 1\n        [a, b] -> 2\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.starts_with("Unreachable match arm: pattern [_, _]")),
+        "{:?}",
+        errs
+    );
+}
+
+#[test]
+fn nested_pattern_binders_get_field_types() {
+    let errs = errors(
+        "fn f(xs: List<Option<Int>>) -> String\n    match xs\n        [Option.Some(x), ..rest] -> x\n        _ -> \"\"\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Int") && e.contains("String")),
+        "x is an Int, so returning it as a String must fail: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn nested_literal_of_the_wrong_type_is_rejected() {
+    let errs = errors(
+        "fn f(o: Option<Int>) -> Int\n    match o\n        Option.Some(\"x\") -> 1\n        _ -> 0\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e == "Literal pattern of type String cannot match a value of type Int"),
+        "{:?}",
+        errs
+    );
+}
+
+#[test]
+fn list_pattern_against_a_non_list_is_rejected() {
+    let errs = errors("fn f(n: Int) -> Int\n    match n\n        [a, b] -> a\n        _ -> 0\n");
+    assert!(
+        errs.iter()
+            .any(|e| e == "List pattern matches a List value, but the match subject is Int"),
+        "{:?}",
+        errs
+    );
+}

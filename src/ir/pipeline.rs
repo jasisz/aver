@@ -58,6 +58,13 @@ pub enum PipelineStage {
     /// items of the program and both proof exporters see them. Fires
     /// only when a function was lowered.
     YieldLower,
+    /// Nested-pattern compilation: every `match` with a nested
+    /// constructor pattern or a general list pattern becomes nested flat
+    /// matches, after the program was checked as written. Runs inside
+    /// [`front`], ABOVE the proof line: it adds no entity the source
+    /// does not contain, only the case analysis the source spelled.
+    /// Fires only when a match was compiled.
+    PatternLower,
     Typecheck,
     InterpLower,
     BufferBuild,
@@ -142,6 +149,7 @@ impl PipelineStage {
         match self {
             Self::Tco => "tco",
             Self::YieldLower => "yield_lower",
+            Self::PatternLower => "pattern_lower",
             Self::Typecheck => "typecheck",
             Self::InterpLower => "interp_lower",
             Self::BufferBuild => "buffer_build",
@@ -878,7 +886,9 @@ pub fn lower_loaded_yield_modules(
     let marked = marked.with_run_entry("<entry>");
     let mut errors = Vec::new();
     for index in 0..loaded.len() {
-        if !crate::yield_lowering::has_yield_fns(&loaded[index].items) {
+        if !crate::yield_lowering::has_yield_fns(&loaded[index].items)
+            && !crate::ir::nested_patterns::has_nested_patterns(&loaded[index].items)
+        {
             continue;
         }
         let deps: Vec<LoadedModule> = loaded[..index].to_vec();
@@ -986,6 +996,23 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             })
             .collect();
         let phase_one = typecheck(&written, mode);
+        let nested_in_yield = if phase_one.errors.is_empty() {
+            crate::ir::nested_patterns::nested_patterns_in_yield_fns(items)
+        } else {
+            Vec::new()
+        };
+        if !nested_in_yield.is_empty() {
+            let tc = TypeCheckResult {
+                errors: nested_in_yield,
+                ..phase_one
+            };
+            result
+                .pass_diagnostics
+                .push(diag_for_typecheck(&tc, items.len()));
+            fire(PipelineStage::Typecheck, items);
+            result.typecheck = Some(tc);
+            return result;
+        }
         // The answer modules say what they answer in their own headers, and
         // the check has just read every module this one can see.
         let marked = marked.with_answer_pairs(&phase_one.answers);
@@ -1015,6 +1042,25 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
                 }
                 result.yield_lowering = Some(report);
                 fire(PipelineStage::YieldLower, items);
+                if crate::ir::nested_patterns::has_nested_patterns(items) {
+                    let errors = crate::ir::nested_patterns::lower_nested_patterns(
+                        items,
+                        &phase_one.pattern_ctor_families,
+                    );
+                    fire(PipelineStage::PatternLower, items);
+                    if !errors.is_empty() {
+                        let tc = TypeCheckResult {
+                            errors,
+                            ..phase_one
+                        };
+                        result
+                            .pass_diagnostics
+                            .push(diag_for_typecheck(&tc, items.len()));
+                        fire(PipelineStage::Typecheck, items);
+                        result.typecheck = Some(tc);
+                        return result;
+                    }
+                }
                 let mut tc = typecheck(items, mode);
                 if tc.errors.is_empty() {
                     tc.errors.extend(crate::resolver::check_shadowing(
@@ -1028,6 +1074,48 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
                 ..phase_one
             },
         }
+    } else if crate::ir::nested_patterns::has_nested_patterns(items)
+        || (!marked.is_empty() && crate::yield_lowering::calls_wait_poll(items))
+    {
+        // A module with no process of its own. Checked as written first, so
+        // exhaustiveness, redundancy, type and shadowing errors name the
+        // patterns the user wrote. Its nested patterns are then compiled to
+        // flat matches and the lowered module is checked again, which stamps
+        // the nodes the compilation made. Last, in a module of a program that
+        // answers a capability of its own, its waits keyed by another type
+        // than `Int` are carried through an `Int`-keyed one, the same way the
+        // entry's are, so they can meet the generated loop's wait in one
+        // program. The keys are read off the lowered module as the last check
+        // stamped it, and what the carrying wrote is checked once more.
+        let carries = !marked.is_empty() && crate::yield_lowering::calls_wait_poll(items);
+        let mut tc = typecheck_gate(items, mode, &items[..user_program_len]);
+        if tc.errors.is_empty() && crate::ir::nested_patterns::has_nested_patterns(items) {
+            let errors =
+                crate::ir::nested_patterns::lower_nested_patterns(items, &tc.pattern_ctor_families);
+            fire(PipelineStage::PatternLower, items);
+            tc = if errors.is_empty() {
+                typecheck(items, mode)
+            } else {
+                TypeCheckResult { errors, ..tc }
+            };
+        }
+        if tc.errors.is_empty() && carries {
+            let stamped = items.clone();
+            match crate::yield_lowering::carry_waits(items, &stamped, &tc.type_spellings) {
+                Ok(Some(source)) => {
+                    if std::env::var_os("AVER_YIELD_DUMP").is_some() {
+                        eprintln!("{source}");
+                    }
+                    if run_tco {
+                        tco(items);
+                    }
+                    tc = typecheck(items, mode);
+                }
+                Ok(None) => {}
+                Err(errors) => tc = TypeCheckResult { errors, ..tc },
+            }
+        }
+        tc
     } else {
         typecheck_gate(items, mode, &items[..user_program_len])
     };

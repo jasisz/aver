@@ -120,7 +120,10 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
     packed_sequences_enabled: bool,
     provider_bindings: &[aver::provider::ProviderBinding],
 ) {
-    if let Err(e) = try_run_wasm_gc(
+    let entry_label = entry_info
+        .as_ref()
+        .map_or_else(|| "main".to_string(), |(name, _)| name.clone());
+    match try_run_wasm_gc(
         file,
         module_root_override,
         program_args,
@@ -131,8 +134,38 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
         packed_sequences_enabled,
         provider_bindings,
     ) {
-        eprintln!("{}", e.red());
-        process::exit(1);
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+        // An entry that answers `Err` ends the process the way it does on
+        // the VM: the error on stderr and a failing exit status. A run of the
+        // generated loop that some turn failed answers `Err(reason)`.
+        Ok(outcome) => {
+            if let Some(message) = returned_error(&outcome.output) {
+                eprintln!(
+                    "{}",
+                    format!("{entry_label} returned error: {message}").red()
+                );
+                process::exit(1);
+            }
+        }
+    }
+}
+
+/// The error an entry answered, rendered the way the VM renders it, when the
+/// decoded return value is a `Result.Err`.
+#[cfg(feature = "wasm")]
+fn returned_error(output: &aver::replay::JsonValue) -> Option<String> {
+    let aver::replay::JsonValue::Object(marker) = output else {
+        return None;
+    };
+    if marker.len() != 1 {
+        return None;
+    }
+    match marker.get("$err")? {
+        aver::replay::JsonValue::String(message) => Some(message.clone()),
+        other => Some(other.to_string()),
     }
 }
 

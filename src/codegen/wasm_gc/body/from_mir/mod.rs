@@ -873,6 +873,14 @@ pub(crate) fn emit_mir_expr(
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
                     }
+                    // `Run.fail` and `Run.failure` keep the reason in a
+                    // global of the module on both wasm targets, the same
+                    // way a job is the module's own.
+                    match emit_mir_run_call(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
                     // `--target wasip2`: every effect lowers to a
                     // canonical-ABI call sequence (Console / Args / Env /
                     // Time / Random / Disk / Http / Tcp), NOT the AverBridge
@@ -2162,6 +2170,43 @@ pub(crate) fn emit_mir_args_then_call_lowering_int(
     }
     func.instruction(&Instruction::Call(wasm_idx));
     Ok(Some(()))
+}
+
+/// `Run.fail(message)` and `Run.failure()`, lowered inline over the
+/// module's failure global. See `super::super::run_fail`.
+fn emit_mir_run_call(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    match dotted {
+        "Run.fail" => {
+            let [message] = args else {
+                return Err(WasmGcError::Validation(format!(
+                    "`Run.fail` takes exactly one argument, got {}",
+                    args.len()
+                )));
+            };
+            if emit_mir_expr(func, message, slots, ctx)?.is_none() {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+            super::super::run_fail::emit_fail(func, slots, ctx)?;
+            Ok(MirBuiltinEmit::Produced(false))
+        }
+        "Run.failure" => {
+            if !args.is_empty() {
+                return Err(WasmGcError::Validation(format!(
+                    "`Run.failure` takes no arguments, got {}",
+                    args.len()
+                )));
+            }
+            super::super::run_fail::emit_failure(func, slots, ctx)?;
+            Ok(MirBuiltinEmit::Produced(true))
+        }
+        _ => Ok(MirBuiltinEmit::NotHandled),
+    }
 }
 
 /// jasisz/aver#1329 — a job kind's `begin` and `take`, and `Work.cancel`,

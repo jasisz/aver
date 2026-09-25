@@ -18,10 +18,11 @@ use super::factories::{
 use super::model::{AnalysisReport, Diagnostic, Severity, Span};
 use crate::ast::TopLevel;
 use crate::checker::{
-    CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
+    CheckFinding, check_module_intent_with_capabilities_in, collect_cse_warnings_in,
     collect_independence_warnings_in, collect_module_effects_warnings_in,
     collect_naming_warnings_in, collect_perf_warnings_in, collect_serve_path_warnings_in,
-    collect_traversal_warnings_in, collect_verify_coverage_warnings_in,
+    collect_shared_update_warnings, collect_traversal_warnings_in,
+    collect_verify_coverage_warnings_in,
 };
 #[cfg(feature = "runtime")]
 use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
@@ -340,9 +341,10 @@ fn analyze_prechecked_items_impl(
     }
 
     let findings = if options.include_intent_warnings {
-        Some(check_module_intent_with_sigs_in(
+        Some(check_module_intent_with_capabilities_in(
             items,
             Some(&tc_result.fn_sigs),
+            Some(&tc_result.capabilities),
             None,
         ))
     } else {
@@ -460,6 +462,33 @@ fn analyze_prechecked_items_impl(
 
     if options.include_perf_warnings {
         for w in collect_perf_warnings_in(transformed, None) {
+            diagnostics.push(from_check_finding_with_index(
+                Severity::Warning,
+                &w,
+                &source_index,
+                &options.file_label,
+            ));
+        }
+    }
+
+    // `warning[perf-shared-update]` follows calls into the dependencies they
+    // name, so it reads their source: the modules the caller loaded, or the
+    // files under the module root. A program that does not typecheck is not
+    // asked, since the calls it names may not exist.
+    if options.include_perf_warnings && tc_result.errors.is_empty() {
+        let source = |name: &str| -> Option<Vec<TopLevel>> {
+            if let Some(loaded) = options.loaded_modules.as_deref() {
+                return loaded
+                    .iter()
+                    .find(|module| module.dep_name == name)
+                    .map(|module| module.items.clone());
+            }
+            let root = options.module_base_dir.as_deref()?;
+            let path = crate::source::find_module_file(name, root)?;
+            let text = std::fs::read_to_string(path).ok()?;
+            crate::source::parse_source(&text).ok()
+        };
+        for w in collect_shared_update_warnings(transformed, &source) {
             diagnostics.push(from_check_finding_with_index(
                 Severity::Warning,
                 &w,

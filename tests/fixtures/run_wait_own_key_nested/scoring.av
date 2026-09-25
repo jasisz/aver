@@ -1,0 +1,11 @@
+module Scoring
+    intent = "The pure function one scoring job runs."
+    exposes [score]
+    effects []
+
+fn score(task: String) -> Int
+    ? "Scores one task by its length."
+    String.len(task)
+
+verify score
+    score("alpha") => 5

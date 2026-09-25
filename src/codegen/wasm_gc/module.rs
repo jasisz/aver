@@ -2902,6 +2902,36 @@ pub(super) fn emit_module_with(
         next_global_idx += 1;
         Some(idx)
     };
+    // The reason the first `Run.fail` of a run gave: module state on both
+    // wasm targets, read back by the generated loop through `Run.failure`.
+    // Appended after every other global so each keeps its index, and only
+    // for a program that names either operation.
+    let run_failure_global: Option<u32> = if effect_registry
+        .iter()
+        .any(|effect| matches!(effect, EffectName::RunFail | EffectName::RunFailure))
+    {
+        let string_idx = registry.string_array_type_idx.ok_or_else(|| {
+            WasmGcError::Validation(
+                "Run.fail and Run.failure need the String slot to be allocated".into(),
+            )
+        })?;
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::Ref(wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+                }),
+                mutable: true,
+                shared: false,
+            },
+            &wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Concrete(string_idx)),
+        );
+        let idx = next_global_idx;
+        next_global_idx += 1;
+        Some(idx)
+    } else {
+        None
+    };
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -3138,6 +3168,7 @@ pub(super) fn emit_module_with(
         eq_helpers: eq_helpers_lookup,
         funcref_table,
         call_indirect_types,
+        run_failure_global,
         ..FnMap::default()
     };
 
@@ -3730,15 +3761,33 @@ pub(super) fn emit_module_with(
         ));
     } else {
         let mut start = Function::new([]);
+        // A command whose `main` answers `Err` fails the `wasi:cli/run`
+        // call, so the component exits non-zero the way the VM, a native
+        // binary and the wasm-gc runner do.
+        let mut exit_code_on_stack = false;
         if let Some(idx) = main_idx {
             let main_idx_wasm = import_count + 1 + (idx as u32);
-            let main_returns_value = !fn_defs[idx].return_type.trim().eq("Unit");
+            let return_type = fn_defs[idx].return_type.trim();
+            let main_returns_value = !return_type.eq("Unit");
             start.instruction(&Instruction::Call(main_idx_wasm));
-            if main_returns_value {
+            let main_result_idx = if start_returns_i32 && return_type.starts_with("Result<") {
+                registry.result_type_idx(return_type)
+            } else {
+                None
+            };
+            if let Some(result_idx) = main_result_idx {
+                start.instruction(&Instruction::StructGet {
+                    struct_type_index: result_idx,
+                    field_index: 0,
+                });
+                start.instruction(&Instruction::I32Const(super::types::RESULT_OK_TAG));
+                start.instruction(&Instruction::I32Ne);
+                exit_code_on_stack = true;
+            } else if main_returns_value {
                 start.instruction(&Instruction::Drop);
             }
         }
-        if start_returns_i32 {
+        if start_returns_i32 && !exit_code_on_stack {
             start.instruction(&Instruction::I32Const(0));
         }
         start.instruction(&Instruction::End);

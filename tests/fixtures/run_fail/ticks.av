@@ -1,0 +1,21 @@
+module Ticks
+    intent = "Answers Clock at once: every ask is the next tick, whoever asks."
+    depends [Clock]
+    exposes [State, fresh, tick]
+    effects []
+    answers [Clock]
+
+record State
+    count: Int
+
+fn fresh() -> State
+    ? "No tick given yet."
+    State(count = 0)
+
+fn tick(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The next tick, answered in the turn it was asked."
+    next = state.count + 1
+    (State(count = next), Result.Ok(next))
+
+verify tick
+    tick(fresh()) => (State(count = 1), Result.Ok(1))
