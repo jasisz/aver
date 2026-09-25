@@ -400,6 +400,8 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
         ("perf-string-concat", split_repair(msg))
     } else if msg.contains("nested `match") {
         ("perf-nested-match", split_repair(msg))
+    } else if msg.contains("that is still held by") && msg.contains("copies the whole") {
+        ("perf-shared-update", split_repair(msg))
     } else if msg.contains("recomputed every recursive call") {
         ("perf-loop-invariant", split_repair(msg))
     } else if msg.contains("computed in both the match condition") {
