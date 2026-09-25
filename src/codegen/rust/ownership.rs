@@ -82,9 +82,14 @@ pub(super) fn value_facts(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> RustValueFact
             },
             borrow_shape: BorrowShape::Direct,
             // A field of a fresh temporary can move. A local-rooted
-            // projection stays conservative even when the root is at its
-            // final use; proving partial moves belongs in a later MIR pass.
-            can_move: copy || projection_root_local(&project.node.base.node).is_none(),
+            // projection moves only where `field_moves` proved no later or
+            // still-borrowed read overlaps it and the root is an owned
+            // Rust value.
+            can_move: copy
+                || match projection_root_local(&project.node.base.node) {
+                    None => true,
+                    Some(root) => projection_moves(expr, root, ctx),
+                },
             provider_resource: false,
         };
     }
@@ -231,7 +236,23 @@ fn clone_borrowed(code: String, shape: BorrowShape) -> String {
     }
 }
 
-fn projection_root_local(expr: &MirExpr) -> Option<&MirLocal> {
+/// Whether this field read may move its field out of `root`: the read is a
+/// movable projection and `root` is an owned Rust value (not a borrowed
+/// or wrapped parameter, and not carried unchanged into the next loop
+/// iteration).
+pub(super) fn projection_moves(expr: &MirExpr, root: &MirLocal, ctx: &MirEmitCtx<'_>) -> bool {
+    ctx.movable_projections
+        .contains(&(expr as *const MirExpr as usize))
+        && root_is_owned(root, ctx)
+}
+
+/// Whether `local` is an owned Rust value that may give up its fields.
+pub(super) fn root_is_owned(local: &MirLocal, ctx: &MirEmitCtx<'_>) -> bool {
+    local_value_facts(local, ctx).mode == RustValueMode::Owned
+        && !ctx.loop_carried_params.contains(local.name.as_str())
+}
+
+pub(super) fn projection_root_local(expr: &MirExpr) -> Option<&MirLocal> {
     match expr {
         MirExpr::Local(_) => local_of(expr),
         MirExpr::Project(project) => projection_root_local(&project.node.base.node),
