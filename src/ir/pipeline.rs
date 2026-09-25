@@ -1028,6 +1028,43 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
                 ..phase_one
             },
         }
+    } else if !marked.is_empty() && crate::yield_lowering::calls_wait_poll(items) {
+        // A module of a program that answers a capability of its own, with no
+        // process of its own: its waits keyed by another type than `Int` are
+        // carried through an `Int`-keyed one, the same way the entry's are, so
+        // they can meet the generated loop's wait in one program. The keys are
+        // read off a checked copy.
+        let written: Vec<TopLevel> = items
+            .iter()
+            .map(|item| match item {
+                TopLevel::FnDef(fd) => TopLevel::FnDef(crate::ast::FnDef {
+                    body: std::sync::Arc::new(fd.body.as_ref().clone()),
+                    ..fd.clone()
+                }),
+                other => other.clone(),
+            })
+            .collect();
+        let phase_one = typecheck(&written, mode);
+        if phase_one.errors.is_empty() {
+            match crate::yield_lowering::carry_waits(items, &written, &phase_one.type_spellings) {
+                Ok(Some(source)) => {
+                    if std::env::var_os("AVER_YIELD_DUMP").is_some() {
+                        eprintln!("{source}");
+                    }
+                    if run_tco {
+                        tco(items);
+                    }
+                    typecheck_gate(items, mode, &items[..user_program_len])
+                }
+                Ok(None) => typecheck_gate(items, mode, &items[..user_program_len]),
+                Err(errors) => TypeCheckResult {
+                    errors,
+                    ..phase_one
+                },
+            }
+        } else {
+            typecheck_gate(items, mode, &items[..user_program_len])
+        }
     } else {
         typecheck_gate(items, mode, &items[..user_program_len])
     };

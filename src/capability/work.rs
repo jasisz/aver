@@ -1652,7 +1652,7 @@ fn wait_set_key(annotation: &str) -> Option<Type> {
 ///
 /// The generic contract's own `Map<K, Wait.Item>` is the signature rather
 /// than a choice a program made, so a type variable is not an answer.
-fn wait_set_key_of_type(ty: &Type) -> Option<Type> {
+pub(crate) fn wait_set_key_of_type(ty: &Type) -> Option<Type> {
     fn walk(ty: &Type, out: &mut Option<Type>) {
         match ty {
             Type::Map(key, value) if is_wait_item(value) => *out = Some((**key).clone()),

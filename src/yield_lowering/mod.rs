@@ -56,6 +56,7 @@ pub(crate) fn spell_type(ty: &crate::ast::Type, spellings: &TypeSpellings) -> St
 }
 
 mod build;
+mod carried_waits;
 mod coordinator;
 mod lower;
 mod trace;
@@ -210,6 +211,31 @@ impl YieldLoweringReport {
 pub const YIELD_EFFECT: &str = "yield";
 
 /// Whether a function body calls `Run.all()`, which runs the generated loop.
+/// Whether a module calls `Wait.poll` anywhere, read off its source.
+pub fn calls_wait_poll(items: &[TopLevel]) -> bool {
+    carried_waits::calls_wait_poll(items)
+}
+
+/// Carry the waits of a module with no process through an `Int`-keyed wait;
+/// see `carried_waits`. `stamped` is the module after a type check. Answers
+/// the generated source when anything was carried.
+pub fn carry_waits(
+    items: &mut Vec<TopLevel>,
+    stamped: &[TopLevel],
+    spellings: &TypeSpellings,
+) -> Result<Option<String>, Vec<TypeError>> {
+    carried_waits::carry(items, stamped, spellings, &|_| false)
+        .map(|carried| carried.map(|carried| carried.source))
+        .map_err(|parse| {
+            vec![error_at(
+                1,
+                format!(
+                    "internal error carrying this module's waits through an Int-keyed wait: {parse}; please report this program"
+                ),
+            )]
+        })
+}
+
 pub fn calls_run_all(fd: &FnDef) -> bool {
     coordinator::calls_run_all(fd)
 }
@@ -581,6 +607,31 @@ pub fn lower(
                     }
                     _ => {}
                 }
+            }
+        }
+    }
+
+    // The generated loop keys its wait by `Int`. A program that answers a
+    // capability of its own carries every other wait it writes through an
+    // `Int`-keyed one, so the loop's wait and the program's own can meet in
+    // one program.
+    if !marked.is_empty() {
+        let carried = carried_waits::carry(items, stamped, type_spellings, &|name| {
+            yield_fns.contains(name)
+        })
+        .map_err(|parse| {
+            vec![error_at(
+                1,
+                format!(
+                    "internal error carrying this module's waits through an Int-keyed wait: {parse}; please report this program"
+                ),
+            )]
+        })?;
+        if let Some(carried) = carried {
+            report.generated.extend(carried.items);
+            match report.loop_source.as_mut() {
+                Some(source) => source.push_str(&carried.source),
+                None => report.loop_source = Some(carried.source),
             }
         }
     }
