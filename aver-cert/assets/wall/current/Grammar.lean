@@ -57,13 +57,15 @@
      the struct index and the default filler.
    * `match_ subject arms` — `Match`, the arms 1:1 (`MirMatchArm` pattern and
      body). Patterns: `wild`, `litInt`, `litBool`, `litStr`, `bind slot`,
-     `ctor c bindings`, `tuple bindings` (the bindings are the resolver
-     slots, `noSlot` for `_`). The typing admits exactly the arm shapes the
-     emitter lowers with first-match meaning: an Int literal cascade with a
-     catch-all last, a two-arm Bool match, the two-arm Option / Result tag
-     dispatch, a user variant `ref.test` cascade of two or more arms that
-     covers every constructor, a String literal cascade with `_` last, and
-     the single-arm flat tuple destructure.
+     `ctor c bindings`, `tuple bindings`, `emptyList`, `cons head tail` (the
+     bindings are the resolver slots, `noSlot` for `_`). The typing admits
+     exactly the arm shapes the emitter lowers with first-match meaning: an
+     Int literal cascade with a catch-all last, a two-arm Bool match, the
+     two-arm Option / Result tag dispatch, a user variant `ref.test` cascade
+     of two or more arms that covers every constructor, a String literal
+     cascade with `_` last, the single-arm flat tuple destructure, and the
+     two-arm List match (`[]` and `[head, ..tail]` in either order, or
+     either one first with `_` second).
 
    Values: `SVal` has nested records (`record tid fields`; a one-field record
    is a newtype, represented as its field's value), user variants (`variant
@@ -179,6 +181,11 @@ inductive Pat where
   | litStr (bytes : List Nat)
   /-- A flat tuple destructure: one slot per component (`noSlot` for `_`). -/
   | tuple (bindings : List Nat)
+  /-- `EmptyList`, the `[]` arm of a List match. -/
+  | emptyList
+  /-- `Cons`, the `[head, ..tail]` arm of a List match: the head and tail
+      slots (`noSlot` for `_`). -/
+  | cons (head tl : Nat)
 deriving DecidableEq, Repr
 
 mutual
@@ -371,6 +378,17 @@ def resPick : Pat → Pat → Option (Bool × Nat × Nat)
   | .ctor .err [b], .wild => some (true, noSlot, b)
   | _, _ => none
 
+/-- The emitter's List arm pick (`emit_mir_list_match`) for the admitted
+    shapes: `(swap, head, tail)`, where `swap` says the cons arm is the first
+    one. A `_` stands for the arm the other one leaves (it is never first, so
+    the pick is first-match). -/
+def listPick : Pat → Pat → Option (Bool × Nat × Nat)
+  | .emptyList, .cons h tl => some (false, h, tl)
+  | .emptyList, .wild => some (false, noSlot, noSlot)
+  | .cons h tl, .emptyList => some (true, h, tl)
+  | .cons h tl, .wild => some (true, h, tl)
+  | _, _ => none
+
 /-- The fused `Option.withDefault(Vector.get(v, i), <literal>)` shape
     (`emit_mir_option_with_default`): the vector and index slots when the
     vector and the index are bare locals. Any other operand shape is
@@ -554,6 +572,7 @@ mutual
             else none
         | some .string => tyStrArms M n Γ tail arms
         | some (.record tid) => tyTupArms M n Γ tail tid arms
+        | some (.list t) => tyListArms M n Γ tail t arms
         | _ => none
   def tysOf (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) : List Expr → Option (List Ty)
     | [] => some []
@@ -680,6 +699,27 @@ mutual
               | some Γ' => tyOf M n Γ' tail b
               | none => none
             else none
+        | none => none
+    | _ => none
+  /-- Two-arm List match (`listPick` shapes): the cons arm binds its head at
+      the element type and its tail at the list type, both fresh. -/
+  def tyListArms (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tail : Bool) (t : Ty) :
+      Arms → Option Ty
+    | .cons p1 b1 (.cons p2 b2 .nil) =>
+        match listPick p1 p2 with
+        | some (swap, h, tl) =>
+            match bindTys n Γ [h, tl] [t, .list t] with
+            | some Γc =>
+                match swap with
+                | false =>
+                    match tyOf M n Γ tail b1, tyOf M n Γc tail b2 with
+                    | some a, some b => if a = b then some a else none
+                    | _, _ => none
+                | true =>
+                    match tyOf M n Γc tail b1, tyOf M n Γ tail b2 with
+                    | some a, some b => if a = b then some a else none
+                    | _, _ => none
+            | none => none
         | none => none
     | _ => none
 end
@@ -839,6 +879,8 @@ def patMatch : Pat → SVal → Option (List Nat × List SVal)
   | .ctor .err bs, .err _ _ v => some (bs, [v])
   | .litStr k, .s x => if x = k then some ([], []) else none
   | .tuple bs, .record _ fs => some (bs, fs)
+  | .emptyList, .nil _ => some ([], [])
+  | .cons h tl, .cons _ x r => some ([h, tl], [x, r])
   | _, _ => none
 
 /-- Bind the binders in order, skipping `noSlot`; `none` on a length

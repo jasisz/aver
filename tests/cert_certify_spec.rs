@@ -553,6 +553,14 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
                 "a `list` argument has no decoder in this version"
             ),
             (
+                "listHeadGoal",
+                "a `list` argument has no decoder in this version"
+            ),
+            (
+                "sumListGoal",
+                "a `list` argument has no decoder in this version"
+            ),
+            (
                 "floatLeGoal",
                 "a `float` argument has no decoder in this version"
             ),
@@ -660,7 +668,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     let declared_uncertified = manifest["declaredUncertified"].as_array().unwrap();
     assert_eq!(
         declared_uncertified.len(),
-        15,
+        13,
         "all 43 module exports must be certified or explicitly declared"
     );
     assert!(declared_uncertified.iter().all(|entry| {
@@ -918,6 +926,10 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         // replaced the families: a bare parameter read is a plan like any
         // other (numerator moved deliberately).
         ("idGoal", facets(&[])),
+        // A List match is a plan: the head read and the recursive sum over the
+        // tail (numerator moved deliberately).
+        ("listHeadGoal", facets(&[])),
+        ("sumListGoal", facets(&["recursive", "calls"])),
     ]
     .into_iter()
     .map(|(name, facets)| (name.to_string(), facets))
@@ -1025,17 +1037,12 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     .into_iter()
     .map(str::to_string)
     .collect();
-    let expected_backlog: BTreeSet<String> = [
-        "floatAddGoal",
-        "floatMulAddGoal",
-        "listHeadGoal",
-        "sumListGoal",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect();
+    let expected_backlog: BTreeSet<String> = ["floatAddGoal", "floatMulAddGoal"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
     assert_eq!(planned_goal_names.len(), 32, "goal denominator changed");
-    assert_eq!(actual.len(), 28, "goal numerator changed");
+    assert_eq!(actual.len(), 30, "goal numerator changed");
 
     let contracts: Vec<&str> = manifest["runtime_contracts"]
         .as_array()
@@ -1093,8 +1100,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
     for (name, expected) in [
         ("floatAddGoal", "plan does not type in the one grammar"),
         ("floatMulAddGoal", "plan does not type in the one grammar"),
-        ("listHeadGoal", "Match pattern EmptyList"),
-        ("sumListGoal", "Match pattern EmptyList"),
     ] {
         let reason = manifest["source_level_only"]
             .as_array()
@@ -1458,7 +1463,7 @@ fn assert_hostile_source_model_loses_bridges(prefix: &str, edits: &[(&str, &str)
 
     let (ok, report) = check_certificate(&tampered.join("cert_goals.wasm"), &tampered.join("cert"));
     assert!(
-        ok && report.contains("28 checked exports"),
+        ok && report.contains("30 checked exports"),
         "a wrong source definition must not touch the export verdict:\n{report}"
     );
     assert!(
@@ -2443,7 +2448,6 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
     for (export, reason) in [
         // The printer names the MIR node it has no grammar for.
         ("finalizeFibStats", "Call Builtin(List.reverse)"),
-        ("nthOrZero", "Match pattern EmptyList"),
         ("goldenApprox", "BinOp Div"),
         ("showGolden", "InterpolatedStr (a part is not a String)"),
         // A printed plan the one grammar does not type.
@@ -2464,8 +2468,9 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
         );
     }
     // The pure recursions that used to decline on the retired families'
-    // arity limits are certified plans now.
-    for name in ["fibTR", "fib", "fibSpec", "bigger"] {
+    // arity limits are certified plans now, and so is the recursion over a
+    // List match.
+    for name in ["fibTR", "fib", "fibSpec", "bigger", "nthOrZero"] {
         assert!(
             !declared.contains_key(name),
             "`{name}` must be certified, not declined: {declared:?}"
@@ -2956,8 +2961,8 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("59 checked exports"),
-        "payment_ops must keep the fifty-nine exports it certifies:\n{report}"
+        report.contains("101 checked exports"),
+        "payment_ops must keep the 101 exports it certifies:\n{report}"
     );
     // The project's single `verify … law` is universal by design but its
     // emitted proof ladder has no `String.replace` theory and lands on its

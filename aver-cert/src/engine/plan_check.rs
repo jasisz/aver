@@ -254,6 +254,17 @@ fn res_pick(p1: &PlanPat, p2: &PlanPat) -> Option<(bool, u32, u32)> {
     }
 }
 
+/// `Grammar.listPick`: `(swap, head, tail)`, `swap` when the cons arm is
+/// first.
+fn list_pick(p1: &PlanPat, p2: &PlanPat) -> Option<(bool, u32, u32)> {
+    match (p1, p2) {
+        (PlanPat::EmptyList, PlanPat::Cons(h, t)) => Some((false, *h, *t)),
+        (PlanPat::EmptyList, PlanPat::Wild) => Some((false, PLAN_NO_SLOT, PLAN_NO_SLOT)),
+        (PlanPat::Cons(h, t), PlanPat::EmptyList | PlanPat::Wild) => Some((true, *h, *t)),
+        _ => None,
+    }
+}
+
 /// `Grammar.vecGetOr?`.
 fn vec_get_or(lb: PlanLazy, o: &PlanExpr, d: &PlanExpr) -> Option<(u32, u32)> {
     match (lb, o, d) {
@@ -474,6 +485,7 @@ impl MCtx<'_> {
                 }
                 PlanTy::Str => self.ty_str_arms(n, g, tail, arms),
                 PlanTy::Record(tid) => self.ty_tup_arms(n, g, tail, tid, arms),
+                PlanTy::List(t) => self.ty_list_arms(n, g, tail, &t, arms),
                 _ => None,
             },
         }
@@ -633,6 +645,27 @@ impl MCtx<'_> {
             PlanPat::Wild if rest.is_empty() => self.ty_of(n, g, tail, b),
             _ => None,
         }
+    }
+
+    fn ty_list_arms(
+        &self,
+        n: u32,
+        g: &Gamma,
+        tail: bool,
+        t: &PlanTy,
+        arms: &[(PlanPat, PlanExpr)],
+    ) -> Option<PlanTy> {
+        let [(p1, b1), (p2, b2)] = arms else {
+            return None;
+        };
+        let (swap, h, tl) = list_pick(p1, p2)?;
+        let gc = bind_tys(n, g, &[h, tl], &[t.clone(), PlanTy::List(Box::new(t.clone()))])?;
+        let (a, b) = if swap {
+            (self.ty_of(n, &gc, tail, b1)?, self.ty_of(n, g, tail, b2)?)
+        } else {
+            (self.ty_of(n, g, tail, b1)?, self.ty_of(n, &gc, tail, b2)?)
+        };
+        (a == b).then_some(a)
     }
 
     fn ty_tup_arms(
@@ -1297,6 +1330,23 @@ impl MCtx<'_> {
                                 .and_then(|fts| bind_tys(n, g, bs, fts))
                                 .unwrap_or_else(|| g.clone());
                             out.extend(self.lower(x, &g2, tail, b));
+                        }
+                        out
+                    }
+                    Some(PlanTy::List(t)) => {
+                        let mut out = sc;
+                        out.push(BI::Op(WI::LocalSet(x.subj)));
+                        if let [(p1, b1), (p2, b2), ..] = arms.as_slice()
+                            && let Some((swap, h, tl)) = list_pick(p1, p2)
+                        {
+                            let (empty_b, cons_b) = if swap { (b2, b1) } else { (b1, b2) };
+                            let lt = PlanTy::List(t.clone());
+                            let gc = bind_tys(n, g, &[h, tl], &[(*t).clone(), lt])
+                                .unwrap_or_else(|| g.clone());
+                            let mut else_b = extract(x.subj, self.list_struct(&t), &[h, tl]);
+                            else_b.extend(self.lower(x, &gc, tail, cons_b));
+                            out.extend(ops(vec![WI::LocalGet(x.subj), WI::RefIsNull]));
+                            out.push(BI::If(bt, self.lower(x, g, tail, empty_b), else_b));
                         }
                         out
                     }

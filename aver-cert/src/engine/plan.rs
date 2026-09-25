@@ -106,6 +106,10 @@ pub enum PlanPat {
     Ctor(PlanCtor, Vec<u32>),
     LitStr(Vec<u8>),
     Tuple(Vec<u32>),
+    /// `[]`.
+    EmptyList,
+    /// `[head, ..tail]`: the head and tail slots.
+    Cons(u32, u32),
 }
 
 /// `Grammar.Expr`; `Match` arms are `Grammar.Arms` in source order.
@@ -326,6 +330,8 @@ impl PlanPat {
             PlanPat::Ctor(c, bs) => format!("(.ctor {} {})", c.lean(), lean_nat_list(bs)),
             PlanPat::LitStr(bytes) => format!("(.litStr {})", lean_bytes(bytes)),
             PlanPat::Tuple(bs) => format!("(.tuple {})", lean_nat_list(bs)),
+            PlanPat::EmptyList => ".emptyList".into(),
+            PlanPat::Cons(h, t) => format!("(.cons {h} {t})"),
         }
     }
 }

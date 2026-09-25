@@ -2665,9 +2665,10 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // plan grammar certifies five more: 18 of 154. Since `--certify` compiles
     // the same module as a plain build, the String cursor, builder and
     // codepoint variants the plain build synthesizes are in it too, eight more
-    // functions that carry no claim: 18 of 162.
+    // functions that carry no claim: 18 of 162. A List match certifies five
+    // more: 23 of 162.
     assert!(
-        compile_report.contains("(18 certified, 144 source-level-only)"),
+        compile_report.contains("(23 certified, 139 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
@@ -2686,7 +2687,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("18 checked exports"),
+        report.contains("23 checked exports"),
         "json should certify the widened data-segment functions:\n{report}"
     );
     assert!(

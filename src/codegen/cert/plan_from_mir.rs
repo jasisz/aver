@@ -585,8 +585,8 @@ impl Printer<'_> {
                     })
                     .collect::<Result<_, _>>()?,
             ),
-            MirPattern::EmptyList => return Err("Match pattern EmptyList".into()),
-            MirPattern::Cons { .. } => return Err("Match pattern Cons".into()),
+            MirPattern::EmptyList => PlanPat::EmptyList,
+            MirPattern::Cons { head, tail, .. } => PlanPat::Cons(head.0, tail.0),
         })
     }
 
@@ -1246,6 +1246,16 @@ fn notLiteral(a: Int, d: Int) -> Int
         assert_eq!(reason(&map, "neg"), "Neg (no Int negation helper template)");
         assert_eq!(reason(&map, "divide"), "BinOp Div");
         assert_eq!(reason(&map, "effectful"), "fn declares effects");
-        assert_eq!(reason(&map, "lst"), "Match pattern EmptyList");
+    }
+
+    #[test]
+    fn a_list_match_prints_its_two_arms() {
+        let (map, _) = plans(SRC);
+        let lst = plan(&map, "lst");
+        let PlanExpr::Match(_, arms) = &lst.body else {
+            panic!("lst body: {:?}", lst.body)
+        };
+        assert_eq!(arms[0].0, PlanPat::EmptyList);
+        assert!(matches!(arms[1].0, PlanPat::Cons(h, t) if h != PLAN_NO_SLOT && h != t));
     }
 }
