@@ -1,0 +1,58 @@
+module Collecting
+    intent = "A wait keyed by a sum of this module's own, in a dependency of a program whose generated loop keys its wait by Int."
+    depends [Validation]
+    exposes [Watch, collect]
+    effects [Console.print, Validation.take, Wait.poll]
+
+type Watch
+    Read(Int)
+    Write(Int)
+
+fn collect(pending: Map<Watch, Wait.Item>, turns: Int) -> Result<Unit, String>
+    ? "Waits once per call until every job has landed."
+    ! [Console.print, Validation.take, Wait.poll]
+    match Map.len(pending) == 0
+        true -> Result.Ok(Unit)
+        false -> match turns < 1
+            true -> Result.Err("the jobs did not finish within the turns allowed")
+            false -> collected(pending, Wait.poll(pending, 200)?, turns)
+
+fn collected(pending: Map<Watch, Wait.Item>, ready: List<Watch>, turns: Int) -> Result<Unit, String>
+    ? "Takes every job the wait reported, then waits again for the rest."
+    ! [Console.print, Validation.take, Wait.poll]
+    remaining = harvest(pending, ready)?
+    collect(remaining, turns - 1)
+
+fn harvest(pending: Map<Watch, Wait.Item>, ready: List<Watch>) -> Result<Map<Watch, Wait.Item>, String>
+    ? "Takes one reported key at a time; a job that has not finished stays pending."
+    ! [Console.print, Validation.take]
+    match ready
+        [] -> Result.Ok(pending)
+        [key, ..rest] -> match Map.get(pending, key)
+            Option.None -> harvest(pending, rest)
+            Option.Some(item) -> harvest(took(pending, key, item)?, rest)
+
+fn took(pending: Map<Watch, Wait.Item>, key: Watch, item: Wait.Item) -> Result<Map<Watch, Wait.Item>, String>
+    ? "One key: its job's score printed and the key dropped, or the key kept while the job runs."
+    ! [Console.print, Validation.take]
+    match item
+        Wait.Item.Socket(_) -> Result.Ok(Map.remove(pending, key))
+        Wait.Item.Job(job) -> match Validation.take(job)?
+            Option.None -> Result.Ok(pending)
+            Option.Some(points) -> printed(Map.remove(pending, key), key, points)
+
+fn printed(pending: Map<Watch, Wait.Item>, key: Watch, points: Int) -> Result<Map<Watch, Wait.Item>, String>
+    ? "Says which key landed and what its job scored."
+    ! [Console.print]
+    Console.print("{describe(key)} scored {points}")
+    Result.Ok(pending)
+
+fn describe(key: Watch) -> String
+    ? "A key as a line of output."
+    match key
+        Watch.Read(n) -> "read {n}"
+        Watch.Write(n) -> "write {n}"
+
+verify describe
+    describe(Watch.Read(1)) => "read 1"
+    describe(Watch.Write(2)) => "write 2"

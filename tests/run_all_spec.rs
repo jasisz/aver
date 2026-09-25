@@ -1131,6 +1131,95 @@ fn a_directory_check_names_an_answer_module_under_a_subdirectory_the_way_its_imp
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ticked");
 }
 
+/// A program whose generated loop keys its wait by `Int` can key its own
+/// waits by a sum, in the entry and in a dependency. Each such wait is
+/// carried through an `Int`-keyed wait by helpers generated for its key type,
+/// and answers the same keys it would have answered, in the same order. The
+/// second fixture also matches the waits' answers with nested patterns, in
+/// the entry and in the dependency function that waits: the dependency's
+/// patterns are compiled first and its waits carried after.
+#[test]
+fn waits_keyed_by_a_sum_run_beside_the_generated_loop() {
+    for name in ["run_wait_own_key", "run_wait_own_key_nested"] {
+        let looped = aver_within(name, &["run"], 60);
+        assert!(looped.status.success(), "{}", format_output(&looped));
+        assert_eq!(
+            String::from_utf8_lossy(&looped.stdout).trim(),
+            "ticked 3 times"
+        );
+
+        let manual = aver_within(name, &["run", "--", "manual"], 60);
+        assert!(manual.status.success(), "{}", format_output(&manual));
+        let text = String::from_utf8_lossy(&manual.stdout);
+        let mut lines: Vec<&str> = text.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(
+            lines,
+            [
+                "an empty wait reported 0 keys",
+                "read 1 scored 5",
+                "write 2 scored 8",
+            ],
+            "{name}: {}",
+            format_output(&manual)
+        );
+
+        let dir = fixture(name);
+        let dump = Command::new(aver_bin())
+            .current_dir(&dir)
+            .env("AVER_YIELD_DUMP", "1")
+            .arg("check")
+            .arg("main.av")
+            .arg("--module-root")
+            .arg(&dir)
+            .output()
+            .expect("aver runs");
+        assert!(dump.status.success(), "{}", format_output(&dump));
+        let dumped = combined(&dump);
+        for helper in [
+            "fn __waitPollByCollectingWatch(items: Map<Collecting.Watch, Wait.Item>, timeoutMs: Int) -> Result<List<Collecting.Watch>, String>",
+            "fn __waitKeysAtCollectingWatch(",
+            "fn __waitPollByWatch(items: Map<Watch, Wait.Item>, timeoutMs: Int) -> Result<List<Watch>, String>",
+        ] {
+            assert!(
+                dumped.contains(helper),
+                "{name}: missing `{helper}`:\n{dumped}"
+            );
+        }
+    }
+}
+
+/// A recording of the hand-written waits replays: the recording holds the
+/// `Int`-keyed wait every backend performs, and the replay performs it again.
+#[test]
+fn a_recording_of_carried_waits_replays() {
+    let dir = scratch("own-key-replay");
+    let mut recorded = Command::new(aver_bin());
+    recorded
+        .current_dir(fixture("run_wait_own_key"))
+        .arg("run")
+        .arg("main.av")
+        .arg("--module-root")
+        .arg(fixture("run_wait_own_key"))
+        .arg("--record")
+        .arg(&dir)
+        .args(["--", "manual"]);
+    let out = recorded.output().expect("aver runs");
+    assert!(out.status.success(), "{}", format_output(&out));
+    let recording = only_recording(&dir);
+    let mut command = Command::new(aver_bin());
+    command.current_dir(fixture("run_wait_own_key"));
+    command.arg("replay").arg(&recording).arg("--check-args");
+    let replayed = command.output().expect("aver replays");
+    assert!(replayed.status.success(), "{}", format_output(&replayed));
+    assert!(
+        combined(&replayed).contains("Output:  MATCH"),
+        "{}",
+        format_output(&replayed)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Two processes each call `Run.fail` on their third tick, in the same turn.
 /// The turn is finished, the run answers the reason of the process the turn
 /// served first, and the loop's own `main` exits non-zero with it on stderr.
