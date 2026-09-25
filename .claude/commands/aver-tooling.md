@@ -25,7 +25,7 @@ aver check file-or-dir --module-root .
 `check` reports every module of the program (the entry plus everything it reaches through `depends [...]`), leaves first, with one `Check:` section per module. A directory is the union of the programs rooted at each file, and each module is reported once. Embedded standard modules are typed but not reported. Any module with an error fails the command. `check` handles static contract diagnostics:
 - missing `intent =`
 - missing `?` descriptions on relevant functions
-- missing `verify` on pure, non-trivial, non-`main` functions (`error[missing-verify]`; answer functions and seam functions count as such functions)
+- missing `verify` on pure, non-trivial, non-`main` functions (`error[missing-verify]`; answer functions and seam functions count as such functions). A function is exempt when a parameter has no value a verify case can write: a capability resource such as `Tcp.Connection` or `Work.Job`, or a tuple, record or sum of the same module that always carries one
 - coverage-style warnings for thin `verify` examples
 - file size warnings
 - exposed names that nothing in the checked program imports (`unused-expose`). A directory input judges exposes over every program in it, and a single file only over its own program, so a name used only by a sibling program outside the input is reported. What only the generated loop reaches (an answer module's functions, a job kind's `begin` and `take`, the seam) is not an import, so leave those out of `exposes`
