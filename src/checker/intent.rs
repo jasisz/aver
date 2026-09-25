@@ -47,12 +47,14 @@ fn fn_needs_verify(f: &FnDef, unwritable: &Unwritable<'_>, sigs: Option<&FnSigMa
 /// types, and a record or sum of this module whose every constructor has
 /// such a field. `Option`, `List`, `Map` and `Vector` always have an empty
 /// value, so a parameter of those types can still be written and the
-/// function still needs its verify block. A record or sum of another module
-/// is not looked into and counts as writable.
+/// function still needs its verify block. A capability's own record or sum
+/// (`Tcp.Socket`, `Wait.Item`) is looked into the same way. A record or sum
+/// of another ordinary module is not looked into and counts as writable.
 struct Unwritable<'a> {
     resources: std::collections::HashSet<&'a str>,
     module: Option<&'a str>,
     local_types: std::collections::HashMap<&'a str, &'a TypeDef>,
+    capabilities: Option<&'a crate::capability::CapabilityRegistry>,
 }
 
 impl<'a> Unwritable<'a> {
@@ -80,6 +82,7 @@ impl<'a> Unwritable<'a> {
             resources,
             module,
             local_types,
+            capabilities,
         }
     }
 
@@ -93,28 +96,45 @@ impl<'a> Unwritable<'a> {
         match sigs.and_then(|sigs| sigs.get(&f.name)) {
             Some((params, _, _)) if params.len() == f.params.len() => params
                 .iter()
-                .any(|ty| self.type_is_unwritable(ty, &mut Vec::new())),
+                .any(|ty| self.type_is_unwritable(ty, None, &mut Vec::new())),
             _ => f.params.iter().any(|(_, annotation)| {
-                self.type_is_unwritable(&crate::types::parse_type_str(annotation), &mut Vec::new())
+                self.type_is_unwritable(
+                    &crate::types::parse_type_str(annotation),
+                    None,
+                    &mut Vec::new(),
+                )
             }),
         }
     }
 
-    fn type_is_unwritable(&self, ty: &crate::types::Type, visiting: &mut Vec<&'a str>) -> bool {
+    /// `owner` is the capability whose own type is being looked into: a
+    /// field it spells without a module (`Listener`) is that capability's.
+    fn type_is_unwritable(
+        &self,
+        ty: &crate::types::Type,
+        owner: Option<&str>,
+        visiting: &mut Vec<String>,
+    ) -> bool {
         use crate::types::Type;
         match ty {
-            Type::Named { name, .. } => self.named_is_unwritable(name, visiting),
+            Type::Named { name, .. } => match owner {
+                Some(owner) if !name.contains('.') => {
+                    self.named_is_unwritable(&format!("{owner}.{name}"), visiting)
+                }
+                _ => self.named_is_unwritable(name, visiting),
+            },
             Type::Tuple(items) => items
                 .iter()
-                .any(|item| self.type_is_unwritable(item, visiting)),
+                .any(|item| self.type_is_unwritable(item, owner, visiting)),
             Type::Result(ok, err) => {
-                self.type_is_unwritable(ok, visiting) && self.type_is_unwritable(err, visiting)
+                self.type_is_unwritable(ok, owner, visiting)
+                    && self.type_is_unwritable(err, owner, visiting)
             }
             _ => false,
         }
     }
 
-    fn named_is_unwritable(&self, name: &str, visiting: &mut Vec<&'a str>) -> bool {
+    fn named_is_unwritable(&self, name: &str, visiting: &mut Vec<String>) -> bool {
         if self.resources.contains(name)
             || self
                 .module
@@ -129,7 +149,16 @@ impl<'a> Unwritable<'a> {
                 .unwrap_or(name),
             None => name,
         };
-        let Some((&key, def)) = self.local_types.get_key_value(bare) else {
+        // A type of this module, or a capability's own type such as
+        // `Tcp.Socket`, looked into by the same rule.
+        let (key, def, owner) = if let Some(def) = self.local_types.get(bare) {
+            (bare.to_string(), *def, None)
+        } else if let Some((owner, def)) = self.capabilities.and_then(|registry| {
+            let (owner, _) = name.rsplit_once('.')?;
+            Some((owner, registry.boundary_type(name)?))
+        }) {
+            (name.to_string(), def, Some(owner))
+        } else {
             return false;
         };
         // A type met again while it is being examined is assumed writable,
@@ -141,14 +170,14 @@ impl<'a> Unwritable<'a> {
         let unwritable = match def {
             TypeDef::Product { fields, .. } => fields
                 .iter()
-                .any(|(_, field)| self.field_is_unwritable(field, visiting)),
+                .any(|(_, field)| self.field_is_unwritable(field, owner, visiting)),
             TypeDef::Sum { variants, .. } => {
                 !variants.is_empty()
                     && variants.iter().all(|variant| {
                         variant
                             .fields
                             .iter()
-                            .any(|field| self.field_is_unwritable(field, visiting))
+                            .any(|field| self.field_is_unwritable(field, owner, visiting))
                     })
             }
         };
@@ -156,8 +185,13 @@ impl<'a> Unwritable<'a> {
         unwritable
     }
 
-    fn field_is_unwritable(&self, annotation: &str, visiting: &mut Vec<&'a str>) -> bool {
-        self.type_is_unwritable(&crate::types::parse_type_str(annotation), visiting)
+    fn field_is_unwritable(
+        &self,
+        annotation: &str,
+        owner: Option<&str>,
+        visiting: &mut Vec<String>,
+    ) -> bool {
+        self.type_is_unwritable(&crate::types::parse_type_str(annotation), owner, visiting)
     }
 }
 
