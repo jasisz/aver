@@ -70,6 +70,8 @@ enum Branching {
     Alternatives,
     /// `let`: child 0 is the value, child 1 the body.
     Sequence,
+    /// A call: its value holds nothing of what its arguments read.
+    Call,
     Other,
 }
 
@@ -273,6 +275,7 @@ fn collect(
     let branching = match expr {
         MirExpr::Match(_) | MirExpr::IfThenElse(_) => Branching::Alternatives,
         MirExpr::Let(_) => Branching::Sequence,
+        MirExpr::Call(_) => Branching::Call,
         _ => Branching::Other,
     };
     let in_product = in_product || matches!(expr, MirExpr::IndependentProduct(_));
@@ -411,16 +414,26 @@ fn final_reads(
 /// Whether `o` never runs together with `q`, or finishes before `q` starts
 /// without holding a borrow of the local.
 fn apart(o: &Read, q: &Read) -> bool {
-    for (a, b) in o.trail.iter().zip(q.trail.iter()) {
+    for (depth, (a, b)) in o.trail.iter().zip(q.trail.iter()).enumerate() {
         if a == b {
             continue;
         }
         let (_, o_child, branching) = *a;
         let q_child = b.1;
         return match branching {
-            Branching::Alternatives => o_child >= 1 && q_child >= 1,
+            // Two arms never run together. A read inside a call in the
+            // subject or condition is over once that call returns, before
+            // any arm runs: the call's value holds nothing of it.
+            Branching::Alternatives => {
+                (o_child >= 1 && q_child >= 1)
+                    || (o_child == 0
+                        && q_child >= 1
+                        && o.trail[depth + 1..]
+                            .iter()
+                            .any(|(_, _, below)| *below == Branching::Call))
+            }
             Branching::Sequence => o_child == 0 && q_child == 1,
-            Branching::Other => false,
+            Branching::Call | Branching::Other => false,
         };
     }
     false
@@ -590,6 +603,57 @@ mod tests {
         let movable = movable_projections(&body.node);
         assert!(!movable.contains(&addr(&update.node.base)));
         assert!(!movable.contains(&addr(&args(&update.node.updates[0].value)[0])));
+    }
+
+    #[test]
+    fn a_read_inside_a_call_in_the_subject_is_over_before_the_arms() {
+        use crate::ir::mir::expr::{MirMatch, MirMatchArm, MirPattern};
+        // match f(s.jobs)
+        //     _ -> T.update(s, jobs = g(s.jobs))
+        let update = sp(MirExpr::RecordUpdate(Spanned::bare(MirRecordUpdate {
+            type_id: Some(TypeId(0)),
+            type_name: "State".to_string(),
+            base: Box::new(local(0, false)),
+            updates: vec![MirRecordField {
+                name: "jobs".to_string(),
+                value: call(vec![project(local(0, true), "jobs")]),
+            }],
+        })));
+        let arm_read = addr(
+            &args(match &update.node {
+                MirExpr::RecordUpdate(update) => &update.node.updates[0].value,
+                _ => unreachable!(),
+            })[0],
+        );
+        let subject = call(vec![project(local(0, false), "jobs")]);
+        let subject_read = addr(&args(&subject)[0]);
+        let body = sp(MirExpr::Match(Spanned::bare(MirMatch {
+            subject: Box::new(subject),
+            arms: vec![MirMatchArm {
+                pattern: MirPattern::Wildcard,
+                body: update,
+            }],
+        })));
+        let movable = movable_projections(&body.node);
+        assert!(movable.contains(&arm_read));
+        assert!(!movable.contains(&subject_read));
+    }
+
+    #[test]
+    fn a_subject_bound_whole_is_not_over_before_the_arms() {
+        use crate::ir::mir::expr::{MirMatch, MirMatchArm, MirPattern};
+        // match s.jobs
+        //     _ -> g(s.jobs)
+        let arm = call(vec![project(local(0, true), "jobs")]);
+        let arm_read = addr(&args(&arm)[0]);
+        let body = sp(MirExpr::Match(Spanned::bare(MirMatch {
+            subject: Box::new(project(local(0, false), "jobs")),
+            arms: vec![MirMatchArm {
+                pattern: MirPattern::Wildcard,
+                body: arm,
+            }],
+        })));
+        assert!(!movable_projections(&body.node).contains(&arm_read));
     }
 
     #[test]
