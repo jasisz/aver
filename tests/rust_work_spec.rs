@@ -1022,3 +1022,70 @@ mod map_replay_regression {
 
 #[path = "rust_work_spec/native_transfer.rs"]
 mod native_transfer;
+
+// ── Run.fail ────────────────────────────────────────────────────────────
+
+/// A run that a turn failed ends the same way on the Rust backend as on the
+/// VM: the same turns, the first reason of the failing turn, and a binary
+/// that exits non-zero with that reason on stderr. The answer-module form,
+/// where the failure and the entry's `stop` meet in one turn, answers the
+/// failure from `Run.all()` on both.
+#[test]
+fn run_fail_ends_the_run_as_the_vm_does() {
+    let vm = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("run")
+        .arg(fixture("run_fail").join("main.av"))
+        .arg("--module-root")
+        .arg(fixture("run_fail"))
+        .output()
+        .expect("expected `aver run` to execute");
+    assert!(!vm.status.success(), "{}", format_output(&vm));
+
+    let ws = temp_dir("run_fail");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust("run_fail", &project, "run_fail", &[])?;
+        let bin = cargo_build(&project, "run_fail")?;
+        let rust = Command::new(&bin)
+            .output()
+            .map_err(|error| format!("failed to run {}: {error}", bin.display()))?;
+        if rust.status.success() {
+            return Err(format!(
+                "a failed run exited zero:\n{}",
+                format_output(&rust)
+            ));
+        }
+        if rust.stdout != vm.stdout {
+            return Err(format!(
+                "stdout mismatch\n--- VM ---\n{}\n--- Rust ---\n{}",
+                format_output(&vm),
+                format_output(&rust)
+            ));
+        }
+        if !String::from_utf8_lossy(&rust.stderr).contains("first gave up in turn 3") {
+            return Err(format!(
+                "the reason is not on stderr:\n{}",
+                format_output(&rust)
+            ));
+        }
+
+        let answering = ws.join("answering");
+        fs::create_dir_all(&answering).expect("create project dir");
+        compile_rust("run_fail_answer", &answering, "run_fail_answer", &[])?;
+        let bin = cargo_build(&answering, "run_fail_answer")?;
+        for mode in ["late", "quit"] {
+            let vm = run_vm_with("run_fail_answer", &[mode])?;
+            let rust = run_binary_with(&bin, &[mode])?;
+            if vm != rust {
+                return Err(format!(
+                    "run_fail_answer {mode}: stdout mismatch\n--- VM ---\n{vm}\n--- Rust ---\n{rust}"
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}

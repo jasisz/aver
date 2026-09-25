@@ -12,6 +12,7 @@ mod disk;
 mod env;
 mod http;
 mod process;
+mod run;
 mod runtime;
 mod tcp;
 mod terminal;
@@ -37,6 +38,7 @@ pub use process::{
     STANDARD_PROCESS_FINGERPRINT, STANDARD_PROCESS_NATIVE_IDENTITY, StandardProcessProvider,
     standard_process_stop_requested, stop_watch_fired, stop_watch_installed,
 };
+pub use run::{STANDARD_RUN_FINGERPRINT, STANDARD_RUN_NATIVE_IDENTITY, StandardRunProvider};
 pub use runtime::{
     NativeProviderRegistry, STANDARD_TIME_FINGERPRINT, STANDARD_TIME_NATIVE_IDENTITY,
     StandardTimeProvider, standard_time_now, standard_time_sleep, standard_time_unix_ms,

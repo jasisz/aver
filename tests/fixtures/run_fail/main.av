@@ -1,0 +1,23 @@
+module Main
+    intent = "Two processes that each give up on their third tick. Both give up in the same turn, and the run answers the reason of the one the turn served first; the loop's own main exits with it."
+    depends [Clock, Ticks]
+    effects [Clock.tick, Console.print, Run.fail, yield]
+
+fn first() -> Unit
+    ? "Counts three ticks, then fails the run."
+    ! [Clock.tick, Console.print, Run.fail, yield]
+    counting("first", 1)
+
+fn second() -> Unit
+    ? "Counts three ticks, then fails the run too, in the same turn as first."
+    ! [Clock.tick, Console.print, Run.fail, yield]
+    counting("second", 1)
+
+fn counting(name: String, turn: Int) -> Unit
+    ? "One tick per turn; the third one fails the run, and the process ends there."
+    ! [Clock.tick, Console.print, Run.fail, yield]
+    tick = Clock.tick()
+    Console.print("{name} saw tick {tick} in turn {turn}")
+    match turn >= 3
+        true -> Run.fail("{name} gave up in turn {turn}")
+        false -> counting(name, turn + 1)

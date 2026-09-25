@@ -535,6 +535,8 @@ The worked example of `Settled` is the walk in the same slice: the walk waits fo
 - `fn stop(view: Run.View) -> Bool` ends the run when it answers `true`. The run still ends once nothing is seated, whatever `stop` says.
 - `fn admit(view: Run.View, id: Int) -> Bool` is asked about every askable slot, in slot order, and a slot it refuses is not served in this turn.
 
+**Ending a run with a reason.** A process or an answer module that finds a fault the run cannot go on after, say a broken chain or a name that does not resolve, calls `Run.fail(message)` and declares the effect `Run.fail`. It can call it from anywhere in its own helpers, and the call answers `Unit` like any other. The turn it is called in is finished first. Then the loop stops every process the way a stop does, cancelling the jobs parked requests wait on, and `Run.all()` answers `Err(message)`. A run that ends without a failure answers `Ok(Unit)`. Only the first call of a run counts. Slots are served in slot order, so when two slots fail in one turn the lower slot's reason is the one `Run.all()` answers. A program with no `main` exits non-zero with the reason on stderr. The loop reads the reason back with `Run.failure()` after it seats the processes and after every turn, and a recording carries both calls, so a failed run replays to the same `Err`. A failure outranks `stop`: in a turn where both happen, `Run.all()` answers the failure. A program whose processes and answer modules never call `Run.fail` gets a loop that reads no failure. `tests/fixtures/run_fail/` has two processes failing in the same turn, and `tests/fixtures/run_fail_answer/` has an answer module failing the run while `stop` is also asked.
+
 `Run.View` and `Run.Pending` are generated, and the program names them through the standard module `Run`:
 
 ```
@@ -562,6 +564,7 @@ type Run.Pending
 - `__serve`, `__serve<P>`, `__take<Module>`, `__serve<P><Kind>`: the dispatch, one arm per request kind of each process, which hands the answer module's state out of the run, calls the module's own function with it, and settles or parks on what it answered, writing the state it returned back. Handing the state out means the answer function holds the only reference to it, so a Map or Vector in it is updated in place rather than copied on every request, on the Rust backend in particular, where the run is moved from each of these functions to the next rather than borrowed.
 - `__turn`, `__serveEach`, `__runAll`, `__all`, `main`: observe the stop flag, wait once, read the clock, serve every askable slot in slot order, seat the families, and repeat until the run is over.
 - `__over`, `__cancelWaited`: the end of a run, which cancels every job a parked request is still waiting on.
+- `__failedAfter`, `__hasFailed`, `__outcome`: generated only when a process or an answer module calls `Run.fail`. They keep the first reason in the run's `failed` field, end the run once it is set, and make it what `Run.all()` answers.
 
 Each of those carries its own effects rather than the program's. `__seat<P>` performs what that process performs on its way to its first request. `__serve<P><Kind>` performs what the answer module performs plus what the resumed segment performs. A process that touches nothing gets only pure functions from the loop. Only the dispatch, the turn and the loop's entry carry the union.
 

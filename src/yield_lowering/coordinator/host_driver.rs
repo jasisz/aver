@@ -7,10 +7,15 @@ use super::{CoordinatorStop, effects};
 /// the seating at the turn boundary. `keys` are the wait-set keys the wait
 /// reported; the plan they index is rebuilt from the same run, so a host
 /// that waited on `__workHostWaitSet(run)` hands back keys of that set.
-pub(super) fn write_step(turn_effects: &[String]) -> String {
+pub(super) fn write_step(turn_effects: &[String], fails: bool) -> String {
     format!(
-        "\nfn __workHostStep(run: __Run, keys: List<Int>) -> __Run\n    ? \"The post-wait half of one turn; external hosts deliver readiness after returning to their event loop.\"\n{}    ready = __readySlots(__waitPlan(run).owners, keys, [])\n    timed = __Run.update(run, now = Time.unixMs())\n    ids = Map.keys(timed.slots)\n    served = __serveEach(timed, ready, ids)\n    __seatFamilies(served)\n",
+        "\nfn __workHostStep(run: __Run, keys: List<Int>) -> __Run\n    ? \"The post-wait half of one turn; external hosts deliver readiness after returning to their event loop.\"\n{}    ready = __readySlots(__waitPlan(run).owners, keys, [])\n    timed = __Run.update(run, now = Time.unixMs())\n    ids = Map.keys(timed.slots)\n    served = __serveEach(timed, ready, ids)\n    {}\n",
         effects(turn_effects),
+        if fails {
+            "__failedAfter(__seatFamilies(served))"
+        } else {
+            "__seatFamilies(served)"
+        },
     )
 }
 

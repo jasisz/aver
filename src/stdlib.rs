@@ -158,12 +158,14 @@ pub(crate) const STANDARD_CAPABILITY_MODULES: &[&str] = &[
 /// module, and naming one of their types (`Work.Job`, `Wait.Item`) or calling
 /// one of their operations makes the module an implicit dependency, exactly
 /// as it does for a standard module; only the VM answers them in this build.
-pub(crate) const RESERVED_CAPABILITY_MODULES: &[&str] = &["Wait", "Work"];
+pub(crate) const RESERVED_CAPABILITY_MODULES: &[&str] = &["Wait", "Work", RUN_MODULE];
 
 /// The standard module the generated loop's vocabulary lives in: `Run.Wake`
 /// is declared there, and `Run.View`, `Run.Pending` and `Run.all()` are names
 /// the generated loop answers to in the entry module. Naming it anywhere
-/// makes it a dependency, the way naming `Wait.Item` makes `Wait` one.
+/// makes it a dependency, the way naming `Wait.Item` makes `Wait` one. It is
+/// a reserved capability too: `Run.fail` ends a run with a reason, and
+/// `Run.failure` is how the generated loop reads it back after a turn.
 pub(crate) const RUN_MODULE: &str = "Run";
 
 /// Canonical resource names (`Module.Resource`) of every embedded capability.

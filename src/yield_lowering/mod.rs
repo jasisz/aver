@@ -525,7 +525,7 @@ pub fn lower(
             return Err(vec![error_at(line, "this module declares a seated process, and a seated process runs under the generated loop; its own 'main' does not call Run.all(). Call Run.all() from 'main', or remove 'main' and let the loop's own be generated".to_string())]);
         }
         if generate {
-            let generated = coordinator::generate(
+            let mut generated = coordinator::generate(
                 items,
                 &report.generated,
                 &seated,
@@ -539,10 +539,35 @@ pub fn lower(
             coordinator::rewrite_run_names(items);
             items.extend(generated.items);
             if main.is_none() {
-                let main_source = format!(
-                    "fn main() -> Result<Unit, String>\n    ? \"Runs the generated loop until it is over.\"\n    ! [{}]\n    __all()\n",
-                    generated.module_effects.join(", ")
-                );
+                // Every other door reports what `main` answered. A WASI 0.2
+                // component has no host that does, so when a turn can fail
+                // the run, its generated `main` writes the reason to stderr
+                // itself before answering it.
+                let reports = coordinator_stop == CoordinatorStop::PolicyOnly
+                    && generated
+                        .module_effects
+                        .iter()
+                        .any(|effect| effect == "Run.failure");
+                if reports
+                    && !generated
+                        .module_effects
+                        .iter()
+                        .any(|effect| effect == "Console.error")
+                {
+                    generated.module_effects.push("Console.error".to_string());
+                    generated.module_effects.sort();
+                }
+                let main_source = if reports {
+                    format!(
+                        "fn main() -> Result<Unit, String>\n    ? \"Runs the generated loop until it is over, and writes the reason a failed run gave to stderr.\"\n    ! [{}]\n    __reported(__all())\n\nfn __reported(ran: Result<Unit, String>) -> Result<Unit, String>\n    ? \"What the run answered, with the reason of a failed one written to stderr first.\"\n    ! [Console.error]\n    match ran\n        Result.Ok(_) -> ran\n        Result.Err(reason) -> __failedWith(reason)\n\nfn __failedWith(reason: String) -> Result<Unit, String>\n    ? \"A failed run's reason, written to stderr and answered.\"\n    ! [Console.error]\n    Console.error(reason)\n    Result.Err(reason)\n",
+                        generated.module_effects.join(", ")
+                    )
+                } else {
+                    format!(
+                        "fn main() -> Result<Unit, String>\n    ? \"Runs the generated loop until it is over.\"\n    ! [{}]\n    __all()\n",
+                        generated.module_effects.join(", ")
+                    )
+                };
                 let tokens = crate::lexer::Lexer::new(&main_source)
                     .tokenize()
                     .expect("generated main lexes");
