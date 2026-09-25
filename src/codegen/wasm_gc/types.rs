@@ -348,8 +348,13 @@ pub(super) struct MapSlots {
     /// `(array (mut i32))` — cached complete key hash per occupied bucket.
     pub(super) hashes_array: u32,
     /// `(struct (mut i32 size) (mut i32 cap) (mut keys_ref) (mut values_ref)
-    ///          (mut hashes_ref))`.
+    ///          (mut hashes_ref) (mut diff_ref))`. A null `diff` marks the
+    /// version that owns the arrays' current contents; see `maps.rs`.
     pub(super) map: u32,
+    /// `(struct (mut map_ref next) (mut i32 idx) (mut K key) (mut V value)
+    ///          (mut i32 hash))` — what one bucket held in an older version
+    /// of a map whose arrays a newer version has since written to.
+    pub(super) diff: u32,
 }
 
 impl TypeRegistry {
@@ -1103,7 +1108,8 @@ impl TypeRegistry {
                     next_idx += 1;
                 }
             }
-            // Allocate four slots: keys_array, values_array, hashes_array, map.
+            // Allocate five slots: keys_array, values_array, hashes_array, map,
+            // diff.
             // Order: arrays first so the struct (higher idx) can
             // reference them without crossing rec-group boundaries.
             let keys_array = next_idx;
@@ -1114,6 +1120,8 @@ impl TypeRegistry {
             next_idx += 1;
             let map = next_idx;
             next_idx += 1;
+            let diff = next_idx;
+            next_idx += 1;
             map_types.insert(
                 canonical.clone(),
                 MapSlots {
@@ -1121,6 +1129,7 @@ impl TypeRegistry {
                     values_array,
                     hashes_array,
                     map,
+                    diff,
                 },
             );
             map_order.push(canonical);

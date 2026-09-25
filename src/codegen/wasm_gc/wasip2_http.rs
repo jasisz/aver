@@ -72,6 +72,10 @@ pub(super) struct HttpGetIndices {
     pub headers_values_array_type_idx: u32,
     pub headers_hashes_array_type_idx: u32,
     pub headers_map_type_idx: u32,
+    /// The map's `$diff` struct: a fresh map carries a null one.
+    pub headers_map_diff_type_idx: u32,
+    /// The map's `reroot` helper, called before its buckets are read.
+    pub headers_map_reroot_fn: u32,
     /// `List<String>` cons-cell type idx. Each header value lands
     /// either in a singleton `[value]` list or prepended onto the
     /// existing list when the same field-key reappears (Set-Cookie
@@ -773,6 +777,7 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     //   but the dispatcher passes an empty map, so it's a no-op
     //   beyond the cap-iter (~16k iterations of "is keys[i] null?
     //   yes, skip"). Acceptable for v1 PoC.
+    super::maps::emit_reroot_local(&mut f, indices.headers_map_reroot_fn, p_headers);
     f.instruction(&Instruction::LocalGet(p_headers));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.headers_map_type_idx,
@@ -1523,6 +1528,9 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::ArrayNewDefault(values_arr_idx));
     f.instruction(&Instruction::I32Const(INITIAL_CAP));
     f.instruction(&Instruction::ArrayNewDefault(hashes_arr_idx));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(
+        indices.headers_map_diff_type_idx,
+    )));
     f.instruction(&Instruction::StructNew(map_idx));
     f.instruction(&Instruction::LocalSet(l_h_map));
 

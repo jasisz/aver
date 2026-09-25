@@ -84,6 +84,7 @@ pub(super) use super::slots::count_value_params;
 pub(super) use super::{CallerFnCollector, EmitCtx, FnMap, SlotTable, Wasip2Lowering};
 
 mod builtins;
+pub(super) use builtins::emit_map_arg_current;
 mod collections;
 mod constructors;
 mod control;
@@ -914,6 +915,10 @@ pub(crate) fn emit_mir_expr(
                             if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
                                 return Ok(None);
                             }
+                            // The host reads a map's buckets directly
+                            // (`Tcp.poll`, `Wait.poll`), so hand it the
+                            // current version.
+                            builtins::emit_map_arg_current(func, arg, ctx)?;
                             if ctx.registry.bignum && int_args.contains(&i) {
                                 // CHECKED (not saturating): an out-of-i64 Int
                                 // crossing the host effect boundary must
