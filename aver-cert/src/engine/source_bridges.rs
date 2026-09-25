@@ -1928,15 +1928,29 @@ fn render_bridge_lean(
 
 /// Every source function a law statement mentions, in first-appearance
 /// order: a token is a maximal run of Lean identifier characters, and it
-/// counts when it is the qualified name of a def the model declares.
-/// Over-recognition only adds a TRUE conjunct; under-recognition only costs
-/// the law its bridged corollary — fail-closed for the claim either way.
-fn law_statement_model_fns(statement: &str, info: &ModelInfo) -> Vec<String> {
-    crate::bridge_statement::statement_tokens(statement)
-        .into_iter()
-        .filter(|token| info.defs.contains_key(*token))
-        .map(str::to_string)
-        .collect()
+/// counts when it is `_root_.` followed by the qualified name of a def the
+/// model declares (the statement is root-qualified by then, and that is the
+/// only spelling the checker counts). A def spelled any other way would be a
+/// mention the checker refuses in a bridged law, so it costs the law its
+/// bridged corollary. Over-recognition only adds a TRUE conjunct;
+/// under-recognition only costs the law its bridged corollary — fail-closed
+/// for the claim either way.
+fn law_statement_model_fns(statement: &str, info: &ModelInfo) -> Option<Vec<String>> {
+    let mut fns = Vec::new();
+    for token in crate::bridge_statement::statement_tokens(statement) {
+        match token.strip_prefix(crate::bridge_statement::ROOT_PREFIX) {
+            Some(named) if info.defs.contains_key(named) => fns.push(named.to_string()),
+            Some(_) => {}
+            None => {
+                if info.defs.keys().any(|def| {
+                    crate::bridge_statement::token_names_model_unqualified(token, def)
+                }) {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(fns)
 }
 
 /// The bridges covering every source function a law mentions (`None` when
@@ -1945,7 +1959,7 @@ fn law_statement_model_fns(statement: &str, info: &ModelInfo) -> Vec<String> {
 /// ([`crate::bridge_statement::law_mentioned_bridges`]), so the checker finds
 /// exactly the list the manifest carries.
 fn law_bridge_coverage(statement: &str, info: &ModelInfo, bridges: &[SourceBridge]) -> Option<Vec<usize>> {
-    for model in law_statement_model_fns(statement, info) {
+    for model in law_statement_model_fns(statement, info)? {
         bridges.iter().position(|bridge| bridge.model == model)?;
     }
     let models: Vec<&str> = bridges.iter().map(|bridge| bridge.model.as_str()).collect();
@@ -2255,7 +2269,17 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
             (isolate_theorems(&proofs), isolate_theorems(&corollaries), parts)
         });
     let info = ModelInfo::from_model(model);
-    let (law_claims, declined_laws) = admit_law_claims(model.law_claims.clone());
+    // The checker reads every law statement at the root, so each is rewritten
+    // from the emitter's namespace-relative text to `_root_.`-qualified names
+    // before the gates see it.
+    let names = ModelNames::from_files(
+        model
+            .files
+            .iter()
+            .map(|(path, content)| (path.as_str(), content.as_str())),
+    );
+    let (law_claims, declined_laws) =
+        admit_law_claims(root_qualify_law_claims(&model.law_claims, &names));
     let law_bridges: Vec<Vec<usize>> = law_claims
         .iter()
         .map(|claim| law_bridge_coverage(&claim.statement, &info, &bridges).unwrap_or_default())

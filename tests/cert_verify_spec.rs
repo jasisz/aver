@@ -5552,7 +5552,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // Tamper A: edit one law statement inside the package's `Laws.lean`. The
     // corollary no longer has the declared type, so the package build (or the
     // witness) must fail — never a silent re-interpretation.
-    let needle = "(Domain.Rational.plus a b) (Domain.Rational.plus b a)";
+    let needle = "(_root_.Domain.Rational.plus a b) (_root_.Domain.Rational.plus b a)";
     assert!(laws_lean.contains(needle), "expected commutative statement");
     let dir = temp_dir("cert-k5-laws-file-tamper");
     copy_dir(&out_dir, &dir);
@@ -5560,7 +5560,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         dir.join("cert").join("Laws.lean"),
         laws_lean.replacen(
             needle,
-            "(Domain.Rational.plus a b) (Domain.Rational.plus a a)",
+            "(_root_.Domain.Rational.plus a b) (_root_.Domain.Rational.plus a a)",
             1,
         ),
     )
@@ -5575,7 +5575,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
     // Tamper B: edit the same statement in `cert-manifest.json` only. The
     // witness re-elaborates the corollary at the manifest-declared statement,
     // so the declared surface and the package theorem no longer agree.
-    let json_needle = "(Domain.Rational.plus a b) (Domain.Rational.plus b a)";
+    let json_needle = "(_root_.Domain.Rational.plus a b) (_root_.Domain.Rational.plus b a)";
     assert!(
         manifest.contains(json_needle),
         "expected statement in manifest"
@@ -5586,7 +5586,7 @@ fn cert_tripwire_declines_tampered_law_claims() {
         dir.join("cert").join("cert-manifest.json"),
         manifest.replacen(
             json_needle,
-            "(Domain.Rational.plus a b) (Domain.Rational.plus a a)",
+            "(_root_.Domain.Rational.plus a b) (_root_.Domain.Rational.plus a a)",
             1,
         ),
     )

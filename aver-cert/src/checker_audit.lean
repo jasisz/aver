@@ -46,7 +46,9 @@ def packageAverCertChildren : List Name := @PACKAGE_AVERCERT_CHILDREN@
     witness could resolve first, since Lean tries the innermost enclosing
     namespace before the root. Under `AverCert` the admitted names are exact
     shapes: `AverCert.manifest`, `AverCert.subject`, and names at least one
-    component deep in a producer namespace. -/
+    component deep in a producer namespace. The caller exempts exactly two
+    kinds of package constant from this rule: a private constant, and a
+    `leanAuxiliary` one. -/
 def namespaceRefusal (n : Name) : Option String :=
   match n.eraseMacroScopes.components with
   | [] => none
@@ -98,16 +100,42 @@ def numberedAuxiliary : Name → Bool
   | .str _ s => numberedAs "proof_" s || numberedAs "match_" s || numberedAs "eq_" s
   | _ => false
 
+/-- Whether the last component of `n` is `eq_def` or `eq_unfold`, the
+    names of the unfolding lemmas Lean realizes for a definition. -/
+def unfoldAuxiliary : Name → Bool
+  | .str _ s => s == "eq_def" || s == "eq_unfold"
+  | _ => false
+
 /-- Whether `n` is an auxiliary Lean itself declares beside the constant
-    `n.getPrefix`: an equation lemma or other reserved name, or, beside a
-    constant the package itself declares, an internal (`_`-prefixed)
-    compiler constant or an abstracted `proof_<k>`, matcher `match_<k>` or
-    equation `eq_<k>`. None of these is a field name a wall structure has,
-    so no field read can land on one. -/
+    `n.getPrefix`. Two cases:
+    * beside a constant the package does NOT declare (a wall or core
+      constant), a reserved name such as an equation lemma. That parent
+      existed before every package module, and Lean refuses a user
+      declaration of a reserved name whose parent exists, so such a
+      constant can only have been realized by Lean, in the package module
+      that first unfolded the parent. (Beside a package constant a reserved
+      name is not exempt on that ground: a package can declare `V.h.eq_1`
+      itself before it declares `V.h`.)
+    * beside a constant the package declares, an internal (`_`-prefixed)
+      compiler constant, an abstracted `proof_<k>`, a matcher `match_<k>`,
+      an equation `eq_<k>`, or an unfolding lemma `eq_def` or `eq_unfold`,
+      recognised by name alone.
+    None of these is a field name a wall structure has, so no field read
+    can land on one. -/
 def leanAuxiliary (env : Environment) (inPkg : Name → Bool) (n : Name) : Bool :=
   let parent := n.getPrefix
   env.contains parent &&
-    (isReservedName env n || (inPkg parent && (n.isInternal || numberedAuxiliary n)))
+    (if inPkg parent then n.isInternal || numberedAuxiliary n || unfoldAuxiliary n
+     else isReservedName env n)
+
+/-- Every bridged law's statement definition in the witness, with the model
+    constants its bridges are about. -/
+def lawModelUses : List (Name × List Name) := @LAW_MODEL_USES@
+
+/-- `Q ++ M` for every namespace prefix `Q` of a law's model namespace and
+    every model `M` a law statement names: where Lean would resolve `M`
+    inside that namespace. No package constant may have one of these names. -/
+def lawShadows : List Name := @LAW_SHADOWS@
 
 def lawRoots : List Name := @LAW_ROOTS@
 def bridgedLawRoots : List Name := @BRIDGED_LAW_ROOTS@
@@ -267,13 +295,14 @@ def main : IO UInt32 := do
     if (`AverCertChecker).isPrefixOf name && !(moduleOf env name == some `CheckerWitness) then
       return ← decline s!"a certificate module declares {name} under the checker's reserved prefix"
   -- 1b. Names under the wall's and the checker's namespaces.
-  --     Two kinds of package constant are not names a reference resolves
-  --     to and are not refused: a private one (a match splitter or other
-  --     auxiliary Lean builds while a package proof unfolds a wall
-  --     definition), which no other module can name, and an auxiliary Lean
-  --     declares beside a constant (`leanAuxiliary`): an equation lemma of a
-  --     wall definition, realized on demand in the package module that first
-  --     unfolds it, states the wall's own fact.
+  --     Exactly two kinds of package constant are exempt from both rules of
+  --     this step, because no name the wall or the witness writes resolves
+  --     to them: a private one (a match splitter or other auxiliary Lean
+  --     builds while a package proof unfolds a wall definition), which no
+  --     other module can name, and a `leanAuxiliary` one: a reserved name
+  --     (an equation lemma) realized for a wall or core constant, which
+  --     states that constant's own fact, or, beside a package constant, an
+  --     internal compiler constant or a numbered or unfolding auxiliary.
   --     A package constant under `AverCert` must also not extend another
   --     declared constant's name, since a dotted reference to that constant's
   --     fields would resolve to it.
@@ -311,6 +340,24 @@ def main : IO UInt32 := do
   for (ty, ctors) in sumShapes do
     if let some reason ← sumRefusal env ty ctors then
       return ← decline reason
+  -- 3b. The law statements. The witness elaborates them at the root, where a
+  --     `_root_.`-spelled model name is the root constant; this re-checks the
+  --     outcome on the elaborated terms. No package constant may sit where a
+  --     law's model namespace would resolve a mentioned model's name, and
+  --     each bridged law's statement must use every model constant its
+  --     bridges are about.
+  for shadow in lawShadows do
+    if env.contains shadow then
+      return ← decline s!"a certificate module declares {shadow}, where a law's namespace would resolve the name of a model it mentions"
+  for (stmt, models) in lawModelUses do
+    let some info := env.find? stmt
+      | return ← decline s!"the witness does not declare {stmt}"
+    let some value := info.value?
+      | return ← decline s!"the law statement {stmt} has no value"
+    let used := value.getUsedConstants
+    for model in models do
+      unless used.contains model do
+        return ← decline s!"the law statement {stmt} does not use the bridged model {model}"
   -- 4. The accepted root and the report pins: whitelisted axioms only.
   for root in strictRoots do
     if (env.find? root).isNone then

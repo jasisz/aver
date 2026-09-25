@@ -252,8 +252,10 @@ struct LawCandidate {
     statement: String,
     /// Corollary name inside `AverCert.Laws`.
     corollary: String,
-    /// Namespace to `open` so the statement elaborates (`theorem` minus its
-    /// last segment).
+    /// The model theorem's namespace (`theorem` minus its last segment). The
+    /// witness does NOT elaborate the statement in it; every statement is read
+    /// at the root. The audit refuses a package constant that this namespace,
+    /// or one of its prefixes, would make a bridged model's name resolve to.
     prefix: String,
     /// Indices into the declared `sourceBridges` whose statements the corollary
     /// conjoins — every model function this law mentions, when all of them are
@@ -938,16 +940,21 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     // conditional `Laws` import, and the corollary roots the audit walks. All
     // fields were validated by `validate_law_candidate`.
     //
-    // The statement is re-elaborated inside the model theorem's OWN namespace
-    // — the same context the package's `Laws.lean` uses — because `open
-    // <prefix> in` at root does not reproduce it: inside `namespace Json` the
-    // text `Json.jsonInt` reaches the constructor `Json.Json.jsonInt`, while
-    // at root it reaches the accessor `Json.jsonInt` that `open` only adds an
-    // alias beside. The pins name themselves `_root_.AverCertChecker.law_pin_<i>`
-    // and cite `_root_.AverCert.Laws.<c>`, so the namespace cannot redirect
-    // either name. A law statement means what the MODEL's names and
+    // Every statement is elaborated at the ROOT namespace, never inside the
+    // model theorem's namespace. That namespace is the package's choice (the
+    // manifest's `theorem` minus its last segment), and Lean resolves a name
+    // in the innermost enclosing namespace first: inside `namespace Evil` the
+    // text `Tiny.addTwo` means a package constant `Evil.Tiny.addTwo` when one
+    // is declared, so a law whose text names the bridged `Tiny.addTwo` could
+    // be about a function the package slipped in. At the root, with no
+    // `open`, a dotted name means the root constant it spells or a field read
+    // of a binder the statement itself introduces. The producer writes every
+    // model name in a statement `_root_.`-qualified, and a law that lists
+    // bridges must name each bridged model exactly as `_root_.<model>`, which
+    // no binder can capture. A law statement means what the MODEL's names and
     // instances make it mean; the instances a package may declare at all are
-    // audited by `checker_audit`.
+    // audited by `checker_audit`, which also checks that each bridged law's
+    // elaborated statement uses the bridged constants.
     let law_import = if candidates.laws.is_empty() {
         String::new()
     } else {
@@ -968,11 +975,6 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     // the bridge plays no part in proving.
     let mut law_pins = String::new();
     for (index, law) in candidates.laws.iter().enumerate() {
-        if !law.prefix.is_empty() {
-            law_pins.push_str("namespace ");
-            law_pins.push_str(&law.prefix);
-            law_pins.push_str("\n\n");
-        }
         // The statement is elaborated ALONE, as a definition of its own, and
         // the pins conjoin that definition. However its text is spelled, it
         // is one proposition, so it cannot re-associate the conjunction with
@@ -1013,15 +1015,10 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
             law_pins.push_str(LAW_BRIDGED_COROLLARY_SUFFIX);
             law_pins.push_str("\n\n");
         }
-        if !law.prefix.is_empty() {
-            law_pins.push_str("end ");
-            law_pins.push_str(&law.prefix);
-            law_pins.push_str("\n\n");
-        }
     }
-    // Bridge pins need no namespace context: a bridge statement is rendered
-    // by the checker, fully `_root_`-qualified, so it means the same at the
-    // root as it does in the package's `Bridge.lean`.
+    // Bridge pins are at the root too: a bridge statement is rendered by the
+    // checker, fully `_root_`-qualified, so it means the same at the root as
+    // it does in the package's `Bridge.lean`.
     let mut bridge_pins = String::new();
     for (index, bridge) in candidates.source_bridges.iter().enumerate() {
         bridge_pins.push_str(&format!(
@@ -1050,7 +1047,14 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     // `AverCert.manifest.subject`, when one was declared, instead of the real
     // manifest's field. A projection such as
     // `_root_.AverCert.Schema.Subject.contracts` is a wall constant under a
-    // wall namespace, where the audit refuses every package constant.
+    // wall namespace, where the audit refuses every package constant except
+    // two kinds no reference can resolve to by a name the witness writes: a
+    // private constant, and an auxiliary Lean itself declares beside a
+    // constant (`leanAuxiliary` in `checker_audit.lean`: a reserved name,
+    // such as an equation lemma, realized for a constant the package does
+    // not declare, and, beside a package constant, an internal `_`-prefixed
+    // compiler constant or a numbered `proof_<k>`, `match_<k>` or `eq_<k>`).
+    // None of those is a field name of a wall structure.
     let data = "_root_.AverCert.Artifact.data";
     let manifest = "_root_.AverCert.manifest";
     let datum =
@@ -1234,6 +1238,7 @@ fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String 
     let bridge_roots: Vec<String> = (0..candidates.source_bridges.len())
         .map(|index| format!("{BRIDGE_PIN_PREFIX}{index}"))
         .collect();
+    let (law_model_uses, law_shadows) = law_statement_audit_names(candidates);
     let allowed: Vec<String> = AXIOM_WHITELIST
         .iter()
         .map(|name| name.to_string())
@@ -1285,6 +1290,8 @@ fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String 
         )
         .replace("@ALLOWED@", &lean_name_list(&allowed))
         .replace("@STRICT_ROOTS@", &lean_name_list(&strict_roots))
+        .replace("@LAW_MODEL_USES@", &law_model_uses)
+        .replace("@LAW_SHADOWS@", &lean_name_list(&law_shadows))
         .replace("@LAW_ROOTS@", &lean_name_list(&law_roots))
         .replace("@BRIDGED_LAW_ROOTS@", &lean_name_list(&bridged_law_roots))
         .replace("@BRIDGE_ROOTS@", &lean_name_list(&bridge_roots))
@@ -1293,6 +1300,71 @@ fn checker_audit(candidates: &Candidates, package_modules: &[String]) -> String 
         .replace("@BRIDGE_MARKER@", BRIDGE_AUDIT_MARKER)
         .replace("@DECLINE_MARKER@", AUDIT_DECLINE_MARKER)
         .replace("@OK_MARKER@", AUDIT_OK_MARKER)
+}
+
+/// What the audit checks of the law statements, as Lean literals:
+///
+/// * per bridged law, `(law_statement_<i>, [models of its bridges])`: the
+///   elaborated statement must use each of those constants;
+/// * `Q.M` for every namespace prefix `Q` of any law's model namespace and
+///   every bridge model `M` any law statement names (`_root_.M`, `M`, or a
+///   name ending in `.M` that is not `_root_`-spelled): where
+///   Lean would resolve `M` if the statement were read inside that namespace.
+///   The witness reads it at the root, so these names are refused as a second
+///   layer.
+fn law_statement_audit_names(candidates: &Candidates) -> (String, Vec<String>) {
+    let uses = candidates
+        .laws
+        .iter()
+        .enumerate()
+        .filter(|(_, law)| !law.bridges.is_empty())
+        .map(|(index, law)| {
+            let models: Vec<String> = law
+                .bridges
+                .iter()
+                .map(|bridge| candidates.source_bridges[*bridge].model.clone())
+                .collect();
+            format!(
+                "(`{LAW_STATEMENT_PREFIX}{index}, {})",
+                lean_name_list(&models)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut mentioned: Vec<&str> = Vec::new();
+    for law in &candidates.laws {
+        let tokens = bridge_statement::statement_tokens(&law.statement);
+        for bridge in &candidates.source_bridges {
+            let model = bridge.model.as_str();
+            let named = tokens.iter().any(|token| {
+                token.strip_prefix(bridge_statement::ROOT_PREFIX) == Some(model)
+                    || bridge_statement::token_names_model_unqualified(token, model)
+            });
+            if named && !mentioned.contains(&model) {
+                mentioned.push(model);
+            }
+        }
+    }
+    let mut namespaces: Vec<String> = Vec::new();
+    for law in &candidates.laws {
+        let mut prefix = String::new();
+        for segment in law.prefix.split('.').filter(|segment| !segment.is_empty()) {
+            if !prefix.is_empty() {
+                prefix.push('.');
+            }
+            prefix.push_str(segment);
+            if !namespaces.contains(&prefix) {
+                namespaces.push(prefix.clone());
+            }
+        }
+    }
+    let mut shadows = Vec::new();
+    for namespace in &namespaces {
+        for model in &mentioned {
+            shadows.push(format!("{namespace}.{model}"));
+        }
+    }
+    (format!("[{uses}]"), shadows)
 }
 
 /// Every record and sum a bridge encoder reads, with the members it lists
@@ -1806,11 +1878,23 @@ fn read_candidates(
         }
         // The bridges a law conjoins are those of the functions its statement
         // names — all of them, in first-appearance order — and nothing else.
+        // A law that lists bridges names each model `_root_.`-qualified and in
+        // no other spelling, so the text the bridges are matched on is the
+        // text that elaborates to the bridged constants.
         if !law.bridges.is_empty() {
             let models: Vec<&str> = source_bridges
                 .iter()
                 .map(|bridge| bridge.model.as_str())
                 .collect();
+            if let Some(model) =
+                bridge_statement::law_names_model_unqualified(&law.statement, &models)
+            {
+                return Err(format!(
+                    "law-claim `{}` names the bridged model `{}` without `_root_.`",
+                    display_safe(&law.label),
+                    display_safe(model)
+                ));
+            }
             let mentioned = bridge_statement::law_mentioned_bridges(&law.statement, &models);
             if law.bridges != mentioned {
                 return Err(format!(
@@ -4435,6 +4519,9 @@ mod tests {
         assert!(!witness.contains("import Lean"), "{witness}");
         assert!(!witness.contains("run_cmd") && !witness.contains("#eval"));
         assert!(!witness.contains("namespace AverCertChecker"));
+        // No statement is read inside a namespace the package chose: the
+        // law's model namespace (`Domain`) is never opened.
+        assert!(!witness.contains("namespace "), "{witness}");
         for (at, _) in witness.match_indices("AverCert") {
             let before = &witness[..at];
             assert!(
@@ -4552,13 +4639,48 @@ mod tests {
     #[test]
     fn a_law_lists_exactly_the_bridges_its_statement_names() {
         let models = ["Domain.plus", "Domain.times"];
+        let qualified = "∀ (a : Int), _root_.Domain.times (_root_.Domain.plus a a) a = \
+                         _root_.Domain.plus a a";
         assert_eq!(
-            bridge_statement::law_mentioned_bridges(
-                "∀ (a : Int), Domain.times (Domain.plus a a) a = Domain.plus a a",
-                &models
-            ),
+            bridge_statement::law_mentioned_bridges(qualified, &models),
             vec![1, 0]
         );
+        assert_eq!(
+            bridge_statement::law_names_model_unqualified(qualified, &models),
+            None
+        );
         assert!(bridge_statement::law_mentioned_bridges("∀ (a : Int), a = a", &models).is_empty());
+        // A model spelled any other way is no mention, and is refused: bare,
+        // it could be a binder's field; under a prefix, a slipped-in constant.
+        for spelling in [
+            "∀ (a : Int), Domain.plus a a = a",
+            "∀ (a : Int), Evil.Domain.plus a a = a",
+        ] {
+            assert!(bridge_statement::law_mentioned_bridges(spelling, &models).is_empty());
+            assert_eq!(
+                bridge_statement::law_names_model_unqualified(spelling, &models),
+                Some("Domain.plus")
+            );
+        }
+    }
+
+    /// The audit is handed, per bridged law, the model constants its
+    /// elaborated statement must use, and every name a law's namespace would
+    /// resolve a mentioned model to.
+    #[test]
+    fn the_audit_checks_what_each_law_statement_resolves_to() {
+        let mut candidates = witness_candidates();
+        candidates.laws[0].statement = "∀ (a : Int), _root_.Domain.plus a a = a".to_string();
+        candidates.laws[0].prefix = "Evil.Inner".to_string();
+        let (uses, shadows) = law_statement_audit_names(&candidates);
+        assert_eq!(
+            uses,
+            format!("[(`{LAW_STATEMENT_PREFIX}0, [`Domain.plus])]")
+        );
+        assert_eq!(shadows, vec!["Evil.Domain.plus", "Evil.Inner.Domain.plus"]);
+        let audit = checker_audit(&candidates, &["Laws".to_string()]);
+        assert!(audit.contains(
+            "def lawShadows : List Name := [`Evil.Domain.plus, `Evil.Inner.Domain.plus]"
+        ));
     }
 }

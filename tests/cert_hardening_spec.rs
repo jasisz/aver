@@ -175,6 +175,7 @@ fn cert_hardening_accepts_the_clean_certificate() {
     assert!(
         report.contains("CERTIFIED")
             && report.contains("law-claims: 2 of 2 credited")
+            && report.contains("bridged-laws: 2 of 2 credited")
             && report.contains("source-bridges: 2 of 2 credited"),
         "{report}"
     );
@@ -287,7 +288,7 @@ fn cert_hardening_declines_a_law_citing_an_unrelated_bridge() {
     };
     replace_once(
         &cert.join("cert-manifest.json"),
-        "\"corollary\": \"addTwo_isPlusTwo\", \"bridges\": []",
+        "\"corollary\": \"addTwo_isPlusTwo\", \"bridges\": [\"addTwo\"]",
         "\"corollary\": \"addTwo_isPlusTwo\", \"bridges\": [\"double\"]",
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
@@ -347,6 +348,15 @@ fn cert_hardening_declines_a_record_encoder_missing_a_field() {
          \"tid\": 0, \"type\": \"_root_.Evil\", \"fields\": [{\"accessor\": \"_root_.Evil.a\", \
          \"encoder\": {\"kind\": \"int\"}}]}]",
     );
+    // The `addTwo` law names `Tiny.addTwo`, whose bridge this one replaces,
+    // so it no longer lists a bridge.
+    edit_json(&cert, |json| {
+        for law in json["laws"].as_array_mut().unwrap() {
+            if law["label"] == "addTwo.isPlusTwo" {
+                law["bridges"] = serde_json::json!([]);
+            }
+        }
+    });
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(
         ok,
@@ -439,8 +449,9 @@ fn cert_hardening_declines_a_law_statement_that_reassociates_its_pin() {
     };
     replace_once(
         &cert.join("cert-manifest.json"),
-        "\"statement\": \"∀ (a : Int), addTwo a = (a + 2)\"",
-        "\"statement\": \"\\\"(\\\" = \\\"(\\\" ) ∨ ( addTwo 0 = addTwo 0 ∧ \\\")\\\" = \\\")\\\"\"",
+        "\"statement\": \"∀ (a : Int), _root_.Tiny.addTwo a = (a + 2)\"",
+        "\"statement\": \"\\\"(\\\" = \\\"(\\\" ) ∨ ( _root_.Tiny.addTwo 0 = _root_.Tiny.addTwo 0 ∧ \
+         \\\")\\\" = \\\")\\\"\"",
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "is not a single plain term-position line");
@@ -1069,4 +1080,163 @@ fn cert_hardening_declines_a_certified_closure_reaching_a_work_import() {
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
     assert!(report.contains("closureIsolationS"), "{report}");
+}
+
+// ---- law statements read inside a namespace the package chose -----------------
+//
+// The witness used to elaborate a law statement inside `namespace <prefix>`,
+// the manifest's `theorem` minus its last segment. Lean resolves a name in
+// the innermost enclosing namespace first, so a package constant
+// `<prefix>.Tiny.addTwo` made the statement text `Tiny.addTwo` mean the
+// slipped-in function: the law was credited, and bridged through the real
+// `Tiny.addTwo`'s bridge, for a property the real function does not have.
+// The statements are read at the root now, a bridged model must be spelled
+// `_root_.<model>`, and the audit refuses a constant where the law's namespace
+// would resolve a mentioned model.
+
+/// The honest statement of the `addTwo` law, as the manifest and `Laws.lean`
+/// spell it.
+const ADD_TWO_LAW: &str = "∀ (a : Int), _root_.Tiny.addTwo a = (a + 2)";
+
+/// Point the `addTwo` law at `theorem` (so at its namespace), with
+/// `statement` and `bridges` in the manifest.
+fn retarget_add_two_law(cert: &Path, theorem: &str, statement: &str, bridges: &[&str]) {
+    edit_json(cert, |json| {
+        let law = json["laws"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|law| law["label"] == "addTwo.isPlusTwo")
+            .expect("the addTwo law is claimed");
+        law["theorem"] = serde_json::json!(theorem);
+        law["statement"] = serde_json::json!(statement);
+        law["bridges"] = serde_json::json!(bridges);
+    });
+}
+
+/// Rewrite `Laws.lean` so both `addTwo` corollaries state `statement` (read
+/// inside `namespace`, where `slipped_in` is declared) and prove it by
+/// `proof`. Every other corollary stays as produced.
+fn slip_into_laws(cert: &Path, namespace: &str, slipped_in: &str, statement: &str, proof: &str) {
+    let laws = cert.join("Laws.lean");
+    let text = std::fs::read_to_string(&laws).unwrap();
+    let honest = format!("({ADD_TWO_LAW})");
+    assert_eq!(text.matches(&honest).count(), 2, "{text}");
+    let text = text
+        .replace(&honest, &format!("({statement})"))
+        .replace("⟨_root_.Tiny.addTwo_law_isPlusTwo,", &format!("⟨{proof},"))
+        .replacen(
+            "set_option autoImplicit false\n",
+            &format!("set_option autoImplicit false\n\nnamespace {namespace}\n\n{slipped_in}\n"),
+            1,
+        );
+    std::fs::write(&laws, format!("{text}\nend {namespace}\n")).unwrap();
+}
+
+/// Bridged, in the theorem's own namespace: `Tiny.Tiny.addTwo := a + 3`
+/// makes `Tiny.addTwo a = a + 3` true inside `namespace Tiny`, and the token
+/// matches the bridged model. A bridged model spelled without `_root_.` is
+/// refused before Lean runs.
+#[test]
+fn cert_hardening_declines_a_bridged_law_naming_its_model_unqualified() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-lawns-bare") else {
+        return;
+    };
+    let evil = "∀ (a : Int), Tiny.addTwo a = (a + 3)";
+    retarget_add_two_law(&cert, "Tiny.addTwo_law_isPlusTwo", evil, &["addTwo"]);
+    slip_into_laws(
+        &cert,
+        "Tiny",
+        "def Tiny.addTwo (a : Int) : Int := a + 3",
+        evil,
+        "fun _ => rfl",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(
+        ok,
+        &report,
+        "names the bridged model `Tiny.addTwo` without `_root_.`",
+    );
+}
+
+/// Bridged, `_root_`-spelled, with a slipped-in `<ns>.Tiny.addTwo` where
+/// `<ns>` is the law's namespace (`Evil`, from the theorem `Evil.law`) or the
+/// model's own (`Tiny`). The witness reads the statement at the root, so it is
+/// about the real function; the audit still refuses the shadow.
+#[test]
+fn cert_hardening_declines_a_shadow_of_a_bridged_model_in_the_law_namespace() {
+    for (theorem, shadow) in [
+        ("Evil.law", "Evil.Tiny.addTwo"),
+        ("Tiny.addTwo_law_isPlusTwo", "Tiny.Tiny.addTwo"),
+    ] {
+        let Some((_dir, wasm, cert)) = baseline("certharden-lawns-shadow") else {
+            return;
+        };
+        retarget_add_two_law(&cert, theorem, ADD_TWO_LAW, &["addTwo"]);
+        append(
+            &cert.join("Laws.lean"),
+            &format!("\ndef {shadow} (a : Int) : Int := a + 2\n"),
+        );
+        let (ok, report) = aver_cert("check", &wasm, &cert);
+        assert_declined(
+            ok,
+            &report,
+            &format!(
+                "declares {shadow}, where a law's namespace would resolve the name of a model \
+                 it mentions"
+            ),
+        );
+    }
+}
+
+/// Not bridged: the same redirect used to move a plain law-claim's credit.
+/// `Tiny.addTwo a = a + 3` is false of the real `Tiny.addTwo`, and true of a
+/// slipped-in `Evil.Tiny.addTwo` (theorem `Evil.law`) or `Tiny.Tiny.addTwo`
+/// inside the namespace the package's corollary is written in. Read at the
+/// root, the pinned statement is about the real function, so the package's
+/// corollary no longer proves it and the certificate does not bind.
+#[test]
+fn cert_hardening_declines_a_plain_law_about_a_slipped_in_function() {
+    // Declared inside `namespace <ns>`, so the constant is `<ns>.Tiny.addTwo`.
+    let slipped_in = "def Tiny.addTwo (a : Int) : Int := a + 3";
+    for (theorem, namespace) in [("Evil.law", "Evil"), ("Tiny.addTwo_law_isPlusTwo", "Tiny")] {
+        let Some((_dir, wasm, cert)) = baseline("certharden-lawns-plain") else {
+            return;
+        };
+        let evil = "∀ (a : Int), Tiny.addTwo a = (a + 3)";
+        retarget_add_two_law(&cert, theorem, evil, &[]);
+        slip_into_laws(&cert, namespace, slipped_in, evil, "fun _ => rfl");
+        let (ok, report) = aver_cert("check", &wasm, &cert);
+        assert_declined(ok, &report, "does not bind to this artifact");
+        assert!(
+            report.contains(&format!("{namespace}.Tiny.addTwo a = a + 3"))
+                && report.contains("AverCertChecker.law_statement_0"),
+            "{report}"
+        );
+    }
+}
+
+/// Bridged, `_root_`-spelled, but in a position elaboration drops (a type
+/// ascription's type): the statement is `True` and never uses the bridged
+/// function. The audit reads the elaborated statement and refuses it.
+#[test]
+fn cert_hardening_declines_a_bridged_law_that_does_not_use_its_model() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-lawns-unused") else {
+        return;
+    };
+    let hollow = "∀ (a : Int), (True : (fun (_ : Int → Int) => Prop) _root_.Tiny.addTwo)";
+    retarget_add_two_law(&cert, "Tiny.addTwo_law_isPlusTwo", hollow, &["addTwo"]);
+    let laws = cert.join("Laws.lean");
+    let text = std::fs::read_to_string(&laws)
+        .unwrap()
+        .replace(&format!("({ADD_TWO_LAW})"), &format!("({hollow})"))
+        .replace("⟨_root_.Tiny.addTwo_law_isPlusTwo,", "⟨fun _ => trivial,");
+    std::fs::write(&laws, text).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(
+        ok,
+        &report,
+        "the law statement AverCertChecker.law_statement_0 does not use the bridged model \
+         Tiny.addTwo",
+    );
 }

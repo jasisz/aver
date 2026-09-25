@@ -879,21 +879,58 @@ pub fn statement_tokens(statement: &str) -> Vec<&str> {
 }
 
 /// The bridges a law statement mentions: the positions in `models` (the
-/// declared bridges' source functions) of every model the statement names, in
-/// first-appearance order. This is the ONE rule the producer writes a law's
-/// `bridges` list by and the checker holds the list to, so the bridges a
-/// `_bridged` corollary conjoins are exactly those of the functions its
-/// statement speaks about — never a chosen subset or an unrelated bridge.
+/// declared bridges' source functions) of every model the statement names as
+/// `_root_.<model>`, in first-appearance order. This is the ONE rule the
+/// producer writes a law's `bridges` list by and the checker holds the list
+/// to, so the bridges a `_bridged` corollary conjoins are exactly those of the
+/// functions its statement speaks about — never a chosen subset or an
+/// unrelated bridge.
+///
+/// A law statement is elaborated at the root namespace, and only a
+/// `_root_.`-spelled name is certain to mean the root constant there: a bare
+/// `Tiny.addTwo` would be a field read of a binder named `Tiny`. So only that
+/// spelling counts as a mention, and [`law_names_model_unqualified`] refuses
+/// any other spelling of a model name in a law that lists bridges.
 pub fn law_mentioned_bridges(statement: &str, models: &[&str]) -> Vec<usize> {
     let mut covering = Vec::new();
     for token in statement_tokens(statement) {
-        if let Some(index) = models.iter().position(|model| *model == token)
+        let Some(named) = token.strip_prefix(ROOT_PREFIX) else {
+            continue;
+        };
+        if let Some(index) = models.iter().position(|model| *model == named)
             && !covering.contains(&index)
         {
             covering.push(index);
         }
     }
     covering
+}
+
+/// Whether a statement token spells `model` without `_root_.`: the bare
+/// name, or a name ending in `.<model>` that does not start with `_root_.`
+/// (such as `Evil.Tiny.addTwo`). Read inside a namespace, or through a
+/// binder, such a token can mean another constant than `model`. A
+/// `_root_.`-spelled token names exactly the root constant it spells.
+pub fn token_names_model_unqualified(token: &str, model: &str) -> bool {
+    !token.starts_with(ROOT_PREFIX)
+        && (token == model
+            || token
+                .strip_suffix(model)
+                .is_some_and(|head| head.ends_with('.')))
+}
+
+/// The first model of `models` that a law statement spells without
+/// `_root_.` ([`token_names_model_unqualified`]), if any.
+pub fn law_names_model_unqualified<'a>(statement: &str, models: &[&'a str]) -> Option<&'a str> {
+    let tokens = statement_tokens(statement);
+    models
+        .iter()
+        .find(|model| {
+            tokens
+                .iter()
+                .any(|token| token_names_model_unqualified(token, model))
+        })
+        .copied()
 }
 
 #[cfg(test)]

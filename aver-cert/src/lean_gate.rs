@@ -87,8 +87,9 @@ pub const ADMITTED_OPTIONS: [&str; 7] = [
     "synthInstance.maxHeartbeats",
 ];
 
-/// Namespaces a package may not `open`: the metaprogramming API (the checker's
-/// own audit is written against it) and the build system.
+/// Namespaces a package may not `open` or enter with `namespace`: the
+/// metaprogramming API (the checker's own audit is written against it) and
+/// the build system.
 pub const REFUSED_OPEN_ROOTS: [&str; 2] = ["Lean", "Lake"];
 
 /// Whether `set_option <name>` is admitted.
@@ -675,6 +676,18 @@ fn first_refused(chars: &[char], tokens: &[Token]) -> Option<&'static str> {
                         _ => return Some("set_option"),
                     }
                 }
+                // Declaring inside `Lean` or `Lake` resolves their names
+                // unqualified exactly as an `open` would, so the namespace is
+                // refused on the same roots.
+                if name == "namespace"
+                    && let Some(Token::Ident(entered, _)) = tokens.get(at + 1)
+                {
+                    let entered = entered.strip_prefix("_root_.").unwrap_or(entered.as_str());
+                    let root = entered.split('.').next().unwrap_or_default();
+                    if REFUSED_OPEN_ROOTS.contains(&root) {
+                        return Some("namespace Lean");
+                    }
+                }
                 if name == "open" {
                     let mut next = at + 1;
                     while let Some(token) = tokens.get(next) {
@@ -792,6 +805,22 @@ mod tests {
             "open Foo _root_.Lake\n",
         ] {
             assert_eq!(refused(text), Some("open Lean"), "{text:?}");
+        }
+        for text in [
+            "namespace Lean\n",
+            "namespace Lean.Elab\n",
+            "namespace /- c -/\n  _root_.Lean\n",
+            "namespace Lake\n",
+            "namespace _root_.Lake.Build\n",
+        ] {
+            assert_eq!(refused(text), Some("namespace Lean"), "{text:?}");
+        }
+        for text in [
+            "namespace Leaner\n",
+            "namespace Foo.Lean\n",
+            "namespace Json\n",
+        ] {
+            assert_eq!(refused(text), None, "{text:?}");
         }
         for text in [
             "set_option debug.skipKernelTC true\n",
