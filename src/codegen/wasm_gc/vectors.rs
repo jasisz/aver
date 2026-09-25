@@ -26,6 +26,13 @@
 //! nobody can see the old contents any more. That keeps a loop that builds
 //! a vector by setting it free of allocation.
 //!
+//! Only a program with a Vector value gets versions (`types.rs`,
+//! `program_uses_vector`). The registry also keeps a `Vector<T>` array for
+//! every `List<T>` helper pair and for the string concatenation helper; in a
+//! program with no Vector value those stay plain arrays, with no version or
+//! diff struct and no `current` / `set` helper, so its module is what it was
+//! before versions.
+//!
 //! Two versions of one lineage cannot both be current, so a helper that
 //! reads two vectors at once (`eq`) copies one side when both share an
 //! array. A host reads and writes a vector only through the capability ABI

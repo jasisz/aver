@@ -7,12 +7,12 @@ expression: golden
   "schema_version": 9,
   "format": {"version": 1, "wall_id": "sha256:ed89b143414bdff0bfadb49a49bc1e7d8c537365b69549c65f7e82fbccf73cef"},
   "wasm": "wasip2_carrierless.component.wasm",
-  "wasm_sha256": "02673da05edcafa96fef565e1cdb22fade1a6c1545b41f24332fb5fad164a858",
+  "wasm_sha256": "0e7064150f82e180dff6f774a8f48711acd2ea21d183ee06576d4f7c9f135aed",
   "target": "wasip2",
   "level": "L1",
   "profile": "AverUserProfile/v1",
   "abi": "aver-wasip2/0",
-  "wasip2ComponentEnvelope": {"kind": "prefix-core-suffix/v1", "prefix_len": 11, "embedded_core_module_len": 2931, "suffix_len": 478},
+  "wasip2ComponentEnvelope": {"kind": "prefix-core-suffix/v1", "prefix_len": 11, "embedded_core_module_len": 2496, "suffix_len": 478},
   "final_theorem": "AverCert.Final.cert",
   "artifact_certificate_root": "AverCert.Artifact.certificate",
   "carrier_type_index": null,
@@ -46,4 +46,4 @@ expression: golden
 }
 
 == Artifact.data envelope ==
-    manifest := AverCert.manifest, wasip2ComponentEnvelope := some { prefixLen := 11, embeddedCoreModuleLen := 2931, suffixLen := 478 },
+    manifest := AverCert.manifest, wasip2ComponentEnvelope := some { prefixLen := 11, embeddedCoreModuleLen := 2496, suffixLen := 478 },

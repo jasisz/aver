@@ -78,10 +78,13 @@ pub(super) struct VectorFromListOps {
     pub(super) to_list: u32,
     /// `current : (Vector<T>) -> array`: the version made current, and
     /// its array (`vectors.rs`). Every read of the elements goes through it.
-    pub(super) current: u32,
+    /// `None` when the program has no Vector value: the helpers here then
+    /// work on plain arrays.
+    pub(super) current: Option<u32>,
     /// `set : (Vector<T>, i32, T, i32 owned) -> Vector<T>`: a new version
-    /// with one cell written, index already checked (`vectors.rs`).
-    pub(super) set: u32,
+    /// with one cell written, index already checked (`vectors.rs`). `None`
+    /// exactly when `current` is.
+    pub(super) set: Option<u32>,
     /// `eq : (Vector<T>, Vector<T>) -> i32`. Length-match + per-T
     /// element eq. None when T isn't `list_eq_kind`-able.
     pub(super) eq: Option<u32>,
@@ -94,8 +97,8 @@ pub(super) struct VectorFromListOps {
 struct VflTypeIdx {
     from_list: u32,
     to_list: u32,
-    current: u32,
-    set: u32,
+    /// `current` and `set`, when the vector is versioned.
+    versions: Option<(u32, u32)>,
     eq: Option<u32>,
     hash: Option<u32>,
 }
@@ -283,18 +286,25 @@ impl ListHelperRegistry {
             *next_type_idx += 1;
             let to_ty = *next_type_idx;
             *next_type_idx += 1;
-            let current_ty = *next_type_idx;
-            *next_type_idx += 1;
-            let set_ty = *next_type_idx;
-            *next_type_idx += 1;
+            let versioned = registry.vector_slots(&vec_canonical).is_some();
+            let version_tys = versioned.then(|| {
+                let current_ty = *next_type_idx;
+                *next_type_idx += 1;
+                let set_ty = *next_type_idx;
+                *next_type_idx += 1;
+                (current_ty, set_ty)
+            });
             let from_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let to_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
-            let current_fn = *next_wasm_fn_idx;
-            *next_wasm_fn_idx += 1;
-            let set_fn = *next_wasm_fn_idx;
-            *next_wasm_fn_idx += 1;
+            let version_fns = versioned.then(|| {
+                let current_fn = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                let set_fn = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                (current_fn, set_fn)
+            });
             // Vector<T> eq + hash slots match the list cap — same
             // resolvable kinds (primitive / String / nominal record-
             // sum since 0.16.3).
@@ -317,8 +327,8 @@ impl ListHelperRegistry {
                 VectorFromListOps {
                     from_list: from_fn,
                     to_list: to_fn,
-                    current: current_fn,
-                    set: set_fn,
+                    current: version_fns.map(|v| v.0),
+                    set: version_fns.map(|v| v.1),
                     eq: vec_eq_fn,
                     hash: vec_hash_fn,
                 },
@@ -328,8 +338,7 @@ impl ListHelperRegistry {
                 VflTypeIdx {
                     from_list: from_ty,
                     to_list: to_ty,
-                    current: current_ty,
-                    set: set_ty,
+                    versions: version_tys,
                     eq: vec_eq_ty,
                     hash: vec_hash_ty,
                 },
@@ -460,12 +469,14 @@ impl ListHelperRegistry {
                 )))?;
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
             let vec_canonical = format!("Vector<{}>", elem.trim());
-            let vec_idx = registry
-                .vector_slots(&vec_canonical)
-                .ok_or(WasmGcError::Validation(format!(
-                    "vector `{vec_canonical}` not registered for from_list"
-                )))?
-                .version;
+            let vec_idx = match registry.vector_slots(&vec_canonical) {
+                Some(slots) => slots.version,
+                None => registry
+                    .vector_type_idx(&vec_canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "vector `{vec_canonical}` not registered for from_list"
+                    )))?,
+            };
             let list_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(list_idx),
@@ -478,9 +489,11 @@ impl ListHelperRegistry {
             types.ty().function([list_ref], [vec_ref]);
             // to_list : (Vector<T>) -> List<T>
             types.ty().function([vec_ref], [list_ref]);
-            // current, set (`vectors.rs`)
-            for (params, results) in super::vectors::helper_types(&vec_canonical, registry)? {
-                types.ty().function(params, results);
+            // current, set (`vectors.rs`), for a versioned vector
+            if registry.vector_slots(&vec_canonical).is_some() {
+                for (params, results) in super::vectors::helper_types(&vec_canonical, registry)? {
+                    types.ty().function(params, results);
+                }
             }
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
             if list_eq_kind(elem.trim(), registry).is_some() {
@@ -577,8 +590,10 @@ impl ListHelperRegistry {
             let idx = self.vfl_type_indices[canonical];
             funcs.function(idx.from_list);
             funcs.function(idx.to_list);
-            funcs.function(idx.current);
-            funcs.function(idx.set);
+            if let Some((current, set)) = idx.versions {
+                funcs.function(current);
+                funcs.function(set);
+            }
             if let Some(t) = idx.eq {
                 funcs.function(t);
             }
@@ -657,15 +672,17 @@ impl ListHelperRegistry {
             );
             codes.function(&emit_vec_from_list(canonical, registry)?);
             codes.function(&emit_vec_to_list(canonical, registry, ops.current)?);
-            codes.function(&super::vectors::emit_vector_current(
-                &vec_canonical,
-                registry,
-            )?);
-            codes.function(&super::vectors::emit_vector_set(
-                &vec_canonical,
-                registry,
-                ops.current,
-            )?);
+            if let Some(current) = ops.current {
+                codes.function(&super::vectors::emit_vector_current(
+                    &vec_canonical,
+                    registry,
+                )?);
+                codes.function(&super::vectors::emit_vector_set(
+                    &vec_canonical,
+                    registry,
+                    current,
+                )?);
+            }
             if ops.eq.is_some() {
                 let elem = TypeRegistry::list_element_type(canonical).unwrap();
                 let kind = list_eq_kind(elem.trim(), registry).unwrap();
@@ -1177,18 +1194,14 @@ fn vec_idx_of_pair(
     Ok((vec_idx, elem_val))
 }
 
-/// The version slots of the `Vector<T>` paired with `List<T>`.
+/// The version slots of the `Vector<T>` paired with `List<T>`, when the
+/// program has Vector values.
 fn vector_slots_of_pair(
     list_canonical: &str,
     registry: &TypeRegistry,
-) -> Result<super::types::VectorSlots, WasmGcError> {
+) -> Option<super::types::VectorSlots> {
     let elem = TypeRegistry::list_element_type(list_canonical).unwrap();
-    let vec_canonical = format!("Vector<{}>", elem.trim());
-    registry
-        .vector_slots(&vec_canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "vector `{vec_canonical}` not registered"
-        )))
+    registry.vector_slots(&format!("Vector<{}>", elem.trim()))
 }
 
 /// `len : (List<T>) -> i64`.
@@ -1357,7 +1370,9 @@ fn emit_vec_from_list(canonical: &str, registry: &TypeRegistry) -> Result<Functi
     f.instruction(&Instruction::End);
 
     f.instruction(&Instruction::LocalGet(3));
-    super::vectors::emit_wrap_array(&mut f, vector_slots_of_pair(canonical, registry)?);
+    if let Some(slots) = vector_slots_of_pair(canonical, registry) {
+        super::vectors::emit_wrap_array(&mut f, slots);
+    }
     f.instruction(&Instruction::End);
     Ok(f)
 }
@@ -2390,7 +2405,7 @@ fn emit_list_cons(canonical: &str, registry: &TypeRegistry) -> Result<Function, 
 fn emit_vec_to_list(
     canonical: &str,
     registry: &TypeRegistry,
-    current_fn: u32,
+    current_fn: Option<u32>,
 ) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
@@ -2402,16 +2417,27 @@ fn emit_vec_to_list(
         nullable: true,
         heap_type: HeapType::Concrete(vec_idx),
     });
-    // params: 0=vector. locals: 1=acc, 2=i, 3=its current array.
-    let mut f = Function::new([(1, list_ref), (1, ValType::I32), (1, array_ref)]);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::Call(current_fn));
-    f.instruction(&Instruction::LocalSet(3));
+    // params: 0=vector. locals: 1=acc, 2=i, and for a versioned vector
+    // 3=its current array; a plain array is read straight from 0.
+    let mut locals = vec![(1, list_ref), (1, ValType::I32)];
+    let array = match current_fn {
+        Some(_) => {
+            locals.push((1, array_ref));
+            3
+        }
+        None => 0,
+    };
+    let mut f = Function::new(locals);
+    if let Some(current_fn) = current_fn {
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::Call(current_fn));
+        f.instruction(&Instruction::LocalSet(array));
+    }
     // acc = null
     f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
     f.instruction(&Instruction::LocalSet(1));
     // i = vec.len - 1
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(array));
     f.instruction(&Instruction::ArrayLen);
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
@@ -2424,7 +2450,7 @@ fn emit_vec_to_list(
     f.instruction(&Instruction::I32LtS);
     f.instruction(&Instruction::BrIf(1));
     // acc = cons(vec[i], acc)
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(array));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArrayGet(vec_idx));
     f.instruction(&Instruction::LocalGet(1));
@@ -3082,31 +3108,37 @@ fn emit_vec_eq(
     string_eq_fn_idx: Option<u32>,
     eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
     aint_eq_fn_idx: Option<u32>,
-    current_fn: u32,
+    current_fn: Option<u32>,
 ) -> Result<Function, WasmGcError> {
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
     let array_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(vec_idx),
     });
-    // params: 0=va, 1=vb. locals: 2=len, 3=i, 4/5=their arrays.
-    let mut f = Function::new([
-        (1, ValType::I32),
-        (1, ValType::I32),
-        (1, array_ref),
-        (1, array_ref),
-    ]);
-    emit_both_arrays(&mut f, vec_idx, current_fn);
-    f.instruction(&Instruction::LocalGet(4));
+    // params: 0=va, 1=vb. locals: 2=len, 3=i, and for versioned vectors
+    // 4/5=their arrays; plain arrays are read straight from 0 and 1.
+    let mut locals = vec![(1, ValType::I32), (1, ValType::I32)];
+    let (a, b) = match current_fn {
+        Some(_) => {
+            locals.extend([(1, array_ref), (1, array_ref)]);
+            (4, 5)
+        }
+        None => (0, 1),
+    };
+    let mut f = Function::new(locals);
+    if let Some(current_fn) = current_fn {
+        emit_both_arrays(&mut f, vec_idx, current_fn);
+    }
+    f.instruction(&Instruction::LocalGet(a));
     f.instruction(&Instruction::ArrayLen);
-    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(b));
     f.instruction(&Instruction::ArrayLen);
     f.instruction(&Instruction::I32Ne);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(a));
     f.instruction(&Instruction::ArrayLen);
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::I32Const(0));
@@ -3117,10 +3149,10 @@ fn emit_vec_eq(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(a));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(vec_idx));
-    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(b));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(vec_idx));
     match &kind {
@@ -3179,7 +3211,7 @@ fn emit_vec_hash(
     kind: ListEqKind,
     _string_eq_fn_idx: Option<u32>,
     hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
-    current_fn: u32,
+    current_fn: Option<u32>,
 ) -> Result<Function, WasmGcError> {
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
     let elem = TypeRegistry::list_element_type(canonical).unwrap();
@@ -3217,19 +3249,28 @@ fn emit_vec_hash(
         }
         _ => {}
     }
-    // The vector's current array, after every other local.
-    let array_local = 1 + locals.iter().map(|(n, _)| n).sum::<u32>();
-    locals.push((
-        1,
-        ValType::Ref(RefType {
-            nullable: true,
-            heap_type: HeapType::Concrete(vec_idx),
-        }),
-    ));
+    // A versioned vector's current array, after every other local; a plain
+    // array is read straight from 0.
+    let array_local = match current_fn {
+        Some(_) => {
+            let local = 1 + locals.iter().map(|(n, _)| n).sum::<u32>();
+            locals.push((
+                1,
+                ValType::Ref(RefType {
+                    nullable: true,
+                    heap_type: HeapType::Concrete(vec_idx),
+                }),
+            ));
+            local
+        }
+        None => 0,
+    };
     let mut f = Function::new(locals);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::Call(current_fn));
-    f.instruction(&Instruction::LocalSet(array_local));
+    if let Some(current_fn) = current_fn {
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::Call(current_fn));
+        f.instruction(&Instruction::LocalSet(array_local));
+    }
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(1));
     f.instruction(&Instruction::LocalGet(array_local));

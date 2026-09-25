@@ -2353,7 +2353,7 @@ pub(super) fn emit_module_with(
                 let element = super::types::TypeRegistry::vector_element_type(canonical)?;
                 list_helpers
                     .vfl_ops_for(&format!("List<{}>", element.trim()))
-                    .map(|ops| ops.current)
+                    .and_then(|ops| ops.current)
             },
             packed_sequences: &|name| packed_sequence_helpers.ops_for(name),
         },
@@ -6618,8 +6618,11 @@ fn emit_user_types(
             }),
         ));
         // A `Vector<T>` value: a version over that array (`vectors.rs`),
-        // and what one cell held in an older version.
-        let slots = registry.vector_versions[canonical];
+        // and what one cell held in an older version. A program with no
+        // Vector value has neither.
+        let Some(&slots) = registry.vector_versions.get(canonical) else {
+            continue;
+        };
         let nullable = |heap: u32| {
             wasm_encoder::StorageType::Val(ValType::Ref(wasm_encoder::RefType {
                 nullable: true,

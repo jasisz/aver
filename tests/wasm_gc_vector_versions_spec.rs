@@ -339,3 +339,73 @@ fn main() -> Unit
         sets[0]
     );
 }
+
+/// A program with lists, string interpolation and `+` but no Vector value.
+/// The registry still keeps a `Vector<T>` array for every `List<T>` and the
+/// concatenation helper's `Vector<String>`, but they stay plain arrays with
+/// no version or diff struct and no `current` / `set` helper, so the module
+/// is byte for byte what it was before vectors had versions. The hash is the
+/// one the compiler produced before them; a change to codegen that moves it
+/// for another reason updates it, one that moves it because of versions is
+/// the regression this pins.
+#[test]
+fn a_program_without_a_vector_value_is_unchanged_by_versions() {
+    use sha2::{Digest, Sha256};
+    let source = r#"module Main
+    intent = "Lists, string interpolation and concatenation, and no Vector."
+    effects [Console.print]
+
+fn total(xs: List<Int>, acc: Int) -> Int
+    ? "The sum of the list."
+    match xs
+        [] -> acc
+        [x, ..rest] -> total(rest, acc + x)
+
+fn words(xs: List<String>, acc: String) -> String
+    ? "The words, joined."
+    match xs
+        [] -> acc
+        [w, ..rest] -> words(rest, acc + w + " ")
+
+fn main() -> Unit
+    ! [Console.print]
+    xs = [1, 2, 3]
+    Console.print("total {total(xs, 0)} of {List.len(xs)}: {words(["a", "b"], "")}")
+"#;
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = temp_module("vector-versions-none", source);
+    let out_dir = path.with_extension("out");
+    let out = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&path)
+        .args(["--target", "wasm-gc", "-o"])
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile` to execute");
+    assert!(
+        out.status.success(),
+        "compile failed:\n{}",
+        format_output(&out)
+    );
+    let wasm = std::fs::read_dir(&out_dir)
+        .expect("output dir")
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .find(|p| p.extension().is_some_and(|ext| ext == "wasm"))
+        .expect("a .wasm in the output");
+    let bytes = std::fs::read(&wasm).expect("read the module");
+    cleanup(&path);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let digest: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(
+        (bytes.len(), digest.as_str()),
+        (
+            10243,
+            "385c20d44393408caeee6f08c21233534de16bd47f3672a22400976c4813b0b4"
+        ),
+        "a module with no Vector value changed"
+    );
+}

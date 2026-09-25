@@ -1296,9 +1296,19 @@ impl TypeRegistry {
         }
 
         // Every `Vector<T>` is known by now: give each its version and diff
-        // structs, above its array.
+        // structs, above its array, when the program has a Vector value at
+        // all. Every `List<T>` and every string interpolation registers a
+        // `Vector<T>` array for helpers the program may never call; a
+        // program with no Vector value keeps them as plain arrays, and its
+        // module stays what it was before versions.
         let mut vector_versions: HashMap<String, VectorSlots> = HashMap::new();
-        for canonical in &vector_order {
+        let versioned = program_uses_vector(
+            resolved_fn_defs,
+            &record_fields,
+            &variants,
+            capability_boundary_types,
+        );
+        for canonical in vector_order.iter().filter(|_| versioned) {
             let array = vector_types[canonical];
             let version = next_idx;
             let diff = next_idx + 1;
@@ -2388,6 +2398,44 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
 /// table. Both `Literal::Str` and the `Literal` parts of an
 /// `InterpolatedStr` count — each unique byte sequence gets a passive
 /// data segment.
+/// Whether the program has a `Vector` value anywhere: a type that names one
+/// (a signature, a binding annotation, a record or variant field, a
+/// capability boundary type) or a call that makes or reads one. A Vector
+/// value can only come from one of those. When there is none, the
+/// `Vector<T>` arrays the registry keeps for `List<T>` helpers and string
+/// concatenation stay plain arrays and get no versions (`vectors.rs`).
+fn program_uses_vector(
+    resolved_fn_defs: &[crate::ir::hir::ResolvedFnDef],
+    record_fields: &HashMap<String, Vec<(String, String)>>,
+    variants: &HashMap<String, Vec<VariantInfo>>,
+    capability_boundary_types: &[String],
+) -> bool {
+    use crate::ir::hir::{BuiltinIntrinsic, ResolvedCallee, ResolvedFnBody, ResolvedStmt};
+    let names = |ty: &str| ty.contains("Vector<");
+    let makes_or_reads = |callee: &ResolvedCallee| match callee {
+        ResolvedCallee::Builtin(name) => name.starts_with("Vector.") || name == "List.fromVector",
+        ResolvedCallee::Intrinsic(BuiltinIntrinsic::VectorNew) => true,
+        _ => false,
+    };
+    resolved_fn_defs.iter().any(|fd| {
+        let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
+        names(&fd.return_type.display())
+            || fd.params.iter().any(|(_, ty)| names(&ty.display()))
+            || stmts.iter().any(|stmt| {
+                matches!(stmt, ResolvedStmt::Binding { ty_ann: Some(ty), .. } if names(&ty.display()))
+            })
+            || fn_body_reaches(fd, &makes_or_reads)
+    }) || record_fields
+        .values()
+        .flatten()
+        .any(|(_, ty)| names(ty))
+        || variants
+            .values()
+            .flatten()
+            .any(|v| v.fields.iter().any(|ty| names(ty)))
+        || capability_boundary_types.iter().any(|ty| names(ty))
+}
+
 fn fn_body_calls_builtin(fd: &crate::ir::hir::ResolvedFnDef, dotted: &str) -> bool {
     use crate::ir::hir::ResolvedCallee;
     fn_body_reaches(
@@ -2942,6 +2990,13 @@ pub(super) fn aver_to_wasm(
             return Ok(Some(ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(slots.version),
+            })));
+        }
+        // A program with no Vector value: only the helpers' plain arrays.
+        if let Some(idx) = reg.vector_type_idx(&canonical) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
             })));
         }
     }

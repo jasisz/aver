@@ -694,18 +694,19 @@ pub(crate) fn emit_mir_option_with_default(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
+/// The versioned helpers of one `Vector<T>` (`vectors.rs`).
+#[derive(Clone, Copy)]
+struct VectorHelpers {
+    current: u32,
+    set: u32,
+}
+
 /// The version slots and the helpers of `canonical` (`Vector<T>`); see
 /// `vectors.rs`.
 fn vector_helpers(
     canonical: &str,
     ctx: &EmitCtx<'_>,
-) -> Result<
-    (
-        crate::codegen::wasm_gc::types::VectorSlots,
-        crate::codegen::wasm_gc::lists::VectorFromListOps,
-    ),
-    WasmGcError,
-> {
+) -> Result<(crate::codegen::wasm_gc::types::VectorSlots, VectorHelpers), WasmGcError> {
     let slots = ctx
         .registry
         .vector_slots(canonical)
@@ -722,7 +723,12 @@ fn vector_helpers(
         .ok_or(WasmGcError::Validation(format!(
             "the helpers of `{canonical}` were not registered"
         )))?;
-    Ok((slots, ops))
+    match (ops.current, ops.set) {
+        (Some(current), Some(set)) => Ok((slots, VectorHelpers { current, set })),
+        _ => Err(WasmGcError::Validation(format!(
+            "`{canonical}` has no version helpers"
+        ))),
+    }
 }
 
 /// With a vector on the stack, leave its array's length.
