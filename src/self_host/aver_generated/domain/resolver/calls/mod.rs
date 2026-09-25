@@ -12,7 +12,7 @@ pub fn buildFnMap(
         crate::cancel_checkpoint();
         aver_list_match!(fns, [] => { return acc; }, [f, rest] => { {
             let __tco0 = rest;
-            let __tco1 = acc.insert_owned(f.name.clone(), idx.clone());
+            let __tco1 = acc.insert_owned(f.name, idx.clone());
             let __tco2 = idx.add(&aver_rt::AverInt::from_i64(1));
             fns = __tco0;
             acc = __tco1;
@@ -787,7 +787,7 @@ pub fn resolveCallsInArms(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&arm.body, &*fnMap), bindingSlots: arm.bindingSlots.clone() }, &acc);
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&arm.body, &*fnMap), bindingSlots: arm.bindingSlots }, &acc);
             arms = __tco0;
             acc = __tco2;
             continue;
@@ -867,7 +867,7 @@ pub fn resolveCallsInArms__collected(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return aver_rt::list_builder_finalize(acc); }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&arm.body, &*fnMap), bindingSlots: arm.bindingSlots.clone() });
+            let __tco2 = aver_rt::list_builder_push(acc, crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern, body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&arm.body, &*fnMap), bindingSlots: arm.bindingSlots });
             arms = __tco0;
             acc = __tco2;
             continue;
