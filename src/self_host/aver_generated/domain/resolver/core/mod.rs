@@ -30,9 +30,9 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         __MutualTco1::MaxSlotInExpr(
                             elseExpr,
                             crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                                &thenExpr,
+                                thenExpr,
                                 crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                                    &cond, acc,
+                                    cond, acc,
                                 ),
                             ),
                         )
@@ -74,7 +74,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         __MutualTco1::MaxSlotInExpr(
                             idxExpr,
                             crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                                &vecExpr, acc,
+                                vecExpr, acc,
                             ),
                         )
                     }
@@ -83,7 +83,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         let b = (*b).clone();
                         __MutualTco1::MaxSlotInExpr(
                             b,
-                            crate::aver_generated::domain::resolver::core::maxSlotInExpr(&a, acc),
+                            crate::aver_generated::domain::resolver::core::maxSlotInExpr(a, acc),
                         )
                     }
                     crate::aver_generated::domain::ast::Expr::ExprAdd(a, b) => {
@@ -170,9 +170,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                         let subj = (*subj).clone();
                         return crate::aver_generated::domain::resolver::core::maxSlotInArms(
                             arms,
-                            crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                                &subj, acc,
-                            ),
+                            crate::aver_generated::domain::resolver::core::maxSlotInExpr(subj, acc),
                         );
                     }
                     crate::aver_generated::domain::ast::Expr::ExprPropagate(inner) => {
@@ -215,7 +213,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
                 crate::cancel_checkpoint();
                 __MutualTco1::MaxSlotInExpr(
                     b,
-                    crate::aver_generated::domain::resolver::core::maxSlotInExpr(&a, acc),
+                    crate::aver_generated::domain::resolver::core::maxSlotInExpr(a, acc),
                 )
             }
         };
@@ -224,35 +222,35 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverInt {
 
 /// Find highest slot index in an expression tree.
 pub fn maxSlotInExpr(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    expr @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(expr.clone(), acc))
+    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExpr(expr, acc))
 }
 
 /// Continue max-slot traversal for composite expression forms.
 pub fn maxSlotInExprComposite(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    expr @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprComposite(expr.clone(), acc))
+    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprComposite(expr, acc))
 }
 
 /// Finish max-slot traversal for aggregate and call expression forms.
 pub fn maxSlotInExprAggregate(
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    expr @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprAggregate(expr.clone(), acc))
+    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprAggregate(expr, acc))
 }
 
 /// Visit both sides of a binary expression.
 pub fn maxSlotInExprPair(
-    a @ _: &crate::aver_generated::domain::ast::Expr,
-    b @ _: &crate::aver_generated::domain::ast::Expr,
+    a @ _: crate::aver_generated::domain::ast::Expr,
+    b @ _: crate::aver_generated::domain::ast::Expr,
     acc @ _: aver_rt::AverInt,
 ) -> aver_rt::AverInt {
-    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(a.clone(), b.clone(), acc))
+    __mutual_tco_trampoline_1(__MutualTco1::MaxSlotInExprPair(a, b, acc))
 }
 
 /// Resolve each function definition.
@@ -387,15 +385,15 @@ pub fn maxSlotInStmt(
     match s.clone() {
         crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
             crate::aver_generated::domain::resolver::core::maxSlotInExpr(
-                &expr,
+                expr,
                 crate::aver_generated::domain::resolver::core::maxInt(slot, acc),
             )
         }
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
-            crate::aver_generated::domain::resolver::core::maxSlotInExpr(&expr, acc)
+            crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr, acc)
         }
         crate::aver_generated::domain::ast::Stmt::StmtBind(_, expr) => {
-            crate::aver_generated::domain::resolver::core::maxSlotInExpr(&expr, acc)
+            crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr, acc)
         }
     }
 }
@@ -410,7 +408,7 @@ pub fn maxSlotInExprs(
         crate::cancel_checkpoint();
         aver_list_match!(exprs, [] => { return acc; }, [e, rest] => { {
             let __tco0 = rest;
-            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&e, acc);
+            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(e, acc);
             exprs = __tco0;
             acc = __tco1;
             continue;
@@ -428,7 +426,7 @@ pub fn maxSlotInFields(
         crate::cancel_checkpoint();
         aver_list_match!(fields, [] => { return acc; }, [pair, rest] => { { let (_, expr) = pair; {
             let __tco0 = rest;
-            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&expr, acc);
+            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(expr, acc);
             fields = __tco0;
             acc = __tco1;
             continue;
@@ -446,7 +444,7 @@ pub fn maxSlotInArms(
         crate::cancel_checkpoint();
         aver_list_match!(arms, [] => { return acc; }, [arm, rest] => { {
             let __tco0 = rest;
-            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&arm.body, acc);
+            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(arm.body, acc);
             arms = __tco0;
             acc = __tco1;
             continue;

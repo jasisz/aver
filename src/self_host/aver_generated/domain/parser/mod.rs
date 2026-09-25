@@ -58,7 +58,7 @@ fn __mutual_tco_trampoline_1(
 pub fn parseFnBodyStmtsIndented(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<
     (
         aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -66,17 +66,14 @@ pub fn parseFnBodyStmtsIndented(
     ),
     AverStr,
 > {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::ParseFnBodyStmtsIndented(pos, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_1(__MutualTco1::ParseFnBodyStmtsIndented(pos, acc), &tokens)
 }
 
 /// Parse one statement and continue with indented body.
 pub fn parseFnBodyOneStmtIndented(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<
     (
         aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -84,10 +81,7 @@ pub fn parseFnBodyOneStmtIndented(
     ),
     AverStr,
 > {
-    __mutual_tco_trampoline_1(
-        __MutualTco1::ParseFnBodyOneStmtIndented(pos, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_1(__MutualTco1::ParseFnBodyOneStmtIndented(pos, acc), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -158,7 +152,7 @@ fn __mutual_tco_trampoline_2(
 pub fn parseFnBodyStmtsFlat(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<
     (
         aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -166,17 +160,14 @@ pub fn parseFnBodyStmtsFlat(
     ),
     AverStr,
 > {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::ParseFnBodyStmtsFlat(pos, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_2(__MutualTco2::ParseFnBodyStmtsFlat(pos, acc), &tokens)
 }
 
 /// Parse one statement in function body and continue (flat mode).
 pub fn parseFnBodyOneStmtFlat(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<
     (
         aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -184,17 +175,14 @@ pub fn parseFnBodyOneStmtFlat(
     ),
     AverStr,
 > {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::ParseFnBodyOneStmtFlat(pos, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_2(__MutualTco2::ParseFnBodyOneStmtFlat(pos, acc), &tokens)
 }
 
 /// After a body statement: single newline continues, anything else ends (flat mode).
 pub fn parseFnBodyAfterStmtFlat(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<
     (
         aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
@@ -202,10 +190,7 @@ pub fn parseFnBodyAfterStmtFlat(
     ),
     AverStr,
 > {
-    __mutual_tco_trampoline_2(
-        __MutualTco2::ParseFnBodyAfterStmtFlat(pos, acc.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_2(__MutualTco2::ParseFnBodyAfterStmtFlat(pos, acc), &tokens)
 }
 
 #[allow(non_camel_case_types)]
@@ -392,27 +377,24 @@ fn __mutual_tco_trampoline_3(
 pub fn parseProgram(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    deps @ _: &aver_rt::AverList<AverStr>,
-    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    deps @ _: aver_rt::AverList<AverStr>,
+    fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<crate::aver_generated::domain::ast::Program, AverStr> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::ParseProgram(pos, deps.clone(), fns.clone(), stmts.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_3(__MutualTco3::ParseProgram(pos, deps, fns, stmts), &tokens)
 }
 
 /// Handle keywords: module (extract depends), type/record/verify/decision (skip).
 pub fn parseProgramKeyword(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    deps @ _: &aver_rt::AverList<AverStr>,
-    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    deps @ _: aver_rt::AverList<AverStr>,
+    fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
     kw @ _: AverStr,
 ) -> Result<crate::aver_generated::domain::ast::Program, AverStr> {
     __mutual_tco_trampoline_3(
-        __MutualTco3::ParseProgramKeyword(pos, deps.clone(), fns.clone(), stmts.clone(), kw),
+        __MutualTco3::ParseProgramKeyword(pos, deps, fns, stmts, kw),
         &tokens,
     )
 }
@@ -421,11 +403,11 @@ pub fn parseProgramKeyword(
 pub fn parseProgramModuleHeader(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<crate::aver_generated::domain::ast::Program, AverStr> {
     __mutual_tco_trampoline_3(
-        __MutualTco3::ParseProgramModuleHeader(pos, fns.clone(), stmts.clone()),
+        __MutualTco3::ParseProgramModuleHeader(pos, fns, stmts),
         &tokens,
     )
 }
@@ -434,26 +416,23 @@ pub fn parseProgramModuleHeader(
 pub fn parseProgramFn(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    deps @ _: &aver_rt::AverList<AverStr>,
-    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    deps @ _: aver_rt::AverList<AverStr>,
+    fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<crate::aver_generated::domain::ast::Program, AverStr> {
-    __mutual_tco_trampoline_3(
-        __MutualTco3::ParseProgramFn(pos, deps.clone(), fns.clone(), stmts.clone()),
-        &tokens,
-    )
+    __mutual_tco_trampoline_3(__MutualTco3::ParseProgramFn(pos, deps, fns, stmts), &tokens)
 }
 
 /// Parse a statement and continue.
 pub fn parseProgramStmt(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    deps @ _: &aver_rt::AverList<AverStr>,
-    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
-    stmts @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
+    deps @ _: aver_rt::AverList<AverStr>,
+    fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    stmts @ _: aver_rt::AverList<crate::aver_generated::domain::ast::Stmt>,
 ) -> Result<crate::aver_generated::domain::ast::Program, AverStr> {
     __mutual_tco_trampoline_3(
-        __MutualTco3::ParseProgramStmt(pos, deps.clone(), fns.clone(), stmts.clone()),
+        __MutualTco3::ParseProgramStmt(pos, deps, fns, stmts),
         &tokens,
     )
 }
@@ -659,7 +638,7 @@ pub fn parseStmtExprFrom(
     let ir @ _ = crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, pos, name)?;
     {
         let (expr, pos2) = ir;
-        crate::aver_generated::domain::parser::parseStmtExprFromMul(tokens, pos2, &expr)
+        crate::aver_generated::domain::parser::parseStmtExprFromMul(tokens, pos2, expr)
     }
 }
 
@@ -667,13 +646,13 @@ pub fn parseStmtExprFrom(
 pub fn parseStmtExprFromMul(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let mr @ _ = crate::aver_generated::domain::parser::expr::parseMulExprTail(tokens, pos, expr)?;
     {
         let (expr2, pos2) = mr;
-        crate::aver_generated::domain::parser::parseStmtExprFromAdd(tokens, pos2, &expr2)
+        crate::aver_generated::domain::parser::parseStmtExprFromAdd(tokens, pos2, expr2)
     }
 }
 
@@ -681,7 +660,7 @@ pub fn parseStmtExprFromMul(
 pub fn parseStmtExprFromAdd(
     tokens @ _: &aver_rt::AverList<crate::aver_generated::domain::token::Token>,
     pos @ _: aver_rt::AverInt,
-    expr @ _: &crate::aver_generated::domain::ast::Expr,
+    mut expr @ _: crate::aver_generated::domain::ast::Expr,
 ) -> Result<(crate::aver_generated::domain::ast::Stmt, aver_rt::AverInt), AverStr> {
     crate::cancel_checkpoint();
     let ar @ _ = crate::aver_generated::domain::parser::expr::parseAddExprTail(tokens, pos, expr)?;
@@ -759,7 +738,7 @@ pub fn parseFnDefParams(
     let pr @ _ = crate::aver_generated::domain::parser_match::parseParamList(
         tokens,
         pos2,
-        &aver_rt::AverList::empty(),
+        aver_rt::AverList::empty(),
     )?;
     {
         let (params, pos3) = pr;
@@ -803,7 +782,7 @@ pub fn parseFnDefBodyIndented(
     let sr @ _ = crate::aver_generated::domain::parser::parseFnBodyStmtsIndented(
         tokens,
         pos2,
-        &aver_rt::AverList::empty(),
+        aver_rt::AverList::empty(),
     )?;
     {
         let (stmts, pos3) = sr;
@@ -835,7 +814,7 @@ pub fn parseFnDefBodyFlat(
     let sr @ _ = crate::aver_generated::domain::parser::parseFnBodyStmtsFlat(
         tokens,
         pos2,
-        &aver_rt::AverList::empty(),
+        aver_rt::AverList::empty(),
     )?;
     {
         let (stmts, pos3) = sr;
@@ -863,9 +842,9 @@ pub fn parse(
     crate::aver_generated::domain::parser::parseProgram(
         tokens,
         aver_rt::AverInt::from_i64(0),
-        &aver_rt::AverList::empty(),
-        &aver_rt::AverList::empty(),
-        &aver_rt::AverList::empty(),
+        aver_rt::AverList::empty(),
+        aver_rt::AverList::empty(),
+        aver_rt::AverList::empty(),
     )
 }
 

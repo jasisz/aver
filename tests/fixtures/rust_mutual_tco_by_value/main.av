@@ -1,0 +1,55 @@
+module Main
+    intent = "A record with a Map handed to a pair of functions that tail-call each other, once per turn of a loop."
+    effects [Args.get, Console.print]
+
+record Pool
+    seen: Map<Int, Int>
+    turns: Int
+
+fn filled(seen: Map<Int, Int>, left: Int) -> Map<Int, Int>
+    ? "Keys 1 to left, each mapped to itself."
+    match left <= 0
+        true -> seen
+        false -> filled(Map.set(seen, left, left), left - 1)
+
+verify filled
+    filled({}, 2) => {1 => 1, 2 => 2}
+
+fn pump(pool: Pool, key: Int, left: Int) -> Pool
+    ? "Marks key left times, handing the pool to pumped between marks."
+    match left <= 0
+        true -> pool
+        false -> pumped(Pool.update(pool, seen = Map.set(pool.seen, key, left)), key, left - 1)
+
+verify pump
+    pump(Pool(seen = {}, turns = 0), 5, 1) => Pool(seen = {5 => 1}, turns = 1)
+
+fn pumped(pool: Pool, key: Int, left: Int) -> Pool
+    ? "Counts one turn and goes back to pump."
+    pump(Pool.update(pool, turns = pool.turns + 1), key, left)
+
+verify pumped
+    pumped(Pool(seen = {}, turns = 0), 5, 0) => Pool(seen = {}, turns = 1)
+
+fn turns(pool: Pool, left: Int) -> Pool
+    ? "One pump per turn of the loop."
+    match left <= 0
+        true -> pool
+        false -> turns(pump(pool, 0 - left, 2), left - 1)
+
+verify turns
+    turns(Pool(seen = {}, turns = 0), 0) => Pool(seen = {}, turns = 0)
+
+fn arg(index: Int, fallback: Int) -> Int
+    ? "The index-th argument as an Int, or the fallback."
+    ! [Args.get]
+    match Vector.get(Vector.fromList(Args.get()), index)
+        Option.Some(text) -> Result.withDefault(Int.fromString(text), fallback)
+        Option.None -> fallback
+
+fn main() -> Unit
+    ! [Args.get, Console.print]
+    size = arg(0, 1000)
+    rounds = arg(1, 100)
+    done = turns(Pool(seen = filled({}, size), turns = 0), rounds)
+    Console.print("{Map.len(done.seen)} {done.turns}")

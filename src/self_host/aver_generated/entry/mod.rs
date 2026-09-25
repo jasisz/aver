@@ -54,27 +54,27 @@ fn __mutual_tco_trampoline_1(
 
 /// Synthesized indexed worker of `qualifyFns`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn qualifyFns__indexed(
-    fns @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    fns @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix @ _: AverStr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     __mutual_tco_trampoline_1(
-        __MutualTco1::QualifyFns__indexed(fns.clone(), prefix, acc.clone()),
+        __MutualTco1::QualifyFns__indexed(fns, prefix, acc),
         &__str_index,
     )
 }
 
 /// Synthesized indexed worker of `qualifyFnsOne`. Its hidden String.Index is built by the ABI-preserving wrapper and forwarded through the recursive string-flow component.
 pub fn qualifyFnsOne__indexed(
-    f @ _: &crate::aver_generated::domain::ast::FnDef,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    f @ _: crate::aver_generated::domain::ast::FnDef,
+    rest @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix @ _: AverStr,
-    acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
+    acc @ _: aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     __str_index @ _: &aver_rt::StringIndex,
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     __mutual_tco_trampoline_1(
-        __MutualTco1::QualifyFnsOne__indexed(f.clone(), rest.clone(), prefix, acc.clone()),
+        __MutualTco1::QualifyFnsOne__indexed(f, rest, prefix, acc),
         &__str_index,
     )
 }
@@ -263,9 +263,9 @@ pub fn qualifyFns(
 ) -> aver_rt::AverList<crate::aver_generated::domain::ast::FnDef> {
     crate::cancel_checkpoint();
     qualifyFns__indexed(
-        fns,
+        fns.clone(),
         prefix.clone(),
-        acc,
+        acc.clone(),
         &aver_rt::string_index_build(&prefix),
     )
 }
@@ -273,7 +273,7 @@ pub fn qualifyFns(
 /// Add both qualified and unqualified versions.
 #[inline(always)]
 pub fn qualifyFnsOne(
-    f @ _: &crate::aver_generated::domain::ast::FnDef,
+    mut f @ _: crate::aver_generated::domain::ast::FnDef,
     rest @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
     prefix @ _: AverStr,
     acc @ _: &aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>,
@@ -281,9 +281,9 @@ pub fn qualifyFnsOne(
     crate::cancel_checkpoint();
     qualifyFnsOne__indexed(
         f,
-        rest,
+        rest.clone(),
         prefix.clone(),
-        acc,
+        acc.clone(),
         &aver_rt::string_index_build(&prefix),
     )
 }
@@ -1354,7 +1354,12 @@ pub fn resolveQualifiedModuleFns__indexed(
     crate::cancel_checkpoint();
     let qualifiedProg @ _ = crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
-        fns: qualifyFns__indexed(&prog.fns, dep, &aver_rt::AverList::empty(), __str_index),
+        fns: qualifyFns__indexed(
+            prog.fns.clone(),
+            dep,
+            aver_rt::AverList::empty(),
+            __str_index,
+        ),
         stmts: prog.stmts.clone(),
     };
     crate::aver_generated::domain::resolver::resolveProgram(qualifiedProg).fns

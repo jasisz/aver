@@ -40,23 +40,19 @@ fn __mutual_tco_trampoline_1(
 
 /// Convert list of (key, value) tuples to a Map.
 pub fn tuplesToMap(
-    items @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    items @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    __mutual_tco_trampoline_1(__MutualTco1::TuplesToMap(items.clone(), acc.clone()))
+    __mutual_tco_trampoline_1(__MutualTco1::TuplesToMap(items, acc))
 }
 
 /// Extract key-value from tuple parts.
 pub fn tuplesToMapOne(
-    parts @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    rest @ _: &aver_rt::AverList<crate::aver_generated::domain::value::Val>,
-    acc @ _: &aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
+    parts @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    rest @ _: aver_rt::AverList<crate::aver_generated::domain::value::Val>,
+    acc @ _: aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val>,
 ) -> aver_rt::AverMap<AverStr, crate::aver_generated::domain::value::Val> {
-    __mutual_tco_trampoline_1(__MutualTco1::TuplesToMapOne(
-        parts.clone(),
-        rest.clone(),
-        acc.clone(),
-    ))
+    __mutual_tco_trampoline_1(__MutualTco1::TuplesToMapOne(parts, rest, acc))
 }
 
 /// Dispatch qualified builtin calls to sub-module implementations.
@@ -604,7 +600,7 @@ pub fn builtinMapFromList(
     let v @ _ = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items @ _ = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
     Ok(crate::aver_generated::domain::value::Val::ValMap(
-        crate::aver_generated::domain::builtins::tuplesToMap(&items, &HashMap::new()),
+        crate::aver_generated::domain::builtins::tuplesToMap(items, HashMap::new()),
     ))
 }
 
