@@ -4,8 +4,8 @@ expression: golden
 ---
 == cert-manifest.json ==
 {
-  "schema_version": 8,
-  "format": {"version": 1, "wall_id": "sha256:8cf1d73ca42ca289b89064f08e18b985d4cdc255293a8183896d117289c4f0fa"},
+  "schema_version": 9,
+  "format": {"version": 1, "wall_id": "sha256:ed89b143414bdff0bfadb49a49bc1e7d8c537365b69549c65f7e82fbccf73cef"},
   "wasm": "wasip2_carrierless.component.wasm",
   "wasm_sha256": "0e7064150f82e180dff6f774a8f48711acd2ea21d183ee06576d4f7c9f135aed",
   "target": "wasip2",
@@ -20,11 +20,15 @@ expression: golden
     "String.concat (container-of-string-arrays -> byte-concatenated array)"
   ],
   "laws": [],
-  "sourceBridges": [],
-  "sourceBridgesDeclined": [],
+  "sourceBridges": [
+    {"export": "greet", "theorem": "AverCert.Bridge.greet", "corollary": "AverCert.Bridge.greet_certified", "model": "Wasip2Carrierless.greet", "kind": "exact", "params": [{"kind": "string"}], "result": {"kind": "string"}},
+    {"export": "shout", "theorem": "AverCert.Bridge.shout", "corollary": "AverCert.Bridge.shout_certified", "model": "Wasip2Carrierless.shout", "kind": "exact", "params": [{"kind": "string"}], "result": {"kind": "string"}}
+  ],
+  "sourceBridgesDeclined": [
+    {"export": "main", "reason": "the Lean source model has no definition for this function"}
+  ],
   "declaredUncertified": [
-    {"name": "wasi:cli/run@0.2.4#run", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},
-    {"name": "main", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},
+    {"name": "wasi:cli/run@0.2.4#run", "reason": "module export is outside the claimed certification obligations"},
     {"name": "memory", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__caller_fn_count", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__caller_fn_name", "reason": "module export is outside the claimed certification obligations"}
@@ -32,16 +36,14 @@ expression: golden
   "capabilities": [],
   "start": {"present": false, "function_index": null},
   "hostRoleTable": null,
-  "stringHostRoles": [{"function_index": 4, "role": "stringConcat"},{"function_index": 8, "role": "stringEq"}],
+  "stringHostRoles": [{"function_index": 4, "role": "stringConcat"}, {"function_index": 8, "role": "stringEq"}],
   "certified": [
-    {"name": "greet", "class": "verbatim-string-concat", "policy": "simulatesModel", "level": "L1", "dom": "WVal", "cod": "WVal", "theorem": "AcceptanceSoundness.stringConcat_canonical_discharges"},
-    {"name": "shout", "class": "verbatim-string-concat", "policy": "simulatesModel", "level": "L1", "dom": "WVal", "cod": "WVal", "theorem": "AcceptanceSoundness.stringConcat_canonical_discharges"}
+    {"name": "greet", "class": "source-plan-v1", "facets": ["strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"},
+    {"name": "shout", "class": "source-plan-v1", "facets": ["strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"},
+    {"name": "main", "class": "source-plan-v1", "facets": ["calls", "strings"], "policy": "simulatesModel", "level": "L1", "theorem": "AcceptanceSoundness.fn_claim_discharges"}
   ],
-  "source_level_only": [
-    {"name": "wasi:cli/run@0.2.4#run", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"},
-    {"name": "main", "reason": "body does not match a carrier-free certified template, and the module has no Int carrier host helpers (`__rt_aint_from_i64`); integer-family certification requires the Int carrier"}
-  ]
+  "source_level_only": []
 }
 
 == Artifact.data envelope ==
-  ({ modBytes := AverCert.ArtifactBytes.modBytes, modLen := AverCert.ArtifactBytes.modLen, manifest := AverCert.manifest, wasip2ComponentEnvelope := some ({ prefixLen := 11, embeddedCoreModuleLen := 2496, suffixLen := 478 } : AverCert.Wasip2Envelope.ComponentEnvelope), symFragmentClaims := symFragmentClaims, stringEqClaims := stringEqClaims, stringConcatClaims := stringConcatClaims, constructClaims := constructClaims, recursionClaims := recursionClaims, mutualRecursionClaims := mutualRecursionClaims, verbatimClaims := verbatimClaims, intDispatchClaims := intDispatchClaims, fieldProjectionClaims := fieldProjectionClaims, compositionMembers := compositionMembers, compositionClaims := compositionClaims, closureFuel := 5, closureClaim := closureClaim } : AverCert.AcceptedArtifact.ArtifactData)
+    manifest := AverCert.manifest, wasip2ComponentEnvelope := some { prefixLen := 11, embeddedCoreModuleLen := 2496, suffixLen := 478 },
