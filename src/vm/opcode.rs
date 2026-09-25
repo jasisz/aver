@@ -228,6 +228,21 @@ pub const RECORD_GET_NAMED: u8 = 0x67; // field_symbol_id:u32
 /// `RECORD_GET_NAMED`.
 pub const RECORD_TAKE_NAMED: u8 = 0x6C; // field_symbol_id:u32, holders:u8
 
+/// Pop a match subject the match consumes: a tuple destructured by the arm
+/// that just matched it. When nothing else holds the tuple, its items are
+/// released, so the values the arm bound are no longer held by it. Otherwise
+/// behaves exactly like `POP`.
+pub const POP_CONSUMED: u8 = 0xB1;
+
+/// `PROPAGATE_ERR` on a `Result` nothing reads afterwards: an `Ok` box nothing
+/// else holds gives up the value it unwraps, as `MATCH_UNWRAP` does when its
+/// kind carries `MATCH_UNWRAP_CONSUMES`.
+pub const PROPAGATE_ERR_CONSUMED: u8 = 0xB2;
+
+/// Set in `MATCH_UNWRAP`'s kind byte when the match consumes its subject:
+/// a box nothing else holds then gives up the value it unwraps.
+pub const MATCH_UNWRAP_CONSUMES: u8 = 0x80;
+
 /// Pop `count` field values, push a new variant.
 pub const VARIANT_NEW: u8 = 0x65; // type_id:u16, variant_id:u16, count:u8
 
@@ -602,6 +617,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         LOAD_CONST => "LOAD_CONST",
         LOAD_GLOBAL => "LOAD_GLOBAL",
         POP => "POP",
+        POP_CONSUMED => "POP_CONSUMED",
         DUP => "DUP",
         LOAD_UNIT => "LOAD_UNIT",
         LOAD_TRUE => "LOAD_TRUE",
@@ -653,6 +669,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         TUPLE_NEW => "TUPLE_NEW",
         RECORD_UPDATE => "RECORD_UPDATE",
         PROPAGATE_ERR => "PROPAGATE_ERR",
+        PROPAGATE_ERR_CONSUMED => "PROPAGATE_ERR_CONSUMED",
         LIST_LEN => "LIST_LEN",
         LIST_PREPEND => "LIST_PREPEND",
         MATCH_VARIANT => "MATCH_VARIANT",
@@ -748,6 +765,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | GT_FLOAT
         | RETURN
         | PROPAGATE_ERR
+        | PROPAGATE_ERR_CONSUMED
         | LIST_HEAD_TAIL
         | LIST_NIL
         | LIST_CONS
@@ -789,7 +807,8 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | VECTOR_NEW_LITERAL
         | BRANCH_PATH_CHILD_LITERAL
         | BRANCH_PATH_PARSE_LITERAL
-        | RESULT_PROVEN => 0,
+        | RESULT_PROVEN
+        | POP_CONSUMED => 0,
 
         // 1-byte
         LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM
