@@ -470,20 +470,42 @@ pub(super) fn compile_mir_expr(
             let p = &spanned_proj.node;
             // A direct last read moves the record local onto the operand stack.
             // RECORD_TAKE_NAMED can then remove the field when runtime alias
-            // checks confirm that the moved handle was unique. Every other
-            // projection stays non-destructive.
-            let take_last_field = matches!(
-                p.base.node,
-                MirExpr::Local(ref local) if local.node.last_use
-            );
+            // checks confirm that the moved handle was unique. A field a record
+            // literal or update consumes may be taken earlier, while the local
+            // or the update's base still holds the record (`field_take`); the
+            // opcode carries how many operand-stack cells the compiler knows
+            // hold it. Every other projection stays non-destructive.
+            let known_holders = match &p.base.node {
+                MirExpr::Local(local) => {
+                    let slot = local.node.slot.0;
+                    let planned = fc
+                        .field_takes
+                        .iter()
+                        .find(|plan| plan.slot == slot)
+                        .filter(|plan| plan.fields.contains(&p.field));
+                    match planned {
+                        Some(plan) => {
+                            Some(u8::from(plan.base_cell) + u8::from(!local.node.last_use))
+                        }
+                        None if local.node.last_use => Some(0),
+                        None => None,
+                    }
+                }
+                _ => None,
+            };
             compile_mir_expr(fc, &p.base)?;
             let field_symbol_id = fc.symbols.intern_name(&p.field);
-            fc.emit_op(if take_last_field {
-                RECORD_TAKE_NAMED
-            } else {
-                RECORD_GET_NAMED
-            });
-            fc.emit_u32(field_symbol_id);
+            match known_holders {
+                Some(holders) => {
+                    fc.emit_op(RECORD_TAKE_NAMED);
+                    fc.emit_u32(field_symbol_id);
+                    fc.emit_u8(holders);
+                }
+                None => {
+                    fc.emit_op(RECORD_GET_NAMED);
+                    fc.emit_u32(field_symbol_id);
+                }
+            }
             Ok(())
         }
 
@@ -628,9 +650,20 @@ pub(super) fn compile_mir_expr(
                     ),
                 }));
             }
-            for field in &rc.fields {
-                compile_mir_expr(fc, &field.value)?;
-            }
+            let written: std::collections::HashSet<&str> =
+                rc.fields.iter().map(|field| field.name.as_str()).collect();
+            let pushed = push_field_takes(
+                fc,
+                None,
+                &written,
+                rc.fields.iter().map(|field| &field.value.node),
+            );
+            let compiled = rc
+                .fields
+                .iter()
+                .try_for_each(|field| compile_mir_expr(fc, &field.value));
+            fc.field_takes.truncate(fc.field_takes.len() - pushed);
+            compiled?;
             let field_count = operand_u8(
                 field_names.len(),
                 &format!(
@@ -687,20 +720,38 @@ pub(super) fn compile_mir_expr(
             // A field named twice keeps the first `field = value` and drops
             // the rest, unevaluated, exactly as the declared-order walk did.
             let mut seen = vec![false; field_names.len()];
-            for field in &ru.updates {
-                let Some(field_idx) = field_names.iter().position(|n| *n == field.name) else {
-                    continue;
-                };
-                if seen[field_idx] {
-                    continue;
-                }
-                seen[field_idx] = true;
+            let evaluated: Vec<(usize, &crate::ir::mir::MirRecordField)> = ru
+                .updates
+                .iter()
+                .filter_map(|field| {
+                    let field_idx = field_names.iter().position(|n| *n == field.name)?;
+                    (!std::mem::replace(&mut seen[field_idx], true)).then_some((field_idx, field))
+                })
+                .collect();
+            let written: std::collections::HashSet<&str> = evaluated
+                .iter()
+                .map(|(_, field)| field.name.as_str())
+                .collect();
+            let base_slot = match &ru.base.node {
+                MirExpr::Local(local) => Some(local.node.slot.0),
+                _ => None,
+            };
+            let pushed = push_field_takes(
+                fc,
+                base_slot,
+                &written,
+                evaluated.iter().map(|(_, field)| &field.value.node),
+            );
+            let compiled = evaluated.iter().try_for_each(|(field_idx, field)| {
                 compile_mir_expr(fc, &field.value)?;
                 updated_indices.push(operand_u8(
-                    field_idx,
+                    *field_idx,
                     &format!("record update `{qualified_type_name}` uses field index {field_idx}"),
                 )?);
-            }
+                Ok::<(), MirVmUnsupported>(())
+            });
+            fc.field_takes.truncate(fc.field_takes.len() - pushed);
+            compiled?;
             let update_count = operand_u8(
                 updated_indices.len(),
                 &format!(
@@ -1648,6 +1699,29 @@ where
     let outer_fail = fc.emit_jump(JUMP);
     fc.patch_jump(success_skip);
     Ok(vec![outer_fail])
+}
+
+/// Make the field takes one record literal or update allows visible to the
+/// projections inside its field values, and return how many were pushed so
+/// the caller can drop them afterwards. A local that an enclosing literal or
+/// update already plans for keeps that plan: its conditions were checked over
+/// the larger expression, which contains this one.
+fn push_field_takes<'e>(
+    fc: &mut FnCompiler<'_>,
+    base_slot: Option<u32>,
+    written: &std::collections::HashSet<&str>,
+    values: impl IntoIterator<Item = &'e MirExpr>,
+) -> usize {
+    let plans = super::field_take::plan_field_takes(base_slot, written, values);
+    let mut pushed = 0;
+    for plan in plans {
+        if fc.field_takes.iter().any(|active| active.slot == plan.slot) {
+            continue;
+        }
+        fc.field_takes.push(plan);
+        pushed += 1;
+    }
+    pushed
 }
 
 /// Extract `(slot, last_use)` if `expr` is a bare local read.

@@ -1686,16 +1686,32 @@ impl VM {
                         )));
                     }
 
-                    let mut fields = old_fields.to_vec();
-                    for offset in (0..count).rev() {
+                    let field_count = old_fields.len();
+                    let mut written = vec![false; field_count];
+                    for offset in 0..count {
                         let field_idx = code[field_indices_start + offset] as usize;
-                        if field_idx >= fields.len() {
+                        if field_idx >= field_count {
                             return Err(VmError::runtime("record update field out of bounds"));
                         }
-                        let val = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                        written[field_idx] = true;
+                    }
+                    let values = self.stack.split_off(base_pos + 1);
+                    self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    // A base nothing else holds any more is gone after this
+                    // update, so its fields move into the new record instead of
+                    // being held by both: a Map the dead base went on holding
+                    // would make the next update of that field copy it.
+                    let mut fields = if self.record_update_may_move_fields(base, &written) {
+                        (0..field_count)
+                            .map(|field_idx| self.arena.take_record_field(base, field_idx))
+                            .collect()
+                    } else {
+                        self.arena.get_record(base.arena_index()).1.to_vec()
+                    };
+                    for (offset, val) in values.into_iter().enumerate() {
+                        let field_idx = code[field_indices_start + offset] as usize;
                         fields[field_idx] = val;
                     }
-                    self.stack.pop().ok_or(VmError::StackUnderflow)?;
 
                     let idx = self
                         .arena
@@ -1751,6 +1767,11 @@ impl VM {
 
                 RECORD_GET_NAMED | RECORD_TAKE_NAMED => {
                     let field_symbol_id = read_u32!(code, ip);
+                    let known_holders = if op == RECORD_TAKE_NAMED {
+                        Some(read_u8!(code, ip))
+                    } else {
+                        None
+                    };
 
                     let record = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     if record.is_record() {
@@ -1760,9 +1781,20 @@ impl VM {
                             .record_field_slots
                             .get(&(type_id, field_symbol_id))
                         {
-                            let can_take = op == RECORD_TAKE_NAMED
-                                && !self.arena.record_is_held_elsewhere(record)
-                                && self.slot_is_unheld(record);
+                            // Exactly the cells the compiler accounted for,
+                            // and nothing off the stack: any other holder
+                            // could still read the field.
+                            let can_take = known_holders.is_some_and(|holders| {
+                                !self.arena.record_is_held_elsewhere(record)
+                                    && match (holders, record.heap_index()) {
+                                        (0, _) => self.slot_is_unheld(record),
+                                        (_, Some(index)) => {
+                                            self.stack_holders_excluding(index, None)
+                                                == u32::from(holders)
+                                        }
+                                        (_, None) => false,
+                                    }
+                            });
                             let value = if can_take {
                                 self.arena.take_record_field(record, field_idx as usize)
                             } else {
