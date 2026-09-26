@@ -330,9 +330,11 @@ pub fn emit_verify_block(
                     // (`AverMap.len [] = 0`); without it the condition stays a
                     // hypothesis beside the oracle and `native_decide` refuses
                     // the goal for its free variable.
+                    // Qualified names escape per segment: a dependency's
+                    // `Domain.ByteField.at` is defined as `at'`.
                     let unfolds = super::verify_cases::plain_case_unfold_names(&left, ctx)
                         .into_iter()
-                        .map(|name| aver_name_to_lean(&name))
+                        .map(|name| crate::codegen::lean::syntax::aver_path_to_lean(&name))
                         .collect::<Vec<_>>()
                         .join(", ");
                     format!(

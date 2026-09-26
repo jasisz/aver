@@ -5664,3 +5664,36 @@ verify polled
     );
     assert!(ctx.declined_claims.borrow().is_empty());
 }
+
+/// A case that reads an effectful function's result through `?` passes the
+/// path and the oracle to the inner call too. The rewrite used to stop at the
+/// `?`, so the inner call named the lifted function without them and Lean
+/// rejected the case for its arity.
+#[test]
+fn case_oracle_reaches_a_call_under_question_mark() {
+    let source = r#"
+module Qm
+    intent = "A case that reads an effectful result through a question mark."
+    exposes [roll]
+    effects [Random.int]
+
+fn roll(n: Int) -> Result<Int, String>
+    ? "n when positive, otherwise a die roll."
+    ! [Random.int]
+    match n > 0
+        true -> Result.Ok(n)
+        false -> Result.Ok(Random.int(1, 6))
+
+verify roll
+    roll(roll(2)?) => Result.Ok(2)
+"#;
+    let mut ctx = ctx_from_source(source, "Qm");
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    assert!(
+        lean.contains(
+            "roll BranchPath.Root rnd_Random_int (<- roll BranchPath.Root rnd_Random_int 2)"
+        ),
+        "{lean}"
+    );
+}

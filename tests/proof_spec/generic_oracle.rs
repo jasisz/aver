@@ -105,9 +105,9 @@ verify pollTwice
             summary["passed"].as_bool(),
             summary["build_errors"].as_u64(),
             summary["sorries"].as_u64(),
-            summary["declined"].as_u64(),
+            summary["declined"].as_u64().unwrap_or(0),
         ),
-        (Some(true), Some(0), Some(0), Some(0)),
+        (Some(true), Some(0), Some(0), 0),
         "both cases must build without a sorry or a refusal:\n{summary}\n{lean}"
     );
     let oracle = "rnd_Wait_poll : BranchPath → Int → (List (Watch × Wait.Item)) → Int → Except String (List Watch)";
@@ -160,9 +160,9 @@ verify pollBoth
         (
             summary["passed"].as_bool(),
             summary["build_errors"].as_u64(),
-            summary["declined"].as_u64(),
+            summary["declined"].as_u64().unwrap_or(0),
         ),
-        (Some(true), Some(0), Some(1)),
+        (Some(true), Some(0), 1),
         "the one claim is declined and the rest of the export builds:\n{summary}\n{lean}"
     );
     assert!(

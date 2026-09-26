@@ -194,14 +194,14 @@ pub(super) fn rewrite_plain_case_oracles(
     let left = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         left,
         &synthetic_law,
-        |name| ctx.fn_def_by_name(name, scope.as_deref()),
+        |name| ctx.fn_def_by_callee(name, scope.as_deref()),
         mode.clone(),
         &ctx.capabilities,
     );
     let right = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         right,
         &synthetic_law,
-        |name| ctx.fn_def_by_name(name, scope.as_deref()),
+        |name| ctx.fn_def_by_callee(name, scope.as_deref()),
         mode,
         &ctx.capabilities,
     );
