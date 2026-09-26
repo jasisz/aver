@@ -369,11 +369,32 @@ pub enum LiftError {
     /// already rejects these earlier, but the lifter re-checks to keep
     /// the invariant local.
     UnclassifiedEffect { method: String },
-    /// The operation's oracle is generic (`Wait.poll<K>`): its signature
-    /// mentions a type variable that only a call site instantiates, so there
-    /// is no single oracle parameter type to prepend. Proof export drops the
-    /// function instead of emitting an unresolved type.
+    /// The operation's oracle is still generic (`Wait.poll<K>`): proof export
+    /// pins it to the program's one instantiation before lifting, so this
+    /// means the program did not settle one (its waits disagree about the
+    /// key, or one does not say). There is no oracle parameter type to
+    /// prepend, and proof export drops the function and declines its claims
+    /// instead of emitting an unresolved type.
     GenericOracle { method: String },
+}
+
+impl LiftError {
+    /// The sentence a user reads on a claim declined because of this error.
+    pub fn reason(&self) -> String {
+        match self {
+            LiftError::MissingOracle { method } => {
+                format!("its body calls `{method}` and the exported function has no oracle for it")
+            }
+            LiftError::UnclassifiedEffect { method } => {
+                format!("`{method}` has no oracle classification")
+            }
+            LiftError::GenericOracle { method } => format!(
+                "`{method}` is generic over its key and this program does not settle one key \
+                 type for it (its waits disagree about the key, or one does not say what it is \
+                 keyed by), so its oracle has no type to export"
+            ),
+        }
+    }
 }
 
 /// Lift a function body under the given configuration.
@@ -1321,7 +1342,7 @@ pub fn oracle_params_for_effects_with_registry(
 
 /// Whether a type still carries a type variable (or checker recovery), which
 /// no backend type can spell.
-fn type_mentions_var(ty: &Type) -> bool {
+pub fn type_mentions_var(ty: &Type) -> bool {
     match ty {
         Type::Var(_) | Type::Invalid => true,
         Type::Result(a, b) | Type::Map(a, b) => type_mentions_var(a) || type_mentions_var(b),

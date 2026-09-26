@@ -1749,6 +1749,34 @@ pub fn instantiate_operation(
     instantiated
 }
 
+impl CapabilityRegistry {
+    /// This registry with every generic operation pinned to the type the
+    /// program keys its waits by, or `None` when the program does not settle
+    /// one: its waits disagree about the key, or one of them does not say.
+    ///
+    /// A backend that reads operation signatures off the registry (the proof
+    /// exporter types each oracle parameter this way) then sees only concrete
+    /// types. Under the program's one-key rule every call of the operation
+    /// uses the same instantiation, so one pinned registry serves them all.
+    pub fn with_program_wait_key(
+        &self,
+        items: &[crate::ast::TopLevel],
+        modules: &[crate::codegen::ModuleInfo],
+    ) -> Option<CapabilityRegistry> {
+        if wait_key_conflict(items, modules).is_some()
+            || wait_key_undetermined(items, modules).is_some()
+        {
+            return None;
+        }
+        let key = wait_key_type(items, modules);
+        let mut pinned = self.clone();
+        for operation in pinned.operations.values_mut() {
+            *operation = instantiate_operation(operation, key.as_ref());
+        }
+        Some(pinned)
+    }
+}
+
 fn substitute_type_params(ty: &Type, key: &Type) -> Type {
     let go = |ty: &Type| substitute_type_params(ty, key);
     match ty {

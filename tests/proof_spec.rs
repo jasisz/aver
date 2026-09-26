@@ -51,6 +51,8 @@ mod floor_citations;
 mod floor_window;
 #[path = "proof_spec/fuel_when_cites.rs"]
 mod fuel_when_cites;
+#[path = "proof_spec/generic_oracle.rs"]
+mod generic_oracle;
 #[path = "proof_spec/int_divmod.rs"]
 mod int_divmod;
 #[path = "proof_spec/isolation.rs"]

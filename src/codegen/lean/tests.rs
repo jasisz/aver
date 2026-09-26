@@ -5622,3 +5622,45 @@ fn pollOnce(items: Map<Int, Wait.Item>) -> Result<List<Int>, String>
         "{lifted:?}"
     );
 }
+
+/// Proof export pins `Wait.poll<K>` to the key the program's wait sets use
+/// before it lifts anything, so a function that polls and carries a case is
+/// lifted with an oracle typed at that key instead of aborting the export on
+/// the unbound `K` (#1449). The case quantifies over the same oracle.
+#[test]
+fn wait_poll_oracle_is_typed_at_the_programs_key() {
+    let source = r#"
+module WaitKeyed
+    depends [Wait]
+    intent = "A function that polls a wait set keyed by a sum type."
+    exposes [polled, Watch]
+    effects [Wait.poll]
+
+type Watch
+    Peer(Int)
+    Listener
+
+fn polled(items: Map<Watch, Wait.Item>, timeoutMs: Int) -> Result<List<Watch>, String>
+    ? "Which watches are ready; none, when nothing is watched."
+    ! [Wait.poll]
+    match Map.len(items) == 0
+        true -> Result.Ok([])
+        false -> Wait.poll(items, timeoutMs)
+
+verify polled
+    polled({}, 10) => Result.Ok([])
+"#;
+    let mut ctx = ctx_from_source(source, "WaitKeyed");
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    let oracle = "(rnd_Wait_poll : BranchPath → Int → (List (Watch × Wait.Item)) → Int → Except String (List Watch))";
+    assert!(
+        lean.contains(&format!("def polled (path : BranchPath) {oracle}")),
+        "{lean}"
+    );
+    assert!(
+        lean.contains(&format!("example {oracle} : polled")),
+        "{lean}"
+    );
+    assert!(ctx.declined_claims.borrow().is_empty());
+}
