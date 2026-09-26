@@ -1,0 +1,82 @@
+module IntLiteralNatLeak
+    intent =
+        "Integer literals in the Lean export stay integers."
+        "A bare Lean numeral with no expected type is a natural number, where 0 - 1 is 0."
+        "The first two laws are the reported shape: a sampled index of 0 - 1 on both sides of a law."
+        "The positive laws hold on every sample but are false at x = 0, and would be proved if 0 - 1 were read as a natural number."
+        "The vector law holds on every sample but is false at -1, and would be proved if a negative index read element 0."
+    effects []
+
+record Input
+    value: Int
+
+fn inputFrom(inputs: List<Input>, index: Int) -> Option<Input>
+    ? "The input at a non-negative index."
+    match inputs
+        [] -> Option.None
+        [head, ..rest] -> inputOrFurther(head, rest, index)
+
+fn inputOrFurther(head: Input, rest: List<Input>, index: Int) -> Option<Input>
+    ? "The head at index zero, otherwise the input one further in."
+    match index == 0
+        true -> Option.Some(head)
+        false -> inputFrom(rest, index - 1)
+
+fn inputAt(inputs: List<Input>, index: Int) -> Option<Input>
+    ? "The input at an index; a negative index has none."
+    match index < 0
+        true -> Option.None
+        false -> inputFrom(inputs, index)
+
+fn isSomeInput(found: Option<Input>) -> Bool
+    ? "Whether an input was found."
+    match found
+        Option.None -> false
+        Option.Some(_) -> true
+
+record Found
+    present: Bool
+
+fn foundOf(found: Option<Input>) -> Found
+    ? "Whether an input was found, as a record."
+    Found(present = isSomeInput(found))
+
+verify inputAt
+    inputAt([], 0 - 1) => Option.None
+    inputAt([Input(value = 7)], 0 - 1) => Option.None
+
+verify inputAt law presentExactlyInRange
+    given inputs: List<Input> = [[], [Input(value = 7)], [Input(value = 7), Input(value = 8)]]
+    given index: Int = [0 - 1, 0, 1]
+    isSomeInput(inputAt(inputs, index)) => Bool.and(index >= 0, index < List.len(inputs))
+
+verify inputAt law foundExactlyInRange
+    given inputs: List<Input> = [[], [Input(value = 7)], [Input(value = 7), Input(value = 8)]]
+    given index: Int = [0 - 1, 0, 1]
+    foundOf(inputAt(inputs, index)) => Found(present = Bool.and(index >= 0, index < List.len(inputs)))
+
+fn positive(x: Int) -> Bool
+    ? "Whether x is above zero."
+    x > 0
+
+fn minusOneIsNonNegative() -> Bool
+    ? "False: minus one is below zero."
+    (0 - 1) >= 0
+
+verify positive law literalInClaim
+    given x: Int = [1, 2, 3]
+    Bool.or(positive(x), (0 - 1) >= 0) => true
+
+verify positive law literalInDefinition
+    given x: Int = [1, 2, 3]
+    Bool.or(positive(x), minusOneIsNonNegative()) => true
+
+fn setsAt(index: Int) -> Bool
+    ? "Whether writing at an index of a three-element vector succeeds."
+    match Vector.set(Vector.fromList([10, 20, 30]), index, 5)
+        Option.None -> false
+        Option.Some(_) -> true
+
+verify setsAt law vectorSetBelowLength
+    given index: Int = [0, 1, 2, 3]
+    setsAt(index) => index < 3

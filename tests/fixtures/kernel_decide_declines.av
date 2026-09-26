@@ -1,11 +1,11 @@
 module KernelDecideDeclines
     intent =
-        "Pairs verify cases the kernel-decide classifier must decline with twins it must keep."
+        "Verify cases the kernel-decide classifier routes: a term-budget decline and the cases it keeps."
     exposes [narrowedIndex, charCode, firstItem, takeNegative, scaleInt, banner]
     effects []
 
 fn narrowedIndex() -> Bool
-    ? "Score the character the negative-index branch selects."
+    ? "Score the character a negative vector index selects."
     s = match Vector.get(Vector.fromList(["x"]), 0 - 1)
         Option.None -> "B"
         Option.Some(_) -> ""

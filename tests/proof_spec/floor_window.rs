@@ -372,7 +372,7 @@ fn proof_export_divisor_shape_positivity_universal() {
     // (normalized off its Prop `= true` form so `omega` reads it) for the pow2
     // fn, and `Int.mul_pos` over both for the product.
     assert!(
-        lean.contains("have hd : 0 < (8 : Int) := by decide"),
+        lean.contains("have hd : 0 < ((8 : Int) : Int) := by decide"),
         "literal divisor positivity must close by `decide`:\n{lean}"
     );
     assert!(

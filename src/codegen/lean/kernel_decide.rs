@@ -685,18 +685,13 @@ fn builtin_panic_capability(builtin: Builtin) -> PanicCapability {
     use Builtin::*;
     use PanicCapability::*;
     match builtin {
-        // `Vector.get` lowers to `arr[Int.toNat i]?`. `Int.toNat` maps EVERY
-        // negative index to `0`, so a negative index reads element 0 in the
-        // model while the VM (`types/vector.rs`, `idx.to_usize()` → `None`)
-        // returns `Option.None`. The model then walks the `Some` arm the
-        // program never took.
-        VectorGet => NarrowsPastVm,
-        // `Vector.set` lowers to
-        //   `if i < arr.size then some (arr.set! (Int.toNat i) v) else none`.
-        // Same narrowing (the VM returns `None` for a negative index), and
-        // the guard does not cover it: on an EMPTY array `-1 < 0` holds, so
-        // the model calls `Array.set!` out of bounds and panics.
-        VectorSet => NarrowsPastVm,
+        // `Vector.get` / `Vector.set` index through `Int.toNat`, which maps
+        // every negative index to `0`. The lowering GUARDS the index
+        // (`if i < 0 then none else …`, see `lean::builtins`), so the model
+        // returns `Option.None` there as the VM does (`types/vector.rs`), and
+        // `Array.set!` is reached only below `arr.size`. The guard is
+        // load-bearing: remove it and these become `NarrowsPastVm`.
+        VectorGet | VectorSet => Total,
         // `Vector.new` lowers its `Int` size through `Int.toNat`. Negative
         // sizes therefore become an empty model array, while the VM rejects
         // them; values outside the portable element budget are rejected by
@@ -863,8 +858,6 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         // Take a fn value; the walk cannot follow a higher-order argument.
         ListFind | ListAny => false,
 
-        // All reduce; `Vector.get` / `Vector.set` are nevertheless declined,
-        // by the faithfulness table (their `Int.toNat` index narrowing).
         VectorGet | VectorSet | VectorLen | VectorFromList | ListFromVector | VectorNew => true,
 
         MapGet | MapSet | MapHas | MapRemove | MapKeys | MapValues | MapEntries | MapLen

@@ -240,12 +240,12 @@ fn proof_dependency_case_ground_truth_is_module_scoped() {
     let dep = std::fs::read_to_string(out.join("Dep.lean")).expect("read Dep.lean");
     let entry = std::fs::read_to_string(out.join("Entry.lean")).expect("read Entry.lean");
     assert!(
-        dep.contains("example : Dep.ident 1 = 1 := by")
-            && !dep.contains("example : Dep.ident 1 = 101 := by"),
+        dep.contains("example : Dep.ident 1 = (1 : Int) := by")
+            && !dep.contains("example : Dep.ident 1 = (101 : Int) := by"),
         "Dep's case must use Dep's VM result, not Entry's same-key result:\n{dep}"
     );
     assert!(
-        entry.contains("example : ident 1 = 101 := by"),
+        entry.contains("example : ident 1 = (101 : Int) := by"),
         "Entry's case must keep Entry's own VM result:\n{entry}"
     );
     let _ = std::fs::remove_dir_all(&src);

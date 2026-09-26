@@ -491,7 +491,7 @@ verify quotient
     assert!(
         examples.iter().any(
             |line| line.contains("(do pure (addOne (<- quotient 10 2)))")
-                && line.contains("= Except.ok (6)")
+                && line.contains("= Except.ok ((6 : Int))")
         ),
         "a verify case carrying `?` must state an `Except` action:\n{lean}"
     );
@@ -504,7 +504,7 @@ verify quotient
     assert!(
         examples
             .iter()
-            .any(|line| line.starts_with("example : quotient 10 2 = Except.ok 5 ")),
+            .any(|line| line.starts_with("example : quotient 10 2 = Except.ok (5 : Int) ")),
         "a verify case without `?` must keep its plain equation:\n{lean}"
     );
 }
@@ -547,15 +547,15 @@ verify safe law shifts
     assert!(
         lean.contains(
             "theorem safe_law_shifts_checked_domain : \
-             ((do pure (addOne (<- safe 1))) = Except.ok ((1 + 1))) ∧ \
-             ((do pure (addOne (<- safe 2))) = Except.ok ((2 + 1)))"
+             ((do pure (addOne (<- safe 1))) = Except.ok (((1 : Int) + 1))) ∧ \
+             ((do pure (addOne (<- safe 2))) = Except.ok (((2 : Int) + 1)))"
         ),
         "the checked-domain conjunction must state `Except` actions:\n{lean}"
     );
     assert!(
         lean.contains(
             "theorem safe_law_shifts_sample_1 : \
-             (do pure (addOne (<- safe 1))) = Except.ok ((1 + 1))"
+             (do pure (addOne (<- safe 1))) = Except.ok (((1 : Int) + 1))"
         ),
         "each sample theorem must state an `Except` action:\n{lean}"
     );
@@ -591,7 +591,7 @@ verify addOne law shifts
         "a law without `?` must keep its plain universal:\n{lean}"
     );
     assert!(
-        lean.contains("theorem addOne_law_shifts_sample_1 : addOne 1 = (1 + 1)"),
+        lean.contains("theorem addOne_law_shifts_sample_1 : addOne 1 = ((1 : Int) + 1)"),
         "a law without `?` must keep its plain samples:\n{lean}"
     );
     assert!(
@@ -948,7 +948,7 @@ fn transpile_emits_native_decide_for_verify_by_default() {
         .iter()
         .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
         .expect("expected generated Lean file");
-    assert!(lean.contains("example : 1 = 1 := by native_decide"));
+    assert!(lean.contains("example : (1 : Int) = (1 : Int) := by native_decide"));
 }
 
 #[test]
@@ -960,7 +960,7 @@ fn transpile_can_emit_sorry_for_verify_when_requested() {
         .iter()
         .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
         .expect("expected generated Lean file");
-    assert!(lean.contains("example : 1 = 1 := by sorry"));
+    assert!(lean.contains("example : (1 : Int) = (1 : Int) := by sorry"));
 }
 
 #[test]
@@ -972,7 +972,7 @@ fn transpile_can_emit_theorem_skeletons_for_verify() {
         .iter()
         .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
         .expect("expected generated Lean file");
-    assert!(lean.contains("theorem f_verify_1 : 1 = 1 := by"));
+    assert!(lean.contains("theorem f_verify_1 : (1 : Int) = (1 : Int) := by"));
     assert!(lean.contains("  sorry"));
     assert!(lean.contains("namespace Verify_mode"));
     assert!(lean.contains("end Verify_mode"));
@@ -987,8 +987,8 @@ fn theorem_skeleton_numbering_is_global_per_function_across_verify_blocks() {
         .iter()
         .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
         .expect("expected generated Lean file");
-    assert!(lean.contains("theorem f_verify_1 : 1 = 1 := by"));
-    assert!(lean.contains("theorem f_verify_2 : 2 = 2 := by"));
+    assert!(lean.contains("theorem f_verify_1 : (1 : Int) = (1 : Int) := by"));
+    assert!(lean.contains("theorem f_verify_2 : (2 : Int) = (2 : Int) := by"));
 }
 
 #[test]
@@ -1070,10 +1070,10 @@ verify pickGreater law ordered
     // `(1 - 2 > 0)` premise would elaborate over Nat, where truncated
     // subtraction can make the theorem FALSE AS STATED.
     assert!(lean.contains(
-            "theorem pickGreater_law_ordered_sample_1 : ((1 : Int) > (1 : Int)) = true -> pickGreater 1 1 = 1 := by"
+            "theorem pickGreater_law_ordered_sample_1 : ((1 : Int) > 1) = true -> pickGreater 1 1 = (1 : Int) := by"
         ));
     assert!(lean.contains(
-            "theorem pickGreater_law_ordered_sample_4 : ((2 : Int) > (2 : Int)) = true -> pickGreater 2 2 = 2 := by"
+            "theorem pickGreater_law_ordered_sample_4 : ((2 : Int) > 2) = true -> pickGreater 2 2 = (2 : Int) := by"
         ));
 }
 
@@ -2716,10 +2716,10 @@ fn verify_law_numbering_is_scoped_per_law_name() {
         .iter()
         .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
         .expect("expected generated Lean file");
-    assert!(lean.contains("theorem f_verify_1 : 1 = 1 := by"));
+    assert!(lean.contains("theorem f_verify_1 : (1 : Int) = (1 : Int) := by"));
     assert!(lean.contains("theorem f_law_identity : ∀ (x : Int), x = x := by"));
-    assert!(lean.contains("theorem f_law_identity_sample_1 : 2 = 2 := by"));
-    assert!(!lean.contains("theorem f_law_identity_sample_2 : 2 = 2 := by"));
+    assert!(lean.contains("theorem f_law_identity_sample_1 : (2 : Int) = (2 : Int) := by"));
+    assert!(!lean.contains("theorem f_law_identity_sample_2 : (2 : Int) = (2 : Int) := by"));
 }
 
 #[test]
