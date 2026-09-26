@@ -589,6 +589,15 @@ where
             "if {}.is_empty() {{ {} }} else {{ {} }}",
             subject_name, body, fallback
         ),
+        // `[_, .._]` only asks whether the list is non-empty, so it needs no
+        // uncons. It also must not have one: an arm without bindings lets the
+        // match borrow a borrowed-parameter subject (`__list_subject` is then
+        // a `&AverList`), and `list_uncons_cloned(&__list_subject)` would ask
+        // `AverListMatch` of the reference (#1450). `is_empty` auto-derefs.
+        ResolvedPattern::Cons(head, tail) if head == "_" && tail == "_" => format!(
+            "if !{}.is_empty() {{ {} }} else {{ {} }}",
+            subject_name, body, fallback
+        ),
         ResolvedPattern::Cons(head, tail) => {
             let head_pat = if head == "_" {
                 "_".to_string()
