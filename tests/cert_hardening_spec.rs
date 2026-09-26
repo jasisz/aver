@@ -40,7 +40,8 @@
 //!   slots are exchanged;
 //! * a List literal's cons helper declared as a user function of the same
 //!   signature, a cons helper whose plan is not the cons plan, and the cons
-//!   helpers of two instantiations exchanged.
+//!   helpers of two instantiations exchanged;
+//! * a bridge whose List argument encoder names another element type.
 //!
 //! Gated behind `wasm` and skipped when `lake` is unavailable, like the other
 //! certificate suites.
@@ -1410,7 +1411,9 @@ fn cert_hardening_declines_a_bridged_law_that_does_not_use_its_model() {
 /// the head ignored, a cons arm first with the tail ignored, and `[]` then
 /// `_`. Each shape lowers to one `ref.is_null` on the stashed subject, the
 /// `[]` arm in `then`, and the head and tail binders read from the cons
-/// struct in `else`.
+/// struct in `else`. Every export takes a List, so each has a source bridge
+/// only through the List decoder, and the law over `count` is on bytes only
+/// through `count`'s bridge.
 const LISTY: &str = "module Listy
     intent = \"List match shapes.\"
     exposes [count, firstOr, isEmpty]
@@ -1435,6 +1438,10 @@ fn isEmpty(xs: List<String>) -> Bool
 
 verify count
     count([]) => 0
+
+verify count law neverNegative
+    given xs: List<Int> = [[], [1], [1, 2]]
+    count(xs) >= 0 => true
 ";
 
 /// Emit the List certificate into a fresh scratch directory.
@@ -1475,6 +1482,34 @@ fn cert_hardening_accepts_list_matches() {
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the List certificate must check:\n{report}");
     assert!(report.contains("3 checked exports"), "{report}");
+    assert!(
+        report.contains("source-bridges: 3 of 3 credited"),
+        "every List argument decodes:\n{report}"
+    );
+    assert!(
+        report.contains("bridged-laws: 1 of 1 credited"),
+        "the law over a List function is on bytes:\n{report}"
+    );
+}
+
+/// The encoders of a bridge are the statement: the checker renders it from
+/// the manifest. Declaring `count`'s argument a List of Strings states a
+/// bridge about a model function that takes a List of Ints: the statement no
+/// longer elaborates, and the package is refused.
+#[test]
+fn cert_hardening_declines_a_list_bridge_with_another_element_encoder() {
+    let Some((_dir, wasm, cert)) = list_baseline("certharden-list-bridge-elem") else {
+        return;
+    };
+    replace_once(
+        &cert.join("cert-manifest.json"),
+        "\"model\": \"Listy.count\", \"kind\": \"adequate\", \"params\": [{\"kind\": \"list\", \
+         \"elem\": {\"kind\": \"int\"}}]",
+        "\"model\": \"Listy.count\", \"kind\": \"adequate\", \"params\": [{\"kind\": \"list\", \
+         \"elem\": {\"kind\": \"string\"}}]",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "the checker-owned Lean witness failed");
 }
 
 /// The arm pick is the wall's, not the plan's: a plan that gives the `[]`

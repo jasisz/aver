@@ -1,7 +1,10 @@
 {
  "examples/data/json.av": {
   "bridges": [
+   "Bytes_allInRange",
    "Bytes_byteToHex",
+   "Bytes_firstOutOfRange",
+   "Bytes_firstOutOfRangeIndex",
    "Bytes_hexDigit",
    "Bytes_highNibble",
    "Bytes_lowNibble",
@@ -117,7 +120,10 @@
    "App_Render_sampleSettlement",
    "App_Render_sampleSummary",
    "App_Render_settlementKindText",
+   "Bytes_allInRange",
    "Bytes_byteToHex",
+   "Bytes_firstOutOfRange",
+   "Bytes_firstOutOfRangeIndex",
    "Bytes_hexDigit",
    "Bytes_highNibble",
    "Bytes_lowNibble",
@@ -125,6 +131,7 @@
    "Domain_Cases_auditForResolvedCase",
    "Domain_Cases_makeCaseDraft",
    "Domain_Cases_statusText",
+   "Domain_Cases_tail",
    "Domain_Ledger_emptyState",
    "Domain_Ledger_eventAmount",
    "Domain_Ledger_eventAt",
@@ -143,6 +150,7 @@
    "Domain_Normalize_normalizeWebhookEvent",
    "Domain_Reconcile_amountMissing",
    "Domain_Reconcile_compareAmounts",
+   "Domain_Reconcile_compareCurrency",
    "Domain_Reconcile_sampleCaptureRow",
    "Domain_Reconcile_sampleRefundRow",
    "Domain_Reconcile_sampleState",
@@ -274,7 +282,10 @@
  },
  "tests/fixtures/cert_work_job/main.av": {
   "bridges": [
+   "Bytes_allInRange",
    "Bytes_byteToHex",
+   "Bytes_firstOutOfRange",
+   "Bytes_firstOutOfRangeIndex",
    "Bytes_hexDigit",
    "Bytes_highNibble",
    "Bytes_lowNibble",
@@ -332,13 +343,16 @@
    "intLessZero",
    "isEven",
    "isOdd",
+   "listHeadGoal",
    "mkOp",
    "quad",
    "quoteOrSelf",
    "shout",
    "sumFrom",
+   "sumListGoal",
    "tagName",
-   "userName"
+   "userName",
+   "wrapItems"
   ],
   "certified": {
    "addTwo": "L1",
@@ -405,6 +419,8 @@
   "bridges": [
    "addPair",
    "boolAnd",
+   "listHead",
+   "sumList",
    "tick"
   ],
   "certified": {
@@ -706,7 +722,8 @@
  },
  "tools/certkit/fixtures/verbatimgen.av": {
   "bridges": [
-   "tagName"
+   "tagName",
+   "wrapItems"
   ],
   "certified": {
    "tagName": "L1",
@@ -715,7 +732,9 @@
   "laws": []
  },
  "tools/certkit/fixtures/verbatimwiden.av": {
-  "bridges": [],
+  "bridges": [
+   "wrapItems"
+  ],
   "certified": {
    "wrapItems": "L1"
   },

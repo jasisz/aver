@@ -549,18 +549,6 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         bridge_declined,
         BTreeMap::from([
             (
-                "wrapItems",
-                "a `list` argument has no decoder in this version"
-            ),
-            (
-                "listHeadGoal",
-                "a `list` argument has no decoder in this version"
-            ),
-            (
-                "sumListGoal",
-                "a `list` argument has no decoder in this version"
-            ),
-            (
                 "floatLeGoal",
                 "a `float` argument has no decoder in this version"
             ),
@@ -1356,7 +1344,7 @@ fn hostile_models_baseline(prefix: &str) -> Option<ScratchDir> {
         "developer preflight must never emit the certification verdict:\n{clean_report}"
     );
     assert!(
-        clean_report.contains("source-bridges: 22 of 22 credited"),
+        clean_report.contains("source-bridges: 25 of 25 credited"),
         "the honest baseline credits every goals bridge:\n{clean_report}"
     );
 
@@ -1468,8 +1456,8 @@ fn assert_hostile_source_model_loses_bridges(prefix: &str, edits: &[(&str, &str)
     );
     assert!(
         report.contains(&format!(
-            "source-bridges: {} of 22 credited",
-            22 - lost.len()
+            "source-bridges: {} of 25 credited",
+            25 - lost.len()
         )),
         "exactly the bridges through the wrong definition must lose their credit:\n{report}"
     );
