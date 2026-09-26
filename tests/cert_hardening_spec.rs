@@ -2173,26 +2173,43 @@ fn cert_hardening_declines_a_saturation_helper_at_another_function() {
     assert_declined(ok, &report, "did not build");
 }
 
-/// `contains` over Ints calls `__aint_eq`, so the certificate is conditional
-/// on its contract and the contract list must say so: a subject that drops
-/// it is refused.
+/// `contains` over Ints calls `__aint_eq` and over Strings `String.eq`, so
+/// the certificate is conditional on both contracts and the contract list
+/// must say so. No plan of this module calls either helper itself; only the
+/// `contains` helpers do. Both contracts are dropped from both manifests, so
+/// the JSON pin agrees with the Lean one and the refusal can only come from
+/// the wall's own contract derivation: the `contains` helpers' inner calls
+/// (`ListHelpers.innerCalls`) put both helpers among the used calls, and the
+/// package's `axes_ok` (`ClaimAxes.checked data = true`) no longer holds.
 #[test]
 fn cert_hardening_declines_a_contains_without_its_equality_contract() {
     let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-contract") else {
         return;
     };
-    let eq = "\"__aint_eq (canonical carrier pair -> i32 boolean; 1 when equal, else 0)\"";
+    let json_path = cert.join("cert-manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
     let manifest = cert.join("Manifest.lean");
-    let text = std::fs::read_to_string(&manifest).unwrap();
-    assert!(text.contains(eq), "the eq contract is disclosed:\n{text}");
-    let dropped = text
-        .replace(&format!(", {eq}"), "")
-        .replace(&format!("{eq}, "), "");
-    assert_ne!(dropped, text);
-    std::fs::write(&manifest, dropped).unwrap();
+    for name in [
+        "__aint_eq (canonical carrier pair -> i32 boolean; 1 when equal, else 0)",
+        "String.eq (WVal byte-array equality; non-arrays compare false)",
+    ] {
+        let quoted = format!("\"{name}\"");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        assert!(text.contains(&quoted), "`{name}` is disclosed:\n{text}");
+        let dropped = text
+            .replace(&format!(", {quoted}"), "")
+            .replace(&format!("{quoted}, "), "");
+        assert_ne!(dropped, text);
+        std::fs::write(&manifest, dropped).unwrap();
+        let contracts = json["runtime_contracts"]
+            .as_array_mut()
+            .expect("the JSON manifest lists its contracts");
+        let before = contracts.len();
+        contracts.retain(|c| c.as_str() != Some(name));
+        assert_eq!(contracts.len() + 1, before, "the JSON lists `{name}` once");
+    }
+    std::fs::write(&json_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
     let (ok, report) = aver_cert("check", &wasm, &cert);
-    assert!(
-        !ok,
-        "a certificate hiding the eq contract must decline:\n{report}"
-    );
+    assert_declined(ok, &report, "ClaimAxes.checked data = true\nis false");
 }
