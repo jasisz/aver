@@ -1,0 +1,9 @@
+ProtoFull0	rc=0	real=7,67s	maxrss=861MB	footprint=134MB	typecheck=6.34s	elab=86.4ms	simp=	tactic=77.9ms
+ProtoFull100	rc=0	real=8,54s	maxrss=793MB	footprint=134MB	typecheck=7.2s	elab=92.2ms	simp=	tactic=91.2ms
+ProtoFull200	rc=0	real=11,03s	maxrss=700MB	footprint=134MB	typecheck=9.64s	elab=95.8ms	simp=	tactic=66.1ms
+ProtoFull300	rc=0	real=11,52s	maxrss=833MB	footprint=136MB	typecheck=9.91s	elab=81.9ms	simp=	tactic=72.5ms
+ProtoFull400	rc=0	real=12,50s	maxrss=838MB	footprint=134MB	typecheck=11.2s	elab=82.5ms	simp=	tactic=68.6ms
+ProtoFull500	rc=0	real=13,28s	maxrss=773MB	footprint=134MB	typecheck=11.9s	elab=102ms	simp=	tactic=72.7ms
+ProtoFull600	rc=0	real=20,54s	maxrss=1592MB	footprint=135MB	typecheck=18.7s	elab=84.4ms	simp=	tactic=70.8ms
+ProtoFull700	rc=0	real=20,43s	maxrss=920MB	footprint=133MB	typecheck=19.1s	elab=85.7ms	simp=	tactic=69.8ms
+ProtoFull800	rc=0	real=6,52s	maxrss=688MB	footprint=134MB	typecheck=5.05s	elab=24ms	simp=	tactic=11.8ms

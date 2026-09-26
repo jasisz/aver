@@ -1,0 +1,15 @@
+ProtoStruct0	rc=0	real=4,39s	maxrss=667MB	footprint=133MB	typecheck=3.47s	elab=355ms	simp=	tactic=9.17ms
+ProtoStruct1	rc=0	real=5,55s	maxrss=667MB	footprint=133MB	typecheck=4.63s	elab=208ms	simp=	tactic=8.69ms
+ProtoStruct2	rc=0	real=6,12s	maxrss=667MB	footprint=133MB	typecheck=5.2s	elab=208ms	simp=	tactic=9.54ms
+ProtoStruct3	rc=0	real=4,84s	maxrss=667MB	footprint=133MB	typecheck=3.91s	elab=208ms	simp=	tactic=10.7ms
+ProtoStruct4	rc=0	real=2,91s	maxrss=667MB	footprint=134MB	typecheck=1.93s	elab=1.22s	simp=	tactic=8ms
+ProtoStruct5	rc=0	real=1,95s	maxrss=667MB	footprint=133MB	typecheck=985ms	elab=217ms	simp=	tactic=10.2ms
+ProtoStruct6	rc=0	real=2,15s	maxrss=667MB	footprint=135MB	typecheck=1.09s	elab=872ms	simp=	tactic=7.63ms
+ProtoStruct7	rc=0	real=1,51s	maxrss=667MB	footprint=133MB	typecheck=549ms	elab=215ms	simp=	tactic=7.84ms
+ProtoStruct8	rc=0	real=1,49s	maxrss=667MB	footprint=133MB	typecheck=544ms	elab=213ms	simp=	tactic=6.81ms
+ProtoStruct9	rc=0	real=1,48s	maxrss=667MB	footprint=134MB	typecheck=553ms	elab=213ms	simp=	tactic=7.89ms
+ProtoStruct10	rc=0	real=3,39s	maxrss=667MB	footprint=133MB	typecheck=1.37s	elab=1.2s	simp=	tactic=7ms
+ProtoStruct11	rc=0	real=3,44s	maxrss=667MB	footprint=133MB	typecheck=2.5s	elab=215ms	simp=	tactic=10.6ms
+ProtoStruct12	rc=0	real=4,11s	maxrss=667MB	footprint=133MB	typecheck=3.17s	elab=217ms	simp=	tactic=9.55ms
+ProtoStruct13	rc=0	real=3,66s	maxrss=667MB	footprint=134MB	typecheck=2.71s	elab=210ms	simp=	tactic=7.89ms
+ProtoStruct14	rc=0	real=20,83s	maxrss=1168MB	footprint=134MB	typecheck=18.9s	elab=1.1s	simp=	tactic=6.63ms

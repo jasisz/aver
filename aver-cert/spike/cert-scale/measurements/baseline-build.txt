@@ -1,0 +1,39 @@
+byte facts (Artifact*, other)         571.5s
+bridges (Bridge*)                     391.7s
+source model (AverModel.*)            141.7s
+plan chunks (ArtifactPlans*)          115.5s
+wall + other                           40.8s
+package data                           12.8s
+laws                                    0.8s
+total 1274.7
+
+Artifact                       316.0s
+BridgeProof                    243.0s
+ArtifactInterface               77.0s
+ArtifactStrings                 68.0s
+ArtifactLayout                  64.0s
+BridgeDefs                      51.0s
+ArtifactClosure                 23.0s
+AverModel.Domain.StackItem      19.0s
+AverModel.Domain.Message        16.0s
+AverModel.Domain.ScriptParse    15.0s
+AverModel.Domain.Segment        14.0s
+Plans                           11.0s
+GrammarSound                    10.0s
+ArithTemplateDerisk              9.8s
+ArtifactPlanCheck                9.7s
+BridgeSteps11                    8.9s
+ArtifactPlans640                 8.8s
+BridgeSteps16                    7.9s
+BridgeSteps6                     7.6s
+ArtifactPlans768                 7.4s
+BridgeSteps19                    7.2s
+ArtifactPlans736                 6.7s
+AverModel.AverCommon             6.5s
+ArtifactPlans800                 6.3s
+ArtifactPlans704                 6.3s
+aver-cert timing: certificate proof build: 1283.2s
+aver-cert timing: artifact witness check: 111.6s
+aver-cert timing: artifact audit: 245.9s
+     1641,73 real      1426,99 user       259,65 sys
+         15124692992  maximum resident set size

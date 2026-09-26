@@ -1,0 +1,16 @@
+Split_Base	rc=0	real=0,86s	maxrss=667MB	footprint=133MB	typecheck=	elab=0.0651ms	simp=	tactic=
+Split_Artifact_axes_ok	rc=0	real=17,71s	maxrss=4253MB	footprint=135MB	typecheck=16.8s	elab=1.18ms	simp=	tactic=0.273ms
+Split_Artifact_envelope_ok	rc=0	real=0,98s	maxrss=1144MB	footprint=133MB	typecheck=114ms	elab=1.3ms	simp=	tactic=0.297ms
+Split_Artifact_plans_ok	rc=0	real=367,98s	maxrss=15146MB	footprint=133MB	typecheck=367s	elab=8.02ms	simp=11.1ms	tactic=8.21ms
+Split_Artifact_roles_ok	rc=0	real=17,19s	maxrss=4922MB	footprint=135MB	typecheck=13.6s	elab=1.37ms	simp=3.4ms	tactic=4.23ms
+Split_ArtifactClosure_closure_ok	rc=0	real=24,21s	maxrss=6124MB	footprint=135MB	typecheck=23.3s	elab=2ms	simp=	tactic=0.237ms
+Split_ArtifactInterface_exports_ok	rc=0	real=71,56s	maxrss=10739MB	footprint=133MB	typecheck=43.3s	elab=25.2s	simp=	tactic=1.12s
+Split_ArtifactInterface_framing_ok	rc=0	real=0,97s	maxrss=1145MB	footprint=133MB	typecheck=113ms	elab=1.26ms	simp=	tactic=0.257ms
+Split_ArtifactInterface_imports_ok	rc=0	real=4,73s	maxrss=1961MB	footprint=133MB	typecheck=3.1s	elab=731ms	simp=	tactic=11.3ms
+Split_ArtifactInterface_start_ok	rc=0	real=0,98s	maxrss=1150MB	footprint=134MB	typecheck=113ms	elab=1.13ms	simp=	tactic=0.274ms
+Split_ArtifactLayout_code_cut	rc=0	real=13,96s	maxrss=3664MB	footprint=134MB	typecheck=13.1s	elab=1.73ms	simp=	tactic=0.236ms
+Split_ArtifactLayout_exports_cut	rc=0	real=4,84s	maxrss=1947MB	footprint=133MB	typecheck=3.98s	elab=1.56ms	simp=	tactic=0.247ms
+Split_ArtifactLayout_layout_ok	rc=0	real=6,54s	maxrss=4277MB	footprint=133MB	typecheck=5.67s	elab=1.34ms	simp=	tactic=1.4ms
+Split_ArtifactLayout_types_cut	rc=0	real=28,12s	maxrss=5911MB	footprint=133MB	typecheck=27.2s	elab=1.64ms	simp=	tactic=0.229ms
+Split_ArtifactPlans640_plans_chunk_640	rc=0	real=9,25s	maxrss=3512MB	footprint=133MB	typecheck=8.21s	elab=125ms	simp=	tactic=4.19ms
+Split_ArtifactStrings_strings_ok	rc=0	real=59,17s	maxrss=12656MB	footprint=135MB	typecheck=58.1s	elab=1.37ms	simp=	tactic=3.06ms

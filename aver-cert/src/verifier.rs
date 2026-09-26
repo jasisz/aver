@@ -3014,6 +3014,11 @@ fn checker_temp_root() -> Result<PathBuf, String> {
 
 impl Drop for BuildDir {
     fn drop(&mut self) {
+        // SPIKE (cert-scale): keep the build directory for measurement.
+        if std::env::var_os("AVER_CERT_KEEP_BUILD_DEVONLY").is_some() {
+            eprintln!("aver-cert: kept build dir {}", self.path.display());
+            return;
+        }
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }

@@ -1,0 +1,5 @@
+ProtoExp0	rc=0	real=8,19s	maxrss=740MB	footprint=134MB	typecheck=7.1s	elab=1.57s	simp=	tactic=19.7ms
+ProtoExp1	rc=0	real=69,54s	maxrss=1591MB	footprint=134MB	typecheck=68.5s	elab=953ms	simp=	tactic=19.3ms
+ProtoExp2	rc=0	real=150,05s	maxrss=2508MB	footprint=133MB	typecheck=149s	elab=436ms	simp=	tactic=39.7ms
+ProtoExp3	rc=0	real=58,19s	maxrss=2571MB	footprint=134MB	typecheck=54.7s	elab=1.23s	simp=	tactic=6.84ms
+ProtoStrict	rc=0	real=5,90s	maxrss=668MB	footprint=134MB	typecheck=1.4s	elab=1.27s	simp=	tactic=2.21ms

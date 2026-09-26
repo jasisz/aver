@@ -1,0 +1,11 @@
+Rest_indices	rc=0	real=34,58s	maxrss=9247MB	footprint=133MB	typecheck=33.6s	elab=2.3ms	simp=	tactic=0.313ms
+Rest_eqref	rc=0	real=1,01s	maxrss=667MB	footprint=133MB	typecheck=144ms	elab=1.74ms	simp=	tactic=0.294ms
+Rest_newtypes	rc=0	real=0,97s	maxrss=667MB	footprint=134MB	typecheck=108ms	elab=1.68ms	simp=	tactic=0.32ms
+Rest_cons	rc=0	real=1,04s	maxrss=667MB	footprint=133MB	typecheck=169ms	elab=1.89ms	simp=	tactic=0.413ms
+Rest_recgroup	rc=0	real=4,69s	maxrss=2621MB	footprint=133MB	typecheck=3.82s	elab=1.82ms	simp=	tactic=0.327ms
+Rest_decodetypes	rc=0	real=1,24s	maxrss=1246MB	footprint=133MB	typecheck=360ms	elab=2.06ms	simp=	tactic=0.861ms
+Rest_decodedata	rc=0	real=1,47s	maxrss=1394MB	footprint=133MB	typecheck=609ms	elab=2.03ms	simp=	tactic=0.263ms
+Rest_roletypes	rc=0	real=9,45s	maxrss=3240MB	footprint=133MB	typecheck=8.57s	elab=1.74ms	simp=8.12ms	tactic=1.05ms
+Rest_inhabited	rc=0	real=1,46s	maxrss=677MB	footprint=133MB	typecheck=607ms	elab=1.93ms	simp=	tactic=0.358ms
+Rest_data	rc=0	real=14,08s	maxrss=5319MB	footprint=134MB	typecheck=13.2s	elab=2.03ms	simp=	tactic=0.264ms
+Rest_typetable	rc=0	real=13,73s	maxrss=4765MB	footprint=134MB	typecheck=12.8s	elab=1.97ms	simp=3.96ms	tactic=1.14ms

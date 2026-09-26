@@ -1,0 +1,5 @@
+Wit_report_pin_8	rc=0	real=10,45s	maxrss=2833MB	footprint=134MB	typecheck=8.54s	elab=104ms	simp=	tactic=0.512ms
+Wit_report_pin_9	rc=0	real=64,12s	maxrss=12142MB	footprint=134MB	typecheck=62.6s	elab=209ms	simp=	tactic=0.854ms
+Wit_report_pin_10	rc=0	real=24,00s	maxrss=5200MB	footprint=134MB	typecheck=22.3s	elab=83.3ms	simp=	tactic=0.31ms
+Wit_report_pin_11	rc=0	real=23,94s	maxrss=5188MB	footprint=136MB	typecheck=22.7s	elab=84.4ms	simp=	tactic=0.302ms
+Wit_rest	rc=0	real=8,03s	maxrss=1706MB	footprint=133MB	typecheck=2.77s	elab=3.93s	simp=	tactic=
