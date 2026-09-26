@@ -905,7 +905,8 @@ fn user_type_spelled_like_a_lean_root_type_builds() {
     );
     let main = &leans["Main.lean"];
     assert!(
-        main.contains("sumSide (T.Sum.inl 2) = 2") && main.contains("{ value := 5 : T.Nat }"),
+        main.contains("sumSide (T.Sum.inl 2) = (2 : Int)")
+            && main.contains("{ value := 5 : T.Nat }"),
         "expected the owner module on the root-named types:\n{main}"
     );
 }

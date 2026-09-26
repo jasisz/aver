@@ -199,7 +199,7 @@ pub fn emit_builtin_call(
         StringFromInt => format!("String.fromInt {}", p(&a[0])),
         StringFromFloat => format!("String.fromFloat {}", p(&a[0])),
         StringFromBool => format!("String.fromBool {}", p(&a[0])),
-        StringByteLength => format!("{}.utf8ByteSize", p(&a[0])),
+        StringByteLength => format!("({}.utf8ByteSize : Int)", p(&a[0])),
         StringToUtf8 => format!("Bytes.stringToUtf8 {}", p(&a[0])),
         StringFromUtf8 => format!("Bytes.stringFromUtf8 {}", p(&a[0])),
 
@@ -221,8 +221,9 @@ pub fn emit_builtin_call(
         // which Lean parses as `concatLists xs ++ ([v] ys)` and fails
         // with "function expected at [v]". Same hazard for `::`.
         ListPrepend => format!("({} :: {})", a[0], p(&a[1])),
-        ListTake => format!("{}.take (Int.toNat {})", p(&a[0]), p(&a[1])),
-        ListDrop => format!("{}.drop (Int.toNat {})", p(&a[0]), p(&a[1])),
+        // `Int.toNat` takes an `Int`, so a literal count needs no ascription.
+        ListTake => format!("{}.take (Int.toNat {})", p(&a[0]), int_arg(&args[1], ctx)),
+        ListDrop => format!("{}.drop (Int.toNat {})", p(&a[0]), int_arg(&args[1], ctx)),
         ListConcat => format!("({} ++ {})", p(&a[0]), p(&a[1])),
         ListReverse => format!("{}.reverse", p(&a[0])),
         ListContains => format!("{}.contains {}", p(&a[0]), p(&a[1])),
@@ -235,14 +236,22 @@ pub fn emit_builtin_call(
         // `Array.get?` was removed in Lean 4.31 in favour of the `GetElem?`
         // bracket notation `arr[i]?`, which reduces under kernel `decide`
         // (so a finite-domain table law over a `Vector` enumerates cleanly).
-        VectorGet => format!("{}[Int.toNat {}]?", p(&a[0]), p(&a[1])),
+        //
+        // A negative index is `Option.None` in the runtime (`types/vector.rs`).
+        // `Int.toNat` sends it to `0`, so both lowerings test it first: without
+        // that test the model read or wrote element 0, and a law such as
+        // "`Vector.set` succeeds exactly below the length" was proved although
+        // it is false at `-1`.
+        VectorGet => format!(
+            "(if {i} < 0 then Option.none else {v}[Int.toNat {i}]?)",
+            i = p(&a[1]),
+            v = p(&a[0])
+        ),
         VectorSet => format!(
-            "if {} < {}.size then Option.some ({}.set! (Int.toNat {}) {}) else Option.none",
-            p(&a[1]),
-            p(&a[0]),
-            p(&a[0]),
-            p(&a[1]),
-            p(&a[2])
+            "(if {i} < 0 then Option.none else if {i} < {v}.size then Option.some ({v}.set! (Int.toNat {i}) {x}) else Option.none)",
+            i = p(&a[1]),
+            v = p(&a[0]),
+            x = p(&a[2])
         ),
         VectorLen => format!("({}.size : Int)", p(&a[0])),
         VectorFromList => format!("{}.toArray", p(&a[0])),
@@ -260,6 +269,11 @@ pub fn emit_builtin_call(
         MapFromList => format!("AverMap.fromList {}", p(&a[0])),
     };
     Some(result)
+}
+
+/// An argument in a position Lean already types as `Int`.
+fn int_arg(arg: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
+    p(&super::expr::emit_int_anchored(arg, ctx))
 }
 
 fn emit_list_length_subject(arg: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
@@ -374,7 +388,7 @@ mod tests {
         let emitted = emit_builtin_call("Option.withDefault", &[option_expr, default_expr], &ctx)
             .expect("Option.withDefault should be emitted");
 
-        assert_eq!(emitted, "((String.fromCodePointAv 8).getD \"\")");
+        assert_eq!(emitted, "((String.fromCodePointAv (8 : Int)).getD \"\")");
     }
 
     #[test]
@@ -409,7 +423,7 @@ mod tests {
         assert_eq!(
             emitted,
             format!(
-                "(if 0 <= 3 && 3 <= {} then Except.ok (Array.replicate (Int.toNat 3) 0) else Except.error \"{}\")",
+                "(if 0 <= (3 : Int) && (3 : Int) <= {} then Except.ok (Array.replicate (Int.toNat (3 : Int)) (0 : Int)) else Except.error \"{}\")",
                 aver_rt::MAX_MATERIALIZED_VECTOR_ELEMENTS,
                 aver_rt::vector_size_error_message()
             )

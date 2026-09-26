@@ -4,6 +4,11 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Fixed — `aver proof` could prove a law that is false for negative integers
+
+- **An integer literal in the Lean export is now always a Lean `Int`.** A literal with nothing around it to fix its type, such as `(0 - 1) >= 0` in a law or in a function body, was read by Lean as a natural number, where `0 - 1` is `0`. A law like `Bool.or(positive(x), (0 - 1) >= 0) => true` was then reported proved although it is false at `x = 0`, and a law sampled at `0 - 1` could fail to build although `aver verify` passed it (#1451). Literals are now written `(n : Int)` wherever Lean could not tell, and `String.byteLength` is cast to `Int` like the other lengths.
+- **`Vector.get` and `Vector.set` with a negative index return `Option.None` in the Lean export, as they do at run time.** The export used to read or write element 0, so a law such as "`Vector.set` succeeds exactly below the length" was reported proved although it is false at `-1`.
+
 ### Changed — a large certificate checks faster
 
 - **`aver-cert check` of a large package takes about a third less time and less memory.** On an 800 KB module with 823 certified exports it went from 30 to 19 minutes and from 15.6 to 13.1 GB. The plans' acceptance is checked in several small proofs instead of one, distinct function indices and export names are checked in one pass instead of pairwise, the report's per-group data is computed once per group, and the axiom audit shares its work across all claims (5 minutes to 9 seconds). What a certificate proves is unchanged. The wall changed, so packages must be produced again.

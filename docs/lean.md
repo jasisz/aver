@@ -76,7 +76,9 @@ The default automatic mode is stricter at one boundary. Suppose a sampled `verif
 
 The same refusal covers pure capability operations owned by a provider. Each is exported as `noncomputable opaque`, with a proposition-only `Nonempty` witness and never `Inhabited`, so no default value can stand in for the provider. Every function whose call cone reaches one is emitted inside a `noncomputable section`. A sampled case or law whose cases, `given` values, template or `when` guard reach such an operation is declined as a whole instead of being evaluated. Functions and claims that never touch a capability operation are emitted exactly as before, even in a module that also holds part of a provider cone.
 
-The `Vector.get` / `Vector.set` family stays on `native_decide` even though it reduces in the kernel. Its exported model narrows a negative index to `0` where the runtime returns `Option.None`, and that can walk the model down a branch the program never took. String code-point lookup is total on both sides (`String.firstCodePoint("")` is `Option.None`), so it no longer needs this exception.
+`Vector.get` and `Vector.set` test a negative index before `Int.toNat` narrows it to `0`, so the exported model returns `Option.None` there, as the runtime does, and both reduce in the kernel. String code-point lookup is total on both sides (`String.firstCodePoint("")` is `Option.None`).
+
+Every Aver `Int` is a Lean `Int` in the export. A bare Lean numeral with no expected type is a `Nat`, where `0 - 1 = 0`, so an `Int` literal is written `(n : Int)` unless Lean already expects an `Int` at that position: an argument of a user function, a field of a user record or constructor, or an operand next to a variable, field or call of type `Int`. The `*.len` and `String.byteLength` builtins cast their `Nat` result to `Int` the same way.
 
 `verify ... law ...` always emits expanded sample theorems from `given` domains:
 - `theorem ..._sample_n := by native_decide`
