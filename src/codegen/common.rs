@@ -3543,9 +3543,13 @@ where
                 capabilities,
             ));
 
+            // A dependency's function is called with its module path
+            // (`Infra.Store.get(...)`); whether `find_fn_def` resolves that
+            // spelling is the caller's choice.
             let callee_name = match &callee.node {
                 Expr::Ident(name) => Some(name.clone()),
                 Expr::Resolved { name, .. } => Some(name.clone()),
+                Expr::Attr(..) => expr_to_dotted_name(&callee.node),
                 _ => None,
             };
 
@@ -3651,7 +3655,23 @@ where
             ),
             expr.line,
         ),
-        _ => expr.clone(),
+        // Every other shape carries its calls in its children: a call under
+        // `?` (`f(x)?`), inside a constructor, a list or a record still needs
+        // its oracle arguments, or the case names the lifted function at
+        // the wrong arity.
+        _ => {
+            let mut out = expr.clone();
+            crate::codegen::expr_walk::for_each_child_mut(&mut out, &mut |child| {
+                *child = rewrite_effectful_call(
+                    child,
+                    injection_by_effect,
+                    fresh_by_effect,
+                    find_fn_def,
+                    capabilities,
+                );
+            });
+            out
+        }
     }
 }
 

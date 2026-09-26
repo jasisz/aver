@@ -38,6 +38,57 @@ pub(super) fn plain_case_unfold_names(expr: &Spanned<Expr>, ctx: &CodegenContext
     names.into_iter().collect()
 }
 
+/// Why a claim cannot be stated because an oracle it needs has no concrete
+/// type, or `None` when every oracle it needs has one.
+///
+/// A generic capability operation (`Wait.poll<K>`) takes the program's one
+/// instantiation before emission starts. A program that does not settle one
+/// leaves the operation generic: the lift of every function that performs it
+/// declines, so a case would name a function the export does not define, and
+/// a law `given` of the operation would need a type Lean cannot spell.
+pub(super) fn generic_oracle_refusal(vb: &VerifyBlock, ctx: &CodegenContext) -> Option<String> {
+    use crate::types::checker::effect_classification::{
+        classify_with_registry, oracle_signature_with_registry,
+    };
+    use crate::types::checker::effect_lifting::{
+        oracle_params_for_effects_with_registry, type_mentions_var,
+    };
+
+    let scope = ctx.active_module_scope();
+    if let Some(fd) = ctx.fn_def_by_name(&vb.fn_name, scope.as_deref())
+        && !fd.effects.is_empty()
+        && fd
+            .effects
+            .iter()
+            .all(|effect| classify_with_registry(&ctx.capabilities, &effect.node).is_some())
+        && let Err(error) = oracle_params_for_effects_with_registry(&fd.effects, &ctx.capabilities)
+    {
+        return Some(format!(
+            "`{}` is not exported: {}",
+            vb.fn_name,
+            error.reason()
+        ));
+    }
+    let crate::ast::VerifyKind::Law(law) = &vb.kind else {
+        return None;
+    };
+    law.givens.iter().find_map(|given| {
+        oracle_signature_with_registry(&ctx.capabilities, &given.type_name)
+            .filter(type_mentions_var)
+            .map(|_| {
+                format!(
+                    "`given {}: {}` needs an oracle type, and {}",
+                    given.name,
+                    given.type_name,
+                    crate::types::checker::effect_lifting::LiftError::GenericOracle {
+                        method: given.type_name.clone(),
+                    }
+                    .reason()
+                )
+            })
+    })
+}
+
 /// Rewrite a cases-form assertion against an Oracle-lifted function.
 ///
 /// Explicit `given` stubs remain concrete sample arguments. Any classified
@@ -143,14 +194,14 @@ pub(super) fn rewrite_plain_case_oracles(
     let left = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         left,
         &synthetic_law,
-        |name| ctx.fn_def_by_name(name, scope.as_deref()),
+        |name| ctx.fn_def_by_callee(name, scope.as_deref()),
         mode.clone(),
         &ctx.capabilities,
     );
     let right = crate::codegen::common::rewrite_effectful_calls_in_law_with_registry(
         right,
         &synthetic_law,
-        |name| ctx.fn_def_by_name(name, scope.as_deref()),
+        |name| ctx.fn_def_by_callee(name, scope.as_deref()),
         mode,
         &ctx.capabilities,
     );

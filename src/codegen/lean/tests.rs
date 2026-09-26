@@ -5622,3 +5622,78 @@ fn pollOnce(items: Map<Int, Wait.Item>) -> Result<List<Int>, String>
         "{lifted:?}"
     );
 }
+
+/// Proof export pins `Wait.poll<K>` to the key the program's wait sets use
+/// before it lifts anything, so a function that polls and carries a case is
+/// lifted with an oracle typed at that key instead of aborting the export on
+/// the unbound `K` (#1449). The case quantifies over the same oracle.
+#[test]
+fn wait_poll_oracle_is_typed_at_the_programs_key() {
+    let source = r#"
+module WaitKeyed
+    depends [Wait]
+    intent = "A function that polls a wait set keyed by a sum type."
+    exposes [polled, Watch]
+    effects [Wait.poll]
+
+type Watch
+    Peer(Int)
+    Listener
+
+fn polled(items: Map<Watch, Wait.Item>, timeoutMs: Int) -> Result<List<Watch>, String>
+    ? "Which watches are ready; none, when nothing is watched."
+    ! [Wait.poll]
+    match Map.len(items) == 0
+        true -> Result.Ok([])
+        false -> Wait.poll(items, timeoutMs)
+
+verify polled
+    polled({}, 10) => Result.Ok([])
+"#;
+    let mut ctx = ctx_from_source(source, "WaitKeyed");
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    let oracle = "(rnd_Wait_poll : BranchPath → Int → (List (Watch × Wait.Item)) → Int → Except String (List Watch))";
+    assert!(
+        lean.contains(&format!("def polled (path : BranchPath) {oracle}")),
+        "{lean}"
+    );
+    assert!(
+        lean.contains(&format!("example {oracle} : polled")),
+        "{lean}"
+    );
+    assert!(ctx.declined_claims.borrow().is_empty());
+}
+
+/// A case that reads an effectful function's result through `?` passes the
+/// path and the oracle to the inner call too. The rewrite used to stop at the
+/// `?`, so the inner call named the lifted function without them and Lean
+/// rejected the case for its arity.
+#[test]
+fn case_oracle_reaches_a_call_under_question_mark() {
+    let source = r#"
+module Qm
+    intent = "A case that reads an effectful result through a question mark."
+    exposes [roll]
+    effects [Random.int]
+
+fn roll(n: Int) -> Result<Int, String>
+    ? "n when positive, otherwise a die roll."
+    ! [Random.int]
+    match n > 0
+        true -> Result.Ok(n)
+        false -> Result.Ok(Random.int(1, 6))
+
+verify roll
+    roll(roll(2)?) => Result.Ok(2)
+"#;
+    let mut ctx = ctx_from_source(source, "Qm");
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    assert!(
+        lean.contains(
+            "roll BranchPath.Root rnd_Random_int (<- roll BranchPath.Root rnd_Random_int 2)"
+        ),
+        "{lean}"
+    );
+}

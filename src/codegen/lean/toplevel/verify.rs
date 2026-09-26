@@ -155,7 +155,12 @@ pub fn emit_verify_block(
         roots.extend(law.because.iter());
         roots.extend(law.when.iter());
     }
-    let refusal = if matches!(verify_mode, VerifyEmitMode::NativeDecide) {
+    // An oracle whose type the program never settles (a generic operation
+    // such as `Wait.poll<K>` in a program whose waits disagree about `K`)
+    // has no Lean type at all, so this refusal holds in every emit mode.
+    let refusal = if let Some(reason) = super::verify_cases::generic_oracle_refusal(vb, ctx) {
+        Some(reason)
+    } else if matches!(verify_mode, VerifyEmitMode::NativeDecide) {
         decidability
             .capability_decline_reason(&roots, ctx)
             .or_else(|| {
@@ -320,14 +325,20 @@ pub fn emit_verify_block(
                     // case after the concrete branch reduces. `simp` removes
                     // it before native evaluation; if a future case actually
                     // depends on the oracle, the remaining free variable makes
-                    // `native_decide` fail closed.
+                    // `native_decide` fail closed. `+decide` lets simp settle
+                    // a closed branch condition its lemmas do not rewrite
+                    // (`AverMap.len [] = 0`); without it the condition stays a
+                    // hypothesis beside the oracle and `native_decide` refuses
+                    // the goal for its free variable.
+                    // Qualified names escape per segment: a dependency's
+                    // `Domain.ByteField.at` is defined as `at'`.
                     let unfolds = super::verify_cases::plain_case_unfold_names(&left, ctx)
                         .into_iter()
-                        .map(|name| aver_name_to_lean(&name))
+                        .map(|name| crate::codegen::lean::syntax::aver_path_to_lean(&name))
                         .collect::<Vec<_>>()
                         .join(", ");
                     format!(
-                        "simp [{}] <;> native_decide",
+                        "simp +decide [{}] <;> native_decide",
                         if unfolds.is_empty() {
                             aver_name_to_lean(&vb.fn_name)
                         } else {

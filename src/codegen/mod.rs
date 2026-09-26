@@ -1070,6 +1070,19 @@ impl CodegenContext {
                 .find(matches),
         }
     }
+
+    /// [`Self::fn_def_by_name`], also resolving a call spelled with its
+    /// module path (`Infra.Store.get`) to that dependency's function.
+    pub fn fn_def_by_callee(&self, name: &str, scope: Option<&str>) -> Option<&FnDef> {
+        self.fn_def_by_name(name, scope).or_else(|| {
+            let (module, bare) = name.rsplit_once('.')?;
+            self.modules
+                .iter()
+                .any(|m| m.prefix == module)
+                .then(|| self.fn_def_by_name(bare, Some(module)))
+                .flatten()
+        })
+    }
 }
 
 impl CodegenContext {
