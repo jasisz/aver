@@ -4345,16 +4345,28 @@ mod tests {
     #[test]
     fn artifact_bytes_are_little_endian_nat() {
         let rendered = wall::render_artifact_bytes(&[0x00, 0x61, 0x73, 0x6d]);
-        assert!(rendered.contains("noncomputable def modBytes : Nat :=\n  0x6d736100\n"));
+        assert!(rendered.contains("noncomputable def chunks : List Nat :=\n  [0x6d736100]\n"));
+        assert!(rendered.contains(
+            "noncomputable def modBytes : Nat :=\n  AverCert.ScaleBytes.joinTree 1024 32 chunks\n"
+        ));
         assert!(rendered.contains("def modLen : Nat := 4"));
-        // Past one numeral chunk, each chunk sits at its byte offset.
-        let mut long = vec![0u8; 1025];
+        // The chunks are cut every 1024 bytes, whatever the module's
+        // structure, each little-endian: chunk 0 holds bytes 0 to 1023.
+        let mut long = vec![0u8; 2049];
         long[0] = 0x01;
+        long[1023] = 0xcd;
         long[1024] = 0xab;
+        long[2048] = 0xef;
         let rendered = wall::render_artifact_bytes(&long);
-        assert!(rendered.contains("noncomputable def modBytes : Nat :=\n  0x"));
-        assert!(rendered.contains("01 |||\n  (0xab <<< 8192)\n"));
-        assert!(rendered.contains("def modLen : Nat := 1025"));
+        let first = format!("0xcd{}01", "00".repeat(1022));
+        let second = format!("0x{}ab", "00".repeat(1023));
+        assert!(rendered.contains(&format!(
+            "noncomputable def chunks : List Nat :=\n  [{first},\n   {second},\n   0xef]\n"
+        )));
+        assert!(rendered.contains("def modLen : Nat := 2049"));
+        let empty = wall::render_artifact_bytes(&[]);
+        assert!(empty.contains("noncomputable def chunks : List Nat :=\n  []\n"));
+        assert!(empty.contains("def modLen : Nat := 0"));
     }
 
     #[test]

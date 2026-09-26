@@ -24,8 +24,13 @@
 //! * a law statement whose literals hide a parenthesis that re-associates the
 //!   witness's conjunction;
 //! * a section cut (the producer's declared entry lengths) that moves one
-//!   byte between two exports, or between two code entries, or one of the
-//!   type section;
+//!   byte between two exports, or one of the type section;
+//! * on the chunked byte path: a code slice moved by one byte that still
+//!   tiles, overlapping code entries, a gap between code entries, a lying
+//!   code count, a false section header, a header inside a payload, a header
+//!   past the end of the module, a plan whose packed lowering is not its code
+//!   entry, role bits hiding a helper call, and a package chunk list with a
+//!   wrong chunk boundary;
 //! * a package constant a report pin used to read as a dotted path
 //!   (`AverCert.manifest.obligations`, `AverCert.manifest.subject.contracts`,
 //!   `AverCert.Artifact.data.manifest`, and `.modBytes` on wasip2), with and
@@ -507,15 +512,277 @@ fn cert_hardening_declines_a_lying_export_cut() {
     assert_declined(ok, &report, "did not build");
 }
 
-/// The same lie about the code section's entries.
+// ---- the byte path: chunks, framing, code tiling, packed plans --------------
+//
+// The module is read through checker-rendered 1 KiB chunks. The producer
+// declares every section header's offset, every code entry's offset and
+// length, and each plan's role bits; the wall reads each on its own chunk
+// window and requires the declarations to chain from the magic to the end of
+// the module (`ScaleLayout.framingOk`) and to tile the code section
+// (`ScaleLayout.codeTiled`). Each test below tells one lie that keeps the
+// rest of the package intact.
+
+/// The packed layout table `field` as its entries, entry 0 first, and a
+/// writer for it (`packed_hex` in `layout.rs`: `0x0` then 8 hex digits per
+/// entry, the last entry first).
+fn layout_table(layout: &Path, field: &str) -> (Vec<i64>, impl Fn(&[i64])) {
+    let text = std::fs::read_to_string(layout).unwrap();
+    let head = format!("{field} := 0x0");
+    let start = text.find(&head).expect("the layout declares the table") + head.len();
+    let end = start
+        + text[start..]
+            .find(|c: char| !c.is_ascii_hexdigit())
+            .unwrap();
+    let digits = &text[start..end];
+    assert_eq!(digits.len() % 8, 0, "{field}: {digits}");
+    let mut entries: Vec<i64> = digits
+        .as_bytes()
+        .chunks(8)
+        .map(|d| i64::from_str_radix(std::str::from_utf8(d).unwrap(), 16).unwrap())
+        .collect();
+    entries.reverse();
+    let (before, after) = (text[..start].to_string(), text[end..].to_string());
+    let path = layout.to_path_buf();
+    let write = move |entries: &[i64]| {
+        let body: String = entries.iter().rev().map(|e| format!("{e:08x}")).collect();
+        std::fs::write(&path, format!("{before}{body}{after}")).unwrap();
+    };
+    (entries, write)
+}
+
+/// Replace the list literal that follows `def {name} : List Nat :=`.
+fn edit_nat_list(path: &Path, name: &str, edit: impl FnOnce(&mut Vec<u64>)) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let head = format!("def {name} : List Nat :=\n  [");
+    let start = text.find(&head).expect("the list is declared") + head.len();
+    let end = start + text[start..].find(']').unwrap();
+    let mut items: Vec<u64> = text[start..end]
+        .split(',')
+        .map(|x| x.trim().parse().unwrap())
+        .collect();
+    edit(&mut items);
+    let body = items
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(path, format!("{}{body}{}", &text[..start], &text[end..])).unwrap();
+}
+
+fn declines_in_layout(cert: &Path, wasm: &Path, needle: &str) {
+    let (ok, report) = aver_cert("check", wasm, cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("ArtifactLayout"), "{report}");
+    assert!(report.contains(needle), "expected `{needle}`:\n{report}");
+}
+
+/// A lying slice that still tiles: one byte moved from the second code entry
+/// to the first (its length one longer, the next entry one byte later and one
+/// shorter). Count, offsets and lengths chain, so only the entries' own size
+/// LEBs catch it: neither decodes on its declared window.
 #[test]
-fn cert_hardening_declines_a_lying_code_cut() {
-    let Some((_dir, wasm, cert)) = baseline("certharden-codecut") else {
+fn cert_hardening_declines_a_lying_code_slice() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-codeslice") else {
         return;
     };
-    shift_first_cut(&cert.join("ArtifactLayout.lean"), "codeCuts");
+    let layout = cert.join("ArtifactLayout.lean");
+    let (mut lengths, write_lengths) = layout_table(&layout, "lengths");
+    lengths[0] += 1;
+    lengths[1] -= 1;
+    write_lengths(&lengths);
+    let (mut offsets, write_offsets) = layout_table(&layout, "offsets");
+    offsets[1] += 1;
+    write_offsets(&offsets);
+    declines_in_layout(&cert, &wasm, "codeEntryOk");
+}
+
+/// Two code entries that overlap: a middle entry declared one byte longer,
+/// reaching into the next one, which still starts where it does.
+#[test]
+fn cert_hardening_declines_overlapping_code_entries() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-codeoverlap") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let (mut lengths, write) = layout_table(&layout, "lengths");
+    let mid = lengths.len() / 2;
+    lengths[mid] += 1;
+    write(&lengths);
+    declines_in_layout(&cert, &wasm, "codeTiled");
+}
+
+/// A gap between two code entries: a middle entry declared one byte later
+/// and one byte shorter, so it still ends where it did and one byte of the
+/// section belongs to no entry.
+#[test]
+fn cert_hardening_declines_a_gap_between_code_entries() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-codegap") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let (mut offsets, write_offsets) = layout_table(&layout, "offsets");
+    let mid = offsets.len() / 2;
+    offsets[mid] += 1;
+    write_offsets(&offsets);
+    let (mut lengths, write_lengths) = layout_table(&layout, "lengths");
+    lengths[mid] -= 1;
+    write_lengths(&lengths);
+    declines_in_layout(&cert, &wasm, "codeTiled");
+}
+
+/// A code section declared one function short: the section's own count
+/// must equal the declared count.
+#[test]
+fn cert_hardening_declines_a_lying_code_count() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-codecount") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let at = text.find("count := ").unwrap() + "count := ".len();
+    let end = at + text[at..].find(',').unwrap();
+    let count: u64 = text[at..end].parse().unwrap();
+    std::fs::write(
+        &layout,
+        format!("{}{}{}", &text[..at], count - 1, &text[end..]),
+    )
+    .unwrap();
+    declines_in_layout(&cert, &wasm, "codeTiled");
+}
+
+/// A false section header: one header declared one byte into its section,
+/// so its id and size are read from the wrong bytes and the chain of
+/// payloads breaks.
+#[test]
+fn cert_hardening_declines_a_false_section_header() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-header") else {
+        return;
+    };
+    edit_nat_list(&cert.join("ArtifactLayout.lean"), "headers", |hs| {
+        assert!(hs.len() > 2, "{hs:?}");
+        hs[1] += 1;
+    });
+    declines_in_layout(&cert, &wasm, "framingOk");
+}
+
+/// A header declared inside a payload: an extra section between two real
+/// ones, where the type section's payload is.
+#[test]
+fn cert_hardening_declines_a_header_inside_a_payload() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-innerheader") else {
+        return;
+    };
+    edit_nat_list(&cert.join("ArtifactLayout.lean"), "headers", |hs| {
+        let inner = (hs[0] + hs[1]) / 2;
+        hs.insert(1, inner);
+    });
+    declines_in_layout(&cert, &wasm, "framingOk");
+}
+
+/// A read past the end: one more header declared at the module's length,
+/// where there is no byte left to read.
+#[test]
+fn cert_hardening_declines_a_header_past_the_end() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-pastend") else {
+        return;
+    };
+    let len = std::fs::metadata(&wasm).unwrap().len();
+    edit_nat_list(&cert.join("ArtifactLayout.lean"), "headers", |hs| {
+        hs.push(len)
+    });
+    declines_in_layout(&cert, &wasm, "framingOk");
+}
+
+/// A lying packed code entry: the first plan's lowering changed (its integer
+/// literal) while its declared code entry stays. The plan still types, the
+/// layout still tiles, and only the packed comparison of the lowering with
+/// the entry's chunk window refuses it.
+#[test]
+fn cert_hardening_declines_a_lying_packed_code_entry() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-packed") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let at = text.find("def fn").expect("a plan");
+    let body_end = at + text[at..].find("\n\n").unwrap();
+    let body = &text[at..body_end];
+    let lit = body.find(".int 2").expect("addTwo adds the literal 2");
+    let edited = format!("{}.int 3{}", &body[..lit], &body[lit + ".int 2".len()..]);
+    std::fs::write(
+        &plans,
+        format!("{}{edited}{}", &text[..at], &text[body_end..]),
+    )
+    .unwrap();
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
+    assert!(report.contains("planCheck"), "{report}");
+}
+
+/// Role bits that hide a helper call: the first plan calls the carrier
+/// helpers, and its declared bits say it calls none. Its own declaration
+/// compares the bits with its lowering.
+#[test]
+fn cert_hardening_declines_lying_role_bits() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-rolebits") else {
+        return;
+    };
+    edit_nat_list(&cert.join("ArtifactLayout.lean"), "callBits", |bits| {
+        assert_ne!(bits[0], 0, "{bits:?}");
+        bits[0] = 0;
+    });
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("planCheck"), "{report}");
+}
+
+/// A wrong chunk boundary: the package reads its own chunk list with the
+/// second chunk moved into the first. The list joins to the same module
+/// numeral, so `join = modBytes` holds, but the first chunk no longer fits
+/// 1 KiB, and every window past it would read the wrong bytes.
+#[test]
+fn cert_hardening_declines_a_wrong_chunk_boundary() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-chunks") else {
+        return;
+    };
+    let bytes = std::fs::read(&wasm).unwrap();
+    assert!(bytes.len() > 2048, "the module spans more than two chunks");
+    let hex = |chunk: &[u8]| {
+        let digits: String = chunk.iter().rev().map(|b| format!("{b:02x}")).collect();
+        format!("0x{digits}")
+    };
+    let mut chunks = vec![hex(&bytes[..2048]), "0".to_string()];
+    chunks.extend(bytes[2048..].chunks(1024).map(hex));
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout)
+        .unwrap()
+        .replace("AverCert.ArtifactBytes.chunks", "liedChunks")
+        .replace(
+            "(AverCert.ScaleBytes.joinTree_eq _ _ _).symm",
+            "by decide +kernel",
+        );
+    let at = text.find("def layout : Layout").unwrap();
+    let text = format!(
+        "{}noncomputable def liedChunks : List Nat :=\n  [{}]\n\n{}",
+        &text[..at],
+        chunks.join(",\n   "),
+        &text[at..]
+    );
+    std::fs::write(&layout, text).unwrap();
+    for name in [
+        "ArtifactPlans.lean",
+        "ArtifactStrings.lean",
+        "Artifact.lean",
+    ] {
+        let path = cert.join(name);
+        if path.exists() {
+            let text = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("AverCert.ArtifactBytes.chunks", "liedChunks");
+            std::fs::write(&path, text).unwrap();
+        }
+    }
+    declines_in_layout(&cert, &wasm, "chunksFit");
 }
 
 // ---- package constants that extend a name the witness reads ----------------
