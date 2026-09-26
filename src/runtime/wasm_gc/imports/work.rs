@@ -179,6 +179,15 @@ fn wait<'entries>(
     sockets.sort_by(|left, right| left.provider_order.cmp(&right.provider_order));
 
     let mut ready = jobs;
+    // Nothing to watch and nothing ready: the wait is a deadline alone, and
+    // it sleeps it out the way the VM does, rather than answering at once
+    // and turning the loop around it into a spin.
+    if sockets.is_empty() && ready.is_empty() && timeout_ms > 0 {
+        let deadline = aver_rt::provider::wait_deadline(std::time::Instant::now(), timeout_ms);
+        if let Err(error) = aver_rt::provider::wait_ready(&[], &[], deadline) {
+            return Ok(Err(error));
+        }
+    }
     if !sockets.is_empty() {
         let handles = sockets
             .iter()

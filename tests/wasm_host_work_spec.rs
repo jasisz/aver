@@ -173,6 +173,9 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
         "wait_socket_only",
         // A turn that calls Run.fail: the coordinator answers its reason.
         "run_fail",
+        // A program that reads Run.lastTurn: the host's clock marks the
+        // waits it awaits.
+        "run_last_turn",
     ] {
         let fixture = repo_root().join("tests/fixtures").join(name);
         let output = bounded(
@@ -199,7 +202,8 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
             .arg(out.path().join("work_jobs_unit_task/main.wasm"))
             .arg(out.path().join("work_jobs_unit_result/main.wasm"))
             .arg(out.path().join("wait_socket_only/main.wasm"))
-            .arg(out.path().join("run_fail/main.wasm")),
+            .arg(out.path().join("run_fail/main.wasm"))
+            .arg(out.path().join("run_last_turn/main.wasm")),
     );
     assert!(output.status.success(), "{}", format_output(&output));
     assert!(String::from_utf8_lossy(&output.stdout).contains("worker ABI passed"));
@@ -210,6 +214,11 @@ fn javascript_workers_run_the_coordinator_and_progress_independently() {
     );
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("Run.fail coordinator passed"),
+        "{}",
+        format_output(&output)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Run.lastTurn coordinator passed"),
         "{}",
         format_output(&output)
     );

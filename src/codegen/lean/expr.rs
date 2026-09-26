@@ -180,15 +180,23 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             }
         }
         ResolvedExpr::Call(callee, args) => emit_fn_call(callee, args, ctx),
-        ResolvedExpr::Neg(inner) => format!("(-{})", emit_expr(inner, ctx)),
+        ResolvedExpr::Neg(inner) => match bare_int_literal(inner) {
+            // `-2` parses as a negation of `2`: one ascription covers both.
+            Some(digits) => format!("(-{digits} : Int)"),
+            None => format!("(-{})", emit_expr(inner, ctx)),
+        },
         ResolvedExpr::BinOp(op, left, right) => {
-            let (l, r) = typed_comparison_operands(
-                op,
-                left,
-                right,
-                emit_expr(left, ctx),
-                emit_expr(right, ctx),
-            );
+            let (l, r) = if is_int_operand(left) || is_int_operand(right) {
+                int_binop_operands(left, right, ctx)
+            } else {
+                typed_comparison_operands(
+                    op,
+                    left,
+                    right,
+                    emit_expr(left, ctx),
+                    emit_expr(right, ctx),
+                )
+            };
             let op_str = match op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",
@@ -230,7 +238,21 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
                     None => "[]".to_string(),
                 }
             } else {
-                let parts: Vec<String> = elements.iter().map(|e| emit_expr(e, ctx)).collect();
+                // Lean gives every element the type of the first one it can
+                // fix, so one `Int` term makes the other literals `Int` too.
+                let mut pinned = elements.iter().any(anchors_int);
+                let parts: Vec<String> = elements
+                    .iter()
+                    .map(|e| {
+                        let text = if pinned {
+                            emit_int_anchored(e, ctx)
+                        } else {
+                            emit_expr(e, ctx)
+                        };
+                        pinned |= pins_int(e);
+                        text
+                    })
+                    .collect();
                 format!("[{}]", parts.join(", "))
             }
         }
@@ -348,7 +370,11 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             let parts: Vec<String> = fields
                 .iter()
                 .map(|(name, expr)| {
-                    format!("{} := {}", aver_name_to_lean(name), emit_expr(expr, ctx))
+                    format!(
+                        "{} := {}",
+                        aver_name_to_lean(name),
+                        emit_int_anchored(expr, ctx)
+                    )
                 })
                 .collect();
             // Builtin HOST carrier records (`Terminal.Size`,
@@ -371,7 +397,11 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             let parts: Vec<String> = updates
                 .iter()
                 .map(|(name, expr)| {
-                    format!("{} := {}", aver_name_to_lean(name), emit_expr(expr, ctx))
+                    format!(
+                        "{} := {}",
+                        aver_name_to_lean(name),
+                        emit_int_anchored(expr, ctx)
+                    )
                 })
                 .collect();
             format!("{{ {} with {} }}", base_str, parts.join(", "))
@@ -436,7 +466,6 @@ fn is_one_group(s: &str) -> bool {
 fn emit_expr_atom(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     let s = emit_expr(expr, ctx);
     match &expr.node {
-        ResolvedExpr::Literal(Literal::Int(i)) if *i < 0 => format!("({})", s),
         ResolvedExpr::Literal(Literal::Float(f)) if *f < 0.0 => format!("({})", s),
         ResolvedExpr::Literal(_)
         | ResolvedExpr::Ident(_)
@@ -453,12 +482,122 @@ fn emit_expr_atom(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String 
     }
 }
 
+/// Where Lean already elaborates an argument at `Int`, an `Int` literal is
+/// emitted bare; anything else goes through [`emit_expr_atom`].
+///
+/// Only positions whose expected type Lean takes from a declaration are
+/// anchored: the parameters of a user function or function value, the fields
+/// of a user record or constructor, and an operand whose sibling is a
+/// variable, field or call of type `Int` (Lean's `binop%` then lifts every
+/// numeral of the tree to `Int`). Every other `Int` literal carries its
+/// ascription, see [`emit_literal`].
+fn emit_int_anchored_atom(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
+    bare_int_literal(expr).unwrap_or_else(|| emit_expr_atom(expr, ctx))
+}
+
+/// The same as [`emit_int_anchored_atom`] for a position that needs no
+/// parentheses, such as a record field after `:=` or the right side of
+/// `x = …` where `x` is a typed binder.
+pub(super) fn emit_int_anchored(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
+    bare_int_literal(expr).unwrap_or_else(|| emit_expr(expr, ctx))
+}
+
+fn bare_int_literal(expr: &Spanned<ResolvedExpr>) -> Option<String> {
+    match &expr.node {
+        ResolvedExpr::Literal(Literal::Int(i)) if *i < 0 => Some(format!("({i})")),
+        ResolvedExpr::Literal(Literal::Int(i)) => Some(i.to_string()),
+        ResolvedExpr::Literal(Literal::BigInt(s)) => Some(s.clone()),
+        ResolvedExpr::Neg(inner) => bare_int_literal(inner).map(|digits| format!("(-{digits})")),
+        _ => None,
+    }
+}
+
+/// Whether `expr` is emitted as a Lean term whose type Lean knows on its
+/// own: a variable, a field, or a call of a user function or a function
+/// value. Their types come from declarations, so next to an `Int` literal
+/// (which Aver only allows next to another `Int`) they pin the tree to `Int`.
+///
+/// A missing type stamp does not disqualify: the proof-mode rewrites build
+/// such idents without one, and the sibling literal already fixes the Aver
+/// type. A stamp that says anything other than `Int` does.
+fn anchors_int(expr: &Spanned<ResolvedExpr>) -> bool {
+    matches!(expr.ty(), None | Some(crate::types::Type::Int))
+        && match &expr.node {
+            ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } => {
+                name != crate::codegen::recursion::OMEGA_PROOF_SENTINEL
+            }
+            ResolvedExpr::Attr(..) => true,
+            ResolvedExpr::Call(ResolvedCallee::Fn(_) | ResolvedCallee::LocalSlot { .. }, _) => true,
+            _ => false,
+        }
+}
+
+/// Whether the emitted `expr` is already an `Int` term in Lean, so an
+/// arithmetic or comparison tree containing it elaborates at `Int`.
+fn pins_int(expr: &Spanned<ResolvedExpr>) -> bool {
+    match &expr.node {
+        // `emit_literal` ascribes it.
+        ResolvedExpr::Literal(Literal::Int(_) | Literal::BigInt(_)) => true,
+        ResolvedExpr::Neg(inner) => pins_int(inner),
+        ResolvedExpr::BinOp(op, l, r) if is_int_tree_op(op) => pins_int(l) || pins_int(r),
+        _ => anchors_int(expr),
+    }
+}
+
+fn is_int_tree_op(op: &BinOp) -> bool {
+    !matches!(op, BinOp::Eq | BinOp::Neq)
+}
+
+fn is_int_operand(expr: &Spanned<ResolvedExpr>) -> bool {
+    matches!(
+        &expr.node,
+        ResolvedExpr::Literal(Literal::Int(_) | Literal::BigInt(_))
+    ) || matches!(expr.ty(), Some(crate::types::Type::Int))
+}
+
+/// Operands of an arithmetic or comparison node, typed so that Lean reads
+/// the node at `Int`.
+///
+/// A literal next to an anchoring sibling, or right of a pinned left operand,
+/// stays bare. When neither side can fix the type in Lean (two `match`
+/// expressions with literal arms, say), the left operand is ascribed, because
+/// Lean would otherwise default the whole tree to `Nat`, where `0 - 1 = 0`.
+fn int_binop_operands(
+    left: &Spanned<ResolvedExpr>,
+    right: &Spanned<ResolvedExpr>,
+    ctx: &CodegenContext,
+) -> (String, String) {
+    let mut l = if anchors_int(right) {
+        emit_int_anchored(left, ctx)
+    } else {
+        emit_expr(left, ctx)
+    };
+    // The left operand is emitted first, so an ascribed left literal is
+    // enough for the right one: `(0 : Int) - 1`.
+    let r = if pins_int(left) {
+        emit_int_anchored(right, ctx)
+    } else {
+        emit_expr(right, ctx)
+    };
+    if (is_int_operand(left) || is_int_operand(right)) && !pins_int(left) && !pins_int(right) {
+        l = format!("({l} : Int)");
+    }
+    (l, r)
+}
+
+/// Lean text of a literal.
+///
+/// An Aver `Int` is ℤ. A bare Lean numeral with no expected type defaults to
+/// `Nat`, where `0 - 1 = 0`, so a claim such as `(0 - 1) >= 0` in a sampled
+/// law would state a different, true proposition. Every `Int` literal is
+/// therefore ascribed; the positions where Lean already expects an `Int` emit
+/// it bare through [`emit_int_anchored_atom`].
 fn emit_literal(lit: &Literal) -> String {
     match lit {
-        Literal::Int(i) => format!("{}", i),
-        // Lean numerals are arbitrary-precision; emit the digits bare and let
-        // expected-type elaboration pin them to `Int` (same as the i64 path).
-        Literal::BigInt(s) => s.clone(),
+        Literal::Int(i) => format!("({i} : Int)"),
+        // Lean numerals are arbitrary-precision; the digits are the unsigned
+        // magnitude (the sign is a separate `Neg`).
+        Literal::BigInt(s) => format!("({s} : Int)"),
         Literal::Float(f) => {
             let s = f.to_string();
             if s.contains('.') {
@@ -612,11 +751,13 @@ fn emit_fn_call(
             // The HIR resolver produces these intrinsics for every
             // discharged source call.
             match intr {
-                BuiltinIntrinsic::IntDivEuclid if arg_strs.len() == 2 => {
-                    format!("({} / {})", arg_strs[0], arg_strs[1])
+                BuiltinIntrinsic::IntDivEuclid if args.len() == 2 => {
+                    let (l, r) = int_binop_operands(&args[0], &args[1], ctx);
+                    format!("({l} / {r})")
                 }
-                BuiltinIntrinsic::IntModEuclid if arg_strs.len() == 2 => {
-                    format!("({} % {})", arg_strs[0], arg_strs[1])
+                BuiltinIntrinsic::IntModEuclid if args.len() == 2 => {
+                    let (l, r) = int_binop_operands(&args[0], &args[1], ctx);
+                    format!("({l} % {r})")
                 }
                 // Literal-count discharge: shift-left and low use a bounded
                 // non-negative literal; shift-right accepts every
@@ -637,9 +778,11 @@ fn emit_fn_call(
                     "(Array.replicate (Int.toNat {}) {})",
                     arg_strs[0], arg_strs[1]
                 ),
-                BuiltinIntrinsic::BranchPathChild if arg_strs.len() == 2 => {
-                    format!("(BranchPath.child {} {})", arg_strs[0], arg_strs[1])
-                }
+                BuiltinIntrinsic::BranchPathChild if arg_strs.len() == 2 => format!(
+                    "(BranchPath.child {} {})",
+                    arg_strs[0],
+                    emit_int_anchored_atom(&args[1], ctx)
+                ),
                 BuiltinIntrinsic::BranchPathParse if arg_strs.len() == 1 => {
                     format!("(BranchPath.parse {})", arg_strs[0])
                 }
@@ -656,7 +799,10 @@ fn emit_fn_call(
             }
         }
         ResolvedCallee::Fn(fn_id) => {
-            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            let arg_strs: Vec<String> = args
+                .iter()
+                .map(|a| emit_int_anchored_atom(a, ctx))
+                .collect();
             let func = user_fn_path(*fn_id, ctx);
             if arg_strs.is_empty() {
                 func
@@ -666,7 +812,10 @@ fn emit_fn_call(
         }
         ResolvedCallee::LocalSlot { name, .. } => {
             // First-class fn value bound to a local — curry application.
-            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            let arg_strs: Vec<String> = args
+                .iter()
+                .map(|a| emit_int_anchored_atom(a, ctx))
+                .collect();
             let func = aver_name_to_lean(name);
             if arg_strs.is_empty() {
                 func
@@ -679,8 +828,25 @@ fn emit_fn_call(
             // expression as a curry'd call so the surrounding Lean
             // proof still typechecks (verify driver surfaces the
             // missing target separately).
+            //
+            // The effect lifter's oracle calls (`rnd_Random_int path 0 1 6`)
+            // arrive here too: a bare name bound as a parameter whose Lean
+            // type spells every argument, so their literals stay bare.
             let func = emit_expr(inner, ctx);
-            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            let bare_name = matches!(
+                &inner.node,
+                ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. }
+            );
+            let arg_strs: Vec<String> = args
+                .iter()
+                .map(|a| {
+                    if bare_name {
+                        emit_int_anchored_atom(a, ctx)
+                    } else {
+                        emit_expr_atom(a, ctx)
+                    }
+                })
+                .collect();
             if arg_strs.is_empty() {
                 func
             } else {
@@ -759,7 +925,10 @@ fn emit_constructor(
             // Aver names).
             let type_name = user_type_path(*type_id, ctx);
             let variant = super::syntax::lean_ctor_name(name);
-            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            let arg_strs: Vec<String> = args
+                .iter()
+                .map(|a| emit_int_anchored_atom(a, ctx))
+                .collect();
             if arg_strs.is_empty() {
                 format!("{}.{}", type_name, variant)
             } else {

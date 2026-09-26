@@ -86,7 +86,7 @@ verify f
         "verify-case `?` must short-circuit instead of substituting a default:\n{lean}"
     );
     assert!(
-        lean.contains("example : (do pure ((<- f 0))) = Except.ok (0)"),
+        lean.contains("example : (do pure ((<- f 0))) = Except.ok ((0 : Int))"),
         "the case must be stated as an `Except` action against `Except.ok`:\n{lean}"
     );
     let _ = std::fs::remove_dir_all(&src);
@@ -168,7 +168,9 @@ verify f law zero
         "law `?` must short-circuit instead of substituting a default:\n{lean}"
     );
     assert!(
-        lean.contains("theorem f_law_zero : ∀ (a : Int), (do pure ((<- f a))) = Except.ok (0)"),
+        lean.contains(
+            "theorem f_law_zero : ∀ (a : Int), (do pure ((<- f a))) = Except.ok ((0 : Int))"
+        ),
         "the universal law theorem must be stated as an `Except` action:\n{lean}"
     );
 
@@ -2420,7 +2422,7 @@ fn export_kernel_decide_declines(out: &std::path::Path) -> String {
 }
 
 #[test]
-fn proof_lean_semantically_mismatched_builtins_stay_native_decide() {
+fn proof_lean_index_guarded_builtins_reduce_in_kernel() {
     // The ground-truth literal alone does NOT close the vacuity hole. Lean's
     // `panic!` returns `default`, and under KERNEL reduction it does so with
     // no diagnostic — so a model that panics still proves the equation
@@ -2428,24 +2430,16 @@ fn proof_lean_semantically_mismatched_builtins_stay_native_decide() {
     // default, which is half of all predicate cases.
     //
     // `narrowedIndex` is the two-step version an audit of single builtins
-    // misses: `Vector.get(v, -1)` lowers to `v[Int.toNat (-1)]?` = `v[0]?`, so
-    // the model takes the `Some` arm the VM never took (the VM returns
-    // `Option.None`). Both branches happen to make the final predicate false,
-    // so kernel reduction would certify the sample despite the semantic
-    // mismatch.
+    // misses. `Vector.get(v, -1)` used to lower to `v[Int.toNat (-1)]?` =
+    // `v[0]?`, so the model took the `Some` arm the VM never took, and the
+    // case had to stay on `native_decide`. The lowering now tests the sign
+    // first and returns `Option.None` as the VM does, so the case reduces in
+    // the kernel and the lake half below checks that it agrees.
     //
-    // `Vector.get` is therefore declined because it narrows a negative index
-    // the VM rejects into one it accepts. The decline is keyed on the builtin,
-    // not on the case, so `firstItem [7, 8]` still routes native. In contrast,
     // `String.firstCodePoint` is total and semantically aligned, so
-    // `charCode "A"` is kernel-decided.
-    // Proving in-bounds-ness per case is exactly the reasoning this
-    // classifier refuses to do.
-    //
-    // The twins are the other half: `List.take` narrows through the SAME
+    // `charCode "A"` is kernel-decided. `List.take` narrows through the same
     // `Int.toNat`, but the VM clamps identically (`list::clamp_count`), so it
-    // stays kernel-decided — the audit is per-lowering, not a retreat from
-    // `Int.toNat`. `scaleInt` pins that plain Int cases survive too.
+    // stays kernel-decided too. `scaleInt` pins that plain Int cases survive.
     //
     // The routing half needs no `lake`; only the panic-gate half does.
     let out = temp_output_dir("aver-proof-kernel-decide-declines");
@@ -2453,8 +2447,8 @@ fn proof_lean_semantically_mismatched_builtins_stay_native_decide() {
     for (needle, tactic, why) in [
         (
             "narrowedIndex",
-            "native_decide",
-            "contains the index-narrowing `Vector.get` mismatch",
+            "decide +kernel",
+            "reads a negative index, which the guarded `Vector.get` answers as the VM does",
         ),
         (
             "charCode \"A\"",
@@ -2462,12 +2456,12 @@ fn proof_lean_semantically_mismatched_builtins_stay_native_decide() {
             "uses the total `String.firstCodePoint`",
         ),
         (
-            "firstItem [7, 8]",
-            "native_decide",
-            "calls the index-narrowing `Vector.get`",
+            "firstItem [(7 : Int), 8]",
+            "decide +kernel",
+            "calls the guarded `Vector.get`",
         ),
         (
-            "takeNegative [1, 2, 3]",
+            "takeNegative [(1 : Int), 2, 3]",
             "decide +kernel",
             "narrows its count exactly as the VM does",
         ),
@@ -2485,9 +2479,8 @@ fn proof_lean_semantically_mismatched_builtins_stay_native_decide() {
         let _ = std::fs::remove_dir_all(&out);
         return;
     }
-    // The semantically mismatched `Vector.get` case remains on
-    // `native_decide`, while the total code-point operation introduces no
-    // panic. The complete file must therefore build cleanly.
+    // The kernel-decided negative-index case and the total code-point
+    // operation introduce no panic. The complete file must build cleanly.
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let checked = temp_output_dir("aver-proof-kernel-decide-declines-check");
@@ -2518,8 +2511,8 @@ fn proof_lean_semantically_mismatched_builtins_stay_native_decide() {
             summary["build_errors"].as_u64(),
         ),
         (Some(false), Some(true), Some(0)),
-        "the mismatched index case must stay native without reintroducing a \
-         code-point model panic:\n{}",
+        "the negative-index case must agree with the VM without a model \
+         panic:\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&out);

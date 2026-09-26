@@ -284,7 +284,7 @@ fn proof_export_module_owned_native_guarded_resolves_correct_fn_id() {
         .expect("down__aux present in Worker.lean");
     let worker_aux = &worker_lean[worker_idx..];
     assert!(
-        worker_aux.contains("then 1"),
+        worker_aux.contains("then (1 : Int)"),
         "Worker.down__aux must keep its OWN base arm literal (1):\n{worker_aux}"
     );
     let entry_idx = entry_lean
@@ -292,7 +292,7 @@ fn proof_export_module_owned_native_guarded_resolves_correct_fn_id() {
         .expect("down__aux present in entry.lean");
     let entry_aux = &entry_lean[entry_idx..];
     assert!(
-        entry_aux.contains("then 2"),
+        entry_aux.contains("then (2 : Int)"),
         "entry.down__aux must keep its OWN base arm literal (2):\n{entry_aux}"
     );
 

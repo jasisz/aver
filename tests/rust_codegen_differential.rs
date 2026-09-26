@@ -441,11 +441,38 @@ fn tuple_match_with_list_literal_and_option_elements_matches_between_rust_and_vm
 /// front door compiles them into nested flat matches over fresh binders
 /// before any backend runs; only a build proves the Rust those matches
 /// render borrows and moves the bound sub-values correctly, and only a run
-/// proves the compiled decision tree takes the arm the VM takes.
+/// proves the compiled decision tree takes the arm the VM takes. The fixture
+/// also holds the wild list shapes (`[_, .._]`, `[_]`, `[_, _]`, `[x, .._]`,
+/// `[_, ..rest]`, and wild lists inside a constructor or a tuple) over a
+/// borrowed parameter: an arm with no binder lets the match borrow its
+/// subject, and `[_, .._]` used to uncons that borrow and fail to build
+/// (#1450).
 #[test]
 fn nested_literal_and_list_patterns_match_between_rust_and_vm() {
     assert_plain_parity("tests/fixtures/nested_patterns.av", None)
         .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// A value read twice in one expression: once where it is kept, and once
+/// inside a part that hands it on (`Clock.update(later(c, n + leftMs),
+/// answeredMs = leftMs)`, #1454). The last-use facts follow Aver's order —
+/// a record update's base before its fields, operands and arguments left to
+/// right — and mark the later read as the one that moves. Generated Rust has
+/// to evaluate in that order and must not hold a borrow of the earlier read
+/// across the move: `..base` runs after the fields in Rust, and a method
+/// receiver, a comparison operand or a borrowed argument stays borrowed
+/// while later operands run. A base that moves out of the record in place
+/// (`..shelf.box` after `..shelf.box.clock` in a nested update) stays last,
+/// where Rust moves only what the fields left. `check`, `verify` and the VM
+/// all accept every shape here; only a build proves the Rust does, and only
+/// a run proves it prints what the VM prints.
+#[test]
+fn value_read_twice_in_one_expression_matches_between_rust_and_vm() {
+    assert_plain_parity(
+        "tests/fixtures/value_read_twice_in_one_expression_app.av",
+        None,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// A one-arm wildcard match over an effectful call: `match say(x)` with a

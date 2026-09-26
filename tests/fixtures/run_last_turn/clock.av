@@ -1,0 +1,15 @@
+module Clock
+    kind = capability
+    semantics = effectful
+    intent = "The ticks the ticker waits on."
+    exposes [tick, soon]
+
+operation tick() -> Int
+    ? "The number of the next tick, a deadline after it was asked for."
+    oracle = generative
+    replay = recorded
+
+operation soon() -> Int
+    ? "The number of the next tick, in the turn after it was asked for."
+    oracle = generative
+    replay = recorded

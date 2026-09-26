@@ -45,7 +45,7 @@ fn proof_lean_verify_case_expected_side_is_literalized_from_vm_ground_truth() {
 
     let entry = std::fs::read_to_string(out.join("LiteralProbe.lean")).expect("read emitted entry");
     assert!(
-        entry.contains("example : doubled 20 = 40"),
+        entry.contains("example : doubled 20 = (40 : Int)"),
         "expected side must be the VM ground-truth literal (40), got:\n{entry}"
     );
     assert!(

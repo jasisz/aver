@@ -73,6 +73,7 @@ mod module;
 mod optimize;
 mod packed_sequences;
 mod run_fail;
+mod run_turn;
 #[cfg(test)]
 mod tests;
 mod types;

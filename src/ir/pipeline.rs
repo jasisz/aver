@@ -986,6 +986,9 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
         return result;
     };
     let user_program_len = user_program_len.min(items.len());
+    // Read off the module as written, before a loop generated into it widens
+    // its effect lists with the marks.
+    let named_marks = crate::yield_lowering::loop_marks_named(&items[..user_program_len]);
 
     let tc = if crate::yield_lowering::has_yield_fns(items) {
         // A deep copy: `FnDef.body` is shared behind an `Arc`, and the
@@ -1126,6 +1129,18 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
     } else {
         typecheck_gate(items, mode, &items[..user_program_len])
     };
+    let mut tc = tc;
+    tc.errors.extend(named_marks);
+    if tc.errors.is_empty() {
+        let has_loop = result
+            .yield_lowering
+            .as_ref()
+            .is_some_and(|report| report.loop_source.is_some());
+        tc.errors
+            .extend(crate::yield_lowering::last_turn_without_loop(
+                items, has_loop,
+            ));
+    }
     result
         .pass_diagnostics
         .push(diag_for_typecheck(&tc, items.len()));

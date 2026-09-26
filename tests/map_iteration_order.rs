@@ -138,13 +138,13 @@ fn three_key_map_iterates_key_sorted_in_the_exported_proof() {
     let lean = emit_lean(ORDER_FIXTURE, "aver-map-order-lean", "MapIterationOrder");
     for claim in [
         "AverMap.keys threeKeys = [\"a\", \"m\", \"z\"]",
-        "AverMap.values threeKeys = [2, 3, 1]",
-        "AverMap.entries threeKeys = [(\"a\", 2), (\"m\", 3), (\"z\", 1)]",
+        "AverMap.values threeKeys = [(2 : Int), 3, 1]",
+        "AverMap.entries threeKeys = [(\"a\", (2 : Int)), (\"m\", (3 : Int)), (\"z\", (1 : Int))]",
         // A literal written out of key order is emitted in key order, so it is
         // the same value as the map built by three `Map.set` calls.
-        "AverMap.values literalOutOfOrder = [2, 3, 1]",
+        "AverMap.values literalOutOfOrder = [(2 : Int), 3, 1]",
         // Integer keys order numerically, not by printed digits.
-        "AverMap.keys numericKeys = [2, 10]",
+        "AverMap.keys numericKeys = [(2 : Int), 10]",
     ] {
         assert!(
             lean.contains(claim),

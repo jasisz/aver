@@ -588,7 +588,7 @@ fn main() -> Unit
     );
     assert!(
         !main.contains("verify guarded case 1:")
-            && main.contains("guarded BranchPath.Root rnd_Probe_get 0 = Except.ok 0"),
+            && main.contains("guarded BranchPath.Root rnd_Probe_get 0 = Except.ok (0 : Int)"),
         "a concrete branch that removes the partial call must remain provable:\n{main}"
     );
 }

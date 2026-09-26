@@ -1,5 +1,5 @@
 use super::VerifyEmitMode;
-use super::expr::{aver_name_to_lean, emit_expr, resolve_rewrite_output};
+use super::expr::{aver_name_to_lean, emit_expr, emit_int_anchored, resolve_rewrite_output};
 use super::kernel_decide::CaseDecidability;
 use super::law_auto::{emit_verify_law_forall_auto_proof, emit_verify_law_support_theorems};
 use super::types::type_annotation_to_lean;
@@ -21,93 +21,17 @@ fn oracle_subtype_for(method: &str) -> Option<&'static str> {
         .map(|kind| kind.lean_type_name())
 }
 
-/// Render a per-sample instantiated `when` guard with every Int literal
-/// ascribed (`(4 : Int)`).
+/// Render a per-sample instantiated `when` guard.
 ///
 /// The guard is the parser's SUBSTITUTED premise: numeral literals stand
-/// where Int givens stood. A bare Lean numeral in a comparison elaborates
-/// as `Nat`, and with subtraction in the premise truncated `Nat`
-/// subtraction changes the proposition — e.g. the probe's
-/// `((((1 * 1) - 4) * ((1 * 1) - 4)) <= 4)` is TRUE over `Nat`
-/// (`1 - 4 = 0`) but FALSE over `Int` (`(-3) * (-3) = 9`), so the emitted
-/// `_sample_N` / `_checked_domain` theorem was FALSE AS STATED and
-/// `native_decide` failed the build on a law the VM verifies. Ascribing
-/// pins every literal to `Int` — the type the substituted given had.
-///
-/// Recurses through the operator shapes a premise is built from
-/// (comparisons, arithmetic, `&&`-conjunction of multiple `when`s,
-/// negation); anything else (fn calls, idents, record literals) falls
-/// back to `emit_expr`, where Lean already types the positions from
-/// signatures.
+/// where Int givens stood. Read as `Nat`, the probe's
+/// `((((1 * 1) - 4) * ((1 * 1) - 4)) <= 4)` is TRUE (`1 - 4 = 0`), while over
+/// `Int` it is FALSE (`(-3) * (-3) = 9`). `emit_expr` keeps every such
+/// literal an `Int` (see `expr::emit_literal`).
 pub(super) fn emit_sample_guard(guard: &Spanned<Expr>, ctx: &CodegenContext) -> String {
     let active = ctx.active_module_scope();
     let resolved = ctx.resolve_expr(guard, active.as_deref());
-    emit_sample_guard_resolved(&resolved, ctx)
-}
-
-fn emit_sample_guard_resolved(
-    expr: &Spanned<crate::ir::hir::ResolvedExpr>,
-    ctx: &CodegenContext,
-) -> String {
-    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
-    match &expr.node {
-        ResolvedExpr::Literal(Literal::Int(i)) => format!("({} : Int)", i),
-        ResolvedExpr::Neg(inner) => format!("(-{})", emit_sample_guard_resolved(inner, ctx)),
-        // Multiple `when` clauses parse into a `Bool.and` chain (and a
-        // negated premise into `Bool.not`) — recurse through the Bool
-        // combinators with the exact spellings `lean::builtins` uses so
-        // literals INSIDE the conjunction stay ascribed.
-        ResolvedExpr::Call(callee, args)
-            if matches!(callee, ResolvedCallee::Builtin(n) if n == "Bool.and")
-                && args.len() == 2 =>
-        {
-            format!(
-                "({} && {})",
-                emit_sample_guard_resolved(&args[0], ctx),
-                emit_sample_guard_resolved(&args[1], ctx)
-            )
-        }
-        ResolvedExpr::Call(callee, args)
-            if matches!(callee, ResolvedCallee::Builtin(n) if n == "Bool.or")
-                && args.len() == 2 =>
-        {
-            format!(
-                "({} || {})",
-                emit_sample_guard_resolved(&args[0], ctx),
-                emit_sample_guard_resolved(&args[1], ctx)
-            )
-        }
-        ResolvedExpr::Call(callee, args)
-            if matches!(callee, ResolvedCallee::Builtin(n) if n == "Bool.not")
-                && args.len() == 1 =>
-        {
-            format!("(!{})", emit_sample_guard_resolved(&args[0], ctx))
-        }
-        ResolvedExpr::BinOp(op, left, right) => {
-            let (l, r) = super::expr::typed_comparison_operands(
-                op,
-                left,
-                right,
-                emit_sample_guard_resolved(left, ctx),
-                emit_sample_guard_resolved(right, ctx),
-            );
-            // Operator spellings mirror `expr::emit_expr` exactly.
-            let op_str = match op {
-                BinOp::Add => "+",
-                BinOp::Sub => "-",
-                BinOp::Mul => "*",
-                BinOp::Div => "/",
-                BinOp::Eq => "==",
-                BinOp::Neq => "!=",
-                BinOp::Lt => "<",
-                BinOp::Gt => ">",
-                BinOp::Lte => "<=",
-                BinOp::Gte => ">=",
-            };
-            format!("({} {} {})", l, op_str, r)
-        }
-        _ => super::expr::emit_expr(expr, ctx),
-    }
+    super::expr::emit_expr(&resolved, ctx)
 }
 
 /// Emit verify blocks as Lean 4 `example` declarations.
@@ -155,7 +79,12 @@ pub fn emit_verify_block(
         roots.extend(law.because.iter());
         roots.extend(law.when.iter());
     }
-    let refusal = if matches!(verify_mode, VerifyEmitMode::NativeDecide) {
+    // An oracle whose type the program never settles (a generic operation
+    // such as `Wait.poll<K>` in a program whose waits disagree about `K`)
+    // has no Lean type at all, so this refusal holds in every emit mode.
+    let refusal = if let Some(reason) = super::verify_cases::generic_oracle_refusal(vb, ctx) {
+        Some(reason)
+    } else if matches!(verify_mode, VerifyEmitMode::NativeDecide) {
         decidability
             .capability_decline_reason(&roots, ctx)
             .or_else(|| {
@@ -320,14 +249,20 @@ pub fn emit_verify_block(
                     // case after the concrete branch reduces. `simp` removes
                     // it before native evaluation; if a future case actually
                     // depends on the oracle, the remaining free variable makes
-                    // `native_decide` fail closed.
+                    // `native_decide` fail closed. `+decide` lets simp settle
+                    // a closed branch condition its lemmas do not rewrite
+                    // (`AverMap.len [] = 0`); without it the condition stays a
+                    // hypothesis beside the oracle and `native_decide` refuses
+                    // the goal for its free variable.
+                    // Qualified names escape per segment: a dependency's
+                    // `Domain.ByteField.at` is defined as `at'`.
                     let unfolds = super::verify_cases::plain_case_unfold_names(&left, ctx)
                         .into_iter()
-                        .map(|name| aver_name_to_lean(&name))
+                        .map(|name| crate::codegen::lean::syntax::aver_path_to_lean(&name))
                         .collect::<Vec<_>>()
                         .join(", ");
                     format!(
-                        "simp [{}] <;> native_decide",
+                        "simp +decide [{}] <;> native_decide",
                         if unfolds.is_empty() {
                             aver_name_to_lean(&vb.fn_name)
                         } else {
@@ -2297,7 +2232,7 @@ fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) ->
             "[{}]",
             values
                 .iter()
-                .map(|v| emit_expr(&resolve_rewrite_output(v, ctx, None), ctx))
+                .map(|v| emit_int_anchored(&resolve_rewrite_output(v, ctx, None), ctx))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -2320,14 +2255,14 @@ fn law_given_domain_prop(given: &VerifyGiven, ctx: &CodegenContext) -> String {
         [] => "False".to_string(),
         [value] => format!(
             "{given_name} = {}",
-            emit_expr(&resolve_rewrite_output(value, ctx, None), ctx)
+            emit_int_anchored(&resolve_rewrite_output(value, ctx, None), ctx)
         ),
         _ => values
             .iter()
             .map(|value| {
                 format!(
                     "{given_name} = {}",
-                    emit_expr(&resolve_rewrite_output(value, ctx, None), ctx)
+                    emit_int_anchored(&resolve_rewrite_output(value, ctx, None), ctx)
                 )
             })
             .collect::<Vec<_>>()

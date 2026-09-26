@@ -227,42 +227,42 @@ namespace MapModelShape
 set_option smartUnfolding false in
 /-- A Bool-keyed literal, which orders false before true. -/
 def boolKeyed  : List (Bool × Int) :=
-  [(false, 0), (true, 1)]
+  [(false, (0 : Int)), (true, (1 : Int))]
 
 set_option smartUnfolding false in
 /-- A map built by three Map.set calls, written out of key order. -/
 def built  : List (String × Int) :=
-  let m0 := AverMap.set [] "z" 1
-  let m1 := AverMap.set m0 "a" 2
-  AverMap.set m1 "m" 3
+  let m0 := AverMap.set [] "z" (1 : Int)
+  let m1 := AverMap.set m0 "a" (2 : Int)
+  AverMap.set m1 "m" (3 : Int)
 
 set_option smartUnfolding false in
 /-- The same map through Map.fromList, with a duplicate key last-write-wins. -/
 def fromPairs  : List (String × Int) :=
-  AverMap.fromList ([("z", 9), ("a", 2), ("m", 3), ("z", 1)])
+  AverMap.fromList ([("z", (9 : Int)), ("a", (2 : Int)), ("m", (3 : Int)), ("z", (1 : Int))])
 
 set_option smartUnfolding false in
 /-- An Int-keyed literal, which orders numerically and not by printed digits. -/
 def intKeyed  : List (Int × String) :=
-  [(2, "two"), (10, "ten")]
+  [((2 : Int), "two"), ((10 : Int), "ten")]
 
 set_option smartUnfolding false in
 /-- The same map as a literal, also written out of key order. -/
 def literal  : List (String × Int) :=
-  [("a", 2), ("m", 3), ("z", 1)]
+  [("a", (2 : Int)), ("m", (3 : Int)), ("z", (1 : Int))]
 
 example : AverMap.keys built = ["a", "m", "z"] := by decide +kernel
-example : AverMap.values built = [2, 3, 1] := by decide +kernel
+example : AverMap.values built = [(2 : Int), 3, 1] := by decide +kernel
 
 example : literal = built := by native_decide
-example : AverMap.entries literal = [("a", 2), ("m", 3), ("z", 1)] := by decide +kernel
+example : AverMap.entries literal = [("a", (2 : Int)), ("m", (3 : Int)), ("z", (1 : Int))] := by decide +kernel
 
 example : fromPairs = built := by native_decide
-example : AverMap.values fromPairs = [2, 3, 1] := by decide +kernel
+example : AverMap.values fromPairs = [(2 : Int), 3, 1] := by decide +kernel
 
-example : AverMap.keys intKeyed = [2, 10] := by decide +kernel
+example : AverMap.keys intKeyed = [(2 : Int), 10] := by decide +kernel
 
-example : AverMap.values boolKeyed = [0, 1] := by decide +kernel
+example : AverMap.values boolKeyed = [(0 : Int), 1] := by decide +kernel
 
 #guard_msgs (drop error, pass warning, pass info, pass trace) in
 -- verify law built.setKeepsWhatItWrote (6 cases)
@@ -273,12 +273,12 @@ theorem built_law_setKeepsWhatItWrote : ∀ (k : String) (v : Int), AverMap.get 
   intro k v
   simpa using AverMap.get_set_self built k v
 set_option synthInstance.maxSize 4096 in
-theorem built_law_setKeepsWhatItWrote_checked_domain : (AverMap.get (AverMap.set built "a" 0) "a" = Option.some 0) ∧ (AverMap.get (AverMap.set built "a" 7) "a" = Option.some 7) ∧ (AverMap.get (AverMap.set built "q" 0) "q" = Option.some 0) ∧ (AverMap.get (AverMap.set built "q" 7) "q" = Option.some 7) ∧ (AverMap.get (AverMap.set built "z" 0) "z" = Option.some 0) ∧ (AverMap.get (AverMap.set built "z" 7) "z" = Option.some 7) := by native_decide
-theorem built_law_setKeepsWhatItWrote_sample_1 : AverMap.get (AverMap.set built "a" 0) "a" = Option.some 0 := by native_decide
-theorem built_law_setKeepsWhatItWrote_sample_2 : AverMap.get (AverMap.set built "a" 7) "a" = Option.some 7 := by native_decide
-theorem built_law_setKeepsWhatItWrote_sample_3 : AverMap.get (AverMap.set built "q" 0) "q" = Option.some 0 := by native_decide
-theorem built_law_setKeepsWhatItWrote_sample_4 : AverMap.get (AverMap.set built "q" 7) "q" = Option.some 7 := by native_decide
-theorem built_law_setKeepsWhatItWrote_sample_5 : AverMap.get (AverMap.set built "z" 0) "z" = Option.some 0 := by native_decide
-theorem built_law_setKeepsWhatItWrote_sample_6 : AverMap.get (AverMap.set built "z" 7) "z" = Option.some 7 := by native_decide
+theorem built_law_setKeepsWhatItWrote_checked_domain : (AverMap.get (AverMap.set built "a" (0 : Int)) "a" = Option.some (0 : Int)) ∧ (AverMap.get (AverMap.set built "a" (7 : Int)) "a" = Option.some (7 : Int)) ∧ (AverMap.get (AverMap.set built "q" (0 : Int)) "q" = Option.some (0 : Int)) ∧ (AverMap.get (AverMap.set built "q" (7 : Int)) "q" = Option.some (7 : Int)) ∧ (AverMap.get (AverMap.set built "z" (0 : Int)) "z" = Option.some (0 : Int)) ∧ (AverMap.get (AverMap.set built "z" (7 : Int)) "z" = Option.some (7 : Int)) := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_1 : AverMap.get (AverMap.set built "a" (0 : Int)) "a" = Option.some (0 : Int) := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_2 : AverMap.get (AverMap.set built "a" (7 : Int)) "a" = Option.some (7 : Int) := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_3 : AverMap.get (AverMap.set built "q" (0 : Int)) "q" = Option.some (0 : Int) := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_4 : AverMap.get (AverMap.set built "q" (7 : Int)) "q" = Option.some (7 : Int) := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_5 : AverMap.get (AverMap.set built "z" (0 : Int)) "z" = Option.some (0 : Int) := by native_decide
+theorem built_law_setKeepsWhatItWrote_sample_6 : AverMap.get (AverMap.set built "z" (7 : Int)) "z" = Option.some (7 : Int) := by native_decide
 
 end MapModelShape

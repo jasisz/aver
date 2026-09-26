@@ -244,10 +244,11 @@ pub fn job_kinds(
 
 /// The standard operations that answer at once, whatever the world does: the
 /// non-blocking half of `Tcp`, the clock, randomness, the stop flag and a
-/// job's cancel, and ending the run with a reason. An answer function that
-/// performs only these, or the `begin`/`take` of a job kind, cannot stall the
-/// turn, so the answer-shape warning does not name them.
-const ANSWERS_AT_ONCE: [&str; 16] = [
+/// job's cancel, ending the run with a reason, and reading how long the last
+/// turn waited and worked. An answer function that performs only these, or
+/// the `begin`/`take` of a job kind, cannot stall the turn, so the
+/// answer-shape warning does not name them.
+const ANSWERS_AT_ONCE: [&str; 19] = [
     "Tcp.readNow",
     "Tcp.writeNow",
     "Tcp.accept",
@@ -264,6 +265,9 @@ const ANSWERS_AT_ONCE: [&str; 16] = [
     "Work.cancel",
     "Run.fail",
     "Run.failure",
+    "Run.lastTurn",
+    "Run.waitStarts",
+    "Run.waitEnds",
 ];
 
 /// Whether one effect of an answer function returns at once.
@@ -1747,6 +1751,34 @@ pub fn instantiate_operation(
     instantiated.return_type = substitute_type_params(&operation.return_type, &key);
     instantiated.type_params = Vec::new();
     instantiated
+}
+
+impl CapabilityRegistry {
+    /// This registry with every generic operation pinned to the type the
+    /// program keys its waits by, or `None` when the program does not settle
+    /// one: its waits disagree about the key, or one of them does not say.
+    ///
+    /// A backend that reads operation signatures off the registry (the proof
+    /// exporter types each oracle parameter this way) then sees only concrete
+    /// types. Under the program's one-key rule every call of the operation
+    /// uses the same instantiation, so one pinned registry serves them all.
+    pub fn with_program_wait_key(
+        &self,
+        items: &[crate::ast::TopLevel],
+        modules: &[crate::codegen::ModuleInfo],
+    ) -> Option<CapabilityRegistry> {
+        if wait_key_conflict(items, modules).is_some()
+            || wait_key_undetermined(items, modules).is_some()
+        {
+            return None;
+        }
+        let key = wait_key_type(items, modules);
+        let mut pinned = self.clone();
+        for operation in pinned.operations.values_mut() {
+            *operation = instantiate_operation(operation, key.as_ref());
+        }
+        Some(pinned)
+    }
 }
 
 fn substitute_type_params(ty: &Type, key: &Type) -> Type {

@@ -170,6 +170,11 @@ define_wasip2_import_slots! {
     /// so the resource lifecycle is per-call, not program-life.
     /// Canonical-ABI signature: `(when: i64) -> i32`.
     ClocksMonotonicSubscribeDuration,
+    /// `wasi:clocks/monotonic-clock.now: func() -> instant` where
+    /// `type instant = u64` (nanoseconds). The generated loop's two marks
+    /// around its wait read it, in a program that reads `Run.lastTurn`.
+    /// Canonical-ABI signature: `() -> i64`.
+    ClocksMonotonicNow,
     /// `wasi:io/poll.poll: func(in: list<borrow<pollable>>) ->
     /// list<u32>` — the synchronous wait primitive of WASI 0.2.
     /// Blocks until at least one of the supplied pollables is
@@ -869,6 +874,7 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::ClocksMonotonicSubscribeDuration => {
                 ("wasi:clocks/monotonic-clock@0.2.4", "subscribe-duration")
             }
+            Wasip2ImportSlot::ClocksMonotonicNow => ("wasi:clocks/monotonic-clock@0.2.4", "now"),
             Wasip2ImportSlot::IoPollPoll => ("wasi:io/poll@0.2.4", "poll"),
             Wasip2ImportSlot::IoPollResourceDropPollable => {
                 ("wasi:io/poll@0.2.4", "[resource-drop]pollable")
@@ -1092,6 +1098,7 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::CliGetStdout
             | Wasip2ImportSlot::CliGetStderr
             | Wasip2ImportSlot::CliStdinGetStdin
+            | Wasip2ImportSlot::ClocksMonotonicNow
             | Wasip2ImportSlot::RandomGetRandomU64 => Vec::new(),
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush => {
                 vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32]
@@ -1449,7 +1456,9 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry
             | Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
-            Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
+            Wasip2ImportSlot::RandomGetRandomU64 | Wasip2ImportSlot::ClocksMonotonicNow => {
+                vec![ValType::I64]
+            }
             // ── wasi:http/* (Phase 2). ─────────────────────────────
             // Resource handles or status codes — flat i32 return.
             // `set-scheme/authority/path-with-query` return result<_, _>
@@ -1604,10 +1613,15 @@ mod tests {
         );
     }
 
+    /// The monotonic clock is imported only by a program that reads
+    /// `Run.lastTurn`, and the verifier does not admit it yet: such a
+    /// component is refused at the certificate envelope, fail-closed, the way
+    /// a wasm-gc module that calls `Run.fail` is.
     #[test]
     fn emitted_import_registry_matches_the_verifier_owned_format() {
         let emitted = Wasip2ImportSlot::ALL
             .iter()
+            .filter(|slot| **slot != Wasip2ImportSlot::ClocksMonotonicNow)
             .map(|slot| slot.module_field_pair())
             .collect::<Vec<_>>();
         assert_eq!(emitted.as_slice(), aver_cert::format::WASIP2_CAPABILITIES);

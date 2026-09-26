@@ -165,8 +165,16 @@ impl TypeChecker {
         let operations: Vec<_> = self.capabilities.operations().cloned().collect();
         for operation in operations {
             let visible = current_scope == Some(operation.module.as_str()) || operation.exposed;
-            if !visible {
+            // An operation a capability the compiler ships keeps to itself is internal
+            // to the code the compiler generates: registered, but callable
+            // only from a generated function (see `internal_operations`).
+            let internal = !visible && crate::stdlib::has_shipped_provider(&operation.module);
+            if !visible && !internal {
                 continue;
+            }
+            if internal {
+                self.internal_operations
+                    .insert(operation.canonical_name.clone());
             }
             let params = operation
                 .params

@@ -120,6 +120,10 @@ pub(super) struct FnMap {
     /// `Run.fail` of this run gave, when the program calls `Run.fail` or
     /// `Run.failure`. `None` otherwise, so every other module keeps its bytes.
     pub(super) run_failure_global: Option<u32>,
+    /// The five i64 globals the loop's waits are measured in, when the
+    /// program reads `Run.lastTurn`. `None` otherwise, so every other module
+    /// keeps its bytes. See `super::run_turn`.
+    pub(super) run_turn_globals: Option<super::run_turn::RunTurnGlobals>,
 }
 
 impl FnMap {
@@ -384,6 +388,10 @@ pub(super) struct Wasip2Lowering {
     /// `wasi:clocks/wall-clock.now` imported wasm fn idx.
     /// `Some(...)` when `Time.unixMs` is registered.
     pub(super) clocks_now_fn_idx: Option<u32>,
+    /// `wasi:clocks/monotonic-clock.now` imported wasm fn idx. `Some(...)`
+    /// only when the program reads `Run.lastTurn`, whose loop marks its
+    /// waits with it.
+    pub(super) clocks_monotonic_now_fn_idx: Option<u32>,
     /// `wasi:random/random.get-random-u64` imported wasm fn idx.
     /// `Some(...)` when at least one of `Random.{int, float}` is
     /// registered (the same import drives both).

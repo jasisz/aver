@@ -72,7 +72,7 @@ use super::expr::{
 };
 use super::ownership::{
     align_equality_operands, emits_direct_borrow, local_of, materialize_borrowed,
-    materialize_owned, materialize_scoped_thread_capture,
+    materialize_owned, materialize_scoped_thread_capture, projection_root_local,
 };
 use super::pattern::emit_pattern;
 use super::syntax::{aver_name_to_rust, generated_ident};
@@ -1472,22 +1472,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     }
                     _ => unreachable!("int_arith only set for Add/Sub/Mul/Div"),
                 };
-                // The method receiver is borrowed for the duration of the
-                // call. If a nested RHS expression consumes that local (for
-                // example `n * factorial(n - 1)` in
-                // `examples/core/big_integers.av`), Rust rejects the receiver
-                // borrow followed by the move inside the argument. Clone only
-                // for that overlap; a direct `x + x` RHS is itself borrowed by
-                // this method call and remains `x.add(&x)`.
-                let lhs_rhs_move_overlap = local_of(&bop.lhs.node).is_some_and(|lhs| {
-                    !matches!(&bop.rhs.node, MirExpr::Local(_))
-                        && mir_expr_contains_last_use_of_slot(&bop.rhs.node, lhs.slot)
-                });
-                let l = if lhs_rhs_move_overlap {
-                    materialize_owned(l, &bop.lhs.node, emit_ctx)
-                } else {
-                    l
-                };
+                let l = detach_borrow_before_later_move(l, &bop.lhs, &[&bop.rhs], emit_ctx);
                 return Some(format!("{}.{}(&{})", l, method, r));
             }
             // Int unboxing: a comparison (`==`, `<`, `<=`, `>`, `>=`, `!=`)
@@ -1562,12 +1547,16 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 let l = materialize_owned(l, &bop.lhs.node, emit_ctx);
                 Some(format!("({} + &{})", l, r))
             } else if matches!(bop.op, BinOp::Eq | BinOp::Neq) {
+                // A comparison borrows both operands for the call to
+                // `PartialEq`/`PartialOrd`, like the arithmetic receiver.
+                let l = detach_borrow_before_later_move(l, &bop.lhs, &[&bop.rhs], emit_ctx);
                 // HIR derefs `AverStr` (Rc<str>) to `&str` when one
                 // side is a string literal, since `Rc<str>` doesn't
                 // impl `PartialEq<&str>`. Mirror that so string
                 // equality matches.
                 Some(mir_emit_equality(bop, &l, &r, op_str, emit_ctx))
             } else {
+                let l = detach_borrow_before_later_move(l, &bop.lhs, &[&bop.rhs], emit_ctx);
                 Some(format!("({} {} {})", l, op_str, r))
             }
         }
@@ -1901,14 +1890,30 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // (`T.update(s, window = f(s.window.created))`) moves after them;
             // those values only ever move fields this update replaces.
             let base = if moved_replaced_field || owned_final_base {
-                emitted_base
+                emitted_base.clone()
             } else {
-                mir_clone_arg(emitted_base, &upd.base.node, emit_ctx)
+                mir_clone_arg(emitted_base.clone(), &upd.base.node, emit_ctx)
             };
             let parts: Vec<String> = parts
                 .iter()
                 .map(|(field, value)| format!("{field}: {value}"))
                 .collect();
+            // Aver evaluates the base before the new field values, and the
+            // last-use facts follow that order: in
+            // `T.update(f(x), a = x)` the `x` in the field is the last read,
+            // so it moves. Rust evaluates `..base` after the fields, so a
+            // base that is not a moved place is bound first, where Aver
+            // evaluates it. A moved place (`..s`, `..s.walk`) stays last:
+            // Rust moves only the fields the new values left, which the
+            // field-move facts already account for.
+            if update_base_runs_before_fields(upd, base != emitted_base, emit_ctx) {
+                return Some(format!(
+                    "{{ let __base = {}; {} {{ {}, ..__base }} }}",
+                    base,
+                    rust_type,
+                    parts.join(", ")
+                ));
+            }
             Some(format!(
                 "{} {{ {}, ..{} }}",
                 rust_type,
@@ -4892,7 +4897,11 @@ fn mir_call_borrow_overlaps_later_move(
     borrow_mask: &[bool],
     ctx: &MirEmitCtx<'_>,
 ) -> bool {
-    let Some(local) = args.get(arg_index).and_then(|arg| local_of(&arg.node)) else {
+    // A field of a local (`f(s.window, g(s))`) is borrowed in place too.
+    let Some(local) = args
+        .get(arg_index)
+        .and_then(|arg| projection_root_local(&arg.node))
+    else {
         return false;
     };
     let name = local.name.as_str();
@@ -4919,6 +4928,88 @@ fn mir_call_borrow_overlaps_later_move(
                 ctx,
             )
         })
+}
+
+/// Detach an operand Rust holds borrowed while it evaluates later operands.
+///
+/// A method receiver (`x.add(&rhs)`, `c.ticks.max_ref(&rhs)`), a comparison
+/// operand (`x < rhs`) or a `&x` builtin argument stays borrowed until the
+/// whole operation runs. When a later operand moves the local at its last
+/// read (`x < f(x)`, `c.ticks + reset(c).ticks`), the earlier read is not the
+/// last one, so it takes its own value. A later operand that is the local
+/// itself (`x + x`) is borrowed by the same operation and keeps the borrow.
+fn detach_borrow_before_later_move(
+    code: String,
+    earlier: &Spanned<MirExpr>,
+    later: &[&Spanned<MirExpr>],
+    ctx: &MirEmitCtx<'_>,
+) -> String {
+    let Some(local) = projection_root_local(&earlier.node) else {
+        return code;
+    };
+    let overlaps = later.iter().any(|operand| {
+        !matches!(&operand.node, MirExpr::Local(_))
+            && mir_last_use_moves_slot(operand, local.slot, ctx)
+    });
+    if overlaps {
+        materialize_owned(code, &earlier.node, ctx)
+    } else {
+        code
+    }
+}
+
+/// Whether the last read of `slot` inside `expr` is emitted as a move.
+///
+/// Rendering the expression once as it is and once with that read marked as
+/// not the last tells the two apart: a read that moves turns into a clone,
+/// while a read that only borrows (`String.len(s)`, `c.to_lowercase()`)
+/// renders the same either way. Anything that fails to render counts as a
+/// move.
+fn mir_last_use_moves_slot(expr: &Spanned<MirExpr>, slot: LocalId, ctx: &MirEmitCtx<'_>) -> bool {
+    fn keep_slot(expr: &mut MirExpr, slot: LocalId) {
+        if let MirExpr::Local(local) = expr {
+            if local.node.slot == slot {
+                local.node.last_use = false;
+            }
+            return;
+        }
+        crate::ir::mir::expr::walk_children_mut(expr, &mut |child| {
+            keep_slot(&mut child.node, slot)
+        });
+    }
+    if !mir_expr_contains_last_use_of_slot(&expr.node, slot) {
+        return false;
+    }
+    let mut kept = expr.clone();
+    keep_slot(&mut kept.node, slot);
+    match (emit_mir_expr(expr, ctx), emit_mir_expr(&kept, ctx)) {
+        (Some(moved), Some(kept)) => moved != kept,
+        _ => true,
+    }
+}
+
+/// Whether a cloned or computed `T.update` base must be bound before its
+/// field values to keep the order the last-use facts assume.
+///
+/// Aver evaluates the base first; Rust evaluates `..base` last. A computed
+/// base (a call, a nested literal) is bound first whatever it reads, so its
+/// moves and effects happen where Aver has them. A base read from a local
+/// (`s`, `s.window`) is bound first only when it is cloned (`cloned`) and a
+/// field value moves that local at its last read, which would leave nothing
+/// to clone.
+fn update_base_runs_before_fields(
+    update: &crate::ir::mir::MirRecordUpdate,
+    cloned: bool,
+    ctx: &MirEmitCtx<'_>,
+) -> bool {
+    let Some(root) = projection_root_local(&update.base.node) else {
+        return true;
+    };
+    cloned
+        && update
+            .updates
+            .iter()
+            .any(|field| mir_last_use_moves_slot(&field.value, root.slot, ctx))
 }
 
 /// Compatibility name for an owning call/aggregate argument. Copy-field
@@ -5280,11 +5371,14 @@ fn emit_mir_builtin_call(
         return Some(fused);
     }
 
-    // `emit_arg(i)`: raw emit (HIR's `emit_expr(&args[i].node, …)`).
+    // `emit_arg(i)`: raw emit (HIR's `emit_expr(&args[i].node, …)`). A
+    // raw argument is often a receiver or a `&` borrow that lives until the
+    // builtin runs, so it is detached when a later argument moves it.
     macro_rules! arg {
-        ($i:expr) => {
-            emit_mir_expr(&args[$i], ctx)?
-        };
+        ($i:expr) => {{
+            let later: Vec<&Spanned<MirExpr>> = args.iter().skip($i + 1).collect();
+            detach_borrow_before_later_move(emit_mir_expr(&args[$i], ctx)?, &args[$i], &later, ctx)
+        }};
     }
     // `clone_arg(&args[i].node, …)`: owning clone.
     macro_rules! clone {

@@ -1130,6 +1130,18 @@ impl TypeChecker {
                         }
                         return ret;
                     }
+                    if self.internal_operations.contains(&display_name)
+                        && !self.current_fn_generated
+                    {
+                        self.error_at_line(
+                            err_line,
+                            format!(
+                                "Capability operation '{}' is not exposed by its module",
+                                display_name
+                            ),
+                        );
+                        return Type::Invalid;
+                    }
                     if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
                         let ret = check_call(self, &display_name, sig);
                         return ret;
