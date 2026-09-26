@@ -334,6 +334,8 @@ variable {C : Nat} (S : CarrierSpec C)
   (F : Nat → List SVal → Option SVal)
   (hCallees : ∀ f sig, M.sigs f = some sig →
     Contract S M host ar callee f sig (F f))
+  (hConsF : ∀ t f, M.listCons t = some f → ∀ h tl sv, HasTy M tl (.list t) →
+    F f [h, tl] = some sv → sv = .cons t h tl)
   (X : LCtx)
   (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)
   (hAddT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
@@ -345,7 +347,7 @@ variable {C : Nat} (S : CarrierSpec C)
   (hCallP : calls = true → ∀ g sig, mem g = true → M.sigs g = some sig →
     ∀ svs ws, HasTyL M (.i (n - 1) :: svs) sig.params →
       SReprL S M (.i (n - 1) :: svs) ws → ∃ r, callee g ws = some r)
-include Ctr hNegC hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R hCallees hBoxT hAddT hSubT hMulT
+include Ctr hNegC hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R hCallees hConsF hBoxT hAddT hSubT hMulT
   hSig hCallP
 
 mutual
@@ -381,13 +383,13 @@ theorem progress :
       · simp only [lowerW, lowerB, htl, hA, ↓reduceIte, eraseL_append, eraseL, eraseI]
         obtain ⟨o1, h1⟩ := progress l Γ env false .int wl st htl0 hΓ htl henv hl h0
         obtain ⟨sv1, _, hT1, hres1⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host ar
-          callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X l Γ env false .int
+          callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X l Γ env false .int
           wl st o1 htl henv hl h1
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         obtain ⟨a, rfl⟩ := hasTy_int hT1
         obtain ⟨o2, h2⟩ := progress r Γ env false .int wl1 (w1 :: st) htr0 hΓ htr henv hl1 h0
         obtain ⟨sv2, _, hT2, hres2⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host ar
-          callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X r Γ env false .int
+          callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X r Γ env false .int
           wl1 (w1 :: st) o2 htr henv hl1 h2
         obtain ⟨wl2, w2, rfl, hw2, _⟩ := res_false hres2
         obtain ⟨b, rfl⟩ := hasTy_int hT2
@@ -417,7 +419,7 @@ theorem progress :
       obtain ⟨o1, h1⟩ := progressArgs args Γ env sig.params wl st hargs hΓ hts henv hl h0
       obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, _⟩ :=
         agreementArgs S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd
-          hSub hMul hNeg hCmp hEq R F hCallees X args Γ env sig.params wl st o1 hts henv hl h1
+          hSub hMul hNeg hCmp hEq R F hCallees hConsF X args Γ env sig.params wl st o1 hts henv hl h1
       obtain ⟨rest, rfl⟩ := descentHead_eq hdh
       have hd : eval F env (.binOp .sub (.local 0) (.literal (.int 1))) = some (.i (n - 1)) := by
         simp [eval, h0, intBin]
@@ -444,7 +446,7 @@ theorem progress :
       obtain ⟨o1, h1⟩ := progressArgs args Γ env sig.params wl st hargs hΓ hts henv hl h0
       obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, _⟩ :=
         agreementArgs S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd
-          hSub hMul hNeg hCmp hEq R F hCallees X args Γ env sig.params wl st o1 hts henv hl h1
+          hSub hMul hNeg hCmp hEq R F hCallees hConsF X args Γ env sig.params wl st o1 hts henv hl h1
       obtain ⟨rest, rfl⟩ := descentHead_eq hdh
       have hd : eval F env (.binOp .sub (.local 0) (.literal (.int 1))) = some (.i (n - 1)) := by
         simp [eval, h0, intBin]
@@ -494,7 +496,7 @@ theorem progressArgs :
       simp only [lowerArgsW, lowerArgsB, eraseL_append]
       obtain ⟨o1, h1⟩ := progress e Γ env false t wl st htot.1 hΓ hte henv hl h0
       obtain ⟨sv, _, _, hres⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host ar
-        callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X e Γ env false t
+        callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X e Γ env false t
         wl st o1 hte henv hl h1
       obtain ⟨wl1, w, rfl, _, hl1⟩ := res_false hres
       obtain ⟨o2, h2⟩ := progressArgs es Γ env ts wl1 (w :: st) htot.2 hΓ htes henv hl1 h0
@@ -574,6 +576,8 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
     (hMem : ∀ f p, G f = some p →
       M.sigs f = some p.sig ∧ planTyped M p = true ∧ host f = none ∧
         code f = some (fnCode M p))
+    (hCons : ∀ t f, M.listCons t = some f → ∀ k h tl sv, HasTy M tl (.list t) →
+      groupModel outer G k f [h, tl] = some sv → sv = .cons t h tl)
     (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)
     (hAddT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
     (hSubT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
@@ -585,7 +589,7 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
       FnCertified S M code host f p.sig (fun fuel => groupModel outer G fuel f) ∧
         FnTotal S M code host f p.sig (fun fuel => groupModel outer G fuel f) := by
   have hCert := fn_certified_group S box add sub mul cmp eq neg Ctr hNegC code host M hCarrier
-    hBox hAdd hSub hMul hNeg hCmp hEq R G outer hOuter hMem
+    hBox hAdd hSub hMul hNeg hCmp hEq R G outer hOuter hMem hCons
   have hSigOf : ∀ f p, G f = some p → M.sigs f = some p.sig := fun f p h => (hMem f p h).1
   have hSig : ∀ g sig, mem g = true → M.sigs g = some sig → sig.ret = .int ∨ sig.ret = .bool := by
     intro g sig hg hs
@@ -650,7 +654,8 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
           (ar := fun g => (code g).map (·.arity)) (callee := fun g as => wFuncN code host m g as)
           (M := M) (hCarrier := hCarrier) (hBox := hBox) (hAdd := hAdd) (hSub := hSub)
           (hMul := hMul) (hNeg := hNeg) (hCmp := hCmp) (hEq := hEq) (R := R)
-          (F := groupModel outer G m) (hCallees := hCallees) (X := p.lctx) (hBoxT := hBoxT)
+          (F := groupModel outer G m) (hCallees := hCallees)
+          (hConsF := fun t g hg h tl sv htl hm => hCons t g hg m h tl sv htl hm) (X := p.lctx) (hBoxT := hBoxT)
           (hAddT := hAddT) (hSubT := hSubT) (mulOk := mulOk) (hMulT := hMulT) (mem := mem)
           (calls := false) (n := n) (hSig := hSig) (hCallP := fun h => by cases h)
           base _ _ true p.sig.ret _ [] hbase hΓ hbty henv hLR h0
@@ -671,7 +676,8 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
           (ar := fun g => (code g).map (·.arity)) (callee := fun g as => wFuncN code host m g as)
           (M := M) (hCarrier := hCarrier) (hBox := hBox) (hAdd := hAdd) (hSub := hSub)
           (hMul := hMul) (hNeg := hNeg) (hCmp := hCmp) (hEq := hEq) (R := R)
-          (F := groupModel outer G m) (hCallees := hCallees) (X := p.lctx) (hBoxT := hBoxT)
+          (F := groupModel outer G m) (hCallees := hCallees)
+          (hConsF := fun t g hg h tl sv htl hm => hCons t g hg m h tl sv htl hm) (X := p.lctx) (hBoxT := hBoxT)
           (hAddT := hAddT) (hSubT := hSubT) (mulOk := mulOk) (hMulT := hMulT) (mem := mem)
           (calls := true) (n := n) (hSig := hSig) (hCallP := hCallP)
           step _ _ true p.sig.ret _ [] hstep hΓ hsty henv hLR h0
@@ -679,6 +685,7 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
     obtain ⟨sv, _, _, hres⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host
       (fun g => (code g).map (·.arity)) (fun g as => wFuncN code host m g as) M
       hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R (groupModel outer G m) hCallees
+      (fun t g hg h tl sv htl hm => hCons t g hg m h tl sv htl hm)
       p.lctx p.body (paramsΓ p.sig.params) (argsEnv (.i n :: tl)) true p.sig.ret
       (initLocals (fnCode M p) (w0 :: ws')) [] out hty henv hLR hout
     unfold wFuncN
@@ -734,6 +741,8 @@ theorem fn_certified_total_of_check {C : Nat} (S : CarrierSpec C)
     (hMem : ∀ f p, G f = some p →
       M.sigs f = some p.sig ∧ planTyped M p = true ∧ host f = none ∧
         code f = some (fnCode M p))
+    (hCons : ∀ t f, M.listCons t = some f → ∀ k h tl sv, HasTy M tl (.list t) →
+      groupModel outer G k f [h, tl] = some sv → sv = .cons t h tl)
     (hBoxT : ∀ k : Int, -(2 ^ 63 : Int) ≤ k → k < 2 ^ 63 → ∃ w, box [.i64v k] = some w)
     (hAddT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, add [va, vb] = some w)
     (hSubT : ∀ a b va vb, S.Repr a va → S.Repr b vb → ∃ w, sub [va, vb] = some w)
@@ -743,7 +752,7 @@ theorem fn_certified_total_of_check {C : Nat} (S : CarrierSpec C)
         FnTotal S M code host f p.sig (fun fuel => groupModel outer G fuel f) := by
   obtain ⟨_, hall⟩ := checkTermGroup_spec hck
   refine fn_certified_total S box add sub mul cmp eq neg Ctr hNegC code host M hCarrier hBox hAdd
-    hSub hMul hNeg hCmp hEq R G outer hOuter hMem hBoxT hAddT hSubT (role == .mul)
+    hSub hMul hNeg hCmp hEq R G outer hOuter hMem hCons hBoxT hAddT hSubT (role == .mul)
     (fun h => hMulT (by simpa using h)) (memOf ms) ?_ ?_
   · intro g hg
     obtain ⟨m, hm, hmg⟩ := List.any_eq_true.mp hg

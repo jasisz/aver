@@ -103,7 +103,16 @@ def obligationsOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) : List Obl
 /-! ### Calls -/
 
 mutual
-  /-- The function indices a plan calls (`call` and `tailCall`). -/
+  /-- Every declared cons helper is a planned function whose plan is the
+    wall's cons plan (`Grammar.isConsPlan`: its body is `consBody`), so a
+    non-empty list literal calls a function whose meaning is `List.prepend`. -/
+def consPinned (tt : TypeTable) (fns : List FnEntry) : Bool :=
+  tt.listCons.all fun x =>
+    match planOf fns x.2 with
+    | some p => isConsPlan p
+    | none => false
+
+/-- The function indices a plan calls (`call` and `tailCall`). -/
   def callTargets : Expr → List Nat
     | .literal _ => []
     | .local _ => []
@@ -567,7 +576,8 @@ def plansAccepted (artifact : ArtifactData) : Bool :=
   typeTableConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   dataConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   roleTypesPinned artifact.modBytes artifact.modLen M &&
-  declsWellFormed m.subject m.types m.fnPlans
+  declsWellFormed m.subject m.types m.fnPlans &&
+  consPinned m.types m.fnPlans
 
 /-- The conjuncts of `plansAccepted` other than the per-entry checks. A
     package proves the per-entry checks in chunks, one declaration each, so
@@ -579,7 +589,8 @@ def plansAcceptedRest (artifact : ArtifactData) : Bool :=
   typeTableConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   dataConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   roleTypesPinned artifact.modBytes artifact.modLen M &&
-  declsWellFormed m.subject m.types m.fnPlans
+  declsWellFormed m.subject m.types m.fnPlans &&
+  consPinned m.types m.fnPlans
 
 theorem plansAccepted_of_parts (artifact : ArtifactData)
     (hall : artifact.manifest.fnPlans.all
@@ -588,9 +599,9 @@ theorem plansAccepted_of_parts (artifact : ArtifactData)
         artifact.manifest.fnPlans) = true)
     (hrest : plansAcceptedRest artifact = true) : plansAccepted artifact = true := by
   simp only [plansAcceptedRest, Bool.and_eq_true] at hrest
-  obtain ⟨⟨⟨⟨ha, hc⟩, hd⟩, he⟩, hf⟩ := hrest
+  obtain ⟨⟨⟨⟨⟨ha, hc⟩, hd⟩, he⟩, hf⟩, hg⟩ := hrest
   simp only [plansAccepted, Bool.and_eq_true]
-  exact ⟨⟨⟨⟨⟨ha, hall⟩, hc⟩, hd⟩, he⟩, hf⟩
+  exact ⟨⟨⟨⟨⟨⟨ha, hall⟩, hc⟩, hd⟩, he⟩, hf⟩, hg⟩
 
 /-- The manifest's obligations are exactly the ones the wall derives from its
     plans: no obligation field is producer data. -/

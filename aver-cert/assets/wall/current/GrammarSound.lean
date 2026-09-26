@@ -1372,12 +1372,26 @@ theorem tyOf_interp_inv {parts : List Expr} {T : Ty}
   · simp at h
 
 theorem tyOf_list_inv {t : Ty} {items : List Expr} {T : Ty}
-    (h : tyOf M n Γ tail (.list t items) = some T) : items = [] ∧ T = .list t := by
+    (h : tyOf M n Γ tail (.list t items) = some T) :
+    T = .list t ∧ (items = [] ∨ ∃ f ts, items.isEmpty = false ∧ M.listCons t = some f ∧
+      M.sigs f = some (consSig t) ∧ tysOf M n Γ items = some ts ∧ ∀ x ∈ ts, x = t) := by
   simp only [tyOf] at h
   split at h
-  · simp only [Option.some.injEq] at h
-    exact ⟨rfl, h.symm⟩
-  · simp at h
+  · rename_i he
+    simp only [Option.some.injEq] at h
+    exact ⟨h.symm, Or.inl (List.isEmpty_iff.mp he)⟩
+  · rename_i he
+    split at h
+    · rename_i f ts hf hts
+      split at h
+      · rename_i hc
+        simp only [Option.some.injEq] at h
+        refine ⟨h.symm, Or.inr ⟨f, ts, by simpa using he, hf, hc.1, hts, ?_⟩⟩
+        have h2 := hc.2
+        simp only [List.all_eq_true, decide_eq_true_eq] at h2
+        exact h2
+      · simp at h
+    · simp at h
 
 theorem tyOf_construct_inv {c : CtorTag} {ty : Ty} {args : List Expr} {T : Ty}
     (h : tyOf M n Γ tail (.construct c ty args) = some T) :
@@ -1879,6 +1893,98 @@ the nested argument lists and the arm shapes). The context fixes: the carrier sp
 host contracts at their indices, an arbitrary opaque `callee`, and a
 `Contract` for every callee the typing admits. -/
 
+/-! ## List literals
+
+A non-empty literal pushes its items, `ref.null`, and calls the cons helper
+once per item; the stack then holds the items in reverse, so the calls fold
+them into cons cells from the last one in. The helper is known only through
+its `Contract` and the model fact that its meaning is `List.prepend`. -/
+
+section ListLit
+variable {C : Nat} {S : CarrierSpec C} {M : MCtx}
+
+theorem eraseL_replicate (k : Nat) (i : WInstr) :
+    eraseL (List.replicate k (BI.op i)) = List.replicate k i := by
+  induction k with
+  | zero => simp [eraseL]
+  | succ k ih => simp [List.replicate_succ, eraseL, eraseI, ih]
+
+theorem consAll_foldl (t : Ty) (vs : List SVal) :
+    consAll t vs = vs.reverse.foldl (fun a v => SVal.cons t v a) (.nil t) := by
+  rw [List.foldl_reverse]
+  induction vs with
+  | nil => simp [consAll]
+  | cons v vs ih => simp [consAll, ih]
+
+theorem sreprL_append : ∀ {vs1 : List SVal} {ws1 : List WVal} {vs2 : List SVal}
+    {ws2 : List WVal}, SReprL S M vs1 ws1 → SReprL S M vs2 ws2 →
+      SReprL S M (vs1 ++ vs2) (ws1 ++ ws2)
+  | [], [], _, _, _, h2 => by simpa using h2
+  | _ :: _, _ :: _, _, _, h1, h2 => ⟨h1.1, sreprL_append h1.2 h2⟩
+  | [], _ :: _, _, _, h1, _ => by simp [SReprL] at h1
+  | _ :: _, [], _, _, h1, _ => by simp [SReprL] at h1
+
+theorem sreprL_reverse : ∀ {vs : List SVal} {ws : List WVal},
+    SReprL S M vs ws → SReprL S M vs.reverse ws.reverse
+  | [], [], _ => by simp [SReprL]
+  | _ :: _, _ :: _, h => by
+      simp only [List.reverse_cons]
+      exact sreprL_append (sreprL_reverse h.2) ⟨h.1, trivial⟩
+  | [], _ :: _, h => by simp [SReprL] at h
+  | _ :: _, [], h => by simp [SReprL] at h
+
+theorem hasTyL_mem {t : Ty} : ∀ {svs : List SVal} {ts : List Ty},
+    HasTyL M svs ts → (∀ x ∈ ts, x = t) → ∀ v ∈ svs, HasTy M v t
+  | [], _, _, _, v, hv => by simp at hv
+  | _ :: _, [], h, _, _, _ => by simp [HasTyL] at h
+  | a :: svs, x :: ts, h, hall, v, hv => by
+      rcases List.mem_cons.mp hv with rfl | hv
+      · have hx := hall x (by simp)
+        subst hx
+        exact h.1
+      · exact hasTyL_mem h.2 (fun y hy => hall y (by simp [hy])) v hv
+
+/-- `rs.length` calls of the cons helper over `acc :: wrs ++ st`, where `acc`
+    represents `tl` and `wrs` the items `rs` (last item first), fold them
+    into `tl` and leave one represented list on `st`. -/
+theorem consCalls_run {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee}
+    {f : Nat} {t : Ty} {model : List SVal → Option SVal}
+    (hC : Contract S M host ar callee f (consSig t) model)
+    (hm : ∀ h tl sv, HasTy M tl (.list t) → model [h, tl] = some sv → sv = .cons t h tl) :
+    ∀ (rs : List SVal) (wrs : List WVal) (tl : SVal) (acc : WVal) (wl st : List WVal)
+      (out : Out),
+      SReprL S M rs wrs → (∀ v ∈ rs, HasTy M v t) → SRepr S M tl acc →
+      HasTy M tl (.list t) →
+      wRunF host ar callee (List.replicate rs.length (.call f)) wl (acc :: (wrs ++ st)) =
+        some out →
+      ∃ w, out = .ok wl (w :: st) ∧
+        SRepr S M (rs.foldl (fun a v => SVal.cons t v a) tl) w ∧
+        HasTy M (rs.foldl (fun a v => SVal.cons t v a) tl) (.list t)
+  | [], [], tl, acc, wl, st, out, _, _, hacc, htl, hrun => by
+      simp only [List.length_nil, List.replicate_zero, List.nil_append, wRunF,
+        Option.some.injEq] at hrun
+      subst hrun
+      exact ⟨acc, rfl, hacc, htl⟩
+  | [], _ :: _, _, _, _, _, _, hr, _, _, _, _ => by simp [SReprL] at hr
+  | _ :: _, [], _, _, _, _, _, hr, _, _, _, _ => by simp [SReprL] at hr
+  | r :: rs, w :: wrs, tl, acc, wl, st, out, hr, hall, hacc, htl, hrun => by
+      have har2 : ar f = some 2 := by simpa [consSig] using hC.2.1
+      have hpop : popArgs 2 (acc :: w :: (wrs ++ st)) = some ([w, acc], wrs ++ st) :=
+        popArgs_two w acc _
+      simp only [List.length_cons, List.replicate_succ, List.cons_append] at hrun
+      cases hc : callee f [w, acc] with
+      | none => simp [wRunF, hC.1, har2, hpop, hc] at hrun
+      | some r1 =>
+          simp only [wRunF, hC.1, har2, hpop, hc] at hrun
+          obtain ⟨sv, hmv, hsv, hT⟩ := hC.2.2 [r, tl] [w, acc] r1
+            ⟨hall r (by simp), htl, trivial⟩ ⟨hr.1, hacc, trivial⟩ hc
+          have hsv' := hm r tl sv htl hmv
+          subst hsv'
+          exact consCalls_run hC hm rs wrs (.cons t r tl) r1 wl st out hr.2
+            (fun v hv => hall v (by simp [hv])) hsv hT hrun
+
+end ListLit
+
 section Agreement
 variable {C : Nat} (S : CarrierSpec C)
   (box add sub mul cmp eq neg : List WVal → Option WVal)
@@ -1895,8 +2001,10 @@ variable {C : Nat} (S : CarrierSpec C)
   (F : Nat → List SVal → Option SVal)
   (hCallees : ∀ f sig, M.sigs f = some sig →
     Contract S M host ar callee f sig (F f))
+  (hConsF : ∀ t f, M.listCons t = some f → ∀ h tl sv, HasTy M tl (.list t) →
+    F f [h, tl] = some sv → sv = .cons t h tl)
   (X : LCtx)
-include Ctr hNegC hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R hCallees
+include Ctr hNegC hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R hCallees hConsF
 
 set_option hygiene false in
 /-- The size side condition of a recursive call in the agreement proofs: the
@@ -2962,10 +3070,28 @@ theorem agreement_step :
       subst hout
       exact ⟨.s bs, by simp [eval, hevs, hbs], by simp [HasTy], res_ok (by simp [SRepr]) hl1⟩
   | .list t items, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
-      obtain ⟨rfl, rfl⟩ := tyOf_list_inv hty
-      simp [lowerW, lowerB, eraseL, eraseI, wRunF] at hrun
-      subst hrun
-      exact ⟨.nil t, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr]) hl⟩
+      obtain ⟨rfl, hcase⟩ := tyOf_list_inv hty
+      rcases hcase with rfl | ⟨f, ts, hne, hf, hsig, hts, hall⟩
+      · simp [lowerW, lowerB, eraseL, eraseI, wRunF] at hrun
+        subst hrun
+        exact ⟨.nil t, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr]) hl⟩
+      · simp only [lowerW, lowerB, hne, hf, Bool.false_eq_true, ↓reduceIte, eraseL_append,
+          List.append_assoc] at hrun
+        obtain ⟨o1, h1, hseq⟩ := run_split hrun
+        obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
+          agreementArgs items Γ env ts wl st o1 hts henv hl h1
+        have hlen : items.length = svs.reverse.length := by
+          rw [List.length_reverse, hasTyL_length hTs, tysOf_length hts]
+        simp only [seqOut, eraseL, eraseI, eraseL_replicate, List.cons_append,
+          List.nil_append, wRunF, hlen] at hseq
+        obtain ⟨w, rfl, hw, hT⟩ := consCalls_run (hCallees f (consSig t) hsig)
+          (hConsF t f hf) svs.reverse ws.reverse (.nil t) .null wl1 st out
+          (sreprL_reverse hrep) (fun v hv => hasTyL_mem hTs hall v (List.mem_reverse.mp hv))
+          (by simp [SRepr]) (by simp [HasTy]) hseq
+        refine ⟨consAll t svs, ?_, ?_, res_ok ?_ hl1⟩
+        · simp [eval, hne, hevs]
+        · rw [consAll_foldl]; exact hT
+        · rw [consAll_foldl]; exact hw
 
 theorem agreementArgs_step :
     ∀ (es : List Expr) (hsz : sizeOf es < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
@@ -3756,23 +3882,23 @@ theorem agreement_upto : ∀ n : Nat,
     obtain ⟨ih0, ih1, ih2, ih3, ih4, ih5, ih6, ih7, ih8⟩ := ih
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intros
-      apply agreement_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreement_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
     · intros
-      apply agreementArgs_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreementArgs_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
     · intros
-      apply agreementIntArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreementIntArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
     · intros
-      apply agreementBoolArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreementBoolArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
     · intros
-      apply agreementOptArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreementOptArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
     · intros
-      apply agreementResArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreementResArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
     · intros
-      apply agreementVarArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreementVarArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
     · intros
-      apply agreementStrArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreementStrArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
     · intros
-      apply agreementTupArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
+      apply agreementTupArms_step S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X n ih0 ih1 ih2 ih3 ih4 ih5 ih6 ih7 ih8 _ ‹_› <;> assumption
 
 theorem agreement :
     ∀ (e : Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
@@ -3786,7 +3912,7 @@ theorem agreement :
   := by
   intro e
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf e + 1)).1 e <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf e + 1)).1 e <;> first | assumption | exact Nat.lt_succ_self _
 
 theorem agreementArgs :
     ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
@@ -3801,7 +3927,7 @@ theorem agreementArgs :
   := by
   intro es
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf es + 1)).2.1 es <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf es + 1)).2.1 es <;> first | assumption | exact Nat.lt_succ_self _
 
 /-- The Int literal cascade: `sc` is the subject's code, re-run per literal
     arm; every run yields the same Int `x` (evaluation is pure). -/
@@ -3820,7 +3946,7 @@ theorem agreementIntArms :
   := by
   intro arms
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf arms + 1)).2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
 
 /-- The two-arm Bool match: one `if` on the subject's `i32`. -/
 theorem agreementBoolArms :
@@ -3835,7 +3961,7 @@ theorem agreementBoolArms :
   := by
   intro arms
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf arms + 1)).2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
 
 /-- The two-arm Option match over the subject held in the scratch. -/
 theorem agreementOptArms :
@@ -3850,7 +3976,7 @@ theorem agreementOptArms :
   := by
   intro arms
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf arms + 1)).2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
 
 /-- The two-arm Result match: `Ok` in the `then` (payload field 1), `Err` in
     the `else` (payload field 2). -/
@@ -3866,7 +3992,7 @@ theorem agreementResArms :
   := by
   intro arms
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf arms + 1)).2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
 
 /-- The user-variant `ref.test` cascade over the subject held in the
     scratch. `coversB` says some remaining arm reaches the subject's
@@ -3888,7 +4014,7 @@ theorem agreementVarArms :
   := by
   intro arms
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf arms + 1)).2.2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
 
 /-- The String literal cascade over the subject held in the scratch: each
     literal arm compares through `__wasmgc_string_eq`; `_` ends it. -/
@@ -3904,7 +4030,7 @@ theorem agreementStrArms :
   := by
   intro arms
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf arms + 1)).2.2.2.2.2.2.2.1 arms <;> first | assumption | exact Nat.lt_succ_self _
 
 /-- The flat tuple destructure over the subject held in the scratch. -/
 theorem agreementTupArms :
@@ -3921,7 +4047,7 @@ theorem agreementTupArms :
   := by
   intro arms
   intros
-  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees X (sizeOf arms + 1)).2.2.2.2.2.2.2.2 arms <;> first | assumption | exact Nat.lt_succ_self _
+  apply (agreement_upto S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X (sizeOf arms + 1)).2.2.2.2.2.2.2.2 arms <;> first | assumption | exact Nat.lt_succ_self _
 
 
 end Agreement
@@ -3939,6 +4065,37 @@ theorem groupModel_member (outer : Nat → Nat → List SVal → Option SVal)
     groupModel outer G (fuel + 1) f args =
       eval (groupModel outer G fuel) (argsEnv args) p.body := by
   simp [groupModel, hG]
+
+/-- The wall's own cons plan means `List.prepend` at every fuel. -/
+theorem groupModel_consPlan (outer : Nat → Nat → List SVal → Option SVal)
+    (G : Nat → Option FnPlan) {M : MCtx} {f : Nat} {p : FnPlan} {t : Ty}
+    (hG : G f = some p) (hb : p.body = consBody) :
+    ∀ k h tl sv, HasTy M tl (.list t) → groupModel outer G k f [h, tl] = some sv →
+      sv = .cons t h tl := by
+  intro k h tl sv htl hm
+  cases k with
+  | zero => simp [groupModel, hG] at hm
+  | succ k =>
+      rw [groupModel_member outer G hG, hb] at hm
+      cases tl <;> simp only [HasTy] at htl
+      · subst htl
+        simp [consBody, eval, evalArgs, argsEnv, builtinEval] at hm
+        subst hm; rfl
+      · obtain ⟨rfl, -, -⟩ := htl
+        simp [consBody, eval, evalArgs, argsEnv, builtinEval] at hm
+        subst hm; rfl
+
+theorem isConsPlan_body {p : FnPlan} (h : isConsPlan p = true) :
+    p.body = consBody := by
+  unfold isConsPlan at h
+  revert h
+  split
+  · rename_i heq
+    intro _
+    rw [heq]
+    rfl
+  · intro hb
+    cases hb
 
 theorem envTy_args {M : MCtx} {svs : List SVal} {ts : List Ty}
     (h : HasTyL M svs ts) : EnvTy M (argsEnv svs) (paramsΓ ts) := by
@@ -3985,7 +4142,9 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
       FnCertified S M code host f sig (fun fuel => outer fuel f))
     (hMem : ∀ f p, G f = some p →
       M.sigs f = some p.sig ∧ planTyped M p = true ∧ host f = none ∧
-        code f = some (fnCode M p)) :
+        code f = some (fnCode M p))
+    (hCons : ∀ t f, M.listCons t = some f → ∀ k h tl sv, HasTy M tl (.list t) →
+      groupModel outer G k f [h, tl] = some sv → sv = .cons t h tl) :
     ∀ f p, G f = some p →
       FnCertified S M code host f p.sig
         (fun fuel => groupModel outer G fuel f) := by
@@ -4047,6 +4206,7 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
             obtain ⟨sv, hev, hT, hres⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host
               (fun g => (code g).map (·.arity)) (fun g as => wFuncN code host k g as) M
               hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R (groupModel outer G k) hCallees
+              (fun t g hg h tl sv htl hm => hCons t g hg k h tl sv htl hm)
               p.lctx p.body (paramsΓ p.sig.params) (argsEnv svs) true p.sig.ret
               (initLocals (fnCode M p) ws) [] o hty (envTy_args hTs) hLR hw
             have hm : groupModel outer G (k + 1) f svs = some sv := by

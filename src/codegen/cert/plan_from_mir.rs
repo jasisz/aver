@@ -61,6 +61,9 @@ pub trait PlanLayout {
     fn result(&self, canonical: &str) -> Option<u32>;
     fn vector(&self, canonical: &str) -> Option<u32>;
     fn list(&self, canonical: &str) -> Option<u32>;
+    /// The function index of the `List<T>` cons helper a non-empty literal
+    /// calls once per item (`emit_mir_list_literal`).
+    fn list_cons(&self, canonical: &str) -> Option<u32>;
     fn tuple(&self, canonical: &str) -> Option<u32>;
     fn map(&self, canonical: &str) -> Option<u32>;
     /// A type name the emitter represents specially (packed sequence,
@@ -430,6 +433,23 @@ impl TypeTableBuilder {
         Err(format!("type `{name}`"))
     }
 
+    /// Declare the cons helper of `List<elem>` (the literal's canonical type
+    /// `canonical`), which a non-empty literal calls once per item.
+    fn list_cons(
+        &mut self,
+        layout: &dyn PlanLayout,
+        canonical: &str,
+        elem: &PlanTy,
+    ) -> Result<(), String> {
+        let f = layout
+            .list_cons(canonical)
+            .ok_or_else(|| format!("List (non-empty literal): `{canonical}` has no cons helper"))?;
+        if !self.table.list_cons.iter().any(|l| &l.0 == elem) {
+            self.table.list_cons.push((elem.clone(), f));
+        }
+        Ok(())
+    }
+
     /// Declare the passive data segment holding a string literal's bytes.
     fn str_seg(&mut self, layout: &dyn PlanLayout, bytes: &[u8]) -> Result<(), String> {
         if self.table.str_segs.iter().any(|(b, _)| b == bytes) {
@@ -784,14 +804,18 @@ impl Printer<'_> {
                     .collect::<Result<_, _>>()?,
             ),
             MirExpr::List(items) => {
-                if !items.is_empty() {
-                    return Err("List (non-empty literal)".into());
-                }
-                let ty = self.ty(&stamped(expr)?)?;
+                let text = stamped(expr)?;
+                let ty = self.ty(&text)?;
                 let PlanTy::List(elem) = ty else {
                     return Err("List (stamp is not a List)".into());
                 };
-                PlanExpr::List(*elem, Vec::new())
+                if !items.is_empty() {
+                    let canonical = parse_ty(&text)
+                        .map(|t| t.canonical())
+                        .ok_or("List (stamp does not parse)")?;
+                    self.types.list_cons(self.layout, &canonical, &elem)?;
+                }
+                PlanExpr::List(*elem, self.exprs(items)?)
             }
             other => return Err(node_name(other).to_string()),
         })
@@ -1257,5 +1281,25 @@ fn notLiteral(a: Int, d: Int) -> Int
         };
         assert_eq!(arms[0].0, PlanPat::EmptyList);
         assert!(matches!(arms[1].0, PlanPat::Cons(h, t) if h != PLAN_NO_SLOT && h != t));
+    }
+
+    #[test]
+    fn a_list_literal_prints_its_items_and_declares_its_cons_helper() {
+        let (map, types) = plans(
+            r#"
+module L
+    intent = "literal probes"
+    exposes [three]
+
+fn three(x: Int) -> List<Int>
+    [x, 2, x]
+"#,
+        );
+        let three = plan(&map, "three");
+        let PlanExpr::List(PlanTy::Int, items) = &three.body else {
+            panic!("three body: {:?}", three.body)
+        };
+        assert_eq!(items.len(), 3);
+        assert!(types.list_cons.iter().any(|(t, _)| *t == PlanTy::Int));
     }
 }

@@ -1493,7 +1493,8 @@ const STEP_EVAL: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, arms_
      _root_.false_and, _root_.and_false, AverCert.GrammarBridge.decodeStr_strBytes, \
      _root_.Option.bind_some, _root_.Function.comp_apply, strBytes_eq_iff, strBytes_beq, \
      Nat.reduceEqDiff, Int.reduceEq, ← AverCert.GrammarBridge.strBytes_append, \
-     _root_.List.append_nil, str_toString, str_hadd";
+     _root_.List.append_nil, str_toString, str_hadd, _root_.List.isEmpty_nil, \
+     _root_.List.isEmpty_cons, _root_.Bool.false_eq_true, AverCert.Grammar.consAll";
 
 /// Normal forms a leaf closes with, on top of the source definition.
 const STEP_NORM: &str = "_root_.bne, dec_eq_beq, dec_ne_bne, strBytes_eq_iff, str_toString, \

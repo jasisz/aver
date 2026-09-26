@@ -205,7 +205,8 @@ def plansAcceptedRestL (artifact : ArtifactData) (L : Layout) : Bool :=
   typeTableConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   dataConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   roleTypesPinnedL L artifact.modBytes artifact.modLen M &&
-  declsWellFormed m.subject m.types m.fnPlans
+  declsWellFormed m.subject m.types m.fnPlans &&
+  consPinned m.types m.fnPlans
 
 theorem plansAcceptedRest_of_layout {artifact : ArtifactData} {L : Layout}
     (hL : layoutConfirmed artifact.modBytes artifact.modLen L = true)

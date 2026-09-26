@@ -158,6 +158,8 @@ theorem groupModel_restrict (P G : Nat → Option FnPlan)
 structure PlanFacts (s : Subject) (tt : TypeTable) (fns : List FnEntry) : Prop where
   distinct : (roleIndices (mctxOf s tt fns) ++ fns.map (·.funcIdx)).Nodup
   typed : ∀ e ∈ fns, planTyped (mctxOf s tt fns) e.plan = true
+  cons : ∀ t f, (mctxOf s tt fns).listCons t = some f →
+    ∃ p, planOf fns f = some p ∧ isConsPlan p = true
 
 theorem PlanFacts.nodup {s : Subject} {tt : TypeTable} {fns : List FnEntry}
     (hf : PlanFacts s tt fns) : (fns.map (·.funcIdx)).Nodup :=
@@ -165,11 +167,21 @@ theorem PlanFacts.nodup {s : Subject} {tt : TypeTable} {fns : List FnEntry}
 
 theorem planFacts_of_accepted (artifact : ArtifactData) (h : plansAccepted artifact = true) :
     PlanFacts artifact.manifest.subject artifact.manifest.types artifact.manifest.fnPlans := by
-  simp only [plansAccepted, Bool.and_eq_true, List.all_eq_true] at h
-  obtain ⟨⟨⟨⟨⟨hd, he⟩, _⟩, _⟩, _⟩, _⟩ := h
-  refine ⟨of_decide_eq_true hd, fun e hm => ?_⟩
-  have := he e hm
-  simp only [entryAccepted, Bool.and_eq_true] at this
-  exact this.1.1
+  simp only [plansAccepted, consPinned, Bool.and_eq_true, List.all_eq_true] at h
+  obtain ⟨⟨⟨⟨⟨⟨hd, he⟩, _⟩, _⟩, _⟩, _⟩, hc⟩ := h
+  refine ⟨of_decide_eq_true hd, fun e hm => ?_, fun t f hf => ?_⟩
+  · have := he e hm
+    simp only [entryAccepted, Bool.and_eq_true] at this
+    exact this.1.1
+  · simp only [mctxOf, Option.map_eq_some_iff] at hf
+    obtain ⟨x, hx, rfl⟩ := hf
+    have hmem := hc x (List.mem_of_find?_eq_some hx)
+    revert hmem
+    split
+    · rename_i p hp
+      intro hmem
+      exact ⟨p, hp, hmem⟩
+    · intro hmem
+      cases hmem
 
 end AcceptanceSoundness

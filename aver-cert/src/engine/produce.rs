@@ -430,6 +430,12 @@ impl Cited {
                 .filter(|s| self.segs.contains(&s.0))
                 .cloned()
                 .collect(),
+            list_cons: tt
+                .list_cons
+                .iter()
+                .filter(|l| has(PlanTy::List(Box::new(l.0.clone()))))
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -505,8 +511,7 @@ fn check_candidate(
     plan: &FnPlan,
     candidates: &BTreeSet<u32>,
 ) -> Option<String> {
-    let mut targets = Vec::new();
-    call_targets(&plan.body, &mut targets);
+    let targets = plan_targets(m.tt, plan);
     if let Some(t) = targets.iter().find(|t| !candidates.contains(t)) {
         return Some(format!("calls function {t}, which has no certified plan"));
     }
@@ -602,6 +607,18 @@ pub fn analyze(
 
     let mut types = plans.types.clone();
     confirm_type_table(&facts, &mut types);
+    // A cons helper is never a user function: an index the compiler also
+    // printed a user plan for is dropped (its literals then decline).
+    types
+        .list_cons
+        .retain(|(_, f)| !plans.fns.iter().any(|p| p.func_idx == *f));
+    // The cons helper of each literal's list type is offered with the wall's
+    // own cons plan; the byte check below confirms the helper is exactly it.
+    let cons_plans: Vec<(u32, FnPlan)> = types
+        .list_cons
+        .iter()
+        .map(|(t, f)| (*f, FnPlan::cons(t)))
+        .collect();
 
     let mut reasons: BTreeMap<u32, String> = BTreeMap::new();
     let mut plan_of: BTreeMap<u32, &FnPlan> = BTreeMap::new();
@@ -614,6 +631,9 @@ pub fn analyze(
                 reasons.insert(f.func_idx, reason.clone());
             }
         }
+    }
+    for (f, p) in &cons_plans {
+        plan_of.entry(*f).or_insert(p);
     }
     let mut candidates: BTreeSet<u32> = plan_of.keys().copied().collect();
     loop {
@@ -638,8 +658,7 @@ pub fn analyze(
     // reaches.
     let mut edges: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     for f in &candidates {
-        let mut t = Vec::new();
-        call_targets(&plan_of[f].body, &mut t);
+        let mut t = plan_targets(&types, plan_of[f]);
         t.sort_unstable();
         t.dedup();
         edges.insert(*f, t);
@@ -758,7 +777,11 @@ pub fn analyze(
     let mut cited = Cited::default();
     entries.iter().for_each(|e| cited.plan(&e.plan));
     cited.close(&types);
-    let types = cited.restrict(&types);
+    let mut types = cited.restrict(&types);
+    // `AcceptedArtifact.consPinned`: every declared cons helper is planned.
+    types
+        .list_cons
+        .retain(|(_, f)| entries.iter().any(|e| e.func_idx == *f));
 
     let declined: Vec<(String, String)> = export_name
         .iter()

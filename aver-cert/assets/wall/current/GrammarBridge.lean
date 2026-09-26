@@ -337,7 +337,15 @@ theorem eval_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
       split at h
       · rename_i vs hvs; rw [evalArgs_mono hle env parts vs hvs]; exact h
       · cases h
-  | env, .list t items, v, h => by simpa [eval] using h
+  | env, .list t items, v, h => by
+      simp only [eval] at h ⊢
+      by_cases he : items.isEmpty = true
+      · simp only [he, ↓reduceIte] at h ⊢
+        exact h
+      · simp only [he, Bool.false_eq_true, ↓reduceIte] at h ⊢
+        split at h
+        · rename_i vs hvs; rw [evalArgs_mono hle env items vs hvs]; exact h
+        · cases h
 theorem evalArgs_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
     ∀ (env : Nat → Option SVal) (es : List Expr) (vs : List SVal),
       evalArgs F env es = some vs → evalArgs G env es = some vs
