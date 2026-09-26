@@ -168,6 +168,8 @@ All prototypes run in the kept btc build directory against the real wall, `Plans
 | (ii) + (iii) together (15 modules) | 355 | 50 s | 60 to 68 s | 1.17 GB |
 | bytes as chunks (`ProtoBytes`: 781 hex numerals, `chunksFit`) | 1 | 0.04 s | 4.5 s | 0.67 GB |
 
+Encoding. Lean parses a hex numeral in time quadratic in its length, so the chunk width sets the elaboration cost of the bytes file: 781 numerals of 1 KiB take 3.1 s and 0.67 GB, and kernel reads are unaffected by the width because `window` joins at most `len / 1024 + 2` chunks. One numeral for the whole module would take minutes to parse, and per-entry numerals would move entry boundaries into checker-rendered data, which is what the checker must not decide. Fixed 1 KiB chunks keep the checker ignorant of the module's structure. The byte list inside the kernel (`pack` of the lowering) is the other encoding cost: packing byte by byte is quadratic in the entry length, which only shows on the 4,870-byte entry.
+
 Per plan the full check costs about 120 ms, half of it the lowering and packing. Today it costs about 256 ms (a 32-plan chunk takes 8.2 s). The one outlier is the largest function (4,870 bytes), whose file peaks at 1.56 GB because `pack` is quadratic in the entry length. Packing 32-byte limbs first would remove that.
 
 The byte path, prototyped and estimated:
@@ -196,7 +198,7 @@ The new byte path costs about 120 ms per plan, about 3 ms per 64-entry block of 
 
 - **Witness report pins: 116 s, 12.1 GB.** `reportFacets`, `policy` and `termination?` over all obligations each call `groupMembers`, which filters all 833 plans once per obligation, so the cost is quadratic. Fix: the package proves the report lists per block of obligations and the witness cites the joined lemma at the checker's statement (the pin's statement stays checker-owned; only its proof term changes). Also build the group table once.
 - **Audit: 246 s.** `axiomsOf` runs `collectAxioms` from an empty state for each of about 700 roots and walks the shared closure every time. Fix: one `CollectAxioms` state threaded through all roots, reporting per root from the memo. Expected a few seconds.
-- **Source bridges: 392 s build, `BridgeProof` alone 243 s and 9 GB.** Same shape as the byte path: one large module. Split it per bridge, or per group of bridges, before anything else.
+- **Source bridges: 392 s build, `BridgeProof` alone 243 s and 9 GB.** Re-elaborated alone, `BridgeProof` takes 290 s and 9.3 GB: 82 s kernel (44 s of it one declaration, `export_names_nodup`, which decides that the 823 export names are distinct over char lists) and about 185 s of `simp` and tactic time spread over the 535 bridge theorems (about 0.35 s each, which is linear in bridges). Two changes: prove `export_names_nodup` from the byte path's sorted export keys instead of deciding it again, and split the 535 bridge theorems over several modules so that lake can build them in parallel.
 - **Source model: 142 s** over 150 modules. Parallel builds help directly.
 
 With the byte path, the witness and the audit fixed and 4 workers, btc should check in about 6 to 7 minutes, and never faster than `BridgeProof`'s 243 s while it is one module. The peak then comes from `BridgeProof` (9 GB) until it is split.
@@ -224,7 +226,7 @@ Each step is one PR. Each keeps `accepted` unchanged, adds its lemma to the wall
 7. **Export blocks and sorted exports.** The emitter sorts exports by the wall's name key; `exportsAccounted_of_blocks`; decide the names question from section 10 here.
 8. **String-helper classification per block,** with the declared shape bitmap.
 9. **Closure from declared callee lists,** then, separately, the planned-function callee lemma.
-10. **Split `BridgeProof` per bridge.** The largest remaining module.
+10. **`BridgeProof`:** derive `export_names_nodup` from the sorted export keys of step 7 (44 s and most of its 9.3 GB), and spread the 535 bridge theorems over several modules. The largest remaining module.
 
 After step 2 the peak is set by `strings_ok` (12.7 GB) and `exports_ok` (10.7 GB) until steps 7 and 8. After step 8 every byte-path module is under 2 GB.
 
