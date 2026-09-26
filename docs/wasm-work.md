@@ -190,13 +190,13 @@ turn fails the run, `runCoordinator()` answers `{ err: reason }`.
 
 A program that reads `Run.lastTurn` also imports `aver.run_wait_starts(i32 caller) -> i64`,
 `aver.run_wait_ends(i32 caller) -> i64` and
-`aver.run_last_turn(i64 waitedMs, i64 workedMs, i32 caller) -> (i64, i64)`. The
+`aver.run_last_turn(i64 turn, i64 waitedMs, i64 workedMs, i32 caller) -> (i64, i64, i64)`. The
 generated loop calls the first right before it waits and the second right after
 the wait returns: each answers the host's monotonic clock in nanoseconds. With
 `runCoordinator()` the first is called from `__workHostObserve` and the second
 from `__workHostStep`, so the time the host spends awaiting worker messages and
 sockets is what `waitedMs` reports. The module keeps the numbers itself, so a
-live host answers `run_last_turn` with its two arguments. The recorder writes all
+live host answers `run_last_turn` with its three arguments. The recorder writes all
 three, and a replay answers `run_last_turn` with the recorded numbers. `host.mjs`
 supplies all three with `performance.now()`. A program that does not read
 `Run.lastTurn` imports none of them.

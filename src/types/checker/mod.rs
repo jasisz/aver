@@ -768,6 +768,15 @@ struct TypeChecker {
     current_fn_ret: Option<Type>,
     /// Line number of the function currently being checked; None at top level.
     current_fn_line: Option<usize>,
+    /// Whether the function currently being checked is one the compiler
+    /// generated: its name is in the `__` namespace, which user source cannot
+    /// declare. Only such a function may call an internal operation.
+    current_fn_generated: bool,
+    /// Operations a standard capability declares but does not expose, such
+    /// as the generated loop's marks around its wait. Their signatures are
+    /// registered so the code the compiler generates can call them; a call
+    /// from any other function is refused as if they did not exist.
+    internal_operations: HashSet<String>,
     /// Type names that are opaque in this module's context (imported via `exposes opaque`).
     opaque_types: HashSet<String>,
     /// Every named type the compiler itself declares — the host
@@ -852,6 +861,8 @@ impl TypeChecker {
             errors: Vec::new(),
             current_fn_ret: None,
             current_fn_line: None,
+            current_fn_generated: false,
+            internal_operations: HashSet::new(),
             opaque_types: HashSet::new(),
             builtin_type_names: HashSet::new(),
             self_host_mode: false,

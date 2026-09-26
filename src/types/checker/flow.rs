@@ -395,6 +395,7 @@ impl TypeChecker {
 
     pub(super) fn check_fn(&mut self, f: &FnDef) {
         self.current_fn_line = Some(f.line);
+        self.current_fn_generated = f.name.starts_with("__");
         // Start with globals and overlay parameter bindings.
         self.locals = self.globals.clone();
         if let Some(sig) = self.find_fn_sig(&f.name).cloned() {
@@ -450,6 +451,7 @@ impl TypeChecker {
             self.current_fn_ret = None;
             self.current_fn_line = None;
         }
+        self.current_fn_generated = false;
     }
 
     pub(super) fn check_top_level_stmts(&mut self, items: &[TopLevel]) {

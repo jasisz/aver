@@ -264,7 +264,7 @@ pub(super) enum EffectName {
     RunWaitStarts,
     /// `() -> i64` — the loop's wait returned: nanoseconds of the same clock.
     RunWaitEnds,
-    /// `(waitedMs: i64, workedMs: i64) -> (i64, i64)` — the numbers the
+    /// `(turn: i64, waitedMs: i64, workedMs: i64) -> (i64, i64, i64)` — the numbers the
     /// module holds, handed through the host: a live host answers them
     /// unchanged, a replay answers the recorded ones.
     RunLastTurn,
@@ -799,7 +799,7 @@ impl EffectName {
             Self::WorkTake => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
             Self::RunFail | Self::RunFailure => Ok(vec![any_ref_ty()]),
             Self::RunWaitStarts | Self::RunWaitEnds => Ok(vec![]),
-            Self::RunLastTurn => Ok(vec![ValType::I64, ValType::I64]),
+            Self::RunLastTurn => Ok(vec![ValType::I64, ValType::I64, ValType::I64]),
             Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpWriteNow => {
                 Ok(vec![any_ref_ty(), any_ref_ty()])
             }
@@ -967,7 +967,7 @@ impl EffectName {
             Self::RunFail => Ok(vec![]),
             Self::RunFailure => Ok(vec![any_ref_ty()]),
             Self::RunWaitStarts | Self::RunWaitEnds => Ok(vec![ValType::I64]),
-            Self::RunLastTurn => Ok(vec![ValType::I64, ValType::I64]),
+            Self::RunLastTurn => Ok(vec![ValType::I64, ValType::I64, ValType::I64]),
         }
     }
 }

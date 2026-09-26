@@ -4,20 +4,23 @@
 //! In a program that reads `Run.lastTurn`, the generated loop marks its one
 //! wait of a turn: `Run.waitStarts()` right before it and `Run.waitEnds()`
 //! right after it returns. Each mark reads a monotonic clock once, in
-//! nanoseconds, and the module keeps what it needs in four i64 globals:
+//! nanoseconds, and the module keeps what it needs in five i64 globals:
 //!
 //! - `started`: when the wait now in progress started;
 //! - `returned`: when the last wait returned, `-1` before the first one;
-//! - `waited`, `worked`: what `Run.lastTurn` answers, in whole milliseconds.
+//! - `waited`, `worked`: what `Run.lastTurn` answers, in whole milliseconds;
+//! - `turn`: how many waits have returned, the turn `Run.lastTurn` names.
 //!
-//! `Run.waitEnds` makes the two numbers: waited is this wait, worked is the
-//! stretch from the return of the wait before it to the start of this one,
-//! or 0 when there was none. Until a wait has returned both are 0.
+//! `Run.waitEnds` makes the numbers: the turn counts one more, waited is this
+//! wait, worked is the stretch from the return of the wait before it to the
+//! start of this one, or 0 when there was none. Until a wait has returned all
+//! three are 0.
 //!
-//! The clock is the host's on wasm-gc (`aver.run_wait_starts` and
+//! `Run` does not expose the two marks, so only the generated loop calls
+//! them. The clock is the host's on wasm-gc (`aver.run_wait_starts` and
 //! `aver.run_wait_ends`, which the recorder sees as the two marks) and
 //! `wasi:clocks/monotonic-clock.now` on wasip2. On wasm-gc `Run.lastTurn`
-//! also hands the two numbers through `aver.run_last_turn`, which a live host
+//! also hands the three numbers through `aver.run_last_turn`, which a live host
 //! answers unchanged and a replay answers with the recorded ones. A component
 //! records nothing, so there it reads the globals directly.
 
@@ -26,19 +29,20 @@ use wasm_encoder::{Function, Instruction};
 use super::WasmGcError;
 use super::body::{EmitCtx, SlotTable};
 
-/// The four globals the loop's waits are measured in.
+/// The five globals the loop's waits are measured in.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct RunTurnGlobals {
     pub(super) started: u32,
     pub(super) returned: u32,
     pub(super) waited: u32,
     pub(super) worked: u32,
+    pub(super) turn: u32,
 }
 
 impl RunTurnGlobals {
     /// Initial values, in allocation order: `started`, `returned` (`-1`: no
-    /// wait has returned yet), `waited`, `worked`.
-    pub(super) const INITIAL: [i64; 4] = [0, -1, 0, 0];
+    /// wait has returned yet), `waited`, `worked`, `turn`.
+    pub(super) const INITIAL: [i64; 5] = [0, -1, 0, 0, 0];
 }
 
 const NANOS_PER_MS: i64 = 1_000_000;
@@ -108,10 +112,15 @@ pub(super) fn emit_wait_ends(func: &mut Function, ctx: &EmitCtx<'_>) -> Result<(
     func.instruction(&Instruction::I64Const(NANOS_PER_MS));
     func.instruction(&Instruction::I64DivS);
     func.instruction(&Instruction::GlobalSet(g.waited));
+    // turn += 1
+    func.instruction(&Instruction::GlobalGet(g.turn));
+    func.instruction(&Instruction::I64Const(1));
+    func.instruction(&Instruction::I64Add);
+    func.instruction(&Instruction::GlobalSet(g.turn));
     Ok(())
 }
 
-/// `Run.lastTurn()`: the two numbers as a `Run.Turn` record.
+/// `Run.lastTurn()`: the three numbers as a `Run.Turn` record.
 pub(super) fn emit_last_turn(
     func: &mut Function,
     slots: &SlotTable,
@@ -124,7 +133,8 @@ pub(super) fn emit_last_turn(
         .ok_or(WasmGcError::Validation(
             "Run.lastTurn answers Run.Turn, and that record was not registered".into(),
         ))?;
-    let (waited, worked) = slots.run_turn_scratch();
+    let (turn, waited, worked) = slots.run_turn_scratch();
+    func.instruction(&Instruction::GlobalGet(g.turn));
     func.instruction(&Instruction::GlobalGet(g.waited));
     func.instruction(&Instruction::GlobalGet(g.worked));
     // Through the recorder on wasm-gc: live the numbers come back unchanged,
@@ -135,6 +145,9 @@ pub(super) fn emit_last_turn(
     }
     func.instruction(&Instruction::LocalSet(worked));
     func.instruction(&Instruction::LocalSet(waited));
+    func.instruction(&Instruction::LocalSet(turn));
+    func.instruction(&Instruction::LocalGet(turn));
+    lift_to_int(func, ctx)?;
     func.instruction(&Instruction::LocalGet(waited));
     lift_to_int(func, ctx)?;
     func.instruction(&Instruction::LocalGet(worked));

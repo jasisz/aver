@@ -1371,9 +1371,9 @@ mod last_turn;
 
 /// The ticker reads `Run.lastTurn()` while it is seated, after three ticks
 /// that each park on a 250 ms deadline, and after one that parks until the
-/// next turn. The seated reading is 0/0; a tick waited about its deadline and
-/// the turn before it worked far less; the tick that waited for nothing
-/// waited next to nothing.
+/// next turn. The seated reading is 0/0/0 and each later one names a later
+/// turn; a tick waited about its deadline and the turn before it worked far
+/// less; the tick that waited for nothing waited next to nothing.
 #[test]
 fn run_last_turn_reports_the_wait_and_the_work_around_a_turn() {
     let out = aver_within("run_last_turn", &["run"], 60);
@@ -1383,8 +1383,9 @@ fn run_last_turn_reports_the_wait_and_the_work_around_a_turn() {
 }
 
 /// The readings are recorded like `Time.unixMs`: the recording carries every
-/// `Run.lastTurn` and the loop's marks around its waits, and a replay answers
-/// the recorded numbers, so it prints the run's lines again, digit for digit.
+/// `Run.lastTurn`, turn number included, and the loop's marks around its
+/// waits, and a replay answers the recorded numbers, so it prints the run's
+/// lines again, digit for digit.
 #[test]
 fn a_recorded_last_turn_replays_to_the_same_numbers() {
     let dir = scratch("last-turn-replay");
@@ -1471,6 +1472,44 @@ fn a_loop_that_reads_no_last_turn_is_the_loop_it_was() {
     ] {
         assert!(measuring.contains(line), "missing `{line}`:\n{measuring}");
     }
+}
+
+/// The loop's marks around its wait are internal to it: `Run` does not expose
+/// them, so a program that calls one is refused the way a call to anything a
+/// module keeps to itself is, and one that names one in an effect list is
+/// refused too, with the operation it should read instead. Only the loop the
+/// compiler generates calls them.
+#[test]
+fn the_loop_marks_are_not_a_programs_to_call_or_name() {
+    let dir = scratch("last-turn-marks");
+    for (name, source, expected) in [
+        (
+            "calls",
+            "module Calls\n    intent = \"Calls a mark of the loop itself.\"\n\nfn main() -> Unit\n    ? \"Marks a wait that never happens.\"\n    ! [Run.waitStarts]\n    Run.waitStarts()\n",
+            "Capability operation 'Run.waitStarts' is not exposed by its module",
+        ),
+        (
+            "names",
+            "module Names\n    intent = \"Names a mark of the loop in an effect list.\"\n\nfn main() -> Unit\n    ? \"Claims an effect it cannot perform.\"\n    ! [Console.print, Run.waitEnds]\n    Console.print(\"hi\")\n",
+            "'Run.waitEnds' is internal to the generated loop",
+        ),
+    ] {
+        let file = dir.join(format!("{name}.av"));
+        std::fs::write(&file, source).expect("write the program");
+        let out = Command::new(aver_bin())
+            .current_dir(&dir)
+            .arg("check")
+            .arg(&file)
+            .output()
+            .expect("aver runs");
+        assert!(!out.status.success(), "{name}: {}", format_output(&out));
+        assert!(
+            combined(&out).contains(expected),
+            "{name}: {}",
+            format_output(&out)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A `main` that reads `Run.lastTurn` in a program that runs no generated

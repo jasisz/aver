@@ -4,13 +4,14 @@ module Run
     kind = capability
     semantics = effectful
     depends [Wait]
-    exposes [Wake, Turn, fail, failure, lastTurn, waitStarts, waitEnds]
+    exposes [Wake, Turn, fail, failure, lastTurn]
 
 type Wake
     Until(List<Wait.Item>, Option<Int>)
     Settled(Option<Int>)
 
 record Turn
+    turn: Int
     waitedMs: Int
     workedMs: Int
 
@@ -26,18 +27,18 @@ operation failure() -> Option<String>
     hostile = [failureNever, failureAtOnce, failureAfterOne]
 
 operation lastTurn() -> Run.Turn
-    ? "How long the loop's one wait before the current turn took (waitedMs), and how long the turn before it worked, from the return of its wait to the start of this one (workedMs), in whole milliseconds of a monotonic clock. While the loop seats the processes, before any wait has returned, both are 0, and so is workedMs in the first turn. Only a program run by Run.all() can call it."
+    ? "Which turn this is (turn: 0 while the loop seats the processes, 1 for the first turn after a wait, one more for every turn after it), how long the loop's one wait before it took (waitedMs), and how long the turn before it worked, from the return of its wait to the start of this one (workedMs), in whole milliseconds of a monotonic clock. While the loop seats the processes, before any wait has returned, all three are 0, and workedMs is 0 in the first turn. Every answer in one turn reads the same Turn, so turn tells them apart from the next. Only a program run by Run.all() can call it."
     oracle = generative
     replay = recorded
     hostile = [turnIdle, turnAsleep, turnBusy]
 
 operation waitStarts() -> Unit
-    ? "The generated loop calls this right before its one wait of a turn, and only in a program that calls lastTurn: it reads the monotonic clock. A program does not call it itself."
+    ? "Internal to the generated loop, which calls it right before its one wait of a turn in a program that calls lastTurn: one reading of the monotonic clock. It is not exposed, so a program cannot call it or name it."
     oracle = output
     replay = reissued
 
 operation waitEnds() -> Unit
-    ? "The generated loop calls this right after its one wait of a turn returns, and only in a program that calls lastTurn: it reads the monotonic clock and makes what lastTurn answers. A program does not call it itself."
+    ? "Internal to the generated loop, which calls it right after its one wait of a turn returns in a program that calls lastTurn: one reading of the monotonic clock, which makes what lastTurn answers. It is not exposed, so a program cannot call it or name it."
     oracle = output
     replay = reissued
 
@@ -57,12 +58,12 @@ fn failureAfterOne(path: BranchPath, call: Int) -> Option<String>
 
 fn turnIdle(path: BranchPath, call: Int) -> Run.Turn
     ? "Hostile profile: the loop neither waited nor worked, as while it seats the processes."
-    Run.Turn(waitedMs = 0, workedMs = 0)
+    Run.Turn(turn = 0, waitedMs = 0, workedMs = 0)
 
 fn turnAsleep(path: BranchPath, call: Int) -> Run.Turn
     ? "Hostile profile: the loop waited a whole day and did no work."
-    Run.Turn(waitedMs = 86400000, workedMs = 0)
+    Run.Turn(turn = call + 1, waitedMs = 86400000, workedMs = 0)
 
 fn turnBusy(path: BranchPath, call: Int) -> Run.Turn
     ? "Hostile profile: the loop never waited and every turn worked a whole minute."
-    Run.Turn(waitedMs = 0, workedMs = 60000)
+    Run.Turn(turn = call + 1, waitedMs = 0, workedMs = 60000)

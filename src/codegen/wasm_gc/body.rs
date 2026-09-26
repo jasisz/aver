@@ -120,7 +120,7 @@ pub(super) struct FnMap {
     /// `Run.fail` of this run gave, when the program calls `Run.fail` or
     /// `Run.failure`. `None` otherwise, so every other module keeps its bytes.
     pub(super) run_failure_global: Option<u32>,
-    /// The four i64 globals the loop's waits are measured in, when the
+    /// The five i64 globals the loop's waits are measured in, when the
     /// program reads `Run.lastTurn`. `None` otherwise, so every other module
     /// keeps its bytes. See `super::run_turn`.
     pub(super) run_turn_globals: Option<super::run_turn::RunTurnGlobals>,

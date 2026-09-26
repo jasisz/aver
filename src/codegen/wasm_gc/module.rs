@@ -2928,7 +2928,7 @@ pub(super) fn emit_module_with(
     } else {
         None
     };
-    // How long the loop waited and worked: four i64 globals on both wasm
+    // How long the loop waited and worked: five i64 globals on both wasm
     // targets, written by the loop's two marks around its wait and read by
     // `Run.lastTurn`. Appended last, and only for a program that reads
     // `Run.lastTurn`, whose loop is the only one that marks its waits.
@@ -2948,6 +2948,7 @@ pub(super) fn emit_module_with(
             returned: next(),
             waited: next(),
             worked: next(),
+            turn: next(),
         };
         for initial in super::run_turn::RunTurnGlobals::INITIAL {
             globals.global(

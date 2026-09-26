@@ -12,7 +12,9 @@
 //! calls it, the generated loop calls `Run.waitStarts()` right before its one
 //! wait of a turn and `Run.waitEnds()` right after it returns; each reads the
 //! monotonic clock once, and this provider keeps the two readings and the
-//! numbers they make. A program that never calls `Run.lastTurn` gets a loop
+//! numbers they make, counting the waits that returned as the turn number.
+//! `Run` does not expose the two marks: only the loop the compiler generates
+//! calls them. A program that never calls `Run.lastTurn` gets a loop
 //! that calls neither, so it reads no clock here at all.
 
 use std::sync::{Arc, Mutex};
@@ -39,7 +41,9 @@ struct TurnClock {
     started: Option<Instant>,
     /// When the last wait returned: where the work of the turn after it began.
     returned: Option<Instant>,
-    /// What `Run.lastTurn` answers: whole milliseconds waited and worked.
+    /// What `Run.lastTurn` answers: which turn this is (how many waits have
+    /// returned), and whole milliseconds waited and worked.
+    turn: i64,
     waited_ms: i64,
     worked_ms: i64,
 }
@@ -95,13 +99,14 @@ impl StandardRunProvider {
             .returned
             .map_or(0, |returned| whole_ms(returned, started));
         turns.returned = Some(now);
+        turns.turn = turns.turn.saturating_add(1);
     }
 
-    /// `(waitedMs, workedMs)` of the current turn: `(0, 0)` until a wait has
-    /// returned.
-    pub fn last_turn(&self) -> (i64, i64) {
+    /// `(turn, waitedMs, workedMs)` of the current turn: `(0, 0, 0)` until a
+    /// wait has returned.
+    pub fn last_turn(&self) -> (i64, i64, i64) {
         let turns = self.turns.lock().unwrap_or_else(|p| p.into_inner());
-        (turns.waited_ms, turns.worked_ms)
+        (turns.turn, turns.waited_ms, turns.worked_ms)
     }
 }
 
@@ -150,10 +155,11 @@ impl CapabilityProvider for StandardRunProvider {
                 Ok(ProviderValue::Unit)
             }
             ("Run.lastTurn", []) => {
-                let (waited, worked) = self.last_turn();
+                let (turn, waited, worked) = self.last_turn();
                 Ok(ProviderValue::Record {
                     type_name: "Run.Turn".to_string(),
                     fields: vec![
+                        ("turn".to_string(), ProviderValue::Int(turn.into())),
                         ("waitedMs".to_string(), ProviderValue::Int(waited.into())),
                         ("workedMs".to_string(), ProviderValue::Int(worked.into())),
                     ],
@@ -189,15 +195,15 @@ mod tests {
     #[test]
     fn the_turn_is_zero_until_a_wait_returns_and_the_first_worked_nothing() {
         let provider = StandardRunProvider::default();
-        assert_eq!(provider.last_turn(), (0, 0));
+        assert_eq!(provider.last_turn(), (0, 0, 0));
         let start = Instant::now();
         provider.wait_starts_at(start);
-        assert_eq!(provider.last_turn(), (0, 0));
+        assert_eq!(provider.last_turn(), (0, 0, 0));
         provider.wait_ends_at(start + std::time::Duration::from_millis(250));
-        assert_eq!(provider.last_turn(), (250, 0));
+        assert_eq!(provider.last_turn(), (1, 250, 0));
         provider.wait_starts_at(start + std::time::Duration::from_millis(262));
         provider.wait_ends_at(start + std::time::Duration::from_millis(262));
-        assert_eq!(provider.last_turn(), (0, 12));
+        assert_eq!(provider.last_turn(), (2, 0, 12));
     }
 
     #[test]

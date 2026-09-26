@@ -66,24 +66,27 @@ pub(super) fn dispatch(
             Ok(true)
         }
         "run_last_turn" => {
-            let (waited, worked) = match try_replay(caller, "Run.lastTurn", vec![])? {
+            let (turn, waited, worked) = match try_replay(caller, "Run.lastTurn", vec![])? {
                 Some(cached) => recorded_turn(&cached)?,
                 None => {
-                    let waited = params.first().and_then(Val::i64).unwrap_or_default();
-                    let worked = params.get(1).and_then(Val::i64).unwrap_or_default();
+                    let turn = params.first().and_then(Val::i64).unwrap_or_default();
+                    let waited = params.get(1).and_then(Val::i64).unwrap_or_default();
+                    let worked = params.get(2).and_then(Val::i64).unwrap_or_default();
                     let outcome = json_record(
                         "Run.Turn",
                         vec![
+                            ("turn", JsonValue::from(turn)),
                             ("waitedMs", JsonValue::from(waited)),
                             ("workedMs", JsonValue::from(worked)),
                         ],
                     );
                     record_effect_if_recording(caller, "Run.lastTurn", vec![], outcome, caller_fn);
-                    (waited, worked)
+                    (turn, waited, worked)
                 }
             };
-            results[0] = Val::I64(waited);
-            results[1] = Val::I64(worked);
+            results[0] = Val::I64(turn);
+            results[1] = Val::I64(waited);
+            results[2] = Val::I64(worked);
             Ok(true)
         }
         _ => Ok(false),
@@ -98,8 +101,8 @@ fn monotonic_nanos() -> i64 {
     i64::try_from(epoch.elapsed().as_nanos()).unwrap_or(i64::MAX)
 }
 
-/// The two numbers of a recorded `Run.Turn`.
-fn recorded_turn(cached: &aver::replay::JsonValue) -> Result<(i64, i64), wasmtime::Error> {
+/// The three numbers of a recorded `Run.Turn`.
+fn recorded_turn(cached: &aver::replay::JsonValue) -> Result<(i64, i64, i64), wasmtime::Error> {
     let invalid = || wasmtime::Error::msg("replay Run.lastTurn: not a Run.Turn");
     let fields = cached
         .get("$record")
@@ -107,6 +110,7 @@ fn recorded_turn(cached: &aver::replay::JsonValue) -> Result<(i64, i64), wasmtim
         .ok_or_else(invalid)?;
     let field = |name: &str| fields.get(name).and_then(|value| value.as_i64());
     Ok((
+        field("turn").ok_or_else(invalid)?,
         field("waitedMs").ok_or_else(invalid)?,
         field("workedMs").ok_or_else(invalid)?,
     ))

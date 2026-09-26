@@ -71,18 +71,22 @@ assert.deepEqual(lines, ["scored 60"]);
 
 // A program that reads Run.lastTurn: the loop marks every wait with this
 // host's clock, so a tick that parked on its 250 ms deadline reads about that
-// long, the turn before it worked far less, and 0/0 while it was seated.
+// long, the turn before it worked far less, 0/0/0 while it was seated, and
+// every line names a later turn than the one before it.
 if (lastTurnFile) {
     const printed = [];
     const reading = await createWorkHost(await WebAssembly.compile(await readFile(lastTurnFile)), { maxJobs: 1, onPrint: line => printed.push(line) });
     try {
         assert.deepEqual(await reading.runCoordinator(), { ok: null });
     } finally { await reading.close(); }
-    const turns = printed.map(line => line.match(/^(.*) waited (\d+) worked (\d+)$/));
+    const turns = printed.map(line => line.match(/^(.*) turn (\d+) waited (\d+) worked (\d+)$/));
     assert.deepEqual(turns.map(turn => turn?.[1]), ["seated", "tick 1", "tick 2", "tick 3", "soon 4"], printed.join("\n"));
-    for (const [, label, waited, worked] of turns) {
-        const [w, k] = [Number(waited), Number(worked)];
-        if (label === "seated") assert.deepEqual([w, k], [0, 0], label);
+    let previous = -1;
+    for (const [, label, turn, waited, worked] of turns) {
+        const [t, w, k] = [Number(turn), Number(waited), Number(worked)];
+        assert.ok(t > previous, `${label}: turn ${t} after ${previous}`);
+        previous = t;
+        if (label === "seated") assert.deepEqual([t, w, k], [0, 0, 0], label);
         else if (label === "soon 4") assert.ok(w < 125 && k < 125, `${label}: ${w} ${k}`);
         else assert.ok(w >= 125 && w < 5000 && k < 125, `${label}: ${w} ${k}`);
     }

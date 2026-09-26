@@ -109,7 +109,7 @@ export async function createWorkHost(module, options = {}) {
         // the numbers itself; run_last_turn only hands them through.
         run_wait_starts: () => BigInt(Math.floor(performance.now() * 1e6)),
         run_wait_ends: () => BigInt(Math.floor(performance.now() * 1e6)),
-        run_last_turn: (waited, worked) => [waited, worked],
+        run_last_turn: (turn, waited, worked) => [turn, waited, worked],
     })) if (!options.imports?.aver?.[name]) aver[name] = value;
     imports["aver:work/v1"] = {
         submit(kind, task) {

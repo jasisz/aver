@@ -19,6 +19,6 @@ fn ticking(n: Int) -> Unit
         false -> ticking(n + 1)
 
 fn report(label: String, turn: Run.Turn) -> Unit
-    ? "One line: what arrived, how long the loop waited before this turn, and how long the turn before it worked."
+    ? "One line: what arrived, in which turn, how long the loop waited before this turn, and how long the turn before it worked."
     ! [Console.print]
-    Console.print("{label} waited {turn.waitedMs} worked {turn.workedMs}")
+    Console.print("{label} turn {turn.turn} waited {turn.waitedMs} worked {turn.workedMs}")

@@ -179,7 +179,7 @@ pub(in crate::codegen::wasm_gc) struct SlotTable {
     run_reason_scratch: RefCell<Option<u32>>,
     /// The two i64 locals `Run.lastTurn` parks the host's answer in while it
     /// lifts each number into an `Int`. Lazily allocated like the one above.
-    run_turn_scratch: RefCell<Option<(u32, u32)>>,
+    run_turn_scratch: RefCell<Option<(u32, u32, u32)>>,
     /// One local per job kind this fn starts a job of. See
     /// `job_task_scratch`.
     job_task_scratch: RefCell<HashMap<i32, u32>>,
@@ -514,14 +514,15 @@ impl SlotTable {
 
     /// Reserve (once per fn) the two i64 locals `Run.lastTurn` parks its
     /// numbers in: waited, then worked.
-    pub(in crate::codegen::wasm_gc) fn run_turn_scratch(&self) -> (u32, u32) {
+    pub(in crate::codegen::wasm_gc) fn run_turn_scratch(&self) -> (u32, u32, u32) {
         if let Some(found) = *self.run_turn_scratch.borrow() {
             return found;
         }
+        let turn = self.push_lazy_local(ValType::I64);
         let waited = self.push_lazy_local(ValType::I64);
         let worked = self.push_lazy_local(ValType::I64);
-        *self.run_turn_scratch.borrow_mut() = Some((waited, worked));
-        (waited, worked)
+        *self.run_turn_scratch.borrow_mut() = Some((turn, waited, worked));
+        (turn, waited, worked)
     }
 
     pub(super) fn extra_locals(&self, params_count: usize) -> Vec<ValType> {

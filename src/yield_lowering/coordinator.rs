@@ -53,8 +53,8 @@ pub(super) const LAST_TURN: &str = "Run.lastTurn";
 /// The marks the loop puts right before and right after its one wait of a
 /// turn, each one monotonic clock reading, in a program that reads
 /// `Run.lastTurn`.
-const WAIT_STARTS: &str = "Run.waitStarts";
-const WAIT_ENDS: &str = "Run.waitEnds";
+pub(super) const WAIT_STARTS: &str = "Run.waitStarts";
+pub(super) const WAIT_ENDS: &str = "Run.waitEnds";
 
 /// What the generator resolved about one answer module.
 struct Answer {

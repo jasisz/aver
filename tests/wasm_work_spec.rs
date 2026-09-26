@@ -879,7 +879,7 @@ fn a_program_that_builds_a_run_turn_itself_keeps_the_record() {
     let ws = temp_dir("last-turn-built");
     fs::write(
         ws.join("main.av"),
-        "module Built\n    intent = \"Builds a Run.Turn without reading the last turn.\"\n\nfn main() -> Unit\n    ? \"Prints a turn it built.\"\n    ! [Console.print]\n    turn = Run.Turn(waitedMs = 3, workedMs = 4)\n    Console.print(\"{turn.waitedMs} {turn.workedMs}\")\n",
+        "module Built\n    intent = \"Builds a Run.Turn without reading the last turn.\"\n\nfn main() -> Unit\n    ? \"Prints a turn it built.\"\n    ! [Console.print]\n    turn = Run.Turn(turn = 2, waitedMs = 3, workedMs = 4)\n    Console.print(\"{turn.turn} {turn.waitedMs} {turn.workedMs}\")\n",
     )
     .expect("write the program");
     let mut targets: Vec<&[&str]> = vec![&[]];
@@ -900,7 +900,7 @@ fn a_program_that_builds_a_run_turn_itself_keeps_the_record() {
         );
         assert_eq!(
             String::from_utf8_lossy(&out.stdout).trim(),
-            "3 4",
+            "2 3 4",
             "{}",
             target_name(target)
         );
