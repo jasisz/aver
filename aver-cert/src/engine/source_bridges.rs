@@ -919,6 +919,10 @@ struct BridgePlan {
     entries: BTreeMap<u32, (usize, String)>,
     /// The export names of the obligations, in `Plans.fnPlans` order.
     obligation_names: Vec<String>,
+    /// The piece declarations `Plans.types` is written in, which the typing
+    /// `simp` of an export theorem must unfold with it (the string segments
+    /// excepted: typing never reads them).
+    type_pieces: Vec<String>,
 }
 
 /// The largest plan a bridge is attempted for. A step proof unfolds the
@@ -1036,6 +1040,13 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
         depth: BTreeMap::new(),
         literals: BTreeSet::new(),
         with_default: false,
+        type_pieces: analysis
+            .types
+            .lean_piece_names("types")
+            .into_iter()
+            .filter(|piece| !piece.starts_with("types_strSegs_"))
+            .map(|piece| format!("AverCert.Plans.{piece}"))
+            .collect(),
         entries: analysis
             .entries
             .iter()
@@ -1713,7 +1724,12 @@ fn render_export(
         ),
     };
     let typing = format!(
-        "{intro}{split_cases}all_goals simp [{TYPING_SIMPS}, AverCert.Plans.fn{func_idx}]"
+        "{intro}{split_cases}all_goals simp [{TYPING_SIMPS}{pieces}, AverCert.Plans.fn{func_idx}]",
+        pieces = plan
+            .type_pieces
+            .iter()
+            .map(|piece| format!(", {piece}"))
+            .collect::<String>()
     );
     let statement = bridge.expanded_statement();
     s.push_str(&format!(

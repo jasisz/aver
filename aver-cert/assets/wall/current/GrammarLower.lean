@@ -47,6 +47,10 @@
      with `ref.cast` + `struct.get` (`emit_mir_tuple_match`);
    * `[]` is `ref.null` of the list's cons struct, `List.prepend` is
      `struct.new` of it;
+   * a List `Match` stashes the subject and tests it with `ref.is_null`: the
+     `[]` arm in `then`, and in `else` the head (field 0) and tail (field 1)
+     binders, each by `ref.cast` + `struct.get`, then the cons arm
+     (`emit_mir_list_match`);
    * the fused `Vector.get`-or-default re-reads the vector and the index
      locals, converts the index through `__aint_to_index`, and bounds-checks
      it signed `>= 0` and unsigned `< array.len` before `array.get`;
@@ -433,6 +437,9 @@ mutual
         | some (.record tid) =>
             lowerB M X Γ false s ++ [.op (.localSet X.subj)] ++
               lowerTupArms M X Γ tail tid arms
+        | some (.list t) =>
+            lowerB M X Γ false s ++ [.op (.localSet X.subj)] ++
+              lowerListArms M X Γ tail (tyOf M X.n Γ tail (.match_ s arms)) t arms
         | _ => []
     | .interp parts => lowerArgsB M X Γ parts ++ concatB M parts.length
     | .list t _ => [.nullOf (M.listStruct t)]
@@ -541,6 +548,25 @@ mutual
     | .cons (.tuple bs) b _ =>
         extractB X.subj (M.structOf tid) 0 bs ++
           lowerB M X (((M.recFields tid).bind (bindTys X.n Γ bs)).getD Γ) tail b
+    | _ => []
+  /-- `emit_mir_list_match`, the subject already in the subject scratch:
+      `ref.is_null` picks the `[]` arm; otherwise the head and tail binders
+      are read from the cons struct, then the cons arm runs. -/
+  def lowerListArms (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) (tail : Bool)
+      (bt : Option Ty) (t : Ty) : Arms → List BI
+    | .cons p1 b1 (.cons p2 b2 _) =>
+        match listPick p1 p2 with
+        | some (false, h, tl) =>
+            [.op (.localGet X.subj), .op .refIsNull,
+              .ifElse bt (lowerB M X Γ tail b1)
+                (extractB X.subj (M.listStruct t) 0 [h, tl] ++
+                  lowerB M X ((bindTys X.n Γ [h, tl] [t, .list t]).getD Γ) tail b2)]
+        | some (true, h, tl) =>
+            [.op (.localGet X.subj), .op .refIsNull,
+              .ifElse bt (lowerB M X Γ tail b2)
+                (extractB X.subj (M.listStruct t) 0 [h, tl] ++
+                  lowerB M X ((bindTys X.n Γ [h, tl] [t, .list t]).getD Γ) tail b1)]
+        | none => []
     | _ => []
 end
 

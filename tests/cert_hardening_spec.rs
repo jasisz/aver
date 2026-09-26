@@ -34,7 +34,10 @@
 //!   function's type index or type, or an export's position;
 //! * a closure claim hiding a helper, `__aint_divmod` at a supertype
 //!   signature, a renamed `aver:work` import, and a certified closure that
-//!   reaches a work import.
+//!   reaches a work import;
+//! * a List match whose arm results are exchanged, List cons structs declared
+//!   for each other's instantiation, and a cons pattern whose head and tail
+//!   slots are exchanged.
 //!
 //! Gated behind `wasm` and skipped when `lake` is unavailable, like the other
 //! certificate suites.
@@ -1398,4 +1401,138 @@ fn cert_hardening_declines_a_bridged_law_that_does_not_use_its_model() {
         "the law statement AverCertChecker.law_statement_0 does not use the bridged model \
          Tiny.addTwo",
     );
+}
+
+/// A program whose three exports are List matches: `[]` then a cons arm with
+/// the head ignored, a cons arm first with the tail ignored, and `[]` then
+/// `_`. Each shape lowers to one `ref.is_null` on the stashed subject, the
+/// `[]` arm in `then`, and the head and tail binders read from the cons
+/// struct in `else`.
+const LISTY: &str = "module Listy
+    intent = \"List match shapes.\"
+    exposes [count, firstOr, isEmpty]
+
+fn count(xs: List<Int>) -> Int
+    ? \"Number of elements.\"
+    match xs
+        [] -> 0
+        [_, ..rest] -> 1 + count(rest)
+
+fn firstOr(xs: List<Int>, d: Int) -> Int
+    ? \"The head, or the default.\"
+    match xs
+        [h, .._] -> h
+        [] -> d
+
+fn isEmpty(xs: List<String>) -> Bool
+    ? \"No elements.\"
+    match xs
+        [] -> true
+        _ -> false
+
+verify count
+    count([]) => 0
+";
+
+/// Emit the List certificate into a fresh scratch directory.
+fn list_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
+    if !lake_available() {
+        return None;
+    }
+    let dir = temp_dir(prefix);
+    std::fs::write(dir.join("listy.av"), LISTY).unwrap();
+    let out = dir.join("out");
+    let compile = aver_command()
+        .current_dir(&*dir)
+        .args([
+            "compile",
+            "listy.av",
+            "--target",
+            "wasm-gc",
+            "--certify",
+            "-o",
+        ])
+        .arg(&out)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    Some((dir, out.join("listy.wasm"), out.join("cert")))
+}
+
+/// The honest List certificate checks, with all three exports certified.
+#[test]
+fn cert_hardening_accepts_list_matches() {
+    let Some((_dir, wasm, cert)) = list_baseline("certharden-list-clean") else {
+        return;
+    };
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "the List certificate must check:\n{report}");
+    assert!(report.contains("3 checked exports"), "{report}");
+}
+
+/// The arm pick is the wall's, not the plan's: a plan that gives the `[]`
+/// arm the cons arm's result (`isEmpty` answering `false` for `[]`) lowers
+/// to other bytes than the emitted `then` branch, so the plan is refused.
+#[test]
+fn cert_hardening_declines_a_list_match_with_its_arms_exchanged() {
+    let Some((_dir, wasm, cert)) = list_baseline("certharden-list-arms") else {
+        return;
+    };
+    replace_once(
+        &cert.join("Plans.lean"),
+        "(.cons .emptyList (.literal (.bool true)) (.cons .wild (.literal (.bool false)) .nil))",
+        "(.cons .emptyList (.literal (.bool false)) (.cons .wild (.literal (.bool true)) .nil))",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The cons struct a List match casts to and reads the head and tail from
+/// is the type table's, confirmed against the type section: declaring the
+/// `List<String>` struct for `List<Int>` (and back) is refused.
+#[test]
+fn cert_hardening_declines_exchanged_list_cons_structs() {
+    let Some((_dir, wasm, cert)) = list_baseline("certharden-list-structs") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let index_after = |needle: &str| -> String {
+        let at = text
+            .find(needle)
+            .expect("the List instantiation is declared")
+            + needle.len();
+        text[at..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect()
+    };
+    let (int_idx, str_idx) = (index_after("lists := [(.int, "), index_after("(.string, "));
+    replace_once(
+        &plans,
+        &format!("lists := [(.int, {int_idx}), (.string, {str_idx})]"),
+        &format!("lists := [(.int, {str_idx}), (.string, {int_idx})]"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A cons pattern whose head and tail slots are exchanged: the head slot
+/// would hold the tail, which the typing refuses before any byte is read.
+#[test]
+fn cert_hardening_declines_a_cons_pattern_with_head_and_tail_exchanged() {
+    let Some((_dir, wasm, cert)) = list_baseline("certharden-list-binders") else {
+        return;
+    };
+    replace_once(
+        &cert.join("Plans.lean"),
+        "(.cons 65535 1)",
+        "(.cons 1 65535)",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
 }

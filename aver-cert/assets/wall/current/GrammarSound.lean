@@ -1398,7 +1398,8 @@ theorem tyOf_match_inv {s : Expr} {arms : Arms} {T : Ty}
        (∃ tid, Ts = .sum tid ∧ sumOk M tid = true ∧ varExhaustive M tid arms = true ∧
           2 ≤ arms.length ∧ tyVarArms M n Γ tail tid arms = some T) ∨
        (Ts = .string ∧ tyStrArms M n Γ tail arms = some T) ∨
-       (∃ tid, Ts = .record tid ∧ tyTupArms M n Γ tail tid arms = some T)) := by
+       (∃ tid, Ts = .record tid ∧ tyTupArms M n Γ tail tid arms = some T) ∨
+       (∃ t, Ts = .list t ∧ tyListArms M n Γ tail t arms = some T)) := by
   simp only [tyOf] at h
   split at h
   · rename_i hs
@@ -1421,7 +1422,9 @@ theorem tyOf_match_inv {s : Expr} {arms : Arms} {T : Ty}
   · rename_i hs
     exact ⟨_, hs, Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨rfl, h⟩)))))⟩
   · rename_i tid hs
-    exact ⟨_, hs, Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr ⟨tid, rfl, h⟩)))))⟩
+    exact ⟨_, hs, Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨tid, rfl, h⟩))))))⟩
+  · rename_i t hs
+    exact ⟨_, hs, Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr ⟨t, rfl, h⟩))))))⟩
   · cases h
 
 end TypingInv
@@ -1499,8 +1502,91 @@ theorem resPick_spec {p1 p2 : Pat} {swap : Bool} {ob eb : Nat}
   unfold resPick at h
   split at h <;> simp_all
 
+theorem listPick_spec {p1 p2 : Pat} {swap : Bool} {hd tl : Nat}
+    (h : listPick p1 p2 = some (swap, hd, tl)) :
+    (swap = false ∧ p1 = .emptyList ∧
+      (p2 = .cons hd tl ∨ (p2 = .wild ∧ hd = noSlot ∧ tl = noSlot))) ∨
+    (swap = true ∧ p1 = .cons hd tl ∧ (p2 = .emptyList ∨ p2 = .wild)) := by
+  cases p1 <;> cases p2 <;> simp [listPick] at h <;> obtain ⟨rfl, rfl, rfl⟩ := h <;> simp
+
+/-- The typing of a List match fixes its shape: two arms, a `listPick`
+    shape, fresh head and tail binders, and one type for both bodies. -/
+theorem tyListArms_shape {M : MCtx} {n : Nat} {Γ : Nat → Option Ty} {tail : Bool} {t : Ty}
+    {arms : Arms} {T : Ty} (h : tyListArms M n Γ tail t arms = some T) :
+    ∃ p1 b1 p2 b2 swap hd tl Γc, arms = .cons p1 b1 (.cons p2 b2 .nil) ∧
+      listPick p1 p2 = some (swap, hd, tl) ∧
+      bindTys n Γ [hd, tl] [t, .list t] = some Γc ∧
+      tyOf M n Γ tail (if swap then b2 else b1) = some T ∧
+      tyOf M n Γc tail (if swap then b1 else b2) = some T := by
+  match arms, h with
+  | .nil, h => simp [tyListArms] at h
+  | .cons _ _ .nil, h => simp [tyListArms] at h
+  | .cons _ _ (.cons _ _ (.cons _ _ _)), h => simp [tyListArms] at h
+  | .cons p1 b1 (.cons p2 b2 .nil), h =>
+      simp only [tyListArms] at h
+      cases hpk : listPick p1 p2 with
+      | none => simp [hpk] at h
+      | some pr =>
+          obtain ⟨swap, hd, tl⟩ := pr
+          simp only [hpk] at h
+          cases hb : bindTys n Γ [hd, tl] [t, .list t] with
+          | none => simp [hb] at h
+          | some Γc =>
+              simp only [hb] at h
+              cases swap with
+              | false =>
+                  simp only at h
+                  cases h1 : tyOf M n Γ tail b1 with
+                  | none => simp [h1] at h
+                  | some a =>
+                      cases h2 : tyOf M n Γc tail b2 with
+                      | none => simp [h1, h2] at h
+                      | some c =>
+                          simp only [h1, h2] at h
+                          by_cases hac : a = c
+                          · subst hac
+                            simp only [↓reduceIte, Option.some.injEq] at h
+                            subst h
+                            exact ⟨p1, b1, p2, b2, false, hd, tl, Γc, rfl, hpk, hb,
+                              by simpa using h1, by simpa using h2⟩
+                          · simp [hac] at h
+              | true =>
+                  simp only at h
+                  cases h1 : tyOf M n Γc tail b1 with
+                  | none => simp [h1] at h
+                  | some a =>
+                      cases h2 : tyOf M n Γ tail b2 with
+                      | none => simp [h1, h2] at h
+                      | some c =>
+                          simp only [h1, h2] at h
+                          by_cases hac : a = c
+                          · subst hac
+                            simp only [↓reduceIte, Option.some.injEq] at h
+                            subst h
+                            exact ⟨p1, b1, p2, b2, true, hd, tl, Γc, rfl, hpk, hb,
+                              by simpa using h2, by simpa using h1⟩
+                          · simp [hac] at h
+
 section ShapeEval
 variable (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal)
+
+/-- The List shapes pick the `[]` arm for the empty list. -/
+theorem evalList_nil {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {hd tl : Nat} {t : Ty}
+    (h : listPick p1 p2 = some (swap, hd, tl)) :
+    evalArms F env (.nil t) (.cons p1 b1 (.cons p2 b2 .nil)) =
+      eval F env (if swap then b2 else b1) := by
+  rcases listPick_spec h with ⟨rfl, rfl, rfl | ⟨rfl, rfl, rfl⟩⟩ | ⟨rfl, rfl, rfl | rfl⟩ <;>
+    simp [evalArms, patMatch, bindVals]
+
+/-- The List shapes pick the cons arm for a cons cell, binding head and tail. -/
+theorem evalList_cons {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {hd tl : Nat} {t : Ty}
+    {x r : SVal} (h : listPick p1 p2 = some (swap, hd, tl)) :
+    evalArms F env (.cons t x r) (.cons p1 b1 (.cons p2 b2 .nil)) =
+      match bindVals env [hd, tl] [x, r] with
+      | some env' => eval F env' (if swap then b1 else b2)
+      | none => none := by
+  rcases listPick_spec h with ⟨rfl, rfl, rfl | ⟨rfl, rfl, rfl⟩⟩ | ⟨rfl, rfl, rfl | rfl⟩ <;>
+    simp [evalArms, patMatch, bindVals, noSlot] <;> rfl
 
 /-- The Option shapes pick the `Some` arm for a `Some` value, binding `sb`. -/
 theorem evalOpt_some {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {sb : Nat} {t : Ty}
@@ -1551,6 +1637,21 @@ theorem run_localSet (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee
     wRunF host ar callee (.localSet j :: ys) wl (w :: st) =
       wRunF host ar callee ys (wl.set j w) st := by
   simp [wRunF]
+
+/-- `ref.is_null` on a stashed List subject: `[]` is `null`, a cons cell a
+    struct. -/
+theorem run_nullTest_null (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+    (ss : Nat) (ys : List WInstr) (wl st : List WVal) (h : wl[ss]? = some .null) :
+    wRunF host ar callee (.localGet ss :: .refIsNull :: ys) wl st =
+      wRunF host ar callee ys wl (b32 true :: st) := by
+  simp [wRunF, h]
+
+theorem run_nullTest_struct (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
+    (ss ty : Nat) (fs : List WVal) (ys : List WInstr) (wl st : List WVal)
+    (h : wl[ss]? = some (.structv ty fs)) :
+    wRunF host ar callee (.localGet ss :: .refIsNull :: ys) wl st =
+      wRunF host ar callee ys wl (b32 false :: st) := by
+  simp [wRunF, h]
 
 /-! ## Reading back a stashed scratch local
 
@@ -2639,7 +2740,7 @@ theorem agreement_step :
   | .match_ s arms, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨Ts, hts, hcases⟩ := tyOf_match_inv hty
       rcases hcases with ⟨rfl, hfl, hta⟩ | ⟨rfl, hta⟩ | ⟨t, rfl, hta⟩ | ⟨t, e, rfl, hta⟩ |
-        ⟨tid, rfl, hok, hex, hlen2, hta⟩ | ⟨rfl, hta⟩ | ⟨tid, rfl, hta⟩
+        ⟨tid, rfl, hok, hex, hlen2, hta⟩ | ⟨rfl, hta⟩ | ⟨tid, rfl, hta⟩ | ⟨t, rfl, hta⟩
       · -- Int literal cascade: the subject is re-run per arm
         simp only [lowerW, lowerB, hts] at hrun
         obtain ⟨ys, hys⟩ := lowerIntArms_firstLit M X Γ tail (lowerB M X Γ false s)
@@ -2767,6 +2868,86 @@ theorem agreement_step :
           agreementTupArms arms Γ env tail T _ st out tid fs ws fts hss hws hR hfs hta henv
             (lrel_set_free _ hl1 hl1.1.2.1) hseq
         exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+      · -- List: stash, `ref.is_null`, then the head and tail binders
+        obtain ⟨p1, b1, p2, b2, swap, hd, tl, Γc, rfl, hpk, hbt, hte, htc⟩ :=
+          tyListArms_shape hta
+        simp only [lowerW, lowerB, hts, eraseL_append, List.append_assoc] at hrun
+        obtain ⟨o1, h1, hseq⟩ := run_split hrun
+        obtain ⟨sv1, hev1, hT1, hres1⟩ :=
+          agreement s Γ env false (.list t) wl st o1 hts henv hl h1
+        obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
+        simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append] at hseq
+        rw [run_localSet] at hseq
+        have hl2 := lrel_set_free (X := X) w1 hl1 hl1.1.2.1
+        cases swap with
+        | false =>
+            simp only [Bool.false_eq_true, ↓reduceIte] at hte htc
+            simp only [lowerListArms, hpk, hbt, Option.getD_some, eraseL, eraseI] at hseq
+            have hss := stash_read rfl hseq
+            rcases hasTy_list hT1 with rfl | ⟨x, r, rfl, hx, hr⟩
+            · simp only [SRepr] at hw1
+              subst hw1
+              rw [run_nullTest_null host ar callee _ _ _ _ hss] at hseq
+              simp only [b32, ↓reduceIte] at hseq
+              rw [wRunF_ifElse_single] at hseq
+              simp only [Int.reduceEq, ↓reduceIte] at hseq
+              obtain ⟨sv, hev, hT, hres⟩ := agreement b1 Γ env tail T _ st out hte henv hl2 hseq
+              refine ⟨sv, ?_, hT, hres⟩
+              have hA := evalList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
+              simp only [Bool.false_eq_true, ↓reduceIte] at hA
+              simp [eval, hev1, hA, hev]
+            · simp only [SRepr] at hw1
+              obtain ⟨xw, rw', rfl, hxw, hrw⟩ := hw1
+              rw [run_nullTest_struct host ar callee _ _ _ _ _ _ hss] at hseq
+              simp only [b32, ↓reduceIte] at hseq
+              rw [wRunF_ifElse_single] at hseq
+              simp only [↓reduceIte, eraseL_append] at hseq
+              obtain ⟨env', wl', hbv, henv', hl', _, hrun', hres'⟩ :=
+                extract_run host ar callee X.subj (M.listStruct t) [xw, rw'] [hd, tl] 0 [x, r]
+                  [t, .list t] [xw, rw'] env Γ Γc _ st hl1.1.2.1 hss
+                  (fun j y hy => by simpa using hy) ⟨hx, hr, trivial⟩ ⟨hxw, hrw, trivial⟩ hbt
+                  henv hl2
+              rw [run_seq_eq hrun'] at hseq
+              obtain ⟨sv, hev, hT, hres⟩ :=
+                agreement b2 Γc env' tail T wl' st out htc henv' hl' hseq
+              refine ⟨sv, ?_, hT, hres' _ _ _ _ hres⟩
+              have hA := evalList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
+              simp only [Bool.false_eq_true, ↓reduceIte, hbv] at hA
+              simp [eval, hev1, hA, hev]
+        | true =>
+            simp only [↓reduceIte] at hte htc
+            simp only [lowerListArms, hpk, hbt, Option.getD_some, eraseL, eraseI] at hseq
+            have hss := stash_read rfl hseq
+            rcases hasTy_list hT1 with rfl | ⟨x, r, rfl, hx, hr⟩
+            · simp only [SRepr] at hw1
+              subst hw1
+              rw [run_nullTest_null host ar callee _ _ _ _ hss] at hseq
+              simp only [b32, ↓reduceIte] at hseq
+              rw [wRunF_ifElse_single] at hseq
+              simp only [Int.reduceEq, ↓reduceIte] at hseq
+              obtain ⟨sv, hev, hT, hres⟩ := agreement b2 Γ env tail T _ st out hte henv hl2 hseq
+              refine ⟨sv, ?_, hT, hres⟩
+              have hA := evalList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
+              simp only [↓reduceIte] at hA
+              simp [eval, hev1, hA, hev]
+            · simp only [SRepr] at hw1
+              obtain ⟨xw, rw', rfl, hxw, hrw⟩ := hw1
+              rw [run_nullTest_struct host ar callee _ _ _ _ _ _ hss] at hseq
+              simp only [b32, ↓reduceIte] at hseq
+              rw [wRunF_ifElse_single] at hseq
+              simp only [↓reduceIte, eraseL_append] at hseq
+              obtain ⟨env', wl', hbv, henv', hl', _, hrun', hres'⟩ :=
+                extract_run host ar callee X.subj (M.listStruct t) [xw, rw'] [hd, tl] 0 [x, r]
+                  [t, .list t] [xw, rw'] env Γ Γc _ st hl1.1.2.1 hss
+                  (fun j y hy => by simpa using hy) ⟨hx, hr, trivial⟩ ⟨hxw, hrw, trivial⟩ hbt
+                  henv hl2
+              rw [run_seq_eq hrun'] at hseq
+              obtain ⟨sv, hev, hT, hres⟩ :=
+                agreement b1 Γc env' tail T wl' st out htc henv' hl' hseq
+              refine ⟨sv, ?_, hT, hres' _ _ _ _ hres⟩
+              have hA := evalList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
+              simp only [↓reduceIte, hbv] at hA
+              simp [eval, hev1, hA, hev]
   | .interp parts, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨ts, hts, hall, rfl⟩ := tyOf_interp_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
@@ -2914,6 +3095,8 @@ theorem agreementIntArms_step :
       | ctor _ _ => simp [tyIntArms] at hty
       | litStr _ => simp [tyIntArms] at hty
       | tuple _ => simp [tyIntArms] at hty
+      | emptyList => simp [tyIntArms] at hty
+      | cons _ _ => simp [tyIntArms] at hty
 
 theorem agreementBoolArms_step :
     ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
@@ -2976,6 +3159,8 @@ theorem agreementBoolArms_step :
       | ctor _ _ => simp [tyBoolArms] at hty
       | litStr _ => simp [tyBoolArms] at hty
       | tuple _ => simp [tyBoolArms] at hty
+      | emptyList => simp [tyBoolArms] at hty
+      | cons _ _ => simp [tyBoolArms] at hty
 
 theorem agreementOptArms_step :
     ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
@@ -3268,6 +3453,8 @@ theorem agreementVarArms_step :
           | bind _ => simp [varArmΓ] at hva
           | litStr _ => simp [varArmΓ] at hva
           | tuple _ => simp [varArmΓ] at hva
+          | emptyList => simp [varArmΓ] at hva
+          | cons _ _ => simp [varArmΓ] at hva
   | .cons p b (.cons p' b' r), hsz, Γ, env, tail, T, wl, st, out, bt, tid, cv, fs, ws, fts, hss,
       hws, hcf, hfs, hcov, hinj, hty, henv, hl, hrun => by
       simp only [tyVarArms] at hty
@@ -3347,6 +3534,8 @@ theorem agreementVarArms_step :
       | bind _ => simp [varArmΓ] at hty
       | litStr _ => simp [varArmΓ] at hty
       | tuple _ => simp [varArmΓ] at hty
+      | emptyList => simp [varArmΓ] at hty
+      | cons _ _ => simp [varArmΓ] at hty
 
 theorem agreementStrArms_step :
     ∀ (arms : Arms) (hsz : sizeOf arms < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
