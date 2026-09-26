@@ -1,0 +1,199 @@
+module Main
+    intent =
+        "A value read twice in one expression, once where it is kept and once where it is handed on, in each place an expression evaluates two parts: a record update's base and fields, a literal's fields, a tuple, a list, operands, call and builtin arguments, a match subject and its arms, and a tail call."
+    exposes []
+    depends []
+    effects [Console.print]
+
+record Clock
+    answeredMs: Int
+    ticks: Int
+
+record Box
+    label: String
+    clock: Clock
+
+fn later(clock: Clock, more: Int) -> Clock
+    ? "More ticks."
+    Clock(answeredMs = clock.answeredMs, ticks = clock.ticks + more)
+
+fn bump(n: Int) -> Int
+    ? "One more."
+    n + 1
+
+fn answered(clock: Clock, node: Option<Int>, leftMs: Int) -> Clock
+    ? "Update over a call that reads the same Int."
+    match node
+        Option.None -> Clock.update(clock, answeredMs = leftMs)
+        Option.Some(n) -> Clock.update(later(clock, n + leftMs), answeredMs = leftMs)
+
+fn selfFed(clock: Clock) -> Clock
+    ? "Update whose field reads the whole base."
+    Clock.update(clock, ticks = later(clock, 3).ticks)
+
+fn reset(clock: Clock) -> Clock
+    ? "Ticks back to zero."
+    Clock.update(clock, ticks = 0)
+
+fn selfConsumed(clock: Clock) -> Clock
+    ? "Update whose field hands the whole base to a call that takes it."
+    Clock.update(clock, ticks = reset(clock).ticks + 1)
+
+fn reordered(x: Int) -> Clock
+    ? "Literal written out of declaration order."
+    Clock(ticks = bump(x), answeredMs = x)
+
+fn inOrder(x: Int) -> Clock
+    ? "Literal written in declaration order."
+    Clock(answeredMs = x, ticks = bump(x))
+
+fn boxed(label: String, clock: Clock) -> Box
+    ? "Literal whose later field calls on an earlier one."
+    Box(clock = later(clock, String.len(label)), label = label)
+
+fn pair(x: Int) -> Tuple<Int, Int>
+    ? "Tuple reading one Int twice."
+    (bump(x), x)
+
+fn pairBack(x: Int) -> Tuple<Int, Int>
+    ? "Tuple reading one Int twice, other order."
+    (x, bump(x))
+
+fn listed(x: Int) -> List<Int>
+    ? "List reading one Int twice."
+    [bump(x), x, x + x]
+
+fn subjectAndArm(x: Int, clock: Clock) -> Int
+    ? "Match subject and arm read the same values."
+    match later(clock, x).ticks > x
+        true -> x + clock.ticks
+        false -> x
+
+fn wrapped(x: Int) -> Option<Clock>
+    ? "Constructor over an update that reads twice."
+    Option.Some(Clock.update(Clock(answeredMs = x, ticks = x), ticks = bump(x)))
+
+fn nestedUpdate(label: String, clock: Clock) -> Box
+    ? "Update of a record field reading the base twice."
+    Box.update(Box(label = label, clock = clock), clock = later(clock, String.len(label)))
+
+fn interp(x: Int) -> String
+    ? "Interpolation reading one Int twice."
+    "{bump(x)}/{x}"
+
+fn sumBack(x: Int) -> Int
+    ? "Binary operands: the left reads what the right call takes."
+    x + bump(x)
+
+fn lessBack(x: Int) -> Bool
+    ? "Comparison: the left reads what the right call takes."
+    x < bump(x)
+
+fn sameBack(x: Int) -> Bool
+    ? "Equality: the left reads what the right call takes."
+    x == bump(x)
+
+fn countDown(n: Int, acc: Int) -> Int
+    ? "Tail call whose arguments read one Int twice."
+    match n <= 0
+        true -> acc
+        false -> countDown(n - 1, acc + n + bump(n))
+
+fn maxBack(x: Int) -> Int
+    ? "Builtin call whose arguments read one Int twice."
+    Int.max(x, bump(x))
+
+fn listBack(xs: List<Int>) -> List<Int>
+    ? "Builtin over a list and a call that takes the same list."
+    List.prepend(List.len(xs), List.reverse(xs))
+
+fn listFront(xs: List<Int>) -> List<Int>
+    ? "Builtin whose first argument takes the list the second reads."
+    List.concat(List.reverse(xs), xs)
+
+fn stepClock(clock: Clock, n: Int) -> Clock
+    ? "Tail call whose arguments update and read the same record."
+    match n <= 0
+        true -> clock
+        false -> stepClock(Clock.update(later(clock, n), answeredMs = n), n - 1)
+
+fn grow(xs: List<Int>) -> List<Int>
+    ? "A list one longer, taking the list it is given."
+    List.prepend(0, xs)
+
+fn subjectMoved(xs: List<Int>) -> Int
+    ? "Match on a list whose arms hand the same list on."
+    match xs
+        [] -> List.len(grow(xs))
+        [a, ..rest] -> a + List.len(rest) + List.len(grow(xs))
+
+fn subjectCall(c: Clock) -> Int
+    ? "Match on a call over a record whose arm takes the record."
+    match later(c, 1).ticks > 3
+        true -> reset(c).ticks
+        false -> c.ticks + reset(c).answeredMs
+
+fn mix(a: Clock, b: Clock) -> Int
+    ? "Read two clocks."
+    a.ticks * 10 + b.ticks
+
+fn relabel(bx: Box) -> Box
+    ? "A box with its label replaced, taking the box it is given."
+    Box.update(bx, label = "moved")
+
+fn fieldThenOwner(bx: Box) -> Int
+    ? "Call whose first argument is a field of what the second takes."
+    mix(bx.clock, relabel(bx).clock)
+
+record Shelf
+    name: String
+    box: Box
+
+fn restamp(shelf: Shelf, n: Int) -> Shelf
+    ? "Update of a field whose base and inner field both move out of the record."
+    Shelf.update(shelf, box = Box.update(shelf.box, label = "re", clock = Clock.update(shelf.box.clock, ticks = n)))
+
+fn showClock(c: Clock) -> String
+    ? "Print a clock."
+    "{c.answeredMs}:{c.ticks}"
+
+fn showPair(p: Tuple<Int, Int>) -> String
+    ? "Print a pair."
+    match p
+        (a, b) -> "{a},{b}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(showClock(answered(Clock(answeredMs = 0, ticks = 0), Option.Some(2), 5)))
+    Console.print(showClock(answered(Clock(answeredMs = 0, ticks = 0), Option.None, 5)))
+    Console.print(showClock(selfFed(Clock(answeredMs = 1, ticks = 2))))
+    Console.print(showClock(selfConsumed(Clock(answeredMs = 1, ticks = 2))))
+    Console.print(showClock(reordered(4)))
+    Console.print(showClock(inOrder(4)))
+    b = boxed("abc", Clock(answeredMs = 1, ticks = 1))
+    Console.print("{b.label} {showClock(b.clock)}")
+    Console.print(showPair(pair(6)))
+    Console.print(showPair(pairBack(6)))
+    Console.print(String.fromInt(List.len(listed(7))))
+    Console.print(String.fromInt(subjectAndArm(3, Clock(answeredMs = 0, ticks = 1))))
+    match wrapped(8)
+        Option.Some(c) -> Console.print(showClock(c))
+        Option.None -> Console.print("none")
+    nb = nestedUpdate("xy", Clock(answeredMs = 2, ticks = 2))
+    Console.print("{nb.label} {showClock(nb.clock)}")
+    Console.print(interp(9))
+    Console.print(String.fromInt(sumBack(10)))
+    Console.print(String.fromBool(lessBack(10)))
+    Console.print(String.fromBool(sameBack(10)))
+    Console.print(String.fromInt(countDown(4, 0)))
+    Console.print(String.fromInt(maxBack(11)))
+    Console.print(String.fromInt(List.len(listBack([1, 2, 3]))))
+    Console.print(String.fromInt(List.len(listFront([1, 2, 3]))))
+    Console.print(String.fromInt(subjectMoved([4, 5])))
+    Console.print(String.fromInt(subjectMoved([])))
+    Console.print(String.fromInt(subjectCall(Clock(answeredMs = 7, ticks = 1))))
+    Console.print(String.fromInt(subjectCall(Clock(answeredMs = 7, ticks = 5))))
+    Console.print(String.fromInt(fieldThenOwner(Box(label = "b", clock = Clock(answeredMs = 1, ticks = 2)))))
+    sh = restamp(Shelf(name = "s", box = Box(label = "l", clock = Clock(answeredMs = 3, ticks = 4))), 9)
+    Console.print("{sh.name} {sh.box.label} {showClock(sh.box.clock)}")
+    Console.print(showClock(stepClock(Clock(answeredMs = 0, ticks = 0), 3)))
