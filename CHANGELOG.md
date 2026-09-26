@@ -28,6 +28,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **Every backend runs the same match.** The compiler turns such a match into nested ordinary matches right after checking it, so the VM, generated Rust, wasm-gc, `wasip2` and the Lean export all read the same program. A `match` that uses these patterns inside a `yield` function is refused for now; move it into a helper function.
 - **`aver format` prints match patterns in one spelling:** `[a, b, ..rest]`, `Option.Some(0)`, `(x, _)`.
 
+### Fixed — `[_, .._]` compiles to Rust
+
+- **A match arm `[_, .._]` over a function parameter now builds with `aver compile`.** `check`, `verify` and `aver run` accepted it, and the generated Rust failed with `the trait bound &AverIntList: AverListMatch is not satisfied`. The arm names nothing, so the match borrowed the parameter, and the non-empty test was written as if it held the list itself. It is now written as `!list.is_empty()`. The Rust parity test now also runs `[_]`, `[_, _]`, `[x, .._]`, `[_, ..rest]` and wild lists inside a constructor or a tuple.
+
 ### Fixed — a large certificate package checks again after Vector versions
 
 - **`aver-cert check` of a large package no longer runs out of time on two acceptance proofs.** The package's proofs of the host-helper table and of the plans' layout unfolded definitions that read the decoded type section, and Lean evaluated the whole decode before it could use the package's declared type-section cut. After Vector values became versions (more types in the type section), btc-listener's package passed the 9000-second limit where it had taken minutes. The two proofs now read the type section only through the cut: 13 s and 68 s on that package. Packages must be produced again to get the new proofs.

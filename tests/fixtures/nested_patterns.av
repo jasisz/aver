@@ -86,6 +86,88 @@ fn whole(xs: List<Int>) -> Int
     match xs
         [..all] -> List.len(all)
 
+
+type Bin
+    Bin(Int)
+
+type Box
+    Full(List<Int>)
+    Empty
+
+fn headCount(items: List<Int>) -> Int
+    ? "Zero for nothing, one for anything: a wild non-empty list over a borrowed parameter (#1450)."
+    match items
+        [] -> 0
+        [_, .._] -> 1
+
+verify headCount
+    headCount([]) => 0
+    headCount([4, 5]) => 1
+
+fn binCount(items: List<Bin>) -> Int
+    ? "The same over record elements."
+    match items
+        [] -> 0
+        [_, .._] -> 1
+
+fn wildFirst(items: List<Int>) -> Int
+    ? "The wild arm first."
+    match items
+        [_, .._] -> 1
+        [] -> 0
+
+fn one(items: List<Int>) -> Int
+    ? "Exactly one, wild."
+    match items
+        [_] -> 1
+        _ -> 0
+
+fn two(items: List<Int>) -> Int
+    ? "Exactly two or one, wild."
+    match items
+        [_, _] -> 2
+        [_] -> 1
+        _ -> 0
+
+fn headOnly(items: List<Int>) -> Int
+    ? "Named head, wild rest."
+    match items
+        [x, .._] -> x
+        [] -> 0
+
+fn restOnly(items: List<Int>) -> Int
+    ? "Wild head, named rest."
+    match items
+        [_, ..rest] -> List.len(rest)
+        [] -> 0 - 1
+
+fn boxed(b: Box) -> Int
+    ? "A wild list inside a user constructor."
+    match b
+        Box.Full([]) -> 0
+        Box.Full([_, .._]) -> 1
+        Box.Empty -> 0 - 1
+
+fn someNonEmpty(o: Option<List<Int>>) -> Int
+    ? "A wild list inside Option.Some."
+    match o
+        Option.Some([_, .._]) -> 1
+        Option.Some([]) -> 0
+        Option.None -> 0 - 1
+
+fn paired(t: Tuple<List<Int>, Int>) -> Int
+    ? "A wild list inside a tuple."
+    match t
+        ([_, .._], n) -> n
+        ([], _) -> 0
+
+fn localWild(n: Int) -> Int
+    ? "A wild list over a local, not a parameter."
+    xs = List.take([1, 2, 3], n)
+    match xs
+        [] -> 0
+        [_, .._] -> 1
+
 fn main() -> Unit
     ! [Console.print]
     Console.print("{classify(Option.Some(0))}")
@@ -120,3 +202,14 @@ fn main() -> Unit
     Console.print("{firstSome([Option.None, Option.None, Option.Some(4)])}")
     Console.print("{firstSome([Option.None])}")
     Console.print("{whole([1, 2, 3])}")
+    Console.print("{headCount([])} {headCount([1, 2, 3])}")
+    Console.print("{binCount([])} {binCount([Bin.Bin(1)])}")
+    Console.print("{wildFirst([])} {wildFirst([7])}")
+    Console.print("{one([])} {one([1])} {one([1, 2])}")
+    Console.print("{two([])} {two([1])} {two([1, 2])} {two([1, 2, 3])}")
+    Console.print("{headOnly([])} {headOnly([9, 8])}")
+    Console.print("{restOnly([])} {restOnly([9, 8, 7])}")
+    Console.print("{boxed(Box.Full([]))} {boxed(Box.Full([1]))} {boxed(Box.Empty)}")
+    Console.print("{someNonEmpty(Option.Some([]))} {someNonEmpty(Option.Some([3]))} {someNonEmpty(Option.None)}")
+    Console.print("{paired(([], 5))} {paired(([1], 5))}")
+    Console.print("{localWild(0)} {localWild(2)}")
