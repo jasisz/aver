@@ -3,10 +3,19 @@
 //! are how the recording sees `Run.fail` and the loop's `Run.failure`
 //! reading, in the same entries the VM writes, and how a replay hands the
 //! recorded reading back.
+//!
+//! A program that reads `Run.lastTurn` also imports the loop's two marks
+//! around its wait, which answer the host's monotonic clock in nanoseconds
+//! and are recorded as the VM records them (no arguments, Unit), and
+//! `run_last_turn`, which hands the numbers the module made from them through
+//! the recorder, the way `run_failure` hands the reason (see
+//! `codegen/wasm_gc/run_turn.rs`).
 
 use super::super::RunWasmGcHost;
 use super::lm::{lm_string_from_host, lm_string_to_host};
-use super::replay_glue::{json_none, json_some, record_effect_if_recording, try_replay};
+use super::replay_glue::{
+    json_none, json_record, json_some, record_effect_if_recording, try_replay,
+};
 
 pub(super) fn dispatch(
     name: &str,
@@ -41,8 +50,66 @@ pub(super) fn dispatch(
             record_effect_if_recording(caller, "Run.failure", vec![], outcome, caller_fn);
             Ok(true)
         }
+        "run_wait_starts" | "run_wait_ends" => {
+            let effect = if name == "run_wait_starts" {
+                "Run.waitStarts"
+            } else {
+                "Run.waitEnds"
+            };
+            // A mark is reissued: a replay consumes the recorded one and still
+            // reads the clock, because what the program saw is the recorded
+            // `Run.lastTurn`, not this reading.
+            if try_replay(caller, effect, vec![])?.is_none() {
+                record_effect_if_recording(caller, effect, vec![], JsonValue::Null, caller_fn);
+            }
+            results[0] = Val::I64(monotonic_nanos());
+            Ok(true)
+        }
+        "run_last_turn" => {
+            let (waited, worked) = match try_replay(caller, "Run.lastTurn", vec![])? {
+                Some(cached) => recorded_turn(&cached)?,
+                None => {
+                    let waited = params.first().and_then(Val::i64).unwrap_or_default();
+                    let worked = params.get(1).and_then(Val::i64).unwrap_or_default();
+                    let outcome = json_record(
+                        "Run.Turn",
+                        vec![
+                            ("waitedMs", JsonValue::from(waited)),
+                            ("workedMs", JsonValue::from(worked)),
+                        ],
+                    );
+                    record_effect_if_recording(caller, "Run.lastTurn", vec![], outcome, caller_fn);
+                    (waited, worked)
+                }
+            };
+            results[0] = Val::I64(waited);
+            results[1] = Val::I64(worked);
+            Ok(true)
+        }
         _ => Ok(false),
     }
+}
+
+/// Nanoseconds of the host's monotonic clock, from the first reading this
+/// process made.
+fn monotonic_nanos() -> i64 {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let epoch = *EPOCH.get_or_init(std::time::Instant::now);
+    i64::try_from(epoch.elapsed().as_nanos()).unwrap_or(i64::MAX)
+}
+
+/// The two numbers of a recorded `Run.Turn`.
+fn recorded_turn(cached: &aver::replay::JsonValue) -> Result<(i64, i64), wasmtime::Error> {
+    let invalid = || wasmtime::Error::msg("replay Run.lastTurn: not a Run.Turn");
+    let fields = cached
+        .get("$record")
+        .and_then(|record| record.get("fields"))
+        .ok_or_else(invalid)?;
+    let field = |name: &str| fields.get(name).and_then(|value| value.as_i64());
+    Ok((
+        field("waitedMs").ok_or_else(invalid)?,
+        field("workedMs").ok_or_else(invalid)?,
+    ))
 }
 
 /// The reason a recording holds, as the string ref (or null) the module reads.

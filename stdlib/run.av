@@ -1,14 +1,18 @@
 module Run
     intent =
-        "The vocabulary of the generated loop. Wake says when a request that an answer module did not answer yet is asked again, and fail ends the run with a reason Run.all() answers."
+        "The vocabulary of the generated loop. Wake says when a request that an answer module did not answer yet is asked again, fail ends the run with a reason Run.all() answers, and lastTurn says how long the loop waited and worked around the current turn."
     kind = capability
     semantics = effectful
     depends [Wait]
-    exposes [Wake, fail, failure]
+    exposes [Wake, Turn, fail, failure, lastTurn, waitStarts, waitEnds]
 
 type Wake
     Until(List<Wait.Item>, Option<Int>)
     Settled(Option<Int>)
+
+record Turn
+    waitedMs: Int
+    workedMs: Int
 
 operation fail(message: String) -> Unit
     ? "Ends the run with this reason. The turn it is called in is finished first; then the loop stops every process the way a stop does, cancelling the jobs parked requests wait on, and Run.all() answers Err(message). Only the first call of a run counts: a later one, in the same turn or after it, changes nothing."
@@ -20,6 +24,22 @@ operation failure() -> Option<String>
     oracle = generative
     replay = recorded
     hostile = [failureNever, failureAtOnce, failureAfterOne]
+
+operation lastTurn() -> Run.Turn
+    ? "How long the loop's one wait before the current turn took (waitedMs), and how long the turn before it worked, from the return of its wait to the start of this one (workedMs), in whole milliseconds of a monotonic clock. While the loop seats the processes, before any wait has returned, both are 0, and so is workedMs in the first turn. Only a program run by Run.all() can call it."
+    oracle = generative
+    replay = recorded
+    hostile = [turnIdle, turnAsleep, turnBusy]
+
+operation waitStarts() -> Unit
+    ? "The generated loop calls this right before its one wait of a turn, and only in a program that calls lastTurn: it reads the monotonic clock. A program does not call it itself."
+    oracle = output
+    replay = reissued
+
+operation waitEnds() -> Unit
+    ? "The generated loop calls this right after its one wait of a turn returns, and only in a program that calls lastTurn: it reads the monotonic clock and makes what lastTurn answers. A program does not call it itself."
+    oracle = output
+    replay = reissued
 
 fn failureNever(path: BranchPath, call: Int) -> Option<String>
     ? "Hostile profile: nothing ever fails the run."
@@ -34,3 +54,15 @@ fn failureAfterOne(path: BranchPath, call: Int) -> Option<String>
     match call >= 1
         true -> Option.Some("hostile: the run failed")
         false -> Option.None
+
+fn turnIdle(path: BranchPath, call: Int) -> Run.Turn
+    ? "Hostile profile: the loop neither waited nor worked, as while it seats the processes."
+    Run.Turn(waitedMs = 0, workedMs = 0)
+
+fn turnAsleep(path: BranchPath, call: Int) -> Run.Turn
+    ? "Hostile profile: the loop waited a whole day and did no work."
+    Run.Turn(waitedMs = 86400000, workedMs = 0)
+
+fn turnBusy(path: BranchPath, call: Int) -> Run.Turn
+    ? "Hostile profile: the loop never waited and every turn worked a whole minute."
+    Run.Turn(waitedMs = 0, workedMs = 60000)

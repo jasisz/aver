@@ -753,3 +753,157 @@ fn a_failed_run_recording_interchanges_between_the_vm_and_wasm_gc() {
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|error| panic!("{error}"));
 }
+
+// ── Run.lastTurn ────────────────────────────────────────────────────────
+
+#[path = "support/last_turn.rs"]
+mod last_turn;
+
+/// A program that reads `Run.lastTurn` reports the same turns on both wasm
+/// targets as on the VM: 0/0 while seated, about the deadline for a tick that
+/// waited for one, and next to nothing for the one that did not. On wasm-gc
+/// the deadline alone is a real wait, not a loop that spins until it passes.
+#[test]
+fn run_last_turn_reports_the_turns_as_the_vm_does_on_both_wasm_targets() {
+    let vm = run("run_last_turn", &[], &[]).unwrap_or_else(|error| panic!("{error}"));
+    last_turn::check(&vm).unwrap_or_else(|error| panic!("VM: {error}"));
+    for target in wasm_targets() {
+        let wasm = run("run_last_turn", target, &[]).unwrap_or_else(|error| panic!("{error}"));
+        last_turn::check(&wasm).unwrap_or_else(|error| panic!("{}: {error}", target_name(target)));
+    }
+}
+
+/// A recording of the readings made on the VM or on wasm-gc replays on the
+/// other: both write `Run.lastTurn` and the marks around every wait into the
+/// same entries, and a replay prints the recorded numbers again.
+#[test]
+fn a_last_turn_recording_interchanges_between_the_vm_and_wasm_gc() {
+    let ws = temp_dir("last-turn-interchange");
+    let result = (|| -> Result<(), String> {
+        for (recorded_on, replayed_on) in
+            [(&[][..], &["--wasm-gc"][..]), (&["--wasm-gc"][..], &[][..])]
+        {
+            let dir = ws.join(target_name(recorded_on).replace(' ', "-"));
+            fs::create_dir_all(&dir).expect("create recordings dir");
+            let mut target = recorded_on.to_vec();
+            target.extend(["--record", dir.to_str().expect("utf-8 scratch path")]);
+            let out = run_any("run_last_turn", &target, &[]);
+            if !out.status.success() {
+                return Err(format_output(&out));
+            }
+            let text = fs::read_to_string(one_recording(&dir)?)
+                .map_err(|error| format!("cannot read the recording: {error}"))?;
+            for effect in ["\"Run.lastTurn\"", "\"Run.waitStarts\"", "\"Run.waitEnds\""] {
+                if !text.contains(effect) {
+                    return Err(format!(
+                        "the recording made on {} does not carry {effect}",
+                        target_name(recorded_on)
+                    ));
+                }
+            }
+            let report = replay(&dir, replayed_on)?;
+            if !report.contains("Output:  MATCH") {
+                return Err(format!(
+                    "a recording made on {} did not replay on {}:\n{report}",
+                    target_name(recorded_on),
+                    target_name(replayed_on)
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The wasm-gc imports of one fixture compiled into `out`.
+fn wasm_gc_imports(name: &str, out: &Path) -> Vec<(String, String)> {
+    use wasmparser::{Parser, Payload};
+    let dir = fixture(name);
+    let compiled = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("compile")
+        .arg(dir.join("main.av"))
+        .arg("--module-root")
+        .arg(&dir)
+        .args(["--target", "wasm-gc", "-o"])
+        .arg(out)
+        .output()
+        .expect("expected `aver compile` to execute");
+    assert!(compiled.status.success(), "{}", format_output(&compiled));
+    let bytes = fs::read(out.join("main.wasm")).expect("read the module");
+    let mut imports = Vec::new();
+    for payload in Parser::new(0).parse_all(&bytes) {
+        if let Payload::ImportSection(reader) = payload.expect("parse emitted wasm") {
+            for group in reader {
+                for import in group.expect("read import group") {
+                    let (_, import) = import.expect("read import");
+                    imports.push((import.module.to_string(), import.name.to_string()));
+                }
+            }
+        }
+    }
+    imports
+}
+
+/// The three imports behind `Run.lastTurn` are imported by a program that
+/// reads it and by no other: a loop that does not measure its waits asks the
+/// host for nothing new.
+#[test]
+fn only_a_program_that_reads_last_turn_imports_its_clock() {
+    let ws = temp_dir("last-turn-imports");
+    let names = ["run_wait_starts", "run_wait_ends", "run_last_turn"];
+    let reading = wasm_gc_imports("run_last_turn", &ws.join("reading"));
+    for name in names {
+        assert!(
+            reading.contains(&("aver".to_string(), name.to_string())),
+            "no aver.{name} in {reading:?}"
+        );
+    }
+    for fixture_name in ["run_all_from_main", "run_fail"] {
+        let quiet = wasm_gc_imports(fixture_name, &ws.join(fixture_name));
+        assert!(
+            !quiet
+                .iter()
+                .any(|(module, name)| module == "aver" && names.contains(&name.as_str())),
+            "{fixture_name} imports the loop's clock: {quiet:?}"
+        );
+    }
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A program may build a `Run.Turn` of its own, say for a sample in a test,
+/// without reading `Run.lastTurn`: the record stays in its artifact.
+#[test]
+fn a_program_that_builds_a_run_turn_itself_keeps_the_record() {
+    let ws = temp_dir("last-turn-built");
+    fs::write(
+        ws.join("main.av"),
+        "module Built\n    intent = \"Builds a Run.Turn without reading the last turn.\"\n\nfn main() -> Unit\n    ? \"Prints a turn it built.\"\n    ! [Console.print]\n    turn = Run.Turn(waitedMs = 3, workedMs = 4)\n    Console.print(\"{turn.waitedMs} {turn.workedMs}\")\n",
+    )
+    .expect("write the program");
+    let mut targets: Vec<&[&str]> = vec![&[]];
+    targets.extend(wasm_targets());
+    for target in targets {
+        let out = Command::new(aver_bin())
+            .current_dir(&ws)
+            .arg("run")
+            .arg("main.av")
+            .args(target)
+            .output()
+            .expect("expected `aver run` to execute");
+        assert!(
+            out.status.success(),
+            "{}: {}",
+            target_name(target),
+            format_output(&out)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "3 4",
+            "{}",
+            target_name(target)
+        );
+    }
+    let _ = fs::remove_dir_all(&ws);
+}

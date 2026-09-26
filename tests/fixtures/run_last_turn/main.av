@@ -1,0 +1,24 @@
+module Main
+    intent = "A ticker that reads how long the loop waited and worked around its turns: once while it is seated, after three ticks that each wait for a 250 ms deadline, and after one that waits for nothing."
+    depends [Clock, Ticks]
+    effects [Clock.soon, Clock.tick, Console.print, Run.lastTurn, yield]
+
+fn ticker() -> Unit
+    ? "Reports the turn it is seated in, then three waited ticks and one that is not."
+    ! [Clock.soon, Clock.tick, Console.print, Run.lastTurn, yield]
+    report("seated", Run.lastTurn())
+    ticking(1)
+
+fn ticking(n: Int) -> Unit
+    ? "One tick per deadline, reporting the turn it arrived in; after the third, one tick that waits for nothing."
+    ! [Clock.soon, Clock.tick, Console.print, Run.lastTurn, yield]
+    tick = Clock.tick()
+    report("tick {tick}", Run.lastTurn())
+    match n >= 3
+        true -> report("soon {Clock.soon()}", Run.lastTurn())
+        false -> ticking(n + 1)
+
+fn report(label: String, turn: Run.Turn) -> Unit
+    ? "One line: what arrived, how long the loop waited before this turn, and how long the turn before it worked."
+    ! [Console.print]
+    Console.print("{label} waited {turn.waitedMs} worked {turn.workedMs}")

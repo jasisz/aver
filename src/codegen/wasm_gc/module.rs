@@ -2928,6 +2928,41 @@ pub(super) fn emit_module_with(
     } else {
         None
     };
+    // How long the loop waited and worked: four i64 globals on both wasm
+    // targets, written by the loop's two marks around its wait and read by
+    // `Run.lastTurn`. Appended last, and only for a program that reads
+    // `Run.lastTurn`, whose loop is the only one that marks its waits.
+    let run_turn_globals = if effect_registry.iter().any(|effect| {
+        matches!(
+            effect,
+            EffectName::RunWaitStarts | EffectName::RunWaitEnds | EffectName::RunLastTurn
+        )
+    }) {
+        let mut next = || {
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            idx
+        };
+        let allocated = super::run_turn::RunTurnGlobals {
+            started: next(),
+            returned: next(),
+            waited: next(),
+            worked: next(),
+        };
+        for initial in super::run_turn::RunTurnGlobals::INITIAL {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I64,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i64_const(initial),
+            );
+        }
+        Some(allocated)
+    } else {
+        None
+    };
     if next_global_idx > 0 {
         module.section(&globals);
     }
@@ -2963,6 +2998,8 @@ pub(super) fn emit_module_with(
                 println_to_lm_fn_idx: bridge.as_ref().map(|b| b.println_to_lm_fn),
                 clocks_now_fn_idx: wasip2_imports
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::ClocksWallClockNow),
+                clocks_monotonic_now_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::ClocksMonotonicNow),
                 random_u64_fn_idx: wasip2_imports
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::RandomGetRandomU64),
                 get_arguments_fn_idx: wasip2_imports
@@ -3165,6 +3202,7 @@ pub(super) fn emit_module_with(
         funcref_table,
         call_indirect_types,
         run_failure_global,
+        run_turn_globals,
         ..FnMap::default()
     };
 

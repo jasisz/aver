@@ -1126,6 +1126,17 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
     } else {
         typecheck_gate(items, mode, &items[..user_program_len])
     };
+    let mut tc = tc;
+    if tc.errors.is_empty() {
+        let has_loop = result
+            .yield_lowering
+            .as_ref()
+            .is_some_and(|report| report.loop_source.is_some());
+        tc.errors
+            .extend(crate::yield_lowering::last_turn_without_loop(
+                items, has_loop,
+            ));
+    }
     result
         .pass_diagnostics
         .push(diag_for_typecheck(&tc, items.len()));

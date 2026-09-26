@@ -244,10 +244,11 @@ pub fn job_kinds(
 
 /// The standard operations that answer at once, whatever the world does: the
 /// non-blocking half of `Tcp`, the clock, randomness, the stop flag and a
-/// job's cancel, and ending the run with a reason. An answer function that
-/// performs only these, or the `begin`/`take` of a job kind, cannot stall the
-/// turn, so the answer-shape warning does not name them.
-const ANSWERS_AT_ONCE: [&str; 16] = [
+/// job's cancel, ending the run with a reason, and reading how long the last
+/// turn waited and worked. An answer function that performs only these, or
+/// the `begin`/`take` of a job kind, cannot stall the turn, so the
+/// answer-shape warning does not name them.
+const ANSWERS_AT_ONCE: [&str; 19] = [
     "Tcp.readNow",
     "Tcp.writeNow",
     "Tcp.accept",
@@ -264,6 +265,9 @@ const ANSWERS_AT_ONCE: [&str; 16] = [
     "Work.cancel",
     "Run.fail",
     "Run.failure",
+    "Run.lastTurn",
+    "Run.waitStarts",
+    "Run.waitEnds",
 ];
 
 /// Whether one effect of an answer function returns at once.

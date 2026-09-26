@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createWorkHost } from "./host.mjs";
 
-const [parallelFile, guideFile, recordFile, unitFile, unitResultFile, socketOnlyFile, runFailFile] = process.argv.slice(2);
+const [parallelFile, guideFile, recordFile, unitFile, unitResultFile, socketOnlyFile, runFailFile, lastTurnFile] = process.argv.slice(2);
 const host = await createWorkHost(await WebAssembly.compile(await readFile(parallelFile)), { maxJobs: 2 });
 try {
     const { exports: e } = host.instance, c = host.codec;
@@ -67,6 +67,26 @@ assert.deepEqual(lines, ["scored 60"]);
         assert.deepEqual(printed.at(-1), "second saw tick 6 in turn 3");
     } finally { await failing.close(); }
     console.log("Run.fail coordinator passed");
+}
+
+// A program that reads Run.lastTurn: the loop marks every wait with this
+// host's clock, so a tick that parked on its 250 ms deadline reads about that
+// long, the turn before it worked far less, and 0/0 while it was seated.
+if (lastTurnFile) {
+    const printed = [];
+    const reading = await createWorkHost(await WebAssembly.compile(await readFile(lastTurnFile)), { maxJobs: 1, onPrint: line => printed.push(line) });
+    try {
+        assert.deepEqual(await reading.runCoordinator(), { ok: null });
+    } finally { await reading.close(); }
+    const turns = printed.map(line => line.match(/^(.*) waited (\d+) worked (\d+)$/));
+    assert.deepEqual(turns.map(turn => turn?.[1]), ["seated", "tick 1", "tick 2", "tick 3", "soon 4"], printed.join("\n"));
+    for (const [, label, waited, worked] of turns) {
+        const [w, k] = [Number(waited), Number(worked)];
+        if (label === "seated") assert.deepEqual([w, k], [0, 0], label);
+        else if (label === "soon 4") assert.ok(w < 125 && k < 125, `${label}: ${w} ${k}`);
+        else assert.ok(w >= 125 && w < 5000 && k < 125, `${label}: ${w} ${k}`);
+    }
+    console.log("Run.lastTurn coordinator passed");
 }
 
 // Both sides reconstruct their own records; no GC object can be cloned into

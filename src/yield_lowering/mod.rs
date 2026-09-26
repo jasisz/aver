@@ -210,7 +210,38 @@ impl YieldLoweringReport {
 /// The language's own effect: bare and lowercase, never a capability.
 pub const YIELD_EFFECT: &str = "yield";
 
-/// Whether a function body calls `Run.all()`, which runs the generated loop.
+/// A `main` that reads `Run.lastTurn` in a program that runs no generated
+/// loop: there is no turn to report, so the program is refused at check time
+/// instead of reading `0/0` forever. `has_loop` is whether the lowering of
+/// this module generated one. A module with no `main` is a library, and the
+/// program that depends on it decides; a `main` that calls `Run.all()` has a
+/// loop whenever its module writes a process, and is refused for that on its
+/// own when it does not.
+pub fn last_turn_without_loop(items: &[TopLevel], has_loop: bool) -> Option<TypeError> {
+    if has_loop {
+        return None;
+    }
+    items.iter().find_map(|item| match item {
+        TopLevel::FnDef(fd)
+            if fd.name == "main"
+                && fd
+                    .effects
+                    .iter()
+                    .any(|effect| effect.node == coordinator::LAST_TURN) =>
+        {
+            Some(error_at(
+                fd.line,
+                format!(
+                    "'main' reads {} (its effect list names it), but this program runs no generated loop, so there is no turn to report. {} answers only inside a program run by Run.all(): write a process and let the loop run it, or drop the effect",
+                    coordinator::LAST_TURN,
+                    coordinator::LAST_TURN
+                ),
+            ))
+        }
+        _ => None,
+    })
+}
+
 /// Whether a module calls `Wait.poll` anywhere, read off its source.
 pub fn calls_wait_poll(items: &[TopLevel]) -> bool {
     carried_waits::calls_wait_poll(items)

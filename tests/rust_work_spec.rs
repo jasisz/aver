@@ -1375,3 +1375,50 @@ fn run_fail_ends_the_run_as_the_vm_does() {
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|error| panic!("{error}"));
 }
+
+// ── Run.lastTurn ────────────────────────────────────────────────────────
+
+#[path = "support/last_turn.rs"]
+mod last_turn;
+
+/// A program that reads `Run.lastTurn` reports the same turns from the Rust
+/// binary as from the VM: 0/0 while seated, about the deadline for a tick
+/// that waited for one, and next to nothing for the one that did not. The
+/// readings are clocks, so the two agree on the lines and the bounds. A
+/// program that does not read it carries no `Run.Turn` in its crate.
+#[test]
+fn run_last_turn_reports_the_turns_as_the_vm_does() {
+    let vm = run_vm("run_last_turn").unwrap_or_else(|error| panic!("{error}"));
+    last_turn::check(&vm).unwrap_or_else(|error| panic!("VM: {error}"));
+
+    let ws = temp_dir("run_last_turn");
+    let project = ws.join("project");
+    let quiet = ws.join("quiet");
+    fs::create_dir_all(&project).expect("create project dir");
+    fs::create_dir_all(&quiet).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust("run_last_turn", &project, "run_last_turn", &[])?;
+        let run_module = project.join("src/aver_generated/run/mod.rs");
+        let emitted = fs::read_to_string(&run_module)
+            .map_err(|error| format!("cannot read {}: {error}", run_module.display()))?;
+        if !emitted.contains("pub struct Turn") {
+            return Err(format!("no Run.Turn in a crate that reads it:\n{emitted}"));
+        }
+        let bin = cargo_build(&project, "run_last_turn")?;
+        let rust = run_binary(&bin)?;
+        last_turn::check(&rust).map_err(|error| format!("Rust: {error}"))?;
+
+        compile_rust("run_all_from_main", &quiet, "run_all_from_main", &[])?;
+        let run_module = quiet.join("src/aver_generated/run/mod.rs");
+        let emitted = fs::read_to_string(&run_module)
+            .map_err(|error| format!("cannot read {}: {error}", run_module.display()))?;
+        if emitted.contains("Turn") {
+            return Err(format!(
+                "Run.Turn in a crate that never reads it:\n{emitted}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
