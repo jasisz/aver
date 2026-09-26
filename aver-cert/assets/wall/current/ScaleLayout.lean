@@ -292,11 +292,6 @@ theorem allRange_spec {f : Nat → Bool} :
 
 theorem allRange_zero (f : Nat → Bool) (k : Nat) : allRange f k 0 = true := rfl
 
-/-- One more point in front of a range. -/
-theorem allRange_cons {f : Nat → Bool} {k m : Nat} (h : f k = true)
-    (t : allRange f (k + 1) m = true) : allRange f k (m + 1) = true := by
-  simp only [allRange, h, t, Bool.and_self]
-
 /-- Two consecutive ranges. -/
 theorem allRange_join {f : Nat → Bool} :
     ∀ {k a b : Nat}, allRange f k a = true → allRange f (k + a) b = true →
@@ -521,96 +516,348 @@ theorem bitAt_bitsOf : ∀ (bs : List Bool) (i : Nat), bitAt (bitsOf bs) i = bs.
 
 def roleBits (M : MCtx) (e : FnEntry) : Nat := bitsOf (roleCalls M e)
 
-/-- Plan entry `i`: its packed check, and its role bits. -/
-def planAt (cs : List Nat) (L : Layout) (fts : List FnType) (M : MCtx) (fns : List FnEntry)
-    (ds : List FnDecl) (rs : List Nat) (i : Nat) : Bool :=
-  match fns[i]?, ds[i]?, rs[i]? with
-  | some e, some d, some r => entryPacked cs L fts M fns e d && roleBits M e == r
-  | _, _, _ => false
+/-! ### Export entries on windows
 
-/-- The export conjunct of plan entry `i`. -/
-def exportAt (E : List AverCert.WasmSlice.ExportEntry) (fns : List FnEntry) (ds : List FnDecl)
-    (i : Nat) : Bool :=
-  match fns[i]?, ds[i]? with
-  | some e, some d => exportOk E e d
-  | _, _ => false
+The producer declares where the export section's first entry starts (`e0`),
+every entry's length (the export cut `ls`), and the bitmap of every entry's
+start relative to `e0` (`startBits`, checked once against the cut).
+`exportsHead` reads the section's count on a window at its payload's start
+and requires the count to be the number of declared lengths, the first
+entry to start at `e0` and the lengths to fill the payload. A plan then
+names its export entry by module offset and length: the offset's bit in the
+bitmap makes it an entry start, and the entry decoded on its own window,
+filling it exactly, is the section's entry there (`exportSite_mem`). No
+check walks the export list. -/
 
-/-- The export conjuncts of plan entries `k, …, k + m - 1`: each exported
-    plan's export entry at its declared position. A package decides a few
-    plans per declaration, since every lookup walks the export list. -/
-def exportsIn (n len : Nat) (fns : List FnEntry) (ds : List FnDecl) (k m : Nat) : Bool :=
-  match decodeRawExports n len with
-  | some E => allRange (exportAt E fns ds) k m
+/-- The export section's count and first entry, against the declared cut. -/
+def exportsHead (cs : List Nat) (len : Nat) (hs : List Nat) (e0 : Nat) (ls : List Nat) : Bool :=
+  framingOk cs len hs &&
+  match headersAt cs len 8 hs with
+  | some S =>
+      match S.find? (fun e => e.1 == 7) with
+      | some (_, start, size) =>
+          match readU (window 1024 cs start (min 5 size)) (min 5 size) with
+          | some (cnt, _, rest) =>
+              cnt == ls.length && e0 == start + (min 5 size - rest) &&
+                ls.sum == size - (min 5 size - rest)
+          | none => false
+      | none => false
   | none => false
 
-theorem exportsIn_join {n len : Nat} {fns : List FnEntry} {ds : List FnDecl} {k a b : Nat}
-    (h1 : exportsIn n len fns ds k a = true) (h2 : exportsIn n len fns ds (k + a) b = true) :
-    exportsIn n len fns ds k (a + b) = true := by
-  unfold exportsIn at h1 h2 ⊢
-  split at h1
-  · rename_i E hE
-    rw [hE] at h2
-    exact allRange_join h1 h2
-  · cases h1
+/-- The starts of consecutive entries of the given lengths, from `s`, as the
+    bits of one numeral. -/
+def startBits : Nat → List Nat → Nat
+  | _, [] => 0
+  | s, l :: ls => (1 <<< s) ||| startBits (s + l) ls
 
-theorem planAt_spec {cs : List Nat} {L : Layout} {fts : List FnType} {M : MCtx}
-    {fns : List FnEntry} {ds : List FnDecl} {rs : List Nat}
-    (hall : allRange (planAt cs L fts M fns ds rs) 0 fns.length = true) {i : Nat}
-    (hi : i < fns.length) :
-    ∃ (hd : i < ds.length) (hr : i < rs.length),
-      entryPacked cs L fts M fns fns[i] ds[i] = true ∧ roleBits M fns[i] = rs[i] := by
-  have h := allRange_spec hall i (by omega) (by omega)
-  unfold planAt at h
-  rw [List.getElem?_eq_getElem hi] at h
-  cases hd : ds[i]? with
-  | none => simp [hd] at h
-  | some d =>
-      cases hr : rs[i]? with
-      | none => simp [hd, hr] at h
-      | some r =>
-          simp only [hd, hr, Bool.and_eq_true, beq_iff_eq] at h
-          obtain ⟨hdl, hdd⟩ := List.getElem?_eq_some_iff.mp hd
-          obtain ⟨hrl, hrr⟩ := List.getElem?_eq_some_iff.mp hr
-          exact ⟨hdl, hrl, by rw [hdd]; exact h.1, by rw [hrr]; exact h.2⟩
+theorem startBits_spec : ∀ (ls : List Nat) (s t : Nat), (startBits s ls).testBit t = true →
+    ∃ p, p < ls.length ∧ t = s + (ls.take p).sum
+  | [], _, t, h => by simp [startBits] at h
+  | l :: ls, s, t, h => by
+      simp only [startBits, Nat.testBit_or, Bool.or_eq_true, Nat.one_shiftLeft,
+        Nat.testBit_two_pow] at h
+      rcases h with h | h
+      · refine ⟨0, by simp, ?_⟩
+        simp only [decide_eq_true_eq] at h
+        simp [h]
+      · obtain ⟨p, hp, rfl⟩ := startBits_spec ls (s + l) t h
+        exact ⟨p + 1, by simp; omega, by simp [List.take_succ_cons, Nat.add_assoc]⟩
 
-/-- The packed plan checks, the export positions and the confirmed layout
-    give every plan's `entryAccepted`. -/
-theorem entries_of_packed {cs : List Nat} {n len : Nat} {L : Layout} {fts : List FnType}
-    {M : MCtx} {fns : List FnEntry} {ds : List FnDecl} {rs : List Nat}
+/-- The windows of consecutive entries in a slice, by position. -/
+theorem seqWin_slice_get {n : Nat} :
+    ∀ (ls : List Nat) (a T p : Nat), ls.sum ≤ T →
+      (seqWin (slice n a T) ls)[p]? = ls[p]?.map fun l => (slice n (a + (ls.take p).sum) l, l)
+  | [], _, _, p, _ => by simp [seqWin]
+  | l :: ls, a, T, 0, h => by
+      simp only [List.sum_cons] at h
+      simp [seqWin, slice_mod n a l T (by omega)]
+  | l :: ls, a, T, p + 1, h => by
+      simp only [List.sum_cons] at h
+      simp only [seqWin, List.getElem?_cons_succ, List.take_succ_cons, List.sum_cons]
+      rw [slice_shr n a T l (by omega), seqWin_slice_get ls (a + l) (T - l) p (by omega),
+        Nat.add_assoc]
+
+/-- A checked `mapM`, read at one position. -/
+theorem mapM_get {α β : Type} {f : α → Option β} :
+    ∀ {l : List α} {E : List β}, l.mapM f = some E → ∀ p : Nat, E[p]? = (l[p]?).bind f
+  | [], E, h, p => by
+      simp only [List.mapM_nil, Option.pure_def, Option.some.injEq] at h
+      subst h; simp
+  | x :: xs, E, h, p => by
+      simp only [List.mapM_cons, Option.bind_eq_bind, Option.pure_def] at h
+      cases hx : f x with
+      | none => simp [hx] at h
+      | some y =>
+          cases hxs : xs.mapM f with
+          | none => simp [hx, hxs] at h
+          | some ys =>
+              simp only [hx, hxs, Option.bind_some, Option.some.injEq] at h
+              subst h
+              cases p with
+              | zero => simp [hx]
+              | succ p => simpa using mapM_get hxs p
+
+theorem exportsHead_spec {cs : List Nat} {n len : Nat} {hs : List Nat} {e0 : Nat} {ls : List Nat}
+    (hn : join 1024 cs = n) (hfit : chunksFit 1024 cs = true)
+    (h : exportsHead cs len hs e0 ls = true) :
+    ∃ start size k, modulePayload 7 n len = some (slice n start size, size) ∧
+      readU (slice n start size) size =
+        some (ls.length, slice n e0 (size - k), size - k) ∧ ls.sum = size - k := by
+  unfold exportsHead at h
+  simp only [Bool.and_eq_true] at h
+  obtain ⟨hfr, hm⟩ := h
+  split at hm
+  · rename_i S hS
+    split at hm
+    · rename_i id start size hfind
+      split at hm
+      · rename_i cnt w' rest hU
+        simp only [Bool.and_eq_true, beq_iff_eq] at hm
+        obtain ⟨⟨rfl, rfl⟩, hsum⟩ := hm
+        have hpay := modulePayload_of_framing hn hfit hfr hS 7
+        rw [hfind] at hpay
+        rw [window_eq (by decide) hfit, hn] at hU
+        obtain ⟨-, hread⟩ := readU_window_slice (S := size) (by omega) hU
+        exact ⟨start, size, min 5 size - rest, hpay, hread, hsum⟩
+      · cases hm
+    · cases hm
+  · cases hm
+
+/-- With a confirmed export cut and head, export entry `p` is the entry its
+    window decodes to. -/
+theorem exportWindow_eq {cs : List Nat} {n len : Nat} {hs : List Nat} {e0 : Nat}
+    {ls : List Nat} {E : List AverCert.WasmSlice.ExportEntry} (hn : join 1024 cs = n)
+    (hfit : chunksFit 1024 cs = true) (h : exportsHead cs len hs e0 ls = true)
+    (hE : decodeRawExportsCut n len ls = some E) (p : Nat) :
+    E[p]? = (ls[p]?).bind fun l => whole readExportEntry (slice n (e0 + (ls.take p).sum) l, l) := by
+  obtain ⟨start, size, k, hpay, hread, hsum⟩ := exportsHead_spec hn hfit h
+  unfold decodeRawExportsCut at hE
+  rw [hpay] at hE
+  simp only [hread, BEq.rfl, hsum, Bool.and_self, ↓reduceIte] at hE
+  rw [cutWin_eq] at hE
+  rw [mapM_get hE p, seqWin_slice_get ls e0 (size - k) p (by omega)]
+  cases ls[p]? <;> rfl
+
+theorem mapM_isSome {α β : Type} {f : α → Option β} :
+    ∀ {l : List α} {E : List β}, l.mapM f = some E → ∀ x ∈ l, (f x).isSome = true
+  | [], _, _, _, hx => by cases hx
+  | x :: xs, E, h, y, hy => by
+      simp only [List.mapM_cons, Option.bind_eq_bind, Option.pure_def] at h
+      cases hx : f x with
+      | none => simp [hx] at h
+      | some z =>
+          cases hxs : xs.mapM f with
+          | none => simp [hx, hxs] at h
+          | some zs =>
+              cases hy with
+              | head => simp [hx]
+              | tail _ hmem => exact mapM_isSome hxs y hmem
+
+/-- Every window of a confirmed export cut decodes. -/
+theorem exportWindow_some {cs : List Nat} {n len : Nat} {hs : List Nat} {e0 : Nat}
+    {ls : List Nat} {E : List AverCert.WasmSlice.ExportEntry} (hn : join 1024 cs = n)
+    (hfit : chunksFit 1024 cs = true) (h : exportsHead cs len hs e0 ls = true)
+    (hE : decodeRawExportsCut n len ls = some E) (p : Nat) (hp : p < ls.length) :
+    (whole readExportEntry (slice n (e0 + (ls.take p).sum) ls[p], ls[p])).isSome = true := by
+  obtain ⟨start, size, k, hpay, hread, hsum⟩ := exportsHead_spec hn hfit h
+  unfold decodeRawExportsCut at hE
+  rw [hpay] at hE
+  simp only [hread, BEq.rfl, hsum, Bool.and_self, ↓reduceIte] at hE
+  rw [cutWin_eq] at hE
+  have hget := seqWin_slice_get (n := n) ls e0 (size - k) p (by omega)
+  rw [List.getElem?_eq_getElem hp, Option.map_some] at hget
+  exact mapM_isSome hE _ (List.mem_of_getElem? hget)
+
+/-- Two windows at one offset that a reader consumes exactly read the same
+    entry. -/
+theorem whole_unique {α : Type} {r : Nat → Nat → Option (α × Nat × Nat)} (hr : Ext r)
+    {n a l₁ l₂ : Nat} {x y : α} (h₁ : whole r (slice n a l₁, l₁) = some x)
+    (h₂ : whole r (slice n a l₂, l₂) = some y) : x = y := by
+  -- The shorter window, extended to the longer one, leaves its excess unread.
+  have key : ∀ {l₁ l₂ : Nat} {x y : α}, l₁ ≤ l₂ → whole r (slice n a l₁, l₁) = some x →
+      whole r (slice n a l₂, l₂) = some y → x = y := by
+    intro l₁ l₂ x y hle h₁ h₂
+    unfold whole at h₁ h₂
+    split at h₁
+    · rename_i x' w' hw
+      simp only [Option.some.injEq] at h₁
+      subst h₁
+      obtain ⟨-, -, hext⟩ := hr (slice_lt n a l₁) hw
+      have hs := hext (slice n (a + l₁) (l₂ - l₁)) (l₂ - l₁)
+      rw [← slice_split, show l₁ + (l₂ - l₁) = l₂ by omega] at hs
+      simp only [hs, Nat.zero_add] at h₂
+      split at h₂
+      · rename_i x'' w'' heq
+        simp only [Option.some.injEq, Prod.mk.injEq] at heq h₂
+        exact heq.1.trans h₂
+      · cases h₂
+    · cases h₁
+  by_cases hle : l₁ ≤ l₂
+  · exact key hle h₁ h₂
+  · exact (key (by omega) h₂ h₁).symm
+
+/-- A plan's export site: the entry at module offset `off`, of length `l`,
+    starts an entry of the section and is the function export of `name` at
+    `fi`. -/
+def exportSite (cs : List Nat) (e0 B off l : Nat) (name : List Nat) (fi : Nat) : Bool :=
+  decide (e0 ≤ off) && B.testBit (off - e0) &&
+    whole readExportEntry (window 1024 cs off l, l) == some ⟨name, 0, fi⟩
+
+theorem exportSite_mem {cs : List Nat} {n len : Nat} {hs : List Nat} {e0 B : Nat}
+    {ls : List Nat} {E : List AverCert.WasmSlice.ExportEntry} {off l fi : Nat}
+    {name : List Nat} (hn : join 1024 cs = n) (hfit : chunksFit 1024 cs = true)
+    (h : exportsHead cs len hs e0 ls = true) (hE : decodeRawExportsCut n len ls = some E)
+    (hB : startBits 0 ls = B) (hsite : exportSite cs e0 B off l name fi = true) :
+    ∃ p : Nat, E[p]? = some (⟨name, 0, fi⟩ : AverCert.WasmSlice.ExportEntry) := by
+  simp only [exportSite, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at hsite
+  obtain ⟨⟨hle, hbit⟩, hw⟩ := hsite
+  rw [← hB] at hbit
+  obtain ⟨p, hp, hoff⟩ := startBits_spec ls 0 (off - e0) hbit
+  refine ⟨p, ?_⟩
+  rw [exportWindow_eq hn hfit h hE p, List.getElem?_eq_getElem hp, Option.bind_some]
+  rw [window_eq (by decide) hfit, hn] at hw
+  have hat : e0 + (ls.take p).sum = off := by omega
+  rw [hat]
+  cases hq : whole readExportEntry (slice n off ls[p], ls[p]) with
+  | none =>
+      have := exportWindow_some hn hfit h hE p hp
+      rw [hat, hq] at this
+      cases this
+  | some y => rw [whole_unique readExportEntry_ext hq hw]
+
+/-! ### The plans, one declaration each -/
+
+/-- One plan entry: its packed check, its export site, and its role bits. -/
+def planOne (cs : List Nat) (L : Layout) (fts : List FnType) (M : MCtx) (fns : List FnEntry)
+    (e0 B : Nat) (e : FnEntry) (d : FnDecl) (r : Nat) (site : Nat × Nat) : Bool :=
+  entryPacked cs L fts M fns e d &&
+  (!e.exported || exportSite cs e0 B site.1 site.2 (d.name.map Char.toNat) e.funcIdx) &&
+  roleBits M e == r
+
+/-- `planOne` along four lists in step, which must end together. -/
+def plansFrom (cs : List Nat) (L : Layout) (fts : List FnType) (M : MCtx) (fns : List FnEntry)
+    (e0 B : Nat) : List FnEntry → List FnDecl → List Nat → List (Nat × Nat) → Bool
+  | [], [], [], [] => true
+  | e :: es, d :: ds, r :: rs, x :: xs =>
+      planOne cs L fts M fns e0 B e d r x && plansFrom cs L fts M fns e0 B es ds rs xs
+  | _, _, _, _ => false
+
+theorem plansFrom_nil (cs : List Nat) (L : Layout) (fts : List FnType) (M : MCtx)
+    (fns : List FnEntry) (e0 B : Nat) : plansFrom cs L fts M fns e0 B [] [] [] [] = true :=
+  rfl
+
+theorem plansFrom_cons {cs : List Nat} {L : Layout} {fts : List FnType} {M : MCtx}
+    {fns : List FnEntry} {e0 B : Nat} {e : FnEntry} {d : FnDecl} {r : Nat} {x : Nat × Nat}
+    {es : List FnEntry} {ds : List FnDecl} {rs : List Nat} {xs : List (Nat × Nat)}
+    (h : planOne cs L fts M fns e0 B e d r x = true)
+    (t : plansFrom cs L fts M fns e0 B es ds rs xs = true) :
+    plansFrom cs L fts M fns e0 B (e :: es) (d :: ds) (r :: rs) (x :: xs) = true := by
+  simp only [plansFrom, h, t, Bool.and_self]
+
+theorem plansFrom_append {cs : List Nat} {L : Layout} {fts : List FnType} {M : MCtx}
+    {fns : List FnEntry} {e0 B : Nat} :
+    ∀ {es₁ : List FnEntry} {ds₁ : List FnDecl} {rs₁ : List Nat} {xs₁ : List (Nat × Nat)}
+      {es₂ : List FnEntry} {ds₂ : List FnDecl} {rs₂ : List Nat} {xs₂ : List (Nat × Nat)},
+      plansFrom cs L fts M fns e0 B es₁ ds₁ rs₁ xs₁ = true →
+      plansFrom cs L fts M fns e0 B es₂ ds₂ rs₂ xs₂ = true →
+      plansFrom cs L fts M fns e0 B (es₁ ++ es₂) (ds₁ ++ ds₂) (rs₁ ++ rs₂) (xs₁ ++ xs₂) = true
+  | [], [], [], [], _, _, _, _, _, h2 => h2
+  | e :: es, d :: ds, r :: rs, x :: xs, _, _, _, _, h1, h2 => by
+      simp only [plansFrom, Bool.and_eq_true] at h1
+      simp only [List.cons_append, plansFrom, h1.1, plansFrom_append h1.2 h2, Bool.and_self]
+  | [], [], [], _ :: _, _, _, _, _, h1, _ => by simp [plansFrom] at h1
+  | [], [], _ :: _, _, _, _, _, _, h1, _ => by cases ‹List (Nat × Nat)› <;> simp [plansFrom] at h1
+  | [], _ :: _, _, _, _, _, _, _, h1, _ => by
+      cases ‹List Nat› <;> cases ‹List (Nat × Nat)› <;> simp [plansFrom] at h1
+  | _ :: _, [], _, _, _, _, _, _, h1, _ => by
+      cases ‹List Nat› <;> cases ‹List (Nat × Nat)› <;> simp [plansFrom] at h1
+  | _ :: _, _ :: _, [], _, _, _, _, _, h1, _ => by
+      cases ‹List (Nat × Nat)› <;> simp [plansFrom] at h1
+  | _ :: _, _ :: _, _ :: _, [], _, _, _, _, h1, _ => by simp [plansFrom] at h1
+
+/-- One block of plans, `m` from position `k`, and all the plans after it,
+    give all the plans from `k`. -/
+theorem plansFrom_block {cs : List Nat} {L : Layout} {fts : List FnType} {M : MCtx}
+    {fns : List FnEntry} {e0 B : Nat} {es : List FnEntry} {ds : List FnDecl}
+    {rs : List Nat} {xs : List (Nat × Nat)} {k m : Nat}
+    (h1 : plansFrom cs L fts M fns e0 B ((es.drop k).take m) ((ds.drop k).take m)
+      ((rs.drop k).take m) ((xs.drop k).take m) = true)
+    (h2 : plansFrom cs L fts M fns e0 B (es.drop (k + m)) (ds.drop (k + m)) (rs.drop (k + m))
+      (xs.drop (k + m)) = true) :
+    plansFrom cs L fts M fns e0 B (es.drop k) (ds.drop k) (rs.drop k) (xs.drop k) = true := by
+  rw [← List.drop_drop] at h2
+  rw [← List.take_append_drop m (es.drop k), ← List.take_append_drop m (ds.drop k),
+    ← List.take_append_drop m (rs.drop k), ← List.take_append_drop m (xs.drop k)]
+  exact plansFrom_append h1 (by simpa [List.drop_drop, Nat.add_comm] using h2)
+
+theorem plansFrom_spec {cs : List Nat} {n len : Nat} {hs : List Nat} {L : Layout}
+    {fts : List FnType} {M : MCtx} {fns : List FnEntry} {e0 B : Nat} {ls : List Nat}
+    {E : List AverCert.WasmSlice.ExportEntry}
+    (hn : join 1024 cs = n) (hfit : chunksFit 1024 cs = true)
+    (hL : layoutConfirmed n len L = true) (hT : fnTypesConfirmed n len fts = true)
+    (hH : exportsHead cs len hs e0 ls = true) (hcut : decodeRawExportsCut n len ls = some E)
+    (hB : startBits 0 ls = B) (hnd : (E.map (·.name)).Nodup) :
+    ∀ (es : List FnEntry) (ds : List FnDecl) (rs : List Nat) (xs : List (Nat × Nat)),
+      es.map (·.name) = ds.map (fun d => String.ofList d.name) →
+      plansFrom cs L fts M fns e0 B es ds rs xs = true →
+      es.all (entryAccepted n len M fns) = true ∧ es.map (roleBits M) = rs
+  | [], [], [], [], _, _ => ⟨rfl, rfl⟩
+  | e :: es, d :: ds, r :: rs, x :: xs, hnm, h => by
+      simp only [List.map_cons, List.cons.injEq] at hnm
+      simp only [plansFrom, planOne, Bool.and_eq_true, beq_iff_eq] at h
+      obtain ⟨⟨⟨hp, hx⟩, hr⟩, hrest⟩ := h
+      obtain ⟨ih1, ih2⟩ :=
+        plansFrom_spec hn hfit hL hT hH hcut hB hnd es ds rs xs hnm.2 hrest
+      have hname : stringBytes e.name = d.name.map Char.toNat := by
+        rw [hnm.1, stringBytes_ofList]
+      have hdec := decodeRawExports_of_cut hcut
+      -- The export entry, at the position the site names.
+      have hexp : ∃ p, exportOk E e { d with exportPos := p } = true := by
+        cases hex : e.exported
+        · exact ⟨0, by simp [exportOk, hex]⟩
+        · simp only [hex, Bool.not_true, Bool.false_or] at hx
+          obtain ⟨p, hpE⟩ := exportSite_mem hn hfit hH hcut hB hx
+          exact ⟨p, by simp [exportOk, hpE]⟩
+      obtain ⟨p, hx'⟩ := hexp
+      -- The packed check reads the declaration's name and function type
+      -- position, never its export position.
+      have hp' : entryPacked cs L fts M fns e { d with exportPos := p } = true := hp
+      have hname' : stringBytes e.name = ({ d with exportPos := p } : FnDecl).name.map
+          Char.toNat := hname
+      refine ⟨?_, by simp [hr, ih2]⟩
+      simp only [List.all_cons, ih1, Bool.and_true]
+      exact entryAccepted_of_fast (d := { d with exportPos := p }) hL hT hdec hnd hname'
+        (entryFast_of_packed hn hfit hp' hx')
+  | [], [], [], _ :: _, _, h => by simp [plansFrom] at h
+  | [], [], _ :: _, _, _, h => by cases ‹List (Nat × Nat)› <;> simp [plansFrom] at h
+  | [], _ :: _, _, _, hnm, _ => by simp at hnm
+  | _ :: _, [], _, _, hnm, _ => by simp at hnm
+  | _ :: _, _ :: _, [], _, _, h => by cases ‹List (Nat × Nat)› <;> simp [plansFrom] at h
+  | _ :: _, _ :: _, _ :: _, [], _, h => by simp [plansFrom] at h
+
+/-- The per-plan checks, the export head and cut, and the confirmed layout
+    give every plan's `entryAccepted` and its role bits. -/
+theorem entries_of_packed {cs : List Nat} {n len : Nat} {hs : List Nat} {L : Layout}
+    {fts : List FnType} {M : MCtx} {fns : List FnEntry} {ds : List FnDecl} {rs : List Nat}
+    {xs : List (Nat × Nat)} {e0 B : Nat} {ls : List Nat}
     (hn : join 1024 cs = n) (hfit : chunksFit 1024 cs = true)
     (hL : layoutConfirmed n len L = true) (hT : fnTypesConfirmed n len fts = true)
     (hX : exportNamesDistinct n len = true)
     (hnames : fns.map (·.name) = ds.map (fun d => String.ofList d.name))
-    (hE : exportsIn n len fns ds 0 fns.length = true)
-    (hall : allRange (planAt cs L fts M fns ds rs) 0 fns.length = true) :
-    fns.all (entryAccepted n len M fns) = true := by
+    (hcut : (decodeRawExportsCut n len ls).isSome = true)
+    (hH : exportsHead cs len hs e0 ls = true) (hB : startBits 0 ls = B)
+    (hall : plansFrom cs L fts M fns e0 B fns ds rs xs = true) :
+    fns.all (entryAccepted n len M fns) = true ∧ fns.map (roleBits M) = rs := by
+  obtain ⟨E, hE⟩ := Option.isSome_iff_exists.mp hcut
   unfold exportNamesDistinct at hX
-  unfold exportsIn at hE
-  split at hE
-  · rename_i E hdec
-    rw [hdec] at hX
-    have hnd := byteSeqListNodup_nodup hX
-    apply List.all_eq_true.mpr
-    intro e he
-    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem he
-    obtain ⟨hd, -, hp, -⟩ := planAt_spec hall hi
-    have hx : exportOk E fns[i] ds[i] = true := by
-      have := allRange_spec hE i (by omega) (by omega)
-      unfold exportAt at this
-      rwa [List.getElem?_eq_getElem hi, List.getElem?_eq_getElem hd] at this
-    have hname : stringBytes fns[i].name = ds[i].name.map Char.toNat := by
-      have := congrArg (fun l => l[i]?) hnames
-      simp only [List.getElem?_map, List.getElem?_eq_getElem hi, List.getElem?_eq_getElem hd,
-        Option.map_some, Option.some.injEq] at this
-      rw [this, stringBytes_ofList]
-    exact entryAccepted_of_fast hL hT hdec hnd hname (entryFast_of_packed hn hfit hp hx)
-  · cases hE
+  rw [decodeRawExports_of_cut hE] at hX
+  exact plansFrom_spec hn hfit hL hT hH hE hB (byteSeqListNodup_nodup hX) fns ds rs xs hnames hall
 
 /-! ### Claim axes from the per-plan role bits
 
 `ClaimAxes.contractUse` lowers every plan again to find the helpers it
 calls. Each plan's declaration already lowers it, so it also pins the plan's
-role bits (`planAt`), and the contracts are read from the bits. -/
+role bits (`planOne`), and the contracts are read from the bits. -/
 
 /-- `ClaimAxes.contractUse` from the plans' role bits. -/
 def useOfBits (rs : List Nat) (total totalMul : Bool) : AverCert.ClaimAxes.ContractUse :=
@@ -633,16 +880,6 @@ theorem contains_flatten (a : Nat) : ∀ xs : List (List Nat),
   | [] => rfl
   | x :: xs => by
       simp only [List.flatten_cons, List.contains_append, List.any_cons, contains_flatten a xs]
-
-theorem roleBits_of_planAt {cs : List Nat} {L : Layout} {fts : List FnType} {M : MCtx}
-    {fns : List FnEntry} {ds : List FnDecl} {rs : List Nat}
-    (hall : allRange (planAt cs L fts M fns ds rs) 0 fns.length = true)
-    (hlen : rs.length = fns.length) : fns.map (roleBits M) = rs := by
-  apply List.ext_getElem (by simp [hlen])
-  intro i h1 h2
-  simp only [List.length_map] at h1
-  obtain ⟨_, _, _, hbits⟩ := planAt_spec hall h1
-  simp only [List.getElem_map, hbits]
 
 /-- The per-plan role bits give the claim axes. -/
 theorem checked_of_bits {artifact : ArtifactData} {rs : List Nat}

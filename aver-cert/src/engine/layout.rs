@@ -30,6 +30,8 @@ struct ModuleLayout {
     export_cuts: Vec<usize>,
     /// The module offset of every section header, in module order.
     section_headers: Vec<usize>,
+    /// The module offset of the export section's first entry.
+    export_start: usize,
 }
 
 struct Cursor<'a> {
@@ -123,6 +125,7 @@ impl ModuleLayout {
             type_cuts: Vec::new(),
             export_cuts: Vec::new(),
             section_headers: Vec::new(),
+            export_start: 0,
         };
         let mut c = Cursor { bytes, at: 8 };
         while c.at < bytes.len() {
@@ -155,7 +158,9 @@ impl ModuleLayout {
                     }
                 }
                 7 => {
-                    for position in 0..s.uleb()? as usize {
+                    let count = s.uleb()? as usize;
+                    layout.export_start = s.at;
+                    for position in 0..count {
                         let start = s.at;
                         let n = s.uleb()? as usize;
                         let name = bytes
@@ -262,8 +267,12 @@ fn nat_list(values: &[usize]) -> String {
 }
 
 /// `ArtifactLayout.lean`: the declared layout, the planned functions' types
-/// and export positions, and the proof that the layout is the module's.
-fn render_artifact_layout(core_bytes: &[u8], analysis: &Analysis) -> Result<String, String> {
+/// and export positions, and the proof that the layout is the module's; with
+/// every plan entry's declaration (`FnDecl`) as its Lean literal.
+fn render_artifact_layout(
+    core_bytes: &[u8],
+    analysis: &Analysis,
+) -> Result<(String, Vec<String>, Vec<String>), String> {
     let layout = ModuleLayout::parse(core_bytes)?;
     let type_of = |func_idx: u32| {
         func_idx
@@ -310,9 +319,37 @@ fn render_artifact_layout(core_bytes: &[u8], analysis: &Analysis) -> Result<Stri
             ))
         })
         .collect::<Result<Vec<_>, String>>()?;
+    // Each planned export's entry by module offset and length, and the
+    // bitmap of every export entry's start relative to the first.
+    let mut export_offsets = Vec::with_capacity(layout.export_cuts.len());
+    let mut at = layout.export_start;
+    for &l in &layout.export_cuts {
+        export_offsets.push(at);
+        at += l;
+    }
+    let sites = analysis
+        .entries
+        .iter()
+        .map(|e| {
+            if !e.exported {
+                return "(0, 0)".to_string();
+            }
+            let p = layout.export_positions[&e.name];
+            format!("({}, {})", export_offsets[p], layout.export_cuts[p])
+        })
+        .collect::<Vec<_>>();
+    let mut start_bits = vec![0u8; at.saturating_sub(layout.export_start) / 8 + 1];
+    for &o in &export_offsets {
+        let bit = o - layout.export_start;
+        start_bits[bit / 8] |= 1 << (bit % 8);
+    }
+    let export_starts = {
+        let digits: String = start_bits.iter().rev().map(|b| format!("{b:02x}")).collect();
+        format!("0x{digits}")
+    };
     let count = layout.func_types.len();
     let code_blocks = render_code_blocks(count);
-    Ok(format!(
+    let text = format!(
         "-- The declared module layout: every defined function's type index and\n\
          -- code entry (packed tables, {LAYOUT_WIDTH} bits per entry), the function types\n\
          -- of the planned functions, each planned function's name, export position\n\
@@ -342,6 +379,13 @@ fn render_artifact_layout(core_bytes: &[u8], analysis: &Analysis) -> Result<Stri
          -- later check reads the section through its cut.\n\
          def typeCuts : List Nat :=\n  [{type_cuts}]\n\n\
          def exportCuts : List Nat :=\n  [{export_cuts}]\n\n\
+         -- The module offset of the export section's first entry, the start of\n\
+         -- every export entry relative to it (as bits), and each plan entry's\n\
+         -- export entry by module offset and length (`(0, 0)` for an internal\n\
+         -- function).\n\
+         def exportStart : Nat := {export_start}\n\n\
+         def exportStarts : Nat :=\n  {export_starts}\n\n\
+         def exportSites : List (Nat × Nat) :=\n  [{sites}]\n\n\
          theorem bytes_eq : AverCert.ScaleBytes.join 1024 AverCert.ArtifactBytes.chunks =\n    \
            AverCert.ArtifactBytes.modBytes :=\n  \
            (AverCert.ScaleBytes.joinTree_eq _ _ _).symm\n\n\
@@ -353,9 +397,17 @@ fn render_artifact_layout(core_bytes: &[u8], analysis: &Analysis) -> Result<Stri
          theorem types_cut : CertDecode.decodeTypes {bytes} =\n    \
            AverCert.ByteWindow.typesLazy {bytes} typeCuts :=\n  \
            AverCert.ByteWindow.decodeTypes_eq_lazy (by decide +kernel)\n\n\
+         theorem exports_cut_ok :\n    \
+           (AverCert.ByteWindow.decodeRawExportsCut {bytes} exportCuts).isSome = true := by\n  \
+           decide +kernel\n\n\
          theorem exports_cut : CertDecode.decodeRawExports {bytes} =\n    \
            AverCert.ByteWindow.exportsLazy {bytes} exportCuts :=\n  \
-           AverCert.ByteWindow.decodeRawExports_eq_lazy (by decide +kernel)\n\n\
+           AverCert.ByteWindow.decodeRawExports_eq_lazy exports_cut_ok\n\n\
+         theorem export_starts : AverCert.ScaleLayout.startBits 0 exportCuts = exportStarts := by\n  \
+           decide +kernel\n\n\
+         theorem exports_head : AverCert.ScaleLayout.exportsHead AverCert.ArtifactBytes.chunks\n    \
+           AverCert.ArtifactBytes.modLen headers exportStart exportCuts = true := by\n  \
+           decide +kernel\n\n\
          -- The code section: its count and its tiling by the declared entries,\n\
          -- then every entry decoded on its own window, a block at a time.\n\
          theorem code_tiled : AverCert.ScaleLayout.codeTiled AverCert.ArtifactBytes.chunks\n    \
@@ -387,8 +439,11 @@ fn render_artifact_layout(core_bytes: &[u8], analysis: &Analysis) -> Result<Stri
         headers = nat_list(&layout.section_headers),
         type_cuts = nat_list(&layout.type_cuts),
         export_cuts = nat_list(&layout.export_cuts),
+        export_start = layout.export_start,
+        sites = sites.join(",\n   "),
         bytes = "AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen",
-    ))
+    );
+    Ok((text, decls, sites))
 }
 
 /// Code entries decoded per declaration in `ArtifactLayout.lean`.
@@ -423,8 +478,7 @@ fn render_code_blocks(count: usize) -> String {
 
 /// A proof over the range `[starts[0], end)` from proofs over the
 /// consecutive ranges starting at `starts`, joined right to left with
-/// `join` (`ScaleLayout.allRange_join` or `exportsIn_join`, whose ranges are
-/// `k`, `a` and `b`). `empty` proves the empty range when there is none.
+/// `join` (`ScaleLayout.allRange_join`, whose ranges are `k`, `a` and `b`). `empty` proves the empty range when there is none.
 fn join_ranges(
     starts: &[usize],
     end: usize,

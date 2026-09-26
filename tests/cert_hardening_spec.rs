@@ -29,14 +29,14 @@
 //!   tiles, overlapping code entries, a gap between code entries, a lying
 //!   code count, a false section header, a header inside a payload, a header
 //!   past the end of the module, a plan whose packed lowering is not its code
-//!   entry, role bits hiding a helper call, and a package chunk list with a
+//!   entry, swapped export sites, role bits hiding a helper call, and a package chunk list with a
 //!   wrong chunk boundary;
 //! * a package constant a report pin used to read as a dotted path
 //!   (`AverCert.manifest.obligations`, `AverCert.manifest.subject.contracts`,
 //!   `AverCert.Artifact.data.manifest`, and `.modBytes` on wasip2), with and
 //!   without the JSON forged to match it;
 //! * a declared layout that lies about a code entry's offset or length, a
-//!   function's type index or type, or an export's position;
+//!   function's type index or type, or an export's site;
 //! * a closure claim hiding a helper, `__aint_divmod` at a supertype
 //!   signature, a renamed `aver:work` import, and a certified closure that
 //!   reaches a work import;
@@ -727,10 +727,19 @@ fn cert_hardening_declines_lying_role_bits() {
     let Some((_dir, wasm, cert)) = baseline("certharden-rolebits") else {
         return;
     };
+    let mut first = 0;
     edit_nat_list(&cert.join("ArtifactLayout.lean"), "callBits", |bits| {
         assert_ne!(bits[0], 0, "{bits:?}");
+        first = bits[0];
         bits[0] = 0;
     });
+    // The plan's own declaration names its bits literally, before its export
+    // site.
+    replace_once(
+        &cert.join("ArtifactPlans.lean"),
+        &format!("\n    {first} ("),
+        "\n    0 (",
+    );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
     assert!(report.contains("planCheck"), "{report}");
@@ -1047,39 +1056,46 @@ fn cert_hardening_declines_a_lying_function_type() {
     );
 }
 
-/// Two planned exports whose declared export positions are swapped: each
-/// declaration's position must hold the export of its own name.
+/// Two planned exports whose declared export entries (module offset and
+/// length) are swapped: each plan reads the entry at its declared site on its
+/// own window and requires it to be the export of its own name.
 #[test]
-fn cert_hardening_declines_a_lying_export_position() {
-    let Some((_dir, wasm, cert)) = baseline("certharden-exportpos") else {
+fn cert_hardening_declines_a_lying_export_site() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-exportsite") else {
         return;
     };
     let layout = cert.join("ArtifactLayout.lean");
     let text = std::fs::read_to_string(&layout).unwrap();
-    let start = text.find("def fnDecls : List FnDecl :=").unwrap();
-    let end = start + text[start..].find("\n\n").unwrap();
-    // `⟨name, exportPos, sigPos⟩`, one per planned export.
-    let decls = &text[start..end];
-    let positions: Vec<&str> = decls
-        .split('⟩')
-        .filter_map(|decl| decl.rsplit_once("], ").map(|(_, rest)| rest))
+    let head = "def exportSites : List (Nat × Nat) :=\n  [";
+    let start = text.find(head).unwrap() + head.len();
+    let end = start + text[start..].find(']').unwrap();
+    let sites: Vec<String> = text[start..end]
+        .split("),")
+        .map(|site| format!("{})", site.trim().trim_end_matches(')')))
         .collect();
-    assert!(positions.len() >= 2, "{decls}");
-    let first = positions[0].split(", ").next().unwrap();
-    let second = positions[1].split(", ").next().unwrap();
-    assert_ne!(first, second);
-    let swapped = decls
-        .replacen(&format!("], {first}, "), "], @SWAP@, ", 1)
-        .replacen(&format!("], {second}, "), &format!("], {first}, "), 1)
-        .replacen("@SWAP@", second, 1);
+    assert!(sites.len() >= 2 && sites[0] != sites[1], "{sites:?}");
+    let swap = |text: &str, pre: &str, post: &str| {
+        text.replacen(&format!("{pre}{}{post}", sites[0]), "@SWAP@", 1)
+            .replacen(
+                &format!("{pre}{}{post}", sites[1]),
+                &format!("{pre}{}{post}", sites[0]),
+                1,
+            )
+            .replacen("@SWAP@", &format!("{pre}{}{post}", sites[1]), 1)
+    };
     std::fs::write(
         &layout,
-        format!("{}{swapped}{}", &text[..start], &text[end..]),
+        format!("{}{}{}", &text[..start], swap(&text[start..end], "", ""), &text[end..]),
     )
     .unwrap();
+    // Each plan's declaration names its site literally: the lie is told there
+    // too.
+    let plans = cert.join("ArtifactPlans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    std::fs::write(&plans, swap(&text, " ", " = true")).unwrap();
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("exportsLazy"), "{report}");
+    assert!(report.contains("planCheck"), "{report}");
 }
 
 /// The closure claim with one reachable helper left out. The claim is checked
@@ -2055,6 +2071,38 @@ fn cert_hardening_declines_a_duplicate_planned_index() {
         "def fnDecls : List FnDecl :=",
         &format!("⟨[{chars}], 0, {sig_pos}⟩"),
     );
+    // Its role bits, and its own plan declaration joined to the others.
+    let mut bits = 0;
+    edit_nat_list(&cert.join("ArtifactLayout.lean"), "callBits", |all| {
+        bits = all[0];
+        all.push(bits);
+    });
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let head = "def exportSites : List (Nat × Nat) :=\n  [";
+    let close = text.find(head).unwrap() + head.len();
+    let close = close + text[close..].find(']').unwrap();
+    std::fs::write(
+        &layout,
+        format!("{}, (0, 0){}", &text[..close], &text[close..]),
+    )
+    .unwrap();
+    let plans = cert.join("ArtifactPlans.lean");
+    replace_once(
+        &plans,
+        "theorem plans_block_0 :",
+        &format!(
+            "theorem plan_extra : planCheck\n    ⟨\"#{idx}\", false, {idx}, {group}, AverCert.Plans.{plan}⟩\n    \
+             ⟨[{chars}], 0, {sig_pos}⟩\n    {bits} (0, 0) = true := by\n  decide +kernel\n\n\
+             theorem plans_block_0 :"
+        ),
+    );
+    replace_once(
+        &plans,
+        "((AverCert.ScaleLayout.plansFrom_nil _ _ _ _ _ _ _ :",
+        "((AverCert.ScaleLayout.plansFrom_cons plan_extra\n      \
+         (AverCert.ScaleLayout.plansFrom_nil _ _ _ _ _ _ _) :",
+    );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
     assert!(report.contains("indicesDistinctBits"), "{report}");
@@ -2086,6 +2134,14 @@ fn cert_hardening_checks_call_groups_out_of_order_unchanged() {
         .replacen(", 1, fn", ", 0, fn", 1)
         .replacen(", @G@, fn", ", 1, fn", 1);
     std::fs::write(&plans, format!("{}{swapped}{}", &text[..at], &text[end..])).unwrap();
+    // Each plan's declaration names its entry literally, with its group.
+    let checks = cert.join("ArtifactPlans.lean");
+    let text = std::fs::read_to_string(&checks).unwrap();
+    let swapped = text
+        .replacen(", 0, AverCert.Plans.fn", ", @G@, AverCert.Plans.fn", 1)
+        .replacen(", 1, AverCert.Plans.fn", ", 0, AverCert.Plans.fn", 1)
+        .replacen(", @G@, AverCert.Plans.fn", ", 1, AverCert.Plans.fn", 1);
+    std::fs::write(&checks, swapped).unwrap();
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "groups out of order must still check:\n{report}");
     assert!(

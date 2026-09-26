@@ -404,22 +404,24 @@ const PLAN_CHUNK: usize = 32;
 /// Plans checked per module of a split package: one declaration each.
 const PLANS_PER_MODULE: usize = 100;
 
-/// Plans whose export positions are checked per declaration.
-const POSITIONS_BLOCK: usize = 25;
-
 /// The per-plan checks. With a declared layout each plan is its own
-/// `decide +kernel` declaration (`planCheck i`, `ScaleLayout.planAt`): its
-/// lowering packed and compared with the chunk window of its declared code
-/// entry, its typing, calls, function type and role bits. The declarations
-/// are joined into `allRange planCheck 0 n` and turned into every plan's
-/// `entryAccepted` by `ScaleLayout.entries_of_packed`, with the export
-/// positions checked `POSITIONS_BLOCK` plans per declaration
-/// (`ScaleLayout.exportsIn`: each lookup walks the export list, so one
-/// declaration over every plan would keep every walk). A split package
-/// puts `PLANS_PER_MODULE` plans in each module, so a parallel Lake checks
-/// them at once. Without a layout (a package with no plans) the check over
-/// every plan is decided directly.
-fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, String)> {
+/// `decide +kernel` declaration (`ScaleLayout.planOne`): its lowering packed
+/// and compared with the chunk window of its declared code entry, its
+/// typing, calls and function type, its export entry read on a window at its
+/// declared position, and its role bits. Each declaration names its plan
+/// entry, declaration and role bits as the literals the lists hold, so no
+/// check indexes into a list. The declarations are joined along the lists
+/// (`plansFrom_cons`, `plansFrom_block`) and turned into every plan's
+/// `entryAccepted` and role bits by `ScaleLayout.entries_of_packed`. A split
+/// package puts `PLANS_PER_MODULE` plans in each module, so a parallel Lake
+/// checks them at once. Without a layout (a package with no plans) the
+/// check over every plan is decided directly.
+fn render_artifact_plans(
+    analysis: &Analysis,
+    decls: &[String],
+    sites: &[String],
+    layout: bool,
+) -> Vec<(String, String)> {
     let n = analysis.entries.len();
     let header = "set_option maxRecDepth 200000\n\
          set_option maxHeartbeats 1600000\n\n\
@@ -456,10 +458,16 @@ fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, Stri
          /-- The lowering context of every plan check. -/\n\
          abbrev planM : AverCert.Grammar.MCtx :=\n  \
            mctxOf AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans\n\n\
-         /-- Plan entry `i`'s packed check (`ScaleLayout.planAt`). -/\n\
-         noncomputable abbrev planCheck : Nat → Bool :=\n  \
-           AverCert.ScaleLayout.planAt AverCert.ArtifactBytes.chunks layout fnTypes planM\n    \
-           AverCert.manifest.fnPlans fnDecls callBits\n\n\
+         /-- One plan entry's check (`ScaleLayout.planOne`). -/\n\
+         noncomputable abbrev planCheck :\n    \
+           FnEntry → AverCert.DeclaredLayout.FnDecl → Nat → Nat × Nat → Bool :=\n  \
+           AverCert.ScaleLayout.planOne AverCert.ArtifactBytes.chunks layout fnTypes planM\n    \
+           AverCert.manifest.fnPlans exportStart exportStarts\n\n\
+         /-- The plan checks along the lists (`ScaleLayout.plansFrom`). -/\n\
+         noncomputable abbrev plansOf : List FnEntry → List AverCert.DeclaredLayout.FnDecl →\n    \
+           List Nat → List (Nat × Nat) → Bool :=\n  \
+           AverCert.ScaleLayout.plansFrom AverCert.ArtifactBytes.chunks layout fnTypes planM\n    \
+           AverCert.manifest.fnPlans exportStart exportStarts\n\n\
          theorem types_ok : AverCert.DeclaredLayout.fnTypesConfirmed AverCert.ArtifactBytes.modBytes\n    \
            AverCert.ArtifactBytes.modLen fnTypes = true := by\n  \
            rw [AverCert.DeclaredLayout.fnTypesConfirmed, types_cut]; decide +kernel\n\n\
@@ -469,59 +477,57 @@ fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, Stri
          theorem names_eq : AverCert.manifest.fnPlans.map (·.name) =\n    \
            fnDecls.map (fun d => String.ofList d.name) := rfl\n\n"
     );
-    const EXPORTS: &str = "AverCert.ScaleLayout.exportsIn AverCert.ArtifactBytes.modBytes\n    \
-         AverCert.ArtifactBytes.modLen AverCert.manifest.fnPlans fnDecls";
-    let positions = |k: usize, m: usize| {
+    let plan = |i: usize| {
+        let e = &analysis.entries[i];
         format!(
-            "theorem positions_{k} : {EXPORTS} {k} {m} = true := by\n  \
-             rw [AverCert.ScaleLayout.exportsIn, exports_cut]; decide +kernel\n"
+            "theorem plan_{i} : planCheck\n    ⟨{}, {}, {}, {}, AverCert.Plans.{}⟩\n    {}\n    {} {} = true := by\n  \
+             decide +kernel\n\n",
+            lean_str(&e.name),
+            e.exported,
+            e.func_idx,
+            e.group,
+            plan_def_name(e.func_idx),
+            decls[i],
+            analysis.role_bits[i],
+            sites[i]
         )
     };
-    let plan = |i: usize| format!("theorem plan_{i} : planCheck {i} = true := by decide +kernel\n");
-    // `allRange planCheck k m` from the plans' own declarations.
+    // The plans `k, …, k + m - 1` from their own declarations.
     let block = |k: usize, m: usize| {
-        let mut term = "AverCert.ScaleLayout.allRange_zero _ _".to_string();
+        let mut term = "AverCert.ScaleLayout.plansFrom_nil _ _ _ _ _ _ _".to_string();
         for i in (k..k + m).rev() {
-            term = format!(
-                "AverCert.ScaleLayout.allRange_cons (k := {i}) (m := {}) plan_{i}\n    ({term})",
-                k + m - 1 - i
-            );
+            term = format!("AverCert.ScaleLayout.plansFrom_cons plan_{i}\n    ({term})");
         }
         format!(
-            "\ntheorem plans_block_{k} : AverCert.ScaleLayout.allRange planCheck {k} {m} = true :=\n  \
+            "theorem plans_block_{k} : plansOf ((AverCert.manifest.fnPlans.drop {k}).take {m})\n    \
+             ((fnDecls.drop {k}).take {m}) ((callBits.drop {k}).take {m})\n    \
+             ((exportSites.drop {k}).take {m}) = true :=\n  \
              {term}\n\n"
         )
     };
     let per_module = if split { PLANS_PER_MODULE } else { n.max(1) };
     let starts: Vec<usize> = (0..n).step_by(per_module).collect();
-    let joined = join_ranges(
-        &starts,
-        n,
-        "AverCert.ScaleLayout.allRange_join",
-        |k| format!("plans_block_{k}"),
-        "AverCert.ScaleLayout.allRange_zero _ 0",
+    let mut joined = format!(
+        "(AverCert.ScaleLayout.plansFrom_nil _ _ _ _ _ _ _ :\n      \
+         plansOf (AverCert.manifest.fnPlans.drop {n}) (fnDecls.drop {n}) (callBits.drop {n})\n        \
+         (exportSites.drop {n}) = true)"
     );
-    let position_starts: Vec<usize> = (0..n).step_by(POSITIONS_BLOCK).collect();
-    let positions_all = join_ranges(
-        &position_starts,
-        n,
-        "AverCert.ScaleLayout.exportsIn_join",
-        |k| format!("positions_{k}"),
-        "by decide +kernel",
-    );
+    for &k in starts.iter().rev() {
+        let m = per_module.min(n - k);
+        joined = format!(
+            "AverCert.ScaleLayout.plansFrom_block (k := {k}) (m := {m}) plans_block_{k}\n    ({joined})"
+        );
+    }
     let end = format!(
-        "theorem plans_packed : AverCert.ScaleLayout.allRange planCheck 0\n    \
-           AverCert.manifest.fnPlans.length = true :=\n  \
+        "theorem plans_packed : plansOf AverCert.manifest.fnPlans fnDecls callBits exportSites = true :=\n  \
            {joined}\n\n\
-         theorem positions_all : {EXPORTS} 0\n    \
-           AverCert.manifest.fnPlans.length = true :=\n  \
-           {positions_all}\n\n\
-         theorem plans_all : AverCert.manifest.fnPlans.all planOk = true :=\n  \
+         theorem plans_checked : AverCert.manifest.fnPlans.all planOk = true ∧\n    \
+           AverCert.manifest.fnPlans.map (AverCert.ScaleLayout.roleBits planM) = callBits :=\n  \
            AverCert.ScaleLayout.entries_of_packed bytes_eq chunks_fit layout_ok types_ok names_ok names_eq\n    \
-           positions_all plans_packed\n\n\
+           exports_cut_ok exports_head export_starts plans_packed\n\n\
+         theorem plans_all : AverCert.manifest.fnPlans.all planOk = true := plans_checked.1\n\n\
          theorem plans_roles : AverCert.manifest.fnPlans.map (AverCert.ScaleLayout.roleBits planM) =\n    \
-           callBits :=\n  \
-           AverCert.ScaleLayout.roleBits_of_planAt plans_packed (by decide +kernel)\n\n\
+           callBits := plans_checked.2\n\n\
          end AverCert.Artifact\n"
     );
     let imports = format!(
@@ -532,10 +538,6 @@ fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, Stri
         let m = per_module.min(n - k);
         let mut body: String = (k..k + m).map(plan).collect();
         body.push_str(&block(k, m));
-        for j in (k..k + m).step_by(POSITIONS_BLOCK) {
-            body.push_str(&positions(j, POSITIONS_BLOCK.min(k + m - j)));
-        }
-        body.push('\n');
         body
     };
     if !split {
@@ -545,7 +547,7 @@ fn render_artifact_plans(analysis: &Analysis, layout: bool) -> Vec<(String, Stri
             format!(
                 "-- The per-plan acceptance checks, one declaration per plan, joined into\n\
                  -- the check over every plan.\n\
-                 {imports}{header}{check}{body}\n{end}"
+                 {imports}{header}{check}{body}{end}"
             ),
         )];
     }
@@ -1207,13 +1209,13 @@ pub fn write_project(
     write(&cert_dir, "Plans.lean", &render_plans(analysis))?;
     // A package with plans declares the module layout its byte checks read.
     let layout = !analysis.entries.is_empty();
-    if layout {
-        write(
-            &cert_dir,
-            "ArtifactLayout.lean",
-            &render_artifact_layout(artifact.core_module_bytes(), analysis)?,
-        )?;
-    }
+    let (decls, sites) = if layout {
+        let (text, decls, sites) = render_artifact_layout(artifact.core_module_bytes(), analysis)?;
+        write(&cert_dir, "ArtifactLayout.lean", &text)?;
+        (decls, sites)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     write(
         &cert_dir,
         "Manifest.lean",
@@ -1230,7 +1232,7 @@ pub fn write_project(
             &render_artifact_host_roles(analysis, &params, layout),
         )?;
     }
-    for (name, text) in render_artifact_plans(analysis, layout) {
+    for (name, text) in render_artifact_plans(analysis, &decls, &sites, layout) {
         write(&cert_dir, &name, &text)?;
     }
     for (name, text) in render_artifact(analysis, envelope, layout) {
