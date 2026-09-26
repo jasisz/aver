@@ -16,6 +16,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **Every backend runs the same match.** The compiler turns such a match into nested ordinary matches right after checking it, so the VM, generated Rust, wasm-gc, `wasip2` and the Lean export all read the same program. A `match` that uses these patterns inside a `yield` function is refused for now; move it into a helper function.
 - **`aver format` prints match patterns in one spelling:** `[a, b, ..rest]`, `Option.Some(0)`, `(x, _)`.
 
+### Fixed — a large certificate package checks again after Vector versions
+
+- **`aver-cert check` of a large package no longer runs out of time on two acceptance proofs.** The package's proofs of the host-helper table and of the plans' layout unfolded definitions that read the decoded type section, and Lean evaluated the whole decode before it could use the package's declared type-section cut. After Vector values became versions (more types in the type section), btc-listener's package passed the 9000-second limit where it had taken minutes. The two proofs now read the type section only through the cut: 13 s and 68 s on that package. Packages must be produced again to get the new proofs.
+
 ### Fixed — `aver proof --gate` passes a law that became universal
 
 - **A law promoted from bounded to universal no longer fails the gate.** A bounded law records no axioms, and its universal proof usually depends on Lean's standard axioms, so the gate reported `REGRESSION <law>: axioms grew {} -> {Classical.choice,Quot.sound,propext}`. It now prints `promoted <law>: bounded -> universal, now uses …` and lists the law under `Promoted:` in the summary. The gate still fails when a law newly depends on any other axiom (`sorryAx`, `Lean.ofReduceBool`, a user `axiom`) at any tier, when it newly depends on one of the standard three at the same tier, and on a missing law, a lower tier or a changed backend.

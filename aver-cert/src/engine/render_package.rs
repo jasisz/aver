@@ -557,10 +557,16 @@ fn render_artifact(
                  AverCert.DeclaredLayout.Chars.carrierHelperAbsent_eq,\n    \
                  AverCert.DeclaredLayout.Chars.boxIdx_eq, AverCert.DeclaredLayout.Chars.toIndexIdx_eq,\n    \
                  AverCert.DeclaredLayout.Chars.cmpIdx_eq{cuts}]\n  \
-                 decide +kernel",
+                 {carrier}decide +kernel",
                 r.roles_lean_value(),
-                cuts = if layout {
-                    ", CertDecode.carrierState, types_cut, exports_cut"
+                cuts = if layout { ", exports_cut" } else { "" },
+                // The carrier is read through the type-section cut. Its
+                // definition is a `match` on the decoded type section, so it
+                // is unfolded by its unconditional equation with matcher
+                // reduction off: otherwise `simp` evaluates the whole type
+                // decode in the elaborator before the cut can rewrite it.
+                carrier = if layout {
+                    "simp -iota only [CertDecode.carrierState.eq_def, types_cut]\n  "
                 } else {
                     ""
                 },
@@ -651,13 +657,19 @@ fn render_artifact(
             "\n     "
         ),
     );
-    // With a declared layout the helper types are read from it.
+    // With a declared layout the helper types are read from it. The
+    // definitions that `match` on the decoded type section are unfolded by
+    // their unconditional equations with matcher reduction off, so the type
+    // section is read only through its cut, in the kernel: `simp` with the
+    // definitions themselves evaluates the whole type decode in the
+    // elaborator first (btc-listener: over 10 minutes per theorem).
     let rest_proof = if layout {
         "(AverCert.DeclaredLayout.plansAcceptedRest_of_layout layout_ok (by\n    \
          dsimp only [AverCert.DeclaredLayout.plansAcceptedRestL, data]\n    \
-         simp only [AverCert.TypeTable.typeTableConfirmed, AverCert.TypeTable.carrierConfirmed,\n      \
-         CertDecode.carrierState, AverCert.DeclaredLayout.roleTypesPinnedL,\n      \
-         AverCert.DeclaredLayout.roleTypePinnedL, AverCert.WasmSlice.typeSectionMatches, types_cut]\n    \
+         simp -iota only [AverCert.TypeTable.typeTableConfirmed.eq_def,\n      \
+         AverCert.TypeTable.carrierConfirmed.eq_def, CertDecode.carrierState.eq_def,\n      \
+         AverCert.DeclaredLayout.roleTypesPinnedL, AverCert.DeclaredLayout.roleTypePinnedL,\n      \
+         AverCert.WasmSlice.typeSectionMatches.eq_def, types_cut]\n    \
          decide +kernel))"
     } else {
         "(by decide +kernel)"
