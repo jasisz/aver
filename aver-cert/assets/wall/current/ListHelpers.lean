@@ -542,17 +542,22 @@ theorem lenLoop0 (host : HostTbl) (L : Nat) (xs : List WVal) (n : Nat) (a v : WV
   rw [lenLoop host L xs n a 0 [] hn (by omega) (by omega)]
   simp
 
+theorem lenSem_eq (L : Nat) (xs : List WVal) (hl : xs.length < 9223372036854775808) :
+    lenSem L [wList L xs] = some (.i64v xs.length) := by
+  unfold lenSem hCall
+  rw [hFuel_wList]
+  have h0 := lenLoop0 noHost L xs (xs.length + 59) (wList L xs) (.i64v 0) (by omega) hl rfl
+  simp [hl, lenCode, LTy.dflt, hRun_b, hRun_block, step1, eraseI, wRunF, lg, ls, i64c, h0]
+
 theorem lenSem_spec (L : Nat) (xs : List WVal) (r : WVal)
     (h : lenSem L [wList L xs] = some r) :
     r = .i64v xs.length ∧ xs.length < 9223372036854775808 := by
-  unfold lenSem hCall at h
-  rw [hFuel_wList] at h
   by_cases hl : xs.length < 9223372036854775808
-  · simp only [hl, ↓reduceIte] at h
-    have h0 := lenLoop0 noHost L xs (xs.length + 59) (wList L xs) (.i64v 0) (by omega) hl rfl
-    simp [lenCode, LTy.dflt, hRun_b, hRun_block, step1, eraseI, wRunF, lg, ls, i64c, h0] at h
-    exact ⟨h.symm, hl⟩
-  · simp [hl] at h
+  · rw [lenSem_eq L xs hl] at h
+    exact ⟨(Option.some.inj h).symm, hl⟩
+  · unfold lenSem hCall at h
+    rw [hFuel_wList] at h
+    simp [hl] at h
 
 /-! ### `reverse` -/
 
@@ -643,18 +648,25 @@ theorem catLoop (host : HostTbl) (L : Nat) : ∀ (xs accL : List WVal) (n : Nat)
       rw [ih]
       simp
 
+theorem catSem_eq (L R : Nat) (t : Ty) (xs ys : List WVal)
+    (hl : xs.length < 9223372036854775808) :
+    catSem L R t [wList L xs, wList L ys] = some (wList L (xs ++ ys)) := by
+  unfold catSem hCall
+  rw [hFuel_wList]
+  have hr := revSem_eq L t xs hl
+  have h0 := catLoop (oneHost R 1 (revSem L t)) L xs.reverse ys (xs.length + 58)
+    (wList L xs) (wList L ys) [] (by simp only [List.length_reverse]; omega)
+  simp [hl, catCode, LTy.dflt, hRun_b, hRun_block, step1, eraseI, wRunF, lg, ls, oneHost,
+    popArgs_one', hr, h0]
+
 theorem catSem_spec (L R : Nat) (t : Ty) (xs ys : List WVal) (r : WVal)
     (h : catSem L R t [wList L xs, wList L ys] = some r) : r = wList L (xs ++ ys) := by
-  unfold catSem hCall at h
-  rw [hFuel_wList] at h
   by_cases hl : xs.length < 9223372036854775808
-  · have hr := revSem_eq L t xs hl
-    have h0 := catLoop (oneHost R 1 (revSem L t)) L xs.reverse ys (xs.length + 58)
-      (wList L xs) (wList L ys) [] (by simp only [List.length_reverse]; omega)
-    simp [hl, catCode, LTy.dflt, hRun_b, hRun_block, step1, eraseI, wRunF, lg, ls, oneHost,
-      popArgs_one', hr, h0] at h
-    exact h.symm
-  · simp [hl] at h
+  · rw [catSem_eq L R t xs ys hl] at h
+    exact (Option.some.inj h).symm
+  · unfold catSem hCall at h
+    rw [hFuel_wList] at h
+    simp [hl] at h
 
 /-! ### `take` and `drop` -/
 
@@ -726,25 +738,32 @@ theorem takeLoop (host : HostTbl) (L : Nat) : ∀ (ys accL : List WVal) (n : Nat
               show j + 1 + ((min (c - (j + 1)).toNat ys'.length : Nat) : Int) =
                 j + ((min (c - (j + 1)).toNat ys'.length + 1 : Nat) : Int) by omega]
 
+theorem takeSem_eq (L R : Nat) (t : Ty) (xs : List WVal) (c : Int)
+    (hl : xs.length < 9223372036854775808) :
+    takeSem L R t [wList L xs, .i64v c] = some (wList L (xs.take c.toNat)) := by
+  unfold takeSem hCall
+  rw [hFuel_wList]
+  have h0 := takeLoop (oneHost R 1 (revSem L t)) L xs [] (xs.length + 57) (wList L xs) c 0 []
+    (by omega) (Int.le_refl 0) (by omega)
+  have hlen : ((xs.take (min (c - 0).toNat xs.length)).reverse ++ []).length <
+      9223372036854775808 := by
+    simp; omega
+  have hr := revSem_eq L t _ hlen
+  simp only [List.append_nil, Int.sub_zero] at hr h0 hlen
+  simp only [wList] at h0
+  simp only [take_min_length] at hr
+  simp [hl, takeCode, LTy.dflt, hRun_b, hRun_block, step1, eraseI, wRunF, lg, ls, i64c,
+    oneHost, popArgs_one', h0, hr, take_min_length]
+
 theorem takeSem_spec (L R : Nat) (t : Ty) (xs : List WVal) (c : Int) (r : WVal)
     (h : takeSem L R t [wList L xs, .i64v c] = some r) :
     r = wList L (xs.take c.toNat) ∧ xs.length < 9223372036854775808 := by
-  unfold takeSem hCall at h
-  rw [hFuel_wList] at h
   by_cases hl : xs.length < 9223372036854775808
-  · have h0 := takeLoop (oneHost R 1 (revSem L t)) L xs [] (xs.length + 57) (wList L xs) c 0 []
-      (by omega) (Int.le_refl 0) (by omega)
-    have hlen : ((xs.take (min (c - 0).toNat xs.length)).reverse ++ []).length <
-        9223372036854775808 := by
-      simp; omega
-    have hr := revSem_eq L t _ hlen
-    simp only [List.append_nil, Int.sub_zero] at hr h0 hlen
-    simp only [wList] at h0
-    simp only [take_min_length] at hr
-    simp [hl, takeCode, LTy.dflt, hRun_b, hRun_block, step1, eraseI, wRunF, lg, ls, i64c,
-      oneHost, popArgs_one', h0, hr, take_min_length] at h
-    exact ⟨by first | exact (Option.some.inj h).symm | exact h.symm, hl⟩
-  · simp [hl] at h
+  · rw [takeSem_eq L R t xs c hl] at h
+    exact ⟨(Option.some.inj h).symm, hl⟩
+  · unfold takeSem hCall at h
+    rw [hFuel_wList] at h
+    simp [hl] at h
 
 theorem dropBody_stop (host : HostTbl) (L n : Nat) (hn : 4 ≤ n) (a cur : WVal) (c j : Int)
     (hj : c ≤ j) (st : List WVal) :
@@ -799,18 +818,24 @@ theorem dropLoop (host : HostTbl) (L : Nat) : ∀ (ys : List WVal) (n : Nat) (a 
               show j + 1 + ((min (c - (j + 1)).toNat ys'.length : Nat) : Int) =
                 j + ((min (c - (j + 1)).toNat ys'.length + 1 : Nat) : Int) by omega]
 
+theorem dropSem_eq (L : Nat) (xs : List WVal) (c : Int) (hl : xs.length < 9223372036854775808) :
+    dropSem L [wList L xs, .i64v c] = some (wList L (xs.drop c.toNat)) := by
+  unfold dropSem hCall
+  rw [hFuel_wList]
+  have h0 := dropLoop noHost L xs (xs.length + 59) (wList L xs) c 0 []
+    (by omega) (Int.le_refl 0) (by omega)
+  simp [hl, dropCode, LTy.dflt, hRun_b, hRun_block, step1, eraseI, wRunF, lg, ls, i64c, h0,
+    drop_min_length]
+
 theorem dropSem_spec (L : Nat) (xs : List WVal) (c : Int) (r : WVal)
     (h : dropSem L [wList L xs, .i64v c] = some r) :
     r = wList L (xs.drop c.toNat) ∧ xs.length < 9223372036854775808 := by
-  unfold dropSem hCall at h
-  rw [hFuel_wList] at h
   by_cases hl : xs.length < 9223372036854775808
-  · have h0 := dropLoop noHost L xs (xs.length + 59) (wList L xs) c 0 []
-      (by omega) (Int.le_refl 0) (by omega)
-    simp [hl, dropCode, LTy.dflt, hRun_b, hRun_block, step1, eraseI, wRunF, lg, ls, i64c, h0,
-      drop_min_length] at h
-    exact ⟨by first | exact (Option.some.inj h).symm | exact h.symm, hl⟩
-  · simp [hl] at h
+  · rw [dropSem_eq L xs c hl] at h
+    exact ⟨(Option.some.inj h).symm, hl⟩
+  · unfold dropSem hCall at h
+    rw [hFuel_wList] at h
+    simp [hl] at h
 
 /-! ### `contains` -/
 
@@ -881,7 +906,7 @@ theorem hasSem_spec (L : Nat) (eqX : BI) (host : HostTbl) (ws : List WVal) (x : 
       List.cons_append, List.nil_append] at h
     rw [show ws.length + 64 = (ws.length + 61) + 1 + 1 + 1 by omega] at h
     simp only [hRun_b, step1, lg, ls, eraseI, wRunF, List.getElem?_cons_zero, List.set_cons_succ,
-      List.set_cons_zero, reduceIte] at h
+      List.set_cons_zero] at h
     simp only [hRun_block] at h
     cases hl2 : hRun host (ws.length + 61) [.loop (hasBody L eqX)]
         [wList L ws, x, wList L ws] [] with
@@ -894,6 +919,76 @@ theorem hasSem_spec (L : Nat) (eqX : BI) (host : HostTbl) (ws : List WVal) (x : 
         · simp [hl2, hRun_b, step1, eraseI, wRunF] at h
           rw [← h, ha]; rfl
   · simp [hl] at h
+
+/-- The equality instruction answers `b` for an element. -/
+def EqIs (host : HostTbl) (eqX : BI) (x : WVal) (w : WVal) (b : Bool) : Prop :=
+  ∀ l st, step1 host eqX l (x :: w :: st) = some (.ok l (b32 b :: st))
+
+theorem hasBody_cons_eq (host : HostTbl) (L n : Nat) (hn : 12 ≤ n) (eqX : BI) (a x w t : WVal)
+    (b : Bool) (st : List WVal) (he : EqIs host eqX x w b) :
+    hRun host n (hasBody L eqX) [a, x, .structv L [w, t]] st =
+      some (if b then .ret (.i32v 1) else .br 0 [a, x, t] st) := by
+  obtain ⟨k, rfl⟩ := fuel_split hn
+  have hq := he [a, x, .structv L [w, t]] st
+  simp only [step1] at hq
+  cases b <;>
+    simp [hasBody, hRun_b, hRun_brIf, hRun_ifThen, hRun_br, hRun_ret, step1, eraseI, wRunF,
+      lg, ls, isNull, hd, tl, b32, hq]
+
+theorem hasLoop_eq (host : HostTbl) (L : Nat) (eqX : BI) (x : WVal) :
+    ∀ (ws : List WVal) (bs : List Bool) (n : Nat) (a : WVal) (st : List WVal),
+    Rel2 (EqIs host eqX x) ws bs → ws.length + 13 ≤ n →
+    hRun host n [.loop (hasBody L eqX)] [a, x, wList L ws] st =
+      some (if bs.any id then .ret (.i32v 1) else .br 0 [a, x, .null] st)
+  | [], [], n, a, st, _, hn => by
+      obtain ⟨k, rfl⟩ := fuel_split (show 1 ≤ n by omega)
+      rw [hRun_loop, wList, hasBody_nil host L k (by simp at hn; omega)]
+      simp
+  | w :: ws, b :: bs, n, a, st, hr, hn => by
+      simp only [List.length_cons] at hn
+      obtain ⟨k, rfl⟩ := fuel_split (show 1 ≤ n by omega)
+      rw [hRun_loop, wList, hasBody_cons_eq host L k (by omega) eqX a x w (wList L ws) b st hr.1]
+      cases b
+      · simp only [Bool.false_eq_true, ↓reduceIte]
+        rw [hasLoop_eq host L eqX x ws bs k a st hr.2 (by omega)]
+        simp
+      · simp
+  | [], _ :: _, _, _, _, hr, _ => by simp [Rel2] at hr
+  | _ :: _, [], _, _, _, hr, _ => by simp [Rel2] at hr
+
+/-- When the equality answers for every element, `contains` returns: below
+    `2 ^ 63` cells its run is never `none`. -/
+theorem hasSem_eq (L : Nat) (eqX : BI) (host : HostTbl) (ws : List WVal) (x : WVal)
+    (bs : List Bool) (hr : Rel2 (EqIs host eqX x) ws bs)
+    (hl : ws.length < 9223372036854775808) :
+    hasSem L eqX host [wList L ws, x] = some (b32 (bs.any id)) := by
+  unfold hasSem hCall
+  rw [hFuel_wList]
+  simp only [hl, ↓reduceIte, hasCode, LTy.dflt, List.map, List.length_cons, List.length_nil,
+    List.cons_append, List.nil_append]
+  rw [show ws.length + 64 = (ws.length + 61) + 1 + 1 + 1 by omega]
+  simp only [hRun_b, step1, lg, ls, eraseI, wRunF, List.getElem?_cons_zero, List.set_cons_succ,
+    List.set_cons_zero]
+  simp only [hRun_block]
+  rw [hasLoop_eq host L eqX x ws bs _ (wList L ws) [] hr (by omega)]
+  cases bs.any id <;> simp [hRun_b, step1, eraseI, wRunF, b32]
+
+/-- `contains` over Bools compares by `i32.eq` and calls nothing: it returns
+    whether the needle occurs. -/
+theorem hasSem_bool_eq (L : Nat) (bs : List Bool) (x : Bool)
+    (hl : bs.length < 9223372036854775808) :
+    hasSem L (.op .i32Eq) noHost [wList L (bs.map b32), b32 x] =
+      some (b32 (bs.any fun y => y == x)) := by
+  have hr : ∀ ys : List Bool,
+      Rel2 (EqIs noHost (.op .i32Eq) (b32 x)) (ys.map b32) (ys.map fun y => y == x) := by
+    intro ys
+    induction ys with
+    | nil => trivial
+    | cons y ys ih =>
+        refine ⟨fun l st => ?_, ih⟩
+        cases x <;> cases y <;> simp [step1, eraseI, wRunF, b32]
+  rw [hasSem_eq L _ noHost _ _ _ (hr bs) (by simpa using hl)]
+  simp [List.any_map, Function.comp_def]
 
 /-! ### `__aint_to_i64_sat` -/
 
