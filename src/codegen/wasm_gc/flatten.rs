@@ -133,6 +133,17 @@ pub fn flatten_multimodule(
     if dep_modules.is_empty() {
         return HashMap::new();
     }
+    // An executable artifact carries `Run.Turn` only when the program names
+    // it; a verification build keeps the hostile profiles that name it.
+    let pruned = (capability_surface == CapabilityFunctionSurface::Runtime)
+        .then(|| {
+            crate::codegen::without_unread_run_turn(
+                || crate::codegen::names_run_turn(items),
+                dep_modules,
+            )
+        })
+        .flatten();
+    let dep_modules = pruned.as_deref().unwrap_or(dep_modules);
 
     // Capability operations are host/provider atoms, not dependency function
     // bodies. Keep standard operations such as `Disk.exists`, `Random.int`,

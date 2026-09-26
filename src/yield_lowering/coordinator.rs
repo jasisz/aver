@@ -45,6 +45,17 @@ const FAIL: &str = "Run.fail";
 /// and once after every turn.
 const FAILURE: &str = "Run.failure";
 
+/// The operation a program reads how long the last turn waited and worked
+/// with. The loop marks its waits only when some function of the program
+/// names it.
+pub(super) const LAST_TURN: &str = "Run.lastTurn";
+
+/// The marks the loop puts right before and right after its one wait of a
+/// turn, each one monotonic clock reading, in a program that reads
+/// `Run.lastTurn`.
+pub(super) const WAIT_STARTS: &str = "Run.waitStarts";
+pub(super) const WAIT_ENDS: &str = "Run.waitEnds";
+
 /// What the generator resolved about one answer module.
 struct Answer {
     /// The module as the program loads it, e.g. `Ledger`.
@@ -247,7 +258,29 @@ pub(super) fn generate(
             .chain(&process.serve)
             .any(|effect| effect == FAIL)
     });
-    let turn_effects = turn_effect_list(&serve_effects, &family_effects, coordinator_stop, fails);
+    // The loop marks its waits only when some function of the program reads
+    // what they measure: a process, an answer module, or the entry's own
+    // `main`. Every other program keeps the loop it had, effects and bytes
+    // alike, and reads no clock beyond the turn's one `Time.unixMs`.
+    let measures = process_effects.iter().any(|process| {
+        process
+            .seat
+            .iter()
+            .chain(&process.serve)
+            .any(|effect| effect == LAST_TURN)
+    }) || items.iter().any(|item| match item {
+        TopLevel::FnDef(fd) => {
+            fd.name == "main" && fd.effects.iter().any(|effect| effect.node == LAST_TURN)
+        }
+        _ => false,
+    });
+    let turn_effects = turn_effect_list(
+        &serve_effects,
+        &family_effects,
+        coordinator_stop,
+        fails,
+        measures,
+    );
     let main_effects = main_effect_list(
         &turn_effects,
         &process_effects,
@@ -266,6 +299,7 @@ pub(super) fn generate(
         coordinator_stop,
         !plan.job_kinds.is_empty(),
         fails,
+        measures,
     );
     match parse_generated(&source) {
         Ok(items) => Ok(GeneratedLoop {
@@ -524,6 +558,7 @@ fn write_loop(
     coordinator_stop: CoordinatorStop,
     cancels_waited: bool,
     fails: bool,
+    measures: bool,
 ) -> String {
     let mut out = String::new();
 
@@ -750,10 +785,15 @@ fn write_loop(
         CoordinatorStop::HostSignal => "Process.stopRequested()",
         CoordinatorStop::PolicyOnly => "false",
     };
-    out.push_str(&host_driver::write_step(turn_effects, fails));
+    out.push_str(&host_driver::write_step(turn_effects, fails, measures));
     out.push_str(&format!(
-        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"Observe stopping, wait once, then perform the same turn as the external host driver.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    plan = __waitPlan(observed)\n    keys = Wait.poll(plan.items, __timeout(observed))?\n    Result.Ok(__workHostStep(observed, keys))\n",
+        "\nfn __turn(run: __Run) -> Result<__Run, String>\n    ? \"Observe stopping, wait once, then perform the same turn as the external host driver.\"\n{}    observed = __Run.update(run, stopping = {stop_observation})\n    plan = __waitPlan(observed)\n{}    keys = Wait.poll(plan.items, __timeout(observed))?\n    Result.Ok(__workHostStep(observed, keys))\n",
         effects(turn_effects),
+        if measures {
+            format!("    {WAIT_STARTS}()\n")
+        } else {
+            String::new()
+        },
     ));
     out.push_str(&format!(
         "\nfn __serveEach(run: __Run, ready: List<Int>, ids: List<Int>) -> __Run\n    ? \"Every seated id, in slot order, once, if its wake has fired{}.\"\n{}    match ids\n        [] -> run\n        [id, ..rest] -> __serveEach(__serveIf(run, ready, id), ready, rest)\n",
@@ -793,6 +833,7 @@ fn write_loop(
         main_effects,
         cancels_waited,
         coordinator_stop,
+        measures,
     ));
     out.push_str(&format!(
         "\nfn __all() -> Result<Unit, String>\n    ? \"Seats every process, turns until the run is over, and ends it.\"\n{}    __over(__runAll(__start())?)\n",
@@ -1074,13 +1115,15 @@ fn process_effect_lists(
 }
 
 /// What a whole turn performs: the stop observation, the clock reading the
-/// wake gate is measured against, the one wait, the serve path, and the
-/// seating of keyed processes at the turn boundary.
+/// wake gate is measured against, the one wait, the serve path, the
+/// seating of keyed processes at the turn boundary, and the two marks around
+/// the wait in a program that reads `Run.lastTurn`.
 fn turn_effect_list(
     serve: &[String],
     families: &[String],
     coordinator_stop: CoordinatorStop,
     fails: bool,
+    measures: bool,
 ) -> Vec<String> {
     let mut found: BTreeSet<String> = BTreeSet::new();
     if coordinator_stop == CoordinatorStop::HostSignal {
@@ -1092,6 +1135,10 @@ fn turn_effect_list(
     found.extend(families.iter().cloned());
     if fails {
         found.insert(FAILURE.to_string());
+    }
+    if measures {
+        found.insert(WAIT_STARTS.to_string());
+        found.insert(WAIT_ENDS.to_string());
     }
     found.into_iter().collect()
 }

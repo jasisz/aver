@@ -40,6 +40,7 @@ use crate::source::LoadedModule;
 use crate::types::checker::TypeCheckResult;
 
 /// Information about a dependent module loaded for codegen.
+#[derive(Clone)]
 pub struct ModuleInfo {
     /// Qualified module path, e.g. "Models.User".
     pub prefix: String,
@@ -149,6 +150,76 @@ impl ModuleInfo {
     pub fn from_loaded(loaded: &LoadedModule) -> Self {
         Self::from_items(loaded.dep_name.clone(), &loaded.items, None)
     }
+}
+
+/// The record `Run.lastTurn` answers, as the shipped `Run` module declares it.
+const RUN_TURN_RECORD: &str = "Turn";
+
+/// The dependencies without `Run.Turn`, when the program never names it.
+///
+/// Every program run by the generated loop depends on `Run`, and the module
+/// declares `Turn` for `Run.lastTurn` to answer. An executable artifact would
+/// carry that record, as a struct in generated Rust and a type in a wasm
+/// module, whether or not the program reads it, so a program that never names
+/// `Run.Turn` or `Run.lastTurn` outside `Run` itself gets its artifact without
+/// it: the same bytes it had before the record existed. The record stays in
+/// the program everywhere else, the proof source model included, where the
+/// hostile profiles of `Run.lastTurn` name it.
+///
+/// `entry_names` answers whether the entry module names either (see
+/// [`names_run_turn`]); it is asked only for a program that has `Run.Turn`. `None` when there is nothing to leave out. A miss here
+/// is loud, not silent: a program that does use the record and loses it fails
+/// to compile.
+pub fn without_unread_run_turn(
+    entry_names: impl FnOnce() -> bool,
+    modules: &[ModuleInfo],
+) -> Option<Vec<ModuleInfo>> {
+    let run = modules
+        .iter()
+        .position(|module| module.prefix == crate::stdlib::RUN_MODULE)?;
+    if !modules[run]
+        .type_defs
+        .iter()
+        .any(|td| common::type_def_name(td) == RUN_TURN_RECORD)
+        || entry_names()
+    {
+        return None;
+    }
+    let dependency_names = modules
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != run)
+        .any(|(_, module)| {
+            module.fn_defs.iter().any(|fd| debug_names_run_turn(fd))
+                || module.type_defs.iter().any(|td| debug_names_run_turn(td))
+        });
+    if dependency_names {
+        return None;
+    }
+    // An executable artifact carries no hostile profile, so the record is the
+    // only thing that names it there.
+    let mut pruned = modules.to_vec();
+    pruned[run]
+        .type_defs
+        .retain(|td| common::type_def_name(td) != RUN_TURN_RECORD);
+    Some(pruned)
+}
+
+/// Whether these items name `Run.Turn` or `Run.lastTurn`. Read off the whole
+/// item, so no spelling of the name, in a signature, an effect list, a
+/// binding's annotation or a constructor, is missed.
+pub fn names_run_turn(items: &[TopLevel]) -> bool {
+    items.iter().any(|item| match item {
+        TopLevel::FnDef(fd) => debug_names_run_turn(fd),
+        TopLevel::TypeDef(td) => debug_names_run_turn(td),
+        TopLevel::Stmt(stmt) => debug_names_run_turn(stmt),
+        _ => false,
+    })
+}
+
+fn debug_names_run_turn(item: &dyn std::fmt::Debug) -> bool {
+    let text = format!("{item:?}");
+    text.contains("Run.Turn") || text.contains("Run.lastTurn")
 }
 
 /// Capability declarations and their homogeneous module semantics, retained

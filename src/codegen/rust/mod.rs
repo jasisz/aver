@@ -119,6 +119,19 @@ fn transpile_project(
     provider_composition: composition::ProviderComposition,
     work_max_jobs: Option<usize>,
 ) -> ProjectOutput {
+    // A program that never names `Run.Turn` carries no struct for it.
+    if let Some(modules) = crate::codegen::without_unread_run_turn(
+        || {
+            ctx.fn_defs.iter().any(|fd| {
+                crate::codegen::names_run_turn(&[crate::ast::TopLevel::FnDef(fd.clone())])
+            }) || ctx.type_defs.iter().any(|td| {
+                crate::codegen::names_run_turn(&[crate::ast::TopLevel::TypeDef(td.clone())])
+            })
+        },
+        &ctx.modules,
+    ) {
+        ctx.modules = modules;
+    }
     // Every refusal below is recorded on the context as it happens; this
     // transpile reports its own, not a previous one's.
     ctx.substituted_compile_errors.borrow_mut().clear();

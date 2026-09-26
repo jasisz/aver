@@ -177,7 +177,7 @@ stdlib/
     wait.av           — Wait contract: one poll over sockets and jobs (reserved; VM provider in aver-rt/src/provider/work.rs, inline on wasm in src/codegen/wasm_gc/jobs.rs)
     work.av           — Work contract: the running-job handle and cancel (reserved; job engine in aver-rt/src/work.rs, inline on wasm in src/codegen/wasm_gc/jobs.rs)
   crypto/digest32.av  — exactly-32-byte Digest32 refinement
-  run.av              — Run capability: Run.Wake (when the generated loop asks an answer module again), Run.fail (end the run with a reason) and Run.failure (the loop reads it back); VM/Rust provider in aver-rt/src/provider/run.rs, a module global on wasm in src/codegen/wasm_gc/run_fail.rs
+  run.av              — Run capability: Run.Wake (when the generated loop asks an answer module again), Run.fail (end the run with a reason) and Run.failure (the loop reads it back), Run.lastTurn (which turn this is and how long the loop waited and worked around it; the loop marks its waits with Run.waitStarts/Run.waitEnds only in a program that declares it, and Run does not expose those two: the checker lets only generated `__` functions call them); VM/Rust provider in aver-rt/src/provider/run.rs, module globals on wasm in src/codegen/wasm_gc/run_fail.rs and run_turn.rs
 ```
 
 ## How to run

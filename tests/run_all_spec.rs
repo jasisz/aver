@@ -1363,3 +1363,178 @@ fn a_loop_that_cannot_fail_reads_no_failure() {
         assert!(failing.contains(line), "missing `{line}`:\n{failing}");
     }
 }
+
+// ── Run.lastTurn ────────────────────────────────────────────────────────
+
+#[path = "support/last_turn.rs"]
+mod last_turn;
+
+/// The ticker reads `Run.lastTurn()` while it is seated, after three ticks
+/// that each park on a 250 ms deadline, and after one that parks until the
+/// next turn. The seated reading is 0/0/0 and each later one names a later
+/// turn; a tick waited about its deadline and the turn before it worked far
+/// less; the tick that waited for nothing waited next to nothing.
+#[test]
+fn run_last_turn_reports_the_wait_and_the_work_around_a_turn() {
+    let out = aver_within("run_last_turn", &["run"], 60);
+    assert!(out.status.success(), "{}", format_output(&out));
+    last_turn::check(&String::from_utf8_lossy(&out.stdout))
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The readings are recorded like `Time.unixMs`: the recording carries every
+/// `Run.lastTurn`, turn number included, and the loop's marks around its
+/// waits, and a replay answers the recorded numbers, so it prints the run's
+/// lines again, digit for digit.
+#[test]
+fn a_recorded_last_turn_replays_to_the_same_numbers() {
+    let dir = scratch("last-turn-replay");
+    let out = aver_within(
+        "run_last_turn",
+        &["run", "--record", dir.to_str().expect("utf-8 scratch path")],
+        60,
+    );
+    assert!(out.status.success(), "{}", format_output(&out));
+    let recording = only_recording(&dir);
+    let written = std::fs::read_to_string(&recording).expect("recording is readable");
+    for effect in ["\"Run.lastTurn\"", "\"Run.waitStarts\"", "\"Run.waitEnds\""] {
+        assert!(
+            written.contains(effect),
+            "the recording does not carry {effect}:\n{}",
+            format_output(&out)
+        );
+    }
+
+    let replayed = Command::new(aver_bin())
+        .current_dir(fixture("run_last_turn"))
+        .arg("replay")
+        .arg(&recording)
+        .arg("--check-args")
+        .output()
+        .expect("aver replays");
+    assert!(replayed.status.success(), "{}", format_output(&replayed));
+    assert!(
+        combined(&replayed).contains("Output:  MATCH"),
+        "{}",
+        format_output(&replayed)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What `AVER_YIELD_DUMP` prints for one fixture: the protocol and the loop.
+fn loop_dump(name: &str) -> String {
+    let dir = fixture(name);
+    let out = Command::new(aver_bin())
+        .current_dir(&dir)
+        .env("AVER_YIELD_DUMP", "1")
+        .arg("check")
+        .arg("main.av")
+        .arg("--module-root")
+        .arg(&dir)
+        .output()
+        .expect("aver runs");
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// A program that never reads `Run.lastTurn` gets the loop it had before the
+/// operation existed, character for character. The digests were taken from
+/// the loop the compiler generated for these fixtures before `Run.lastTurn`
+/// was added; every backend compiles that one loop. A change to the
+/// generator moves them: read the loop with
+/// `AVER_YIELD_DUMP=1 aver check main.av --module-root .` and accept the new
+/// snapshot only when the change is meant.
+#[test]
+fn a_loop_that_reads_no_last_turn_is_the_loop_it_was() {
+    use sha2::{Digest, Sha256};
+    let mut digests = String::new();
+    for name in [
+        "run_all_from_main",
+        "run_all_slice",
+        "run_fail",
+        "run_fail_answer",
+        "run_guide_example",
+    ] {
+        let dump = loop_dump(name);
+        assert!(dump.contains("fn __turn"), "{name}: no loop in\n{dump}");
+        assert!(!dump.contains("Run.waitStarts"), "{name}:\n{dump}");
+        assert!(!dump.contains("Run.waitEnds"), "{name}:\n{dump}");
+        let digest = Sha256::digest(dump.as_bytes());
+        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        digests.push_str(&format!("{name} {hex}\n"));
+    }
+    insta::assert_snapshot!("loop_without_last_turn", digests);
+
+    let measuring = loop_dump("run_last_turn");
+    for line in [
+        "    Run.waitStarts()\n    keys = Wait.poll(plan.items, __timeout(observed))?",
+        "    Run.waitEnds()\n    ready = __readySlots(__waitPlan(run).owners, keys, [])",
+        "    ! [Process.stopRequested, Run.waitStarts]\n    Run.waitStarts()\n    __Run.update(run, stopping = Process.stopRequested())",
+    ] {
+        assert!(measuring.contains(line), "missing `{line}`:\n{measuring}");
+    }
+}
+
+/// The loop's marks around its wait are internal to it: `Run` does not expose
+/// them, so a program that calls one is refused the way a call to anything a
+/// module keeps to itself is, and one that names one in an effect list is
+/// refused too, with the operation it should read instead. Only the loop the
+/// compiler generates calls them.
+#[test]
+fn the_loop_marks_are_not_a_programs_to_call_or_name() {
+    let dir = scratch("last-turn-marks");
+    for (name, source, expected) in [
+        (
+            "calls",
+            "module Calls\n    intent = \"Calls a mark of the loop itself.\"\n\nfn main() -> Unit\n    ? \"Marks a wait that never happens.\"\n    ! [Run.waitStarts]\n    Run.waitStarts()\n",
+            "Capability operation 'Run.waitStarts' is not exposed by its module",
+        ),
+        (
+            "names",
+            "module Names\n    intent = \"Names a mark of the loop in an effect list.\"\n\nfn main() -> Unit\n    ? \"Claims an effect it cannot perform.\"\n    ! [Console.print, Run.waitEnds]\n    Console.print(\"hi\")\n",
+            "'Run.waitEnds' is internal to the generated loop",
+        ),
+    ] {
+        let file = dir.join(format!("{name}.av"));
+        std::fs::write(&file, source).expect("write the program");
+        let out = Command::new(aver_bin())
+            .current_dir(&dir)
+            .arg("check")
+            .arg(&file)
+            .output()
+            .expect("aver runs");
+        assert!(!out.status.success(), "{name}: {}", format_output(&out));
+        assert!(
+            combined(&out).contains(expected),
+            "{name}: {}",
+            format_output(&out)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `main` that reads `Run.lastTurn` in a program that runs no generated
+/// loop is refused at check time: there is no turn to report.
+#[test]
+fn last_turn_without_a_loop_is_refused_at_check_time() {
+    let dir = scratch("last-turn-standalone");
+    std::fs::write(
+        dir.join("main.av"),
+        "module Standalone\n    intent = \"Reads the last turn with no loop to report one.\"\n\nfn main() -> Unit\n    ? \"Prints how long the last turn waited.\"\n    ! [Console.print, Run.lastTurn]\n    turn = Run.lastTurn()\n    Console.print(\"waited {turn.waitedMs}\")\n",
+    )
+    .expect("write the program");
+    for command in ["check", "run"] {
+        let out = Command::new(aver_bin())
+            .current_dir(&dir)
+            .arg(command)
+            .arg("main.av")
+            .output()
+            .expect("aver runs");
+        assert!(!out.status.success(), "{command}: {}", format_output(&out));
+        assert!(
+            combined(&out).contains("runs no generated loop"),
+            "{command}: {}",
+            format_output(&out)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

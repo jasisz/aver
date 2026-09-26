@@ -251,6 +251,23 @@ pub(super) enum EffectName {
     /// holds, handed through the host: a live host answers it unchanged, a
     /// replay answers the recorded one.
     RunFailure,
+    // ── How long the generated loop waited and worked. The module keeps
+    //    the readings and the numbers they make in globals of its own, on
+    //    both wasm targets. On wasm-gc the two marks read the host's
+    //    monotonic clock through these imports, which the recorder sees the
+    //    way the VM records them, and `Run.lastTurn` hands the module's
+    //    numbers through the host so a replay answers the recorded ones.
+    //    None of the three is imported unless the program reads
+    //    `Run.lastTurn`.
+    /// `() -> i64` — the loop is about to wait: nanoseconds of the host's
+    /// monotonic clock. The recording sees `Run.waitStarts` answering Unit.
+    RunWaitStarts,
+    /// `() -> i64` — the loop's wait returned: nanoseconds of the same clock.
+    RunWaitEnds,
+    /// `(turn: i64, waitedMs: i64, workedMs: i64) -> (i64, i64, i64)` — the numbers the
+    /// module holds, handed through the host: a live host answers them
+    /// unchanged, a replay answers the recorded ones.
+    RunLastTurn,
 }
 
 impl EffectName {
@@ -346,6 +363,9 @@ impl EffectName {
         Self::WorkTake,
         Self::RunFail,
         Self::RunFailure,
+        Self::RunWaitStarts,
+        Self::RunWaitEnds,
+        Self::RunLastTurn,
     ];
 
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
@@ -441,6 +461,9 @@ impl EffectName {
             "Work.cancel" => Some(Self::WorkCancel),
             "Run.fail" => Some(Self::RunFail),
             "Run.failure" => Some(Self::RunFailure),
+            "Run.waitStarts" => Some(Self::RunWaitStarts),
+            "Run.waitEnds" => Some(Self::RunWaitEnds),
+            "Run.lastTurn" => Some(Self::RunLastTurn),
             _ => None,
         }
     }
@@ -548,6 +571,9 @@ impl EffectName {
             Self::WorkTake => "__work_take",
             Self::RunFail => "Run.fail",
             Self::RunFailure => "Run.failure",
+            Self::RunWaitStarts => "Run.waitStarts",
+            Self::RunWaitEnds => "Run.waitEnds",
+            Self::RunLastTurn => "Run.lastTurn",
         }
     }
 
@@ -643,6 +669,9 @@ impl EffectName {
             Self::WorkCancel => ("aver", "work_cancel"),
             Self::RunFail => ("aver", "run_fail"),
             Self::RunFailure => ("aver", "run_failure"),
+            Self::RunWaitStarts => ("aver", "run_wait_starts"),
+            Self::RunWaitEnds => ("aver", "run_wait_ends"),
+            Self::RunLastTurn => ("aver", "run_last_turn"),
             Self::WorkBegin => ("aver", "work_begin"),
             Self::WorkTake => ("aver", "work_take"),
         }
@@ -769,6 +798,8 @@ impl EffectName {
             Self::WorkBegin => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
             Self::WorkTake => Ok(vec![ValType::I32, any_ref_ty(), any_ref_ty()]),
             Self::RunFail | Self::RunFailure => Ok(vec![any_ref_ty()]),
+            Self::RunWaitStarts | Self::RunWaitEnds => Ok(vec![]),
+            Self::RunLastTurn => Ok(vec![ValType::I64, ValType::I64, ValType::I64]),
             Self::TcpWriteLine | Self::TcpWriteBytes | Self::TcpWriteNow => {
                 Ok(vec![any_ref_ty(), any_ref_ty()])
             }
@@ -935,6 +966,8 @@ impl EffectName {
             Self::WorkTake => Ok(vec![any_ref_ty()]),
             Self::RunFail => Ok(vec![]),
             Self::RunFailure => Ok(vec![any_ref_ty()]),
+            Self::RunWaitStarts | Self::RunWaitEnds => Ok(vec![ValType::I64]),
+            Self::RunLastTurn => Ok(vec![ValType::I64, ValType::I64, ValType::I64]),
         }
     }
 }
@@ -948,12 +981,22 @@ impl EffectName {
 /// `Run.fail` and the loop's `Run.failure` reading are the exception: the
 /// verifier does not admit their two recorder imports, so a module that ends
 /// its run with a reason is refused at the certificate envelope, fail-closed,
-/// until the wall admits them.
+/// until the wall admits them. The same holds for the three imports of a
+/// program that reads `Run.lastTurn`.
 #[cfg(test)]
 fn capability_registry() -> Vec<(&'static str, &'static str)> {
     EffectName::ALL
         .iter()
-        .filter(|effect| !matches!(effect, EffectName::RunFail | EffectName::RunFailure))
+        .filter(|effect| {
+            !matches!(
+                effect,
+                EffectName::RunFail
+                    | EffectName::RunFailure
+                    | EffectName::RunWaitStarts
+                    | EffectName::RunWaitEnds
+                    | EffectName::RunLastTurn
+            )
+        })
         .map(|effect| effect.import_pair())
         .chain(
             super::work_abi::IMPORTS
@@ -1023,7 +1066,10 @@ mod certificate_format_tests {
             // names no canonical-ABI slot.
             if matches!(
                 effect,
-                EffectName::WorkCancel | EffectName::RunFail | EffectName::RunFailure
+                EffectName::WorkCancel
+                    | EffectName::RunFail
+                    | EffectName::RunFailure
+                    | EffectName::RunLastTurn
             ) {
                 assert!(effect.lowers_on_wasip2());
                 assert!(effect.wasip2_slots().is_empty());
@@ -1211,6 +1257,9 @@ impl EffectName {
                 Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
             ],
             Self::TimeUnixMs | Self::TimeNow => &[Wasip2ImportSlot::ClocksWallClockNow],
+            // The loop's two marks around its wait, in a program that reads
+            // `Run.lastTurn`: one monotonic clock reading each.
+            Self::RunWaitStarts | Self::RunWaitEnds => &[Wasip2ImportSlot::ClocksMonotonicNow],
             Self::RandomInt | Self::RandomFloat => &[Wasip2ImportSlot::RandomGetRandomU64],
             Self::ArgsGet => &[Wasip2ImportSlot::CliEnvironmentGetArguments],
             Self::EnvGet => &[Wasip2ImportSlot::CliEnvironmentGetEnvironment],
@@ -1538,6 +1587,9 @@ impl EffectName {
             // an import.
             | Self::RunFail
             | Self::RunFailure
+            // The numbers `Run.lastTurn` answers are globals of the module
+            // on this target too; only the two marks read a clock.
+            | Self::RunLastTurn
             // A component records nothing, so its job kinds reach no import
             // at all: `--record` is refused on wasip2.
             | Self::WorkBegin

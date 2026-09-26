@@ -2173,7 +2173,8 @@ pub(crate) fn emit_mir_args_then_call_lowering_int(
 }
 
 /// `Run.fail(message)` and `Run.failure()`, lowered inline over the
-/// module's failure global. See `super::super::run_fail`.
+/// module's failure global (see `super::super::run_fail`), and the loop's
+/// marks around its wait with `Run.lastTurn()` (see `super::super::run_turn`).
 fn emit_mir_run_call(
     func: &mut Function,
     dotted: &str,
@@ -2204,6 +2205,25 @@ fn emit_mir_run_call(
             }
             super::super::run_fail::emit_failure(func, slots, ctx)?;
             Ok(MirBuiltinEmit::Produced(true))
+        }
+        // The loop's two marks around its wait and the reading of what they
+        // measured, over the module's turn globals. See `run_turn`.
+        "Run.waitStarts" | "Run.waitEnds" | "Run.lastTurn" => {
+            if !args.is_empty() {
+                return Err(WasmGcError::Validation(format!(
+                    "`{dotted}` takes no arguments, got {}",
+                    args.len()
+                )));
+            }
+            match dotted {
+                "Run.waitStarts" => super::super::run_turn::emit_wait_starts(func, ctx)?,
+                "Run.waitEnds" => super::super::run_turn::emit_wait_ends(func, ctx)?,
+                _ => {
+                    super::super::run_turn::emit_last_turn(func, slots, ctx)?;
+                    return Ok(MirBuiltinEmit::Produced(true));
+                }
+            }
+            Ok(MirBuiltinEmit::Produced(false))
         }
         _ => Ok(MirBuiltinEmit::NotHandled),
     }

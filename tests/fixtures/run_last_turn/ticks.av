@@ -1,0 +1,32 @@
+module Ticks
+    intent = "Answers Clock: tick parks on a 250 ms deadline before it answers, and soon answers in the next turn, which waits for nothing."
+    depends [Clock]
+    exposes [State, fresh, tick, soon]
+    effects []
+    answers [Clock]
+
+record State
+    count: Int
+    armed: Bool
+
+fn fresh() -> State
+    ? "No tick given, nothing armed."
+    State(count = 0, armed = false)
+
+fn tick(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The first ask arms a 250 ms deadline and parks on it; the ask after it is the tick."
+    after(state, 250)
+
+fn soon(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The first ask parks until the next turn; the ask after it is the tick."
+    after(state, 0)
+
+fn after(state: State, ms: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Park on a deadline of ms the first time, answer the next tick the second."
+    match state.armed
+        false -> (State.update(state, armed = true), Result.Err(Run.Wake.Until([], Option.Some(ms))))
+        true -> (State(count = state.count + 1, armed = false), Result.Ok(state.count + 1))
+
+verify after
+    after(fresh(), 250) => (State(count = 0, armed = true), Result.Err(Run.Wake.Until([], Option.Some(250))))
+    after(State(count = 0, armed = true), 250) => (State(count = 1, armed = false), Result.Ok(1))

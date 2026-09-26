@@ -210,7 +210,85 @@ impl YieldLoweringReport {
 /// The language's own effect: bare and lowercase, never a capability.
 pub const YIELD_EFFECT: &str = "yield";
 
-/// Whether a function body calls `Run.all()`, which runs the generated loop.
+/// The loop's marks around its wait named in an effect list the program
+/// wrote. `Run` does not expose them, so no program can call them (the type
+/// checker refuses the call); naming one would buy an effect nothing it writes
+/// can perform, so it is refused as well. `items` are the module as written:
+/// a module the compiler already generated a loop into (it has `__all`) names
+/// them in the effect lists it widened, and is not checked again.
+pub fn loop_marks_named(items: &[TopLevel]) -> Vec<TypeError> {
+    let lowered = items
+        .iter()
+        .any(|item| matches!(item, TopLevel::FnDef(fd) if fd.name == "__all"));
+    if lowered {
+        return Vec::new();
+    }
+    let is_mark =
+        |effect: &str| effect == coordinator::WAIT_STARTS || effect == coordinator::WAIT_ENDS;
+    let refusal = |effect: &str, line: usize| {
+        error_at(
+            line,
+            format!(
+                "'{effect}' is internal to the generated loop and is not exposed by Run; a program cannot name it. To read how long the loop waited and worked, call Run.lastTurn()"
+            ),
+        )
+    };
+    let mut errors = Vec::new();
+    for item in items {
+        match item {
+            TopLevel::Module(module) => {
+                let line = module.effects_line.unwrap_or(module.line);
+                for effect in module.effects.iter().flatten() {
+                    if is_mark(effect) {
+                        errors.push(refusal(effect, line));
+                    }
+                }
+            }
+            TopLevel::FnDef(fd) if !fd.name.starts_with("__") => {
+                for effect in &fd.effects {
+                    if is_mark(&effect.node) {
+                        errors.push(refusal(&effect.node, effect.line));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    errors
+}
+
+/// A `main` that reads `Run.lastTurn` in a program that runs no generated
+/// loop: there is no turn to report, so the program is refused at check time
+/// instead of reading `0/0` forever. `has_loop` is whether the lowering of
+/// this module generated one. A module with no `main` is a library, and the
+/// program that depends on it decides; a `main` that calls `Run.all()` has a
+/// loop whenever its module writes a process, and is refused for that on its
+/// own when it does not.
+pub fn last_turn_without_loop(items: &[TopLevel], has_loop: bool) -> Option<TypeError> {
+    if has_loop {
+        return None;
+    }
+    items.iter().find_map(|item| match item {
+        TopLevel::FnDef(fd)
+            if fd.name == "main"
+                && fd
+                    .effects
+                    .iter()
+                    .any(|effect| effect.node == coordinator::LAST_TURN) =>
+        {
+            Some(error_at(
+                fd.line,
+                format!(
+                    "'main' reads {} (its effect list names it), but this program runs no generated loop, so there is no turn to report. {} answers only inside a program run by Run.all(): write a process and let the loop run it, or drop the effect",
+                    coordinator::LAST_TURN,
+                    coordinator::LAST_TURN
+                ),
+            ))
+        }
+        _ => None,
+    })
+}
+
 /// Whether a module calls `Wait.poll` anywhere, read off its source.
 pub fn calls_wait_poll(items: &[TopLevel]) -> bool {
     carried_waits::calls_wait_poll(items)

@@ -104,6 +104,12 @@ export async function createWorkHost(module, options = {}) {
         // let a recording host see Run.fail and the loop's reading of it.
         run_fail: () => {},
         run_failure: reason => reason,
+        // A program that reads Run.lastTurn: the loop's two marks around its
+        // wait read a monotonic clock in nanoseconds, and the module keeps
+        // the numbers itself; run_last_turn only hands them through.
+        run_wait_starts: () => BigInt(Math.floor(performance.now() * 1e6)),
+        run_wait_ends: () => BigInt(Math.floor(performance.now() * 1e6)),
+        run_last_turn: (turn, waited, worked) => [turn, waited, worked],
     })) if (!options.imports?.aver?.[name]) aver[name] = value;
     imports["aver:work/v1"] = {
         submit(kind, task) {
