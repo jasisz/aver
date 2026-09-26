@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Changed — a large certificate checks faster
+
+- **`aver-cert check` of a large package takes about a third less time and less memory.** On an 800 KB module with 823 certified exports it went from 30 to 19 minutes and from 15.6 to 13.1 GB. The plans' acceptance is checked in several small proofs instead of one, distinct function indices and export names are checked in one pass instead of pairwise, the report's per-group data is computed once per group, and the axiom audit shares its work across all claims (5 minutes to 9 seconds). What a certificate proves is unchanged. The wall changed, so packages must be produced again.
+
 ### Added — source bridges for List arguments
 
 - **A certified function that takes a List of Ints, Bools or Strings now has a source bridge.** The proof that its plan computes your source function used to stop at a List argument, so such a function was certified against its plan only, and a law about it was not on the bytes. The bridge proofs now decode a List argument one cell at a time. On the btc-listener corpus, 98 more functions get a credited source bridge (633 of 636), and 15 more laws are proved about the certified bytes (31 of 32). A List of records, sums or Lists still has no bridge.

@@ -208,6 +208,27 @@ def plansAcceptedRestL (artifact : ArtifactData) (L : Layout) : Bool :=
   declsWellFormed m.subject m.types m.fnPlans &&
   consPinned m.types m.fnPlans
 
+/-- `plansAcceptedRestL` from its conjuncts, each proved on its own: one
+    kernel check over all of them keeps every intermediate term of every
+    conjunct alive until the last one ends. -/
+theorem plansAcceptedRestL_of_parts {artifact : ArtifactData} {L : Layout}
+    (hidx : indicesDistinct (mctxOf artifact.manifest.subject artifact.manifest.types
+      artifact.manifest.fnPlans) artifact.manifest.fnPlans = true)
+    (htypes : typeTableConfirmed artifact.modBytes artifact.modLen artifact.manifest.subject
+      artifact.manifest.types artifact.manifest.fnPlans = true)
+    (hdata : dataConfirmed artifact.modBytes artifact.modLen artifact.manifest.subject
+      artifact.manifest.types artifact.manifest.fnPlans = true)
+    (hroles : roleTypesPinnedL L artifact.modBytes artifact.modLen (mctxOf artifact.manifest.subject
+      artifact.manifest.types artifact.manifest.fnPlans) = true)
+    (heqref : eqrefConfined artifact.manifest.types artifact.manifest.fnPlans = true)
+    (hnewtypes : newtypesGrounded artifact.manifest.types = true)
+    (hinhabited : typesInhabited (mctxOf artifact.manifest.subject artifact.manifest.types
+      artifact.manifest.fnPlans) artifact.manifest.types artifact.manifest.fnPlans = true)
+    (hcons : consPinned artifact.manifest.types artifact.manifest.fnPlans = true) :
+    plansAcceptedRestL artifact L = true := by
+  simp only [plansAcceptedRestL, declsWellFormed, hidx, htypes, hdata, hroles, heqref, hnewtypes,
+    hinhabited, hcons, Bool.and_self, Bool.and_true, Bool.true_and]
+
 theorem plansAcceptedRest_of_layout {artifact : ArtifactData} {L : Layout}
     (hL : layoutConfirmed artifact.modBytes artifact.modLen L = true)
     (h : plansAcceptedRestL artifact L = true) : plansAcceptedRest artifact = true := by
