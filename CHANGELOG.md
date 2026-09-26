@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Added — source bridges for List arguments
+
+- **A certified function that takes a List of Ints, Bools or Strings now has a source bridge.** The proof that its plan computes your source function used to stop at a List argument, so such a function was certified against its plan only, and a law about it was not on the bytes. The bridge proofs now decode a List argument one cell at a time. On the btc-listener corpus, 98 more functions get a credited source bridge (633 of 636), and 15 more laws are proved about the certified bytes (31 of 32). A List of records, sums or Lists still has no bridge.
+
 ### Added — certificates for list literals
 
 - **A function that builds a non-empty list literal can now be certified.** `[a, b, c]` used to leave the function source-level only. The compiler builds such a literal by calling its cons helper for the element type once per item, and the certificate now carries that helper as a planned function: the wall checks that its plan is exactly one `List.prepend` of its two parameters, so the literal's meaning is proved, not assumed. On the btc-listener corpus this certifies 58 more functions and gives 41 more of them a source bridge (a function that returns a literal is now bridged to its source); across the examples, projects and certificate fixtures, 27 more functions are certified. The wall identity rotates: packages produced by earlier versions must be produced again.

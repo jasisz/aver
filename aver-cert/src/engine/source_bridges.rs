@@ -662,12 +662,18 @@ impl ModelInfo {
 /// pattern over them, and the source value it denotes.
 #[derive(Debug, Clone)]
 struct Alt {
-    /// Atomic values the shape binds as a whole `SVal` and decodes by the
-    /// wall's decoder: `(SVal variable, source variable)`.
-    binds: Vec<(String, String)>,
+    /// Atomic values the shape binds as a whole `SVal` and decodes:
+    /// `(SVal variable, source variable, decoder)`, the decoder being the
+    /// wall's `decodeStr` for a String or a `decList…` of the step lemmas for
+    /// a List.
+    binds: Vec<Bind>,
     pattern: String,
     source: String,
 }
+
+/// A value a shape decodes whole: `(SVal variable, source variable,
+/// decoder)`.
+type Bind = (String, String, String);
 
 /// Most argument shapes one function's decoder may expand into.
 const MAX_ALTS: usize = 64;
@@ -691,7 +697,7 @@ fn product(parts: Vec<Vec<Alt>>) -> Result<Vec<Vec<Alt>>, String> {
     Ok(out)
 }
 
-fn join_row(row: &[Alt]) -> (Vec<(String, String)>, Vec<String>, Vec<String>) {
+fn join_row(row: &[Alt]) -> (Vec<Bind>, Vec<String>, Vec<String>) {
     let mut binders = Vec::new();
     let mut patterns = Vec::new();
     let mut sources = Vec::new();
@@ -701,6 +707,16 @@ fn join_row(row: &[Alt]) -> (Vec<(String, String)>, Vec<String>, Vec<String>) {
         sources.push(alt.source.clone());
     }
     (binders, patterns, sources)
+}
+
+/// The step lemmas' decoder of a List argument with these elements.
+fn list_decoder(elem: &SourceEncoder) -> Option<&'static str> {
+    match elem {
+        SourceEncoder::Int => Some("decListInt"),
+        SourceEncoder::Bool => Some("decListBool"),
+        SourceEncoder::Str => Some("decListString"),
+        _ => None,
+    }
 }
 
 fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
@@ -724,12 +740,31 @@ fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
             let t = format!("t{fresh}");
             *fresh += 1;
             Ok(vec![Alt {
-                binds: vec![(v.clone(), t.clone())],
+                binds: vec![(v.clone(), t.clone(), "AverCert.GrammarBridge.decodeStr".into())],
                 pattern: v,
                 source: t,
             }])
         }
-        SourceEncoder::Float | SourceEncoder::List(_) | SourceEncoder::Vector(_) => {
+        // A List of Ints, Bools or Strings is matched as a whole value and
+        // decoded one cons cell at a time by the step lemmas' `decList…`;
+        // a step splits it into its empty and cons shapes (`decList…_cases`).
+        SourceEncoder::List(elem) => {
+            let decoder = list_decoder(elem).ok_or_else(|| {
+                format!(
+                    "a `list` argument of `{}` elements has no decoder in this version",
+                    elem.kind()
+                )
+            })?;
+            let v = format!("v{fresh}");
+            let t = format!("t{fresh}");
+            *fresh += 1;
+            Ok(vec![Alt {
+                binds: vec![(v.clone(), t.clone(), format!("AverCert.Bridge.{decoder}"))],
+                pattern: v,
+                source: t,
+            }])
+        }
+        SourceEncoder::Float | SourceEncoder::Vector(_) => {
             Err(format!("a `{}` argument has no decoder in this version", enc.kind()))
         }
         SourceEncoder::Record {
@@ -898,7 +933,7 @@ struct BridgedFn {
 
 /// One decoder argument shape: the atomic values it decodes, its argument
 /// patterns, and the source arguments it denotes.
-type DecoderShape = (Vec<(String, String)>, Vec<String>, Vec<String>);
+type DecoderShape = (Vec<Bind>, Vec<String>, Vec<String>);
 
 /// The outcome of bridge planning.
 struct BridgePlan {
@@ -1247,7 +1282,8 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
 const TYPING_SIMPS: &str = "AverCert.GrammarBridge.ArgsTyped, AverCert.Grammar.HasTyL, \
      AverCert.Grammar.HasTy, AverCert.Grammar.HasTyAll, AverCert.AcceptedArtifact.obligationOf, \
      AverCert.TypeTable.mctxOf, AverCert.TypeTable.recordOf, AverCert.TypeTable.sumOf, \
-     AverCert.Grammar.ctorFields, AverCert.Plans.types";
+     AverCert.Grammar.ctorFields, AverCert.Plans.types, AverCert.Bridge.hasTy_listInt, \
+     AverCert.Bridge.hasTy_listBool, AverCert.Bridge.hasTy_listString";
 
 fn arg_type(params: &[SourceEncoder]) -> String {
     match params.len() {
@@ -1288,8 +1324,8 @@ fn render_fn_defs(b: &BridgedFn, s: &mut String) {
             _ => format!("({})", sources.join(", ")),
         };
         let mut rhs = format!("_root_.Option.some {value}");
-        for (v, t) in binds.iter().rev() {
-            rhs = format!("(AverCert.GrammarBridge.decodeStr {v}).bind (fun {t} => {rhs})");
+        for (v, t, decode) in binds.iter().rev() {
+            rhs = format!("({decode} {v}).bind (fun {t} => {rhs})");
         }
         s.push_str(&format!("  | [{}] => {rhs}\n", patterns.join(", ")));
     }
@@ -1469,7 +1505,233 @@ theorem optDefault_none (t : Ty) (d : Option SVal) : optDefault (some (.none t))
 theorem resDefault_ok (t e : Ty) (v : SVal) (d : Option SVal) : resDefault (some (.ok t e v)) d = some v := rfl
 theorem resDefault_err (t e : Ty) (v : SVal) (d : Option SVal) : resDefault (some (.err t e v)) d = d := rfl
 
+/-! A List argument of Ints, Bools or Strings is decoded as a whole value,
+    one cons cell at a time. A step splits a decoded List into its empty and
+    cons shapes (`…_cases`); an export's image reads an encoded List back
+    (`…_enc`); an encoded List inhabits its List type (`hasTy_list…`). -/
+
+theorem decListInt_enc : ∀ l : List Int,
+    decListInt (List.foldr (fun y acc => SVal.cons .int (SVal.i y) acc) (SVal.nil .int) l) = some l
+  | [] => by simp [decListInt]
+  | y :: ys => by simp [decListInt, decListInt_enc ys]
+
+theorem decListBool_enc : ∀ l : List Bool,
+    decListBool (List.foldr (fun y acc => SVal.cons .bool (SVal.b y) acc) (SVal.nil .bool) l) = some l
+  | [] => by simp [decListBool]
+  | y :: ys => by simp [decListBool, decListBool_enc ys]
+
+theorem decListString_enc : ∀ l : List String,
+    decListString (List.foldr (fun y acc =>
+      SVal.cons .string (SVal.s (AverCert.GrammarBridge.strBytes y)) acc) (SVal.nil .string) l) = some l
+  | [] => by simp [decListString]
+  | y :: ys => by
+      simp [decListString, decListString_enc ys, AverCert.GrammarBridge.decodeStr_strBytes]
+
+theorem decListInt_cases {v : SVal} {a : List Int} (h : decListInt v = some a) :
+    (v = .nil .int ∧ a = []) ∨
+      ∃ x r t, v = .cons .int (.i x) r ∧ decListInt r = some t ∧ a = x :: t := by
+  unfold decListInt at h
+  split at h
+  · simp only [Option.some.injEq] at h
+    exact Or.inl ⟨rfl, h.symm⟩
+  · rename_i x r
+    cases hr : decListInt r with
+    | none => simp [hr] at h
+    | some t =>
+        simp only [hr, Option.map_some, Option.some.injEq] at h
+        exact Or.inr ⟨x, r, t, rfl, hr, h.symm⟩
+  · simp at h
+
+theorem decListBool_cases {v : SVal} {a : List Bool} (h : decListBool v = some a) :
+    (v = .nil .bool ∧ a = []) ∨
+      ∃ x r t, v = .cons .bool (.b x) r ∧ decListBool r = some t ∧ a = x :: t := by
+  unfold decListBool at h
+  split at h
+  · simp only [Option.some.injEq] at h
+    exact Or.inl ⟨rfl, h.symm⟩
+  · rename_i x r
+    cases hr : decListBool r with
+    | none => simp [hr] at h
+    | some t =>
+        simp only [hr, Option.map_some, Option.some.injEq] at h
+        exact Or.inr ⟨x, r, t, rfl, hr, h.symm⟩
+  · simp at h
+
+theorem decListString_cases {v : SVal} {a : List String} (h : decListString v = some a) :
+    (v = .nil .string ∧ a = []) ∨
+      ∃ x r t, v = .cons .string (.s (AverCert.GrammarBridge.strBytes x)) r ∧
+        decListString r = some t ∧ a = x :: t := by
+  unfold decListString at h
+  split at h
+  · simp only [Option.some.injEq] at h
+    exact Or.inl ⟨rfl, h.symm⟩
+  · rename_i hv r
+    cases hx : AverCert.GrammarBridge.decodeStr hv with
+    | none => simp [hx] at h
+    | some x =>
+        cases hr : decListString r with
+        | none => simp [hx, hr] at h
+        | some t =>
+            simp only [hx, hr, Option.bind_some, Option.map_some, Option.some.injEq] at h
+            exact Or.inr ⟨x, r, t, by rw [AverCert.GrammarBridge.decodeStr_eq_some.mp hx], hr,
+              h.symm⟩
+  · simp at h
+
+/-- A decoded List of Ints is the encoding of what it decodes to. -/
+theorem decListInt_sound : ∀ (a : List Int) {v : SVal}, decListInt v = some a →
+    v = List.foldr (fun y acc => SVal.cons .int (SVal.i y) acc) (SVal.nil .int) a := by
+  intro a
+  induction a with
+  | nil =>
+      intro v h
+      rcases decListInt_cases h with ⟨rfl, _⟩ | ⟨_, _, _, _, _, h2⟩
+      · rfl
+      · cases h2
+  | cons x t ih =>
+      intro v h
+      rcases decListInt_cases h with ⟨_, h2⟩ | ⟨x', r, t', rfl, hr, h2⟩
+      · cases h2
+      · simp only [List.cons.injEq] at h2
+        obtain ⟨rfl, rfl⟩ := h2
+        simp only [List.foldr, ih hr]
+
+/-- A decoded List of Ints, split into its empty and cons shapes, the tail
+    an encoding. -/
+theorem decListInt_split {v : SVal} {a : List Int} (h : decListInt v = some a) :
+    (v = .nil .int ∧ a = []) ∨ ∃ x t, v = .cons .int (SVal.i x) (List.foldr (fun y acc => SVal.cons .int (SVal.i y) acc) (SVal.nil .int) t) ∧ a = x :: t := by
+  have hv := decListInt_sound _ h
+  cases a with
+  | nil => exact Or.inl ⟨hv, rfl⟩
+  | cons x t => exact Or.inr ⟨x, t, by simpa [List.foldr] using hv, rfl⟩
+
+/-- A decoded List of Bools is the encoding of what it decodes to. -/
+theorem decListBool_sound : ∀ (a : List Bool) {v : SVal}, decListBool v = some a →
+    v = List.foldr (fun y acc => SVal.cons .bool (SVal.b y) acc) (SVal.nil .bool) a := by
+  intro a
+  induction a with
+  | nil =>
+      intro v h
+      rcases decListBool_cases h with ⟨rfl, _⟩ | ⟨_, _, _, _, _, h2⟩
+      · rfl
+      · cases h2
+  | cons x t ih =>
+      intro v h
+      rcases decListBool_cases h with ⟨_, h2⟩ | ⟨x', r, t', rfl, hr, h2⟩
+      · cases h2
+      · simp only [List.cons.injEq] at h2
+        obtain ⟨rfl, rfl⟩ := h2
+        simp only [List.foldr, ih hr]
+
+/-- A decoded List of Bools, split into its empty and cons shapes, the tail
+    an encoding. -/
+theorem decListBool_split {v : SVal} {a : List Bool} (h : decListBool v = some a) :
+    (v = .nil .bool ∧ a = []) ∨ ∃ x t, v = .cons .bool (SVal.b x) (List.foldr (fun y acc => SVal.cons .bool (SVal.b y) acc) (SVal.nil .bool) t) ∧ a = x :: t := by
+  have hv := decListBool_sound _ h
+  cases a with
+  | nil => exact Or.inl ⟨hv, rfl⟩
+  | cons x t => exact Or.inr ⟨x, t, by simpa [List.foldr] using hv, rfl⟩
+
+/-- A decoded List of Strings is the encoding of what it decodes to. -/
+theorem decListString_sound : ∀ (a : List String) {v : SVal}, decListString v = some a →
+    v = List.foldr (fun y acc => SVal.cons .string (SVal.s (AverCert.GrammarBridge.strBytes y)) acc) (SVal.nil .string) a := by
+  intro a
+  induction a with
+  | nil =>
+      intro v h
+      rcases decListString_cases h with ⟨rfl, _⟩ | ⟨_, _, _, _, _, h2⟩
+      · rfl
+      · cases h2
+  | cons x t ih =>
+      intro v h
+      rcases decListString_cases h with ⟨_, h2⟩ | ⟨x', r, t', rfl, hr, h2⟩
+      · cases h2
+      · simp only [List.cons.injEq] at h2
+        obtain ⟨rfl, rfl⟩ := h2
+        simp only [List.foldr, ih hr]
+
+/-- A decoded List of Strings, split into its empty and cons shapes, the tail
+    an encoding. -/
+theorem decListString_split {v : SVal} {a : List String} (h : decListString v = some a) :
+    (v = .nil .string ∧ a = []) ∨ ∃ x t, v = .cons .string (SVal.s (AverCert.GrammarBridge.strBytes x)) (List.foldr (fun y acc => SVal.cons .string (SVal.s (AverCert.GrammarBridge.strBytes y)) acc) (SVal.nil .string) t) ∧ a = x :: t := by
+  have hv := decListString_sound _ h
+  cases a with
+  | nil => exact Or.inl ⟨hv, rfl⟩
+  | cons x t => exact Or.inr ⟨x, t, by simpa [List.foldr] using hv, rfl⟩
+
+theorem hasTy_listEnc {α : Type} (M : MCtx) (t : Ty) (e : α → SVal) (he : ∀ y, HasTy M (e y) t) :
+    ∀ l : List α, HasTy M (List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l) (.list t)
+  | [] => by simp [HasTy]
+  | y :: ys => by
+      simp only [List.foldr]
+      exact ⟨rfl, he y, hasTy_listEnc M t e he ys⟩
+
+theorem hasTy_listInt (M : MCtx) (l : List Int) :
+    HasTy M (List.foldr (fun y acc => SVal.cons .int (SVal.i y) acc) (SVal.nil .int) l) (.list .int) :=
+  hasTy_listEnc M .int _ (fun y => by simp [HasTy]) l
+
+theorem hasTy_listBool (M : MCtx) (l : List Bool) :
+    HasTy M (List.foldr (fun y acc => SVal.cons .bool (SVal.b y) acc) (SVal.nil .bool) l)
+      (.list .bool) :=
+  hasTy_listEnc M .bool _ (fun y => by simp [HasTy]) l
+
+theorem hasTy_listString (M : MCtx) (l : List String) :
+    HasTy M (List.foldr (fun y acc =>
+      SVal.cons .string (SVal.s (AverCert.GrammarBridge.strBytes y)) acc) (SVal.nil .string) l)
+      (.list .string) :=
+  hasTy_listEnc M .string _ (fun y => by simp [HasTy]) l
+
+/-! Arm-by-arm evaluation of a List match. -/
+
+theorem arms_emptyList_nil (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (t : Ty)
+    (b : Expr) (rest : Arms) :
+    evalArms F env (.nil t) (.cons .emptyList b rest) = eval F env b := by
+  simp [evalArms, patMatch, bindVals]
+
+theorem arms_emptyList_cons (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (t : Ty)
+    (x r : SVal) (b : Expr) (rest : Arms) :
+    evalArms F env (.cons t x r) (.cons .emptyList b rest) = evalArms F env (.cons t x r) rest := by
+  simp [evalArms, patMatch]
+
+theorem arms_cons_nil (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (t : Ty)
+    (hd tl : Nat) (b : Expr) (rest : Arms) :
+    evalArms F env (.nil t) (.cons (.cons hd tl) b rest) = evalArms F env (.nil t) rest := by
+  simp [evalArms, patMatch]
+
+theorem arms_cons_cons (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (t : Ty)
+    (x r : SVal) (hd tl : Nat) (b : Expr) (rest : Arms) :
+    evalArms F env (.cons t x r) (.cons (.cons hd tl) b rest) =
+      eval F (if tl = noSlot then (if hd = noSlot then env else upd env hd x)
+        else upd (if hd = noSlot then env else upd env hd x) tl r) b := by
+  by_cases h1 : hd = noSlot <;> by_cases h2 : tl = noSlot <;>
+    simp [evalArms, patMatch, bindVals, h1, h2]
+
 end StepLemmas
+"#;
+
+/// The decoders of a List argument of Ints, Bools or Strings, rendered into
+/// `BridgeDefs.lean` ahead of the functions' decoders that call them: the
+/// whole value, one cons cell at a time. Their lemmas are in [`STEP_LEMMAS`].
+const LIST_DECODERS: &str = r#"section ListDecoders
+open AverCert.Grammar
+
+noncomputable def decListInt : SVal → Option (List Int)
+  | .nil .int => some []
+  | .cons .int (.i x) r => (decListInt r).map (fun t => x :: t)
+  | _ => none
+
+noncomputable def decListBool : SVal → Option (List Bool)
+  | .nil .bool => some []
+  | .cons .bool (.b x) r => (decListBool r).map (fun t => x :: t)
+  | _ => none
+
+noncomputable def decListString : SVal → Option (List String)
+  | .nil .string => some []
+  | .cons .string hv r =>
+      (AverCert.GrammarBridge.decodeStr hv).bind (fun x => (decListString r).map (fun t => x :: t))
+  | _ => none
+
+end ListDecoders
+
 "#;
 
 /// Evaluation lemmas of a step proof: the plan's equations with a match
@@ -1478,7 +1740,8 @@ end StepLemmas
 /// callee table, and the normal forms the source spells (`==`, `!=`, decided
 /// comparisons, literal indices, String parts folded into one `strBytes`).
 const STEP_EVAL: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, arms_nil, arms_wild, \
-     arms_bind, arms_litInt, arms_litStr, arms_litBool, arms_ctor, arms_tuple, ↓eval_ite, \
+     arms_bind, arms_litInt, arms_litStr, arms_litBool, arms_ctor, arms_tuple, arms_emptyList_nil, \
+     arms_emptyList_cons, arms_cons_nil, arms_cons_cons, ↓eval_ite, \
      ↓eval_optDefault, ↓eval_resDefault, optDefault_ite, resDefault_ite, optDefault_some, \
      optDefault_none, resDefault_ok, resDefault_err, AverCert.Grammar.argsEnv, \
      AverCert.Grammar.upd, AverCert.Grammar.intBin, AverCert.Grammar.boolBin, \
@@ -1494,11 +1757,12 @@ const STEP_EVAL: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, arms_
      _root_.Option.bind_some, _root_.Function.comp_apply, strBytes_eq_iff, strBytes_beq, \
      Nat.reduceEqDiff, Int.reduceEq, ← AverCert.GrammarBridge.strBytes_append, \
      _root_.List.append_nil, str_toString, str_hadd, _root_.List.isEmpty_nil, \
-     _root_.List.isEmpty_cons, _root_.Bool.false_eq_true, AverCert.Grammar.consAll";
+     _root_.List.isEmpty_cons, _root_.Bool.false_eq_true, AverCert.Grammar.consAll, \
+     decListInt, decListBool, decListString, decListInt_enc, decListBool_enc, decListString_enc";
 
 /// Normal forms a leaf closes with, on top of the source definition.
 const STEP_NORM: &str = "_root_.bne, dec_eq_beq, dec_ne_bne, strBytes_eq_iff, str_toString, \
-     str_hadd, _root_.String.append_assoc";
+     str_hadd, _root_.String.append_assoc, decListInt, decListBool, decListString";
 
 /// One step lemma, proved by construction rather than by search. The
 /// decoder's argument shapes are expanded; the plan body is evaluated by
@@ -1567,7 +1831,19 @@ fn render_step(
     } else {
         ""
     };
-    let norm = format!("{STEP_NORM}{empty}{constants}{with_default}");
+    // A callee with a List parameter answers a call on a decoded List only
+    // once its decoder meets the step's `decList…` hypothesis, which the
+    // leaves rewrite with: the leaves unfold its image too.
+    let list_images: String = b
+        .callees
+        .iter()
+        .filter(|c| {
+            fns.get(c)
+                .is_some_and(|callee| callee.params.iter().any(|p| matches!(p, SourceEncoder::List(_))))
+        })
+        .map(|c| format!(", img_{c}"))
+        .collect();
+    let norm = format!("{STEP_NORM}{empty}{constants}{with_default}{list_images}");
     // A self-recursive source function is unfolded once, on the right: `simp`
     // with its equation would unfold the recursive call on the left as well.
     // The last rung of the other leaves meets a constant the source writes by
@@ -1583,8 +1859,8 @@ fn render_step(
     let leaf = if b.recursive && !b.fuel {
         format!(
             "(with_reducible rfl)\n           \
-             | (symm; rw [{model}]; simp [{norm}, *]; done)\n           \
-             | (symm; rw [{model}]; simp_all [{norm}]; done)\n           \
+             | (symm; rw [{model}]; (try simp [{norm}, *]); done)\n           \
+             | (symm; rw [{model}]; (try simp_all [{norm}]); done)\n           \
              | (symm; rw [{model}]; simp_all [{norm}] <;> omega)"
         )
     } else {
@@ -1611,7 +1887,13 @@ fn render_step(
               unfold dec_{f} at hy\n       \
               split at hy <;> simp only [_root_.Option.bind_eq_some_iff, _root_.Option.some.injEq, \
                 reduceCtorEq, AverCert.GrammarBridge.decodeStr_eq_some] at hy\n       \
-              all_goals (repeat (obtain ⟨_, rfl, hy⟩ := hy))\n       \
+              all_goals (repeat' (first\n         \
+                | (obtain ⟨_, rfl, hy⟩ := hy)\n         \
+                | (obtain ⟨_, hl, hy⟩ := hy\n            \
+                   first\n            \
+                   | (rcases decListInt_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩))\n            \
+                   | (rcases decListBool_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩))\n            \
+                   | (rcases decListString_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩)))))\n       \
               all_goals (try subst hy)\n       \
               all_goals simp only [AverCert.Plans.fn{f}, eval_ite, eval_optDefault, eval_resDefault]\n       \
               all_goals simp only [img_{f}, {STEP_EVAL}, I_{f}{callee_simps}{backward}]\n       \
@@ -1688,7 +1970,8 @@ fn render_export(
     // match (the statement's and `img_f`'s), or a conjunction of such for a
     // record: equal by unfolding, so `rfl` on each conjunct.
     let image_simps = format!(
-        "I_{func_idx}, dec_{func_idx}, img_{func_idx}, AverCert.GrammarBridge.decodeStr_strBytes"
+        "I_{func_idx}, dec_{func_idx}, img_{func_idx}, AverCert.GrammarBridge.decodeStr_strBytes, \
+         decListInt_enc, decListBool_enc, decListString_enc"
     );
     let image = format!(
         "(by {split_cases}all_goals first | rfl | (simp [{image_simps}]; done) | \
@@ -1844,6 +2127,7 @@ fn render_bridge_lean(
          set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
          namespace AverCert.Bridge\n\n"
     ));
+    s.push_str(LIST_DECODERS);
     for b in plan.fns.values() {
         render_fn_defs(b, &mut s);
     }
@@ -2457,9 +2741,26 @@ mod source_bridge_tests {
         // A String is matched whole and decoded by the wall's `decodeStr`.
         let strs = alts(&SourceEncoder::Str, &mut fresh).expect("a String decodes");
         assert_eq!(strs.len(), 1);
-        assert_eq!(strs[0].binds, vec![("v1".to_string(), "t1".to_string())]);
+        assert_eq!(
+            strs[0].binds,
+            vec![(
+                "v1".to_string(),
+                "t1".to_string(),
+                "AverCert.GrammarBridge.decodeStr".to_string()
+            )]
+        );
         assert!(alts(&SourceEncoder::Float, &mut fresh).is_err());
-        assert!(alts(&SourceEncoder::List(Box::new(SourceEncoder::Int)), &mut fresh).is_err());
+        let ints = alts(&SourceEncoder::List(Box::new(SourceEncoder::Int)), &mut fresh)
+            .expect("a List of Ints decodes");
+        assert_eq!(ints.len(), 1);
+        assert_eq!(ints[0].binds[0].2, "AverCert.Bridge.decListInt");
+        assert!(
+            alts(
+                &SourceEncoder::List(Box::new(SourceEncoder::List(Box::new(SourceEncoder::Int)))),
+                &mut fresh
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2678,7 +2979,7 @@ mod source_bridge_tests {
         assert!(s.contains(", ↓ ← strLit_1]"), "{s}");
         assert!(!s.contains("↓ ← strLit_0"), "the empty literal is never read back: {s}");
         assert!(s.contains("all_goals (repeat' (refine ite_eq_of (fun h => ?_) (fun h => ?_)))"), "{s}");
-        assert!(s.contains("| (symm; rw [_root_.M.spaces]; simp [_root_.bne"), "{s}");
+        assert!(s.contains("| (symm; rw [_root_.M.spaces]; (try simp [_root_.bne"), "{s}");
         assert!(s.contains(", strLit_0, _root_.M.width"), "{s}");
         assert!(!s.contains("simp [_root_.M.spaces"), "a recursive source never unfolds by simp: {s}");
         assert!(!s.contains("simp [AverCert.Plans.fn9"), "{s}");
