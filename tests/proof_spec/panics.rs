@@ -324,7 +324,7 @@ fn proof_check_accepts_total_first_code_point_in_lake_build() {
     // the partial Char model.
     let entry = std::fs::read_to_string(out.join("PanicProbe.lean")).expect("read emitted entry");
     assert!(
-        entry.contains("example : firstCode \"\" = 0"),
+        entry.contains("example : firstCode \"\" = (0 : Int)"),
         "expected the empty-string sample in the export:\n{entry}"
     );
 
@@ -394,14 +394,14 @@ fn lake_build_false_greens_on_forced_fuel_exhaustion_and_scan_catches_it() {
     );
 
     // Force fuel 0 on the wrappers — the exhaustion scenario. Also strip the
-    // ground-truth literal (`= 210` back to `= stepSumAcc 20`) so the export is
+    // ground-truth literal (`= (210 : Int)` back to `= stepSumAcc 20`) so the export is
     // the historical model-vs-model shape: this test isolates Lean's panic-line
     // contract while the artifact-local gate is covered above by an actually
     // unbounded mutual group.
     let entry = out.join("FuelProbe.lean");
     let contents = std::fs::read_to_string(&entry).expect("read emitted entry");
     let mutated = contents.replace("((Int.natAbs n) + 1)", "0").replace(
-        "example : stepSum 20 = 210",
+        "example : stepSum 20 = (210 : Int)",
         "example : stepSum 20 = stepSumAcc 20",
     );
     assert_ne!(

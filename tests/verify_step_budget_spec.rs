@@ -640,12 +640,15 @@ fn the_proof_lane_declines_a_case_verify_did_not_answer() {
 
     let lean = std::fs::read_to_string(out_dir.join("Costly.lean")).expect("emitted Lean module");
     // The answered case keeps its theorem.
-    assert!(lean.contains("example : countdown 10 0 = 10"), "{lean}");
+    assert!(
+        lean.contains("example : countdown 10 0 = (10 : Int)"),
+        "{lean}"
+    );
     // The unanswered one gets a refusal, not `impl(sample) = <the author's
     // own expected expression>` — the shape ground-truth literalization
     // exists to prevent, and the one that drops out exactly on big inputs.
     assert!(
-        !lean.contains("countdown 400000 0 = 400000"),
+        !lean.contains("countdown 400000 0 ="),
         "a declined case must not be exported as a theorem:\n{lean}"
     );
     assert!(
@@ -700,7 +703,7 @@ fn the_proof_lane_pins_the_same_case_once_the_budget_lets_it_run() {
     assert!(out.status.success(), "{}", format_output(&out));
     let lean = std::fs::read_to_string(out_dir.join("Costly.lean")).expect("emitted Lean module");
     assert!(
-        lean.contains("countdown 400000 0 = 400000"),
+        lean.contains("countdown 400000 0 = (400000 : Int)"),
         "with the budget raised the case runs, so it is pinned to the value the VM computed:\n{lean}"
     );
     assert!(!lean.contains("no theorem emitted"), "{lean}");

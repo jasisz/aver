@@ -86,7 +86,7 @@ verify f
         "verify-case `?` must short-circuit instead of substituting a default:\n{lean}"
     );
     assert!(
-        lean.contains("example : (do pure ((<- f 0))) = Except.ok (0)"),
+        lean.contains("example : (do pure ((<- f 0))) = Except.ok ((0 : Int))"),
         "the case must be stated as an `Except` action against `Except.ok`:\n{lean}"
     );
     let _ = std::fs::remove_dir_all(&src);
@@ -168,7 +168,9 @@ verify f law zero
         "law `?` must short-circuit instead of substituting a default:\n{lean}"
     );
     assert!(
-        lean.contains("theorem f_law_zero : ∀ (a : Int), (do pure ((<- f a))) = Except.ok (0)"),
+        lean.contains(
+            "theorem f_law_zero : ∀ (a : Int), (do pure ((<- f a))) = Except.ok ((0 : Int))"
+        ),
         "the universal law theorem must be stated as an `Except` action:\n{lean}"
     );
 
