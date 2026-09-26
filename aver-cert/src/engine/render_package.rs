@@ -221,24 +221,17 @@ fn render_plans(analysis: &Analysis) -> String {
             )
         })
         .collect::<Vec<_>>();
-    // A long list is written as the `++` of declarations of at most
-    // `LEAN_LIST_CHUNK` entries each: compiling one definition of a thousand
-    // entries passes Lean's recursion limit.
-    let chunks: Vec<&[String]> = entries.chunks(LEAN_LIST_CHUNK).collect();
-    let entries = if chunks.len() <= 1 {
-        format!("[{}]", entries.join(",\n   "))
+    // Compiling one list literal of a thousand entries passes Lean's default
+    // recursion limit, so a long list raises it for this one definition. The
+    // literal stays one term: the bridge proofs read entries of `fnPlans` by
+    // `rfl`, which is several times slower through `++` of pieces.
+    let depth = if entries.len() > 512 {
+        "set_option maxRecDepth 100000 in\n"
     } else {
-        let mut names = Vec::new();
-        for (k, chunk) in chunks.iter().enumerate() {
-            s.push_str(&format!(
-                "def fnPlans_{k} : List FnEntry :=\n  [{}]\n\n",
-                chunk.join(",\n   ")
-            ));
-            names.push(format!("fnPlans_{k}"));
-        }
-        names.join(" ++ ")
+        ""
     };
-    s.push_str(&format!("def fnPlans : List FnEntry :=\n  {entries}\n\n"));
+    let entries = format!("[{}]", entries.join(",\n   "));
+    s.push_str(&format!("{depth}def fnPlans : List FnEntry :=\n  {entries}\n\n"));
     s.push_str("end AverCert.Plans\n");
     s
 }
