@@ -104,7 +104,7 @@ For wasip2 the same rule covers the component wrapper. The manifest declares the
 
 ## The Lean wall
 
-The wall is one hash-addressed unit of 24 Lean files. By module:
+The wall is one hash-addressed unit of 25 Lean files. By module:
 
 - `CertPrelude`, `InterpreterSequencing`: the wasm instruction model and its interpreter;
 - `CertDecode`, `WasmSlice`, `Wasip2Envelope`: decoders over the actual module and component bytes;
@@ -118,6 +118,7 @@ The wall is one hash-addressed unit of 24 Lean files. By module:
 - `ByteWindow`: section cuts, the producer-declared byte length of every entry of the type, export and code sections; each entry is decoded on its own window, which keeps the kernel's numerals entry-sized instead of section-sized, and the decoders are proved equal to lazy readings of the confirmed windows;
 - `SortedKeys`: the export accounting and closure isolation decided by merge sorts and walks over sorted numeric keys, with proofs that imply the balanced-tree checks they replace;
 - `ArithTemplateDerisk`: the Int helper body templates;
+- `ListHelpers`: the List helper templates (`len`, `reverse`, `concat`, `take`, `drop`, `contains`, and `__aint_to_i64_sat`), the structured-control interpreter that runs them, and the theorems of what each run computes;
 - `AcceptedArtifactCore`, `AcceptedArtifact`: the derived obligations and the acceptance predicate;
 - `ClaimAxes`: the required runtime contracts and the report data;
 - `AcceptanceSoundnessCore`, `AcceptanceSoundness`: `fn_claim_discharges`, `accept_sound` and `accepted_nonvacuous`;

@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Added — certificates for List length, reverse, concat, take, drop and contains
+
+- **A function that calls `List.len`, `List.reverse`, `List.concat`, `List.take`, `List.drop` or `List.contains` can now be certified.** Such a call used to leave the function source-level only. Each of these calls goes to a helper the compiler emits once per element type, a loop over the list's cells. The certificate now names these helpers, and the checker compares each helper's bytes with its own copy and proves what that copy computes, so these calls add no runtime assumption to the certificate. `List.contains` is admitted over Ints, Strings and Bools; over Ints and Strings it relies on the equality contract it calls, which the certificate already lists. On the btc-listener corpus this certifies BTC_GAIN more functions (BTC_AFTER in all); across the examples, projects and certificate fixtures, 114 more (733 to 847). The compiled programs do not change: the modules of btc-listener, the bench scenarios, the examples and the projects are byte for byte the same. The wall identity rotates: packages produced by earlier versions must be produced again.
+
 ### Added — source bridges for List arguments
 
 - **A certified function that takes a List of Ints, Bools or Strings now has a source bridge.** The proof that its plan computes your source function used to stop at a List argument, so such a function was certified against its plan only, and a law about it was not on the bytes. The bridge proofs now decode a List argument one cell at a time. On the btc-listener corpus, 98 more functions get a credited source bridge (633 of 636), and 15 more laws are proved about the certified bytes (31 of 32). A List of records, sums or Lists still has no bridge.

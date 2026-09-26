@@ -34,6 +34,7 @@
    S-3 section below shows the two agree on constructor structs under the
    byte pin `GrammarLower.S3Pin`, which the acceptance must check. -/
 import GrammarLower
+import ListHelpers
 import InterpreterSequencing
 
 set_option maxHeartbeats 4000000
@@ -74,6 +75,29 @@ def Res (tail : Bool) (env : Nat → Option SVal) (st : List WVal) (sv : SVal) :
 
 end Rel
 
+open AverCert.ListHelpers (wList) in
+/-- What a caller knows of the declared `List<t>` helper of role `r`: what
+    `ListHelpers` proves the helper's template computes, over represented
+    lists (cons cells of `M.listStruct t`). -/
+def ListSpec {C : Nat} (S : CarrierSpec C) (M : MCtx) (r : ListRole) (t : Ty)
+    (g : List WVal → Option WVal) : Prop :=
+  match r with
+  | .len => ∀ ws v, g [wList (M.listStruct t) ws] = some v →
+      v = .i64v ws.length ∧ ws.length < 9223372036854775808
+  | .reverse => ∀ ws v, g [wList (M.listStruct t) ws] = some v →
+      v = wList (M.listStruct t) ws.reverse
+  | .concat => ∀ ws ws' v,
+      g [wList (M.listStruct t) ws, wList (M.listStruct t) ws'] = some v →
+      v = wList (M.listStruct t) (ws ++ ws')
+  | .take => ∀ ws c v, g [wList (M.listStruct t) ws, .i64v c] = some v →
+      v = wList (M.listStruct t) (ws.take c.toNat) ∧ ws.length < 9223372036854775808
+  | .drop => ∀ ws c v, g [wList (M.listStruct t) ws, .i64v c] = some v →
+      v = wList (M.listStruct t) (ws.drop c.toNat) ∧ ws.length < 9223372036854775808
+  | .contains => ∀ vs ws x wx v, HasTyAll M vs t → HasTy M x t → SReprL S M vs ws →
+      SRepr S M x wx → g [wList (M.listStruct t) ws, wx] = some v →
+      v = b32 (vs.any fun y => svEq y x)
+
+
 /-- The runtime helpers the String and Vector nodes call, at their indices,
     each with the contract `Schema.Obligation.holds` already assumes of it:
     `__wasmgc_concat_n` concatenates the byte arrays of its `Vector<String>`
@@ -92,6 +116,13 @@ structure XHost {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop
   divmod : ∃ g, host M.divmod = some (3, g) ∧
     ∀ a b wa wb m r, CanonRepr S a wa → CanonRepr S b wb → b ≠ 0 → (m = 0 ∨ m = 1) →
       g [wa, wb, .i32v m] = some r → CanonRepr S (if m = 1 then a % b else a / b) r
+  /-- `__aint_to_i64_sat`, the wall's run of its pinned template. -/
+  toI64Sat : ∃ g, host M.toI64Sat = some (1, g) ∧
+    ∀ n w v, CanonRepr S n w → g [w] = some v →
+      ∃ c, v = .i64v c ∧ AverCert.ListHelpers.satOk n c
+  /-- Every declared List helper, the wall's run of its pinned template. -/
+  listHelper : ∀ r t f, M.listHelper r t = some f →
+    ∃ g, host f = some (r.arity, g) ∧ ListSpec S M r t g
 
 /-- Assume–guarantee contract of a code function `f` at signature `sig` for
     one opaque `callee`: the ONLY thing a caller knows about `f`. -/
@@ -591,7 +622,8 @@ theorem hasTy_list {M : MCtx} {v : SVal} {t : Ty} (h : HasTy M v (.list t)) :
     type. -/
 theorem builtin_step (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     {C : Nat} {S : CarrierSpec C} {M : MCtx}
-    (bi : Builtin) (ts : List Ty) (T : Ty) (hty : builtinTy bi ts = some T)
+    (bi : Builtin) (hnl : bi.listRole = none) (ts : List Ty) (T : Ty)
+    (hty : builtinTy M bi ts = some T)
     (svs : List SVal) (ws : List WVal) (hT : HasTyL M svs ts) (hr : SReprL S M svs ws)
     (wl st : List WVal) (out : Out)
     (hrun : wRunF host ar callee (eraseL (builtinTail M bi (some ts))) wl (ws.reverse ++ st) =
@@ -662,7 +694,7 @@ theorem builtin_step (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee
         ⟨wh, wt, rfl, hwh, hwt⟩, rfl⟩
       rcases hasTy_list htl with rfl | ⟨x, r, rfl, _, _⟩ <;> rfl
     · cases hty
-  · cases hty
+  all_goals first | cases hty | simp [Builtin.listRole] at hnl
 
 /-! ## Strings and Floats -/
 
@@ -1152,7 +1184,7 @@ theorem tyOf_callFn_inv {f : Nat} {args : List Expr} {T : Ty}
 
 theorem tyOf_callBuiltin_inv {bi : Builtin} {args : List Expr} {T : Ty}
     (h : tyOf M n Γ tail (.call (.builtin bi) args) = some T) :
-    ∃ ts, tysOf M n Γ args = some ts ∧ builtinTy bi ts = some T := by
+    ∃ ts, tysOf M n Γ args = some ts ∧ builtinTy M bi ts = some T := by
   simp only [tyOf] at h
   split at h
   · rename_i ts hts
@@ -1985,6 +2017,298 @@ theorem consCalls_run {host : HostTbl} {ar : Nat → Option Nat} {callee : Calle
 
 end ListLit
 
+/-! ## List helper calls
+
+A `List.len` / `reverse` / `concat` / `take` / `drop` / `contains` call
+pushes its arguments and calls the declared helper, which the caller knows
+only through `ListSpec` (what `ListHelpers` proves the helper's template
+computes); `List.len` then boxes the helper's `i64`, and a `take` / `drop`
+count first goes through `__aint_to_i64_sat`. -/
+
+section ListCalls
+variable {C : Nat} {S : CarrierSpec C} {M : MCtx}
+open AverCert.ListHelpers (wList satOk)
+
+theorem srepr_consAll (t : Ty) : ∀ (vs : List SVal) (w : WVal),
+    SRepr S M (consAll t vs) w ↔ ∃ ws, w = wList (M.listStruct t) ws ∧ SReprL S M vs ws
+  | [], w => by
+      simp only [consAll, SRepr]
+      constructor
+      · rintro rfl
+        exact ⟨[], rfl, trivial⟩
+      · rintro ⟨ws, rfl, h⟩
+        cases ws with
+        | nil => rfl
+        | cons _ _ => simp [SReprL] at h
+  | v :: vs, w => by
+      simp only [consAll, SRepr]
+      constructor
+      · rintro ⟨x, y, rfl, hx, hy⟩
+        obtain ⟨ws, rfl, hws⟩ := (srepr_consAll t vs y).1 hy
+        exact ⟨x :: ws, rfl, hx, hws⟩
+      · rintro ⟨ws, rfl, hws⟩
+        cases ws with
+        | nil => simp [SReprL] at hws
+        | cons x ws =>
+            exact ⟨x, wList _ ws, rfl, hws.1, (srepr_consAll t vs _).2 ⟨ws, rfl, hws.2⟩⟩
+
+theorem hasTyAll_iff : ∀ {vs : List SVal} {t : Ty}, HasTyAll M vs t ↔ ∀ v ∈ vs, HasTy M v t
+  | [], _ => by simp [HasTyAll]
+  | v :: vs, t => by simp [HasTyAll, hasTyAll_iff (vs := vs)]
+
+theorem hasTy_consAll {t : Ty} : ∀ {vs : List SVal}, HasTyAll M vs t →
+    HasTy M (consAll t vs) (.list t)
+  | [], _ => by simp [consAll, HasTy]
+  | _ :: _, h => ⟨rfl, h.1, hasTy_consAll h.2⟩
+
+theorem hasTy_list_consAll {t : Ty} : ∀ {v : SVal}, HasTy M v (.list t) →
+    ∃ vs, v = consAll t vs ∧ HasTyAll M vs t
+  | .nil t', h => by
+      simp only [HasTy] at h
+      subst h
+      exact ⟨[], rfl, trivial⟩
+  | .cons t' x r, h => by
+      obtain ⟨rfl, hx, hr⟩ := h
+      obtain ⟨vs, rfl, hvs⟩ := hasTy_list_consAll hr
+      exact ⟨x :: vs, rfl, hx, hvs⟩
+  | .i _, h | .b _, h | .record _ _, h | .variant _ _ _, h | .none _, h | .some _ _, h
+  | .ok _ _ _, h | .err _ _ _, h | .f _, h | .s _, h | .vec _ _, h | .w _, h => by
+      simp [HasTy] at h
+
+theorem listOf_consAll (t : Ty) : ∀ vs : List SVal, listOf? (consAll t vs) = some (t, vs)
+  | [] => rfl
+  | v :: vs => by simp [consAll, listOf?, listOf_consAll t vs]
+
+theorem sreprL_take : ∀ (n : Nat) {vs : List SVal} {ws : List WVal},
+    SReprL S M vs ws → SReprL S M (vs.take n) (ws.take n)
+  | 0, _, _, _ => by simp [SReprL]
+  | _ + 1, [], [], _ => by simp [SReprL]
+  | n + 1, _ :: _, _ :: _, h => ⟨h.1, sreprL_take n h.2⟩
+  | _ + 1, [], _ :: _, h => by simp [SReprL] at h
+  | _ + 1, _ :: _, [], h => by simp [SReprL] at h
+
+theorem sreprL_drop : ∀ (n : Nat) {vs : List SVal} {ws : List WVal},
+    SReprL S M vs ws → SReprL S M (vs.drop n) (ws.drop n)
+  | 0, _, _, h => by simpa using h
+  | _ + 1, [], [], _ => by simp [SReprL]
+  | n + 1, _ :: _, _ :: _, h => by simpa using sreprL_drop n h.2
+  | _ + 1, [], _ :: _, h => by simp [SReprL] at h
+  | _ + 1, _ :: _, [], h => by simp [SReprL] at h
+
+theorem take_sat {ws : List WVal} {n c : Int} (hs : satOk n c)
+    (hl : ws.length < 9223372036854775808) : ws.take c.toNat = ws.take n.toNat := by
+  rw [← AverCert.ListHelpers.take_min_length ws c.toNat,
+    ← AverCert.ListHelpers.take_min_length ws n.toNat, hs _ hl]
+
+theorem drop_sat {ws : List WVal} {n c : Int} (hs : satOk n c)
+    (hl : ws.length < 9223372036854775808) : ws.drop c.toNat = ws.drop n.toNat := by
+  rw [← AverCert.ListHelpers.drop_min_length ws c.toNat,
+    ← AverCert.ListHelpers.drop_min_length ws n.toNat, hs _ hl]
+
+end ListCalls
+
+section ListStep
+variable {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
+open AverCert.ListHelpers (wList satOk)
+
+/-- A represented, typed List argument: its elements and their words. -/
+theorem list_arg {t : Ty} {v : SVal} {w : WVal} (hv : HasTy M v (.list t))
+    (hw : SRepr S M v w) :
+    ∃ vs wsl, v = consAll t vs ∧ HasTyAll M vs t ∧ w = wList (M.listStruct t) wsl ∧
+      SReprL S M vs wsl := by
+  obtain ⟨vs, rfl, hvs⟩ := hasTy_list_consAll hv
+  obtain ⟨wsl, rfl, hr⟩ := (srepr_consAll t vs w).1 hw
+  exact ⟨vs, wsl, rfl, hvs, rfl, hr⟩
+
+theorem hasTyL_one {svs : List SVal} {t : Ty} (h : HasTyL M svs [t]) :
+    ∃ v, svs = [v] ∧ HasTy M v t := by
+  obtain ⟨v, svs1, rfl, hv, h1⟩ := hasTyL_cons_inv h
+  exact ⟨v, by rw [hasTyL_nil_inv h1], hv⟩
+
+theorem hasTyL_two {svs : List SVal} {t t' : Ty} (h : HasTyL M svs [t, t']) :
+    ∃ v v', svs = [v, v'] ∧ HasTy M v t ∧ HasTy M v' t' := by
+  obtain ⟨v, svs1, rfl, hv, h1⟩ := hasTyL_cons_inv h
+  obtain ⟨v', svs2, rfl, hv', h2⟩ := hasTyL_cons_inv h1
+  exact ⟨v, v', by rw [hasTyL_nil_inv h2], hv, hv'⟩
+
+theorem sreprL_one {v : SVal} {ws : List WVal} (h : SReprL S M [v] ws) :
+    ∃ w, ws = [w] ∧ SRepr S M v w := by
+  obtain ⟨w, ws1, rfl, hw, h1⟩ := sreprL_cons_inv h
+  exact ⟨w, by rw [sreprL_nil_inv h1], hw⟩
+
+theorem sreprL_two {v v' : SVal} {ws : List WVal} (h : SReprL S M [v, v'] ws) :
+    ∃ w w', ws = [w, w'] ∧ SRepr S M v w ∧ SRepr S M v' w' := by
+  obtain ⟨w, ws1, rfl, hw, h1⟩ := sreprL_cons_inv h
+  obtain ⟨w', ws2, rfl, hw', h2⟩ := sreprL_cons_inv h1
+  exact ⟨w, w', by rw [sreprL_nil_inv h2], hw, hw'⟩
+
+theorem hasTyAll_sub {vs vs' : List SVal} {t : Ty} (h : HasTyAll M vs t)
+    (hs : ∀ v ∈ vs', v ∈ vs) : HasTyAll M vs' t :=
+  hasTyAll_iff.2 fun v hv => hasTyAll_iff.1 h v (hs v hv)
+
+/-- A List builtin's tail after its arguments: the helper call (and the box,
+    the saturated count) computes the builtin's meaning. -/
+theorem listBuiltin_step (R : XHost S M host)
+    (box : List WVal → Option WVal) (hBox : host M.box = some (1, box))
+    (hBoxC : ∀ n w, -(2 ^ 63 : Int) ≤ n → n < 2 ^ 63 → box [.i64v n] = some w →
+      CanonRepr S n w)
+    (ar : Nat → Option Nat) (callee : Callee)
+    (bi : Builtin) (r : ListRole) (hbi : bi.listRole = some r)
+    (ts : List Ty) (T : Ty) (hty : builtinTy M bi ts = some T)
+    (svs : List SVal) (ws : List WVal) (hT : HasTyL M svs ts) (hr : SReprL S M svs ws)
+    (wl st : List WVal) (out : Out)
+    (hrun : wRunF host ar callee (eraseL (builtinTail M bi (some ts))) wl (ws.reverse ++ st) =
+      some out) :
+    ∃ sv w, builtinEval bi svs = some sv ∧ HasTy M sv T ∧ SRepr S M sv w ∧
+      out = .ok wl (w :: st) := by
+  have h63 : (2 : Int) ^ 63 = 9223372036854775808 := by decide
+  cases bi <;> simp [Builtin.listRole] at hbi <;> subst hbi
+  · -- `List.len`
+    obtain ⟨t, f, rfl, rfl, hf⟩ := AverCert.ListHelpers.builtinTy_listLen hty
+    obtain ⟨xs, rfl, hxs⟩ := hasTyL_one hT
+    obtain ⟨w0, rfl, hw0⟩ := sreprL_one hr
+    obtain ⟨vs, wsl, rfl, hvs, rfl, hrep⟩ := list_arg hxs hw0
+    obtain ⟨g, hg, hspec⟩ := R.listHelper .len t f hf
+    simp only [ListSpec] at hspec
+    simp only [ListRole.arity] at hg
+    simp only [builtinTail, helperCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hgr : g [wList (M.listStruct t) wsl] with
+    | none => simp [wRunF, hg, popArgs_one, popArgs_two, hgr] at hrun
+    | some v =>
+        obtain ⟨rfl, hb⟩ := hspec wsl v hgr
+        cases hbr : box [.i64v wsl.length] with
+        | none => simp [wRunF, hg, popArgs_one, popArgs_two, hgr, hBox, hbr] at hrun
+        | some w =>
+            simp [wRunF, hg, popArgs_one, popArgs_two, hgr, hBox, hbr] at hrun
+            subst hrun
+            have hc := hBoxC _ _ (by omega) (by rw [h63]; omega) hbr
+            have hlen : wsl.length = vs.length := (sreprL_length hrep).symm
+            refine ⟨.i vs.length, w, ?_, trivial, ?_, rfl⟩
+            · simp [builtinEval, listOf_consAll]
+            · simpa [SRepr, hlen] using hc
+  · -- `List.reverse`
+    obtain ⟨t, f, rfl, rfl, hf⟩ := AverCert.ListHelpers.builtinTy_listReverse hty
+    obtain ⟨xs, rfl, hxs⟩ := hasTyL_one hT
+    obtain ⟨w0, rfl, hw0⟩ := sreprL_one hr
+    obtain ⟨vs, wsl, rfl, hvs, rfl, hrep⟩ := list_arg hxs hw0
+    obtain ⟨g, hg, hspec⟩ := R.listHelper .reverse t f hf
+    simp only [ListSpec] at hspec
+    simp only [ListRole.arity] at hg
+    simp only [builtinTail, helperCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hgr : g [wList (M.listStruct t) wsl] with
+    | none => simp [wRunF, hg, popArgs_one, popArgs_two, hgr] at hrun
+    | some v =>
+        have hv := hspec wsl v hgr
+        subst hv
+        simp [wRunF, hg, popArgs_one, popArgs_two, hgr] at hrun
+        subst hrun
+        refine ⟨consAll t vs.reverse, _, ?_, ?_, ?_, rfl⟩
+        · simp [builtinEval, listOf_consAll]
+        · exact hasTy_consAll (hasTyAll_sub hvs fun v hv => List.mem_reverse.1 hv)
+        · exact (srepr_consAll t _ _).2 ⟨_, rfl, sreprL_reverse hrep⟩
+  · -- `List.concat`
+    obtain ⟨t, f, rfl, rfl, hf⟩ := AverCert.ListHelpers.builtinTy_listConcat hty
+    obtain ⟨xs, ys, rfl, hxs, hys⟩ := hasTyL_two hT
+    obtain ⟨w0, w1, rfl, hw0, hw1⟩ := sreprL_two hr
+    obtain ⟨vs, wsl, rfl, hvs, rfl, hrep⟩ := list_arg hxs hw0
+    obtain ⟨vs', wsl', rfl, hvs', rfl, hrep'⟩ := list_arg hys hw1
+    obtain ⟨g, hg, hspec⟩ := R.listHelper .concat t f hf
+    simp only [ListSpec] at hspec
+    simp only [ListRole.arity] at hg
+    simp only [builtinTail, helperCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hgr : g [wList (M.listStruct t) wsl, wList (M.listStruct t) wsl'] with
+    | none => simp [wRunF, hg, popArgs_one, popArgs_two, hgr] at hrun
+    | some v =>
+        have hv := hspec wsl wsl' v hgr
+        subst hv
+        simp [wRunF, hg, popArgs_one, popArgs_two, hgr] at hrun
+        subst hrun
+        refine ⟨consAll t (vs ++ vs'), _, ?_, ?_, ?_, rfl⟩
+        · simp [builtinEval, listOf_consAll]
+        · exact hasTy_consAll (hasTyAll_iff.2 fun v hv => by
+            rcases List.mem_append.1 hv with h | h
+            · exact hasTyAll_iff.1 hvs v h
+            · exact hasTyAll_iff.1 hvs' v h)
+        · exact (srepr_consAll t _ _).2 ⟨_, rfl, sreprL_append hrep hrep'⟩
+  · -- `List.take`
+    obtain ⟨t, f, rfl, rfl, hf⟩ := AverCert.ListHelpers.builtinTy_listTake hty
+    obtain ⟨xs, xn, rfl, hxs, hxn⟩ := hasTyL_two hT
+    obtain ⟨w0, wn, rfl, hw0, hwn⟩ := sreprL_two hr
+    obtain ⟨vs, wsl, rfl, hvs, rfl, hrep⟩ := list_arg hxs hw0
+    obtain ⟨n, rfl⟩ := hasTy_int hxn
+    obtain ⟨gs, hgs, hsat⟩ := R.toI64Sat
+    obtain ⟨g, hg, hspec⟩ := R.listHelper .take t f hf
+    simp only [ListSpec] at hspec
+    simp only [ListRole.arity] at hg
+    simp only [builtinTail, helperCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hsr : gs [wn] with
+    | none => simp [wRunF, hgs, popArgs_one, popArgs_two, hsr] at hrun
+    | some vc =>
+        obtain ⟨c, rfl, hc⟩ := hsat n wn _ hwn hsr
+        cases hgr : g [wList (M.listStruct t) wsl, .i64v c] with
+        | none => simp [wRunF, hgs, hg, popArgs_one, popArgs_two, hsr, hgr] at hrun
+        | some v =>
+            obtain ⟨rfl, hl⟩ := hspec wsl c v hgr
+            simp [wRunF, hgs, hg, popArgs_one, popArgs_two, hsr, hgr] at hrun
+            subst hrun
+            rw [take_sat hc hl]
+            refine ⟨consAll t (vs.take n.toNat), _, ?_, ?_, ?_, rfl⟩
+            · simp [builtinEval, listOf_consAll]
+            · exact hasTy_consAll (hasTyAll_sub hvs fun v hv => List.mem_of_mem_take hv)
+            · exact (srepr_consAll t _ _).2 ⟨_, rfl, sreprL_take _ hrep⟩
+  · -- `List.drop`
+    obtain ⟨t, f, rfl, rfl, hf⟩ := AverCert.ListHelpers.builtinTy_listDrop hty
+    obtain ⟨xs, xn, rfl, hxs, hxn⟩ := hasTyL_two hT
+    obtain ⟨w0, wn, rfl, hw0, hwn⟩ := sreprL_two hr
+    obtain ⟨vs, wsl, rfl, hvs, rfl, hrep⟩ := list_arg hxs hw0
+    obtain ⟨n, rfl⟩ := hasTy_int hxn
+    obtain ⟨gs, hgs, hsat⟩ := R.toI64Sat
+    obtain ⟨g, hg, hspec⟩ := R.listHelper .drop t f hf
+    simp only [ListSpec] at hspec
+    simp only [ListRole.arity] at hg
+    simp only [builtinTail, helperCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hsr : gs [wn] with
+    | none => simp [wRunF, hgs, popArgs_one, popArgs_two, hsr] at hrun
+    | some vc =>
+        obtain ⟨c, rfl, hc⟩ := hsat n wn _ hwn hsr
+        cases hgr : g [wList (M.listStruct t) wsl, .i64v c] with
+        | none => simp [wRunF, hgs, hg, popArgs_one, popArgs_two, hsr, hgr] at hrun
+        | some v =>
+            obtain ⟨rfl, hl⟩ := hspec wsl c v hgr
+            simp [wRunF, hgs, hg, popArgs_one, popArgs_two, hsr, hgr] at hrun
+            subst hrun
+            rw [drop_sat hc hl]
+            refine ⟨consAll t (vs.drop n.toNat), _, ?_, ?_, ?_, rfl⟩
+            · simp [builtinEval, listOf_consAll]
+            · exact hasTy_consAll (hasTyAll_sub hvs fun v hv => List.mem_of_mem_drop hv)
+            · exact (srepr_consAll t _ _).2 ⟨_, rfl, sreprL_drop _ hrep⟩
+  · -- `List.contains`
+    obtain ⟨t, f, rfl, rfl, _, hf⟩ := AverCert.ListHelpers.builtinTy_listContains hty
+    obtain ⟨xs, x, rfl, hxs, hx⟩ := hasTyL_two hT
+    obtain ⟨w0, wx, rfl, hw0, hwx⟩ := sreprL_two hr
+    obtain ⟨vs, wsl, rfl, hvs, rfl, hrep⟩ := list_arg hxs hw0
+    obtain ⟨g, hg, hspec⟩ := R.listHelper .contains t f hf
+    simp only [ListSpec] at hspec
+    simp only [ListRole.arity] at hg
+    simp only [builtinTail, helperCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hgr : g [wList (M.listStruct t) wsl, wx] with
+    | none => simp [wRunF, hg, popArgs_one, popArgs_two, hgr] at hrun
+    | some v =>
+        have hv := hspec vs wsl x wx v hvs hx hrep hwx hgr
+        subst hv
+        simp [wRunF, hg, popArgs_one, popArgs_two, hgr] at hrun
+        subst hrun
+        refine ⟨.b (vs.any fun y => svEq y x), _, ?_, trivial, rfl, rfl⟩
+        simp [builtinEval, listOf_consAll]
+
+end ListStep
+
 section Agreement
 variable {C : Nat} (S : CarrierSpec C)
   (box add sub mul cmp eq neg : List WVal → Option WVal)
@@ -2212,9 +2536,16 @@ theorem agreement_step :
       obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
         agreementArgs args Γ env ts wl st o1 hts henv hl h1
       simp only [seqOut] at hseq
-      obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
-        builtin_step host ar callee bi ts T hbt svs ws hTs hrep wl1 st out hseq
-      exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
+      cases hlr : bi.listRole with
+      | none =>
+          obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
+            builtin_step host ar callee bi hlr ts T hbt svs ws hTs hrep wl1 st out hseq
+          exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
+      | some r =>
+          obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
+            listBuiltin_step R box hBox Ctr.hBox ar callee bi r hlr ts T hbt svs ws hTs hrep
+              wl1 st out hseq
+          exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
   | .call (.intrinsic ie) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨a, k, rfl, hk0, hband, hta, rfl⟩ := tyOf_intrinsic_inv hty
       simp only [lowerW, lowerB, lowerArgsB, eraseL_append, List.append_nil,

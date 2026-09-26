@@ -161,6 +161,42 @@ theorem funcBindingByFuncIndex_of_layout_out {n len : Nat} {L : Layout}
     · rfl
   · rfl
 
+/-! ### Helper bodies over the declared layout -/
+
+/-- `bodyBytesAtFuncIndex` read from the layout: the code entry without its
+    size prefix. -/
+def Layout.bodyAt (L : Layout) (n idx : Nat) : Option (List Nat) :=
+  if L.imports ≤ idx ∧ idx - L.imports < L.count then
+    match CertDecode.readU (L.entryN n (idx - L.imports)) (L.len (idx - L.imports)) with
+    | some (esz, bodyN, _) => some (CertDecode.takeBytes esz bodyN)
+    | none => none
+  else none
+
+theorem bodyBytesAtFuncIndex_of_layout {n len : Nat} {L : Layout}
+    (h : layoutConfirmed n len L = true) (idx : Nat) :
+    bodyBytesAtFuncIndex n len idx = L.bodyAt n idx := by
+  unfold layoutConfirmed at h
+  split at h
+  · rename_i nimp fts locs himp hfts hlocs
+    simp only [Bool.and_eq_true, beq_iff_eq] at h
+    obtain ⟨⟨rfl, hcount⟩, hm⟩ := h
+    obtain ⟨hlen, hget⟩ := locsMatch_spec hm
+    simp only [bodyBytesAtFuncIndex, himp, hlocs, Layout.bodyAt]
+    by_cases hlo : L.imports ≤ idx
+    · simp only [hlo, ↓reduceIte, true_and]
+      by_cases hhi : idx - L.imports < L.count
+      · obtain ⟨_, loc, hloc, hl, hn⟩ := hget (idx - L.imports) (by omega)
+        simp only [Array.getElem?_toList] at hloc
+        simp only [hloc, hhi, ↓reduceIte, hl, hn, Nat.zero_add]
+        rfl
+      · have : locs[idx - L.imports]? = none := by
+          rw [← Array.getElem?_toList]
+          apply List.getElem?_eq_none
+          simp only [Array.length_toList] at hlen ⊢; omega
+        simp [this, hhi]
+    · simp [hlo]
+  · simp at h
+
 /-! ### Helper function types over the declared layout -/
 
 /-- `roleTypePinned`, with the helper's type index read from the layout. -/
@@ -197,6 +233,20 @@ def roleTypesPinnedL (L : Layout) (n len : Nat) (M : MCtx) : Bool :=
   roleTypePinnedL L n len M.concat [refN M.strVec] [refN M.str] &&
   roleTypePinnedL L n len M.divmod [c, c, .numeric 0x7f] [c]
 
+/-- `listHelpersPinned` with each helper's body and type read from the
+    layout. -/
+def listHelpersPinnedL (L : Layout) (n len : Nat) (M : MCtx) : Bool :=
+  listHelpersPinnedWith (L.bodyAt n) (roleTypePinnedL L n len) M
+
+theorem listHelpersPinned_of_layout {n len : Nat} {L : Layout}
+    (h : layoutConfirmed n len L = true) (M : MCtx) :
+    listHelpersPinned n len M = listHelpersPinnedL L n len M := by
+  unfold listHelpersPinned listHelpersPinnedL
+  have hb : bodyBytesAtFuncIndex n len = L.bodyAt n := funext (bodyBytesAtFuncIndex_of_layout h)
+  have ht : roleTypePinned n len = roleTypePinnedL L n len :=
+    funext fun i => funext fun ps => funext fun rs => roleTypePinned_of_layout h i ps rs
+  rw [hb, ht]
+
 /-- `plansAcceptedRest` with the helper types read over the layout. -/
 def plansAcceptedRestL (artifact : ArtifactData) (L : Layout) : Bool :=
   let m := artifact.manifest
@@ -206,14 +256,15 @@ def plansAcceptedRestL (artifact : ArtifactData) (L : Layout) : Bool :=
   dataConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   roleTypesPinnedL L artifact.modBytes artifact.modLen M &&
   declsWellFormed m.subject m.types m.fnPlans &&
-  consPinned m.types m.fnPlans
+  consPinned m.types m.fnPlans &&
+  listHelpersPinnedL L artifact.modBytes artifact.modLen M
 
 theorem plansAcceptedRest_of_layout {artifact : ArtifactData} {L : Layout}
     (hL : layoutConfirmed artifact.modBytes artifact.modLen L = true)
     (h : plansAcceptedRestL artifact L = true) : plansAcceptedRest artifact = true := by
   unfold plansAcceptedRest
   unfold plansAcceptedRestL at h
-  simp only [roleTypesPinned, roleTypePinned_of_layout hL]
+  simp only [roleTypesPinned, roleTypePinned_of_layout hL, listHelpersPinned_of_layout hL]
   exact h
 
 /-! ### Distinct export names -/
@@ -568,41 +619,7 @@ theorem closureIsolation_of_layout {artifact : ArtifactData} {L : Layout}
   simp only [closureFold_eq_with, hlook]
   exact h
 
-/-! ### Helper bodies over the declared layout -/
-
-/-- `bodyBytesAtFuncIndex` read from the layout: the code entry without its
-    size prefix. -/
-def Layout.bodyAt (L : Layout) (n idx : Nat) : Option (List Nat) :=
-  if L.imports ≤ idx ∧ idx - L.imports < L.count then
-    match CertDecode.readU (L.entryN n (idx - L.imports)) (L.len (idx - L.imports)) with
-    | some (esz, bodyN, _) => some (CertDecode.takeBytes esz bodyN)
-    | none => none
-  else none
-
-theorem bodyBytesAtFuncIndex_of_layout {n len : Nat} {L : Layout}
-    (h : layoutConfirmed n len L = true) (idx : Nat) :
-    bodyBytesAtFuncIndex n len idx = L.bodyAt n idx := by
-  unfold layoutConfirmed at h
-  split at h
-  · rename_i nimp fts locs himp hfts hlocs
-    simp only [Bool.and_eq_true, beq_iff_eq] at h
-    obtain ⟨⟨rfl, hcount⟩, hm⟩ := h
-    obtain ⟨hlen, hget⟩ := locsMatch_spec hm
-    simp only [bodyBytesAtFuncIndex, himp, hlocs, Layout.bodyAt]
-    by_cases hlo : L.imports ≤ idx
-    · simp only [hlo, ↓reduceIte, true_and]
-      by_cases hhi : idx - L.imports < L.count
-      · obtain ⟨_, loc, hloc, hl, hn⟩ := hget (idx - L.imports) (by omega)
-        simp only [Array.getElem?_toList] at hloc
-        simp only [hloc, hhi, ↓reduceIte, hl, hn, Nat.zero_add]
-        rfl
-      · have : locs[idx - L.imports]? = none := by
-          rw [← Array.getElem?_toList]
-          apply List.getElem?_eq_none
-          simp only [Array.length_toList] at hlen ⊢; omega
-        simp [this, hhi]
-    · simp [hlo]
-  · simp at h
+/-! ### Arith helper bodies over the declared layout -/
 
 theorem arithRoleCheck_of_layout {n len : Nat} {L : Layout}
     (h : layoutConfirmed n len L = true) (role : ArithTemplateDerisk.ArithRole)

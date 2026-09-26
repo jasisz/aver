@@ -22,7 +22,10 @@
      synthetic drop form, is declined).
    * `call (.fn idx) args` — `Call { callee: Fn(..) }`, the callee by its
      wasm function index; `call (.builtin b) args` — `Call { callee:
-     Builtin(..) }` for `Bool.and`, `Bool.or`, `Bool.not`, `List.prepend`.
+     Builtin(..) }` for `Bool.and`, `Bool.or`, `Bool.not`, `List.prepend`,
+     and `List.len` / `reverse` / `concat` / `take` / `drop` / `contains`,
+     each a call of its per-instantiation runtime helper (`MCtx.listHelper`,
+     `ListHelpers`).
    * `tailCall target args` — `TailCall`, target by wasm function index.
    * `binOp op lhs rhs` — `BinOp` with `ast::BinOp` minus `Div`, over two
      `Int` operands (arithmetic and the six comparisons), two `Bool`
@@ -142,7 +145,33 @@ inductive Builtin where
       fused under `Result.withDefault` with an Int literal default (the
       emitter's guarded `__aint_divmod` call). -/
   | intDiv | intMod
+  /-- `List.len`, `List.reverse`, `List.concat`, `List.take`, `List.drop`,
+      `List.contains`: a call of the per-instantiation runtime helper the
+      type table declares (`MCtx.listHelper`), whose body the acceptance
+      pins to the wall's template and `ListHelpers` proves. -/
+  | listLen | listReverse | listConcat | listTake | listDrop | listContains
 deriving DecidableEq, Repr
+
+/-- The per-instantiation `List<T>` runtime helpers a builtin call reaches
+    (`src/codegen/wasm_gc/lists.rs`). -/
+inductive ListRole where
+  | len | reverse | concat | take | drop | contains
+deriving DecidableEq, Repr
+
+/-- A List helper's parameter count. -/
+def ListRole.arity : ListRole → Nat
+  | .len | .reverse => 1
+  | _ => 2
+
+/-- The List helper a List builtin calls. -/
+def Builtin.listRole : Builtin → Option ListRole
+  | .listLen => some .len
+  | .listReverse => some .reverse
+  | .listConcat => some .concat
+  | .listTake => some .take
+  | .listDrop => some .drop
+  | .listContains => some .contains
+  | _ => none
 
 /-- `BuiltinIntrinsic::IntDivEuclid` / `IntModEuclid`: Euclidean division and
     remainder by a syntactic nonzero literal (no `Result`). -/
@@ -282,6 +311,24 @@ structure MCtx where
   /-- The cons helper of `List<T>` (`(T, List<T>) -> List<T>`) a non-empty
       literal calls, when the type table declares one. -/
   listCons : Ty → Option Nat := fun _ => none
+  /-- The `List<T>` runtime helpers the type table declares, as
+      `(element type, role, function index)`: each one's body is pinned to
+      the wall's template for its role and instantiation. -/
+  listHelpers : List (Ty × ListRole × Nat) := []
+  /-- `__aint_to_i64_sat`, the saturating Int-to-`i64` conversion of a
+      `List.take` / `List.drop` count, pinned to its template. -/
+  toI64Sat : Nat := 0
+
+/-- The declared helper of `role` for `List<t>`. -/
+def MCtx.listHelper (M : MCtx) (r : ListRole) (t : Ty) : Option Nat :=
+  (M.listHelpers.find? fun x => decide (x.1 = t ∧ x.2.1 = r)).map (·.2.2)
+
+/-- The element types `List.contains` compares: its helper calls
+    `__aint_eq` (Int), `__wasmgc_string_eq` (String), or uses `i32.eq`
+    (Bool). -/
+def Ty.containsEq : Ty → Bool
+  | .int | .string | .bool => true
+  | _ => false
 
 /-- One function's plan: signature, the resolver slot count (parameters and
     every binder; the const-compare scratch local sits at this index), the
@@ -472,11 +519,20 @@ must be below it and not yet bound (fresh), so the scratch local at `n` is
 never a binder. `tail` is the position: `tailCall` is typed only in tail
 position (its `return_call` leaves the function). -/
 
-def builtinTy : Builtin → List Ty → Option Ty
+def builtinTy (M : MCtx) : Builtin → List Ty → Option Ty
   | .boolAnd, [.bool, .bool] => some .bool
   | .boolOr, [.bool, .bool] => some .bool
   | .boolNot, [.bool] => some .bool
   | .listPrepend, [t, .list t'] => if t = t' then some (.list t) else none
+  | .listLen, [.list t] => if (M.listHelper .len t).isSome then some .int else none
+  | .listReverse, [.list t] =>
+      if (M.listHelper .reverse t).isSome then some (.list t) else none
+  | .listConcat, [.list t, .list t'] =>
+      if t = t' ∧ (M.listHelper .concat t).isSome then some (.list t) else none
+  | .listTake, [.list t, .int] => if (M.listHelper .take t).isSome then some (.list t) else none
+  | .listDrop, [.list t, .int] => if (M.listHelper .drop t).isSome then some (.list t) else none
+  | .listContains, [.list t, t'] =>
+      if t = t' ∧ t.containsEq ∧ (M.listHelper .contains t).isSome then some .bool else none
   | _, _ => none
 
 /-- `withDefault` over a subject and default of these types. -/
@@ -517,7 +573,7 @@ mutual
         | _, _ => none
     | .call (.builtin bi) args =>
         match tysOf M n Γ args with
-        | some ts => builtinTy bi ts
+        | some ts => builtinTy M bi ts
         | none => none
     | .tailCall f args =>
         if tail then
@@ -871,6 +927,20 @@ def consAll (t : Ty) : List SVal → SVal
   | [] => .nil t
   | v :: vs => .cons t v (consAll t vs)
 
+/-- A `List<t>` value as its element type and its elements. -/
+def listOf? : SVal → Option (Ty × List SVal)
+  | .nil t => some (t, [])
+  | .cons t h tl => (listOf? tl).map fun p => (t, h :: p.2)
+  | _ => none
+
+/-- The element equality `List.contains` uses: Int by value, String by
+    bytes, Bool by value. -/
+def svEq : SVal → SVal → Bool
+  | .i a, .i b => decide (a = b)
+  | .s a, .s b => decide (a = b)
+  | .b a, .b b => a == b
+  | _, _ => false
+
 def builtinEval : Builtin → List SVal → Option SVal
   | .boolAnd, [.b x, .b y] => some (.b (x && y))
   | .boolOr, [.b x, .b y] => some (.b (x || y))
@@ -883,6 +953,15 @@ def builtinEval : Builtin → List SVal → Option SVal
       if y = 0 then some (.err .int .string (.s divByZeroBytes)) else some (.ok .int .string (.i (x / y)))
   | .intMod, [.i x, .i y] =>
       if y = 0 then some (.err .int .string (.s divByZeroBytes)) else some (.ok .int .string (.i (x % y)))
+  | .listLen, [xs] => (listOf? xs).map fun p => .i p.2.length
+  | .listReverse, [xs] => (listOf? xs).map fun p => consAll p.1 p.2.reverse
+  | .listConcat, [xs, ys] =>
+      match listOf? xs, listOf? ys with
+      | some p, some q => some (consAll p.1 (p.2 ++ q.2))
+      | _, _ => none
+  | .listTake, [xs, .i n] => (listOf? xs).map fun p => consAll p.1 (p.2.take n.toNat)
+  | .listDrop, [xs, .i n] => (listOf? xs).map fun p => consAll p.1 (p.2.drop n.toNat)
+  | .listContains, [xs, x] => (listOf? xs).map fun p => .b (p.2.any fun v => svEq v x)
   | _, _ => none
 
 /-- A Euclidean intrinsic (Lean's `Int` `/` and `%` are `Int.ediv` and
