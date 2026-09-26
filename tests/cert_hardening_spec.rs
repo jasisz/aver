@@ -41,7 +41,13 @@
 //! * a List literal's cons helper declared as a user function of the same
 //!   signature, a cons helper whose plan is not the cons plan, and the cons
 //!   helpers of two instantiations exchanged;
-//! * a bridge whose List argument encoder names another element type.
+//! * a bridge whose List argument encoder names another element type;
+//! * a duplicate planned function index that passes every per-plan check,
+//!   call groups numbered against the plans' order (which must check
+//!   unchanged), a conjunct of the plans' acceptance proved by `sorry`,
+//!   declared-uncertified names out of key order (which must check unchanged)
+//!   or listed twice, and export names for the bridges' distinctness that
+//!   are not the obligations' names.
 //!
 //! Gated behind `wasm` and skipped when `lake` is unavailable, like the other
 //! certificate suites.
@@ -562,7 +568,7 @@ fn cert_hardening_declines_forged_policies_behind_a_shadowed_obligations() {
     });
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "does not bind to this artifact");
-    assert!(report.contains("Obligation.policy"), "{report}");
+    assert!(report.contains("ClaimAxes.policiesFast"), "{report}");
 }
 
 /// (b) Hidden runtime contracts: a package constant
@@ -956,7 +962,9 @@ fn cert_hardening_declines_divmod_at_a_supertype_signature() {
     restamp(&wasm, &cert, &bytes);
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("indicesDistinct"), "{report}");
+    // The role types are their own declaration (`rest_roles`), read through
+    // the type section's cut.
+    assert!(report.contains("typesLazy"), "{report}");
 }
 
 /// Compile the work-job fixture, whose module imports `aver:work/v1`.
@@ -1716,4 +1724,259 @@ fn cert_hardening_declines_exchanged_cons_helpers() {
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
+}
+
+/// The first planned entry of `Plans.lean` (`⟨"name", exported, funcIdx,
+/// group, fnN⟩`) and its declaration in `ArtifactLayout.lean`
+/// (`⟨[chars], exportPos, sigPos⟩`), as text.
+fn first_plan_entry(cert: &Path) -> (String, String) {
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let at = plans.find("def fnPlans : List FnEntry :=\n  [").unwrap()
+        + "def fnPlans : List FnEntry :=\n  [".len();
+    let entry = plans[at..at + plans[at..].find('⟩').unwrap() + '⟩'.len_utf8()].to_string();
+    let layout = std::fs::read_to_string(cert.join("ArtifactLayout.lean")).unwrap();
+    let at = layout.find("def fnDecls : List FnDecl :=\n  [").unwrap()
+        + "def fnDecls : List FnDecl :=\n  [".len();
+    let decl = layout[at..at + layout[at..].find('⟩').unwrap() + '⟩'.len_utf8()].to_string();
+    (entry, decl)
+}
+
+/// Insert `item` as the last element of the list literal that follows
+/// `header` in `path`.
+fn append_to_list(path: &Path, header: &str, item: &str) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let at = text.find(header).unwrap();
+    let close = at + text[at..].find("⟩]").unwrap() + '⟩'.len_utf8();
+    std::fs::write(
+        path,
+        format!("{},\n   {item}{}", &text[..close], &text[close..]),
+    )
+    .unwrap();
+}
+
+/// A second, internal entry for the first plan's function index, with its
+/// declaration: every per-plan check passes for it (it is the same plan at
+/// the same code entry), so only the distinctness of the planned indices
+/// (`rest_indices`, decided on a bitmap) refuses it.
+#[test]
+fn cert_hardening_declines_a_duplicate_planned_index() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-dupidx") else {
+        return;
+    };
+    let (entry, decl) = first_plan_entry(&cert);
+    // `⟨"addTwo", true, 2, 0, fn2⟩` becomes `⟨"#2", false, 2, 0, fn2⟩`.
+    let fields: Vec<&str> = entry
+        .trim_start_matches('⟨')
+        .trim_end_matches('⟩')
+        .split(", ")
+        .collect();
+    assert_eq!(fields.len(), 5, "{entry}");
+    let (idx, group, plan) = (fields[2], fields[3], fields[4]);
+    let sig_pos = decl.trim_end_matches('⟩').rsplit(", ").next().unwrap();
+    let chars = format!("#{idx}")
+        .chars()
+        .map(|c| format!("'{c}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    append_to_list(
+        &cert.join("Plans.lean"),
+        "def fnPlans : List FnEntry :=",
+        &format!("⟨\"#{idx}\", false, {idx}, {group}, {plan}⟩"),
+    );
+    append_to_list(
+        &cert.join("ArtifactLayout.lean"),
+        "def fnDecls : List FnDecl :=",
+        &format!("⟨[{chars}], 0, {sig_pos}⟩"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("indicesDistinctBits"), "{report}");
+}
+
+/// Call groups numbered against the plans' order: the report pins compute
+/// the facets, policies and termination witnesses once per run of one group
+/// only when the runs' groups strictly increase, and otherwise through
+/// `groupMembers`. A package that lies about the order still checks its
+/// exports, with the same report. (Its bridge proofs, which the producer
+/// wrote for the groups it declared, lose their credit.)
+#[test]
+fn cert_hardening_checks_call_groups_out_of_order_unchanged() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-grouporder") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let at = text.find("def fnPlans : List FnEntry :=").unwrap();
+    let end = at + text[at..].find("⟩]").unwrap();
+    // Two singleton groups, `0` and `1`, numbered the other way round.
+    let entries = &text[at..end];
+    assert!(
+        entries.contains(", 0, fn") && entries.contains(", 1, fn"),
+        "{entries}"
+    );
+    let swapped = entries
+        .replacen(", 0, fn", ", @G@, fn", 1)
+        .replacen(", 1, fn", ", 0, fn", 1)
+        .replacen(", @G@, fn", ", 1, fn", 1);
+    std::fs::write(&plans, format!("{}{swapped}{}", &text[..at], &text[end..])).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "groups out of order must still check:\n{report}");
+    assert!(
+        report.contains("2 checked exports, level L1")
+            && report.contains("law-claims: 2 of 2 credited")
+            && report.contains("addTwo  policy: simulatesModel")
+            && report.contains("double  policy: simulatesModel"),
+        "{report}"
+    );
+}
+
+/// One conjunct of the plans' acceptance, now a declaration of its own,
+/// proved by `sorry`: the axiom audit of the accepted root still reaches it
+/// through `plansAcceptedRestL_of_parts`.
+#[test]
+fn cert_hardening_declines_a_sorry_backed_plans_part() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-restpart") else {
+        return;
+    };
+    replace_once(
+        &cert.join("Artifact.lean"),
+        "AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans = true := by\n  \
+         decide +kernel\n\ntheorem rest_roles",
+        "AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans = true := by\n  \
+         sorry\n\ntheorem rest_roles",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "non-whitelisted axiom: sorryAx");
+}
+
+/// The export names the bridges' `export_names_nodup` sorts are the
+/// package's own character lists, tied to the obligations' names by `rfl`:
+/// lists that name other exports (here with the first character changed)
+/// cannot stand in for them, and every bridge loses its credit.
+#[test]
+fn cert_hardening_uncredits_bridges_over_lying_export_names() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-namekeys") else {
+        return;
+    };
+    let proof = cert.join("BridgeProof.lean");
+    let text = std::fs::read_to_string(&proof).unwrap();
+    let at = text
+        .find("names_nodup_of_sorted\n")
+        .expect("the export names are sorted");
+    let first = at + text[at..].find("[['").unwrap() + "[['".len();
+    let mut tampered = text.clone();
+    let c = tampered[first..].chars().next().unwrap();
+    let other = if c == 'z' { 'y' } else { 'z' };
+    tampered.replace_range(first..first + c.len_utf8(), &other.to_string());
+    std::fs::write(&proof, tampered).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(
+        ok,
+        "a bridge proof failing only its axiom audit keeps the exports:\n{report}"
+    );
+    assert!(
+        report.contains("source-bridges: 0 of 2 credited")
+            && report.contains("(proof depends on sorryAx)"),
+        "{report}"
+    );
+}
+
+/// The declared-uncertified names as the three places of a package state
+/// them: the JSON, the manifest's `(name, reason)` list and the character
+/// lists `exports_ok` reads. `edit` rearranges the entries (as indices into
+/// the original list) and the three places are rewritten alike.
+fn rearrange_declared(cert: &Path, edit: impl Fn(Vec<usize>) -> Vec<usize>) {
+    let json_path = cert.join("cert-manifest.json");
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+    let entries = json["declaredUncertified"].as_array().unwrap().clone();
+    let order = edit((0..entries.len()).collect());
+    let pairs: Vec<(String, String)> = entries
+        .iter()
+        .map(|e| {
+            (
+                e["name"].as_str().unwrap().to_string(),
+                e["reason"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    edit_json(cert, |json| {
+        json["declaredUncertified"] =
+            serde_json::Value::Array(order.iter().map(|&i| entries[i].clone()).collect());
+    });
+    let tuple = |(name, reason): &(String, String)| format!("(\"{name}\", \"{reason}\")");
+    let old = pairs.iter().map(tuple).collect::<Vec<_>>().join(", ");
+    let new = order
+        .iter()
+        .map(|&i| tuple(&pairs[i]))
+        .collect::<Vec<_>>()
+        .join(", ");
+    replace_once(
+        &cert.join("Manifest.lean"),
+        &format!("declaredUncertified := [{old}]"),
+        &format!("declaredUncertified := [{new}]"),
+    );
+    let chars = |name: &str| {
+        let cs = name
+            .chars()
+            .map(|c| format!("'{c}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("[{cs}]")
+    };
+    let old = pairs
+        .iter()
+        .map(|(name, _)| chars(name))
+        .collect::<Vec<_>>()
+        .join(",\n     ");
+    let new = order
+        .iter()
+        .map(|&i| chars(&pairs[i].0))
+        .collect::<Vec<_>>()
+        .join(",\n     ");
+    replace_once(
+        &cert.join("Artifact.lean"),
+        &format!("[{old}]"),
+        &format!("[{new}]"),
+    );
+}
+
+/// The producer lists `declaredUncertified` in the wall's key order, so the
+/// export accounting walks it without sorting (`SortedKeys.sortedOr`). The
+/// order is a convenience: a package that lists it in another order is
+/// sorted in the kernel and checks the same.
+#[test]
+fn cert_hardening_checks_declared_names_out_of_order_unchanged() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-declared-order") else {
+        return;
+    };
+    rearrange_declared(&cert, |mut order| {
+        order.reverse();
+        order
+    });
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(
+        ok,
+        "declared names out of order must still check:\n{report}"
+    );
+    assert!(report.contains("2 checked exports"), "{report}");
+}
+
+/// A declared-uncertified name listed twice, the same in all three places:
+/// the declared list, sorted or not, must be strictly increasing.
+#[test]
+fn cert_hardening_declines_a_duplicate_declared_name() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-declared-dup") else {
+        return;
+    };
+    rearrange_declared(&cert, |mut order| {
+        order.insert(1, order[0]);
+        order
+    });
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(
+        report.contains("exports_ok") || report.contains("exportsAccounted"),
+        "{report}"
+    );
 }

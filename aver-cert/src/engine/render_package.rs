@@ -227,10 +227,27 @@ fn render_plans(analysis: &Analysis) -> String {
     s
 }
 
+/// The declared-uncertified exports, in the order of the wall's name keys
+/// (`WasmSlice.seqKey` of the name's code points: one digit of 21 bits per
+/// code point, the first the lowest), so the export accounting finds them
+/// already sorted (`SortedKeys.sortedOr`) instead of sorting them in the
+/// kernel. The order is a convenience only: any other order is sorted by the
+/// kernel and accepted the same.
 fn declared_uncertified(analysis: &Analysis) -> Vec<(String, String)> {
-    analysis
+    let mut declared = analysis
         .module_envelope
-        .declared_uncertified(analysis.certified_names(), &analysis.declined)
+        .declared_uncertified(analysis.certified_names(), &analysis.declined);
+    declared.sort_by_cached_key(|(name, _)| name_key_order(name));
+    declared
+}
+
+/// A sort key whose order is the numeric order of `WasmSlice.seqKey` over a
+/// name's code points: more code points is larger (every digit is at least
+/// 1), and at equal length the last code point is the most significant.
+fn name_key_order(name: &str) -> (usize, Vec<u32>) {
+    let mut codes: Vec<u32> = name.chars().map(u32::from).collect();
+    codes.reverse();
+    (codes.len(), codes)
 }
 
 fn render_manifest_lean(analysis: &Analysis, sha: &str, target: &str, abi: &str) -> String {
@@ -663,17 +680,19 @@ fn render_artifact(
     // section is read only through its cut, in the kernel: `simp` with the
     // definitions themselves evaluates the whole type decode in the
     // elaborator first (btc-listener: over 10 minutes per theorem).
+    // With a declared layout every conjunct of the rest is its own
+    // declaration (`rest_parts`), joined by `plansAcceptedRestL_of_parts`:
+    // one kernel check over all of them keeps every conjunct's terms alive
+    // until the last one ends (btc-listener: 367 s and 15 GB as one
+    // declaration, 80 s and at most 9 GB as its parts).
     let rest_proof = if layout {
-        "(AverCert.DeclaredLayout.plansAcceptedRest_of_layout layout_ok (by\n    \
-         dsimp only [AverCert.DeclaredLayout.plansAcceptedRestL, data]\n    \
-         simp -iota only [AverCert.TypeTable.typeTableConfirmed.eq_def,\n      \
-         AverCert.TypeTable.carrierConfirmed.eq_def, CertDecode.carrierState.eq_def,\n      \
-         AverCert.DeclaredLayout.roleTypesPinnedL, AverCert.DeclaredLayout.roleTypePinnedL,\n      \
-         AverCert.WasmSlice.typeSectionMatches.eq_def, types_cut]\n    \
-         decide +kernel))"
+        "(AverCert.DeclaredLayout.plansAcceptedRest_of_layout layout_ok\n    \
+         (AverCert.DeclaredLayout.plansAcceptedRestL_of_parts rest_indices rest_types rest_data\n      \
+         rest_roles rest_eqref rest_newtypes rest_inhabited rest_cons))"
     } else {
         "(by decide +kernel)"
     };
+    let rest_parts = rest_parts(layout);
     let rest = format!(
         "theorem plans_ok : plansAccepted data = true :=\n  \
            plansAccepted_of_parts data plans_all {rest_proof}\n\n\
@@ -688,6 +707,7 @@ fn render_artifact(
     let base_imports =
         "import AcceptedArtifact\nimport DeclaredLayout\nimport ArtifactBytes\nimport Manifest\n";
     if !splits_artifact_modules(analysis) {
+        let rest_all: String = rest_parts.iter().map(|(_, body)| body.as_str()).collect();
         return vec![(
             "Artifact.lean".to_string(),
             format!(
@@ -698,7 +718,7 @@ fn render_artifact(
                  {layout_import}\
                  {roles_import}\n\
                  {ARTIFACT_HEADER}\
-                 {data}{rest}{strings}{exports}{closure_ok}{tail}"
+                 {data}{rest_all}{rest}{strings}{exports}{closure_ok}{tail}"
             ),
         )];
     }
@@ -712,7 +732,21 @@ fn render_artifact(
              end AverCert.Artifact\n"
         )
     };
-    vec![
+    // The parts of the rest, grouped into modules: the heavy ones alone, so
+    // that each builds in a process of its own (and in parallel with more
+    // than one Lake worker), the light ones together.
+    let mut rest_modules: Vec<(String, String)> = Vec::new();
+    for (module, body) in &rest_parts {
+        match rest_modules.iter_mut().find(|(name, _)| name == module) {
+            Some((_, text)) => text.push_str(body),
+            None => rest_modules.push((module.to_string(), body.clone())),
+        }
+    }
+    let rest_imports: String = rest_modules
+        .iter()
+        .map(|(module, _)| format!("import {module}\n"))
+        .collect();
+    let mut files = vec![
         (
             "ArtifactData.lean".to_string(),
             format!(
@@ -749,9 +783,91 @@ fn render_artifact(
                  import ArtifactClosure\n\
                  import ArtifactInterface\n\
                  import ArtifactPlans\n\
+                 {rest_imports}\
                  {roles_import}\n\
                  {ARTIFACT_HEADER}\
                  {rest}{tail}"
+            ),
+        ),
+    ];
+    for (module, body) in rest_modules {
+        files.push((
+            format!("{module}.lean"),
+            part(
+                "Conjuncts of the plans' acceptance other than the per-plan checks.",
+                "import ArtifactLayout\nimport SortedKeys\n",
+                &body,
+            ),
+        ));
+    }
+    files
+}
+
+/// The conjuncts of `DeclaredLayout.plansAcceptedRestL`, one declaration
+/// each, with the module a split package proves it in. Empty without a
+/// declared layout, where the rest is decided whole. The helper types and
+/// the type table read the type section through its cut: the definitions
+/// that `match` on the decoded section are unfolded by their unconditional
+/// equations with matcher reduction off, so `simp` does not evaluate the
+/// whole type decode in the elaborator before the cut can rewrite it
+/// (btc-listener: over 10 minutes per theorem).
+fn rest_parts(layout: bool) -> Vec<(&'static str, String)> {
+    if !layout {
+        return Vec::new();
+    }
+    const BYTES: &str = "AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen";
+    const DECLS: &str = "AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans";
+    const TYPES_PLANS: &str = "AverCert.manifest.types AverCert.manifest.fnPlans";
+    let m = format!("(AverCert.TypeTable.mctxOf {DECLS})");
+    vec![
+        (
+            "ArtifactRest",
+            format!(
+                "theorem rest_indices : indicesDistinct {m} AverCert.manifest.fnPlans = true :=\n  \
+                 AverCert.SortedKeys.indicesDistinct_of_bits (by decide +kernel)\n\n"
+            ),
+        ),
+        (
+            "ArtifactRestTypes",
+            format!(
+                "theorem rest_types : AverCert.TypeTable.typeTableConfirmed {BYTES}\n    \
+                 {DECLS} = true := by\n  \
+                 simp -iota only [AverCert.TypeTable.typeTableConfirmed.eq_def,\n    \
+                 AverCert.TypeTable.carrierConfirmed.eq_def, CertDecode.carrierState.eq_def, types_cut]\n  \
+                 decide +kernel\n\n"
+            ),
+        ),
+        (
+            "ArtifactRestData",
+            format!(
+                "theorem rest_data : AverCert.TypeTable.dataConfirmed {BYTES}\n    \
+                 {DECLS} = true := by\n  \
+                 decide +kernel\n\n"
+            ),
+        ),
+        (
+            "ArtifactRestRoles",
+            format!(
+                "theorem rest_roles : AverCert.DeclaredLayout.roleTypesPinnedL layout {BYTES}\n    \
+                 {m} = true := by\n  \
+                 simp -iota only [AverCert.DeclaredLayout.roleTypesPinnedL,\n    \
+                 AverCert.DeclaredLayout.roleTypePinnedL, AverCert.WasmSlice.typeSectionMatches.eq_def,\n    \
+                 types_cut]\n  \
+                 decide +kernel\n\n"
+            ),
+        ),
+        (
+            "ArtifactRest",
+            format!(
+                "theorem rest_eqref : AverCert.TypeTable.eqrefConfined {TYPES_PLANS} = true := by\n  \
+                 decide +kernel\n\n\
+                 theorem rest_newtypes : AverCert.TypeTable.newtypesGrounded AverCert.manifest.types = true := by\n  \
+                 decide +kernel\n\n\
+                 theorem rest_inhabited : AverCert.TypeTable.typesInhabited {m}\n    \
+                 {TYPES_PLANS} = true := by\n  \
+                 decide +kernel\n\n\
+                 theorem rest_cons : AverCert.AcceptedArtifact.consPinned {TYPES_PLANS} = true := by\n  \
+                 decide +kernel\n\n"
             ),
         ),
     ]
@@ -1083,4 +1199,36 @@ fn write_nested(dir: &Path, name: &str, content: &str) -> Result<(), String> {
             .map_err(|e| format!("create directory for {name}: {e}"))?;
     }
     std::fs::write(&path, content).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod name_key_order_tests {
+    use super::name_key_order;
+
+    /// `WasmSlice.seqKey` of a name's code points, for names short enough
+    /// to fit a `u128` (five 21-bit digits).
+    fn seq_key(name: &str) -> u128 {
+        name.chars().rev().fold(0u128, |key, c| {
+            u128::from(u32::from(c)) + 1 + 2_097_152 * key
+        })
+    }
+
+    /// The producer's sort order is the numeric order of the wall's keys,
+    /// so a declared list it sorts passes `strictly` without a kernel sort.
+    #[test]
+    fn name_key_order_is_the_wall_key_order() {
+        let names = [
+            "", "a", "b", "z", "ab", "ba", "zz", "aaa", "_st", "size", "é", "aé", "éa", "mem",
+            "__a", "abcde", "bbcde", "abcdf",
+        ];
+        for a in names {
+            for b in names {
+                assert_eq!(
+                    name_key_order(a).cmp(&name_key_order(b)),
+                    seq_key(a).cmp(&seq_key(b)),
+                    "{a:?} vs {b:?}"
+                );
+            }
+        }
+    }
 }

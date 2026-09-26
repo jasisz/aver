@@ -96,6 +96,22 @@ theorem strictly_nodup : ∀ {xs : List Nat}, strictly xs = true → xs.Nodup
   | x :: _, h => List.nodup_cons.mpr
       ⟨fun hx => Nat.lt_irrefl x (strictly_lt h x hx), strictly_nodup (strictly_tail h)⟩
 
+/-- `xs` itself when it is already strictly increasing, and `msort xs`
+    otherwise. A producer that declares a list in sorted order saves the
+    kernel the sort, and a list in any other order is sorted: the result is
+    a permutation of `xs` either way (`sortedOr_perm`), so the order a
+    package declares can only change how long a check takes. -/
+def sortedOr (xs : List Nat) : List Nat := if strictly xs then xs else msort xs
+
+theorem sortedOr_perm (xs : List Nat) : (sortedOr xs).Perm xs := by
+  unfold sortedOr
+  split
+  · exact List.Perm.refl _
+  · exact msort_perm xs
+
+theorem nodup_of_msort {xs : List Nat} (h : strictly (msort xs) = true) : xs.Nodup :=
+  (msort_perm xs).nodup_iff.mp (strictly_nodup h)
+
 /-- Every element of `s` is in `t`, walking both in order. -/
 def subsetW : Nat → List Nat → List Nat → Bool
   | _, [], _ => true
@@ -210,6 +226,92 @@ theorem cover_sound : ∀ {f : Nat} {as cs ds : List Nat}, cover f as cs ds = tr
         · cases h
       · cases h
 
+/-! ### Distinct small numbers, on a bitmap
+
+`decide (List.Nodup xs)` compares every pair, a quadratic walk the kernel
+pays through the `Decidable` instances. Numbers below a bound are instead
+checked in one pass, keeping the ones seen as the bits of one numeral: a
+bit test and an `or` per element, which the kernel does on the numeral
+directly. The bound keeps that numeral small: a number at or above it
+fails the check instead of being set. -/
+
+/-- The numbers of `xs` as the bits of one numeral. -/
+def bitsOf : List Nat → Nat
+  | [] => 0
+  | x :: xs => bitsOf xs ||| (1 <<< x)
+
+theorem testBit_or_shift (bits x y : Nat) :
+    (bits ||| (1 <<< x)).testBit y = true ↔ bits.testBit y = true ∨ y = x := by
+  rw [Nat.testBit_or, Nat.shiftLeft_eq, Nat.one_mul, Nat.testBit_two_pow, Bool.or_eq_true,
+    decide_eq_true_eq]
+  exact or_congr Iff.rfl ⟨fun h => h.symm, fun h => h.symm⟩
+
+theorem testBit_bitsOf : ∀ (xs : List Nat) (y : Nat), (bitsOf xs).testBit y = true ↔ y ∈ xs
+  | [], y => by simp [bitsOf]
+  | x :: xs, y => by
+      rw [bitsOf, testBit_or_shift, testBit_bitsOf xs y, List.mem_cons]
+      exact Or.comm
+
+/-- Every number of `xs` is below `bound`, none repeats, and none is a bit
+    of `bits`. -/
+def nodupBits (bound : Nat) : List Nat → Nat → Bool
+  | [], _ => true
+  | x :: xs, bits =>
+      decide (x < bound) && !bits.testBit x && nodupBits bound xs (bits ||| (1 <<< x))
+
+theorem nodupBits_sound : ∀ {bound : Nat} {xs : List Nat} {bits : Nat},
+    nodupBits bound xs bits = true → xs.Nodup ∧ ∀ x ∈ xs, x < bound ∧ bits.testBit x = false
+  | _, [], _, _ => ⟨List.nodup_nil, fun _ hx => by cases hx⟩
+  | bound, x :: xs, bits, h => by
+      simp only [nodupBits, Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_true'] at h
+      obtain ⟨⟨hlt, hfresh⟩, hrest⟩ := h
+      obtain ⟨hnd, hall⟩ := nodupBits_sound hrest
+      -- An element of the tail is not a bit of `bits ||| 1 <<< x`: not `x`, and
+      -- not a bit of `bits`.
+      have htail : ∀ y ∈ xs, y < bound ∧ bits.testBit y = false ∧ y ≠ x := by
+        intro y hy
+        obtain ⟨hy1, hy2⟩ := hall y hy
+        have hn : ¬ ((bits ||| (1 <<< x)).testBit y = true) := by simp [hy2]
+        rw [testBit_or_shift] at hn
+        refine ⟨hy1, ?_, fun e => hn (Or.inr e)⟩
+        cases hb : bits.testBit y
+        · rfl
+        · exact absurd (Or.inl hb) hn
+      refine ⟨List.nodup_cons.mpr ⟨fun hx => (htail x hx).2.2 rfl, hnd⟩, ?_⟩
+      intro y hy
+      cases hy with
+      | head => exact ⟨hlt, hfresh⟩
+      | tail _ hy' => exact ⟨(htail y hy').1, (htail y hy').2.1⟩
+
+/-- The bound `indicesDistinctBits` holds function indices to. A module has
+    far fewer functions; an index above it fails the check. -/
+def indexBound : Nat := 16777216
+
+/-- `indicesDistinct` in one pass: the role indices (eleven of them, some
+    far above any function index when a role is absent) are compared
+    pairwise, and the planned indices go through the bitmap, starting from
+    the bits of the roles below the bound. -/
+def indicesDistinctBits (M : AverCert.Grammar.MCtx) (fns : List AverCert.Schema.FnEntry) : Bool :=
+  decide (roleIndices M).Nodup &&
+  nodupBits indexBound (fns.map (·.funcIdx)) (bitsOf ((roleIndices M).filter (· < indexBound)))
+
+theorem indicesDistinct_of_bits {M : AverCert.Grammar.MCtx} {fns : List AverCert.Schema.FnEntry}
+    (h : indicesDistinctBits M fns = true) : indicesDistinct M fns = true := by
+  unfold indicesDistinctBits at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨hroles, hbits⟩ := h
+  obtain ⟨hnd, hall⟩ := nodupBits_sound hbits
+  unfold indicesDistinct
+  refine decide_eq_true (List.nodup_append.mpr ⟨hroles, hnd, ?_⟩)
+  intro a ha b hb hab
+  subst hab
+  obtain ⟨hlt, hfresh⟩ := hall a hb
+  have hin : a ∈ (roleIndices M).filter (· < indexBound) :=
+    List.mem_filter.mpr ⟨ha, decide_eq_true hlt⟩
+  rw [← testBit_bitsOf] at hin
+  rw [hin] at hfresh
+  cases hfresh
+
 /-! ### What the balanced-tree checks decide -/
 
 theorem foldl_contains {α : Type} [Ord α] [Std.TransOrd α] [Std.LawfulEqOrd α] :
@@ -309,11 +411,11 @@ theorem entryNum_inj {a b : ExportKey} (ha : keyBounded a = true) (hb : keyBound
 /-- The accounting of the actual export keys `A` against the certified keys `C`
     and the declared name keys `D`, decided on sorted lists. -/
 def accountedSorted (A C : List ExportKey) (D : List Nat) : Bool :=
-  let an := msort (A.map (·.name))
-  let cn := msort (C.map (·.name))
-  let dn := msort D
-  let ae := msort (A.map entryNum)
-  let ce := msort (C.map entryNum)
+  let an := sortedOr (A.map (·.name))
+  let cn := sortedOr (C.map (·.name))
+  let dn := sortedOr D
+  let ae := sortedOr (A.map entryNum)
+  let ce := sortedOr (C.map entryNum)
   A.all keyBounded && C.all keyBounded &&
   strictly an && strictly cn && strictly dn &&
   disjointW (cn.length + dn.length + 1) cn dn &&
@@ -329,10 +431,10 @@ def exportsAccountedFast (actual certified : List AverCert.WasmSlice.ExportEntry
   | some A, some C, some D => accountedSorted A C D
   | _, _, _ => false
 
-theorem mem_msort {xs : List Nat} {x : Nat} : x ∈ msort xs ↔ x ∈ xs := (msort_perm xs).mem_iff
+theorem mem_sortedOr {xs : List Nat} {x : Nat} : x ∈ sortedOr xs ↔ x ∈ xs := (sortedOr_perm xs).mem_iff
 
-theorem nodup_of_msort {xs : List Nat} (h : strictly (msort xs) = true) : xs.Nodup :=
-  (msort_perm xs).nodup_iff.mp (strictly_nodup h)
+theorem nodup_of_sortedOr {xs : List Nat} (h : strictly (sortedOr xs) = true) : xs.Nodup :=
+  (sortedOr_perm xs).nodup_iff.mp (strictly_nodup h)
 
 theorem exportsAccountedOf_of_fast {n len : Nat}
     {E : Option (List AverCert.WasmSlice.ExportEntry)}
@@ -357,30 +459,30 @@ theorem exportsAccountedOf_of_fast {n len : Nat}
         obtain ⟨⟨⟨⟨⟨⟨⟨⟨hAb, hCb⟩, han⟩, hcn⟩, hdn⟩, hdis⟩, hcov⟩, hsub1⟩, hsub2⟩ := h
         simp only [Bool.and_eq_true, List.all_eq_true, Bool.or_eq_true, Bool.not_eq_true',
           orderedSet_contains]
-        refine ⟨⟨⟨⟨⟨⟨natListNodup_of_nodup (nodup_of_msort han),
-          natListNodup_of_nodup (nodup_of_msort hcn)⟩, natListNodup_of_nodup (nodup_of_msort hdn)⟩,
+        refine ⟨⟨⟨⟨⟨⟨natListNodup_of_nodup (nodup_of_sortedOr han),
+          natListNodup_of_nodup (nodup_of_sortedOr hcn)⟩, natListNodup_of_nodup (nodup_of_sortedOr hdn)⟩,
           ?_⟩, ?_⟩, ?_⟩, ?_⟩
         · intro name hname
           apply Bool.eq_false_iff.mpr
           intro hmem
           rw [orderedSet_contains] at hmem
-          exact disjointW_sound hcn hdn hdis name (mem_msort.mpr hname) (mem_msort.mpr hmem)
+          exact disjointW_sound hcn hdn hdis name (mem_sortedOr.mpr hname) (mem_sortedOr.mpr hmem)
         · intro e he
-          rcases cover_sound hcov (entryNum e) (mem_msort.mpr (List.mem_map_of_mem he)) with h1 | h1
+          rcases cover_sound hcov (entryNum e) (mem_sortedOr.mpr (List.mem_map_of_mem he)) with h1 | h1
           · left
-            obtain ⟨c, hc, hce⟩ := List.mem_map.mp (mem_msort.mp h1)
+            obtain ⟨c, hc, hce⟩ := List.mem_map.mp (mem_sortedOr.mp h1)
             rw [entryNum_inj (hCb c hc) (hAb e he) hce] at hc
             exact hc
           · right
             rw [entryNum_div (hAb e he)] at h1
-            exact mem_msort.mp h1
+            exact mem_sortedOr.mp h1
         · intro c hc
-          have := subsetW_mem hsub1 (entryNum c) (mem_msort.mpr (List.mem_map_of_mem hc))
-          obtain ⟨a, ha, hae⟩ := List.mem_map.mp (mem_msort.mp this)
+          have := subsetW_mem hsub1 (entryNum c) (mem_sortedOr.mpr (List.mem_map_of_mem hc))
+          obtain ⟨a, ha, hae⟩ := List.mem_map.mp (mem_sortedOr.mp this)
           rw [← entryNum_inj (hAb a ha) (hCb c hc) hae]
           exact ha
         · intro d hd
-          exact mem_msort.mp (subsetW_mem hsub2 d (mem_msort.mpr hd))
+          exact mem_sortedOr.mp (subsetW_mem hsub2 d (mem_sortedOr.mpr hd))
       · cases h
 
 /-! ### Distinct export names, from the accounting -/
@@ -425,18 +527,18 @@ theorem exportNamesDistinct_of_accounted {n len : Nat}
 /-! ### Closure isolation on sorted lists and a membership bitmap -/
 
 theorem natSetEq_of_sorted {xs ys : List Nat}
-    (h1 : subsetW ((msort xs).length + (msort ys).length + 1) (msort xs) (msort ys) = true)
-    (h2 : subsetW ((msort ys).length + (msort xs).length + 1) (msort ys) (msort xs) = true) :
+    (h1 : subsetW ((sortedOr xs).length + (sortedOr ys).length + 1) (sortedOr xs) (sortedOr ys) = true)
+    (h2 : subsetW ((sortedOr ys).length + (sortedOr xs).length + 1) (sortedOr ys) (sortedOr xs) = true) :
     AverCert.WasmSlice.natSetEq xs ys = true := by
   unfold AverCert.WasmSlice.natSetEq AverCert.WasmSlice.indexedSetEq AverCert.WasmSlice.indexedSubset
   simp only [Bool.and_eq_true, List.all_eq_true, orderedSet_contains]
-  exact ⟨fun x hx => mem_msort.mp (subsetW_mem h1 x (mem_msort.mpr hx)),
-    fun y hy => mem_msort.mp (subsetW_mem h2 y (mem_msort.mpr hy))⟩
+  exact ⟨fun x hx => mem_sortedOr.mp (subsetW_mem h1 x (mem_sortedOr.mpr hx)),
+    fun y hy => mem_sortedOr.mp (subsetW_mem h2 y (mem_sortedOr.mpr hy))⟩
 
 /-- `natSetEq` on sorted lists. -/
 def setEqSorted (xs ys : List Nat) : Bool :=
-  let sx := msort xs
-  let sy := msort ys
+  let sx := sortedOr xs
+  let sy := sortedOr ys
   subsetW (sx.length + sy.length + 1) sx sy && subsetW (sy.length + sx.length + 1) sy sx
 
 theorem natSetEq_of_setEqSorted {xs ys : List Nat} (h : setEqSorted xs ys = true) :
@@ -499,9 +601,9 @@ theorem closureFoldB_eq (look : Nat → Option AverCert.WasmSlice.ByteSeq) :
 def closureIsolationS (artifact : ArtifactData) (L : AverCert.DeclaredLayout.Layout) : Bool :=
   let claim := artifact.closureClaim
   let certified := artifact.manifest.obligations.map (fun obligation => obligation.self)
-  strictly (msort claim.roots) &&
-  strictly (msort claim.helpers) &&
-  strictly (msort claim.admitted) &&
+  strictly (sortedOr claim.roots) &&
+  strictly (sortedOr claim.helpers) &&
+  strictly (sortedOr claim.admitted) &&
   setEqSorted claim.roots certified &&
   claim.roots.all (fun root => !AverCert.WasmSlice.natMem root claim.helpers) &&
   setEqSorted claim.admitted (claim.roots ++ claim.helpers) &&
@@ -517,8 +619,8 @@ theorem closureIsolationL_of_S {artifact : ArtifactData} {L : AverCert.DeclaredL
   unfold AverCert.DeclaredLayout.closureIsolationL
   simp only [Bool.and_eq_true] at h ⊢
   obtain ⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩ := h
-  refine ⟨⟨⟨⟨⟨⟨⟨natListNodup_of_nodup (nodup_of_msort h1), natListNodup_of_nodup (nodup_of_msort h2)⟩,
-    natListNodup_of_nodup (nodup_of_msort h3)⟩, natSetEq_of_setEqSorted h4⟩, h5⟩,
+  refine ⟨⟨⟨⟨⟨⟨⟨natListNodup_of_nodup (nodup_of_sortedOr h1), natListNodup_of_nodup (nodup_of_sortedOr h2)⟩,
+    natListNodup_of_nodup (nodup_of_sortedOr h3)⟩, natSetEq_of_setEqSorted h4⟩, h5⟩,
     natSetEq_of_setEqSorted h6⟩, h7⟩, ?_⟩
   rw [← closureFoldB_eq _ _ _ _ 0 (fun x => by simp)]
   split at h8

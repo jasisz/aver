@@ -2065,8 +2065,9 @@ fn render_export(
 
 /// `export_names_nodup`: the obligations' export names are pairwise
 /// distinct, decided once for the package on the names' characters (each
-/// literal is definitionally `String.ofList` of them). A failure costs every
-/// bridge its credit, never the package.
+/// literal is definitionally `String.ofList` of them), one number per name,
+/// sorted and walked once. A failure costs every bridge its credit, never the
+/// package.
 fn render_export_names_nodup(names: &[String]) -> String {
     let chars = lean_char_lists(names, "\n       ");
     format!(
@@ -2074,7 +2075,7 @@ fn render_export_names_nodup(names: &[String]) -> String {
          theorem export_names_nodup :\n    \
          (AverCert.manifest.obligations.map (·.export_)).Nodup := by\n  \
          first\n  \
-         | exact AverCert.GrammarBridge.names_nodup_of_chars\n      \
+         | exact AverCert.GrammarBridge.names_nodup_of_sorted\n      \
          {chars}\n      \
          rfl (by decide +kernel)\n  \
          | sorry\n\n"

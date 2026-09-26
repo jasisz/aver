@@ -5,7 +5,7 @@ expression: golden
 == cert-manifest.json ==
 {
   "schema_version": 9,
-  "format": {"version": 1, "wall_id": "sha256:318de1883be91114ed8a396835aea6d183ac9acc4903c7c99e72b023a20ce2c6"},
+  "format": {"version": 1, "wall_id": "sha256:2556e30b59b91b1a7a2b24e23dd720e1e9a989338ea4d8ca9018d7b8e1a8aedb"},
   "wasm": "wasip2_carrierless.component.wasm",
   "wasm_sha256": "0e7064150f82e180dff6f774a8f48711acd2ea21d183ee06576d4f7c9f135aed",
   "target": "wasip2",
@@ -28,10 +28,10 @@ expression: golden
     {"export": "main", "reason": "the Lean source model has no definition for this function"}
   ],
   "declaredUncertified": [
-    {"name": "wasi:cli/run@0.2.4#run", "reason": "module export is outside the claimed certification obligations"},
     {"name": "memory", "reason": "module export is outside the claimed certification obligations"},
+    {"name": "__caller_fn_name", "reason": "module export is outside the claimed certification obligations"},
     {"name": "__caller_fn_count", "reason": "module export is outside the claimed certification obligations"},
-    {"name": "__caller_fn_name", "reason": "module export is outside the claimed certification obligations"}
+    {"name": "wasi:cli/run@0.2.4#run", "reason": "module export is outside the claimed certification obligations"}
   ],
   "capabilities": [],
   "start": {"present": false, "function_index": null},
