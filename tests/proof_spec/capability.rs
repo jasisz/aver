@@ -123,7 +123,10 @@ fn main() -> Unit
     let main_lean =
         std::fs::read_to_string(output_dir.join("Main.lean")).expect("read generated Main.lean");
     assert!(
-        main_lean.contains("example (rnd_Cap_get :"),
+        main_lean
+            .lines()
+            .any(|line| line.starts_with("theorem looked_verify_")
+                && line.contains(" (rnd_Cap_get :")),
         "the unreached arm must quantify over its unused oracle:\n{main_lean}"
     );
     assert!(

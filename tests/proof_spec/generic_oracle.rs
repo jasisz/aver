@@ -116,7 +116,9 @@ verify pollTwice
         "the lifted function takes the oracle at the program's key:\n{lean}"
     );
     assert!(
-        lean.contains(&format!("example ({oracle}) : pollTwice")),
+        lean.contains(&format!(
+            "theorem pollTwice_verify_1 ({oracle}) : pollTwice"
+        )),
         "a case through a polling helper quantifies over the same oracle:\n{lean}"
     );
 }

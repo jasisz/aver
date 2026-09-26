@@ -5659,7 +5659,7 @@ verify polled
         "{lean}"
     );
     assert!(
-        lean.contains(&format!("example {oracle} : polled")),
+        lean.contains(&format!("theorem polled_verify_1 {oracle} : polled")),
         "{lean}"
     );
     assert!(ctx.declined_claims.borrow().is_empty());

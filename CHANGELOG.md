@@ -12,6 +12,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 - **`aver-memory` compiles with `default-features = false` again.** The crate declares `no_std` when its `std` feature is off, but some code reached `std::mem`, `Box`, `vec!` and `to_string` through the standard prelude, so a `no_std` build failed. It now takes them from `core` and `alloc`, and CI checks the crate without default features. Reported in #1460.
 
+### Fixed — a whole program's `aver proof` export builds
+
+- **`aver proof` of btc-listener's `main.av` builds in Lean.** Three kinds of `verify` case used to fail `lake build` for the whole entry. A case comparing a `Result` of a large tuple could not find its `DecidableEq` instance under Lean's default instance budget; such a case now gets a larger budget. A countdown like `heightsFrom(from, to, acc)`, which steps `to - 1` until `to < from`, was given fuel for a countdown to zero, so `heightsFrom(0, 0, [])` ran out of fuel and a true case failed; its fuel is now measured from `from`. A case that states its equation for every implementation of an input effect needs `simp` to evaluate its branch, and when `simp` cannot (a key built from `String.toUtf8`, or a heartbeat timeout), the error failed the module. Such a case is now isolated like a failed law proof: `--check` charges it as a sorry and names it in `isolated_errors`, and the rest of the module still builds.
+
 ### Fixed — `aver proof` could prove a law that is false for negative integers
 
 - **An integer literal in the Lean export is now always a Lean `Int`.** A literal with nothing around it to fix its type, such as `(0 - 1) >= 0` in a law or in a function body, was read by Lean as a natural number, where `0 - 1` is `0`. A law like `Bool.or(positive(x), (0 - 1) >= 0) => true` was then reported proved although it is false at `x = 0`, and a law sampled at `0 - 1` could fail to build although `aver verify` passed it (#1451). Literals are now written `(n : Int)` wherever Lean could not tell, and `String.byteLength` is cast to `Int` like the other lengths.

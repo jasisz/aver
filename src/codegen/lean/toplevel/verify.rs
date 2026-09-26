@@ -270,10 +270,39 @@ pub fn emit_verify_block(
                         }
                     )
                 };
-                lines.push(format!(
-                    "example{} : {} = {} := by {}",
-                    theorem_param_text, left_str, right_str, tactic
-                ));
+                if theorem_params.is_empty() {
+                    lines.push(format!(
+                        "{}example : {} = {} := by {}",
+                        synth_budget_for_case(&left, ctx),
+                        left_str,
+                        right_str,
+                        tactic
+                    ));
+                } else {
+                    // Whether `simp` gets the oracle out of the goal depends
+                    // on how far it can evaluate the concrete branch, which
+                    // the export cannot know in advance: a key built through
+                    // `String`-to-bytes or hex parsing leaves the branch
+                    // condition standing (and the oracle free, so
+                    // `native_decide` refuses the goal), and a large fixture
+                    // can run simp out of heartbeats, which no `first`
+                    // catches. Either is a proof the export could not
+                    // finish, never a counterexample, so the case is a named
+                    // theorem behind the isolation guard: a failure costs
+                    // this case, which `--check` charges as a sorry, and not
+                    // the build of the whole module.
+                    lines.push(crate::codegen::lean::isolate::ISOLATION_GUARD.to_string());
+                    lines.push(format!(
+                        "{}theorem {}_verify_{}{} : {} = {} := by {}",
+                        synth_budget_for_case(&left, ctx),
+                        aver_name_to_lean(&vb.fn_name),
+                        case_index_start + idx + 1,
+                        theorem_param_text,
+                        left_str,
+                        right_str,
+                        tactic
+                    ));
+                }
             }
             VerifyEmitMode::Sorry => {
                 lines.push(format!(
@@ -296,6 +325,41 @@ pub fn emit_verify_block(
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+/// `set_option synthInstance.maxSize 4096 in` (with its line break) for a case
+/// whose compared value has a large type, or nothing.
+///
+/// The case is decided through `DecidableEq` of the type both sides have, and
+/// Lean finds that instance by composing one per type constructor. For a
+/// `Result` of a tuple of maps, lists and records (btc-listener's `absorbed`)
+/// the composed instance is larger than Lean's default `synthInstance.maxSize`,
+/// and the case failed with `failed to synthesize Decidable` although every
+/// part has its instance. The budget is scoped to the one declaration, like
+/// the `_checked_domain` theorems carry it.
+fn synth_budget_for_case(left: &Spanned<Expr>, ctx: &CodegenContext) -> &'static str {
+    const BUDGET: &str = "set_option synthInstance.maxSize 4096 in\n";
+    fn large(annotation: &str) -> bool {
+        annotation.contains("Tuple<") || annotation.matches('<').count() >= 3
+    }
+    fn walk(expr: &Spanned<Expr>, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+        match &expr.node {
+            Expr::FnCall(callee, args) => {
+                let returns_large = crate::codegen::common::expr_to_dotted_name(&callee.node)
+                    .and_then(|name| ctx.fn_def_by_callee(&name, scope))
+                    .is_some_and(|fd| large(&fd.return_type));
+                returns_large || args.iter().any(|arg| walk(arg, ctx, scope))
+            }
+            Expr::ErrorProp(inner) | Expr::Attr(inner, _) => walk(inner, ctx, scope),
+            _ => false,
+        }
+    }
+    let scope = ctx.active_module_scope();
+    if walk(left, ctx, scope.as_deref()) {
+        BUDGET
+    } else {
+        ""
+    }
 }
 
 /// Record that one case of `vb` was declined by `aver verify`, and render the

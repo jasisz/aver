@@ -235,12 +235,24 @@ fn emit_int_countdown_wrapper(fd: &FnDef, helper_name: &str, param_index: usize)
         .get(param_index)
         .map(|(name, _)| aver_name_to_lean(name))
         .unwrap_or_else(|| "0".to_string());
+    // A countdown that stops at a floor other than zero gets a seed measured
+    // from that floor (see `countdown_invariant_floor`).
+    let seed = match crate::codegen::recursion::detect::countdown_invariant_floor(fd, param_index) {
+        Some(floor) => {
+            // The floor is an Int literal or a parameter's name.
+            let floor = match &floor.node {
+                crate::ast::Expr::Literal(crate::ast::Literal::Int(n)) => format!("({n} : Int)"),
+                _ => crate::codegen::recursion::detect::local_name_of(&floor)
+                    .map(aver_name_to_lean)
+                    .unwrap_or_else(|| "0".to_string()),
+            };
+            format!("((Int.natAbs ({metric_name} - {floor})) + 2)")
+        }
+        None => format!("((Int.natAbs {metric_name}) + 1)"),
+    };
     vec![
         format!("def {} {} : {} :=", fn_name, params, ret_type),
-        format!(
-            "  {} ((Int.natAbs {}) + 1) {}",
-            helper_name, metric_name, arg_names
-        ),
+        format!("  {} {} {}", helper_name, seed, arg_names),
     ]
 }
 

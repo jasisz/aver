@@ -112,6 +112,8 @@ mod waterfall;
 mod wf_fuel;
 #[path = "proof_spec/when_lane.rs"]
 mod when_lane;
+#[path = "proof_spec/whole_program_cases.rs"]
+mod whole_program_cases;
 
 fn temp_output_dir(prefix: &str) -> PathBuf {
     // Parallel positive/negative checker runs must never share an output tree,
