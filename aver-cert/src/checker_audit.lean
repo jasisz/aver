@@ -162,10 +162,104 @@ def inPackage (env : Environment) (n : Name) : Bool :=
   | some m => packageModules.contains m
   | none => false
 
-def axiomsOf (env : Environment) (n : Name) : IO (Array Name) := do
-  let (axs, _) ← (collectAxioms n : CoreM (Array Name)).toIO
-    { fileName := "<aver-cert audit>", fileMap := default } { env := env }
-  return axs
+-- The axiom memo begins (a unit test elaborates this part alone).
+/-! ### Axioms, collected once for every root
+
+`Lean.collectAxioms` starts from nothing on every call: the environment
+the audit imports does not load the extension that stores each imported
+constant's axioms, so every call walks the root's whole closure again,
+and the roots of a large certificate share most of theirs. The walk below
+reads the same edges `collectAxioms` reads (a constant's type, the value
+of a definition, theorem or opaque, the constructors of an inductive), and
+keeps one memo for all roots.
+
+The memo holds a constant's axioms only once they are final. Constants
+can reach each other in a cycle (an inductive and its constructors), and
+while such a constant is still being walked what has been collected for
+it is partial, so the walk finds the cycles (Tarjan's strongly connected
+components) and records one set for a whole component when it is
+complete: the axioms of its members and of everything they reach. What a
+root reports is therefore exactly the axioms reachable from it, the same
+set `collectAxioms` returns on its own, whichever roots were asked
+before. -/
+
+structure AxiomMemo where
+  /-- The final axiom set of every constant whose component is complete. -/
+  done : NameMap NameSet := {}
+  /-- The depth-first index and low link of every constant being walked. -/
+  index : NameMap Nat := {}
+  low : NameMap Nat := {}
+  /-- Constants being walked whose component is not complete, in visit order. -/
+  stack : Array Name := #[]
+  onStack : NameSet := {}
+  /-- Axioms found so far for a constant being walked: its own, and the
+      final sets of the successors outside its component. -/
+  partialAxioms : NameMap NameSet := {}
+  next : Nat := 0
+
+/-- The constants `collectAxioms` visits after `c`, and whether `c` is itself
+    an axiom. -/
+def axiomEdges (env : Environment) (c : Name) : Bool × Array Name :=
+  let used (e : Expr) : Array Name := e.getUsedConstants
+  match env.checked.get.find? c with
+  | some (.axiomInfo v) => (true, used v.type)
+  | some (.defnInfo v) => (false, used v.type ++ used v.value)
+  | some (.thmInfo v) => (false, used v.type ++ used v.value)
+  | some (.opaqueInfo v) => (false, used v.type ++ used v.value)
+  | some (.quotInfo _) => (false, #[])
+  | some (.ctorInfo v) => (false, used v.type)
+  | some (.recInfo v) => (false, used v.type)
+  | some (.inductInfo v) => (false, used v.type ++ v.ctors.toArray)
+  | none => (false, #[])
+
+partial def axiomWalk (env : Environment) (c : Name) : StateM AxiomMemo Unit := do
+  let s ← get
+  if s.done.contains c || s.index.contains c then return
+  let (isAxiom, succs) := axiomEdges env c
+  modify fun s => { s with
+    index := s.index.insert c s.next, low := s.low.insert c s.next, next := s.next + 1,
+    stack := s.stack.push c, onStack := s.onStack.insert c,
+    partialAxioms := s.partialAxioms.insert c (if isAxiom then ({} : NameSet).insert c else {}) }
+  for w in succs do
+    axiomWalk env w
+    let s ← get
+    match s.done.find? w with
+    | some axs =>
+      -- `w` is in a complete component: its set is final.
+      let mine := (s.partialAxioms.find? c).getD {}
+      set { s with partialAxioms := s.partialAxioms.insert c (axs.foldl (·.insert ·) mine) }
+    | none =>
+      -- `w` is on the stack, in `c`'s component: joined when it completes.
+      let lw := (s.low.find? w).getD 0
+      let lc := (s.low.find? c).getD 0
+      if lw < lc then set { s with low := s.low.insert c lw }
+  let s ← get
+  if s.low.find? c == s.index.find? c then
+    -- `c` roots a component: pop it and give every member the joined set.
+    let mut members : Array Name := #[]
+    let mut stack := s.stack
+    repeat
+      match stack.back? with
+      | none => break
+      | some m =>
+        stack := stack.pop
+        members := members.push m
+        if m == c then break
+    let joined := members.foldl
+      (fun acc m => ((s.partialAxioms.find? m).getD {}).foldl (·.insert ·) acc) ({} : NameSet)
+    set { s with
+      stack := stack,
+      onStack := members.foldl (·.erase ·) s.onStack,
+      partialAxioms := members.foldl (·.erase ·) s.partialAxioms,
+      done := members.foldl (·.insert · joined) s.done }
+
+/-- The axioms reachable from `n`, sorted, reading and extending `memo`. -/
+def axiomsOf (env : Environment) (memo : IO.Ref AxiomMemo) (n : Name) : IO (Array Name) := do
+  let s ← memo.get
+  let s := (axiomWalk env n).run s |>.2
+  memo.set s
+  return ((s.done.find? n).getD {}).toArray.qsort Name.lt
+-- The axiom memo ends.
 
 def runMeta (env : Environment) (x : MetaM α) : IO α := do
   let (a, _) ← (x.run' {} {}).toIO
@@ -285,6 +379,8 @@ def instanceRefusal (env : Environment) (inst : Name) : Option String :=
 def main : IO UInt32 := do
   initSearchPath (← findSysroot)
   let env ← importModules #[{ module := `CheckerWitness }] {}
+  -- One axiom memo for every root below (see `AxiomMemo`).
+  let memo ← IO.mkRef ({} : AxiomMemo)
   -- 1. Names reserved for the checker's witness.
   for (name, _) in env.constants.map₁.toList do
     if (`AverCertChecker).isPrefixOf name && !(moduleOf env name == some `CheckerWitness) then
@@ -353,7 +449,7 @@ def main : IO UInt32 := do
   for root in strictRoots do
     if (env.find? root).isNone then
       return ← decline s!"the witness does not declare {root}"
-    for used in ← axiomsOf env root do
+    for used in ← axiomsOf env memo root do
       unless allowed.contains used do
         return ← decline s!"non-whitelisted axiom: {used} (under {root})"
   -- 5. Per-claim audit lines, read back by the checker.
@@ -362,7 +458,7 @@ def main : IO UInt32 := do
       return ← decline s!"the witness does not declare {root}"
   let audit (marker : String) (roots : List Name) : IO Unit := do
     for root in roots do
-      let offending := (← axiomsOf env root).filter (fun used => !allowed.contains used)
+      let offending := (← axiomsOf env memo root).filter (fun used => !allowed.contains used)
       if offending.isEmpty then
         IO.println s!"{marker} {root} ok"
       else

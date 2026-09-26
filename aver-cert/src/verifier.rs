@@ -1108,15 +1108,15 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
         ),
         (
             format!("_root_.AverCert.ClaimAxes.reportFacets {data} = {report_facets}"),
-            KERNEL_REPORT_PROOF,
+            FACETS_REPORT_PROOF,
         ),
         (
             format!("{} = {policies}", obligations("policy")),
-            KERNEL_REPORT_PROOF,
+            POLICIES_REPORT_PROOF,
         ),
         (
             format!("{} = {terminations}", obligations("termination?")),
-            KERNEL_REPORT_PROOF,
+            TERMINATIONS_REPORT_PROOF,
         ),
         (format!("{} = {contracts}", subject("contracts")), "rfl"),
         (
@@ -1153,7 +1153,7 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     );
     let mut report = String::new();
     for (index, (statement, proof)) in report_pins.iter().enumerate() {
-        if *proof == KERNEL_REPORT_PROOF {
+        if *proof != "rfl" {
             report.push_str("set_option maxHeartbeats 4000000 in\n");
         }
         report.push_str(&format!(
@@ -1180,13 +1180,35 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     )
 }
 
-/// The proof of a report pin whose left side the wall computes from every
-/// plan (report entries and facets, policies, termination witnesses). The
-/// kernel decides it; the elaborator's defeq check on a large module runs past
+/// The proof of the report-entries pin, whose left side the wall computes
+/// from every plan. The kernel decides it; the elaborator's defeq check on a large module runs past
 /// its default budget before it reaches the kernel, so the budget is raised
 /// for the pin's declaration alone. It moves a resource limit only: the kernel still checks
 /// the equation, and a runaway is stopped by the step's time limit.
 const KERNEL_REPORT_PROOF: &str = "by first | decide +kernel | rfl";
+
+/// The proofs of the report pins computed per call group (facets, policies,
+/// termination witnesses). Deciding them as stated asks every exported plan
+/// for its group's members, a walk over all plans each time. Each is instead
+/// rewritten by a wall equation (`ClaimAxes.reportFacets_eq_fast`,
+/// `map_policy_of_derived`, `map_termination_of_derived`) to the same data
+/// computed once per group, and that is decided. The equations hold for every
+/// package, so the pin's statement, which the checker writes, is unchanged
+/// and a package can only make them slower. The obligations are the derived
+/// ones by the accepted certificate's `obligationsDerived` conjunct.
+const FACETS_REPORT_PROOF: &str = "_root_.Eq.trans\n    \
+     (_root_.AverCert.ClaimAxes.reportFacets_eq_fast _root_.AverCert.Artifact.data)\n    \
+     (by decide +kernel)";
+const POLICIES_REPORT_PROOF: &str = "_root_.Eq.trans\n    \
+     (_root_.AverCert.ClaimAxes.map_policy_of_derived (artifact := _root_.AverCert.Artifact.data)\n      \
+     (_root_.And.left (_root_.And.right (_root_.And.right (_root_.And.right\n        \
+     _root_.AverCert.Artifact.certificate)))))\n    \
+     (by decide +kernel)";
+const TERMINATIONS_REPORT_PROOF: &str = "_root_.Eq.trans\n    \
+     (_root_.AverCert.ClaimAxes.map_termination_of_derived (artifact := _root_.AverCert.Artifact.data)\n      \
+     (_root_.And.left (_root_.And.right (_root_.And.right (_root_.And.right\n        \
+     _root_.AverCert.Artifact.certificate)))))\n    \
+     (by decide +kernel)";
 
 /// Number of report pins [`checker_witness`] writes (they are numbered
 /// `report_pin_0 ..`); the audit walks every one of them.
@@ -4562,6 +4584,101 @@ mod tests {
                 .matches(candidates.laws[0].statement.as_str())
                 .count(),
             1
+        );
+    }
+
+    /// The audit's axiom memo reports every root exactly as a fresh
+    /// `collectAxioms` does, whichever roots were asked before it. The probe
+    /// has two roots with different axioms sharing a constant, and an
+    /// inductive whose constructors reach each other through it: asked
+    /// after the inductive, a constructor's set would be missing the other
+    /// constructor's axiom if a partial set were kept for a constant still
+    /// being walked (Lean's own `collect` with one state kept across roots
+    /// does exactly that).
+    #[test]
+    fn audit_axiom_memo_reports_each_root_as_a_fresh_walk() {
+        let toolchain = wall::LEAN_TOOLCHAIN.trim();
+        let available = std::process::Command::new("elan")
+            .args(["run", "--install", toolchain, "lake", "--version"])
+            .output();
+        if !matches!(available, Ok(output) if output.status.success()) {
+            assert!(
+                std::env::var_os("AVER_CERT_REQUIRE_PINNED_LEAN").is_none(),
+                "pinned Elan toolchain is required for the axiom memo test"
+            );
+            eprintln!("skipping the axiom memo test: pinned Elan toolchain unavailable");
+            return;
+        }
+        let begin = AUDIT_TEMPLATE
+            .find("-- The axiom memo begins")
+            .expect("the audit marks its axiom memo");
+        let end = AUDIT_TEMPLATE
+            .find("-- The axiom memo ends.")
+            .expect("the audit marks the end of its axiom memo");
+        let memo = &AUDIT_TEMPLATE[begin..end];
+        let probe = format!(
+            "import Lean\n\
+             open Lean\n\n\
+             namespace AverCertAudit\n{memo}\nend AverCertAudit\n\n\
+             axiom axA : True\n\
+             axiom axB : 1 = 1\n\
+             theorem onlyA : True := axA\n\
+             theorem onlyB : 1 = 1 := axB\n\
+             theorem shared : True ∧ 1 = 1 := ⟨onlyA, onlyB⟩\n\
+             theorem clean : 2 = 2 := rfl\n\
+             def TyB : Type := (fun (_ : 1 = 1) => Nat) axB\n\
+             inductive Cyc where\n  | plain : Cyc\n  | viaB : TyB → Cyc\n\
+             def usesCyc : Cyc := Cyc.plain\n\
+             def usesPlain : Cyc → Cyc := fun _ => Cyc.plain\n\n\
+             def roots : List Name :=\n  \
+             [`Cyc, `usesPlain, `Cyc.plain, `onlyA, `shared, `onlyB, `clean, `usesCyc]\n\n\
+             #eval show CoreM Unit from do\n  \
+             let env ← getEnv\n  \
+             for order in [roots, roots.reverse] do\n    \
+             let memo ← IO.mkRef ({{}} : AverCertAudit.AxiomMemo)\n    \
+             for root in order do\n      \
+             let fresh := (← collectAxioms root).qsort Name.lt\n      \
+             let viaMemo ← AverCertAudit.axiomsOf env memo root\n      \
+             unless fresh == viaMemo do\n        \
+             throwError s!\"memo {{root}}: {{viaMemo}} but fresh {{fresh}}\"\n  \
+             let memo ← IO.mkRef ({{}} : AverCertAudit.AxiomMemo)\n  \
+             let expect (root : Name) (axs : Array Name) : CoreM Unit := do\n    \
+             let got ← AverCertAudit.axiomsOf env memo root\n    \
+             unless got == axs do throwError s!\"{{root}}: {{got}}, expected {{axs}}\"\n  \
+             expect `Cyc #[`axB]\n  \
+             expect `Cyc.plain #[`axB]\n  \
+             expect `onlyA #[`axA]\n  \
+             expect `onlyB #[`axB]\n  \
+             expect `shared #[`axA, `axB]\n  \
+             expect `clean #[]\n  \
+             IO.println \"memo agrees\"\n"
+        );
+        let dir = std::env::temp_dir().join(format!(
+            "aver-cert-axiom-memo-{}-{}",
+            std::process::id(),
+            unique_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lean-toolchain"), wall::LEAN_TOOLCHAIN).unwrap();
+        std::fs::write(
+            dir.join("lakefile.lean"),
+            "import Lake\nopen Lake DSL\npackage «memoprobe» where\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("MemoProbe.lean"), probe).unwrap();
+        let output = crate::lean_process::LeanRunner::new(wall::LEAN_TOOLCHAIN)
+            .unwrap()
+            .run_lake(&dir, "axiom memo probe", &["env", "lean", "MemoProbe.lean"])
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            output.status.success() && text.contains("memo agrees"),
+            "the axiom memo disagrees with a fresh walk:\n{text}"
         );
     }
 

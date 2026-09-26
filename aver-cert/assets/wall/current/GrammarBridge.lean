@@ -33,6 +33,7 @@
    into exact answers above a declared call depth, for a closure without
    recursion. -/
 import AcceptedArtifactCore
+import SortedKeys
 
 namespace AverCert.GrammarBridge
 open AverCert.Schema AverCert.Grammar AverCert.TypeTable AverCert.AcceptedArtifact CertPrelude
@@ -91,6 +92,15 @@ theorem names_nodup_of_chars {names : List String} (cs : List (List Char))
       (fun a b hab heq => hab (heq ▸ rfl)) hnd
   exact List.Pairwise.map String.ofList (fun a b hab heq =>
     hab (by simpa [String.toList_ofList] using congrArg String.toList heq)) hcs
+
+/-- `names_nodup_of_chars`, with the numbers sorted and walked once
+    (`SortedKeys.strictly`) instead of compared pairwise: `decide
+    List.Nodup` over a large package's names is a quadratic kernel walk. -/
+theorem names_nodup_of_sorted {names : List String} (cs : List (List Char))
+    (h : names = cs.map String.ofList)
+    (hs : _root_.AverCert.SortedKeys.strictly (_root_.AverCert.SortedKeys.msort
+      (cs.map (fun c => natOfCodes (c.map Char.toNat)))) = true) : names.Nodup :=
+  names_nodup_of_chars cs h (_root_.AverCert.SortedKeys.nodup_of_msort hs)
 
 /-- The obligation of a planned, exported entry, when the manifest's export
     names are pairwise distinct. -/

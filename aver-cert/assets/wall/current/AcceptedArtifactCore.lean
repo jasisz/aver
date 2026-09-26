@@ -290,20 +290,13 @@ def listHelpersPinnedWith (bodyAt : Nat → Option (List Nat))
     (tyOk : Nat → List _root_.CertDecode.ValType → List _root_.CertDecode.ValType → Bool)
     (M : MCtx) : Bool :=
   M.listHelpers.all (fun x =>
-    (match (_root_.AverCert.ListHelpers.helperCode M x.2.1 x.1).bind
-        (_root_.AverCert.ListHelpers.hBodyBytes M) with
-     | some b => bodyAt x.2.2 == some b
-     | none => false) &&
-    (match helperSig M x.2.1 x.1 with
-     | some (ps, rs) => tyOk x.2.2 ps rs
-     | none => false)) &&
-  (if M.toI64Sat < 4294967296 then
-     (match _root_.AverCert.ListHelpers.hBodyBytes M
-         (_root_.AverCert.ListHelpers.satCode M.carrier) with
-      | some b => bodyAt M.toI64Sat == some b
-      | none => false) &&
-     tyOk M.toI64Sat [refN M.carrier] [.numeric 0x7e]
-   else true)
+    ((_root_.AverCert.ListHelpers.helperCode M x.2.1 x.1).bind
+        (_root_.AverCert.ListHelpers.hBodyBytes M)).any (fun b => bodyAt x.2.2 == some b) &&
+    (helperSig M x.2.1 x.1).any (fun p => tyOk x.2.2 p.1 p.2)) &&
+  (decide (4294967296 ≤ M.toI64Sat) ||
+    ((_root_.AverCert.ListHelpers.hBodyBytes M (_root_.AverCert.ListHelpers.satCode M.carrier)).any
+        (fun b => bodyAt M.toI64Sat == some b) &&
+      tyOk M.toI64Sat [refN M.carrier] [.numeric 0x7e]))
 
 /-- `listHelpersPinnedWith` over the module's code and type sections. -/
 def listHelpersPinned (n len : Nat) (M : MCtx) : Bool :=
