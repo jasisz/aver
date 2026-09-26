@@ -288,6 +288,24 @@ pub fn proof_mode_issues(ctx: &CodegenContext) -> Vec<String> {
         .collect()
 }
 
+/// Pin every generic capability operation to the one type this program
+/// instantiates it at, before any oracle parameter is typed.
+///
+/// `Wait.poll<K>` states its contract over a key type each program chooses,
+/// and a program keys every wait the same way. Lean has no spelling for the
+/// unbound `K`, so the export reads the operation at the program's key, the
+/// way the Rust backend renders it (#1449). A program that does not settle
+/// one key keeps the generic operation; its lifts then decline and
+/// `verify_cases::generic_oracle_refusal` declines their claims with a reason.
+fn pin_generic_operations(ctx: &mut CodegenContext) {
+    if let Some(pinned) = ctx
+        .capabilities
+        .with_program_wait_key(&ctx.items, &ctx.modules)
+    {
+        ctx.capabilities = pinned;
+    }
+}
+
 /// Transpile an Aver program to a Lean 4 project.
 ///
 /// Takes `&mut ctx` so it can run `ctx.refresh_facts()` upfront — keeps
@@ -308,6 +326,7 @@ pub fn transpile_for_proof_mode(
     ctx: &mut CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
+    pin_generic_operations(ctx);
     // No refresh_facts call here: production callers go through
     // build_codegen_context → pipeline, which populates every derived
     // fact (recursive_fns, mutual_tco_members, proof_ir) once.
@@ -344,6 +363,7 @@ pub fn transpile_for_proof_mode(
 /// instead of stripping them out of already-emitted text. The `aver proof`
 /// emission is untouched (this is a distinct entry point).
 pub fn transpile_for_cert_model(ctx: &mut CodegenContext) -> ProjectOutput {
+    pin_generic_operations(ctx);
     transpile_unified(ctx, VerifyEmitMode::NativeDecide, LeanEmitMode::Proof, true)
 }
 
@@ -367,6 +387,7 @@ pub fn transpile_with_verify_mode(
     ctx: &mut CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
+    pin_generic_operations(ctx);
     // No refresh_facts call here — same reasoning as
     // `transpile_for_proof_mode`. Synthetic-AST tests refresh
     // themselves; production paths come pre-populated.
