@@ -175,6 +175,10 @@ pub struct PlanTypeTable {
     pub lists: Vec<(PlanTy, u32)>,
     pub opaques: Vec<(u32, u32)>,
     pub str_segs: Vec<(Vec<u8>, u32)>,
+    /// The cons helper of each `List<T>` a non-empty literal builds
+    /// (`Schema.TypeTable.listCons`): the function the literal calls once per
+    /// item, whose plan must be exactly [`FnPlan::cons`].
+    pub list_cons: Vec<(PlanTy, u32)>,
 }
 
 /// One user function as the compiler printed it: its wasm function index, its
@@ -445,6 +449,21 @@ impl PlanExpr {
 }
 
 impl FnPlan {
+    /// `Grammar.isConsPlan`'s plan: the cons helper of `List<t>`, one
+    /// `List.prepend` over its two parameters and no declared local.
+    pub fn cons(t: &PlanTy) -> FnPlan {
+        FnPlan {
+            params: vec![t.clone(), PlanTy::List(Box::new(t.clone()))],
+            ret: PlanTy::List(Box::new(t.clone())),
+            nslots: 2,
+            locals: Vec::new(),
+            body: PlanExpr::Call(
+                PlanCallee::Builtin(PlanBuiltin::ListPrepend),
+                vec![PlanExpr::Local(0), PlanExpr::Local(1)],
+            ),
+        }
+    }
+
     /// The Lean `Grammar.FnPlan` term.
     pub fn lean(&self) -> String {
         format!(
@@ -618,13 +637,23 @@ impl PlanTypeTable {
         let lists = field("lists", "Ty × Nat", &pairs(&self.lists));
         let opaques = field("opaques", "Nat × Nat", &opaques);
         let segs = field("strSegs", "List Nat × Nat", &segs);
+        // Written only when present: the wall's default is the empty list,
+        // so a module without list literals renders as before.
+        let cons = if self.list_cons.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ",\n    listCons := {}",
+                field("listCons", "Ty × Nat", &pairs(&self.list_cons))
+            )
+        };
         let pieces = decls
             .lines()
             .filter_map(|line| line.strip_prefix("def "))
             .filter_map(|rest| rest.split_once(" :").map(|(n, _)| n.to_string()))
             .collect();
         let text = format!(
-            "{decls}def {name} : TypeTable :=\n  {{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := {records},\n    sums := {sums},\n    options := {options}, results := {results},\n    vecs := {vecs}, lists := {lists}, opaques := {opaques},\n    strSegs := {segs} }}\n\n",
+            "{decls}def {name} : TypeTable :=\n  {{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := {records},\n    sums := {sums},\n    options := {options}, results := {results},\n    vecs := {vecs}, lists := {lists}, opaques := {opaques},\n    strSegs := {segs}{cons} }}\n\n",
             lean_opt_nat(self.carrier),
             lean_opt_nat(self.mag),
             lean_opt_nat(self.str_),

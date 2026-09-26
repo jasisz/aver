@@ -6150,6 +6150,7 @@ pub(super) fn emit_module_with(
     // never changes a byte.
     let cert_layout = super::cert_layout::CertLayout {
         registry: &registry,
+        fn_map: &fn_map,
         symbol_table: &symbol_table,
         fn_idx: resolved_fn_defs
             .iter()

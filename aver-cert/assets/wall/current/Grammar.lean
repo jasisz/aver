@@ -49,7 +49,11 @@
      Euclidean `__aint_divmod` call.
    * `interp parts` — `InterpolatedStr` whose parts are all `String` (a
      literal part printed as a string literal).
-   * `list t []` — the empty `List(..)` literal, with its element type.
+   * `list t items` — a `List(..)` literal with its element type: `[]` is
+     `ref.null` of the cons struct, and a non-empty literal pushes its items,
+     `ref.null`, and calls the `List<t>` cons helper once per item. The
+     helper's index comes from the type table (`MCtx.listCons`), and the
+     acceptance pins its plan to exactly `consPlan t`.
    * `construct c ty args` — `Construct`; `c` is the constructor
      (`MirCtor::User(CtorId)` as type id + constructor index, or a built-in
      `Some`/`None`/`Ok`/`Err`) and `ty` is the node's stamped type
@@ -206,8 +210,7 @@ mutual
     /-- `InterpolatedStr` whose parts are all `String`: a literal part is
         printed as a string literal, an embed as its expression. -/
     | interp (parts : List Expr)
-    /-- `List(items)` with its element type (the stamped instantiation);
-        only the empty literal `[]` is admitted. -/
+    /-- `List(items)` with its element type (the stamped instantiation). -/
     | list (elem : Ty) (items : List Expr)
   /-- The arms of a `Match`, in source order. -/
   inductive Arms where
@@ -276,6 +279,9 @@ structure MCtx where
   vecStruct : Ty → Nat := fun _ => 0
   listStruct : Ty → Nat := fun _ => 0
   opaqueStruct : Nat → Nat := fun _ => 0
+  /-- The cons helper of `List<T>` (`(T, List<T>) -> List<T>`) a non-empty
+      literal calls, when the type table declares one. -/
+  listCons : Ty → Option Nat := fun _ => none
 
 /-- One function's plan: signature, the resolver slot count (parameters and
     every binder; the const-compare scratch local sits at this index), the
@@ -437,6 +443,28 @@ def varArmΓ (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tid : Nat) : Pat →
   | .wild => some Γ
   | _ => none
 
+/-! ## The cons helper
+
+A non-empty list literal calls the per-instantiation cons helper, whose body
+is one `struct.new` of the cons struct: exactly the lowering of the one-node
+plan `List.prepend(local 0, local 1)`. -/
+
+/-- The cons helper's signature. -/
+def consSig (t : Ty) : Sig := ⟨[t, .list t], .list t⟩
+
+/-- The cons helper's body: `List.prepend(head, tail)` over its parameters. -/
+def consBody : Expr := .call (.builtin .listPrepend) [.local 0, .local 1]
+
+/-- A plan is the wall's own cons plan: its body is `consBody`, so its
+    meaning is `List.prepend` of its two arguments. (Its signature is the
+    typing's business: a literal of `List<t>` requires the helper's planned
+    signature to be `consSig t`; its slots and locals are pinned with its
+    code entry like every plan's.) -/
+def isConsPlan (p : FnPlan) : Bool :=
+  match p.body with
+  | .call (.builtin .listPrepend) [.local 0, .local 1] => true
+  | _ => false
+
 /-! ## Typing
 
 One checker for every node. `n` is the resolver slot count: a `let` binder
@@ -557,9 +585,14 @@ mutual
         | some ts => if allStr ts then some .string else none
         | none => none
     | .list t items =>
-        match items with
-        | [] => some (.list t)
-        | _ => none
+        if items.isEmpty then some (.list t)
+        else
+          match M.listCons t, tysOf M n Γ items with
+          | some f, some ts =>
+              if M.sigs f = some (consSig t) ∧ ts.all (fun x => decide (x = t)) = true then
+                some (.list t)
+              else none
+          | _, _ => none
     | .match_ s arms =>
         match tyOf M n Γ false s with
         | some .int => if arms.firstLit then tyIntArms M n Γ tail arms else none
@@ -833,6 +866,11 @@ def strCat : List SVal → Option (List Nat)
 def divByZeroBytes : List Nat :=
   [100, 105, 118, 105, 115, 105, 111, 110, 32, 98, 121, 32, 122, 101, 114, 111]
 
+/-- The list of `vs`, in order, as cons cells of `List<t>`. -/
+def consAll (t : Ty) : List SVal → SVal
+  | [] => .nil t
+  | v :: vs => .cons t v (consAll t vs)
+
 def builtinEval : Builtin → List SVal → Option SVal
   | .boolAnd, [.b x, .b y] => some (.b (x && y))
   | .boolOr, [.b x, .b y] => some (.b (x || y))
@@ -965,9 +1003,11 @@ mutual
         | some vs => (strCat vs).map .s
         | none => none
     | .list t items =>
-        match items with
-        | [] => some (.nil t)
-        | _ => none
+        if items.isEmpty then some (.nil t)
+        else
+          match evalArgs F env items with
+          | some vs => some (consAll t vs)
+          | none => none
   def evalArgs (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
       List Expr → Option (List SVal)
     | [] => some []

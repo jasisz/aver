@@ -103,7 +103,8 @@ def mctxOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) : MCtx :=
     divmod := idxOr 23 (roleOf s.hostRoleTable (·.divmod))
     vecStruct := lookupTy 20 tt.vecs
     listStruct := lookupTy 21 tt.lists
-    opaqueStruct := lookupNat 22 tt.opaques }
+    opaqueStruct := lookupNat 22 tt.opaques
+    listCons := fun t => (tt.listCons.find? fun x => decide (x.1 = t)).map (·.2) }
 
 /-! ## The opening rec group, raw and decoded
 

@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Added — certificates for list literals
+
+- **A function that builds a non-empty list literal can now be certified.** `[a, b, c]` used to leave the function source-level only. The compiler builds such a literal by calling its cons helper for the element type once per item, and the certificate now carries that helper as a planned function: the wall checks that its plan is exactly one `List.prepend` of its two parameters, so the literal's meaning is proved, not assumed. On the btc-listener corpus this certifies 58 more functions and gives 41 more of them a source bridge (a function that returns a literal is now bridged to its source); across the examples, projects and certificate fixtures, 27 more functions are certified. The wall identity rotates: packages produced by earlier versions must be produced again.
+
 ### Added — certificates for a match on a List
 
 - **A function that matches on a List can now be certified.** `match xs` with a `[]` arm and a `[head, ..tail]` arm, in either order, or one of them followed by `_`, used to leave the function source-level only. Such a function now gets a certificate for the bytes the compiler already emits, recursive ones included (`count(rest)` on the tail). On the btc-listener corpus this certifies 133 more functions, and 160 more across the examples, projects and certificate fixtures. A List argument has no source-bridge encoder yet, so these functions are certified against their plan and carry no bridge. The wall identity rotates: packages produced by earlier versions must be produced again.

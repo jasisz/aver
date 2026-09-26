@@ -137,6 +137,11 @@ impl<'a> MCtx<'a> {
         idx_or(21, self.tt.lists.iter().find(|l| &l.0 == t).map(|l| l.1))
     }
 
+    /// `MCtx.listCons`: the declared cons helper of `List<t>`.
+    fn list_cons(&self, t: &PlanTy) -> Option<u32> {
+        self.tt.list_cons.iter().find(|l| &l.0 == t).map(|l| l.1)
+    }
+
     fn opaque_struct(&self, tid: u32) -> u64 {
         idx_or(22, self.tt.opaques.iter().find(|o| o.0 == tid).map(|o| o.1))
     }
@@ -469,7 +474,16 @@ impl MCtx<'_> {
             }
             PlanExpr::Construct(c, ty, args) => self.ctor_ty(*c, ty, &self.tys_of(n, g, args)?),
             PlanExpr::Interp(parts) => all_str(&self.tys_of(n, g, parts)?).then_some(PlanTy::Str),
-            PlanExpr::List(t, items) => items.is_empty().then(|| PlanTy::List(Box::new(t.clone()))),
+            PlanExpr::List(t, items) => {
+                let lt = PlanTy::List(Box::new(t.clone()));
+                if items.is_empty() {
+                    return Some(lt);
+                }
+                let f = self.list_cons(t)?;
+                let ts = self.tys_of(n, g, items)?;
+                let sig_ok = self.sigs.get(&f) == Some(&(vec![t.clone(), lt.clone()], lt.clone()));
+                (sig_ok && ts.iter().all(|x| x == t)).then_some(lt)
+            }
             PlanExpr::Match(s, arms) => match self.ty_of(n, g, false, s)? {
                 PlanTy::Int => {
                     matches!(arms.first(), Some((PlanPat::LitInt(_), _))).then_some(())?;
@@ -1358,7 +1372,18 @@ impl MCtx<'_> {
                 out.extend(self.concat(parts.len()));
                 out
             }
-            PlanExpr::List(t, _) => vec![BI::NullOf(self.list_struct(t))],
+            PlanExpr::List(t, items) => {
+                if items.is_empty() {
+                    return vec![BI::NullOf(self.list_struct(t))];
+                }
+                let Some(f) = self.list_cons(t) else {
+                    return vec![];
+                };
+                let mut out = self.lower_args(x, g, items);
+                out.push(BI::NullOf(self.list_struct(t)));
+                out.extend(items.iter().map(|_| BI::Op(WI::Call(u64::from(f)))));
+                out
+            }
         }
     }
 
@@ -1750,7 +1775,7 @@ fn lowered_calls(bs: &[BI], out: &mut Vec<u64>) {
 /// `AcceptedArtifact.callTargets`.
 fn call_targets(e: &PlanExpr, out: &mut Vec<u32>) {
     match e {
-        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::List(_, _) => {}
+        PlanExpr::Literal(_) | PlanExpr::Local(_) => {}
         PlanExpr::Let(_, v, b) => {
             call_targets(v, out);
             call_targets(b, out);
@@ -1762,7 +1787,8 @@ fn call_targets(e: &PlanExpr, out: &mut Vec<u32>) {
         PlanExpr::Call(_, args)
         | PlanExpr::RecordCreate(_, args)
         | PlanExpr::Construct(_, _, args)
-        | PlanExpr::Interp(args) => args.iter().for_each(|a| call_targets(a, out)),
+        | PlanExpr::Interp(args)
+        | PlanExpr::List(_, args) => args.iter().for_each(|a| call_targets(a, out)),
         PlanExpr::BinOp(_, l, r) => {
             call_targets(l, out);
             call_targets(r, out);
@@ -1778,6 +1804,55 @@ fn call_targets(e: &PlanExpr, out: &mut Vec<u32>) {
             arms.iter().for_each(|(_, b)| call_targets(b, out));
         }
     }
+}
+
+/// The element types of the non-empty list literals of a plan: each one
+/// calls its type's cons helper (`MCtx.listCons`), which must therefore be
+/// offered with the plan.
+fn literal_list_types(e: &PlanExpr, out: &mut Vec<PlanTy>) {
+    match e {
+        PlanExpr::Literal(_) | PlanExpr::Local(_) => {}
+        PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
+            literal_list_types(v, out);
+            literal_list_types(b, out);
+        }
+        PlanExpr::List(t, items) => {
+            if !items.is_empty() {
+                out.push(t.clone());
+            }
+            items.iter().for_each(|a| literal_list_types(a, out));
+        }
+        PlanExpr::Call(_, args)
+        | PlanExpr::TailCall(_, args)
+        | PlanExpr::RecordCreate(_, args)
+        | PlanExpr::Construct(_, _, args)
+        | PlanExpr::Interp(args) => args.iter().for_each(|a| literal_list_types(a, out)),
+        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => literal_list_types(x, out),
+        PlanExpr::If(c, t, el) => {
+            literal_list_types(c, out);
+            literal_list_types(t, out);
+            literal_list_types(el, out);
+        }
+        PlanExpr::Match(s, arms) => {
+            literal_list_types(s, out);
+            arms.iter().for_each(|(_, b)| literal_list_types(b, out));
+        }
+    }
+}
+
+/// The functions a plan runs: its calls (`call_targets`) and the cons
+/// helpers of its non-empty list literals.
+fn plan_targets(tt: &PlanTypeTable, p: &FnPlan) -> Vec<u32> {
+    let mut out = Vec::new();
+    call_targets(&p.body, &mut out);
+    let mut tys = Vec::new();
+    literal_list_types(&p.body, &mut tys);
+    for t in tys {
+        if let Some((_, f)) = tt.list_cons.iter().find(|l| l.0 == t) {
+            out.push(*f);
+        }
+    }
+    out
 }
 
 /// `GrammarLower.exprLits`: every string literal a plan lowers to

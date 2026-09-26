@@ -46,6 +46,15 @@ theorem contracts_of {C : Nat} (S : CarrierSpec C) (h : HostFns) (hc : HostContr
   hCmp := hc.cmp
   hEq := hc.eq
 
+/-- A declared cons helper means `List.prepend` in the one model of all plans. -/
+theorem modelOf_cons (hf : PlanFacts s tt fns) :
+    ∀ t f, (mctxOf s tt fns).listCons t = some f → ∀ k h tl sv,
+      HasTy (mctxOf s tt fns) tl (.list t) → modelOf fns k f [h, tl] = some sv →
+        sv = .cons t h tl := by
+  intro t f hf' k h tl sv htl hm
+  obtain ⟨p, hp, hcp⟩ := hf.cons t f hf'
+  exact groupModel_consPlan _ (planOf fns) hp (isConsPlan_body hcp) k h tl sv htl hm
+
 /-- Every planned function is certified at the one model of all plans. -/
 theorem fns_certified (hf : PlanFacts s tt fns)
     (S : CarrierSpec (mctxOf s tt fns).carrier) (h : HostFns) (hc : HostContracts S h) :
@@ -64,6 +73,7 @@ theorem fns_certified (hf : PlanFacts s tt fns)
   refine fn_certified_group S (boxRef _) h.add h.sub h.mul h.cmp h.eq (fun _ => none)
     (contracts_of S h hc) (fun _ _ _ _ hr => by cases hr) _ _ (mctxOf s tt fns) rfl
     hBox hAdd hSub hMul hNeg hCmp hEq R (planOf fns) (fun _ _ _ => none) ?_ ?_
+    (modelOf_cons hf)
   · intro f sig hs hG
     simp [mctxOf, hG] at hs
   · intro f p hp
@@ -148,6 +158,12 @@ theorem obligation_total (hf : PlanFacts s tt fns) {e : FnEntry} (he : e ∈ fns
       have hp := hGP f p hg
       obtain ⟨e', he', rfl, rfl⟩ := planOf_some hp
       exact ⟨by simp [mctxOf, hp], hf.typed e' he', hClaims e' he', by simp [codeOf, hp]⟩)
+    (by
+      intro t f hf' k h tl sv htl hm
+      have hm' : groupModel (groupModel (fun _ _ _ => none) (planOf fns)) (groupOf ms) k f
+          [h, tl] = some sv := hm
+      rw [groupModel_restrict (planOf fns) (groupOf ms) hGP] at hm'
+      exact modelOf_cons hf t f hf' k h tl sv htl hm')
     (fun k _ _ => boxRef_total _ k) ht.add ht.sub ht.mul
     e.funcIdx e.plan (hGall (e.funcIdx, e.plan) (by
       simp only [ms, groupMembers]
@@ -234,7 +250,7 @@ theorem accepted_nonvacuous (artifact : ArtifactData)
   have hwf : declsWellFormed artifact.manifest.subject artifact.manifest.types
       artifact.manifest.fnPlans = true := by
     simp only [plansAccepted, Bool.and_eq_true] at hPlans
-    exact hPlans.2
+    exact hPlans.1.2
   have hti : typesInhabited (mctxOf artifact.manifest.subject artifact.manifest.types
       artifact.manifest.fnPlans) artifact.manifest.types artifact.manifest.fnPlans = true := by
     simp only [declsWellFormed, Bool.and_eq_true] at hwf
@@ -262,7 +278,7 @@ theorem refTest_exact_of_accepted (artifact : ArtifactData)
   intro M
   have hpin : S3Pin M d.tid d.ctors.length (grp.map (·.1)) = true := by
     simp only [plansAccepted, Bool.and_eq_true] at hPlans
-    have htt := hPlans.1.1.1.2
+    have htt := hPlans.1.1.1.1.2
     unfold typeTableConfirmed at htt
     simp only [hg, Bool.and_eq_true, List.all_eq_true] at htt
     have hs := htt.2.1.1.1.1.1.1.1.2 d hd

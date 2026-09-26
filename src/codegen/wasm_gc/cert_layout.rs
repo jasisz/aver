@@ -12,6 +12,7 @@ use super::types::TypeRegistry;
 
 pub(super) struct CertLayout<'a> {
     pub(super) registry: &'a TypeRegistry,
+    pub(super) fn_map: &'a super::body::FnMap,
     pub(super) symbol_table: &'a SymbolTable,
     pub(super) fn_idx: HashMap<FnId, u32>,
     pub(super) builtins: &'a [String],
@@ -69,6 +70,10 @@ impl PlanLayout for CertLayout<'_> {
 
     fn list(&self, canonical: &str) -> Option<u32> {
         self.registry.list_type_idx(canonical)
+    }
+
+    fn list_cons(&self, canonical: &str) -> Option<u32> {
+        self.fn_map.list_ops_lookup(canonical).map(|ops| ops.cons)
     }
 
     fn tuple(&self, canonical: &str) -> Option<u32> {

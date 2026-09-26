@@ -67,6 +67,10 @@ structure TypeTable where
   opaques : List (Nat × Nat)
   /-- The passive data segment holding each string literal's bytes. -/
   strSegs : List (List Nat × Nat)
+  /-- The cons helper of each `List<T>` a non-empty literal builds: the
+      function the literal calls once per item. The acceptance pins its plan
+      to the wall's cons plan (`Grammar.isConsPlan`). -/
+  listCons : List (Ty × Nat) := []
 deriving Repr
 
 /-- One planned function: the plan is the function's MIR body printed 1:1

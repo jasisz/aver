@@ -46,7 +46,9 @@
    * a tuple destructure stashes the subject and reads each bound component
      with `ref.cast` + `struct.get` (`emit_mir_tuple_match`);
    * `[]` is `ref.null` of the list's cons struct, `List.prepend` is
-     `struct.new` of it;
+     `struct.new` of it; a non-empty literal pushes its items in order, then
+     `ref.null`, then calls the cons helper once per item, so the last item
+     is consed first (`emit_mir_list_literal`);
    * a List `Match` stashes the subject and tests it with `ref.is_null`: the
      `[]` arm in `then`, and in `else` the head (field 0) and tail (field 1)
      binders, each by `ref.cast` + `struct.get`, then the cons arm
@@ -442,7 +444,14 @@ mutual
               lowerListArms M X Γ tail (tyOf M X.n Γ tail (.match_ s arms)) t arms
         | _ => []
     | .interp parts => lowerArgsB M X Γ parts ++ concatB M parts.length
-    | .list t _ => [.nullOf (M.listStruct t)]
+    | .list t items =>
+        if items.isEmpty then [.nullOf (M.listStruct t)]
+        else
+          match M.listCons t with
+          | some f =>
+              lowerArgsB M X Γ items ++ [.nullOf (M.listStruct t)] ++
+                List.replicate items.length (.op (.call f))
+          | none => []
   def lowerArgsB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) : List Expr → List BI
     | [] => []
     | e :: es => lowerB M X Γ false e ++ lowerArgsB M X Γ es
