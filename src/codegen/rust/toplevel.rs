@@ -1695,6 +1695,7 @@ mod tests {
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),
+            vm_passed_cases: std::collections::HashSet::new(),
             allow_mathlib: false,
         }
     }

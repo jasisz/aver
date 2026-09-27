@@ -804,12 +804,22 @@ impl Parser {
         let case_hostile_origins = vec![false; cases.len()];
         let case_hostile_profiles = vec![Vec::new(); cases.len()];
         let case_reverse_order = vec![false; cases.len()];
+        let case_ids = (0..cases.len())
+            .map(|case_index| {
+                Some(crate::ast::VerifyCaseId {
+                    block_line: line,
+                    case_index,
+                    explanation_index: None,
+                })
+            })
+            .collect();
         Ok(VerifyBlock {
             process_verification: None,
             fn_name,
             line,
             cases,
             case_spans,
+            case_ids,
             case_givens,
             case_hostile_origins,
             case_hostile_profiles,

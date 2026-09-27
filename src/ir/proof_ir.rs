@@ -379,6 +379,16 @@ pub struct NativeIntCountdownBody {
 pub enum FuelMetric {
     /// `n.natAbs + 1` — classic IntCountdown fuel.
     NatAbsPlusOne { param: String },
+    /// `max (n.natAbs + 1) ((n - floor).natAbs + 2)` — an IntCountdown that
+    /// stops at a floor other than zero (`match to < from` stepping `to - 1`).
+    /// Every self-call is guarded by `n >= floor`, so the recursion makes at
+    /// most `(n - floor).natAbs + 2` calls. The seed never drops below the
+    /// zero-floor `n.natAbs + 1`, so a floor the classifier read wrong can
+    /// only cost fuel it would have had anyway, never make it run out sooner.
+    NatAbsOrFloorDistance {
+        param: String,
+        floor: CountdownFloor,
+    },
     /// `(bound - n).natAbs + 1` — IntAscending: param climbs toward
     /// a bound expression. Lean renders the bound through
     /// `bound_expr_to_lean`.
@@ -401,6 +411,15 @@ pub enum FuelMetric {
     },
     /// Lexicographic pair for mutual recursion SCCs.
     Lex { params: Vec<String>, rank: usize },
+}
+
+/// The floor an Int countdown stops at (see [`FuelMetric::NatAbsOrFloorDistance`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CountdownFloor {
+    /// An Int literal, negative ones included.
+    Literal(i64),
+    /// A parameter every self-call passes on unchanged (source name).
+    Param(String),
 }
 
 /// Symbolic termination measure. Backend-agnostic.

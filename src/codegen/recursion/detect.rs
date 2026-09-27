@@ -552,6 +552,101 @@ pub(crate) fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
         })
 }
 
+/// The floor an Int countdown stops at, when it is not zero.
+///
+/// `natAbs(p) + 1` bounds a countdown only when every self-call is guarded by
+/// `p >= 1`: the recursion then stops before `p` passes zero. A countdown can
+/// also stop at another floor, `match to < from` stepping `to - 1` until it
+/// drops below `from`, and from `from <= 0` it keeps calling itself at and
+/// below zero. `heightsFrom(0, 0, [])` makes two calls where `natAbs(0) + 1`
+/// allows one, and the fuel runs out on a claim the program meets.
+///
+/// Returns the floor `e` when the guards do not imply `p >= 1` but every
+/// self-call is guarded by `p >= e` (or `p > e`, or the flipped spellings) for
+/// one `e` that is an Int literal (`-3` included) or a parameter every
+/// self-call passes on unchanged. Each call then has `p >= e` and `p` drops by
+/// at least one, so `natAbs(p - e) + 2` invocations suffice. `None` keeps the
+/// zero floor.
+///
+/// Only the function's own self-calls are read. A function of a mutual group
+/// shares its fuel with calls to the other members, which this does not see,
+/// so the mutual-group emitter never asks for a floor.
+///
+/// The seed built from the floor is never below the zero-floor seed (see
+/// `FuelMetric::NatAbsOrFloorDistance`), so this detector only ever adds fuel:
+/// a floor it reads wrong can make no model run out sooner.
+pub(crate) fn countdown_invariant_floor(
+    fd: &FnDef,
+    param_index: usize,
+) -> Option<crate::ir::CountdownFloor> {
+    let (param, _) = fd.params.get(param_index)?;
+    let calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    let chains = collect_self_call_guard_chains(fd);
+    if calls.is_empty()
+        || chains.len() != calls.len()
+        || !calls.iter().all(|args| {
+            args.get(param_index)
+                .is_some_and(|arg| is_int_minus_positive(arg, param))
+        })
+        || chains
+            .iter()
+            .all(|chain| guards_imply_param_ge_one(chain, param))
+    {
+        return None;
+    }
+    use crate::ir::CountdownFloor;
+    let invariant = |bound: &Spanned<Expr>| -> Option<CountdownFloor> {
+        match &bound.node {
+            Expr::Literal(crate::ast::Literal::Int(n)) => Some(CountdownFloor::Literal(*n)),
+            Expr::Neg(inner) => match &inner.node {
+                Expr::Literal(crate::ast::Literal::Int(n)) => {
+                    n.checked_neg().map(CountdownFloor::Literal)
+                }
+                _ => None,
+            },
+            _ => local_name_of(bound)
+                .filter(|name| {
+                    *name != param
+                        && fd
+                            .params
+                            .iter()
+                            .position(|(p, ty)| p == name && ty == "Int")
+                            .is_some_and(|at| {
+                                calls
+                                    .iter()
+                                    .all(|args| args.get(at).is_some_and(|arg| is_ident(arg, name)))
+                            })
+                })
+                .map(|name| CountdownFloor::Param(name.to_string())),
+        }
+    };
+    let floor_of = |guard: &Spanned<Expr>| -> Option<CountdownFloor> {
+        let Expr::BinOp(op, left, right) = &guard.node else {
+            return None;
+        };
+        let bound = match op {
+            BinOp::Gte | BinOp::Gt if is_ident(left, param) => right,
+            BinOp::Lte | BinOp::Lt if is_ident(right, param) => left,
+            _ => return None,
+        };
+        invariant(bound)
+    };
+    let mut floor: Option<CountdownFloor> = None;
+    for chain in &chains {
+        let found = chain.iter().find_map(floor_of)?;
+        match &floor {
+            None => floor = Some(found),
+            Some(seen) if *seen == found => {}
+            Some(_) => return None,
+        }
+    }
+    floor
+}
+
 /// Reuse the countdown shrink and guard checks for a native `param.toNat`
 /// measure. Every recursive call must subtract a positive literal under a
 /// guard proving the old parameter positive; no law shape is involved.

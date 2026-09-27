@@ -897,6 +897,17 @@ pub struct ProcessVerification {
     pub driver: String,
 }
 
+/// Identity assigned at parse time, before verify blocks can be merged.
+/// A module scope completes this identity when used across a whole program.
+/// Expanded given samples have distinct indices even when their spans coincide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VerifyCaseId {
+    pub block_line: usize,
+    pub case_index: usize,
+    /// A law explanation is a separate obligation over the same sample.
+    pub explanation_index: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerifyBlock {
     pub fn_name: String,
@@ -906,6 +917,8 @@ pub struct VerifyBlock {
     pub line: usize,
     pub cases: Vec<(Spanned<Expr>, Spanned<Expr>)>,
     pub case_spans: Vec<SourceSpan>,
+    /// Parallel to `cases`; absent for synthetic cases without source identity.
+    pub case_ids: Vec<Option<VerifyCaseId>>,
     /// Per-case `given` bindings after domain expansion. Populated for
     /// both law-form and cases-form verify blocks.
     pub case_givens: Vec<Vec<(String, Spanned<Expr>)>>,
@@ -949,6 +962,15 @@ pub struct VerifyBlock {
 }
 
 impl VerifyBlock {
+    /// Unknown provenance (including regenerated hostile samples) fails closed.
+    /// Trace checks are runtime-only and never supply proof ground truth.
+    pub fn source_case_id(&self, index: usize) -> Option<VerifyCaseId> {
+        if self.trace || self.case_ids.len() != self.cases.len() {
+            return None;
+        }
+        self.case_ids.get(index).copied().flatten()
+    }
+
     /// Compiler-owned helpers that exist only to execute this process case.
     pub fn process_driver_names(&self) -> impl Iterator<Item = &str> {
         self.process_verification
@@ -980,6 +1002,7 @@ impl VerifyBlock {
             line,
             cases,
             case_spans,
+            case_ids: vec![],
             case_givens: vec![],
             case_hostile_origins,
             case_hostile_profiles,

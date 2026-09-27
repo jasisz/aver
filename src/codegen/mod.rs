@@ -91,10 +91,8 @@ pub struct ModuleInfo {
 /// Identity of one emitted verify case in the whole program.
 ///
 /// `None` owns the entry module; `Some(prefix)` owns a dependency module.
-/// The textual counter key preserves the existing merge semantics within one
-/// module, while the scope prevents same-bare-name blocks in two modules from
-/// sharing VM ground truth or decline state.
-pub type VerifyCaseKey = (Option<String>, String, usize);
+/// Source identity survives merging; scope separates cases in different files.
+pub type VerifyCaseKey = (Option<String>, crate::ast::VerifyCaseId);
 
 impl ModuleInfo {
     /// Build the shared projection from parsed module items. Target-specific
@@ -586,7 +584,7 @@ pub struct CodegenContext {
     /// the CLI wired it — discovery feedback is strictly opt-in.
     pub discovered_lemmas: Vec<crate::codegen::lemma_discovery::CommittedLemma>,
     /// VM-computed ground-truth values for verify cases, keyed by
-    /// `(module_scope, common::verify_block_counter_key(vb), case_index)` →
+    /// `(module_scope, source_case_id)` →
     /// `aver_repr_literal` rendering of the case's expected (right-side)
     /// value. Set by the CLI on `aver proof --backend lean` from a Declared-
     /// mode `aver verify` run over every project module; empty everywhere else.
@@ -597,7 +595,7 @@ pub struct CodegenContext {
     /// kernel-certify a false equation. Entries exist only for cases that
     /// PASSED `aver verify`; failing/skipped cases keep the source RHS.
     pub sample_expected: std::collections::HashMap<VerifyCaseKey, String>,
-    /// `(module_scope, common::verify_block_counter_key(vb), case_index)` → the
+    /// `(module_scope, source_case_id)` → the
     /// reason `aver verify` gave for not answering that case.
     ///
     /// The counterpart to [`Self::sample_expected`], and the reason it is a
@@ -608,6 +606,14 @@ pub struct CodegenContext {
     /// precisely on the big inputs where the model is likeliest to exhaust
     /// fuel too. A case listed here is declined as a claim instead.
     pub declined_cases: std::collections::HashMap<VerifyCaseKey, String>,
+    /// The cases `aver verify` passed, whether or not their value could be
+    /// literalized into [`Self::sample_expected`].
+    ///
+    /// Only such a case may be put behind the proof isolation guard: its
+    /// equation is known to hold, so a proof that does not close is a proof
+    /// the export could not finish. A case the VM failed, or never ran, is a
+    /// possible counterexample and must keep failing the build.
+    pub vm_passed_cases: std::collections::HashSet<VerifyCaseKey>,
     /// `aver proof --allow-mathlib` (Lean only, opt-in): permit a generic
     /// Mathlib break-glass closing arm on laws the core strategies cannot
     /// claim. When `false` (the default) the Lean backend is BYTE-IDENTICAL to
@@ -1025,6 +1031,7 @@ pub fn build_context(
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),
+        vm_passed_cases: std::collections::HashSet::new(),
         allow_mathlib: false,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
@@ -1508,6 +1515,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),
+        vm_passed_cases: std::collections::HashSet::new(),
         allow_mathlib: false,
     }
 }

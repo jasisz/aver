@@ -47,9 +47,9 @@ fn capability_tuple_verify_exports_from_entry_and_dependency() {
             "the verified function must remain exported"
         );
         assert!(
-            lean.lines().any(
-                |line| line.starts_with("example ") && line.contains("applied BranchPath.Root")
-            ),
+            lean.lines()
+                .any(|line| line.starts_with("theorem __aver_verify_applied_")
+                    && line.contains("applied BranchPath.Root")),
             "the pure-branch verify case must remain a proof obligation:\n{lean}"
         );
         let _ = std::fs::remove_dir_all(out);

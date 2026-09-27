@@ -159,6 +159,21 @@ pub fn merge_verify_blocks(items: &[TopLevel]) -> Vec<VerifyBlock> {
                         && candidate.cases_givens == vb.cases_givens
                 });
                 if let Some(idx) = compatible {
+                    // Carry source identity with each case, including holes in
+                    // synthetic blocks; never infer identity from merged order.
+                    let ids = merged[idx]
+                        .cases
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| merged[idx].source_case_id(i))
+                        .chain(
+                            vb.cases
+                                .iter()
+                                .enumerate()
+                                .map(|(i, _)| vb.source_case_id(i)),
+                        )
+                        .collect();
+                    merged[idx].case_ids = ids;
                     merged[idx].cases.extend(vb.cases.clone());
                     merged[idx].case_spans.extend(vb.case_spans.clone());
                     merged[idx].case_givens.extend(vb.case_givens.clone());

@@ -3073,16 +3073,9 @@ pub fn entry_basename(ctx: &CodegenContext) -> String {
         })
 }
 
-/// Stable identity key for a verify block's case-index space, shared by the
-/// Lean emitter's per-block case counters and the CLI's VM ground-truth
-/// collection (`CodegenContext::sample_expected`).
-///
-/// Plain `verify <fn>` blocks share one index space per fn — the VM verify
-/// runner merges them (`checker::merge_verify_blocks`) and the Lean emitter
-/// continues the counter across blocks with the same key — while each
-/// `verify <fn> law <name>` block keeps its own space. Both sides MUST derive
-/// keys from this one function: index drift between them would associate a
-/// case with another case's ground-truth value.
+/// Counter namespace for stable, unique emitted theorem names only.
+/// VM ground truth uses source-assigned `VerifyCaseId`, never this counter:
+/// merging interleaved stub worlds changes case order.
 pub fn verify_block_counter_key(vb: &crate::ast::VerifyBlock) -> String {
     match &vb.kind {
         crate::ast::VerifyKind::Cases => format!("fn:{}", vb.fn_name),
@@ -4229,6 +4222,7 @@ mod tests {
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),
+            vm_passed_cases: std::collections::HashSet::new(),
             allow_mathlib: false,
         };
         ctx.proof_ir
@@ -4355,6 +4349,7 @@ mod tests {
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),
+            vm_passed_cases: std::collections::HashSet::new(),
             allow_mathlib: false,
         };
 

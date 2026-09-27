@@ -42,8 +42,8 @@ pub use pipeline::{
     PipelineResult, PipelineStage, TypecheckMode,
 };
 pub use proof_ir::{
-    DecreaseProof, EscapePairSpec, FloorDivShrink, FloorWindowFigure, FnContract, FuelMetric,
-    LawTheorem, MapUpdatePostconditionKind, Measure, NativeIntCountdownBody, Predicate,
+    CountdownFloor, DecreaseProof, EscapePairSpec, FloorDivShrink, FloorWindowFigure, FnContract,
+    FuelMetric, LawTheorem, MapUpdatePostconditionKind, Measure, NativeIntCountdownBody, Predicate,
     PreservationProof, ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract,
     RefinedTypeDecl, SmartGuard, StringEscapeRoundtripPin, UnclassifiedFn, WrapperDriver,
 };

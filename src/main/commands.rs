@@ -293,15 +293,6 @@ pub(super) type ReportUnit = (String, String, Vec<TopLevel>);
 /// the entry last. Embedded standard modules are not units. Modules whose
 /// canonical path is already in `reported` are skipped and the rest are
 /// added to it, so a directory input reports each module once.
-pub(super) fn collect_program_units(
-    file: &str,
-    module_root: &str,
-    reported: &mut HashSet<PathBuf>,
-) -> Result<Vec<ReportUnit>, String> {
-    let mut cache = aver::source::ProgramLoadCache::default();
-    collect_program_units_with_cache(file, module_root, reported, &mut cache)
-}
-
 fn collect_program_units_with_cache(
     file: &str,
     module_root: &str,
@@ -3053,7 +3044,7 @@ fn run_verify_for_units(
             fault: _,
             prepared,
         } = unit;
-        // `collect_program_units` swallows a parse error into empty `items` so
+        // `collect_program_units_with_cache` swallows a parse error into empty `items` so
         // that `aver check` can surface it as a canonical line/col diagnostic
         // via its own analysis pass. `verify` has no such pass, so an
         // unparseable file would silently report "no verify blocks" and exit 0
@@ -8227,6 +8218,7 @@ pub(super) fn cmd_proof(
     let ground_truth = collect_verify_ground_truth(file, &module_root);
     ctx.sample_expected = ground_truth.expected;
     ctx.declined_cases = ground_truth.declined;
+    ctx.vm_passed_cases = ground_truth.passed;
     let lean_files = cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
     // Under `--allow-mathlib` the speculative/minimize re-emit passes are
     // SKIPPED: they run their own `lake build` probes that would choke on
@@ -8337,14 +8329,9 @@ pub(super) fn cmd_proof(
 /// the ground-truth table for `CodegenContext::sample_expected`: for every
 /// case that PASSES, the VM-computed expected (right-side) value, rendered
 /// with `aver_repr_literal`, keyed by
-/// `(module_scope, verify_block_counter_key, module_local_case_index)`.
-///
-/// The index space mirrors the Lean emitter exactly: per-key running
-/// counters over the merged blocks (plain `verify <fn>` blocks coalesce per
-/// fn in source order — `merge_verify_blocks` — matching the emitter's
-/// per-key counter continuation over unmerged items; law blocks each start
-/// at their own running offset, which also keeps duplicate same-named law
-/// blocks from cross-associating values).
+/// `(module_scope, source_case_id)`. The parser assigns identity before any
+/// merging, and the VM carries it into each result. No running counter or
+/// correspondence between result/block positions is used to recover identity.
 ///
 /// Skips, by design:
 /// - trace blocks (runtime-only projections; the emitter doesn't literalize
@@ -8359,53 +8346,71 @@ pub(super) fn cmd_proof(
 /// modules still keep their ground truth. Emission falls back to the source
 /// RHS for every miss, as before.
 fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTruth {
-    use aver::checker::{VerifyCaseOutcome, merge_verify_blocks};
+    use aver::checker::VerifyCaseOutcome;
 
     let mut out = VerifyGroundTruth::default();
-    let mut reported = HashSet::new();
-    let Ok(units) = collect_program_units(file, module_root, &mut reported) else {
+    let mut cache = aver::source::ProgramLoadCache::default();
+    let Ok(program) = load_report_program_with_cache(file, module_root, &mut cache) else {
         return out;
     };
     let config = match load_runtime_policy(module_root) {
         Ok(c) => c,
         Err(_) => return out,
     };
-    let unit_count = units.len();
-    for (unit_index, (path, _source, items)) in units.into_iter().enumerate() {
-        let merged = merge_verify_blocks(&items);
-        if merged.is_empty() {
+    // Each unit with the scope the Lean emitter keys its cases by: none for
+    // the entry, the dependency's path name (`Infra.Store`) for a dependency.
+    // The name the module declares (`Store`) is only the last segment of it,
+    // and keying by it lost every dependency's ground truth.
+    let units: Vec<(String, Option<String>, Vec<aver::ast::TopLevel>)> = program
+        .report_units()
+        .map(|module| {
+            if module.is_entry {
+                (file.to_string(), None, module.items.clone())
+            } else {
+                (
+                    module.path.to_string_lossy().to_string(),
+                    Some(module.dep_name.clone()),
+                    module.items.clone(),
+                )
+            }
+        })
+        .collect();
+    for (path, scope, items) in units {
+        if !items.iter().any(|item| matches!(item, TopLevel::Verify(_))) {
             continue;
         }
-        let scope = if unit_index + 1 == unit_count {
-            None
-        } else {
-            aver::visibility::module_decl(&items).map(|module| module.name.clone())
-        };
         let results = match aver::diagnostics::vm_verify::run_verify_for_items_vm(
             items,
             config.clone(),
             Some(module_root),
             &path,
         ) {
-            Ok(results) if results.len() == merged.len() => results,
+            Ok(results) => results,
             _ => continue,
         };
 
-        let mut counters: HashMap<String, usize> = HashMap::new();
-        for (block, result) in merged.iter().zip(&results) {
-            let block_key = aver::codegen::common::verify_block_counter_key(block);
-            let base = *counters.get(&block_key).unwrap_or(&0);
-            counters.insert(block_key.clone(), base + block.cases.len());
-            if block.trace {
-                continue;
-            }
+        let mut seen = HashSet::new();
+        for result in &results {
             for cr in &result.case_results {
-                let key = (scope.clone(), block_key.clone(), base + cr.case_index);
+                let Some(id) = cr.case_id else {
+                    continue;
+                };
+                let key = (scope.clone(), id);
+                if !seen.insert(key.clone()) {
+                    // Ambiguous provenance must never authorize a substitution
+                    // or isolation, even if one of the duplicate results passed.
+                    out.passed.remove(&key);
+                    out.expected.remove(&key);
+                    out.declined.remove(&key);
+                    continue;
+                }
                 // Exhaustive on purpose. A decline is not an absent value: the
                 // emitter must refuse the theorem rather than fall back to the
                 // author's expected expression.
                 match &cr.outcome {
-                    VerifyCaseOutcome::Pass => {}
+                    VerifyCaseOutcome::Pass => {
+                        out.passed.insert(key.clone());
+                    }
                     VerifyCaseOutcome::Declined { reason, .. } => {
                         out.declined.insert(key, reason.clone());
                         continue;
@@ -8441,6 +8446,8 @@ struct VerifyGroundTruth {
     expected: std::collections::HashMap<aver::codegen::VerifyCaseKey, String>,
     /// Cases that were declined, with the reason.
     declined: std::collections::HashMap<aver::codegen::VerifyCaseKey, String>,
+    /// Cases that passed, whether or not their value could be literalized.
+    passed: std::collections::HashSet<aver::codegen::VerifyCaseKey>,
 }
 
 /// Structural Float scan for ground-truth literalization: any embedded
@@ -8752,7 +8759,14 @@ fn run_proof_check(
     // build. Also anchors `--explain`'s residual attribution below.
     let sorry_laws: Vec<String> = if sorries > 0 {
         let mut laws = lean_sorry_laws(output_dir, &format!("{stdout}{stderr}"));
-        laws.extend(isolated_error_labels.iter().cloned());
+        // An isolated `verify` case is not a law; it is listed in
+        // `isolated_cases` instead.
+        laws.extend(
+            isolated_error_labels
+                .iter()
+                .filter(|label| !aver::codegen::lean::isolate::is_isolated_case(label))
+                .cloned(),
+        );
         laws.sort();
         laws.dedup();
         laws
@@ -9033,6 +9047,19 @@ fn run_proof_check(
                         .map(|l| serde_json::Value::String(l.clone()))
                         .collect(),
                 ),
+            );
+        }
+        // The `verify` cases among them: a case whose proof did not close,
+        // charged as a sorry. Its name is `<Module>.__aver_verify_<fn>_<N>`.
+        let isolated_cases: Vec<serde_json::Value> = isolated_error_labels
+            .iter()
+            .filter(|label| aver::codegen::lean::isolate::is_isolated_case(label))
+            .map(|label| serde_json::Value::String(label.clone()))
+            .collect();
+        if !isolated_cases.is_empty() {
+            obj.insert(
+                "isolated_cases".into(),
+                serde_json::Value::Array(isolated_cases),
             );
         }
         if isolated_errors.is_err() {
@@ -11065,6 +11092,7 @@ fn build_candidate_law(
         line: 0,
         cases: vec![],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -11520,17 +11548,26 @@ fn lean_lakefile_roots(dir: &str) -> Vec<String> {
 fn lean_isolated_errors(dir: &str) -> Result<Vec<String>, String> {
     use aver::codegen::lean::isolate;
     let roots = lean_lakefile_roots(dir);
-    let guarded: Vec<String> = roots
+    let texts: Vec<String> = roots
         .iter()
         .filter_map(|root| {
             let path = std::path::Path::new(dir).join(format!("{}.lean", root.replace('.', "/")));
             std::fs::read_to_string(path).ok()
         })
-        .flat_map(|contents| isolate::guarded_theorem_names(&contents))
+        .collect();
+    let guarded: Vec<String> = texts
+        .iter()
+        .flat_map(|contents| isolate::guarded_theorem_names(contents))
         .collect();
     if guarded.is_empty() {
         return Ok(Vec::new());
     }
+    // A guarded theorem whose name another theorem of the export also takes
+    // lost its declaration to an "already declared" error the guard dropped.
+    let duplicates: Vec<String> = texts
+        .iter()
+        .flat_map(|contents| isolate::duplicate_guarded_theorems(contents))
+        .collect();
     let checker = std::path::Path::new(dir).join("_aver_isolation_check.lean");
     std::fs::write(&checker, isolate::isolation_check_source(&roots, &guarded))
         .map_err(|e| format!("could not write the isolation check: {e}"))?;
@@ -11545,13 +11582,17 @@ fn lean_isolated_errors(dir: &str) -> Result<Vec<String>, String> {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    isolate::parse_isolation_check(&combined).ok_or_else(|| {
+    let mut errored = isolate::parse_isolation_check(&combined).ok_or_else(|| {
         let tail: Vec<&str> = combined.lines().rev().take(12).collect();
         format!(
             "the isolation check did not finish:\n{}",
             tail.into_iter().rev().collect::<Vec<_>>().join("\n")
         )
-    })
+    })?;
+    errored.extend(duplicates);
+    errored.sort();
+    errored.dedup();
+    Ok(errored)
 }
 
 /// The `fn.law` identity of each errored declaration that is a law or
@@ -13426,6 +13467,7 @@ error: build failed";
             discovered_lemmas: Vec::new(),
             sample_expected: std::collections::HashMap::new(),
             declined_cases: std::collections::HashMap::new(),
+            vm_passed_cases: std::collections::HashSet::new(),
             allow_mathlib: false,
         }
     }

@@ -185,8 +185,7 @@ pub fn emit_verify_block(
 
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
-        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, case_index_start + idx)
-        {
+        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, idx) {
             lines.push(record_declined_case(
                 vb,
                 ctx,
@@ -216,7 +215,7 @@ pub fn emit_verify_block(
         // without an entry (verify failed/skipped, Float-carrying value —
         // decimal repr isn't bit-exact — or a shape that doesn't round-trip)
         // keep the source RHS and rely on the `--check` panic gate.
-        let ground_truth = super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx);
+        let ground_truth = super::sample_literal::ground_truth_rhs(vb, ctx, idx);
         let has_ground_truth = ground_truth.is_some();
         // A case carrying `?` denotes an `Except` action (see
         // `emit_statement_lhs`), so both sides end up in the same monad.
@@ -270,10 +269,45 @@ pub fn emit_verify_block(
                         }
                     )
                 };
-                lines.push(format!(
-                    "example{} : {} = {} := by {}",
-                    theorem_param_text, left_str, right_str, tactic
-                ));
+                let vm_passed = super::sample_literal::vm_passed(vb, ctx, idx);
+                if theorem_params.is_empty() || !vm_passed {
+                    // A case the VM failed, or never ran, stays an `example`
+                    // outside any guard, so a counterexample fails the build
+                    // whatever the sorry budget.
+                    lines.push(format!(
+                        "{}example{} : {} = {} := by {}",
+                        synth_budget_for_case(&left, ctx),
+                        theorem_param_text,
+                        left_str,
+                        right_str,
+                        tactic
+                    ));
+                } else {
+                    // Whether `simp` gets the oracle out of the goal depends
+                    // on how far it can evaluate the concrete branch, which
+                    // the export cannot know in advance: a key built through
+                    // `String`-to-bytes or hex parsing leaves the branch
+                    // condition standing (and the oracle free, so
+                    // `native_decide` refuses the goal), and a large fixture
+                    // can run simp out of heartbeats, which no `first`
+                    // catches. The VM passed this case, so either is a proof
+                    // the export could not finish, never a counterexample:
+                    // the case is a named theorem behind the isolation
+                    // guard, a failure costs this case, which `--check`
+                    // charges as a sorry, and not the build of the whole
+                    // module. The name begins with `__`, which no source
+                    // identifier can, so no user function takes it.
+                    lines.push(crate::codegen::lean::isolate::ISOLATION_GUARD.to_string());
+                    lines.push(format!(
+                        "{}theorem {}{} : {} = {} := by {}",
+                        synth_budget_for_case(&left, ctx),
+                        isolated_case_theorem_name(&vb.fn_name, case_index_start + idx + 1),
+                        theorem_param_text,
+                        left_str,
+                        right_str,
+                        tactic
+                    ));
+                }
             }
             VerifyEmitMode::Sorry => {
                 lines.push(format!(
@@ -296,6 +330,56 @@ pub fn emit_verify_block(
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+/// The theorem name of an isolated `verify` case: `__aver_verify_<fn>_<N>`.
+///
+/// Source identifiers cannot begin with `__` (the compiler's namespace), so
+/// no user function or law theorem can be declared under this name. A name a
+/// user could write would let a same-named function stand in for a case whose
+/// own theorem was dropped with its "already declared" error.
+pub(crate) fn isolated_case_theorem_name(fn_name: &str, case_number: usize) -> String {
+    format!(
+        "{}{}_{}",
+        crate::codegen::lean::isolate::ISOLATED_CASE_PREFIX,
+        fn_name.replace('.', "_"),
+        case_number
+    )
+}
+
+/// `set_option synthInstance.maxSize 4096 in` (with its line break) for a case
+/// whose compared value has a large type, or nothing.
+///
+/// The case is decided through `DecidableEq` of the type both sides have, and
+/// Lean finds that instance by composing one per type constructor. For a
+/// `Result` of a tuple of maps, lists and records (btc-listener's `absorbed`)
+/// the composed instance is larger than Lean's default `synthInstance.maxSize`,
+/// and the case failed with `failed to synthesize Decidable` although every
+/// part has its instance. The budget is scoped to the one declaration, like
+/// the `_checked_domain` theorems carry it.
+fn synth_budget_for_case(left: &Spanned<Expr>, ctx: &CodegenContext) -> &'static str {
+    const BUDGET: &str = "set_option synthInstance.maxSize 4096 in\n";
+    fn large(annotation: &str) -> bool {
+        annotation.contains("Tuple<") || annotation.matches('<').count() >= 3
+    }
+    fn walk(expr: &Spanned<Expr>, ctx: &CodegenContext, scope: Option<&str>) -> bool {
+        match &expr.node {
+            Expr::FnCall(callee, args) => {
+                let returns_large = crate::codegen::common::expr_to_dotted_name(&callee.node)
+                    .and_then(|name| ctx.fn_def_by_callee(&name, scope))
+                    .is_some_and(|fd| large(&fd.return_type));
+                returns_large || args.iter().any(|arg| walk(arg, ctx, scope))
+            }
+            Expr::ErrorProp(inner) | Expr::Attr(inner, _) => walk(inner, ctx, scope),
+            _ => false,
+        }
+    }
+    let scope = ctx.active_module_scope();
+    if walk(left, ctx, scope.as_deref()) {
+        BUDGET
+    } else {
+        ""
+    }
 }
 
 /// Record that one case of `vb` was declined by `aver verify`, and render the
@@ -1518,9 +1602,8 @@ fn emit_verify_law_block(
     // case would carry the source RHS into it and make the whole conjunct a
     // statement nothing checked. The answered cases still get their granular
     // `_sample_N` theorems below.
-    let has_declined_case = (0..vb.cases.len()).any(|idx| {
-        super::sample_literal::decline_reason(vb, ctx, case_index_start + idx).is_some()
-    });
+    let has_declined_case = (0..vb.cases.len())
+        .any(|idx| super::sample_literal::decline_reason(vb, ctx, idx).is_some());
     if !vb.cases.is_empty() && lifted_vars.is_empty() && !has_declined_case {
         let domain_theorem_name = format!("{}_checked_domain", theorem_base);
         let domain_conjuncts: Vec<String> = vb
@@ -1557,7 +1640,7 @@ fn emit_verify_law_block(
                 // the carrier-typed VM literal matches the statement type.
                 let (right_str, right_propagates) = emit_statement_rhs(
                     &right_rw,
-                    super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx),
+                    super::sample_literal::ground_truth_rhs(vb, ctx, idx),
                     ctx,
                 );
                 let (left_str, right_str) =
@@ -1686,8 +1769,7 @@ fn emit_verify_law_block(
         ));
     }
     for idx in sample_indices {
-        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, case_index_start + idx)
-        {
+        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, idx) {
             lines.push(record_declined_case(
                 vb,
                 ctx,
@@ -1734,7 +1816,7 @@ fn emit_verify_law_block(
         let (right_str, right_propagates) = emit_statement_rhs(
             &right_rw,
             if lifted_vars.is_empty() {
-                super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
+                super::sample_literal::ground_truth_rhs(vb, ctx, idx)
             } else {
                 None
             },
