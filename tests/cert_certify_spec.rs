@@ -2435,15 +2435,14 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
 
     for (export, reason) in [
         // The printer names the MIR node it has no grammar for.
-        ("finalizeFibStats", "Call Builtin(List.reverse)"),
         ("goldenApprox", "BinOp Div"),
         ("showGolden", "InterpolatedStr (a part is not a String)"),
         // A printed plan the one grammar does not type.
         ("absF", "plan does not type in the one grammar"),
         // A call to a function without a certified plan.
         (
-            "buildFibStats",
-            "calls function 8, which has no certified plan",
+            "showListInt",
+            "calls function 12, which has no certified plan",
         ),
         // An effectful function has no pure plan at all.
         ("main", "fn declares effects"),
@@ -2457,13 +2456,39 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
     }
     // The pure recursions that used to decline on the retired families'
     // arity limits are certified plans now, and so is the recursion over a
-    // List match.
-    for name in ["fibTR", "fib", "fibSpec", "bigger", "nthOrZero"] {
+    // List match. `List.reverse` has a certified helper, so the function
+    // that calls it and the builder that calls that one are certified too.
+    for name in [
+        "fibTR",
+        "fib",
+        "fibSpec",
+        "bigger",
+        "nthOrZero",
+        "finalizeFibStats",
+        "buildFibStats",
+    ] {
         assert!(
             !declared.contains_key(name),
             "`{name}` must be certified, not declined: {declared:?}"
         );
     }
+    // A builtin call the grammar has no node for is named by the printer.
+    let (_empty_dir, empty) = certify_fixture(
+        "tools/certkit/fixtures/certempty.av",
+        &[],
+        "certify-decline-builtin",
+    );
+    let name_len = empty["declaredUncertified"]
+        .as_array()
+        .expect("declaredUncertified report is an array")
+        .iter()
+        .find(|entry| entry["name"] == "nameLen")
+        .and_then(|entry| entry["reason"].as_str());
+    assert_eq!(
+        name_len,
+        Some("Call Builtin(String.len)"),
+        "`nameLen` must decline on the builtin it calls"
+    );
 }
 
 /// This test used to duplicate, line for line, `aver cert verify` on the same
@@ -2949,8 +2974,8 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("106 checked exports"),
-        "payment_ops must keep the 106 exports it certifies:\n{report}"
+        report.contains("140 checked exports"),
+        "payment_ops must keep the 140 exports it certifies:\n{report}"
     );
     // The project's single `verify … law` is universal by design but its
     // emitted proof ladder has no `String.replace` theory and lands on its

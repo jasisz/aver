@@ -47,6 +47,13 @@ Nothing below is a producer choice: the host table, the code table, the model
 and the policy axes are functions of the plans, the type table and the
 subject. -/
 
+/-- The List helpers' entries of the host table: each declared helper is its
+    template, run by the wall (`ListHelpers.helperSem`); `contains` calls the
+    Int or String equality contract function. -/
+def helperAssoc (M : MCtx) (h : HostFns) : List (Nat × (Nat × (List WVal → Option WVal))) :=
+  M.listHelpers.map fun x =>
+    (x.2.2, (x.2.1.arity, _root_.AverCert.ListHelpers.helperSem M h.eq h.stringEq x.2.1 x.1))
+
 /-- The host table an obligation runs against, as an association list keyed
     by role index: the wall's own `boxRef` at the box index, the contract
     functions at their role indices, and the trap-only function at the (never
@@ -55,13 +62,16 @@ def hostAssoc (M : MCtx) (h : HostFns) : List (Nat × (Nat × (List WVal → Opt
   [(M.box, (1, boxRef M.carrier)), (M.add, (2, h.add)), (M.sub, (2, h.sub)),
    (M.mul, (2, h.mul)), (M.neg, (1, fun _ => none)), (M.cmp, (2, h.cmp)), (M.eq, (2, h.eq)),
    (M.concat, (1, h.stringConcat M.str)), (M.streq, (2, h.stringEq)),
-   (M.toIndex, (1, h.toIndex)), (M.divmod, (3, h.divmod))]
+   (M.toIndex, (1, h.toIndex)), (M.divmod, (3, h.divmod)),
+   (M.toI64Sat, (1, _root_.AverCert.ListHelpers.satSem M.carrier))] ++
+  helperAssoc M h
 
 def hostOf (M : MCtx) (h : HostFns) : HostTbl := fun f => (hostAssoc M h).lookup f
 
 /-- The role indices of a lowering context, in `hostAssoc` order. -/
 def roleIndices (M : MCtx) : List Nat :=
-  [M.box, M.add, M.sub, M.mul, M.neg, M.cmp, M.eq, M.concat, M.streq, M.toIndex, M.divmod]
+  [M.box, M.add, M.sub, M.mul, M.neg, M.cmp, M.eq, M.concat, M.streq, M.toIndex, M.divmod,
+   M.toI64Sat] ++ M.listHelpers.map (·.2.2)
 
 /-- The emitted code of every planned function: its plan's lowering. -/
 def codeOf (M : MCtx) (fns : List FnEntry) : CodeTbl := fun f => (planOf fns f).map (fnCode M)
@@ -249,6 +259,48 @@ def bodyBytesAtFuncIndex (n len idx : Nat) : Option (List Nat) :=
         | none => none
       else none
   | _, _ => none
+
+/-- The function type of the `List<t>` helper of role `r`: the cons struct
+    reference for a list, `i64` for a count or a length, `i32` for a Bool,
+    and the element's value type for the needle of `contains`. -/
+def helperSig (M : MCtx) (r : ListRole) (t : Ty) :
+    Option (List _root_.CertDecode.ValType × List _root_.CertDecode.ValType) :=
+  let l := refN (M.listStruct t)
+  let i64 : _root_.CertDecode.ValType := .numeric 0x7e
+  match r with
+  | .len => some ([l], [i64])
+  | .reverse => some ([l], [l])
+  | .concat => some ([l, l], [l])
+  | .take | .drop => some ([l, i64], [l])
+  | .contains =>
+      match t with
+      | .int => some ([l, refN M.carrier], [.numeric 0x7f])
+      | .string => some ([l, refN M.str], [.numeric 0x7f])
+      | .bool => some ([l, .numeric 0x7f], [.numeric 0x7f])
+      | _ => none
+
+/-- Every declared List helper, and `__aint_to_i64_sat` when declared, is
+    pinned by TEMPLATE equality: its code body is exactly the bytes of the
+    wall's template for its role and instantiation
+    (`ListHelpers.hBodyBytes`), and its function type is the one its role
+    fixes. The template is also what the host table runs
+    (`ListHelpers.helperSem`), so the pinned bytes and the proved meaning are
+    of the same instruction tree. -/
+def listHelpersPinnedWith (bodyAt : Nat → Option (List Nat))
+    (tyOk : Nat → List _root_.CertDecode.ValType → List _root_.CertDecode.ValType → Bool)
+    (M : MCtx) : Bool :=
+  M.listHelpers.all (fun x =>
+    ((_root_.AverCert.ListHelpers.helperCode M x.2.1 x.1).bind
+        (_root_.AverCert.ListHelpers.hBodyBytes M)).any (fun b => bodyAt x.2.2 == some b) &&
+    (helperSig M x.2.1 x.1).any (fun p => tyOk x.2.2 p.1 p.2)) &&
+  (decide (4294967296 ≤ M.toI64Sat) ||
+    ((_root_.AverCert.ListHelpers.hBodyBytes M (_root_.AverCert.ListHelpers.satCode M.carrier)).any
+        (fun b => bodyAt M.toI64Sat == some b) &&
+      tyOk M.toI64Sat [refN M.carrier] [.numeric 0x7e]))
+
+/-- `listHelpersPinnedWith` over the module's code and type sections. -/
+def listHelpersPinned (n len : Nat) (M : MCtx) : Bool :=
+  listHelpersPinnedWith (bodyBytesAtFuncIndex n len) (roleTypePinned n len) M
 
 /-- One declared arith role pinned by TEMPLATE equality: the real code-section
     body at the declared function index equals the canonical helper body
@@ -577,7 +629,8 @@ def plansAccepted (artifact : ArtifactData) : Bool :=
   dataConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   roleTypesPinned artifact.modBytes artifact.modLen M &&
   declsWellFormed m.subject m.types m.fnPlans &&
-  consPinned m.types m.fnPlans
+  consPinned m.types m.fnPlans &&
+  listHelpersPinned artifact.modBytes artifact.modLen M
 
 /-- The conjuncts of `plansAccepted` other than the per-entry checks. A
     package proves the per-entry checks in chunks, one declaration each, so
@@ -590,7 +643,8 @@ def plansAcceptedRest (artifact : ArtifactData) : Bool :=
   dataConfirmed artifact.modBytes artifact.modLen m.subject m.types m.fnPlans &&
   roleTypesPinned artifact.modBytes artifact.modLen M &&
   declsWellFormed m.subject m.types m.fnPlans &&
-  consPinned m.types m.fnPlans
+  consPinned m.types m.fnPlans &&
+  listHelpersPinned artifact.modBytes artifact.modLen M
 
 theorem plansAccepted_of_parts (artifact : ArtifactData)
     (hall : artifact.manifest.fnPlans.all
@@ -599,9 +653,9 @@ theorem plansAccepted_of_parts (artifact : ArtifactData)
         artifact.manifest.fnPlans) = true)
     (hrest : plansAcceptedRest artifact = true) : plansAccepted artifact = true := by
   simp only [plansAcceptedRest, Bool.and_eq_true] at hrest
-  obtain ⟨⟨⟨⟨⟨ha, hc⟩, hd⟩, he⟩, hf⟩, hg⟩ := hrest
+  obtain ⟨⟨⟨⟨⟨⟨ha, hc⟩, hd⟩, he⟩, hf⟩, hg⟩, hl⟩ := hrest
   simp only [plansAccepted, Bool.and_eq_true]
-  exact ⟨⟨⟨⟨⟨⟨ha, hall⟩, hc⟩, hd⟩, he⟩, hf⟩, hg⟩
+  exact ⟨⟨⟨⟨⟨⟨⟨ha, hall⟩, hc⟩, hd⟩, he⟩, hf⟩, hg⟩, hl⟩
 
 /-- The manifest's obligations are exactly the ones the wall derives from its
     plans: no obligation field is producer data. -/

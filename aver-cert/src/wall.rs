@@ -24,6 +24,7 @@ pub const CERT_INTERPRETER_SEQUENCING: &str =
     include_str!("../assets/wall/current/InterpreterSequencing.lean");
 pub const CERT_GRAMMAR: &str = include_str!("../assets/wall/current/Grammar.lean");
 pub const CERT_GRAMMAR_LOWER: &str = include_str!("../assets/wall/current/GrammarLower.lean");
+pub const CERT_LIST_HELPERS: &str = include_str!("../assets/wall/current/ListHelpers.lean");
 pub const CERT_GRAMMAR_SOUND: &str = include_str!("../assets/wall/current/GrammarSound.lean");
 pub const CERT_GRAMMAR_TOTAL: &str = include_str!("../assets/wall/current/GrammarTotal.lean");
 pub const CERT_TYPE_TABLE: &str = include_str!("../assets/wall/current/TypeTable.lean");
@@ -54,7 +55,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 24] = [
+pub const SOURCES: [Source; 25] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -120,6 +121,10 @@ pub const SOURCES: [Source; 24] = [
         contents: CERT_INTERPRETER_SEQUENCING,
     },
     Source {
+        name: "ListHelpers.lean",
+        contents: CERT_LIST_HELPERS,
+    },
+    Source {
         name: "ModelPrelude.lean",
         contents: CERT_MODEL_PRELUDE,
     },
@@ -155,7 +160,7 @@ pub const SOURCES: [Source; 24] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 22] = [
+pub const PRISTINE_ROOTS: [&str; 23] = [
     "CertPrelude",
     "CertDecode",
     "ByteWindow",
@@ -167,6 +172,7 @@ pub const PRISTINE_ROOTS: [&str; 22] = [
     "InterpreterSequencing",
     "Grammar",
     "GrammarLower",
+    "ListHelpers",
     "GrammarSound",
     "GrammarTotal",
     "TypeTable",

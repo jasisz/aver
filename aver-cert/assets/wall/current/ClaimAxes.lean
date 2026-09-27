@@ -35,9 +35,11 @@ mutual
     | i :: is => wCalls i ++ wCallsL is
 end
 
-/-- The helper calls of every planned function's lowering. -/
+/-- The helper calls of every planned function's lowering, and the contract
+    helpers the declared List helpers call (`contains` over Int or String). -/
 def usedCalls (M : MCtx) (fns : List FnEntry) : List Nat :=
-  (fns.map fun e => wCallsL (fnCode M e.plan).body).flatten
+  (fns.map fun e => wCallsL (fnCode M e.plan).body).flatten ++
+    (M.listHelpers.map fun x => _root_.AverCert.ListHelpers.innerCalls M x.2.1 x.1).flatten
 
 structure ContractUse where
   box : Bool := false

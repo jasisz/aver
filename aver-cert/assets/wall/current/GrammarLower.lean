@@ -220,14 +220,31 @@ def boolCmpInstr : BinOp → WInstr
   | .eq => .i32Eq
   | _ => .i32Ne
 
+/-- A call of the declared `List<t>` helper of role `r`, or nothing when the
+    type table declares none (the typing requires one). -/
+def helperCall (M : MCtx) (r : ListRole) (t : Ty) : List BI :=
+  match M.listHelper r t with
+  | some f => [.op (.call f)]
+  | none => []
+
 /-- The instruction a builtin call ends with, given its argument types:
     one `i32` instruction for the Bool builtins, `struct.new` of the tail's
-    cons struct for `List.prepend`. -/
+    cons struct for `List.prepend`, and a call of the List helper for the
+    List builtins (`emit_mir_builtin_call`'s per-`List<T>` dispatch):
+    `List.len` then boxes the helper's `i64` (`__aint_from_i64`), and
+    `List.take` / `List.drop` first saturate their Int count to an `i64`
+    (`__aint_to_i64_sat`). -/
 def builtinTail (M : MCtx) : Builtin → Option (List Ty) → List BI
   | .boolAnd, _ => [.op .i32And]
   | .boolOr, _ => [.op .i32Or]
   | .boolNot, _ => [.op .i32Eqz]
   | .listPrepend, some [_, .list t] => [.op (.structNew (M.listStruct t) 2)]
+  | .listLen, some [.list t] => helperCall M .len t ++ [.op (.call M.box)]
+  | .listReverse, some [.list t] => helperCall M .reverse t
+  | .listConcat, some [.list t, _] => helperCall M .concat t
+  | .listTake, some [.list t, _] => .op (.call M.toI64Sat) :: helperCall M .take t
+  | .listDrop, some [.list t, _] => .op (.call M.toI64Sat) :: helperCall M .drop t
+  | .listContains, some [.list t, _] => helperCall M .contains t
   | _, _ => []
 
 /-- The `f64` comparison of a Float `BinOp`. -/

@@ -18,8 +18,8 @@ use std::collections::HashMap;
 
 use aver_cert::{
     FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBuiltin, PlanCallee, PlanCtor, PlanExpr,
-    PlanIntrinsic, PlanLazy, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl, PlanTy, PlanTypeTable,
-    PlannedFn,
+    PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl, PlanTy,
+    PlanTypeTable, PlannedFn,
 };
 
 use crate::ast::{BinOp, Literal, Spanned};
@@ -64,6 +64,13 @@ pub trait PlanLayout {
     /// The function index of the `List<T>` cons helper a non-empty literal
     /// calls once per item (`emit_mir_list_literal`).
     fn list_cons(&self, canonical: &str) -> Option<u32>;
+    /// The function index of the `List<T>` helper a `List.len` / `reverse` /
+    /// `concat` / `take` / `drop` / `contains` call calls
+    /// (`emit_mir_builtin_call`'s per-`List<T>` dispatch).
+    fn list_helper(&self, canonical: &str, role: PlanListRole) -> Option<u32>;
+    /// `__aint_to_i64_sat`, which a `List.take` / `List.drop` count goes
+    /// through.
+    fn int_sat(&self) -> Option<u32>;
     fn tuple(&self, canonical: &str) -> Option<u32>;
     fn map(&self, canonical: &str) -> Option<u32>;
     /// A type name the emitter represents specially (packed sequence,
@@ -450,6 +457,36 @@ impl TypeTableBuilder {
         Ok(())
     }
 
+    /// Declare the `role` helper of `List<elem>` (canonical type `canonical`)
+    /// a List builtin calls, and `__aint_to_i64_sat` for a take / drop count.
+    fn list_helper(
+        &mut self,
+        layout: &dyn PlanLayout,
+        canonical: &str,
+        elem: &PlanTy,
+        role: PlanListRole,
+    ) -> Result<(), String> {
+        let f = layout
+            .list_helper(canonical, role)
+            .ok_or_else(|| format!("List helper ({role:?}): `{canonical}` has none"))?;
+        if !self
+            .table
+            .list_helpers
+            .iter()
+            .any(|l| &l.0 == elem && l.1 == role)
+        {
+            self.table.list_helpers.push((elem.clone(), role, f));
+        }
+        // `concat` and `take` call the reverse helper of the same list.
+        if matches!(role, PlanListRole::Concat | PlanListRole::Take) {
+            self.list_helper(layout, canonical, elem, PlanListRole::Reverse)?;
+        }
+        if matches!(role, PlanListRole::Take | PlanListRole::Drop) && self.table.int_sat.is_none() {
+            self.table.int_sat = Some(layout.int_sat().ok_or("__aint_to_i64_sat is not emitted")?);
+        }
+        Ok(())
+    }
+
     /// Declare the passive data segment holding a string literal's bytes.
     fn str_seg(&mut self, layout: &dyn PlanLayout, bytes: &[u8]) -> Result<(), String> {
         if self.table.str_segs.iter().any(|(b, _)| b == bytes) {
@@ -675,6 +712,32 @@ impl Printer<'_> {
                             "Bool.or" => PlanCallee::Builtin(PlanBuiltin::BoolOr),
                             "Bool.not" => PlanCallee::Builtin(PlanBuiltin::BoolNot),
                             "List.prepend" => PlanCallee::Builtin(PlanBuiltin::ListPrepend),
+                            "List.len" | "List.reverse" | "List.concat" | "List.take"
+                            | "List.drop" | "List.contains" => {
+                                let b = match name.as_str() {
+                                    "List.len" => PlanBuiltin::ListLen,
+                                    "List.reverse" => PlanBuiltin::ListReverse,
+                                    "List.concat" => PlanBuiltin::ListConcat,
+                                    "List.take" => PlanBuiltin::ListTake,
+                                    "List.drop" => PlanBuiltin::ListDrop,
+                                    _ => PlanBuiltin::ListContains,
+                                };
+                                let first = call.args.first().ok_or_else(|| {
+                                    format!("Call Builtin({name}) without arguments")
+                                })?;
+                                let text = stamped(first)?;
+                                let PlanTy::List(elem) = self.ty(&text)? else {
+                                    return Err(format!("Call Builtin({name}) over a non-List"));
+                                };
+                                let canonical =
+                                    parse_ty(&text).map(|t| t.canonical()).ok_or_else(|| {
+                                        format!("Call Builtin({name}) (stamp does not parse)")
+                                    })?;
+                                let role = b.list_role().expect("a List builtin has a helper");
+                                self.types
+                                    .list_helper(self.layout, &canonical, &elem, role)?;
+                                PlanCallee::Builtin(b)
+                            }
                             "Vector.get" => PlanCallee::Builtin(PlanBuiltin::VecGet),
                             "Option.withDefault" => PlanCallee::Lazy(PlanLazy::OptWithDefault),
                             "Result.withDefault" => {
@@ -1301,5 +1364,42 @@ fn three(x: Int) -> List<Int>
         };
         assert_eq!(items.len(), 3);
         assert!(types.list_cons.iter().any(|(t, _)| *t == PlanTy::Int));
+    }
+
+    #[test]
+    fn a_list_helper_call_prints_its_builtin_and_declares_its_helpers() {
+        let (map, types) = plans(
+            r#"
+module L
+    intent = "helper probes"
+    exposes [front, size]
+
+fn front(xs: List<String>, n: Int) -> List<String>
+    List.take(xs, n)
+
+fn size(xs: List<Int>) -> Int
+    List.len(xs)
+"#,
+        );
+        let front = plan(&map, "front");
+        assert!(
+            matches!(&front.body, PlanExpr::Call(PlanCallee::Builtin(PlanBuiltin::ListTake), args)
+                if args.len() == 2),
+            "front body: {:?}",
+            front.body
+        );
+        let size = plan(&map, "size");
+        assert!(matches!(
+            &size.body,
+            PlanExpr::Call(PlanCallee::Builtin(PlanBuiltin::ListLen), _)
+        ));
+        let has =
+            |t: PlanTy, r: PlanListRole| types.list_helpers.iter().any(|x| x.0 == t && x.1 == r);
+        assert!(has(PlanTy::Str, PlanListRole::Take));
+        // `take` calls its instantiation's reverse helper, and its count goes
+        // through `__aint_to_i64_sat`.
+        assert!(has(PlanTy::Str, PlanListRole::Reverse));
+        assert!(has(PlanTy::Int, PlanListRole::Len));
+        assert!(types.int_sat.is_some());
     }
 }

@@ -220,9 +220,18 @@ fn render_plans(analysis: &Analysis) -> String {
                 plan_def_name(e.func_idx)
             )
         })
-        .collect::<Vec<_>>()
-        .join(",\n   ");
-    s.push_str(&format!("def fnPlans : List FnEntry :=\n  [{entries}]\n\n"));
+        .collect::<Vec<_>>();
+    // Compiling one list literal of a thousand entries passes Lean's default
+    // recursion limit, so a long list raises it for this one definition. The
+    // literal stays one term: the bridge proofs read entries of `fnPlans` by
+    // `rfl`, which is several times slower through `++` of pieces.
+    let depth = if entries.len() > 512 {
+        "set_option maxRecDepth 100000 in\n"
+    } else {
+        ""
+    };
+    let entries = format!("[{}]", entries.join(",\n   "));
+    s.push_str(&format!("{depth}def fnPlans : List FnEntry :=\n  {entries}\n\n"));
     s.push_str("end AverCert.Plans\n");
     s
 }
@@ -688,7 +697,7 @@ fn render_artifact(
     let rest_proof = if layout {
         "(AverCert.DeclaredLayout.plansAcceptedRest_of_layout layout_ok\n    \
          (AverCert.DeclaredLayout.plansAcceptedRestL_of_parts rest_indices rest_types rest_data\n      \
-         rest_roles rest_eqref rest_newtypes rest_inhabited rest_cons))"
+         rest_roles rest_eqref rest_newtypes rest_inhabited rest_cons rest_helpers))"
     } else {
         "(by decide +kernel)"
     };
@@ -867,6 +876,17 @@ fn rest_parts(layout: bool) -> Vec<(&'static str, String)> {
                  {TYPES_PLANS} = true := by\n  \
                  decide +kernel\n\n\
                  theorem rest_cons : AverCert.AcceptedArtifact.consPinned {TYPES_PLANS} = true := by\n  \
+                 decide +kernel\n\n"
+            ),
+        ),
+        (
+            "ArtifactRestHelpers",
+            format!(
+                "theorem rest_helpers : AverCert.DeclaredLayout.listHelpersPinnedL layout {BYTES}\n    \
+                 {m} = true := by\n  \
+                 simp -iota only [AverCert.DeclaredLayout.listHelpersPinnedL,\n    \
+                 AverCert.AcceptedArtifact.listHelpersPinnedWith, AverCert.DeclaredLayout.roleTypePinnedL,\n    \
+                 AverCert.WasmSlice.typeSectionMatches.eq_def, types_cut]\n  \
                  decide +kernel\n\n"
             ),
         ),

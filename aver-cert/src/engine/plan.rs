@@ -57,6 +57,54 @@ pub enum PlanBuiltin {
     /// with an Int literal default.
     IntDiv,
     IntMod,
+    /// `List.len` / `reverse` / `concat` / `take` / `drop` / `contains`: a
+    /// call of the per-instantiation helper the type table declares
+    /// (`Grammar.MCtx.listHelper`).
+    ListLen,
+    ListReverse,
+    ListConcat,
+    ListTake,
+    ListDrop,
+    ListContains,
+}
+
+impl PlanBuiltin {
+    /// The List helper a List builtin calls.
+    pub fn list_role(self) -> Option<PlanListRole> {
+        Some(match self {
+            PlanBuiltin::ListLen => PlanListRole::Len,
+            PlanBuiltin::ListReverse => PlanListRole::Reverse,
+            PlanBuiltin::ListConcat => PlanListRole::Concat,
+            PlanBuiltin::ListTake => PlanListRole::Take,
+            PlanBuiltin::ListDrop => PlanListRole::Drop,
+            PlanBuiltin::ListContains => PlanListRole::Contains,
+            _ => return None,
+        })
+    }
+}
+
+/// `Grammar.ListRole`: the per-instantiation `List<T>` runtime helpers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PlanListRole {
+    Len,
+    Reverse,
+    Concat,
+    Take,
+    Drop,
+    Contains,
+}
+
+impl PlanListRole {
+    pub fn lean(self) -> &'static str {
+        match self {
+            PlanListRole::Len => ".len",
+            PlanListRole::Reverse => ".reverse",
+            PlanListRole::Concat => ".concat",
+            PlanListRole::Take => ".take",
+            PlanListRole::Drop => ".drop",
+            PlanListRole::Contains => ".contains",
+        }
+    }
 }
 
 /// `Grammar.Intrinsic`: the resolver's Euclidean discharge of `Int.div` /
@@ -179,6 +227,13 @@ pub struct PlanTypeTable {
     /// (`Schema.TypeTable.listCons`): the function the literal calls once per
     /// item, whose plan must be exactly [`FnPlan::cons`].
     pub list_cons: Vec<(PlanTy, u32)>,
+    /// The List helpers the plans' List builtins call
+    /// (`Schema.TypeTable.listHelpers`): element type, role, function index.
+    /// The acceptance pins each body to the wall's template.
+    pub list_helpers: Vec<(PlanTy, PlanListRole, u32)>,
+    /// `__aint_to_i64_sat`, which a `List.take` / `List.drop` count goes
+    /// through (`Schema.TypeTable.intSat`), pinned to its template.
+    pub int_sat: Option<u32>,
 }
 
 /// One user function as the compiler printed it: its wasm function index, its
@@ -292,6 +347,12 @@ impl PlanCallee {
                     PlanBuiltin::VecGet => ".vecGet",
                     PlanBuiltin::IntDiv => ".intDiv",
                     PlanBuiltin::IntMod => ".intMod",
+                    PlanBuiltin::ListLen => ".listLen",
+                    PlanBuiltin::ListReverse => ".listReverse",
+                    PlanBuiltin::ListConcat => ".listConcat",
+                    PlanBuiltin::ListTake => ".listTake",
+                    PlanBuiltin::ListDrop => ".listDrop",
+                    PlanBuiltin::ListContains => ".listContains",
                 }
             ),
             PlanCallee::Intrinsic(i) => format!(
@@ -647,13 +708,30 @@ impl PlanTypeTable {
                 field("listCons", "Ty × Nat", &pairs(&self.list_cons))
             )
         };
+        let helpers = if self.list_helpers.is_empty() {
+            String::new()
+        } else {
+            let items = self
+                .list_helpers
+                .iter()
+                .map(|(t, r, i)| format!("({}, {}, {i})", t.lean(), r.lean()))
+                .collect::<Vec<_>>();
+            format!(
+                ",\n    listHelpers := {}",
+                field("listHelpers", "Ty × ListRole × Nat", &items)
+            )
+        };
+        let sat = match self.int_sat {
+            Some(i) => format!(",\n    intSat := some {i}"),
+            None => String::new(),
+        };
         let pieces = decls
             .lines()
             .filter_map(|line| line.strip_prefix("def "))
             .filter_map(|rest| rest.split_once(" :").map(|(n, _)| n.to_string()))
             .collect();
         let text = format!(
-            "{decls}def {name} : TypeTable :=\n  {{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := {records},\n    sums := {sums},\n    options := {options}, results := {results},\n    vecs := {vecs}, lists := {lists}, opaques := {opaques},\n    strSegs := {segs}{cons} }}\n\n",
+            "{decls}def {name} : TypeTable :=\n  {{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := {records},\n    sums := {sums},\n    options := {options}, results := {results},\n    vecs := {vecs}, lists := {lists}, opaques := {opaques},\n    strSegs := {segs}{cons}{helpers}{sat} }}\n\n",
             lean_opt_nat(self.carrier),
             lean_opt_nat(self.mag),
             lean_opt_nat(self.str_),

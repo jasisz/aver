@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Added — certificates for List length, reverse, concat, take, drop and contains
+
+- **A function that calls `List.len`, `List.reverse`, `List.concat`, `List.take`, `List.drop` or `List.contains` can now be certified.** Such a call used to leave the function source-level only. Each of these calls goes to a helper the compiler emits once per element type, a loop over the list's cells. The certificate now names these helpers, and the checker compares each helper's bytes with its own copy and proves what that copy computes, so these calls add no runtime assumption to the certificate. `List.contains` is admitted over Ints, Strings and Bools; over Ints and Strings it relies on the equality contract it calls, which the certificate already lists. On the btc-listener corpus this certifies 270 more functions (1093 in all); across the examples, projects and certificate fixtures, 114 more (733 to 847). These functions are certified against their plan: a function whose plan calls one of these helpers gets no source bridge yet, so no law is proved about it on the bytes. The compiled programs do not change: the modules of btc-listener, the bench scenarios, the examples and the projects are byte for byte the same. The wall identity rotates: packages produced by earlier versions must be produced again.
+
 ### Fixed — `aver proof` could prove a law that is false for negative integers
 
 - **An integer literal in the Lean export is now always a Lean `Int`.** A literal with nothing around it to fix its type, such as `(0 - 1) >= 0` in a law or in a function body, was read by Lean as a natural number, where `0 - 1` is `0`. A law like `Bool.or(positive(x), (0 - 1) >= 0) => true` was then reported proved although it is false at `x = 0`, and a law sampled at `0 - 1` could fail to build although `aver verify` passed it (#1451). Literals are now written `(n : Int)` wherever Lean could not tell, and `String.byteLength` is cast to `Int` like the other lengths.

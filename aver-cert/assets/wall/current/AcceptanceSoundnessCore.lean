@@ -96,7 +96,8 @@ theorem lookup_none {β : Type} :
       exact lookup_none h.2
 
 theorem hostAssoc_keys (M : MCtx) (h : HostFns) :
-    (hostAssoc M h).map (·.1) = roleIndices M := rfl
+    (hostAssoc M h).map (·.1) = roleIndices M := by
+  simp [hostAssoc, roleIndices, helperAssoc, Function.comp_def]
 
 /-- Under distinct role indices, the host table resolves every role to its own
     function; under disjointness, every planned index to nothing. -/
@@ -113,6 +114,9 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
     hostOf M h M.streq = some (2, h.stringEq) ∧
     hostOf M h M.toIndex = some (1, h.toIndex) ∧
     hostOf M h M.divmod = some (3, h.divmod) ∧
+    hostOf M h M.toI64Sat = some (1, _root_.AverCert.ListHelpers.satSem M.carrier) ∧
+    (∀ x ∈ M.listHelpers, hostOf M h x.2.2 =
+      some (x.2.1.arity, _root_.AverCert.ListHelpers.helperSem M h.eq h.stringEq x.2.1 x.1)) ∧
     ∀ e ∈ fns, hostOf M h e.funcIdx = none := by
   have hkeys : ((hostAssoc M h).map (·.1)).Nodup := by
     rw [hostAssoc_keys]
@@ -122,7 +126,9 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
   refine ⟨L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
-    L (by simp [hostAssoc]), L (by simp [hostAssoc]), ?_⟩
+    L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
+    fun x hx => L (by simp only [hostAssoc, List.mem_append]; right
+                      exact List.mem_map.mpr ⟨x, hx, rfl⟩), ?_⟩
   intro e he
   apply lookup_none
   rw [hostAssoc_keys]
@@ -168,7 +174,7 @@ theorem PlanFacts.nodup {s : Subject} {tt : TypeTable} {fns : List FnEntry}
 theorem planFacts_of_accepted (artifact : ArtifactData) (h : plansAccepted artifact = true) :
     PlanFacts artifact.manifest.subject artifact.manifest.types artifact.manifest.fnPlans := by
   simp only [plansAccepted, consPinned, Bool.and_eq_true, List.all_eq_true] at h
-  obtain ⟨⟨⟨⟨⟨⟨hd, he⟩, _⟩, _⟩, _⟩, _⟩, hc⟩ := h
+  obtain ⟨⟨⟨⟨⟨⟨⟨hd, he⟩, _⟩, _⟩, _⟩, _⟩, hc⟩, _⟩ := h
   refine ⟨of_decide_eq_true hd, fun e hm => ?_, fun t f hf => ?_⟩
   · have := he e hm
     simp only [entryAccepted, Bool.and_eq_true] at this

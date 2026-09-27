@@ -436,6 +436,9 @@ impl Cited {
                 .filter(|l| has(PlanTy::List(Box::new(l.0.clone()))))
                 .cloned()
                 .collect(),
+            // Narrowed to the helpers the certified plans call by `analyze`.
+            list_helpers: tt.list_helpers.clone(),
+            int_sat: tt.int_sat,
         }
     }
 }
@@ -577,6 +580,54 @@ fn check_candidate(
     None
 }
 
+/// Keep only the List helpers (and `__aint_to_i64_sat`) whose code entry and
+/// function type are exactly their templates (`AcceptedArtifact.
+/// listHelpersPinned`), and none that is also a user function. A plan that
+/// calls a dropped helper no longer types or lowers, so it declines.
+fn confirm_list_helpers(
+    facts: &ModuleFacts,
+    roles: Option<&HostRoles>,
+    plans: &ModulePlans,
+    types: &mut PlanTypeTable,
+) {
+    let user = |f: u32| plans.fns.iter().any(|p| p.func_idx == f);
+    let sig_is = |f: u32, sig: Option<(Vec<ValT>, Vec<ValT>)>| match (facts.fn_sig(f), sig) {
+        (Some(CompT::Func(p, r)), Some((ps, rs))) => *p == ps && *r == rs,
+        _ => false,
+    };
+    // A `concat` / `take` template names its reverse helper, so a dropped
+    // reverse drops them on the next pass.
+    loop {
+        let snapshot = types.clone();
+        let m = MCtx::new(roles, &facts.string_roles, &snapshot, &[]);
+        let before = types.list_helpers.len();
+        types.list_helpers.retain(|(t, r, f)| {
+            !user(*f)
+                && m.helper_entry_bytes(*r, t)
+                    .is_some_and(|b| facts.code_of(*f).is_some_and(|c| c.entry == b))
+                && sig_is(*f, m.helper_sig(*r, t))
+        });
+        if types.list_helpers.len() == before {
+            break;
+        }
+    }
+    let m = MCtx::new(roles, &facts.string_roles, types, &[]);
+    let sat_ok = types.int_sat.is_some_and(|f| {
+        !user(f)
+            && m.sat_entry_bytes()
+                .is_some_and(|b| facts.code_of(f).is_some_and(|c| c.entry == b))
+            && sig_is(
+                f,
+                u32::try_from(m.carrier)
+                    .ok()
+                    .map(|c| (vec![ValT::RefNull(c)], vec![ValT::I64])),
+            )
+    });
+    if !sat_ok {
+        types.int_sat = None;
+    }
+}
+
 /// Analyze one core module against the compiler's plans.
 pub fn analyze(
     core_bytes: &[u8],
@@ -619,6 +670,7 @@ pub fn analyze(
         .iter()
         .map(|(t, f)| (*f, FnPlan::cons(t)))
         .collect();
+    confirm_list_helpers(&facts, role_table.as_ref(), plans, &mut types);
 
     let mut reasons: BTreeMap<u32, String> = BTreeMap::new();
     let mut plan_of: BTreeMap<u32, &FnPlan> = BTreeMap::new();
@@ -697,6 +749,28 @@ pub fn analyze(
     let mut calls = Vec::new();
     for e in &entries {
         lowered_calls(&m.lower_plan(&e.plan), &mut calls);
+    }
+    // The List helpers the lowerings call, with the reverse helper `concat`
+    // and `take` call; `contains` relies on its element type's equality
+    // contract (`ClaimAxes.contractUse`).
+    let called = |f: &u32| calls.contains(&u64::from(*f));
+    let used_helpers: Vec<(PlanTy, PlanListRole, u32)> = types
+        .list_helpers
+        .iter()
+        .filter(|(t, r, f)| {
+            called(f)
+                || (*r == PlanListRole::Reverse
+                    && types.list_helpers.iter().any(|(t2, r2, f2)| {
+                        t2 == t
+                            && matches!(r2, PlanListRole::Concat | PlanListRole::Take)
+                            && called(f2)
+                    }))
+        })
+        .cloned()
+        .collect();
+    let used_sat = types.int_sat.filter(|f| called(f));
+    for (t, r, _) in &used_helpers {
+        calls.extend(m.helper_inner_calls(*r, t));
     }
     if eq_from_hint
         && !calls.contains(&m.eq)
@@ -782,6 +856,9 @@ pub fn analyze(
     types
         .list_cons
         .retain(|(_, f)| entries.iter().any(|e| e.func_idx == *f));
+    // Only the List helpers the certified plans reach are declared.
+    types.list_helpers = used_helpers;
+    types.int_sat = used_sat;
 
     let declined: Vec<(String, String)> = export_name
         .iter()

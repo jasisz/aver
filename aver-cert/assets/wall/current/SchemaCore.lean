@@ -71,6 +71,14 @@ structure TypeTable where
       function the literal calls once per item. The acceptance pins its plan
       to the wall's cons plan (`Grammar.isConsPlan`). -/
   listCons : List (Ty × Nat) := []
+  /-- The `List<T>` runtime helpers the plans' List builtins call: element
+      type, role and function index. The acceptance pins each body to the
+      wall's template for its role and instantiation
+      (`AcceptedArtifact.listHelpersPinned`). -/
+  listHelpers : List (Ty × AverCert.Grammar.ListRole × Nat) := []
+  /-- `__aint_to_i64_sat`, which a `List.take` / `List.drop` count goes
+      through, pinned to its template. -/
+  intSat : Option Nat := none
 deriving Repr
 
 /-- One planned function: the plan is the function's MIR body printed 1:1

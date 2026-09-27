@@ -55,6 +55,120 @@ theorem modelOf_cons (hf : PlanFacts s tt fns) :
   obtain ⟨p, hp, hcp⟩ := hf.cons t f hf'
   exact groupModel_consPlan _ (planOf fns) hp (isConsPlan_body hcp) k h tl sv htl hm
 
+open AverCert.ListHelpers in
+/-- What the wall's run of each List helper template computes, as the grammar's
+    simulation theorem consumes it: the `ListHelpers` theorems, with the
+    equality contracts `contains` calls. -/
+theorem helperSem_spec {C : Nat} (S : CarrierSpec C) (M : MCtx) (h : HostFns)
+    (hc : HostContracts S h) (r : ListRole) (t : Ty) :
+    ListSpec S M r t (helperSem M h.eq h.stringEq r t) := by
+  cases r
+  · intro ws v hv
+    exact lenSem_spec _ ws v hv
+  · intro ws v hv
+    exact revSem_spec _ t ws v hv
+  · simp only [ListSpec, helperSem]
+    cases M.listHelper .reverse t with
+    | some R =>
+        intro ws ws' v hv
+        exact catSem_spec _ _ t ws ws' v hv
+    | none =>
+        intro _ _ _ hv
+        cases hv
+  · simp only [ListSpec, helperSem]
+    cases M.listHelper .reverse t with
+    | some R =>
+        intro ws c v hv
+        exact takeSem_spec _ _ t ws c v hv
+    | none =>
+        intro _ _ _ hv
+        cases hv
+  · intro ws c v hv
+    exact dropSem_spec _ ws c v hv
+  · intro vs ws x wx v hvs hx hrep hwx hv
+    have hany : (vs.any fun y => svEq y x) = ((vs.map fun y => svEq y x).any id) := by
+      simp [List.any_map, Function.comp_def]
+    rw [hany]
+    have hrel : ∀ (eqX : BI) (host : HostTbl),
+        (∀ y w, HasTy M y t → SRepr S M y w →
+          EqAns host eqX wx w (svEq y x)) →
+        ∀ vs' ws', HasTyAll M vs' t → SReprL S M vs' ws' →
+          Rel2 (EqAns host eqX wx) ws' (vs'.map fun y => svEq y x) := by
+      intro eqX host he
+      intro vs'
+      induction vs' with
+      | nil => intro ws' _ hr; cases ws' <;> simp_all [SReprL, Rel2]
+      | cons y ys ih =>
+          intro ws' ht hr
+          cases ws' with
+          | nil => simp [SReprL] at hr
+          | cons w ws'' => exact ⟨he y w ht.1 hr.1, ih ws'' ht.2 hr.2⟩
+    cases t with
+    | int =>
+        obtain ⟨b, rfl⟩ := hasTy_int hx
+        refine hasSem_spec _ _ _ ws wx _ (hrel _ _ ?_ vs ws hvs hrep) v hv
+        intro y w hy hw l st
+        obtain ⟨a, rfl⟩ := hasTy_int hy
+        cases hr : h.eq [w, wx] with
+        | none => left; simp [step1, eraseI, wRunF, oneHost, popArgs_two, hr]
+        | some q =>
+            right
+            have := hc.eq a b w wx q hw.1 hwx.1 hw.2 hwx.2 hr
+            subst this
+            simp [step1, eraseI, wRunF, oneHost, popArgs_two, hr, eqW, svEq, b32]
+    | string =>
+        obtain ⟨b, rfl⟩ := hasTy_string hx
+        refine hasSem_spec _ _ _ ws wx _ (hrel _ _ ?_ vs ws hvs hrep) v hv
+        intro y w hy hw l st
+        obtain ⟨a, rfl⟩ := hasTy_string hy
+        have hw' : w = strW M a := hw
+        have hwx' : wx = strW M b := hwx
+        subst hw' hwx'
+        cases hr : h.stringEq [strW M a, strW M b] with
+        | none => left; simp [step1, eraseI, wRunF, oneHost, popArgs_two, hr]
+        | some q =>
+            right
+            have := hc.stringEq _ _ q hr
+            rw [stringEqW_strW] at this
+            subst this
+            simp [step1, eraseI, wRunF, oneHost, popArgs_two, hr, svEq]
+            have hbeq : (a == b) = decide (a = b) := by
+              by_cases hab : a = b <;> simp [hab]
+            rw [hbeq]
+    | bool =>
+        obtain ⟨b, rfl⟩ := hasTy_bool hx
+        refine hasSem_spec _ _ _ ws wx _ (hrel _ _ ?_ vs ws hvs hrep) v hv
+        intro y w hy hw l st
+        obtain ⟨a, rfl⟩ := hasTy_bool hy
+        have hw' := srepr_b hw
+        have hwx' := srepr_b hwx
+        subst hw' hwx'
+        right
+        cases a <;> cases b <;> simp [step1, eraseI, wRunF, svEq, b32]
+    | _ => cases hv
+
+/-- The runtime helpers the grammar's nodes call, from the named contracts and
+    the wall's own runs of the pinned List templates. -/
+theorem xhost_of (hf : PlanFacts s tt fns) (S : CarrierSpec (mctxOf s tt fns).carrier)
+    (h : HostFns) (hc : HostContracts S h) :
+    XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := by
+  obtain ⟨_, _, _, _, _, _, _, hConcat, hStreq, hToIndex, hDivmod, hSat, hHelp, _⟩ :=
+    host_facts (M := mctxOf s tt fns) h hf.distinct
+  refine ⟨⟨_, hConcat, fun parts c hr => hc.stringConcat _ parts c hr⟩,
+     ⟨_, hStreq, fun a b r hr => hc.stringEq a b r hr⟩,
+     ⟨_, hToIndex, hc.toIndex⟩,
+     ⟨_, hDivmod, fun a b wa wb m r ha hb hne hm hr =>
+        hc.divmod a b wa wb m r ha.1 hb.1 ha.2 hb.2 hne hm hr⟩,
+     ⟨_, hSat, fun n w v hw hv => AverCert.ListHelpers.satSem_spec S n w v hw hv⟩, ?_⟩
+  intro r t f hrt
+  simp only [MCtx.listHelper, Option.map_eq_some_iff] at hrt
+  obtain ⟨x, hx, rfl⟩ := hrt
+  have hmem := List.mem_of_find?_eq_some hx
+  have hp := List.find?_some hx
+  simp only [decide_eq_true_eq] at hp
+  obtain ⟨rfl, rfl⟩ := hp
+  exact ⟨_, hHelp x hmem, helperSem_spec S _ h hc _ _⟩
+
 /-- Every planned function is certified at the one model of all plans. -/
 theorem fns_certified (hf : PlanFacts s tt fns)
     (S : CarrierSpec (mctxOf s tt fns).carrier) (h : HostFns) (hc : HostContracts S h) :
@@ -62,14 +176,9 @@ theorem fns_certified (hf : PlanFacts s tt fns)
       FnCertified S (mctxOf s tt fns) (codeOf (mctxOf s tt fns) fns)
         (hostOf (mctxOf s tt fns) h) f p.sig (fun fuel => modelOf fns fuel f) := by
   obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hDivmod,
-    hClaims⟩ :=
+    hSat, hHelp, hClaims⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
-  have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) :=
-    ⟨⟨_, hConcat, fun parts c hr => hc.stringConcat _ parts c hr⟩,
-     ⟨_, hStreq, fun a b r hr => hc.stringEq a b r hr⟩,
-     ⟨_, hToIndex, hc.toIndex⟩,
-     ⟨_, hDivmod, fun a b wa wb m r ha hb hne hm hr =>
-        hc.divmod a b wa wb m r ha.1 hb.1 ha.2 hb.2 hne hm hr⟩⟩
+  have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := xhost_of hf S h hc
   refine fn_certified_group S (boxRef _) h.add h.sub h.mul h.cmp h.eq (fun _ => none)
     (contracts_of S h hc) (fun _ _ _ _ hr => by cases hr) _ _ (mctxOf s tt fns) rfl
     hBox hAdd hSub hMul hNeg hCmp hEq R (planOf fns) (fun _ _ _ => none) ?_ ?_
@@ -134,14 +243,9 @@ theorem obligation_total (hf : PlanFacts s tt fns) {e : FnEntry} (he : e ∈ fns
     obtain ⟨e', he', rfl, rfl⟩ := groupMembers_mem (groupOf_mem hg)
     exact planOf_mem hnd he'
   obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hDivmod,
-    hClaims⟩ :=
+    hSat, hHelp, hClaims⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
-  have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) :=
-    ⟨⟨_, hConcat, fun parts c hr => hc.stringConcat _ parts c hr⟩,
-     ⟨_, hStreq, fun a b r hr => hc.stringEq a b r hr⟩,
-     ⟨_, hToIndex, hc.toIndex⟩,
-     ⟨_, hDivmod, fun a b wa wb m r ha hb hne hm hr =>
-        hc.divmod a b wa wb m r ha.1 hb.1 ha.2 hb.2 hne hm hr⟩⟩
+  have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := xhost_of hf S h hc
   have hAll := fns_certified hf S h hc
   have key := fn_certified_total_of_check S (boxRef _) h.add h.sub h.mul h.cmp h.eq
     (fun _ => none) (contracts_of S h hc) (fun _ _ _ _ hr => by cases hr)
@@ -250,7 +354,7 @@ theorem accepted_nonvacuous (artifact : ArtifactData)
   have hwf : declsWellFormed artifact.manifest.subject artifact.manifest.types
       artifact.manifest.fnPlans = true := by
     simp only [plansAccepted, Bool.and_eq_true] at hPlans
-    exact hPlans.1.2
+    exact hPlans.1.1.2
   have hti : typesInhabited (mctxOf artifact.manifest.subject artifact.manifest.types
       artifact.manifest.fnPlans) artifact.manifest.types artifact.manifest.fnPlans = true := by
     simp only [declsWellFormed, Bool.and_eq_true] at hwf
@@ -278,7 +382,7 @@ theorem refTest_exact_of_accepted (artifact : ArtifactData)
   intro M
   have hpin : S3Pin M d.tid d.ctors.length (grp.map (·.1)) = true := by
     simp only [plansAccepted, Bool.and_eq_true] at hPlans
-    have htt := hPlans.1.1.1.1.2
+    have htt := hPlans.1.1.1.1.1.2
     unfold typeTableConfirmed at htt
     simp only [hg, Bool.and_eq_true, List.all_eq_true] at htt
     have hs := htt.2.1.1.1.1.1.1.1.2 d hd

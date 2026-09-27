@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::codegen::cert::{PlanLayout, RecordLayout, SumLayout};
+use crate::codegen::cert::{PlanLayout, PlanListRole, RecordLayout, SumLayout};
 use crate::ir::{BuiltinId, CtorId, FnId, SymbolTable};
 
 use super::types::TypeRegistry;
@@ -74,6 +74,22 @@ impl PlanLayout for CertLayout<'_> {
 
     fn list_cons(&self, canonical: &str) -> Option<u32> {
         self.fn_map.list_ops_lookup(canonical).map(|ops| ops.cons)
+    }
+
+    fn list_helper(&self, canonical: &str, role: PlanListRole) -> Option<u32> {
+        let ops = self.fn_map.list_ops_lookup(canonical)?;
+        match role {
+            PlanListRole::Len => Some(ops.len),
+            PlanListRole::Reverse => Some(ops.reverse),
+            PlanListRole::Concat => Some(ops.concat),
+            PlanListRole::Take => Some(ops.take),
+            PlanListRole::Drop => Some(ops.drop),
+            PlanListRole::Contains => ops.contains,
+        }
+    }
+
+    fn int_sat(&self) -> Option<u32> {
+        self.fn_map.builtins.get("__aint_to_i64_sat").copied()
     }
 
     fn tuple(&self, canonical: &str) -> Option<u32> {

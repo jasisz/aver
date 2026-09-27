@@ -1980,3 +1980,236 @@ fn cert_hardening_declines_a_duplicate_declared_name() {
         "{report}"
     );
 }
+
+/// A program calling every List helper the plan grammar admits, over Lists
+/// of Ints, Strings and Bools, plus a user function `twice` with the reverse
+/// helper's signature whose body is not a reverse.
+const HELPERS: &str = "module Helpers
+    intent = \"List helpers.\"
+    exposes [lenI, revI, catI, takeI, dropI, hasI, lenS, revS, hasS, hasB, twice]
+
+fn lenI(xs: List<Int>) -> Int
+    ? \"Length.\"
+    List.len(xs)
+
+fn revI(xs: List<Int>) -> List<Int>
+    ? \"Reverse.\"
+    List.reverse(xs)
+
+fn catI(xs: List<Int>, ys: List<Int>) -> List<Int>
+    ? \"Concatenation.\"
+    List.concat(xs, ys)
+
+fn takeI(xs: List<Int>, n: Int) -> List<Int>
+    ? \"A prefix.\"
+    List.take(xs, n)
+
+fn dropI(xs: List<Int>, n: Int) -> List<Int>
+    ? \"A suffix.\"
+    List.drop(xs, n)
+
+fn hasI(xs: List<Int>, x: Int) -> Bool
+    ? \"Membership.\"
+    List.contains(xs, x)
+
+fn lenS(xs: List<String>) -> Int
+    ? \"Length.\"
+    List.len(xs)
+
+fn revS(xs: List<String>) -> List<String>
+    ? \"Reverse.\"
+    List.reverse(xs)
+
+fn hasS(xs: List<String>, x: String) -> Bool
+    ? \"Membership.\"
+    List.contains(xs, x)
+
+fn hasB(xs: List<Bool>, x: Bool) -> Bool
+    ? \"Membership.\"
+    List.contains(xs, x)
+
+fn twice(xs: List<Int>) -> List<Int>
+    ? \"The list, unchanged.\"
+    xs
+";
+
+/// Emit the List-helper certificate into a fresh scratch directory.
+fn helpers_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
+    if !lake_available() {
+        return None;
+    }
+    let dir = temp_dir(prefix);
+    std::fs::write(dir.join("helpers.av"), HELPERS).unwrap();
+    let out = dir.join("out");
+    let compile = aver_command()
+        .current_dir(&*dir)
+        .args([
+            "compile",
+            "helpers.av",
+            "--target",
+            "wasm-gc",
+            "--certify",
+            "-o",
+        ])
+        .arg(&out)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    Some((dir, out.join("helpers.wasm"), out.join("cert")))
+}
+
+/// The honest certificate checks, with every export certified: each helper
+/// is declared, pinned to its template and run by the wall.
+#[test]
+fn cert_hardening_accepts_list_helpers() {
+    let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-clean") else {
+        return;
+    };
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    for row in [
+        "(.int, .len, ",
+        "(.int, .reverse, ",
+        "(.int, .concat, ",
+        "(.int, .take, ",
+        "(.int, .drop, ",
+        "(.int, .contains, ",
+        "(.string, .len, ",
+        "(.string, .reverse, ",
+        "(.string, .contains, ",
+        "(.bool, .contains, ",
+        "intSat := some ",
+    ] {
+        assert!(plans.contains(row), "`{row}` is declared:\n{plans}");
+    }
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "the List-helper certificate must check:\n{report}");
+    assert!(report.contains("11 checked exports"), "{report}");
+}
+
+/// A role row naming another instantiation's helper: `List<Int>`'s reverse
+/// declared at `List<String>`'s. The wall synthesizes the `List<Int>`
+/// template (its cons struct, its element local) and the bytes at that index
+/// are not it, so the package is refused.
+#[test]
+fn cert_hardening_declines_a_helper_of_another_instantiation() {
+    let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-inst") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let int_rev = number_after(&text, "(.int, .reverse, ");
+    let str_rev = number_after(&text, "(.string, .reverse, ");
+    replace_once(
+        &plans,
+        &format!("(.int, .reverse, {int_rev})"),
+        &format!("(.int, .reverse, {str_rev})"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A `len` role on the `reverse` body: the declaration says the function at
+/// that index counts, the bytes there reverse. Template equality refuses it.
+#[test]
+fn cert_hardening_declines_a_len_role_on_the_reverse_body() {
+    let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-role") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let len = number_after(&text, "(.int, .len, ");
+    let rev = number_after(&text, "(.int, .reverse, ");
+    replace_once(
+        &plans,
+        &format!("(.int, .len, {len})"),
+        &format!("(.int, .len, {rev})"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A helper declared at a user function: `twice` has the reverse helper's
+/// signature, but it is a planned function, so it is not a helper (the
+/// indices must be distinct) and its bytes are not the template.
+#[test]
+fn cert_hardening_declines_a_helper_that_is_a_user_function() {
+    let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-user") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let rev = number_after(&text, "(.int, .reverse, ");
+    let twice = number_after(&text, "⟨\"twice\", true, ");
+    replace_once(
+        &plans,
+        &format!("(.int, .reverse, {rev})"),
+        &format!("(.int, .reverse, {twice})"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The saturating count conversion is pinned too: pointing it at the
+/// `List<Int>` length helper is refused.
+#[test]
+fn cert_hardening_declines_a_saturation_helper_at_another_function() {
+    let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-sat") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let sat = number_after(&text, "intSat := some ");
+    let other = number_after(&text, "(.int, .len, ");
+    replace_once(
+        &plans,
+        &format!("intSat := some {sat}"),
+        &format!("intSat := some {other}"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// `contains` over Ints calls `__aint_eq` and over Strings `String.eq`, so
+/// the certificate is conditional on both contracts and the contract list
+/// must say so. No plan of this module calls either helper itself; only the
+/// `contains` helpers do. Both contracts are dropped from both manifests, so
+/// the JSON pin agrees with the Lean one and the refusal can only come from
+/// the wall's own contract derivation: the `contains` helpers' inner calls
+/// (`ListHelpers.innerCalls`) put both helpers among the used calls, and the
+/// package's `axes_ok` (`ClaimAxes.checked data = true`) no longer holds.
+#[test]
+fn cert_hardening_declines_a_contains_without_its_equality_contract() {
+    let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-contract") else {
+        return;
+    };
+    let json_path = cert.join("cert-manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+    let manifest = cert.join("Manifest.lean");
+    for name in [
+        "__aint_eq (canonical carrier pair -> i32 boolean; 1 when equal, else 0)",
+        "String.eq (WVal byte-array equality; non-arrays compare false)",
+    ] {
+        let quoted = format!("\"{name}\"");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        assert!(text.contains(&quoted), "`{name}` is disclosed:\n{text}");
+        let dropped = text
+            .replace(&format!(", {quoted}"), "")
+            .replace(&format!("{quoted}, "), "");
+        assert_ne!(dropped, text);
+        std::fs::write(&manifest, dropped).unwrap();
+        let contracts = json["runtime_contracts"]
+            .as_array_mut()
+            .expect("the JSON manifest lists its contracts");
+        let before = contracts.len();
+        contracts.retain(|c| c.as_str() != Some(name));
+        assert_eq!(contracts.len() + 1, before, "the JSON lists `{name}` once");
+    }
+    std::fs::write(&json_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "ClaimAxes.checked data = true\nis false");
+}

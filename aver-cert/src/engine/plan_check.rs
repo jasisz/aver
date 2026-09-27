@@ -35,6 +35,8 @@ struct MCtx<'a> {
     streq: u64,
     to_index: u64,
     divmod: u64,
+    /// `__aint_to_i64_sat` (`MCtx.toI64Sat`).
+    to_i64_sat: u64,
     tt: &'a PlanTypeTable,
     sigs: HashMap<u32, (Vec<PlanTy>, PlanTy)>,
 }
@@ -69,6 +71,7 @@ impl<'a> MCtx<'a> {
             streq: idx_or(18, string_role(StringHostRole::Eq)),
             to_index: idx_or(19, role(|r| r.to_index_idx)),
             divmod: idx_or(23, role(|r| r.divmod_idx)),
+            to_i64_sat: idx_or(24, tt.int_sat),
             tt,
             sigs,
         }
@@ -309,16 +312,39 @@ fn all_str(ts: &[PlanTy]) -> bool {
     !ts.is_empty() && ts.iter().all(|t| *t == PlanTy::Str)
 }
 
-fn builtin_ty(b: PlanBuiltin, ts: &[PlanTy]) -> Option<PlanTy> {
-    match (b, ts) {
-        (PlanBuiltin::BoolAnd | PlanBuiltin::BoolOr, [PlanTy::Bool, PlanTy::Bool]) => {
-            Some(PlanTy::Bool)
+/// `Ty.containsEq`.
+fn contains_eq(t: &PlanTy) -> bool {
+    matches!(t, PlanTy::Int | PlanTy::Str | PlanTy::Bool)
+}
+
+impl MCtx<'_> {
+    /// `Grammar.builtinTy`.
+    fn builtin_ty(&self, b: PlanBuiltin, ts: &[PlanTy]) -> Option<PlanTy> {
+        use PlanListRole as R;
+        let has = |r: R, t: &PlanTy| self.list_helper(r, t).is_some();
+        let list = |t: &PlanTy| PlanTy::List(Box::new(t.clone()));
+        match (b, ts) {
+            (PlanBuiltin::BoolAnd | PlanBuiltin::BoolOr, [PlanTy::Bool, PlanTy::Bool]) => {
+                Some(PlanTy::Bool)
+            }
+            (PlanBuiltin::BoolNot, [PlanTy::Bool]) => Some(PlanTy::Bool),
+            (PlanBuiltin::ListPrepend, [t, PlanTy::List(t2)]) if t == t2.as_ref() => Some(list(t)),
+            (PlanBuiltin::ListLen, [PlanTy::List(t)]) => has(R::Len, t).then_some(PlanTy::Int),
+            (PlanBuiltin::ListReverse, [PlanTy::List(t)]) => has(R::Reverse, t).then(|| list(t)),
+            (PlanBuiltin::ListConcat, [PlanTy::List(t), PlanTy::List(t2)]) => {
+                (t == t2 && has(R::Concat, t)).then(|| list(t))
+            }
+            (PlanBuiltin::ListTake, [PlanTy::List(t), PlanTy::Int]) => {
+                has(R::Take, t).then(|| list(t))
+            }
+            (PlanBuiltin::ListDrop, [PlanTy::List(t), PlanTy::Int]) => {
+                has(R::Drop, t).then(|| list(t))
+            }
+            (PlanBuiltin::ListContains, [PlanTy::List(t), t2]) => {
+                (t.as_ref() == t2 && contains_eq(t) && has(R::Contains, t)).then_some(PlanTy::Bool)
+            }
+            _ => None,
         }
-        (PlanBuiltin::BoolNot, [PlanTy::Bool]) => Some(PlanTy::Bool),
-        (PlanBuiltin::ListPrepend, [t, PlanTy::List(t2)]) if t == t2.as_ref() => {
-            Some(PlanTy::List(Box::new(t.clone())))
-        }
-        _ => None,
     }
 }
 
@@ -401,7 +427,7 @@ impl MCtx<'_> {
                 (&ts == params).then(|| ret.clone())
             }
             PlanExpr::Call(PlanCallee::Builtin(b), args) => {
-                builtin_ty(*b, &self.tys_of(n, g, args)?)
+                self.builtin_ty(*b, &self.tys_of(n, g, args)?)
             }
             PlanExpr::Call(PlanCallee::Lazy(lb), args) => match args.as_slice() {
                 [o, d] => match vec_get_or(*lb, o, d) {
@@ -1029,6 +1055,27 @@ impl MCtx<'_> {
                     (PlanBuiltin::BoolNot, _) => out.push(BI::Op(WI::I32Eqz)),
                     (PlanBuiltin::ListPrepend, Some([_, PlanTy::List(t)])) => {
                         out.push(BI::Op(WI::StructNew(self.list_struct(t))))
+                    }
+                    (PlanBuiltin::ListLen, Some([PlanTy::List(t)])) => {
+                        out.extend(self.helper_call(PlanListRole::Len, t));
+                        out.push(BI::Op(WI::Call(self.box_)));
+                    }
+                    (PlanBuiltin::ListReverse, Some([PlanTy::List(t)])) => {
+                        out.extend(self.helper_call(PlanListRole::Reverse, t))
+                    }
+                    (PlanBuiltin::ListConcat, Some([PlanTy::List(t), _])) => {
+                        out.extend(self.helper_call(PlanListRole::Concat, t))
+                    }
+                    (PlanBuiltin::ListTake, Some([PlanTy::List(t), _])) => {
+                        out.push(BI::Op(WI::Call(self.to_i64_sat)));
+                        out.extend(self.helper_call(PlanListRole::Take, t));
+                    }
+                    (PlanBuiltin::ListDrop, Some([PlanTy::List(t), _])) => {
+                        out.push(BI::Op(WI::Call(self.to_i64_sat)));
+                        out.extend(self.helper_call(PlanListRole::Drop, t));
+                    }
+                    (PlanBuiltin::ListContains, Some([PlanTy::List(t), _])) => {
+                        out.extend(self.helper_call(PlanListRole::Contains, t))
                     }
                     _ => {}
                 }
@@ -2027,6 +2074,408 @@ fn facets_e(e: &PlanExpr, out: &mut BTreeSet<&'static str>) {
         PlanExpr::Interp(parts) => {
             out.insert("strings");
             parts.iter().for_each(|a| facets_e(a, out));
+        }
+    }
+}
+
+// ---- List helper templates (`ListHelpers.lean`) -----------------------------
+
+/// `ListHelpers.HI`: a helper instruction, straight-line or structured.
+#[derive(Clone, Debug, PartialEq)]
+enum HI {
+    B(BI),
+    I64Add,
+    Block(Vec<HI>),
+    Loop(Vec<HI>),
+    Br(u32),
+    BrIf(u32),
+    IfThen(Vec<HI>),
+    IfElseI64(Vec<HI>, Vec<HI>),
+    Ret,
+}
+
+/// `ListHelpers.HLocal`: a helper's declared local.
+enum HLocal {
+    I64,
+    Ref(u64),
+    Val(PlanTy),
+}
+
+/// `ListHelpers.HCode`.
+struct HCode {
+    locals: Vec<HLocal>,
+    body: Vec<HI>,
+}
+
+fn h_op(i: WI) -> HI {
+    HI::B(BI::Op(i))
+}
+
+fn h_lg(i: u32) -> HI {
+    h_op(WI::LocalGet(i))
+}
+
+fn h_ls(i: u32) -> HI {
+    h_op(WI::LocalSet(i))
+}
+
+/// `ListHelpers.lenCode`.
+fn len_code(l: u64) -> HCode {
+    let body = vec![
+        h_lg(1),
+        h_op(WI::RefIsNull),
+        HI::BrIf(1),
+        h_lg(2),
+        h_op(WI::I64Const(1)),
+        HI::I64Add,
+        h_ls(2),
+        h_lg(1),
+        h_op(WI::StructGet(l, 1)),
+        h_ls(1),
+        HI::Br(0),
+    ];
+    HCode {
+        locals: vec![HLocal::Ref(l), HLocal::I64],
+        body: vec![
+            h_lg(0),
+            h_ls(1),
+            h_op(WI::I64Const(0)),
+            h_ls(2),
+            HI::Block(vec![HI::Loop(body)]),
+            h_lg(2),
+        ],
+    }
+}
+
+/// `ListHelpers.revCode`.
+fn rev_code(l: u64, t: &PlanTy) -> HCode {
+    let body = vec![
+        h_lg(1),
+        h_op(WI::RefIsNull),
+        HI::BrIf(1),
+        h_lg(1),
+        h_op(WI::StructGet(l, 0)),
+        h_ls(3),
+        h_lg(3),
+        h_lg(2),
+        h_op(WI::StructNew(l)),
+        h_ls(2),
+        h_lg(1),
+        h_op(WI::StructGet(l, 1)),
+        h_ls(1),
+        HI::Br(0),
+    ];
+    HCode {
+        locals: vec![HLocal::Ref(l), HLocal::Ref(l), HLocal::Val(t.clone())],
+        body: vec![
+            h_lg(0),
+            h_ls(1),
+            HI::B(BI::NullOf(l)),
+            h_ls(2),
+            HI::Block(vec![HI::Loop(body)]),
+            h_lg(2),
+        ],
+    }
+}
+
+/// `ListHelpers.catCode`.
+fn cat_code(l: u64, r: u64) -> HCode {
+    let body = vec![
+        h_lg(2),
+        h_op(WI::RefIsNull),
+        HI::BrIf(1),
+        h_lg(2),
+        h_op(WI::StructGet(l, 0)),
+        h_lg(3),
+        h_op(WI::StructNew(l)),
+        h_ls(3),
+        h_lg(2),
+        h_op(WI::StructGet(l, 1)),
+        h_ls(2),
+        HI::Br(0),
+    ];
+    HCode {
+        locals: vec![HLocal::Ref(l), HLocal::Ref(l)],
+        body: vec![
+            h_lg(0),
+            h_op(WI::Call(r)),
+            h_ls(2),
+            h_lg(1),
+            h_ls(3),
+            HI::Block(vec![HI::Loop(body)]),
+            h_lg(3),
+        ],
+    }
+}
+
+/// `ListHelpers.takeCode`.
+fn take_code(l: u64, r: u64) -> HCode {
+    let body = vec![
+        h_lg(4),
+        h_lg(1),
+        h_op(WI::I64GeS),
+        HI::BrIf(1),
+        h_lg(2),
+        h_op(WI::RefIsNull),
+        HI::BrIf(1),
+        h_lg(2),
+        h_op(WI::StructGet(l, 0)),
+        h_lg(3),
+        h_op(WI::StructNew(l)),
+        h_ls(3),
+        h_lg(4),
+        h_op(WI::I64Const(1)),
+        HI::I64Add,
+        h_ls(4),
+        h_lg(2),
+        h_op(WI::StructGet(l, 1)),
+        h_ls(2),
+        HI::Br(0),
+    ];
+    HCode {
+        locals: vec![HLocal::Ref(l), HLocal::Ref(l), HLocal::I64],
+        body: vec![
+            h_lg(0),
+            h_ls(2),
+            HI::B(BI::NullOf(l)),
+            h_ls(3),
+            h_op(WI::I64Const(0)),
+            h_ls(4),
+            HI::Block(vec![HI::Loop(body)]),
+            h_lg(3),
+            h_op(WI::Call(r)),
+        ],
+    }
+}
+
+/// `ListHelpers.dropCode`.
+fn drop_code(l: u64) -> HCode {
+    let body = vec![
+        h_lg(3),
+        h_lg(1),
+        h_op(WI::I64GeS),
+        HI::BrIf(1),
+        h_lg(2),
+        h_op(WI::RefIsNull),
+        HI::BrIf(1),
+        h_lg(2),
+        h_op(WI::StructGet(l, 1)),
+        h_ls(2),
+        h_lg(3),
+        h_op(WI::I64Const(1)),
+        HI::I64Add,
+        h_ls(3),
+        HI::Br(0),
+    ];
+    HCode {
+        locals: vec![HLocal::Ref(l), HLocal::I64],
+        body: vec![
+            h_lg(0),
+            h_ls(2),
+            h_op(WI::I64Const(0)),
+            h_ls(3),
+            HI::Block(vec![HI::Loop(body)]),
+            h_lg(2),
+        ],
+    }
+}
+
+/// `ListHelpers.hasCode`.
+fn has_code(l: u64, eq: WI) -> HCode {
+    let body = vec![
+        h_lg(2),
+        h_op(WI::RefIsNull),
+        HI::BrIf(1),
+        h_lg(2),
+        h_op(WI::StructGet(l, 0)),
+        h_lg(1),
+        h_op(eq),
+        HI::IfThen(vec![h_op(WI::I32Const(1)), HI::Ret]),
+        h_lg(2),
+        h_op(WI::StructGet(l, 1)),
+        h_ls(2),
+        HI::Br(0),
+    ];
+    HCode {
+        locals: vec![HLocal::Ref(l)],
+        body: vec![
+            h_lg(0),
+            h_ls(2),
+            HI::Block(vec![HI::Loop(body)]),
+            h_op(WI::I32Const(0)),
+        ],
+    }
+}
+
+/// `ListHelpers.satCode`.
+fn sat_code(c: u64) -> HCode {
+    HCode {
+        locals: vec![],
+        body: vec![
+            h_lg(0),
+            h_op(WI::StructGet(c, 1)),
+            h_op(WI::RefIsNull),
+            HI::IfElseI64(
+                vec![h_lg(0), h_op(WI::StructGet(c, 0))],
+                vec![
+                    h_lg(0),
+                    h_op(WI::StructGet(c, 2)),
+                    h_op(WI::I32Const(0)),
+                    h_op(WI::I32GtS),
+                    HI::IfElseI64(
+                        vec![h_op(WI::I64Const(i64::MAX))],
+                        vec![h_op(WI::I64Const(i64::MIN))],
+                    ),
+                ],
+            ),
+        ],
+    }
+}
+
+impl MCtx<'_> {
+    /// `MCtx.listHelper`: the declared helper of `role` for `List<t>`.
+    fn list_helper(&self, r: PlanListRole, t: &PlanTy) -> Option<u32> {
+        self.tt
+            .list_helpers
+            .iter()
+            .find(|x| &x.0 == t && x.1 == r)
+            .map(|x| x.2)
+    }
+
+    /// `ListHelpers.hasEq`.
+    fn has_eq(&self, t: &PlanTy) -> Option<WI> {
+        match t {
+            PlanTy::Int => Some(WI::Call(self.eq)),
+            PlanTy::Str => Some(WI::Call(self.streq)),
+            PlanTy::Bool => Some(WI::I32Eq),
+            _ => None,
+        }
+    }
+
+    /// `ListHelpers.helperCode`.
+    fn helper_code(&self, r: PlanListRole, t: &PlanTy) -> Option<HCode> {
+        let l = self.list_struct(t);
+        let rev = || self.list_helper(PlanListRole::Reverse, t).map(u64::from);
+        Some(match r {
+            PlanListRole::Len => len_code(l),
+            PlanListRole::Reverse => rev_code(l, t),
+            PlanListRole::Concat => cat_code(l, rev()?),
+            PlanListRole::Take => take_code(l, rev()?),
+            PlanListRole::Drop => drop_code(l),
+            PlanListRole::Contains => has_code(l, self.has_eq(t)?),
+        })
+    }
+
+    /// The functions a helper's template calls besides its own instantiation's
+    /// reverse (`ClaimAxes`: the equality contract `contains` relies on).
+    fn helper_inner_calls(&self, r: PlanListRole, t: &PlanTy) -> Vec<u64> {
+        match (r, t) {
+            (PlanListRole::Contains, PlanTy::Int) => vec![self.eq],
+            (PlanListRole::Contains, PlanTy::Str) => vec![self.streq],
+            _ => vec![],
+        }
+    }
+
+    /// `AcceptedArtifact.helperSig`, as decoded value types.
+    fn helper_sig(&self, r: PlanListRole, t: &PlanTy) -> Option<(Vec<ValT>, Vec<ValT>)> {
+        let rn = |i: u64| u32::try_from(i).ok().map(ValT::RefNull);
+        let l = rn(self.list_struct(t))?;
+        Some(match r {
+            PlanListRole::Len => (vec![l], vec![ValT::I64]),
+            PlanListRole::Reverse => (vec![l], vec![l]),
+            PlanListRole::Concat => (vec![l, l], vec![l]),
+            PlanListRole::Take | PlanListRole::Drop => (vec![l, ValT::I64], vec![l]),
+            PlanListRole::Contains => {
+                let e = match t {
+                    PlanTy::Int => rn(self.carrier)?,
+                    PlanTy::Str => rn(self.str_)?,
+                    PlanTy::Bool => ValT::I32,
+                    _ => return None,
+                };
+                (vec![l, e], vec![ValT::I32])
+            }
+        })
+    }
+
+    fn enc_h(&self, hs: &[HI], out: &mut Vec<u8>) -> Option<()> {
+        for h in hs {
+            match h {
+                HI::B(b) => self.enc(std::slice::from_ref(b), out)?,
+                HI::I64Add => out.push(0x7c),
+                HI::Block(b) => {
+                    out.extend([0x02, 0x40]);
+                    self.enc_h(b, out)?;
+                    out.push(0x0b);
+                }
+                HI::Loop(b) => {
+                    out.extend([0x03, 0x40]);
+                    self.enc_h(b, out)?;
+                    out.push(0x0b);
+                }
+                HI::Br(d) => {
+                    out.push(0x0c);
+                    uleb(u64::from(*d), out)?
+                }
+                HI::BrIf(d) => {
+                    out.push(0x0d);
+                    uleb(u64::from(*d), out)?
+                }
+                HI::IfThen(b) => {
+                    out.extend([0x04, 0x40]);
+                    self.enc_h(b, out)?;
+                    out.push(0x0b);
+                }
+                HI::IfElseI64(t, e) => {
+                    out.extend([0x04, 0x7e]);
+                    self.enc_h(t, out)?;
+                    out.push(0x05);
+                    self.enc_h(e, out)?;
+                    out.push(0x0b);
+                }
+                HI::Ret => out.push(0x0f),
+            }
+        }
+        Some(())
+    }
+
+    /// `ListHelpers.hBodyBytes`, with the code entry's size prefix.
+    fn h_entry_bytes(&self, c: &HCode) -> Option<Vec<u8>> {
+        let mut entry = Vec::new();
+        uleb(c.locals.len() as u64, &mut entry)?;
+        for t in &c.locals {
+            entry.push(0x01);
+            match t {
+                HLocal::I64 => entry.push(0x7e),
+                HLocal::Ref(ht) => {
+                    entry.push(0x63);
+                    s33(*ht, &mut entry)?
+                }
+                HLocal::Val(t) => self.val_ty(t, &mut entry)?,
+            }
+        }
+        self.enc_h(&c.body, &mut entry)?;
+        entry.push(0x0b);
+        let mut out = Vec::new();
+        uleb(entry.len() as u64, &mut out)?;
+        out.extend(entry);
+        Some(out)
+    }
+
+    /// The code entry the `List<t>` helper of role `r` must have.
+    fn helper_entry_bytes(&self, r: PlanListRole, t: &PlanTy) -> Option<Vec<u8>> {
+        self.h_entry_bytes(&self.helper_code(r, t)?)
+    }
+
+    /// The code entry `__aint_to_i64_sat` must have.
+    fn sat_entry_bytes(&self) -> Option<Vec<u8>> {
+        self.h_entry_bytes(&sat_code(self.carrier))
+    }
+
+    /// `GrammarLower.helperCall`.
+    fn helper_call(&self, r: PlanListRole, t: &PlanTy) -> Vec<BI> {
+        match self.list_helper(r, t) {
+            Some(f) => vec![BI::Op(WI::Call(u64::from(f)))],
+            None => vec![],
         }
     }
 }

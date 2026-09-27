@@ -1129,6 +1129,16 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
                      one-step bridge proof unfolds in bounded time"
                 ));
             }
+            // The step lemmas do not yet unfold a List helper call, so such a
+            // bridge could only fall to `sorry` after spending its whole budget.
+            let body = e.plan.body.lean();
+            if [".listLen", ".listReverse", ".listConcat", ".listTake", ".listDrop", ".listContains"]
+                .iter()
+                .any(|b| body.contains(&format!("(.builtin {b})")))
+            {
+                return Err("the plan calls a List helper, which the bridge proofs do not unfold yet"
+                    .to_string());
+            }
             let def = info.def_for(&flat)?;
             if def.params.len() != e.plan.params.len() {
                 return Err(format!(

@@ -104,7 +104,9 @@ def mctxOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) : MCtx :=
     vecStruct := lookupTy 20 tt.vecs
     listStruct := lookupTy 21 tt.lists
     opaqueStruct := lookupNat 22 tt.opaques
-    listCons := fun t => (tt.listCons.find? fun x => decide (x.1 = t)).map (·.2) }
+    listCons := fun t => (tt.listCons.find? fun x => decide (x.1 = t)).map (·.2)
+    listHelpers := tt.listHelpers
+    toI64Sat := idxOr 24 tt.intSat }
 
 /-! ## The opening rec group, raw and decoded
 
