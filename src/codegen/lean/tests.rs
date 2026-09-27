@@ -3125,6 +3125,38 @@ fn proof_mode_non_zero_base_literal_falls_back_to_fuel() {
 }
 
 #[test]
+fn proof_mode_bytes_fuel_exhaustion_has_a_local_inhabited_instance() {
+    // ctx_from_source omits dependency type tables; spell the owner explicitly.
+    // The proof-level test exercises the original unqualified annotations.
+    let source = include_str!("../../../tests/fixtures/bytes_fuel.av")
+        .replace("List<Bytes>", "List<Bytes.Bytes>")
+        .replace("one: Bytes,", "one: Bytes.Bytes,")
+        .replace("-> Bytes\n", "-> Bytes.Bytes\n");
+    // A product needs the same local Bytes instance to synthesize Inhabited.
+    let tuple_source = source
+        .replace("-> Bytes.Bytes\n", "-> Tuple<Bytes.Bytes, Int>\n")
+        .replace("[] -> Bytes.empty()", "[] -> (Bytes.empty(), 0)")
+        .replace("[] -> one", "[] -> (one, 0)");
+    for source in [source.as_str(), tuple_source.as_str()] {
+        let mut ctx = ctx_from_source(source, "BytesFuel");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        for name in ["joined", "joinedOnward"] {
+            let helper = lean
+                .split_once(&format!("def {name}__fuel"))
+                .unwrap_or_else(|| panic!("expected fuel helper for {name}:\n{lean}"))
+                .1;
+            let arm = helper.lines().find(|line| line.contains("| 0 =>")).unwrap();
+            assert!(
+                arm.contains("haveI : Inhabited Bytes.Bytes := ⟨⟨[], by simp [Bytes.allInRange]⟩⟩; panic! \"Aver proof fuel exhausted\""),
+                "the local default must preserve the non-comment panic marker: {arm}"
+            );
+        }
+        assert!(!lean.contains("instance : Inhabited Bytes.Bytes"), "{lean}");
+    }
+}
+
+#[test]
 fn proof_mode_exposed_int_countdown_falls_back_to_fuel() {
     // Closed-world check: a fn that lives in a module with an
     // explicit `exposes [...]` listing the fn is open-world, so the
@@ -3142,6 +3174,11 @@ fn proof_mode_exposed_int_countdown_falls_back_to_fuel() {
     let mut ctx = ctx_from_source(src, "downmod");
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
+    assert!(!lean.contains("haveI : Inhabited Bytes.Bytes"), "{lean}");
+    assert!(
+        lean.contains("| 0 => panic! \"Aver proof fuel exhausted\""),
+        "{lean}"
+    );
     assert!(
         lean.contains("def down__fuel"),
         "expected fuel emission for exposed fn, got:\n{}",

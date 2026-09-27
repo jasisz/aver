@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::expr::aver_name_to_lean;
 use super::syntax::lean_ctor_name;
-use super::types::type_annotation_to_lean;
+use super::types::{EMPTY_BYTES, type_annotation_to_lean};
 use super::{is_recursive_product, is_recursive_type};
 use crate::ast::*;
 use crate::codegen::CodegenContext;
@@ -257,10 +257,6 @@ fn named_type_is_inhabitable(
     seen.pop();
     inhabitable
 }
-
-/// The empty octet list as a `Bytes` value, the refinement discharged the way
-/// the model's own `Nonempty Bytes` instance does.
-const EMPTY_BYTES: &str = "⟨[], by simp [Bytes.allInRange]⟩";
 
 /// The term a stated `Inhabited` instance writes for a field: `default`, or
 /// for a field of exactly the standard `Bytes` type the empty octet list.

@@ -1,0 +1,20 @@
+module BytesFuel
+    depends [Bytes]
+    intent = "Fuel-lowered byte concatenation retains a local panic default."
+
+fn paired(chunks: List<Bytes>, acc: List<Bytes>) -> List<Bytes>
+    match chunks
+        [] -> List.reverse(acc)
+        [left, ..rest] -> match rest
+            [] -> List.reverse(List.prepend(left, acc))
+            [right, ..tail] -> paired(tail, List.prepend(Bytes.concat(left, right), acc))
+
+fn joined(chunks: List<Bytes>) -> Bytes
+    match chunks
+        [] -> Bytes.empty()
+        [one, ..rest] -> joinedOnward(one, rest, chunks)
+
+fn joinedOnward(one: Bytes, rest: List<Bytes>, chunks: List<Bytes>) -> Bytes
+    match rest
+        [] -> one
+        [_, .._] -> joined(paired(chunks, []))

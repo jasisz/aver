@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Fixed — `aver proof` of a recursive function that returns `Bytes`
+
+- **A recursive function returning `Bytes` that the proof export gives fuel now builds in Lean.** When fuel runs out the model calls `panic!`, which needs a default value of the result type, and the export states no `Inhabited Bytes`. Such a function, like a pairwise `Bytes.concat` over a `List<Bytes>`, failed `lake build` with `failed to synthesize Inhabited Bytes`. The empty byte list is now given as the default at that one point, and the fuel-exhausted panic is still reported by `--check`. Reported in #1462.
+
 ### Added — certificates for List length, reverse, concat, take, drop and contains
 
 - **A function that calls `List.len`, `List.reverse`, `List.concat`, `List.take`, `List.drop` or `List.contains` can now be certified.** Such a call used to leave the function source-level only. Each of these calls goes to a helper the compiler emits once per element type, a loop over the list's cells. The certificate now names these helpers, and the checker compares each helper's bytes with its own copy and proves what that copy computes, so these calls add no runtime assumption to the certificate. `List.contains` is admitted over Ints, Strings and Bools; over Ints and Strings it relies on the equality contract it calls, which the certificate already lists. On the btc-listener corpus this certifies 270 more functions (1093 in all); across the examples, projects and certificate fixtures, 114 more (733 to 847). These functions are certified against their plan: a function whose plan calls one of these helpers gets no source bridge yet, so no law is proved about it on the bytes. The compiled programs do not change: the modules of btc-listener, the bench scenarios, the examples and the projects are byte for byte the same. The wall identity rotates: packages produced by earlier versions must be produced again.
