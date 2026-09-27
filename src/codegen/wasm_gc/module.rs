@@ -3514,7 +3514,10 @@ pub(super) fn emit_module_with(
         exports.export("__caller_fn_count", ExportKind::Func, count_fn_idx);
         exports.export("__caller_fn_name", ExportKind::Func, name_fn_idx);
     }
-    module.section(&exports);
+    module.section(&wasm_encoder::RawSection {
+        id: wasm_encoder::SectionId::Export as u8,
+        data: &sorted_export_payload(&exports),
+    });
 
     // ── Element section (active funcref-table init) ────────────────
     //
@@ -11398,4 +11401,51 @@ fn validate(bytes: &[u8]) -> Result<(), WasmGcError> {
         .validate_all(bytes)
         .map_err(|e| WasmGcError::Validation(format!("{e}")))?;
     Ok(())
+}
+
+/// The export section's payload with its entries sorted by the certificate
+/// wall's name key (`WasmSlice.seqKey` of the name's bytes): a longer name is
+/// larger, and between two names of one length the last byte is the most
+/// significant. Export order carries no meaning in WebAssembly; a certificate
+/// reads the section in blocks and has the names distinct from their order
+/// alone, without sorting them in the kernel.
+fn sorted_export_payload(exports: &ExportSection) -> Vec<u8> {
+    use wasm_encoder::Encode;
+    fn uleb(bytes: &[u8], at: &mut usize) -> usize {
+        let (mut value, mut shift) = (0usize, 0u32);
+        loop {
+            let byte = bytes[*at];
+            *at += 1;
+            value |= usize::from(byte & 0x7f) << shift;
+            shift += 7;
+            if byte < 0x80 {
+                return value;
+            }
+        }
+    }
+    let mut encoded = Vec::new();
+    exports.encode(&mut encoded);
+    let mut at = 0;
+    uleb(&encoded, &mut at);
+    let count = uleb(&encoded, &mut at);
+    let mut entries: Vec<(&[u8], &[u8])> = Vec::with_capacity(count);
+    for _ in 0..count {
+        let start = at;
+        let len = uleb(&encoded, &mut at);
+        let name = &encoded[at..at + len];
+        at += len + 1;
+        uleb(&encoded, &mut at);
+        entries.push((name, &encoded[start..at]));
+    }
+    entries.sort_by(|(a, _), (b, _)| {
+        a.len()
+            .cmp(&b.len())
+            .then_with(|| a.iter().rev().cmp(b.iter().rev()))
+    });
+    let mut payload = Vec::new();
+    (count as u32).encode(&mut payload);
+    for (_, entry) in entries {
+        payload.extend_from_slice(entry);
+    }
+    payload
 }

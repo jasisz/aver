@@ -259,7 +259,17 @@ fn name_key_order(name: &str) -> (usize, Vec<u32>) {
     (codes.len(), codes)
 }
 
-fn render_manifest_lean(analysis: &Analysis, sha: &str, target: &str, abi: &str) -> String {
+/// The manifest. With a declared layout, the declared-uncertified exports are
+/// written in `declared_pieces`, one piece per block of the export walk
+/// (`ArtifactExports`), joined right-nested so each block's declaration reads
+/// its piece by name; the list they join to is the one written without them.
+fn render_manifest_lean(
+    analysis: &Analysis,
+    sha: &str,
+    target: &str,
+    abi: &str,
+    declared_pieces: Option<&[Vec<(String, String)>]>,
+) -> String {
     let roles = match &analysis.roles {
         Some(r) => format!("some {}", r.roles_lean_value()),
         None => "(none : Option CertDecode.AddSub.Roles)".to_string(),
@@ -303,12 +313,26 @@ fn render_manifest_lean(analysis: &Analysis, sha: &str, target: &str, abi: &str)
         "String",
         &string_items(&analysis.certified_names()),
     );
-    let declared = lean_list_in_pieces(
-        &mut pieces,
-        "Plans.subject_declaredUncertified",
-        "String × String",
-        &pair_items(&declared_uncertified(analysis)),
-    );
+    let declared = match declared_pieces {
+        None => lean_list_in_pieces(
+            &mut pieces,
+            "Plans.subject_declaredUncertified",
+            "String × String",
+            &pair_items(&declared_uncertified(analysis)),
+        ),
+        Some(blocks) => {
+            let mut names = Vec::new();
+            for (b, piece) in blocks.iter().enumerate() {
+                let name = format!("Plans.subject_declaredUncertified_{b}");
+                pieces.push_str(&format!(
+                    "def {name} : List (String × String) :=\n  [{}]\n\n",
+                    pair_items(piece).join(",\n   ")
+                ));
+                names.push(name);
+            }
+            right_nested(&names)
+        }
+    };
     let capabilities = lean_list_in_pieces(
         &mut pieces,
         "Plans.subject_capabilities",
@@ -393,7 +417,11 @@ fn render_artifact_host_roles(analysis: &Analysis, params: &str, layout: bool) -
          namespace AverCert.Artifact\n\n\
          {leaves}\n\n\
          end AverCert.Artifact\n",
-        layout_import = if layout { "import ArtifactLayout\n" } else { "" },
+        layout_import = if layout {
+            format!("import {}\n", layout_facts_module(analysis))
+        } else {
+            String::new()
+        },
     )
 }
 
@@ -446,13 +474,6 @@ fn render_artifact_plans(
         )];
     }
     let split = splits_artifact_modules(analysis);
-    let names_ok = if split {
-        // A split package proves the export accounting in its own module, and
-        // the accounting decides the names distinct; a small one decides them.
-        "AverCert.SortedKeys.exportNamesDistinct_of_accounted exports_ok"
-    } else {
-        "by rw [AverCert.DeclaredLayout.exportNamesDistinct, exports_cut]; decide +kernel"
-    };
     let check = format!(
         "{plan_ok}\
          /-- The lowering context of every plan check. -/\n\
@@ -471,9 +492,6 @@ fn render_artifact_plans(
          theorem types_ok : AverCert.DeclaredLayout.fnTypesConfirmed AverCert.ArtifactBytes.modBytes\n    \
            AverCert.ArtifactBytes.modLen fnTypes = true := by\n  \
            rw [AverCert.DeclaredLayout.fnTypesConfirmed, types_cut]; decide +kernel\n\n\
-         theorem names_ok : AverCert.DeclaredLayout.exportNamesDistinct AverCert.ArtifactBytes.modBytes\n    \
-           AverCert.ArtifactBytes.modLen = true :=\n  \
-           {names_ok}\n\n\
          theorem names_eq : AverCert.manifest.fnPlans.map (·.name) =\n    \
            fnDecls.map (fun d => String.ofList d.name) := rfl\n\n"
     );
@@ -523,16 +541,25 @@ fn render_artifact_plans(
            {joined}\n\n\
          theorem plans_checked : AverCert.manifest.fnPlans.all planOk = true ∧\n    \
            AverCert.manifest.fnPlans.map (AverCert.ScaleLayout.roleBits planM) = callBits :=\n  \
-           AverCert.ScaleLayout.entries_of_packed bytes_eq chunks_fit layout_ok types_ok names_ok names_eq\n    \
-           exports_cut_ok exports_head export_starts plans_packed\n\n\
+           AverCert.ScaleLayout.entries_of_packed bytes_eq chunks_fit layout_ok types_ok export_names_ok\n    \
+           names_eq exports_cut_ok exports_head export_starts plans_packed\n\n\
+         /-- The export accounting: the export walk, and every planned export read at\n\
+         its site by its plan's check. -/\n\
+         theorem exports_accounted : AverCert.AcceptedArtifact.exportsAccountedOf\n    \
+           AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen\n    \
+           (AverCert.AcceptedArtifact.certifiedExportEntries AverCert.manifest)\n    \
+           (AverCert.AcceptedArtifact.declaredUncertifiedNames AverCert.manifest) = true :=\n  \
+           AverCert.ScaleExports.exportsAccounted_of_walk bytes_eq chunks_fit exports_head export_starts\n    \
+           exports_walk plans_packed names_eq cert_bits rfl\n\n\
          theorem plans_all : AverCert.manifest.fnPlans.all planOk = true := plans_checked.1\n\n\
          theorem plans_roles : AverCert.manifest.fnPlans.map (AverCert.ScaleLayout.roleBits planM) =\n    \
            callBits := plans_checked.2\n\n\
          end AverCert.Artifact\n"
     );
     let imports = format!(
-        "import AcceptedArtifact\nimport ArtifactBytes\nimport Manifest\nimport ArtifactLayout\n{}\n",
-        if split { "import ArtifactInterface\n" } else { "" }
+        "import AcceptedArtifact\nimport ArtifactBytes\nimport Manifest\nimport {}\n{}\n",
+        layout_facts_module(analysis),
+        if split { "" } else { "import ArtifactExports\n" }
     );
     let module_body = |k: usize| {
         let m = per_module.min(n - k);
@@ -578,7 +605,7 @@ fn render_artifact_plans(
         format!(
             "-- The per-plan checks of the plan modules, joined into the check over\n\
              -- every plan.\n\
-             {plan_imports}\n{header}{end}"
+             {plan_imports}import ArtifactExports\n\n{header}{end}"
         ),
     ));
     files
@@ -615,8 +642,9 @@ const ARTIFACT_HEADER: &str = "set_option maxRecDepth 200000\n\
 fn render_artifact(
     analysis: &Analysis,
     envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
-    layout: bool,
+    string_blocks: Option<&str>,
 ) -> Vec<(String, String)> {
+    let layout = string_blocks.is_some();
     let envelope = match envelope {
         None => "none".to_string(),
         Some(env) => format!(
@@ -688,19 +716,16 @@ fn render_artifact(
     // function's signature only when its type has a helper's shape.
     // With a declared layout they read the type section through its
     // confirmed cut, and every code entry on its own chunk window.
-    let strings = if layout {
-        "theorem strings_ok : decodedStringHostRoles data := by\n  \
-         dsimp only [decodedStringHostRoles, data]\n  \
-         rw [← AverCert.DeclaredLayout.StringFast.roleTableFast_eq,\n    \
-         AverCert.DeclaredLayout.StringFast.roleTableFast, CertDecode.StringHost.decodeTypeSigs,\n    \
-         CertDecode.StringHost.bodyLocs, types_cut, code_locs,\n    \
-         AverCert.ScaleLayout.decodeFuncTypes_of_funcsOk funcs_ok,\n    \
-         AverCert.ScaleLayout.funcImportBase_of_funcsOk funcs_ok]\n  \
-         decide +kernel\n\n"
-    } else {
-        "theorem strings_ok : decodedStringHostRoles data := by\n  \
+    // The String roles: with a declared layout, every function classified by
+    // its type's shape bit in blocks (`ScaleTypes.roleTable_of_blocks`);
+    // without one, decided through `roleTableFast`, which reads a function's
+    // signature only when its type has a helper's shape.
+    let strings = match string_blocks {
+        Some(blocks) => blocks.to_string(),
+        None => "theorem strings_ok : decodedStringHostRoles data := by\n  \
          unfold decodedStringHostRoles\n  \
          rw [← AverCert.DeclaredLayout.StringFast.roleTableFast_eq]; decide +kernel\n\n"
+            .to_string(),
     };
     // With a declared layout the closure scan reads each member's code entry
     // from it (one slice) instead of decoding the code section per member.
@@ -712,10 +737,11 @@ fn render_artifact(
         "theorem closure_ok : closureIsolation data = true := by decide +kernel\n\n"
     };
     let layout_import = if layout {
-        "import ArtifactLayout\nimport SortedKeys\n"
+        format!("import {}\nimport SortedKeys\n", layout_facts_module(analysis))
     } else {
-        ""
+        String::new()
     };
+    let layout_import = layout_import.as_str();
     // With a declared layout the framing is read from the declared headers.
     let framing_proof = if layout {
         "\n  AverCert.ScaleLayout.moduleFramingValid_of_framing bytes_eq chunks_fit framing_decl"
@@ -724,39 +750,39 @@ fn render_artifact(
     };
     let exports = format!(
         "theorem framing_ok : CertDecode.moduleFramingValid data.modBytes data.modLen = true :={framing_proof}\n\n\
-         theorem exports_ok : exportsAccounted data = true :=\n  \
-           exportsAccounted_of_chars data\n    \
-           {obligation_names}\n    \
-           {declared_names}\n    \
-           rfl rfl {exports_proof}\n\n\
+         theorem exports_ok : exportsAccounted data = true :={exports_proof}\n\n\
          theorem imports_ok : importsWithinCapabilities data = true :=\n  \
            AverCert.DeclaredLayout.Chars.importsWithinCapabilities_of_chars data\n    \
            {capabilities}\n    \
            rfl (by decide +kernel)\n\n\
          theorem start_ok : startAccounted data = true := by decide +kernel\n\n",
-        obligation_names = lean_char_lists(
-            &analysis
-                .entries
-                .iter()
-                .filter(|e| e.exported)
-                .map(|e| e.name.clone())
-                .collect::<Vec<_>>(),
-            "\n     "
-        ),
-        // With a declared layout the export section is read through its cut.
+        // With a declared layout the accounting is read from the export walk
+        // and the plan checks (`ArtifactPlans`); without one it is decided on
+        // the names as character lists.
         exports_proof = if layout {
-            "(AverCert.SortedKeys.exportsAccountedOf_of_fast exports_cut (by decide +kernel))"
+            "\n  exports_accounted".to_string()
         } else {
-            "(by decide +kernel)"
+            format!(
+                "\n  exportsAccounted_of_chars data\n    {}\n    {}\n    rfl rfl (by decide +kernel)",
+                lean_char_lists(
+                    &analysis
+                        .entries
+                        .iter()
+                        .filter(|e| e.exported)
+                        .map(|e| e.name.clone())
+                        .collect::<Vec<_>>(),
+                    "\n     "
+                ),
+                lean_char_lists(
+                    &declared_uncertified(analysis)
+                        .into_iter()
+                        .map(|(name, _)| name)
+                        .collect::<Vec<_>>(),
+                    "\n     "
+                ),
+            )
         },
         capabilities = lean_char_pairs(&analysis.module_envelope.capabilities),
-        declared_names = lean_char_lists(
-            &declared_uncertified(analysis)
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>(),
-            "\n     "
-        ),
     );
     // With a declared layout the helper types are read from it. The
     // definitions that `match` on the decoded type section are unfolded by
@@ -851,7 +877,7 @@ fn render_artifact(
         ),
         (
             "ArtifactStrings.lean".to_string(),
-            part("The String helper roles, decoded from the module.", layout_import, strings),
+            part("The String helper roles, decoded from the module.", layout_import, &strings),
         ),
         (
             "ArtifactClosure.lean".to_string(),
@@ -861,7 +887,8 @@ fn render_artifact(
             "ArtifactInterface.lean".to_string(),
             part(
                 "The module's framing, exports, imports and start function.",
-                layout_import,
+                // The export accounting is read from the plan checks.
+                &format!("{layout_import}import ArtifactPlans\n"),
                 &exports,
             ),
         ),
@@ -887,7 +914,7 @@ fn render_artifact(
             format!("{module}.lean"),
             part(
                 "Conjuncts of the plans' acceptance other than the per-plan checks.",
-                "import ArtifactLayout\nimport SortedKeys\n",
+                &format!("import {}\nimport SortedKeys\n", layout_facts_module(analysis)),
                 &body,
             ),
         ));
@@ -1219,17 +1246,30 @@ pub fn write_project(
     write(&cert_dir, "Plans.lean", &render_plans(analysis))?;
     // A package with plans declares the module layout its byte checks read.
     let layout = !analysis.entries.is_empty();
-    let (decls, sites) = if layout {
-        let (text, decls, sites) = render_artifact_layout(artifact.core_module_bytes(), analysis)?;
+    let (decls, sites, declared_pieces, strings) = if layout {
+        let LayoutParts {
+            text,
+            extra,
+            decls,
+            sites,
+            walk,
+            strings,
+        } = render_artifact_layout(artifact.core_module_bytes(), analysis)?;
         write(&cert_dir, "ArtifactLayout.lean", &text)?;
-        (decls, sites)
+        for (name, text) in extra {
+            write(&cert_dir, &name, &text)?;
+        }
+        for (name, text) in render_artifact_exports(&walk) {
+            write(&cert_dir, &name, &text)?;
+        }
+        (decls, sites, Some(walk.declared_pieces()), Some(strings))
     } else {
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), None, None)
     };
     write(
         &cert_dir,
         "Manifest.lean",
-        &render_manifest_lean(analysis, &sha, target, abi),
+        &render_manifest_lean(analysis, &sha, target, abi, declared_pieces.as_deref()),
     )?;
     if let Some(params) = analysis
         .roles
@@ -1245,7 +1285,7 @@ pub fn write_project(
     for (name, text) in render_artifact_plans(analysis, &decls, &sites, layout) {
         write(&cert_dir, &name, &text)?;
     }
-    for (name, text) in render_artifact(analysis, envelope, layout) {
+    for (name, text) in render_artifact(analysis, envelope, strings.as_deref()) {
         write(&cert_dir, &name, &text)?;
     }
     write(&cert_dir, "Final.lean", &render_final())?;
