@@ -355,6 +355,10 @@ verify pick
 "#;
 
 fn check_interleaved_case_identity(dependency: bool) {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping interleaved case identity test: `lake` not available");
+        return;
+    }
     let source_dir = tempfile::tempdir().expect("source directory");
     let file = source_dir.path().join("main.av");
     let (subject, lean_path, pick) = if dependency {
