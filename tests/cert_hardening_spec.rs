@@ -1085,7 +1085,12 @@ fn cert_hardening_declines_a_lying_export_site() {
     };
     std::fs::write(
         &layout,
-        format!("{}{}{}", &text[..start], swap(&text[start..end], "", ""), &text[end..]),
+        format!(
+            "{}{}{}",
+            &text[..start],
+            swap(&text[start..end], "", ""),
+            &text[end..]
+        ),
     )
     .unwrap();
     // Each plan's declaration names its site literally: the lie is told there

@@ -859,27 +859,54 @@ theorem entries_of_packed {cs : List Nat} {n len : Nat} {hs : List Nat} {L : Lay
 calls. Each plan's declaration already lowers it, so it also pins the plan's
 role bits (`planOne`), and the contracts are read from the bits. -/
 
-/-- `ClaimAxes.contractUse` from the plans' role bits. -/
-def useOfBits (rs : List Nat) (total totalMul : Bool) : AverCert.ClaimAxes.ContractUse :=
-  { box := rs.any (bitAt · 0), add := rs.any (bitAt · 1), sub := rs.any (bitAt · 2),
-    mul := rs.any (bitAt · 3), stringEq := rs.any (bitAt · 4), stringConcat := rs.any (bitAt · 5),
-    toIndex := rs.any (bitAt · 6), cmp := rs.any (bitAt · 7), eq := rs.any (bitAt · 8),
-    divmod := rs.any (bitAt · 9), addTotal := total, subTotal := total, mulTotal := totalMul }
+/-- The contract helpers the declared List helpers call, the second half of
+    `ClaimAxes.usedCalls`. -/
+def helperCalls (M : MCtx) : List Nat :=
+  (M.listHelpers.map fun x => _root_.AverCert.ListHelpers.innerCalls M x.2.1 x.1).flatten
 
-/-- `ClaimAxes.checked` with the helper calls read from the role bits. -/
+/-- `ClaimAxes.contractUse` from the plans' role bits and the List helpers'
+    own calls. -/
+def useOfBits (M : MCtx) (rs : List Nat) (total totalMul : Bool) :
+    AverCert.ClaimAxes.ContractUse :=
+  let hc := helperCalls M
+  { box := rs.any (bitAt · 0) || hc.contains M.box,
+    add := rs.any (bitAt · 1) || hc.contains M.add,
+    sub := rs.any (bitAt · 2) || hc.contains M.sub,
+    mul := rs.any (bitAt · 3) || hc.contains M.mul,
+    stringEq := rs.any (bitAt · 4) || hc.contains M.streq,
+    stringConcat := rs.any (bitAt · 5) || hc.contains M.concat,
+    toIndex := rs.any (bitAt · 6) || hc.contains M.toIndex,
+    cmp := rs.any (bitAt · 7) || hc.contains M.cmp,
+    eq := rs.any (bitAt · 8) || hc.contains M.eq,
+    divmod := rs.any (bitAt · 9) || hc.contains M.divmod,
+    addTotal := total, subTotal := total, mulTotal := totalMul }
+
+/-- `ClaimAxes.checked` with the plans' helper calls read from the role bits. -/
 def checkedBits (artifact : ArtifactData) (rs : List Nat) : Bool :=
   let m := artifact.manifest
+  let M := mctxOf m.subject m.types m.fnPlans
   let total := m.obligations.any fun o => o.policy == .simulatesModelTotally
   let totalMul := m.obligations.any fun o =>
     o.policy == .simulatesModelTotally && o.totalityRole == .mul
   rs.length == m.fnPlans.length &&
-    (useOfBits rs total totalMul).contracts == m.subject.contracts
+    (useOfBits M rs total totalMul).contracts == m.subject.contracts
 
 theorem contains_flatten (a : Nat) : ∀ xs : List (List Nat),
     xs.flatten.contains a = xs.any (·.contains a)
   | [] => rfl
   | x :: xs => by
       simp only [List.flatten_cons, List.contains_append, List.any_cons, contains_flatten a xs]
+
+/-- One role's bit, over every plan, is whether some plan's lowering calls the
+    role's helper. -/
+theorem any_bit {M : MCtx} {fns : List FnEntry} {i a : Nat}
+    (hi : ∀ e : FnEntry, (roleCalls M e).getD i false =
+      (AverCert.ClaimAxes.wCallsL (fnCode M e.plan).body).contains a) :
+    (fns.map (roleBits M)).any (bitAt · i) =
+      (fns.map fun e => AverCert.ClaimAxes.wCallsL (fnCode M e.plan).body).flatten.contains a := by
+  rw [contains_flatten, List.any_map, List.any_map]
+  refine congrArg (List.any fns) (funext fun e => ?_)
+  simp only [Function.comp_def, roleBits, bitAt_bitsOf, hi]
 
 /-- The per-plan role bits give the claim axes. -/
 theorem checked_of_bits {artifact : ArtifactData} {rs : List Nat}
@@ -894,10 +921,8 @@ theorem checked_of_bits {artifact : ArtifactData} {rs : List Nat}
   congr 1
   subst hbits
   simp only [AverCert.ClaimAxes.contractUse, AverCert.ClaimAxes.usedCalls, useOfBits,
-    contains_flatten, List.any_map, Function.comp_def]
+    helperCalls, List.contains_append]
   congr 1 <;>
-    (refine congrArg (List.any _) (funext fun x => ?_)
-     rw [roleBits, bitAt_bitsOf]
-     simp only [roleCalls, List.getD_cons_zero, List.getD_cons_succ])
+    (rw [any_bit]; intro e; simp only [roleCalls, List.getD_cons_zero, List.getD_cons_succ])
 
 end AverCert.ScaleLayout
