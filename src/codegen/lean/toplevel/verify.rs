@@ -270,10 +270,15 @@ pub fn emit_verify_block(
                         }
                     )
                 };
-                if theorem_params.is_empty() {
+                let vm_passed = super::sample_literal::vm_passed(vb, ctx, case_index_start + idx);
+                if theorem_params.is_empty() || !vm_passed {
+                    // A case the VM failed, or never ran, stays an `example`
+                    // outside any guard, so a counterexample fails the build
+                    // whatever the sorry budget.
                     lines.push(format!(
-                        "{}example : {} = {} := by {}",
+                        "{}example{} : {} = {} := by {}",
                         synth_budget_for_case(&left, ctx),
+                        theorem_param_text,
                         left_str,
                         right_str,
                         tactic
@@ -286,17 +291,18 @@ pub fn emit_verify_block(
                     // condition standing (and the oracle free, so
                     // `native_decide` refuses the goal), and a large fixture
                     // can run simp out of heartbeats, which no `first`
-                    // catches. Either is a proof the export could not
-                    // finish, never a counterexample, so the case is a named
-                    // theorem behind the isolation guard: a failure costs
-                    // this case, which `--check` charges as a sorry, and not
-                    // the build of the whole module.
+                    // catches. The VM passed this case, so either is a proof
+                    // the export could not finish, never a counterexample:
+                    // the case is a named theorem behind the isolation
+                    // guard, a failure costs this case, which `--check`
+                    // charges as a sorry, and not the build of the whole
+                    // module. The name begins with `__`, which no source
+                    // identifier can, so no user function takes it.
                     lines.push(crate::codegen::lean::isolate::ISOLATION_GUARD.to_string());
                     lines.push(format!(
-                        "{}theorem {}_verify_{}{} : {} = {} := by {}",
+                        "{}theorem {}{} : {} = {} := by {}",
                         synth_budget_for_case(&left, ctx),
-                        aver_name_to_lean(&vb.fn_name),
-                        case_index_start + idx + 1,
+                        isolated_case_theorem_name(&vb.fn_name, case_index_start + idx + 1),
                         theorem_param_text,
                         left_str,
                         right_str,
@@ -325,6 +331,21 @@ pub fn emit_verify_block(
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+/// The theorem name of an isolated `verify` case: `__aver_verify_<fn>_<N>`.
+///
+/// Source identifiers cannot begin with `__` (the compiler's namespace), so
+/// no user function or law theorem can be declared under this name. A name a
+/// user could write would let a same-named function stand in for a case whose
+/// own theorem was dropped with its "already declared" error.
+pub(crate) fn isolated_case_theorem_name(fn_name: &str, case_number: usize) -> String {
+    format!(
+        "{}{}_{}",
+        crate::codegen::lean::isolate::ISOLATED_CASE_PREFIX,
+        fn_name.replace('.', "_"),
+        case_number
+    )
 }
 
 /// `set_option synthInstance.maxSize 4096 in` (with its line break) for a case

@@ -86,3 +86,52 @@ fn proof_isolation_one_failed_proof_keeps_the_rest_universal() {
     );
     let _ = std::fs::remove_dir_all(&output_dir);
 }
+
+/// A user function named like a guarded law theorem must not stand in for it.
+///
+/// `inRanges_law_agreesOnTheSamples` is the theorem the law below is exported
+/// as, and a legal (if badly cased) function name. The theorem then fails with
+/// "already declared", the isolation guard drops that error, and the check
+/// used to find the function under the name, with no `sorryAx` in it: the law,
+/// false at 131, passed a zero sorry budget with no trace. A guarded name must
+/// now be a theorem.
+#[test]
+fn proof_isolation_a_function_named_like_a_law_theorem_fails_the_check() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping law name collision test: `lake` not available");
+        return;
+    }
+    let source = std::fs::read_to_string("tests/fixtures/proof_isolation.av")
+        .expect("read the isolation fixture");
+    let source = format!(
+        "{source}\nfn inRanges_law_agreesOnTheSamples() -> Int\n    ? \"A function named like the law's theorem.\"\n    1\n"
+    );
+    let source_dir = temp_output_dir("aver-proof-isolation-collision-src");
+    std::fs::create_dir_all(&source_dir).expect("create source dir");
+    let file = source_dir.join("proof_isolation.av");
+    std::fs::write(&file, source).expect("write source");
+    let output_dir = temp_output_dir("aver-proof-isolation-collision");
+    let (summary, run) = run_lean_check_json_with_args(
+        file.to_str().expect("utf-8 path"),
+        &output_dir,
+        0,
+        &[],
+        &["--module-root", source_dir.to_str().expect("utf-8 path")],
+    );
+    let _ = std::fs::remove_dir_all(&source_dir);
+    let _ = std::fs::remove_dir_all(&output_dir);
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(false),
+        "a law whose theorem a function took must not pass:\n{}",
+        format_output(&run)
+    );
+    // The build itself passes (the collision error is dropped behind the
+    // guard), so the failure must come from the isolation check.
+    assert_eq!(
+        summary["isolated_errors"],
+        serde_json::json!(["inRanges.agreesOnTheSamples"]),
+        "{}",
+        format_output(&run)
+    );
+}

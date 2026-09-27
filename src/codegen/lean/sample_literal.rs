@@ -55,6 +55,17 @@ pub(super) fn decline_reason<'a>(
     ctx.declined_cases.get(&key)
 }
 
+/// Whether `aver verify` passed case `global_case_idx` (the emitter's running
+/// per-key index), whatever its value.
+pub(super) fn vm_passed(vb: &VerifyBlock, ctx: &CodegenContext, global_case_idx: usize) -> bool {
+    let key = (
+        ctx.active_module_scope(),
+        crate::codegen::common::verify_block_counter_key(vb),
+        global_case_idx,
+    );
+    ctx.vm_passed_cases.contains(&key)
+}
+
 /// Emit the expected side of case `global_case_idx` (the emitter's running
 /// per-key index: `case_index_start + idx`) from VM ground truth, if a safe
 /// literal is available. `None` → caller falls back to the source RHS.

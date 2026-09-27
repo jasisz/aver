@@ -79,6 +79,7 @@ fn empty_ctx() -> CodegenContext {
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),
+        vm_passed_cases: std::collections::HashSet::new(),
         allow_mathlib: false,
     }
 }
@@ -5658,11 +5659,29 @@ verify polled
         lean.contains(&format!("def polled (path : BranchPath) {oracle}")),
         "{lean}"
     );
+    // No VM run stands behind this export, so the case is a plain example.
     assert!(
-        lean.contains(&format!("theorem polled_verify_1 {oracle} : polled")),
+        lean.contains(&format!("example {oracle} : polled")),
         "{lean}"
     );
     assert!(ctx.declined_claims.borrow().is_empty());
+
+    // Once the VM passed the case, it is a theorem behind the isolation guard,
+    // under a name no source identifier can take.
+    let mut ctx = ctx_from_source(source, "WaitKeyed");
+    for scope in [None, Some("WaitKeyed".to_string())] {
+        ctx.vm_passed_cases
+            .insert((scope, "fn:polled".to_string(), 0));
+    }
+    let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+    let lean = generated_lean_file(&out);
+    assert!(
+        lean.contains(&format!(
+            "{}\ntheorem __aver_verify_polled_1 {oracle} : polled",
+            crate::codegen::lean::isolate::ISOLATION_GUARD
+        )),
+        "{lean}"
+    );
 }
 
 /// A case that reads an effectful function's result through `?` passes the

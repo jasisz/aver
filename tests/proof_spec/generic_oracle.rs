@@ -117,7 +117,7 @@ verify pollTwice
     );
     assert!(
         lean.contains(&format!(
-            "theorem pollTwice_verify_1 ({oracle}) : pollTwice"
+            "theorem __aver_verify_pollTwice_1 ({oracle}) : pollTwice"
         )),
         "a case through a polling helper quantifies over the same oracle:\n{lean}"
     );

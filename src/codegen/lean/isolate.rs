@@ -33,6 +33,20 @@ pub const ISOLATION_GUARD: &str =
 /// emitted text into declarations and must treat the guard as a boundary.
 pub const ISOLATION_GUARD_PREFIX: &str = "#guard_msgs";
 
+/// The name prefix of an isolated `verify` case theorem (see
+/// `toplevel::verify::isolated_case_theorem_name`). It begins with `__`, which
+/// no source identifier can, so the theorem's name is never a user function's.
+pub const ISOLATED_CASE_PREFIX: &str = "__aver_verify_";
+
+/// Whether a qualified isolated declaration name is a `verify` case rather
+/// than a law or a helper lemma.
+pub fn is_isolated_case(qualified: &str) -> bool {
+    qualified
+        .rsplit('.')
+        .next()
+        .is_some_and(|last| last.starts_with(ISOLATED_CASE_PREFIX))
+}
+
 /// The marker each isolated declaration whose proof failed prints in the
 /// output of [`isolation_check_source`].
 pub const ISOLATION_ERROR_MARKER: &str = "AVER_ISOLATED_ERROR ";
@@ -170,6 +184,52 @@ pub fn guarded_theorem_names(text: &str) -> Vec<String> {
     names
 }
 
+/// The guarded theorems of `text` (qualified like [`guarded_theorem_names`])
+/// whose name another theorem of `text` also declares, or that are guarded
+/// twice.
+///
+/// Lean keeps the first declaration of a name and rejects the second with an
+/// "already declared" error. Behind the guard that error is dropped, and the
+/// name is found declared, as a theorem, with a statement that is not the
+/// guarded one. Every such name therefore counts as a failed proof, whichever
+/// of the two commands came first.
+pub fn duplicate_guarded_theorems(text: &str) -> Vec<String> {
+    let guarded = guarded_theorem_names(text);
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut scopes: Vec<Vec<String>> = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("namespace ") {
+            scopes.push(rest.trim().split('.').map(str::to_string).collect());
+            continue;
+        }
+        if line == "section"
+            || line.starts_with("section ")
+            || line == "noncomputable section"
+            || line.starts_with("noncomputable section ")
+            || line == "mutual"
+        {
+            scopes.push(Vec::new());
+            continue;
+        }
+        if line == "end" || line.starts_with("end ") {
+            scopes.pop();
+            continue;
+        }
+        if let Some(name) = theorem_name(line) {
+            let mut parts: Vec<&str> = scopes.iter().flatten().map(String::as_str).collect();
+            parts.push(name);
+            *counts.entry(parts.join(".")).or_default() += 1;
+        }
+    }
+    let mut out: Vec<String> = guarded
+        .into_iter()
+        .filter(|name| counts.get(name).copied().unwrap_or(0) > 1)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The theorem name a column-0 declaration line opens, after the modifiers and
 /// an inline attribute list the emitter uses.
 fn theorem_name(line: &str) -> Option<&str> {
@@ -205,7 +265,14 @@ fn is_bounded_evidence(name: &str) -> bool {
 /// whose value or type carries a synthetic `sorryAx` (the term Lean puts in
 /// place of a proof that failed to elaborate; an explicit `sorry` is not
 /// synthetic), and one per name of `guarded` (see [`guarded_theorem_names`])
-/// that no module declares. Ends with [`ISOLATION_DONE_MARKER`].
+/// that no module declares as a theorem. Ends with [`ISOLATION_DONE_MARKER`].
+///
+/// A guarded name must be a theorem and nothing else. When the guarded
+/// theorem's name is already taken, Lean reports "already declared", the guard
+/// drops that error, and the name stays with the declaration that took it
+/// first. A function of that name is a `def`, so it is reported. A theorem of
+/// that name is another command's: [`duplicate_guarded_theorems`] finds it in
+/// the export text, since only the export writes theorems.
 pub fn isolation_check_source(roots: &[String], guarded: &[String]) -> String {
     let mut src = String::from("import Lean.Elab.Command\n");
     for root in roots {
@@ -234,12 +301,16 @@ pub fn isolation_check_source(roots: &[String], guarded: &[String]) -> String {
     src.push_str(&guarded.join(", "));
     src.push_str(
         "]\n  \
-           let mut declared : NameSet := {}\n  \
+           let mut theorems : NameSet := {}\n  \
+           let mut others : NameSet := {}\n  \
            for root in roots do\n    \
              let some idx := env.getModuleIdx? root | continue\n    \
              for name in env.header.moduleData[idx.toNat]!.constNames do\n      \
-               declared := declared.insert ((privateToUserName? name).getD name)\n      \
                let some info := env.find? name | continue\n      \
+               let user := (privateToUserName? name).getD name\n      \
+               match info with\n      \
+               | .thmInfo _ => theorems := theorems.insert user\n      \
+               | _ => others := others.insert user\n      \
                let value := (info.value? (allowOpaque := true)).getD (mkConst ``True)\n      \
                if synthetic value || synthetic info.type then\n        \
                  IO.println s!\"",
@@ -248,7 +319,7 @@ pub fn isolation_check_source(roots: &[String], guarded: &[String]) -> String {
     src.push_str(
         "{name}\"\n  \
            for name in guarded do\n    \
-             unless declared.contains name do\n      \
+             unless theorems.contains name && !others.contains name do\n      \
                IO.println s!\"",
     );
     src.push_str(ISOLATION_ERROR_MARKER);
@@ -367,6 +438,37 @@ mod tests {
         );
         assert!(src.contains("#[`Laws, `Domain.Chainwork]"));
         assert!(src.contains("let guarded : Array Name := #[`Laws.f_law_id]"));
+        // A guarded name counts as proved only as a theorem, and only when no
+        // other constant of the export takes the same name.
+        assert!(src.contains("| .thmInfo _ => theorems := theorems.insert user"));
+        assert!(src.contains("unless theorems.contains name && !others.contains name do"));
+    }
+
+    #[test]
+    fn a_guarded_theorem_whose_name_another_theorem_takes_is_reported() {
+        let text = "namespace M\n\
+                    theorem a_law_law_b : True := by trivial\n\
+                    #guard_msgs (drop error, pass warning, pass info, pass trace) in\n\
+                    theorem a_law_law_b : False := by sorry\n\
+                    #guard_msgs (drop error, pass warning, pass info, pass trace) in\n\
+                    theorem fine : True := by trivial\n\
+                    theorem fine_sample_1 : True := by trivial\n\
+                    end M\n\
+                    namespace N\n\
+                    theorem fine : True := by trivial\n\
+                    end N\n";
+        assert_eq!(
+            duplicate_guarded_theorems(text),
+            vec!["M.a_law_law_b".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_isolated_case_is_told_from_a_law() {
+        assert!(is_isolated_case("Shapes.__aver_verify_lookup_1"));
+        assert!(is_isolated_case("__aver_verify_lookup_1"));
+        assert!(!is_isolated_case("Shapes.lookup_law_x"));
+        assert!(!is_isolated_case("lookup.x"));
     }
 
     #[test]

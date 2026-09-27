@@ -125,7 +125,7 @@ fn main() -> Unit
     assert!(
         main_lean
             .lines()
-            .any(|line| line.starts_with("theorem looked_verify_")
+            .any(|line| line.starts_with("theorem __aver_verify_looked_")
                 && line.contains(" (rnd_Cap_get :")),
         "the unreached arm must quantify over its unused oracle:\n{main_lean}"
     );

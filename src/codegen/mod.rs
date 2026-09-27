@@ -608,6 +608,14 @@ pub struct CodegenContext {
     /// precisely on the big inputs where the model is likeliest to exhaust
     /// fuel too. A case listed here is declined as a claim instead.
     pub declined_cases: std::collections::HashMap<VerifyCaseKey, String>,
+    /// The cases `aver verify` passed, whether or not their value could be
+    /// literalized into [`Self::sample_expected`].
+    ///
+    /// Only such a case may be put behind the proof isolation guard: its
+    /// equation is known to hold, so a proof that does not close is a proof
+    /// the export could not finish. A case the VM failed, or never ran, is a
+    /// possible counterexample and must keep failing the build.
+    pub vm_passed_cases: std::collections::HashSet<VerifyCaseKey>,
     /// `aver proof --allow-mathlib` (Lean only, opt-in): permit a generic
     /// Mathlib break-glass closing arm on laws the core strategies cannot
     /// claim. When `false` (the default) the Lean backend is BYTE-IDENTICAL to
@@ -1025,6 +1033,7 @@ pub fn build_context(
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),
+        vm_passed_cases: std::collections::HashSet::new(),
         allow_mathlib: false,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
@@ -1508,6 +1517,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         discovered_lemmas: Vec::new(),
         sample_expected: std::collections::HashMap::new(),
         declined_cases: std::collections::HashMap::new(),
+        vm_passed_cases: std::collections::HashSet::new(),
         allow_mathlib: false,
     }
 }
