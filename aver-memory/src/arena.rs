@@ -1178,7 +1178,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// the box again.
     pub fn take_boxed_value(&mut self, wrapper: NanValue) -> NanValue {
         let value = match self.get_mut(wrapper.arena_index()) {
-            ArenaEntry::Boxed { value, .. } => std::mem::replace(value, NanValue::UNIT),
+            ArenaEntry::Boxed { value, .. } => core::mem::replace(value, NanValue::UNIT),
             _ => panic!("Arena: expected Boxed at {}", wrapper.arena_index()),
         };
         self.release_held_elsewhere(value);
@@ -1191,7 +1191,7 @@ impl<T: ArenaTypes> Arena<T> {
     /// items it needs.
     pub fn release_tuple_items(&mut self, tuple: NanValue) {
         let items = match self.get_mut(tuple.arena_index()) {
-            ArenaEntry::Tuple { items, .. } => std::mem::take(items),
+            ArenaEntry::Tuple { items, .. } => core::mem::take(items),
             _ => panic!("Arena: expected Tuple at {}", tuple.arena_index()),
         };
         for item in items {
@@ -1226,7 +1226,7 @@ impl<T: ArenaTypes> Arena<T> {
     pub fn take_nested_record_field(&mut self, record: NanValue, field_idx: usize) -> NanValue {
         let value = match self.get_mut(record.arena_index()) {
             ArenaEntry::Record { fields, .. } => {
-                std::mem::replace(&mut fields[field_idx], NanValue::UNIT)
+                core::mem::replace(&mut fields[field_idx], NanValue::UNIT)
             }
             _ => panic!("Arena: expected Record at {}", record.arena_index()),
         };
@@ -1243,7 +1243,7 @@ impl<T: ArenaTypes> Arena<T> {
         debug_assert!(!self.record_is_held_elsewhere(record));
         let value = match self.get_mut(record.arena_index()) {
             ArenaEntry::Record { fields, .. } => {
-                std::mem::replace(&mut fields[field_idx], NanValue::UNIT)
+                core::mem::replace(&mut fields[field_idx], NanValue::UNIT)
             }
             _ => panic!("Arena: expected Record at {}", record.arena_index()),
         };
@@ -1390,7 +1390,7 @@ impl<T: ArenaTypes> Arena<T> {
             Vec::new()
         } else {
             let index = value.arena_index();
-            std::mem::take(self.get_vector_mut(index))
+            core::mem::take(self.get_vector_mut(index))
         }
     }
     pub fn get_map(&self, index: u32) -> &T::Map {

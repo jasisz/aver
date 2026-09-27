@@ -38,9 +38,11 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc as Rc;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};

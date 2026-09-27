@@ -53,6 +53,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --exclude aver-lang -- -D warnings && cargo clippy -p aver-lang --lib --bin aver --benches -- -D warnings
 
+      - name: Compile gate — aver-memory without std
+        run: cargo check -p aver-memory --no-default-features
+
       - name: Compile gate — terminal-off feature set
         # The default build has `terminal` on, so `#[cfg(not(feature =
         # "terminal"))]` branches (the playground/wasm32 and fuzz-mutator
