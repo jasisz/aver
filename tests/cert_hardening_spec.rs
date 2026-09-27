@@ -50,9 +50,16 @@
 //! * a duplicate planned function index that passes every per-plan check,
 //!   call groups numbered against the plans' order (which must check
 //!   unchanged), a conjunct of the plans' acceptance proved by `sorry`,
-//!   declared-uncertified names out of key order (which must check unchanged)
-//!   or listed twice, and export names for the bridges' distinctness that
-//!   are not the obligations' names.
+//!   declared-uncertified names out of key order, listed twice, left out or
+//!   spelled unlike their export, and export names for the bridges'
+//!   distinctness that are not the obligations' names;
+//! * on the export walk: an export section out of key order (with every
+//!   declared offset kept true), a block boundary declared inside an entry,
+//!   and site bits that hand a declared-uncertified export to the plans;
+//! * on the type walk: a shape bit on a type without a helper's shape, a
+//!   String helper's type with its shape bit cleared, a helper-shaped type
+//!   declared with another signature, and a block of functions that drops
+//!   its String helper.
 //!
 //! Gated behind `wasm` and skipped when `lake` is unavailable, like the other
 //! certificate suites.
@@ -508,7 +515,7 @@ fn cert_hardening_declines_a_lying_export_cut() {
     let Some((_dir, wasm, cert)) = baseline("certharden-exportcut") else {
         return;
     };
-    shift_first_cut(&cert.join("ArtifactLayout.lean"), "exportCuts");
+    shift_first_cut(&cert.join("ArtifactLayout.lean"), "exportCuts_0");
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
 }
@@ -966,10 +973,178 @@ fn cert_hardening_declines_a_lying_type_cut() {
     let Some((_dir, wasm, cert)) = baseline("certharden-typecut") else {
         return;
     };
-    shift_first_cut(&cert.join("ArtifactLayout.lean"), "typeCuts");
+    shift_first_cut(&cert.join("ArtifactLayout.lean"), "typeCuts_0");
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("decodeTypesCut"), "{report}");
+    assert!(report.contains("walkTypes"), "{report}");
+}
+
+// ---- the type walk and the String helper roles --------------------------------
+//
+// The type section is read in blocks, every type checked against three
+// declarations: the String byte-array types, the shape bits (a type whose
+// signature has an eq or concat helper's shape) and those types' signatures.
+// The functions are classified in blocks through the shape bits. Each test
+// tells one lie about them.
+
+/// Compile a repository fixture with `--certify` into a fresh scratch
+/// directory.
+fn fixture_baseline(prefix: &str, fixture: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
+    if !lake_available() {
+        return None;
+    }
+    let dir = temp_dir(prefix);
+    let out = dir.join("out");
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(fixture);
+    let compile = aver_command()
+        .current_dir(&*dir)
+        .arg("compile")
+        .arg(&source)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let stem = std::path::Path::new(fixture)
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let wasm = out.join(format!("{stem}.wasm"));
+    let cert = out.join("cert");
+    Some((dir, wasm, cert))
+}
+
+/// The hex digits of the numeral declared as `def {name} : Nat :=`, and a
+/// writer for it.
+fn layout_numeral(layout: &Path, name: &str) -> (String, impl Fn(&str)) {
+    let text = std::fs::read_to_string(layout).unwrap();
+    let head = format!("def {name} : Nat :=\n  0x");
+    let start = text.find(&head).expect("the layout declares the numeral") + head.len();
+    let end = start + text[start..].find('\n').unwrap();
+    let digits = text[start..end].to_string();
+    let (before, after) = (text[..start].to_string(), text[end..].to_string());
+    let path = layout.to_path_buf();
+    (digits, move |digits: &str| {
+        std::fs::write(&path, format!("{before}{digits}{after}")).unwrap()
+    })
+}
+
+/// A shape bit set on a type that is no function type (type 0, the tiny
+/// module's first type): the type walk reads every type's shape itself.
+#[test]
+fn cert_hardening_declines_a_lying_shape_bit() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-shapebit") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let (digits, write) = layout_numeral(&layout, "shapeBits");
+    let last = u8::from_str_radix(&digits[digits.len() - 1..], 16).unwrap();
+    assert_eq!(last & 1, 0, "type 0 has no helper shape");
+    write(&format!("{}{:x}", &digits[..digits.len() - 1], last | 1));
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("walkTypes"), "{report}");
+}
+
+/// The String eq helper's type with its shape bit cleared and its signature
+/// dropped: its functions would then be classified without reading their
+/// code, and the helper hidden. The type walk reads the type's shape.
+#[test]
+fn cert_hardening_declines_a_shape_bit_hiding_a_string_helper() {
+    let Some((_dir, wasm, cert)) = fixture_baseline(
+        "certharden-hiddenhelper",
+        "tools/certkit/fixtures/stringeq.av",
+    ) else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let head = "def shapeSigs : List (Nat × CertDecode.StringHost.Sig) :=\n  [";
+    let start = text.find(head).unwrap() + head.len();
+    let end = start + text[start..].find("\n\n").unwrap();
+    let sigs = text[start..end].trim_end_matches(']').to_string();
+    let first: usize = sigs[1..sigs.find(',').unwrap()].parse().unwrap();
+    std::fs::write(&layout, format!("{}{}", &text[..start], &text[end - 1..])).unwrap();
+    let (digits, write) = layout_numeral(&layout, "shapeBits");
+    let mut value: Vec<u8> = digits
+        .chars()
+        .rev()
+        .map(|c| c.to_digit(16).unwrap() as u8)
+        .collect();
+    assert_ne!(
+        value[first / 4] & (1 << (first % 4)),
+        0,
+        "type {first} has its bit"
+    );
+    value[first / 4] &= !(1 << (first % 4));
+    let lied: String = value
+        .iter()
+        .rev()
+        .map(|d| std::char::from_digit(u32::from(*d), 16).unwrap())
+        .collect();
+    write(&lied);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("walkTypes"), "{report}");
+}
+
+/// A helper-shaped type declared with another signature (its result an
+/// `i32` said to be another scalar): the walk compares every declared
+/// signature with the type's own.
+#[test]
+fn cert_hardening_declines_a_lying_helper_signature() {
+    let Some((_dir, wasm, cert)) =
+        fixture_baseline("certharden-helpersig", "tools/certkit/fixtures/stringeq.av")
+    else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let head = "def shapeSigs : List (Nat × CertDecode.StringHost.Sig) :=\n  [";
+    let start = text.find(head).unwrap() + head.len();
+    let at = start + text[start..].find("[.i32").expect("an eq-shaped signature");
+    std::fs::write(
+        &layout,
+        format!("{}[.scalar{}", &text[..at], &text[at + "[.i32".len()..]),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("walkTypes"), "{report}");
+}
+
+/// A block of functions that claims no String helper where the module has
+/// one: each block classifies its functions itself.
+#[test]
+fn cert_hardening_declines_a_string_block_dropping_its_helper() {
+    let Some((_dir, wasm, cert)) = fixture_baseline(
+        "certharden-stringblock",
+        "tools/certkit/fixtures/stringeq.av",
+    ) else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let text = std::fs::read_to_string(&artifact).unwrap();
+    let at = text
+        .find(", .eq)] := by")
+        .expect("a block names the eq helper");
+    let open = text[..at].rfind("=\n    [").unwrap() + "=\n    [".len();
+    std::fs::write(
+        &artifact,
+        format!("{}{}", &text[..open], &text[at + ", .eq)".len()..]),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("classifyBlock"), "{report}");
 }
 
 /// Add one to the entry of function 0 in the packed layout table `field`
@@ -1102,6 +1277,214 @@ fn cert_hardening_declines_a_lying_export_site() {
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
     assert!(report.contains("planCheck"), "{report}");
+}
+
+/// Every export entry of a module as its name and its byte range.
+fn export_entries(bytes: &[u8]) -> Vec<(String, std::ops::Range<usize>)> {
+    fn uleb(bytes: &[u8], at: &mut usize) -> usize {
+        let (mut value, mut shift) = (0usize, 0u32);
+        loop {
+            let byte = bytes[*at];
+            *at += 1;
+            value |= usize::from(byte & 0x7f) << shift;
+            shift += 7;
+            if byte < 0x80 {
+                return value;
+            }
+        }
+    }
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let wasmparser::Payload::ExportSection(reader) = payload.expect("parses") {
+            let mut at = reader.range().start;
+            let count = uleb(bytes, &mut at);
+            let mut entries = Vec::with_capacity(count);
+            for _ in 0..count {
+                let start = at;
+                let len = uleb(bytes, &mut at);
+                let name = String::from_utf8(bytes[at..at + len].to_vec()).unwrap();
+                at += len + 1;
+                uleb(bytes, &mut at);
+                entries.push((name, start..at));
+            }
+            return entries;
+        }
+    }
+    panic!("the module has an export section")
+}
+
+/// The emitter sorts the export section by the wall's name key, and the walk
+/// requires every name's key above the one before. Two exports of one length
+/// exchanged in the section, with the plans' declared sites exchanged too:
+/// every declared offset and length is then true of the tampered module, and
+/// only the order is wrong.
+#[test]
+fn cert_hardening_declines_unsorted_exports() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-unsorted") else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let entries = export_entries(&bytes);
+    let at = |name: &str| {
+        entries
+            .iter()
+            .position(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("an export named {name}: {entries:?}"))
+    };
+    let (d, a) = (at("double"), at("addTwo"));
+    assert_eq!(
+        a,
+        d + 1,
+        "sorted by key, `double` comes just before `addTwo`"
+    );
+    let (rd, ra) = (entries[d].1.clone(), entries[a].1.clone());
+    assert_eq!(rd.len(), ra.len());
+    let (ed, ea) = (bytes[rd.clone()].to_vec(), bytes[ra.clone()].to_vec());
+    bytes[rd.start..rd.start + ea.len()].copy_from_slice(&ea);
+    bytes[ra.start..ra.start + ed.len()].copy_from_slice(&ed);
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (sd, sa) = (
+        format!("({}, {})", rd.start, rd.len()),
+        format!("({}, {})", ra.start, ra.len()),
+    );
+    for file in ["ArtifactLayout.lean", "ArtifactPlans.lean"] {
+        let path = cert.join(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains(&sd) && text.contains(&sa),
+            "{file} names both sites"
+        );
+        std::fs::write(
+            &path,
+            text.replace(&sd, "@SWAP@")
+                .replace(&sa, &sd)
+                .replace("@SWAP@", &sa),
+        )
+        .unwrap();
+    }
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("walkExports"), "{report}");
+}
+
+/// The export walk is written in blocks, each a declaration that states where
+/// its entries start and where the next block starts. The one block of the
+/// tiny module split in two, the boundary declared one byte into the second
+/// entry: the first block's entries end one byte earlier than it states.
+#[test]
+fn cert_hardening_declines_an_export_block_boundary_inside_an_entry() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-exportblock") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let head = "def exportCuts_0 : List Nat :=\n  [";
+    let start = text.find(head).unwrap() + head.len();
+    let end = start + text[start..].find(']').unwrap();
+    let cuts: Vec<usize> = text[start..end]
+        .split(',')
+        .map(|x| x.trim().parse().unwrap())
+        .collect();
+    let rest = cuts[1..]
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let text = format!(
+        "{}{}]\n\ndef exportCuts_1 : List Nat :=\n  [{rest}{}",
+        &text[..start],
+        cuts[0],
+        &text[end..]
+    );
+    let text = text.replacen(
+        "def exportCuts : List Nat :=\n  exportCuts_0\n",
+        "def exportCuts : List Nat :=\n  exportCuts_0 ++ (exportCuts_1)\n",
+        1,
+    );
+    let e0: usize = {
+        let head = "def exportStart : Nat := ";
+        let at = text.find(head).unwrap() + head.len();
+        text[at..at + text[at..].find('\n').unwrap()]
+            .parse()
+            .unwrap()
+    };
+    std::fs::write(&layout, text).unwrap();
+    // The first entry is the declared `size`: it is the first block's piece.
+    let manifest = cert.join("Manifest.lean");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let head = "def Plans.subject_declaredUncertified_0 : List (String × String) :=\n  [";
+    let first = "(\"size\", \"Call Builtin(Map.len)\"),\n   ";
+    assert!(text.contains(&format!("{head}{first}")), "{text}");
+    let text = text
+        .replacen(
+            &format!("{head}{first}"),
+            &format!(
+                "{head}{}]\n\ndef Plans.subject_declaredUncertified_1 : List (String × String) :=\n  [",
+                first.trim_end_matches(",\n   ")
+            ),
+            1,
+        )
+        .replacen(
+            "declaredUncertified := Plans.subject_declaredUncertified_0\n",
+            "declaredUncertified := Plans.subject_declaredUncertified_0 ++ \
+             (Plans.subject_declaredUncertified_1)\n",
+            1,
+        );
+    std::fs::write(&manifest, text).unwrap();
+    let exports = cert.join("ArtifactExports.lean");
+    let text = std::fs::read_to_string(&exports).unwrap();
+    let head = "theorem exports_block_0 : ";
+    let start = text.find(head).unwrap();
+    let end =
+        start + text[start..].find("decide +kernel\n\n").unwrap() + "decide +kernel\n\n".len();
+    let block = &text[start..end];
+    let tail = &block[block.find("=\n    some (").unwrap()..];
+    let size: Vec<String> = b"size".iter().map(u8::to_string).collect();
+    let prev = format!("(some [{}])", size.join(", "));
+    let boundary = e0 + cuts[0] + 1;
+    let blocks = format!(
+        "theorem exports_block_0 : AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks \
+         exportStart\n    exportCertified none exportStart exportCuts_0\n    \
+         AverCert.Plans.subject_declaredUncertified_0 =\n    some ({prev}, {boundary}) := by\n  \
+         decide +kernel\n\n\
+         theorem exports_block_1 : AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks \
+         exportStart\n    exportCertified {prev} {boundary} exportCuts_1\n    \
+         AverCert.Plans.subject_declaredUncertified_1 {tail}"
+    );
+    let text = format!("{}{blocks}{}", &text[..start], &text[end..]);
+    let text = text.replacen(
+        ") :=\n  exports_block_0\n",
+        ") :=\n  AverCert.ScaleExports.walk_cons exports_block_0\n    (exports_block_1)\n",
+        1,
+    );
+    std::fs::write(&exports, text).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("subject_declaredUncertified_0"), "{report}");
+}
+
+/// The site bits (`exportCertified`) hand an entry to the plan checks, which
+/// read only the planned exports' sites. A bit added for the declared `size`
+/// entry would let the walk skip it: the bits are checked against the plans'
+/// sites.
+#[test]
+fn cert_hardening_declines_site_bits_hiding_a_declared_export() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-sitebits") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let head = "def exportCertified : Nat :=\n  0x";
+    let start = text.find(head).unwrap() + head.len();
+    let end = start + text[start..].find('\n').unwrap();
+    let digits = &text[start..end];
+    let last = u8::from_str_radix(&digits[digits.len() - 1..], 16).unwrap();
+    assert_eq!(last & 1, 0, "the first entry, `size`, is no site");
+    let lied = format!("{}{:x}", &digits[..digits.len() - 1], last | 1);
+    std::fs::write(&layout, format!("{}{lied}{}", &text[..start], &text[end..])).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("certBitsOf"), "{report}");
 }
 
 /// The closure claim with one reachable helper left out. The claim is checked
@@ -2297,10 +2680,10 @@ fn cert_hardening_declines_bridges_whose_slice_is_not_imported() {
     assert!(!report.contains("CERTIFIED"), "{report}");
 }
 
-/// The declared-uncertified names as the three places of a package state
-/// them: the JSON, the manifest's `(name, reason)` list and the character
-/// lists `exports_ok` reads. `edit` rearranges the entries (as indices into
-/// the original list) and the three places are rewritten alike.
+/// The declared-uncertified names as the two places of a package state
+/// them: the JSON and the manifest's `(name, reason)` list, written as the
+/// one piece of the export walk's one block. `edit` rearranges the entries
+/// (as indices into the original list) and both places are rewritten alike.
 fn rearrange_declared(cert: &Path, edit: impl Fn(Vec<usize>) -> Vec<usize>) {
     let json_path = cert.join("cert-manifest.json");
     let json: serde_json::Value =
@@ -2321,48 +2704,26 @@ fn rearrange_declared(cert: &Path, edit: impl Fn(Vec<usize>) -> Vec<usize>) {
             serde_json::Value::Array(order.iter().map(|&i| entries[i].clone()).collect());
     });
     let tuple = |(name, reason): &(String, String)| format!("(\"{name}\", \"{reason}\")");
-    let old = pairs.iter().map(tuple).collect::<Vec<_>>().join(", ");
+    let old = pairs.iter().map(tuple).collect::<Vec<_>>().join(",\n   ");
     let new = order
         .iter()
         .map(|&i| tuple(&pairs[i]))
         .collect::<Vec<_>>()
-        .join(", ");
+        .join(",\n   ");
+    let head = "def Plans.subject_declaredUncertified_0 : List (String × String) :=\n  ";
     replace_once(
         &cert.join("Manifest.lean"),
-        &format!("declaredUncertified := [{old}]"),
-        &format!("declaredUncertified := [{new}]"),
-    );
-    let chars = |name: &str| {
-        let cs = name
-            .chars()
-            .map(|c| format!("'{c}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("[{cs}]")
-    };
-    let old = pairs
-        .iter()
-        .map(|(name, _)| chars(name))
-        .collect::<Vec<_>>()
-        .join(",\n     ");
-    let new = order
-        .iter()
-        .map(|&i| chars(&pairs[i].0))
-        .collect::<Vec<_>>()
-        .join(",\n     ");
-    replace_once(
-        &cert.join("Artifact.lean"),
-        &format!("[{old}]"),
-        &format!("[{new}]"),
+        &format!("{head}[{old}]"),
+        &format!("{head}[{new}]"),
     );
 }
 
-/// The producer lists `declaredUncertified` in the wall's key order, so the
-/// export accounting walks it without sorting (`SortedKeys.sortedOr`). The
-/// order is a convenience: a package that lists it in another order is
-/// sorted in the kernel and checks the same.
+/// The producer lists `declaredUncertified` in the wall's key order, the
+/// order of the sorted export section, and the export walk matches every
+/// entry outside the planned exports with the next declared name. The order
+/// is checked: a package that lists the names in another order declines.
 #[test]
-fn cert_hardening_checks_declared_names_out_of_order_unchanged() {
+fn cert_hardening_declines_declared_names_out_of_order() {
     let Some((_dir, wasm, cert)) = baseline("certharden-declared-order") else {
         return;
     };
@@ -2371,11 +2732,52 @@ fn cert_hardening_checks_declared_names_out_of_order_unchanged() {
         order
     });
     let (ok, report) = aver_cert("check", &wasm, &cert);
-    assert!(
-        ok,
-        "declared names out of order must still check:\n{report}"
-    );
-    assert!(report.contains("2 checked exports"), "{report}");
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("walkExports"), "{report}");
+}
+
+/// A declared-uncertified name left out of the declared list, in both
+/// places: its export is then matched with no declared name.
+#[test]
+fn cert_hardening_declines_a_missing_declared_name() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-declared-missing") else {
+        return;
+    };
+    rearrange_declared(&cert, |mut order| {
+        order.remove(1);
+        order
+    });
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("walkExports"), "{report}");
+}
+
+/// A declared-uncertified name whose manifest spelling is not its export's
+/// bytes, in both places, one letter changed and the key order kept: the
+/// walk reads the manifest name's own bytes and compares them with the
+/// entry's.
+#[test]
+fn cert_hardening_declines_a_declared_name_that_is_not_its_export() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-declared-spelling") else {
+        return;
+    };
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap())
+            .unwrap();
+    let names: Vec<String> = json["declaredUncertified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names[0], "size", "{names:?}");
+    edit_json(&cert, |json| {
+        json["declaredUncertified"][0]["name"] = serde_json::Value::from("sizf");
+    });
+    replace_once(&cert.join("Manifest.lean"), "(\"size\", ", "(\"sizf\", ");
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("walkExports"), "{report}");
 }
 
 /// A declared-uncertified name listed twice, the same in all three places:
@@ -2391,10 +2793,7 @@ fn cert_hardening_declines_a_duplicate_declared_name() {
     });
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(
-        report.contains("exports_ok") || report.contains("exportsAccounted"),
-        "{report}"
-    );
+    assert!(report.contains("walkExports"), "{report}");
 }
 
 /// A program calling every List helper the plan grammar admits, over Lists

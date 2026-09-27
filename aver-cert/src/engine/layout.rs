@@ -23,15 +23,16 @@ struct ModuleLayout {
     fn_types: BTreeMap<u32, (Vec<String>, Vec<String>)>,
     /// Position of each function export in the export section.
     export_positions: HashMap<String, usize>,
-    /// Byte length of each top-level entry (rec group or subtype) of the type
-    /// section, of each export entry, and (`code_lengths`) of each code entry:
-    /// the cuts at which the wall decodes each section one entry at a time.
-    type_cuts: Vec<usize>,
+    /// Byte length of each export entry, and (`code_lengths`) of each code
+    /// entry: the cuts at which the wall decodes each section one entry at a
+    /// time. The type section's cut is `TypeSection`'s.
     export_cuts: Vec<usize>,
     /// The module offset of every section header, in module order.
     section_headers: Vec<usize>,
     /// The module offset of the export section's first entry.
     export_start: usize,
+    /// The bytes of every export's name, in section order.
+    export_names: Vec<Vec<u8>>,
 }
 
 struct Cursor<'a> {
@@ -122,10 +123,10 @@ impl ModuleLayout {
             code_lengths: Vec::new(),
             fn_types: BTreeMap::new(),
             export_positions: HashMap::new(),
-            type_cuts: Vec::new(),
             export_cuts: Vec::new(),
             section_headers: Vec::new(),
             export_start: 0,
+            export_names: Vec::new(),
         };
         let mut c = Cursor { bytes, at: 8 };
         while c.at < bytes.len() {
@@ -163,10 +164,12 @@ impl ModuleLayout {
                     for position in 0..count {
                         let start = s.at;
                         let n = s.uleb()? as usize;
-                        let name = bytes
+                        let raw = bytes
                             .get(s.at..s.at + n)
-                            .and_then(|name| std::str::from_utf8(name).ok())
-                            .ok_or("layout: export name is not UTF-8")?
+                            .ok_or("layout: truncated export name")?;
+                        layout.export_names.push(raw.to_vec());
+                        let name = std::str::from_utf8(raw)
+                            .map_err(|_| "layout: export name is not UTF-8")?
                             .to_string();
                         s.skip(n)?;
                         let kind = s.byte()?;
@@ -196,7 +199,6 @@ impl ModuleLayout {
     fn parse_types(&mut self, s: &mut Cursor<'_>) -> Result<(), String> {
         let mut index = 0u32;
         for _ in 0..s.uleb()? {
-            let start = s.at;
             let group = if s.bytes.get(s.at) == Some(&0x4e) {
                 s.skip(1)?;
                 s.uleb()?
@@ -238,7 +240,6 @@ impl ModuleLayout {
                 }
                 index += 1;
             }
-            self.type_cuts.push(s.at - start);
         }
         Ok(())
     }
@@ -272,7 +273,7 @@ fn nat_list(values: &[usize]) -> String {
 fn render_artifact_layout(
     core_bytes: &[u8],
     analysis: &Analysis,
-) -> Result<(String, Vec<String>, Vec<String>), String> {
+) -> Result<LayoutParts, String> {
     let layout = ModuleLayout::parse(core_bytes)?;
     let type_of = |func_idx: u32| {
         func_idx
@@ -343,12 +344,95 @@ fn render_artifact_layout(
         let bit = o - layout.export_start;
         start_bits[bit / 8] |= 1 << (bit % 8);
     }
-    let export_starts = {
-        let digits: String = start_bits.iter().rev().map(|b| format!("{b:02x}")).collect();
-        format!("0x{digits}")
-    };
+    let export_starts = hex_bits(&start_bits);
+    // The planned exports' entries: the walk leaves them to the plan checks,
+    // which read each at its site.
+    let certified: BTreeSet<usize> = analysis
+        .entries
+        .iter()
+        .filter(|e| e.exported)
+        .map(|e| export_offsets[layout.export_positions[&e.name]])
+        .collect();
+    let mut certified_bits = vec![0u8; start_bits.len()];
+    for &o in &certified {
+        let bit = o - layout.export_start;
+        certified_bits[bit / 8] |= 1 << (bit % 8);
+    }
+    let export_certified = hex_bits(&certified_bits);
+    let walk = ExportWalk::new(&layout, &export_offsets, &certified, declared_uncertified(analysis));
+    let export_cut_pieces: String = walk
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(b, block)| {
+            format!(
+                "def exportCuts_{b} : List Nat :=\n  [{}]\n\n",
+                nat_list(&block.cuts)
+            )
+        })
+        .collect();
+    let export_cuts = right_nested(
+        &(0..walk.blocks.len())
+            .map(|b| format!("exportCuts_{b}"))
+            .collect::<Vec<_>>(),
+    );
     let count = layout.func_types.len();
-    let code_blocks = render_code_blocks(count);
+    let types = TypeWalk::new(core_bytes)?;
+    let split = splits_artifact_modules(analysis);
+    let (code_block_texts, code_join) = render_code_blocks(count);
+    let (type_head, type_block_texts, type_joins) = render_type_theorems(&types);
+    const JOINED: &str = "theorem code_locs : CertDecode.codeLocs AverCert.ArtifactBytes.modBytes \
+         AverCert.ArtifactBytes.modLen =\n    \
+         some (AverCert.ScaleLayout.codeLocsL AverCert.ArtifactBytes.chunks layout) :=\n  \
+         AverCert.ScaleLayout.codeLocs_of_tiled bytes_eq chunks_fit code_tiled code_entries\n\n\
+         theorem layout_ok : layoutConfirmed AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen \
+         layout = true :=\n  \
+         AverCert.ScaleLayout.layoutConfirmed_of_tiled bytes_eq chunks_fit code_tiled code_entries\n    \
+         funcs_ok\n\n";
+    let mut extra = Vec::new();
+    let (type_theorems, code_blocks, joined) = if split {
+        let blocks: Vec<String> = type_block_texts
+            .into_iter()
+            .chain(code_block_texts)
+            .collect();
+        let mut imports = String::new();
+        for (m, chunk) in blocks.chunks(LAYOUT_BLOCKS_PER_MODULE).enumerate() {
+            let name = format!("ArtifactLayoutBlocks{m}");
+            imports.push_str(&format!("import {name}\n"));
+            extra.push((
+                format!("{name}.lean"),
+                format!(
+                    "-- Blocks of the type walk and of the code entries (`ArtifactFacts`).\n\
+                     import ArtifactLayout\n\n\
+                     set_option maxRecDepth 200000\n\n\
+                     namespace AverCert.Artifact\n\
+                     open AverCert.DeclaredLayout\n\n\
+                     {}\
+                     end AverCert.Artifact\n",
+                    chunk.concat()
+                ),
+            ));
+        }
+        extra.push((
+            "ArtifactFacts.lean".to_string(),
+            format!(
+                "-- The type walk and the code entries joined from their blocks.\n\
+                 {imports}\n\
+                 set_option maxRecDepth 200000\n\n\
+                 namespace AverCert.Artifact\n\
+                 open AverCert.DeclaredLayout\n\n\
+                 {type_joins}{code_join}{JOINED}\
+                 end AverCert.Artifact\n"
+            ),
+        ));
+        (type_head, String::new(), String::new())
+    } else {
+        (
+            format!("{type_head}{}{type_joins}", type_block_texts.concat()),
+            format!("{}{code_join}", code_block_texts.concat()),
+            JOINED.to_string(),
+        )
+    };
     let text = format!(
         "-- The declared module layout: every defined function's type index and\n\
          -- code entry (packed tables, {LAYOUT_WIDTH} bits per entry), the function types\n\
@@ -356,7 +440,7 @@ fn render_artifact_layout(
          -- and the helper roles its lowering calls, and every section header's\n\
          -- offset. Producer data: the framing and the code tiling are confirmed\n\
          -- against the staged bytes below, and the plan checks confirm the rest.\n\
-         import ScaleLayout\n\
+         import ScaleTypes\n\
          import ArtifactBytes\n\n\
          set_option maxRecDepth 200000\n\n\
          namespace AverCert.Artifact\n\
@@ -377,14 +461,19 @@ fn render_artifact_layout(
          -- type section and of every export. Each cut is confirmed once below\n\
          -- (every entry decodes alone and exactly fills its window), and every\n\
          -- later check reads the section through its cut.\n\
-         def typeCuts : List Nat :=\n  [{type_cuts}]\n\n\
-         def exportCuts : List Nat :=\n  [{export_cuts}]\n\n\
+         {type_decls}\
+         -- The export cut is written in blocks of {EXPORT_BLOCK} entries, the blocks the\n\
+         -- export walk reads one declaration at a time (`ArtifactExports`).\n\
+         {export_cut_pieces}\
+         def exportCuts : List Nat :=\n  {export_cuts}\n\n\
          -- The module offset of the export section's first entry, the start of\n\
-         -- every export entry relative to it (as bits), and each plan entry's\n\
-         -- export entry by module offset and length (`(0, 0)` for an internal\n\
+         -- every export entry relative to it (as bits), the starts of the\n\
+         -- planned exports' entries (as bits), and each plan entry's export\n\
+         -- entry by module offset and length (`(0, 0)` for an internal\n\
          -- function).\n\
          def exportStart : Nat := {export_start}\n\n\
          def exportStarts : Nat :=\n  {export_starts}\n\n\
+         def exportCertified : Nat :=\n  {export_certified}\n\n\
          def exportSites : List (Nat × Nat) :=\n  [{sites}]\n\n\
          theorem bytes_eq : AverCert.ScaleBytes.join 1024 AverCert.ArtifactBytes.chunks =\n    \
            AverCert.ArtifactBytes.modBytes :=\n  \
@@ -394,15 +483,7 @@ fn render_artifact_layout(
          theorem framing_decl : AverCert.ScaleLayout.framingOk AverCert.ArtifactBytes.chunks\n    \
            AverCert.ArtifactBytes.modLen headers = true := by\n  \
            decide +kernel\n\n\
-         theorem types_cut : CertDecode.decodeTypes {bytes} =\n    \
-           AverCert.ByteWindow.typesLazy {bytes} typeCuts :=\n  \
-           AverCert.ByteWindow.decodeTypes_eq_lazy (by decide +kernel)\n\n\
-         theorem exports_cut_ok :\n    \
-           (AverCert.ByteWindow.decodeRawExportsCut {bytes} exportCuts).isSome = true := by\n  \
-           decide +kernel\n\n\
-         theorem exports_cut : CertDecode.decodeRawExports {bytes} =\n    \
-           AverCert.ByteWindow.exportsLazy {bytes} exportCuts :=\n  \
-           AverCert.ByteWindow.decodeRawExports_eq_lazy exports_cut_ok\n\n\
+         {type_theorems}\
          theorem export_starts : AverCert.ScaleLayout.startBits 0 exportCuts = exportStarts := by\n  \
            decide +kernel\n\n\
          theorem exports_head : AverCert.ScaleLayout.exportsHead AverCert.ArtifactBytes.chunks\n    \
@@ -416,12 +497,7 @@ fn render_artifact_layout(
          {code_blocks}\
          theorem funcs_ok : AverCert.ScaleLayout.funcsOk {bytes} layout = true := by\n  \
            decide +kernel\n\n\
-         theorem code_locs : CertDecode.codeLocs {bytes} =\n    \
-           some (AverCert.ScaleLayout.codeLocsL AverCert.ArtifactBytes.chunks layout) :=\n  \
-           AverCert.ScaleLayout.codeLocs_of_tiled bytes_eq chunks_fit code_tiled code_entries\n\n\
-         theorem layout_ok : layoutConfirmed {bytes} layout = true :=\n  \
-           AverCert.ScaleLayout.layoutConfirmed_of_tiled bytes_eq chunks_fit code_tiled code_entries\n    \
-           funcs_ok\n\n\
+         {joined}\
          end AverCert.Artifact\n",
         imports = layout.imports,
         types = packed_hex(layout.func_types.iter().map(|&t| u64::from(t)))?,
@@ -437,13 +513,243 @@ fn render_artifact_layout(
                 .collect::<Vec<_>>()
         ),
         headers = nat_list(&layout.section_headers),
-        type_cuts = nat_list(&layout.type_cuts),
-        export_cuts = nat_list(&layout.export_cuts),
+        type_decls = types.layout_decls(),
         export_start = layout.export_start,
         sites = sites.join(",\n   "),
         bytes = "AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen",
     );
-    Ok((text, decls, sites))
+    let strings = render_string_blocks(analysis, count, layout.imports);
+    Ok(LayoutParts {
+        text,
+        extra,
+        decls,
+        sites,
+        walk,
+        strings,
+    })
+}
+
+/// What the layout rendering produces: `ArtifactLayout.lean`, the block
+/// modules of a large package, every plan entry's declaration and export
+/// site, the export walk, and the String roles' function blocks.
+pub(crate) struct LayoutParts {
+    text: String,
+    extra: Vec<(String, String)>,
+    decls: Vec<String>,
+    sites: Vec<String>,
+    walk: ExportWalk,
+    strings: String,
+}
+
+/// A byte-per-8-bits bitmap as a hex numeral, bit 0 lowest.
+fn hex_bits(bits: &[u8]) -> String {
+    let digits: String = bits.iter().rev().map(|b| format!("{b:02x}")).collect();
+    format!("0x{digits}")
+}
+
+/// `a ++ (b ++ (c ++ d))`: the kernel reads a right-nested join one piece
+/// after another, never walking back through the ones before.
+fn right_nested(names: &[String]) -> String {
+    match names.split_first() {
+        None => "[]".to_string(),
+        Some((first, [])) => first.clone(),
+        Some((first, rest)) => format!("{first} ++ ({})", right_nested(rest)),
+    }
+}
+
+/// Export entries the export walk reads per declaration.
+const EXPORT_BLOCK: usize = 64;
+
+/// Export walk blocks per module of a large package.
+const EXPORT_BLOCKS_PER_MODULE: usize = 16;
+
+/// The export section in blocks of [`EXPORT_BLOCK`] entries, as
+/// `ScaleExports.walkExports` reads it: each block's entries' lengths, the
+/// declared-uncertified exports among them (the block's piece of the
+/// manifest's list), where it starts and the name before it.
+pub(crate) struct ExportWalk {
+    blocks: Vec<ExportBlock>,
+    /// The last entry's name and the offset after it.
+    end: (Option<Vec<u8>>, usize),
+}
+
+struct ExportBlock {
+    start: usize,
+    prev: Option<Vec<u8>>,
+    cuts: Vec<usize>,
+    declared: Vec<(String, String)>,
+}
+
+impl ExportWalk {
+    /// The blocks of the export section. Every entry that is not a planned
+    /// export's is matched with the next declared-uncertified export; a
+    /// declared name that matches no entry goes to the last block's piece, so
+    /// the pieces always join to the declared list and the walk declines.
+    fn new(
+        layout: &ModuleLayout,
+        offsets: &[usize],
+        certified: &BTreeSet<usize>,
+        declared: Vec<(String, String)>,
+    ) -> Self {
+        let n = layout.export_cuts.len();
+        let mut declared = declared.into_iter().peekable();
+        let mut blocks = Vec::new();
+        let mut prev: Option<Vec<u8>> = None;
+        let mut k = 0;
+        loop {
+            let end = (k + EXPORT_BLOCK).min(n);
+            let mut piece = Vec::new();
+            for (offset, name_bytes) in offsets[k..end].iter().zip(&layout.export_names[k..end]) {
+                if certified.contains(offset) {
+                    continue;
+                }
+                if declared
+                    .peek()
+                    .is_some_and(|(name, _)| name.as_bytes() == name_bytes.as_slice())
+                {
+                    piece.extend(declared.next());
+                }
+            }
+            blocks.push(ExportBlock {
+                start: offsets.get(k).copied().unwrap_or(layout.export_start),
+                prev: prev.clone(),
+                cuts: layout.export_cuts[k..end].to_vec(),
+                declared: piece,
+            });
+            if end > k {
+                prev = Some(layout.export_names[end - 1].clone());
+            }
+            k = end;
+            if k >= n {
+                break;
+            }
+        }
+        if let Some(last) = blocks.last_mut() {
+            last.declared.extend(declared);
+        }
+        let end = layout.export_start + layout.export_cuts.iter().sum::<usize>();
+        ExportWalk {
+            blocks,
+            end: (prev, end),
+        }
+    }
+
+    /// The declared-uncertified exports, one piece per block.
+    pub(crate) fn declared_pieces(&self) -> Vec<Vec<(String, String)>> {
+        self.blocks.iter().map(|b| b.declared.clone()).collect()
+    }
+}
+
+/// A name the walk last read, as the Lean `Option (List Nat)`.
+fn lean_prev(prev: &Option<Vec<u8>>) -> String {
+    match prev {
+        None => "none".to_string(),
+        Some(bytes) => format!(
+            "(some [{}])",
+            bytes
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+/// `ArtifactExports.lean`: the export section read in blocks, one
+/// declaration each, joined into the walk over the whole section; the export
+/// cut, the export names' distinctness and the planned exports' site bits,
+/// all read from it.
+fn render_artifact_exports(walk: &ExportWalk) -> Vec<(String, String)> {
+    const WALK: &str = "AverCert.ScaleExports.walkExports AverCert.ArtifactBytes.chunks exportStart\n    \
+         exportCertified";
+    let mut block_texts = Vec::new();
+    for (b, block) in walk.blocks.iter().enumerate() {
+        let (next_prev, next_start) = match walk.blocks.get(b + 1) {
+            Some(next) => (&next.prev, next.start),
+            None => (&walk.end.0, walk.end.1),
+        };
+        let start = if b == 0 {
+            "exportStart".to_string()
+        } else {
+            block.start.to_string()
+        };
+        block_texts.push(format!(
+            "theorem exports_block_{b} : {WALK} {} {start} exportCuts_{b}\n    \
+             AverCert.Plans.subject_declaredUncertified_{b} =\n    \
+             some ({}, {next_start}) := by\n  \
+             decide +kernel\n\n",
+            lean_prev(&block.prev),
+            lean_prev(next_prev),
+        ));
+    }
+    let mut term = format!("exports_block_{}", walk.blocks.len() - 1);
+    for b in (0..walk.blocks.len() - 1).rev() {
+        term = format!("AverCert.ScaleExports.walk_cons exports_block_{b}\n    ({term})");
+    }
+    // A large section's blocks go to modules of their own, which Lake builds
+    // in parallel with more than one worker.
+    let (blocks, block_imports, mut files) = if walk.blocks.len() <= EXPORT_BLOCKS_PER_MODULE {
+        (block_texts.concat(), String::new(), Vec::new())
+    } else {
+        let mut imports = String::new();
+        let mut files = Vec::new();
+        for (m, chunk) in block_texts.chunks(EXPORT_BLOCKS_PER_MODULE).enumerate() {
+            let name = format!("ArtifactExports{m}");
+            imports.push_str(&format!("import {name}\n"));
+            files.push((
+                format!("{name}.lean"),
+                format!(
+                    "-- Blocks of the export walk (`ArtifactExports`).\n\
+                     import ArtifactLayout\n\
+                     import Manifest\n\
+                     import ScaleExports\n\n\
+                     set_option maxRecDepth 200000\n\n\
+                     namespace AverCert.Artifact\n\n\
+                     {}\
+                     end AverCert.Artifact\n",
+                    chunk.concat()
+                ),
+            ));
+        }
+        (String::new(), imports, files)
+    };
+    const BYTES: &str = "AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen";
+    let main = format!(
+        "-- The export section read in blocks of {EXPORT_BLOCK} entries, each entry on its\n\
+         -- own chunk window (`ScaleExports.walkExports`): the names' keys increase,\n\
+         -- and every entry that is not a planned export's is the next\n\
+         -- declared-uncertified export. The export cut and the export names'\n\
+         -- distinctness are read from the walk.\n\
+         import ArtifactLayout\n\
+         import Manifest\n\
+         import ScaleExports\n\
+         {block_imports}\n\
+         set_option maxRecDepth 200000\n\n\
+         namespace AverCert.Artifact\n\n\
+         {blocks}\
+         theorem exports_walk : {WALK} none exportStart exportCuts\n    \
+           AverCert.manifest.subject.declaredUncertified =\n    \
+           some ({}, {}) :=\n  \
+           {term}\n\n\
+         theorem exports_cut_ok :\n    \
+           (AverCert.ByteWindow.decodeRawExportsCut {BYTES} exportCuts).isSome = true :=\n  \
+           AverCert.ScaleExports.exportsCutOk_of_walk bytes_eq chunks_fit exports_head exports_walk\n\n\
+         theorem exports_cut : CertDecode.decodeRawExports {BYTES} =\n    \
+           AverCert.ByteWindow.exportsLazy {BYTES} exportCuts :=\n  \
+           AverCert.ByteWindow.decodeRawExports_eq_lazy exports_cut_ok\n\n\
+         theorem export_names_ok : AverCert.DeclaredLayout.exportNamesDistinct {BYTES} = true :=\n  \
+           AverCert.ScaleExports.exportNamesDistinct_of_walk bytes_eq chunks_fit exports_head exports_walk\n\n\
+         -- The planned exports' sites are distinct entry starts, and their bits are\n\
+         -- the ones the walk leaves to the plan checks.\n\
+         theorem cert_bits : AverCert.ScaleExports.certBitsOf exportStart AverCert.Plans.fnPlans\n    \
+           exportSites 0 = some exportCertified := by\n  \
+           decide +kernel\n\n\
+         end AverCert.Artifact\n",
+        lean_prev(&walk.end.0),
+        walk.end.1,
+    );
+    files.push(("ArtifactExports.lean".to_string(), main));
+    files
 }
 
 /// Code entries decoded per declaration in `ArtifactLayout.lean`.
@@ -452,18 +758,20 @@ const CODE_BLOCK: usize = 64;
 /// One `decide +kernel` declaration per block of `CODE_BLOCK` code entries
 /// (each entry decoded on its own chunk window), joined into
 /// `code_entries`: every declared entry of the code section decodes.
-fn render_code_blocks(count: usize) -> String {
+fn render_code_blocks(count: usize) -> (Vec<String>, String) {
     const F: &str = "(AverCert.ScaleLayout.codeEntryOk AverCert.ArtifactBytes.chunks layout)";
     let starts: Vec<usize> = (0..count).step_by(CODE_BLOCK).collect();
-    let mut out = String::new();
-    for &k in &starts {
-        let m = CODE_BLOCK.min(count - k);
-        out.push_str(&format!(
-            "theorem code_block_{k} : AverCert.ScaleLayout.allRange {F} {k} {m} = true := by\n  \
-             decide +kernel\n\n"
-        ));
-    }
-    out.push_str(&format!(
+    let blocks = starts
+        .iter()
+        .map(|&k| {
+            let m = CODE_BLOCK.min(count - k);
+            format!(
+                "theorem code_block_{k} : AverCert.ScaleLayout.allRange {F} {k} {m} = true := by\n  \
+                 decide +kernel\n\n"
+            )
+        })
+        .collect();
+    let join = format!(
         "theorem code_entries : AverCert.ScaleLayout.allRange {F} 0 layout.count = true :=\n  {}\n\n",
         join_ranges(
             &starts,
@@ -472,8 +780,24 @@ fn render_code_blocks(count: usize) -> String {
             |k| format!("code_block_{k}"),
             "AverCert.ScaleLayout.allRange_zero _ 0"
         )
-    ));
-    out
+    );
+    (blocks, join)
+}
+
+/// Block declarations per module when a large package's layout blocks are
+/// spread over modules of their own (`ArtifactLayoutBlocks<m>`), which Lake
+/// builds in parallel with more than one worker; the facts joined from them
+/// are then `ArtifactFacts`.
+const LAYOUT_BLOCKS_PER_MODULE: usize = 24;
+
+/// The module the layout's joined facts (`types_cut`, `code_locs`,
+/// `layout_ok`) are in.
+fn layout_facts_module(analysis: &Analysis) -> &'static str {
+    if splits_artifact_modules(analysis) {
+        "ArtifactFacts"
+    } else {
+        "ArtifactLayout"
+    }
 }
 
 /// A proof over the range `[starts[0], end)` from proofs over the

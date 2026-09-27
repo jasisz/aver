@@ -180,7 +180,7 @@ pub const FN_CLAIM_DISCHARGE_THEOREM: &str = "AcceptanceSoundness.fn_claim_disch
 
 /// Identity of the exact checker-owned Lean wall shipped by this release.
 pub const CURRENT_WALL_ID: &str =
-    "sha256:02fe57ab6d4fa17ba8a74dd33c7065cd5bf19b50f9c05adf340158611fd493c7";
+    "sha256:e4a7545f56e2eed0ea7ffcfdea0f276082fd270a7334fcbb0d67ea6d52f0ade8";
 
 /// Complete host-import surface admitted by the wasm-gc certificate format.
 ///
