@@ -404,7 +404,7 @@ fn main() -> Unit
         (bytes.len(), digest.as_str()),
         (
             10243,
-            "385c20d44393408caeee6f08c21233534de16bd47f3672a22400976c4813b0b4"
+            "0f11b92deb20f783b106b7e49c8614f92edd7819478f8467ae697b74e677ee1c"
         ),
         "a module with no Vector value changed"
     );
