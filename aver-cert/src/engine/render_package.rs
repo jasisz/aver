@@ -491,10 +491,12 @@ fn render_artifact_plans(
            AverCert.manifest.fnPlans exportStart exportStarts\n\n\
          theorem types_ok : AverCert.DeclaredLayout.fnTypesConfirmed AverCert.ArtifactBytes.modBytes\n    \
            AverCert.ArtifactBytes.modLen fnTypes = true := by\n  \
-           rw [AverCert.DeclaredLayout.fnTypesConfirmed, types_cut]; decide +kernel\n\n\
-         theorem names_eq : AverCert.manifest.fnPlans.map (·.name) =\n    \
-           fnDecls.map (fun d => String.ofList d.name) := rfl\n\n"
+           rw [AverCert.DeclaredLayout.fnTypesConfirmed, types_at]; decide +kernel\n\n"
     );
+    // The plan entries' names against the declared ones, by `rfl`: in a split
+    // package a module of its own, beside the plan modules.
+    let names = "theorem names_eq : AverCert.manifest.fnPlans.map (·.name) =\n    \
+           fnDecls.map (fun d => String.ofList d.name) := rfl\n\n";
     let plan = |i: usize| {
         let e = &analysis.entries[i];
         format!(
@@ -574,7 +576,7 @@ fn render_artifact_plans(
             format!(
                 "-- The per-plan acceptance checks, one declaration per plan, joined into\n\
                  -- the check over every plan.\n\
-                 {imports}{header}{check}{body}{end}"
+                 {imports}{header}{check}{names}{body}{end}"
             ),
         )];
     }
@@ -586,7 +588,15 @@ fn render_artifact_plans(
              {imports}{header}{check}end AverCert.Artifact\n"
         ),
     )];
-    let mut plan_imports = String::new();
+    files.push((
+        "ArtifactPlanNames.lean".to_string(),
+        format!(
+            "-- The plan entries' names, as the layout declares them.\n\
+             import Manifest\nimport ArtifactLayout\n\n\
+             {header}{names}end AverCert.Artifact\n"
+        ),
+    ));
+    let mut plan_imports = String::from("import ArtifactPlanNames\n");
     for &k in &starts {
         files.push((
             format!("ArtifactPlans{k}.lean"),
@@ -643,6 +653,8 @@ fn render_artifact(
     analysis: &Analysis,
     envelope: Option<crate::format::Wasip2ComponentEnvelopeDeclaration>,
     string_blocks: Option<&str>,
+    data_blocks: Option<&str>,
+    helper_sites: &[(&str, usize, usize)],
 ) -> Vec<(String, String)> {
     let layout = string_blocks.is_some();
     let envelope = match envelope {
@@ -666,34 +678,88 @@ fn render_artifact(
             .as_ref()
             .and_then(|r| r.arith_params_record_lean(analysis.carrier)),
     ) {
-        (Some(r), Some(params)) => (
-            "import ArtifactHostRoles\n".to_string(),
-            format!(
-                "theorem roles_ok : decodedHostRoleTable data := by\n  \
-                 dsimp only [decodedHostRoleTable, data]\n  \
-                 rw [show AverCert.manifest.subject.hostRoleTable = some {} from rfl,\n      \
-                 show AverCert.manifest.subject.arithParams = some {params} from rfl]\n  \
-                 simp only [arithTableCheck, decodedHostRole_box, decodedHostRole_toIndex, \
-                 decodedHostRole_add, decodedHostRole_sub, decodedHostRole_mul, decodedHostRole_cmp, \
-                 decodedHostRole_eq, decodedHostRole_divmod, Bool.and_true, Bool.true_and,\n    \
-                 AverCert.DeclaredLayout.Chars.carrierHelperAbsent_eq,\n    \
-                 AverCert.DeclaredLayout.Chars.boxIdx_eq, AverCert.DeclaredLayout.Chars.toIndexIdx_eq,\n    \
-                 AverCert.DeclaredLayout.Chars.cmpIdx_eq{cuts}]\n  \
-                 {carrier}decide +kernel",
-                r.roles_lean_value(),
-                cuts = if layout { ", exports_cut" } else { "" },
-                // The carrier is read through the type-section cut. Its
-                // definition is a `match` on the decoded type section, so it
-                // is unfolded by its unconditional equation with matcher
-                // reduction off: otherwise `simp` evaluates the whole type
-                // decode in the elaborator before the cut can rewrite it.
-                carrier = if layout {
-                    "simp -iota only [CertDecode.carrierState.eq_def, types_cut]\n  "
+        (Some(r), Some(params)) => {
+            // With a declared layout, each Int helper the module exports is
+            // read at its export site (`ScaleTables.helperIdx_of_site`); a
+            // helper the table declares absent is still searched for.
+            let site = |name: &str| helper_sites.iter().find(|(n, _, _)| *n == name);
+            let site_fact = |thm: &str, stmt: String, name: &str, lemma: &str| {
+                let (_, off, l) = site(name)?;
+                Some(format!(
+                    "theorem {thm} : {stmt} :=\n  \
+                     {lemma}\n    \
+                     (AverCert.ScaleTables.helperIdx_of_site bytes_eq chunks_fit exports_head exports_cut_ok\n      \
+                     export_starts export_names_ok (off := {off}) (l := {l}) (by decide +kernel))\n\n"
+                ))
+            };
+            const B: &str = "AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen";
+            let mut facts = String::new();
+            let mut lemmas: Vec<String> = Vec::new();
+            let mut by_name = |thm: &str, fun: &str, eq: &str, name: &str, idx: Option<u32>| {
+                let fact = if layout {
+                    idx.and_then(|fi| {
+                        site_fact(
+                            thm,
+                            format!("CertDecode.AddSub.{fun} {B} = some {fi}"),
+                            name,
+                            &format!("(AverCert.DeclaredLayout.Chars.{eq} _ _).trans"),
+                        )
+                    })
                 } else {
-                    ""
-                },
-            ),
-        ),
+                    None
+                };
+                match fact {
+                    Some(text) => {
+                        facts.push_str(&text);
+                        lemmas.push(thm.to_string());
+                    }
+                    None => lemmas.push(format!("AverCert.DeclaredLayout.Chars.{eq}")),
+                }
+            };
+            by_name("helper_box", "boxIdx", "boxIdx_eq", "__rt_aint_from_i64", r.box_idx);
+            by_name("helper_to_index", "toIndexIdx", "toIndexIdx_eq", "__aint_to_index", r.to_index_idx);
+            by_name("helper_cmp", "cmpIdx", "cmpIdx_eq", "__aint_cmp", r.cmp_idx);
+            // The carrier helper is present: its export site shows it.
+            match (layout, r.box_idx, site("__rt_aint_from_i64")) {
+                (true, Some(fi), Some((_, off, l))) => {
+                    facts.push_str(&format!(
+                        "theorem helper_present : CertDecode.AddSub.carrierHelperAbsent {B} = false :=\n  \
+                         AverCert.ScaleTables.carrierHelperAbsent_of_site bytes_eq chunks_fit exports_head\n    \
+                         exports_cut_ok export_starts export_names_ok (off := {off}) (l := {l}) (fi := {fi})\n    \
+                         (by decide +kernel)\n\n"
+                    ));
+                    lemmas.push("helper_present".to_string());
+                }
+                _ => lemmas.push("AverCert.DeclaredLayout.Chars.carrierHelperAbsent_eq".to_string()),
+            }
+            (
+                "import ArtifactHostRoles\n".to_string(),
+                format!(
+                    "{facts}theorem roles_ok : decodedHostRoleTable data := by\n  \
+                     dsimp only [decodedHostRoleTable, data]\n  \
+                     rw [show AverCert.manifest.subject.hostRoleTable = some {} from rfl,\n      \
+                     show AverCert.manifest.subject.arithParams = some {params} from rfl]\n  \
+                     simp only [arithTableCheck, decodedHostRole_box, decodedHostRole_toIndex, \
+                     decodedHostRole_add, decodedHostRole_sub, decodedHostRole_mul, decodedHostRole_cmp, \
+                     decodedHostRole_eq, decodedHostRole_divmod, Bool.and_true, Bool.true_and,\n    \
+                     {}{cuts}]\n  \
+                     {carrier}decide +kernel",
+                    r.roles_lean_value(),
+                    lemmas.join(", "),
+                    cuts = if layout { ", exports_cut" } else { "" },
+                    // The carrier is read through the type section by index.
+                    // Its definition is a `match` on the decoded type section,
+                    // so it is unfolded by its unconditional equation with
+                    // matcher reduction off: otherwise `simp` evaluates the
+                    // whole type decode in the elaborator first.
+                    carrier = if layout {
+                        "simp -iota only [CertDecode.carrierState.eq_def, types_at]\n  "
+                    } else {
+                        ""
+                    },
+                ),
+            )
+        }
         _ => (
             String::new(),
             "theorem roles_ok : decodedHostRoleTable data := by\n  \
@@ -727,17 +793,31 @@ fn render_artifact(
          rw [← AverCert.DeclaredLayout.StringFast.roleTableFast_eq]; decide +kernel\n\n"
             .to_string(),
     };
-    // With a declared layout the closure scan reads each member's code entry
-    // from it (one slice) instead of decoding the code section per member.
-    let closure_ok = if layout {
-        "theorem closure_ok : closureIsolation data = true :=\n  \
-         AverCert.DeclaredLayout.closureIsolation_of_layout layout_ok\n    \
-         (AverCert.SortedKeys.closureIsolationL_of_S (by decide +kernel))\n\n"
+    // With a declared layout the closure is folded over declared callee
+    // lists, each checked on its function's chunk window a block at a time
+    // (`ScaleClosure.closureIsolation_of_callees`); without one it is decided
+    // whole.
+    let split = splits_artifact_modules(analysis);
+    let (closure_blocks, closure_files) = if layout {
+        render_closure_blocks(analysis, split)
     } else {
-        "theorem closure_ok : closureIsolation data = true := by decide +kernel\n\n"
+        (String::new(), Vec::new())
     };
+    let closure_ok = if layout {
+        format!(
+            "{closure_blocks}theorem closure_ok : closureIsolation data = true :=\n  \
+             AverCert.ScaleClosure.closureIsolation_of_callees bytes_eq chunks_fit layout_ok\n    \
+             closure_callees (by decide +kernel)\n\n"
+        )
+    } else {
+        "theorem closure_ok : closureIsolation data = true := by decide +kernel\n\n".to_string()
+    };
+    let closure_ok = closure_ok.as_str();
     let layout_import = if layout {
-        format!("import {}\nimport SortedKeys\n", layout_facts_module(analysis))
+        format!(
+            "import {}\nimport SortedKeys\nimport ScaleTables\n",
+            layout_facts_module(analysis)
+        )
     } else {
         String::new()
     };
@@ -802,12 +882,21 @@ fn render_artifact(
     } else {
         "(by decide +kernel)"
     };
-    let rest_parts = rest_parts(layout);
+    let rest_parts = rest_parts(layout, data_blocks);
     // With a declared layout the helper calls behind the contracts are read
     // from the role bits every plan's declaration pins (`plans_roles`)
     // instead of lowering every plan again.
+    // The obligations' policy answers are stated in blocks
+    // (`ScaleTables.checkedBits_of_pols`), so no declaration computes every
+    // obligation's call group.
+    let (axes_blocks, axes_files) = if layout {
+        render_axes_blocks(analysis, split)
+    } else {
+        (String::new(), Vec::new())
+    };
     let axes_proof = if layout {
-        "\n  AverCert.ScaleLayout.checked_of_bits plans_roles (by decide +kernel)"
+        "\n  AverCert.ScaleLayout.checked_of_bits plans_roles\n    \
+         (AverCert.ScaleTables.checkedBits_of_pols axes_pols (by decide +kernel))"
     } else {
         " by decide +kernel"
     };
@@ -815,6 +904,7 @@ fn render_artifact(
         "theorem plans_ok : plansAccepted data = true :=\n  \
            plansAccepted_of_parts data plans_all {rest_proof}\n\n\
          {roles_proof}\n\n\
+         {axes_blocks}\
          theorem axes_ok : AverCert.ClaimAxes.checked data = true :={axes_proof}\n\n"
     );
     let tail = "theorem whole_ok : acceptedWholeModule data :=\n  \
@@ -860,6 +950,10 @@ fn render_artifact(
             None => rest_modules.push((module.to_string(), body.clone())),
         }
     }
+    let axes_imports: String = axes_files
+        .iter()
+        .map(|(name, _)| format!("import {}\n", name.trim_end_matches(".lean")))
+        .collect();
     let rest_imports: String = rest_modules
         .iter()
         .map(|(module, _)| format!("import {module}\n"))
@@ -881,7 +975,17 @@ fn render_artifact(
         ),
         (
             "ArtifactClosure.lean".to_string(),
-            part("The certified closure's isolation.", layout_import, closure_ok),
+            part(
+                "The certified closure's isolation.",
+                &format!(
+                    "{layout_import}{}",
+                    closure_files
+                        .iter()
+                        .map(|(name, _)| format!("import {}\n", name.trim_end_matches(".lean")))
+                        .collect::<String>()
+                ),
+                closure_ok,
+            ),
         ),
         (
             "ArtifactInterface.lean".to_string(),
@@ -903,23 +1007,200 @@ fn render_artifact(
                  import ArtifactInterface\n\
                  import ArtifactPlans\n\
                  {rest_imports}\
+                 {axes_imports}\
                  {roles_import}\n\
                  {ARTIFACT_HEADER}\
                  {rest}{tail}"
             ),
         ),
     ];
+    files.extend(closure_files);
+    files.extend(axes_files);
     for (module, body) in rest_modules {
         files.push((
             format!("{module}.lean"),
             part(
                 "Conjuncts of the plans' acceptance other than the per-plan checks.",
-                &format!("import {}\nimport SortedKeys\n", layout_facts_module(analysis)),
+                &format!(
+                    "import {}\nimport SortedKeys\nimport ScaleTables\n",
+                    layout_facts_module(analysis)
+                ),
                 &body,
             ),
         ));
     }
     files
+}
+
+/// Obligations whose policy answers are stated per declaration.
+const AXES_BLOCK: usize = 64;
+
+/// Axes blocks per module of a split package.
+const AXES_BLOCKS_PER_MODULE: usize = 4;
+
+/// Each obligation's policy answers (`ScaleTables.polOf`: total, and total
+/// with the `mul` role), [`AXES_BLOCK`] obligations per declaration, joined
+/// into `axes_pols`. Returns the text that goes before `axes_ok` in its
+/// module, and the block modules of a split package.
+fn render_axes_blocks(analysis: &Analysis, split: bool) -> (String, Vec<(String, String)>) {
+    const OBL: &str = "AverCert.manifest.obligations";
+    const POL: &str = "AverCert.ScaleTables.polOf";
+    let pols: Vec<String> = analysis
+        .certified
+        .iter()
+        .map(|c| format!("({}, {})", c.total, c.total_mul))
+        .collect();
+    let blocks: Vec<&[String]> = pols.chunks(AXES_BLOCK).collect();
+    let last = blocks.len().saturating_sub(1);
+    let texts: Vec<String> = blocks
+        .iter()
+        .enumerate()
+        .map(|(b, block)| {
+            let k = b * AXES_BLOCK;
+            let lhs = if b == last {
+                format!("({OBL}.drop {k}).map {POL}")
+            } else {
+                format!("(({OBL}.drop {k}).take {AXES_BLOCK}).map {POL}")
+            };
+            format!(
+                "def axesPols_{b} : List (Bool × Bool) :=\n  [{}]\n\n\
+                 theorem pols_block_{b} : {lhs} = axesPols_{b} := by\n  \
+                 decide +kernel\n\n",
+                block.join(", ")
+            )
+        })
+        .collect();
+    let join = if blocks.is_empty() {
+        format!(
+            "def axesPols : List (Bool × Bool) := []\n\n\
+             theorem axes_pols : ({OBL}.drop 0).map {POL} = axesPols := by\n  \
+             decide +kernel\n\n"
+        )
+    } else {
+        let names: Vec<String> = (0..blocks.len()).map(|b| format!("axesPols_{b}")).collect();
+        let mut proof = format!("pols_block_{last}");
+        for b in (0..last).rev() {
+            proof = format!("AverCert.ScaleTables.pols_cons pols_block_{b}\n    ({proof})");
+        }
+        format!(
+            "-- Every obligation's policy answers: total, and total with the `mul`\n\
+             -- role, stated a block of obligations at a time.\n\
+             def axesPols : List (Bool × Bool) :=\n  {}\n\n\
+             theorem axes_pols : ({OBL}.drop 0).map {POL} = axesPols :=\n  {proof}\n\n",
+            right_nested(&names)
+        )
+    };
+    if !split {
+        return (format!("{}{join}", texts.concat()), Vec::new());
+    }
+    let files = texts
+        .chunks(AXES_BLOCKS_PER_MODULE)
+        .enumerate()
+        .map(|(m, chunk)| {
+            (
+                format!("ArtifactAxes{m}.lean"),
+                format!(
+                    "-- Blocks of the obligations' policy answers (`Artifact.axes_pols`).\n\
+                     import Manifest\n\
+                     import ScaleTables\n\n\
+                     set_option maxRecDepth 200000\n\n\
+                     namespace AverCert.Artifact\n\n\
+                     {}\
+                     end AverCert.Artifact\n",
+                    chunk.concat()
+                ),
+            )
+        })
+        .collect();
+    (join, files)
+}
+
+/// Callee lists checked per declaration of the closure.
+const CLOSURE_BLOCK: usize = 64;
+
+/// Closure blocks per module of a split package.
+const CLOSURE_BLOCKS_PER_MODULE: usize = 4;
+
+/// The closure's declared callee lists: every function the closure fold
+/// scans, in the order it meets them, with its direct callees. Each block of
+/// [`CLOSURE_BLOCK`] lists is one declaration that checks them against the
+/// functions' code on their chunk windows (`ScaleClosure.calleesOk`); the
+/// blocks are joined right-nested into `closureCallees` and `closure_callees`.
+/// Returns the text that goes before `closure_ok` in its module, and the
+/// block modules of a split package (empty otherwise, the blocks then being
+/// part of the text).
+fn render_closure_blocks(analysis: &Analysis, split: bool) -> (String, Vec<(String, String)>) {
+    let scans = &analysis.module_envelope.closure_scans;
+    let blocks: Vec<&[(u32, Vec<u32>)]> = if scans.is_empty() {
+        vec![&[]]
+    } else {
+        scans.chunks(CLOSURE_BLOCK).collect()
+    };
+    let block_text = |b: usize, block: &[(u32, Vec<u32>)]| {
+        let items = block
+            .iter()
+            .map(|(func, callees)| {
+                format!(
+                    "({func}, [{}])",
+                    callees
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",\n   ");
+        format!(
+            "def closureCallees_{b} : List (Nat × List Nat) :=\n  [{items}]\n\n\
+             theorem closure_block_{b} : AverCert.ScaleClosure.calleesOk AverCert.ArtifactBytes.chunks\n    \
+             layout closureCallees_{b} = true := by\n  \
+             decide +kernel\n\n"
+        )
+    };
+    let texts: Vec<String> = blocks
+        .iter()
+        .enumerate()
+        .map(|(b, block)| block_text(b, block))
+        .collect();
+    let names: Vec<String> = (0..blocks.len()).map(|b| format!("closureCallees_{b}")).collect();
+    let mut proof = format!("closure_block_{}", blocks.len() - 1);
+    for b in (0..blocks.len() - 1).rev() {
+        proof = format!("AverCert.ScaleClosure.calleesOk_append closure_block_{b}\n    ({proof})");
+    }
+    let join = format!(
+        "-- Every function the closure fold scans, in the order it meets them, with\n\
+         -- its direct callees: producer data, each list checked against its\n\
+         -- function's code above.\n\
+         def closureCallees : List (Nat × List Nat) :=\n  {}\n\n\
+         theorem closure_callees : AverCert.ScaleClosure.calleesOk AverCert.ArtifactBytes.chunks\n    \
+         layout closureCallees = true :=\n  {proof}\n\n",
+        right_nested(&names)
+    );
+    if !split {
+        return (format!("{}{join}", texts.concat()), Vec::new());
+    }
+    let files = texts
+        .chunks(CLOSURE_BLOCKS_PER_MODULE)
+        .enumerate()
+        .map(|(m, chunk)| {
+            (
+                format!("ArtifactClosure{m}.lean"),
+                format!(
+                    "-- Blocks of the closure's declared callee lists (`ArtifactClosure`).\n\
+                     import ArtifactLayout\n\
+                     import ScaleClosure\n\n\
+                     set_option maxRecDepth 200000\n\n\
+                     namespace AverCert.Artifact\n\
+                     open AverCert.DeclaredLayout\n\n\
+                     {}\
+                     end AverCert.Artifact\n",
+                    chunk.concat()
+                ),
+            )
+        })
+        .collect();
+    (join, files)
 }
 
 /// The conjuncts of `DeclaredLayout.plansAcceptedRestL`, one declaration
@@ -930,7 +1211,7 @@ fn render_artifact(
 /// equations with matcher reduction off, so `simp` does not evaluate the
 /// whole type decode in the elaborator before the cut can rewrite it
 /// (btc-listener: over 10 minutes per theorem).
-fn rest_parts(layout: bool) -> Vec<(&'static str, String)> {
+fn rest_parts(layout: bool, data_blocks: Option<&str>) -> Vec<(&'static str, String)> {
     if !layout {
         return Vec::new();
     }
@@ -948,21 +1229,28 @@ fn rest_parts(layout: bool) -> Vec<(&'static str, String)> {
         ),
         (
             "ArtifactRestTypes",
+            // The rec group's entries are read on their own windows by index
+            // (`ScaleTables.typeTableConfirmed_of_layout`), and the carrier
+            // state from the type section read by index.
             format!(
                 "theorem rest_types : AverCert.TypeTable.typeTableConfirmed {BYTES}\n    \
-                 {DECLS} = true := by\n  \
-                 simp -iota only [AverCert.TypeTable.typeTableConfirmed.eq_def,\n    \
-                 AverCert.TypeTable.carrierConfirmed.eq_def, CertDecode.carrierState.eq_def, types_cut]\n  \
-                 decide +kernel\n\n"
+                 {DECLS} = true :=\n  \
+                 AverCert.ScaleTables.typeTableConfirmed_of_layout bytes_eq chunks_fit types_head\n    \
+                 types_walk types_tiled rec_tiled rec_subs types_single (by decide +kernel)\n\n"
             ),
         ),
         (
             "ArtifactRestData",
-            format!(
-                "theorem rest_data : AverCert.TypeTable.dataConfirmed {BYTES}\n    \
-                 {DECLS} = true := by\n  \
-                 decide +kernel\n\n"
-            ),
+            // The data section in blocks when every segment is passive (see
+            // `render_data_blocks`); otherwise decided whole, which declines.
+            match data_blocks {
+                Some(text) => text.to_string(),
+                None => format!(
+                    "theorem rest_data : AverCert.TypeTable.dataConfirmed {BYTES}\n    \
+                     {DECLS} = true := by\n  \
+                     decide +kernel\n\n"
+                ),
+            },
         ),
         (
             "ArtifactRestRoles",
@@ -970,8 +1258,7 @@ fn rest_parts(layout: bool) -> Vec<(&'static str, String)> {
                 "theorem rest_roles : AverCert.DeclaredLayout.roleTypesPinnedL layout {BYTES}\n    \
                  {m} = true := by\n  \
                  simp -iota only [AverCert.DeclaredLayout.roleTypesPinnedL,\n    \
-                 AverCert.DeclaredLayout.roleTypePinnedL, AverCert.WasmSlice.typeSectionMatches.eq_def,\n    \
-                 types_cut]\n  \
+                 AverCert.DeclaredLayout.roleTypePinnedL, type_matches]\n  \
                  decide +kernel\n\n"
             ),
         ),
@@ -996,7 +1283,7 @@ fn rest_parts(layout: bool) -> Vec<(&'static str, String)> {
                  {m} = true := by\n  \
                  simp -iota only [AverCert.DeclaredLayout.listHelpersPinnedL,\n    \
                  AverCert.AcceptedArtifact.listHelpersPinnedWith, AverCert.DeclaredLayout.roleTypePinnedL,\n    \
-                 AverCert.WasmSlice.typeSectionMatches.eq_def, types_cut]\n  \
+                 type_matches]\n  \
                  decide +kernel\n\n"
             ),
         ),
@@ -1246,7 +1533,7 @@ pub fn write_project(
     write(&cert_dir, "Plans.lean", &render_plans(analysis))?;
     // A package with plans declares the module layout its byte checks read.
     let layout = !analysis.entries.is_empty();
-    let (decls, sites, declared_pieces, strings) = if layout {
+    let (decls, sites, declared_pieces, strings, data, helper_sites) = if layout {
         let LayoutParts {
             text,
             extra,
@@ -1254,6 +1541,8 @@ pub fn write_project(
             sites,
             walk,
             strings,
+            data,
+            helper_sites,
         } = render_artifact_layout(artifact.core_module_bytes(), analysis)?;
         write(&cert_dir, "ArtifactLayout.lean", &text)?;
         for (name, text) in extra {
@@ -1262,9 +1551,9 @@ pub fn write_project(
         for (name, text) in render_artifact_exports(&walk) {
             write(&cert_dir, &name, &text)?;
         }
-        (decls, sites, Some(walk.declared_pieces()), Some(strings))
+        (decls, sites, Some(walk.declared_pieces()), Some(strings), data, helper_sites)
     } else {
-        (Vec::new(), Vec::new(), None, None)
+        (Vec::new(), Vec::new(), None, None, None, Vec::new())
     };
     write(
         &cert_dir,
@@ -1285,7 +1574,13 @@ pub fn write_project(
     for (name, text) in render_artifact_plans(analysis, &decls, &sites, layout) {
         write(&cert_dir, &name, &text)?;
     }
-    for (name, text) in render_artifact(analysis, envelope, strings.as_deref()) {
+    for (name, text) in render_artifact(
+        analysis,
+        envelope,
+        strings.as_deref(),
+        data.as_deref(),
+        &helper_sites,
+    ) {
         write(&cert_dir, &name, &text)?;
     }
     write(&cert_dir, "Final.lean", &render_final())?;

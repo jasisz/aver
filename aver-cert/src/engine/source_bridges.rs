@@ -2093,12 +2093,15 @@ pub const BRIDGE_PROOF_MODULE: &str = "BridgeProof";
 /// Bridge theorems per `BridgeProof<i>` module, at most. The kernel does not
 /// return memory to the system inside one process, so a module's peak grows
 /// with its declarations: btc-listener's 636 bridges in one module took
-/// 297 s and 9 GB. Modules of about this size build in parallel.
-const BRIDGE_PROOFS_PER_MODULE: usize = 100;
+/// 297 s and 9 GB, and slices of 100 up to 64 s each. Slices of about this
+/// size build in parallel and keep the critical path short.
+const BRIDGE_PROOFS_PER_MODULE: usize = 50;
 /// The module of `export_names_nodup`, which every bridge proof cites.
 pub const BRIDGE_NAMES_MODULE: &str = "BridgeNames";
 /// The decoders, images and rewrite lemmas every step slice imports.
 pub const BRIDGE_DEFS_MODULE: &str = "BridgeDefs";
+/// The String literals' bytes every step slice imports.
+pub const BRIDGE_LITS_MODULE: &str = "BridgeLits";
 /// The step lemma slices, `BridgeSteps0`, `BridgeSteps1`, ….
 pub const BRIDGE_STEPS_MODULE: &str = "BridgeSteps";
 /// Step lemmas per slice module.
@@ -2157,7 +2160,17 @@ fn render_bridge_lean(
     }
     s.push_str("  | _ => 0\n\n");
     // The bytes of every String literal the plans mention, as rewrite
-    // lemmas: `simp` cannot evaluate `strBytes "…"` itself.
+    // lemmas: `simp` cannot evaluate `strBytes "…"` itself. They depend on
+    // nothing but the wall, so they are a module of their own that Lake
+    // builds beside the model; a long literal takes the kernel seconds.
+    let mut lits = format!(
+        "-- The bytes of the String literals the bridge steps rewrite with.\n\
+         import GrammarBridge\n\n\
+         set_option autoImplicit false\n\
+         set_option maxRecDepth 200000\n\
+         set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
+         namespace AverCert.Bridge\n\n"
+    );
     let mut lit_index: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
     for (index, bytes) in plan.literals.iter().enumerate() {
         let Some(text) = lean_string_literal(bytes) else {
@@ -2168,9 +2181,9 @@ fn render_bridge_lean(
             .map(u8::to_string)
             .collect::<Vec<_>>()
             .join(", ");
-        s.push_str(&format!(
+        lits.push_str(&format!(
             "theorem strLit_{index} : AverCert.GrammarBridge.strBytes {text} = [{list}] := by\n  \
-             first | decide | rfl | sorry\n\n"
+             first | decide +kernel | rfl | sorry\n\n"
         ));
         lit_index.insert(bytes.clone(), index);
     }
@@ -2188,14 +2201,19 @@ fn render_bridge_lean(
     // The step lemmas, a slice per module: independent proofs, so Lake builds
     // the slices in parallel; one module of every step took over an hour on
     // k5's 260 bridges.
-    let mut parts = vec![(format!("{BRIDGE_DEFS_MODULE}.lean"), s)];
+    lits.push_str("end AverCert.Bridge\n");
+    let mut parts = vec![
+        (format!("{BRIDGE_DEFS_MODULE}.lean"), s),
+        (format!("{BRIDGE_LITS_MODULE}.lean"), lits),
+    ];
     let steps: Vec<&BridgedFn> = plan.fns.values().collect();
     let mut step_imports = String::new();
     for (i, slice) in steps.chunks(BRIDGE_STEPS_PER_MODULE).enumerate() {
         let name = format!("{BRIDGE_STEPS_MODULE}{i}");
         let mut part = format!(
             "-- One slice of the bridge step lemmas.\n\
-             import {BRIDGE_DEFS_MODULE}\n\n\
+             import {BRIDGE_DEFS_MODULE}\n\
+             import {BRIDGE_LITS_MODULE}\n\n\
              set_option autoImplicit false\n\
              set_option maxRecDepth 200000\n\
              set_option linter.unusedSimpArgs false\n\

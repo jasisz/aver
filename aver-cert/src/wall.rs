@@ -39,6 +39,8 @@ pub const CERT_SCALE_BYTES: &str = include_str!("../assets/wall/current/ScaleByt
 pub const CERT_SCALE_LAYOUT: &str = include_str!("../assets/wall/current/ScaleLayout.lean");
 pub const CERT_SCALE_EXPORTS: &str = include_str!("../assets/wall/current/ScaleExports.lean");
 pub const CERT_SCALE_TYPES: &str = include_str!("../assets/wall/current/ScaleTypes.lean");
+pub const CERT_SCALE_CLOSURE: &str = include_str!("../assets/wall/current/ScaleClosure.lean");
+pub const CERT_SCALE_TABLES: &str = include_str!("../assets/wall/current/ScaleTables.lean");
 pub const CERT_CLAIM_AXES: &str = include_str!("../assets/wall/current/ClaimAxes.lean");
 pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
     include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
@@ -59,7 +61,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 29] = [
+pub const SOURCES: [Source; 31] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -149,12 +151,20 @@ pub const SOURCES: [Source; 29] = [
         contents: CERT_SCALE_BYTES,
     },
     Source {
+        name: "ScaleClosure.lean",
+        contents: CERT_SCALE_CLOSURE,
+    },
+    Source {
         name: "ScaleExports.lean",
         contents: CERT_SCALE_EXPORTS,
     },
     Source {
         name: "ScaleLayout.lean",
         contents: CERT_SCALE_LAYOUT,
+    },
+    Source {
+        name: "ScaleTables.lean",
+        contents: CERT_SCALE_TABLES,
     },
     Source {
         name: "ScaleTypes.lean",
@@ -180,7 +190,7 @@ pub const SOURCES: [Source; 29] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 27] = [
+pub const PRISTINE_ROOTS: [&str; 29] = [
     "CertPrelude",
     "CertDecode",
     "ByteWindow",
@@ -204,6 +214,8 @@ pub const PRISTINE_ROOTS: [&str; 27] = [
     "ScaleLayout",
     "ScaleExports",
     "ScaleTypes",
+    "ScaleClosure",
+    "ScaleTables",
     "AcceptanceSoundnessCore",
     "AcceptanceSoundness",
     "GrammarBridge",

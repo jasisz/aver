@@ -37,7 +37,9 @@
 //!   without the JSON forged to match it;
 //! * a declared layout that lies about a code entry's offset or length, a
 //!   function's type index or type, or an export's site;
-//! * a closure claim hiding a helper, `__aint_divmod` at a supertype
+//! * a closure claim hiding a helper, a declared callee list missing a call,
+//!   naming a callee outside the closure, declared twice, or out of the
+//!   fold's order, `__aint_divmod` at a supertype
 //!   signature, a renamed `aver:work` import, and a certified closure that
 //!   reaches a work import;
 //! * a List match whose arm results are exchanged, List cons structs declared
@@ -56,6 +58,11 @@
 //! * on the export walk: an export section out of key order (with every
 //!   declared offset kept true), a block boundary declared inside an entry,
 //!   and site bits that hand a declared-uncertified export to the plans;
+//! * on the type section by index: a top-level entry declared at a wrong
+//!   offset, a byte moved between two rec subtypes, and the rec group
+//!   declared one subtype short; on the data section: a byte moved between
+//!   two segments and a block lying about its first segment; an Int helper's
+//!   export site moved, and an obligation's policy answer flipped;
 //! * on the type walk: a shape bit on a type without a helper's shape, a
 //!   String helper's type with its shape bit cleared, a helper-shaped type
 //!   declared with another signature, and a block of functions that drops
@@ -1488,8 +1495,8 @@ fn cert_hardening_declines_site_bits_hiding_a_declared_export() {
 }
 
 /// The closure claim with one reachable helper left out. The claim is checked
-/// on the `SortedKeys` path (`closureIsolationL_of_S`) against the closure it
-/// recomputes from the code section.
+/// against the fold over the declared callee lists (`closureIsolationD`),
+/// each list checked against its function's code.
 #[test]
 fn cert_hardening_declines_a_closure_claim_hiding_a_helper() {
     let Some((_dir, wasm, cert)) = baseline("certharden-closure") else {
@@ -1497,7 +1504,7 @@ fn cert_hardening_declines_a_closure_claim_hiding_a_helper() {
     };
     let artifact = cert.join("Artifact.lean");
     let text = std::fs::read_to_string(&artifact).unwrap();
-    assert!(text.contains("closureIsolationL_of_S"), "{text}");
+    assert!(text.contains("closureIsolation_of_callees"), "{text}");
     let head = "closureClaim := ⟨";
     let start = text.find(head).unwrap() + head.len();
     let end = start + text[start..].find('⟩').unwrap();
@@ -1533,7 +1540,396 @@ fn cert_hardening_declines_a_closure_claim_hiding_a_helper() {
     .unwrap();
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("closureIsolationS"), "{report}");
+    assert!(report.contains("closureIsolationD"), "{report}");
+}
+
+// ---- the closure's declared callee lists ---------------------------------------
+//
+// The package declares every function the closure fold scans, in the order it
+// meets them, with its direct callees (`closureCallees`). Each list is checked
+// against its function's code on its chunk window (`calleesOk`), and the fold
+// runs over the lists (`closureIsolationD`), which requires every newly met
+// function to be the next one declared and every declaration to be used.
+
+/// The declared callee lists of `Artifact.lean`: the text before and after
+/// the list, and its entries.
+fn closure_callees(artifact: &Path) -> (String, Vec<(u32, Vec<u32>)>, String) {
+    let text = std::fs::read_to_string(artifact).unwrap();
+    let head = "def closureCallees_0 : List (Nat × List Nat) :=\n  [";
+    let start = text.find(head).expect("the package declares callee lists") + head.len();
+    let end = start + text[start..].find("]\n\n").unwrap();
+    let body = &text[start..end];
+    let entries = if body.is_empty() {
+        Vec::new()
+    } else {
+        body.split(",\n   ")
+            .map(|entry| {
+                let entry = entry.trim_start_matches('(').trim_end_matches(')');
+                let (func, callees) = entry.split_once(", [").unwrap();
+                let callees = callees.trim_end_matches(']');
+                (
+                    func.parse().unwrap(),
+                    if callees.is_empty() {
+                        Vec::new()
+                    } else {
+                        callees.split(", ").map(|x| x.parse().unwrap()).collect()
+                    },
+                )
+            })
+            .collect()
+    };
+    (text[..start].to_string(), entries, text[end..].to_string())
+}
+
+fn write_closure_callees(
+    artifact: &Path,
+    (before, entries, after): (String, Vec<(u32, Vec<u32>)>, String),
+) {
+    let body = entries
+        .iter()
+        .map(|(func, callees)| {
+            format!(
+                "({func}, [{}])",
+                callees
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    std::fs::write(artifact, format!("{before}{body}{after}")).unwrap();
+}
+
+/// Every defined function's index with its direct callees in code order.
+fn direct_calls(bytes: &[u8]) -> Vec<(u32, Vec<u32>)> {
+    let mut imports = 0u32;
+    let mut out = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        match payload.expect("parses") {
+            wasmparser::Payload::ImportSection(reader) => {
+                for group in reader {
+                    for import in group.expect("import group") {
+                        if let wasmparser::TypeRef::Func(_) = import.expect("import").1.ty {
+                            imports += 1;
+                        }
+                    }
+                }
+            }
+            wasmparser::Payload::CodeSectionEntry(body) => {
+                let mut calls = Vec::new();
+                let mut ops = body.get_operators_reader().expect("operators");
+                while !ops.eof() {
+                    match ops.read().expect("operator") {
+                        wasmparser::Operator::Call { function_index }
+                        | wasmparser::Operator::ReturnCall { function_index } => {
+                            calls.push(function_index)
+                        }
+                        _ => {}
+                    }
+                }
+                out.push((imports + out.len() as u32, calls));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A declared callee list with one call left out. The fold over the lists
+/// would miss the callee; the list's own check reads the function's code.
+#[test]
+fn cert_hardening_declines_a_callee_list_missing_a_call() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-calleemiss") else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let (before, mut entries, after) = closure_callees(&artifact);
+    let entry = entries
+        .iter_mut()
+        .find(|(_, callees)| !callees.is_empty())
+        .expect("a scanned function makes a call");
+    entry.1.pop();
+    write_closure_callees(&artifact, (before, entries, after));
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("calleesOk"), "{report}");
+}
+
+/// A declared callee list naming a function outside the closure as a callee:
+/// the closure would grow by a function the code never calls.
+#[test]
+fn cert_hardening_declines_a_callee_outside_the_closure() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-calleeout") else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let (before, mut entries, after) = closure_callees(&artifact);
+    let bytes = std::fs::read(&wasm).unwrap();
+    let outside = direct_calls(&bytes)
+        .into_iter()
+        .map(|(func, _)| func)
+        .find(|func| entries.iter().all(|(f, _)| f != func))
+        .expect("a defined function outside the closure");
+    entries[0].1.push(outside);
+    write_closure_callees(&artifact, (before, entries, after));
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("calleesOk"), "{report}");
+}
+
+/// A true callee list declared twice, the copy after the others. Every list
+/// passes its own check; the fold meets the function once and leaves the copy
+/// unused.
+#[test]
+fn cert_hardening_declines_an_unused_callee_list() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-calleeextra") else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let (before, mut entries, after) = closure_callees(&artifact);
+    entries.push(entries[0].clone());
+    write_closure_callees(&artifact, (before, entries, after));
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("closureIsolationD"), "{report}");
+    assert!(!report.contains("calleesOk"), "{report}");
+}
+
+/// The first two callee lists exchanged. Each is still its function's scan,
+/// but the fold meets the functions in the other order.
+#[test]
+fn cert_hardening_declines_callee_lists_out_of_fold_order() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-calleeorder") else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let (before, mut entries, after) = closure_callees(&artifact);
+    assert!(entries.len() >= 2, "the closure scans two functions");
+    entries.swap(0, 1);
+    write_closure_callees(&artifact, (before, entries, after));
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("closureIsolationD"), "{report}");
+    assert!(!report.contains("calleesOk"), "{report}");
+}
+
+// ---- the type section by index, the data section, the helpers, the axes -------
+//
+// The package declares every top-level type entry and every subtype of the
+// opening rec group by offset and length (`typeLayout`, `recLayout`), every
+// data segment's length (`dataCuts`), the Int helpers' export sites and every
+// obligation's policy answers (`axesPols`). Each test tells one lie.
+
+/// The packed table `field` of the layout literal `def {name} : Layout`, and
+/// a writer for it. Entry 0 is the lowest 32 bits.
+fn packed_table(path: &Path, name: &str, field: &str) -> (Vec<u64>, impl Fn(&[u64])) {
+    let text = std::fs::read_to_string(path).unwrap();
+    let def = format!("def {name} : Layout :=");
+    let at = text.find(&def).expect("the layout declares the table");
+    let head = format!("{field} := 0x");
+    let start = at + text[at..].find(&head).unwrap() + head.len();
+    let end = start
+        + text[start..]
+            .find(|c: char| !c.is_ascii_hexdigit())
+            .unwrap();
+    let digits = &text[start..end];
+    let body = &digits[digits.len() % 8..];
+    let entries: Vec<u64> = body
+        .as_bytes()
+        .chunks(8)
+        .rev()
+        .map(|c| u64::from_str_radix(std::str::from_utf8(c).unwrap(), 16).unwrap())
+        .collect();
+    let (before, after) = (text[..start].to_string(), text[end..].to_string());
+    let path = path.to_path_buf();
+    (entries, move |entries: &[u64]| {
+        let hex: String = entries.iter().rev().map(|e| format!("{e:08x}")).collect();
+        std::fs::write(&path, format!("{before}0{hex}{after}")).unwrap()
+    })
+}
+
+/// A top-level type entry declared one byte later than it starts. The
+/// declared entries must tile the type cut.
+#[test]
+fn cert_hardening_declines_a_type_entry_declared_at_a_wrong_offset() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-typeoff") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let (mut offs, write) = packed_table(&layout, "typeLayout", "offsets");
+    offs[1] += 1;
+    write(&offs);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("typesTiled"), "{report}");
+}
+
+/// A byte moved between the rec group's first two subtypes, the offsets kept
+/// consistent: the subtypes still tile the group, but the first no longer
+/// decodes exactly on its window.
+#[test]
+fn cert_hardening_declines_a_rec_subtype_boundary_moved() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-subtype") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let (mut lens, write_lens) = packed_table(&layout, "recLayout", "lengths");
+    assert!(
+        lens.len() >= 2 && lens[1] > 1,
+        "the rec group has two subtypes"
+    );
+    lens[0] += 1;
+    lens[1] -= 1;
+    write_lens(&lens);
+    let (mut offs, write_offs) = packed_table(&layout, "recLayout", "offsets");
+    offs[1] += 1;
+    write_offs(&offs);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("subOk"), "{report}");
+}
+
+/// The rec group declared one subtype short: its last subtype would be read
+/// as the section's next entry. The group's count is read from its head.
+#[test]
+fn cert_hardening_declines_a_rec_group_declared_short() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-recshort") else {
+        return;
+    };
+    let layout = cert.join("ArtifactLayout.lean");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    let def = "def recLayout : Layout :=\n  { imports := 0, count := ";
+    let at = text.find(def).expect("the layout declares the rec group") + def.len();
+    let count: u64 = text[at..].split(',').next().unwrap().parse().unwrap();
+    std::fs::write(
+        &layout,
+        format!(
+            "{}{}{}",
+            &text[..at],
+            count - 1,
+            &text[at + count.to_string().len()..]
+        ),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("recTiled"), "{report}");
+}
+
+/// A byte moved between the first two data segments' declared lengths:
+/// neither window decodes as one segment.
+#[test]
+fn cert_hardening_declines_a_data_cut_moving_a_byte() {
+    let Some((_dir, wasm, cert)) =
+        fixture_baseline("certharden-datacut", "tools/certkit/fixtures/stringeq.av")
+    else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let text = std::fs::read_to_string(&artifact).unwrap();
+    let head = "def dataCuts_0 : List Nat :=\n  [";
+    let start = text.find(head).expect("the package declares data cuts") + head.len();
+    let end = start + text[start..].find(']').unwrap();
+    let mut cuts: Vec<u64> = text[start..end]
+        .split(", ")
+        .map(|x| x.parse().unwrap())
+        .collect();
+    assert!(cuts.len() >= 2, "the module has two data segments");
+    cuts[0] += 1;
+    cuts[1] -= 1;
+    let body = cuts
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(
+        &artifact,
+        format!("{}{body}{}", &text[..start], &text[end..]),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("dataBlock"), "{report}");
+}
+
+/// A data block declared to start at segment 1 instead of 0: every declared
+/// String segment would be confirmed against the segment before its own.
+#[test]
+fn cert_hardening_declines_a_data_block_lying_about_its_first_segment() {
+    let Some((_dir, wasm, cert)) =
+        fixture_baseline("certharden-datablock", "tools/certkit/fixtures/stringeq.av")
+    else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let text = std::fs::read_to_string(&artifact).unwrap();
+    let head = "AverCert.manifest.types.strSegs 0 dataStart dataCuts_0 = some (";
+    let at = text.find(head).expect("the package reads data block 0") + head.len();
+    let next: u64 = text[at..].split(',').next().unwrap().parse().unwrap();
+    let lie = text.replacen(
+        &format!("{head}{next},"),
+        &format!(
+            "AverCert.manifest.types.strSegs 1 dataStart dataCuts_0 = some ({},",
+            next + 1
+        ),
+        1,
+    );
+    std::fs::write(&artifact, lie).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("dataBlock"), "{report}");
+}
+
+/// The Int box helper's export site moved one byte: the entry read there is
+/// not the helper's export.
+#[test]
+fn cert_hardening_declines_a_helper_export_site_moved() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-helpersite") else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let text = std::fs::read_to_string(&artifact).unwrap();
+    let head = "theorem helper_box :";
+    let at = text.find(head).expect("the box helper is read at its site");
+    let off_head = "(off := ";
+    let start = at + text[at..].find(off_head).unwrap() + off_head.len();
+    let end = start + text[start..].find(')').unwrap();
+    let off: u64 = text[start..end].parse().unwrap();
+    std::fs::write(
+        &artifact,
+        format!("{}{}{}", &text[..start], off + 1, &text[end..]),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("exportSite"), "{report}");
+}
+
+/// An obligation declared total: the policy answers are each obligation's
+/// own group check.
+#[test]
+fn cert_hardening_declines_a_lying_policy_answer() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-pols") else {
+        return;
+    };
+    let artifact = cert.join("Artifact.lean");
+    let text = std::fs::read_to_string(&artifact).unwrap();
+    let head = "def axesPols_0 : List (Bool × Bool) :=\n  [(false, false)";
+    assert!(text.contains(head), "the first obligation is not total");
+    std::fs::write(
+        &artifact,
+        text.replacen(
+            head,
+            "def axesPols_0 : List (Bool × Bool) :=\n  [(true, false)",
+            1,
+        ),
+    )
+    .unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(report.contains("polOf"), "{report}");
 }
 
 /// Replace the delivered artifact with `bytes` and restamp the package with
@@ -1766,7 +2162,9 @@ fn cert_hardening_declines_a_certified_closure_reaching_a_work_import() {
     restamp(&wasm, &cert, &bytes);
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("closureIsolationS"), "{report}");
+    // The package declares the callee lists of the untampered code, so
+    // `strip`'s list no longer matches its scan.
+    assert!(report.contains("calleesOk"), "{report}");
 }
 
 // ---- law statements read inside a namespace the package chose -----------------

@@ -21,6 +21,13 @@ pub struct ModuleEnvelopeFacts {
     pub start: Option<u32>,
     pub closure_fuel: u32,
     pub closure: ClosureClaimFact,
+    /// Every function the wall's closure fold scans, in the order it first
+    /// meets them (depth first: a function's callees go in front of the work
+    /// list), with its direct callees in code order. Producer data: the
+    /// package declares these lists and the wall checks each against its
+    /// function's code (`ScaleClosure.calleesOk`) and folds over them
+    /// (`ScaleClosure.foldSeq`).
+    pub closure_scans: Vec<(u32, Vec<u32>)>,
 }
 
 impl ModuleEnvelopeFacts {
@@ -165,6 +172,21 @@ pub fn collect_module_envelope_facts(
         }
     }
     let admitted = reached.iter().copied().collect::<Vec<_>>();
+    // The fold's own order: the next function is taken from the front of the
+    // work list, and a newly met function's callees go in front of it.
+    let mut scanned = BTreeSet::new();
+    let mut closure_scans = Vec::new();
+    let mut stack = VecDeque::from(roots.clone());
+    while let Some(func) = stack.pop_front() {
+        if !scanned.insert(func) {
+            continue;
+        }
+        let callees = calls_by_func.get(&func).cloned().unwrap_or_default();
+        for &callee in callees.iter().rev() {
+            stack.push_front(callee);
+        }
+        closure_scans.push((func, callees));
+    }
     let helpers = admitted
         .iter()
         .copied()
@@ -193,6 +215,7 @@ pub fn collect_module_envelope_facts(
             helpers,
             admitted,
         },
+        closure_scans,
     })
 }
 
