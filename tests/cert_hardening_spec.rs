@@ -426,7 +426,8 @@ fn cert_hardening_declines_a_package_module_hijacking_the_wall() {
     std::fs::write(&json_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
     replace_once(
         &cert.join("Artifact.lean"),
-        "theorem axes_ok : AverCert.ClaimAxes.checked data = true := by decide +kernel",
+        "theorem axes_ok : AverCert.ClaimAxes.checked data = true :=\n  \
+         AverCert.ScaleLayout.checked_of_bits plans_roles (by decide +kernel)",
         "",
     );
     replace_once(
@@ -2508,7 +2509,9 @@ fn cert_hardening_declines_a_saturation_helper_at_another_function() {
 /// the JSON pin agrees with the Lean one and the refusal can only come from
 /// the wall's own contract derivation: the `contains` helpers' inner calls
 /// (`ListHelpers.innerCalls`) put both helpers among the used calls, and the
-/// package's `axes_ok` (`ClaimAxes.checked data = true`) no longer holds.
+/// package's `axes_ok`, read from the plans' role bits and the helpers' own
+/// calls (`ScaleLayout.checkedBits`, which implies `ClaimAxes.checked`), no
+/// longer holds.
 #[test]
 fn cert_hardening_declines_a_contains_without_its_equality_contract() {
     let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-contract") else {
@@ -2539,5 +2542,9 @@ fn cert_hardening_declines_a_contains_without_its_equality_contract() {
     }
     std::fs::write(&json_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
     let (ok, report) = aver_cert("check", &wasm, &cert);
-    assert_declined(ok, &report, "ClaimAxes.checked data = true\nis false");
+    assert_declined(
+        ok,
+        &report,
+        "ScaleLayout.checkedBits data callBits = true\nis false",
+    );
 }
