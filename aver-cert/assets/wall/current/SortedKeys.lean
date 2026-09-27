@@ -524,6 +524,32 @@ theorem exportNamesDistinct_of_accounted {n len : Nat}
         exact h.1.1.1.1.1.1
       · cases h
 
+/-- The accounting also decides the obligations' export names distinct: it
+    requires the numeric keys of their bytes distinct, and a key identifies
+    its bytes (`seqKey_inj`), so two equal names would give two equal keys.
+    The source bridges read it from here instead of deciding it again. -/
+theorem obligationNamesNodup_of_accounted {artifact : ArtifactData}
+    (h : exportsAccounted artifact = true) :
+    (artifact.manifest.obligations.map (·.export_)).Nodup := by
+  unfold exportsAccounted exportsAccountedOf at h
+  split at h
+  · cases h
+  · split at h
+    · rename_i A C D _ hC _
+      simp only [Bool.and_eq_true] at h
+      have hk := mapM_key_names (certifiedExportEntries artifact.manifest)
+      rw [hC, Option.map_some] at hk
+      have hnd := AverCert.DeclaredLayout.mapM_seqKey_nodup hk.symm
+        (AverCert.DeclaredLayout.natListNodup_nodup h.1.1.1.1.1.2)
+      unfold certifiedExportEntries at hnd
+      rw [List.map_map, show ((fun e : AverCert.WasmSlice.ExportEntry => e.name) ∘
+          fun o : AverCert.Schema.Obligation =>
+            ({ name := stringBytes o.export_, kind := 0, idx := o.self } :
+              AverCert.WasmSlice.ExportEntry)) =
+          stringBytes ∘ (·.export_) from rfl, ← List.map_map] at hnd
+      exact List.Pairwise.of_map stringBytes (fun _ _ hne heq => hne (congrArg _ heq)) hnd
+    · cases h
+
 /-! ### Closure isolation on sorted lists and a membership bitmap -/
 
 theorem natSetEq_of_sorted {xs ys : List Nat}

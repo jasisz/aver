@@ -2178,36 +2178,123 @@ fn cert_hardening_declines_a_sorry_backed_plans_part() {
     assert_declined(ok, &report, "non-whitelisted axiom: sorryAx");
 }
 
-/// The export names the bridges' `export_names_nodup` sorts are the
-/// package's own character lists, tied to the obligations' names by `rfl`:
-/// lists that name other exports (here with the first character changed)
-/// cannot stand in for them, and every bridge loses its credit.
+/// Every bridge proof cites `export_names_nodup`, which `BridgeNames.lean`
+/// reads from the byte facts' export accounting. Proved by `sorry` instead,
+/// the axiom audit reaches it through every bridge: each loses its credit,
+/// and the exports stand.
 #[test]
-fn cert_hardening_uncredits_bridges_over_lying_export_names() {
-    let Some((_dir, wasm, cert)) = baseline("certharden-namekeys") else {
+fn cert_hardening_uncredits_bridges_over_a_sorry_backed_names_fact() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-names-sorry") else {
         return;
     };
-    let proof = cert.join("BridgeProof.lean");
-    let text = std::fs::read_to_string(&proof).unwrap();
-    let at = text
-        .find("names_nodup_of_sorted\n")
-        .expect("the export names are sorted");
-    let first = at + text[at..].find("[['").unwrap() + "[['".len();
-    let mut tampered = text.clone();
-    let c = tampered[first..].chars().next().unwrap();
-    let other = if c == 'z' { 'y' } else { 'z' };
-    tampered.replace_range(first..first + c.len_utf8(), &other.to_string());
-    std::fs::write(&proof, tampered).unwrap();
+    replace_once(
+        &cert.join("BridgeNames.lean"),
+        "(AverCert.manifest.obligations.map (·.export_)).Nodup :=\n  \
+         AverCert.SortedKeys.obligationNamesNodup_of_accounted AverCert.Artifact.exports_ok",
+        "(AverCert.manifest.obligations.map (·.export_)).Nodup := by\n  sorry",
+    );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(
         ok,
         "a bridge proof failing only its axiom audit keeps the exports:\n{report}"
     );
     assert!(
-        report.contains("source-bridges: 0 of 2 credited")
+        report.contains("2 checked exports")
+            && report.contains("source-bridges: 0 of 2 credited")
             && report.contains("(proof depends on sorryAx)"),
         "{report}"
     );
+}
+
+/// The bridge theorems' modules are producer data: the checker pins each
+/// theorem by name and statement, wherever it is declared. A bridge moved
+/// into a slice of its own checks exactly as before.
+#[test]
+fn cert_hardening_checks_a_bridge_moved_to_another_slice_unchanged() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-bridge-moved") else {
+        return;
+    };
+    let slice = cert.join("BridgeProof0.lean");
+    let text = std::fs::read_to_string(&slice).unwrap();
+    let start = text
+        .find("#guard_msgs (drop error) in\n/-- plan-equals-source bridge for `addTwo`")
+        .expect("the addTwo bridge is in the first slice");
+    let end = start
+        + text[start..]
+            .find("\n  | sorry\n\n")
+            .expect("the addTwo bridge ends in a sorry rung")
+        + "\n  | sorry\n\n".len();
+    let header = &text[..text.find("namespace AverCert.Bridge\n\n").unwrap()];
+    std::fs::write(
+        cert.join("BridgeProof1.lean"),
+        format!(
+            "{header}namespace AverCert.Bridge\n\n{}end AverCert.Bridge\n",
+            &text[start..end]
+        ),
+    )
+    .unwrap();
+    std::fs::write(&slice, format!("{}{}", &text[..start], &text[end..])).unwrap();
+    replace_once(
+        &cert.join("Bridge.lean"),
+        "import BridgeProof0\n",
+        "import BridgeProof0\nimport BridgeProof1\n",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "a moved bridge must still check:\n{report}");
+    assert!(
+        report.contains("source-bridges: 2 of 2 credited")
+            && report.contains("bridged-laws: 2 of 2 credited"),
+        "{report}"
+    );
+}
+
+/// Two slices declaring the same bridge theorems collide when `Bridge.lean`
+/// imports both: the package does not build, and nothing is credited.
+#[test]
+fn cert_hardening_declines_a_duplicated_bridge_slice() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-bridge-dup") else {
+        return;
+    };
+    std::fs::copy(
+        cert.join("BridgeProof0.lean"),
+        cert.join("BridgeProof1.lean"),
+    )
+    .unwrap();
+    replace_once(
+        &cert.join("Bridge.lean"),
+        "import BridgeProof0\n",
+        "import BridgeProof0\nimport BridgeProof1\n",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(!report.contains("CERTIFIED"), "{report}");
+}
+
+/// A bridge slice `Bridge.lean` imports but the package does not ship: the
+/// package does not build, and nothing is credited.
+#[test]
+fn cert_hardening_declines_a_missing_bridge_slice() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-bridge-missing") else {
+        return;
+    };
+    std::fs::remove_file(cert.join("BridgeProof0.lean")).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+    assert!(!report.contains("CERTIFIED"), "{report}");
+}
+
+/// `Bridge.lean` without the import of the slice that proves the bridges:
+/// the checker's witness cannot state the bridges it pins, and the package
+/// is declined.
+#[test]
+fn cert_hardening_declines_bridges_whose_slice_is_not_imported() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-bridge-unimported") else {
+        return;
+    };
+    replace_once(&cert.join("Bridge.lean"), "import BridgeProof0\n", "");
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "does not bind to this artifact");
+    assert!(!report.contains("CERTIFIED"), "{report}");
 }
 
 /// The declared-uncertified names as the three places of a package state

@@ -593,6 +593,16 @@ fn splits_artifact_modules(analysis: &Analysis) -> bool {
     analysis.entries.len() > PLAN_CHUNK
 }
 
+/// The module that proves the export accounting (`exports_ok`): its own
+/// module in a split package, `Artifact.lean` otherwise.
+fn exports_fact_module(analysis: &Analysis) -> &'static str {
+    if splits_artifact_modules(analysis) {
+        "ArtifactInterface"
+    } else {
+        "Artifact"
+    }
+}
+
 const ARTIFACT_HEADER: &str = "set_option maxRecDepth 200000\n\
      -- Elaboration cost grows with the artifact; this moves a resource\n\
      -- limit only (no axiom, no hypothesis, nothing the kernel accepts).\n\
@@ -1254,11 +1264,10 @@ pub fn write_project(
             write_nested(&cert_dir, path, content)?;
         }
     }
-    if let Some((proofs, corollaries, parts)) = &surfaces.bridge_lean {
+    if let Some((corollaries, parts)) = &surfaces.bridge_lean {
         for (name, text) in parts {
             write(&cert_dir, name, text)?;
         }
-        write(&cert_dir, &format!("{BRIDGE_PROOF_MODULE}.lean"), proofs)?;
         write(&cert_dir, "Bridge.lean", corollaries)?;
     }
     if let Some(laws_lean) = &surfaces.laws_lean {

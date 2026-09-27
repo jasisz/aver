@@ -79,6 +79,8 @@ mod lean_required;
 
 use aver_cmd::aver_command;
 
+#[path = "support/bridge_slices.rs"]
+mod bridge_slices;
 #[path = "support/cert_wall.rs"]
 mod cert_wall;
 #[path = "support/scratch_dir.rs"]
@@ -5680,7 +5682,7 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     );
 
     let cert = out_dir.join("cert");
-    let bridge_lean = std::fs::read_to_string(cert.join("BridgeProof.lean")).unwrap();
+    let bridge_lean = bridge_slices::bridge_proof_text(&cert);
     let manifest = std::fs::read_to_string(cert.join("cert-manifest.json")).unwrap();
     assert_eq!(
         bridge_lean
@@ -5785,13 +5787,12 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     // the rendered statement, so the pin elaborates and only the axiom audit
     // fails — and it costs the bridge and the bridged law-claim that mentions
     // it, never the law-claim itself.
-    let sorried = sorry_out_theorem(
-        &bridge_lean,
-        "_root_.AverCert.Bridge.Domain_Rational_isNonNeg",
-    );
+    let theorem = "_root_.AverCert.Bridge.Domain_Rational_isNonNeg";
+    let slice = bridge_slices::bridge_proof_slice_of(&cert, theorem);
+    let sorried = sorry_out_theorem(&std::fs::read_to_string(&slice).unwrap(), theorem);
     let dir = temp_dir("cert-k5-bridge-sorry-tamper");
     copy_dir(&out_dir, &dir);
-    std::fs::write(dir.join("cert").join("BridgeProof.lean"), sorried).unwrap();
+    std::fs::write(dir.join("cert").join(slice.file_name().unwrap()), sorried).unwrap();
     let (ok, out) = aver_check(&dir.join("main.wasm"), &dir.join("cert"));
     assert!(
         ok,
