@@ -35,19 +35,24 @@ pub(crate) const MEMORY_LIMIT_ENV: &str = "AVER_CERT_MEMORY_LIMIT_MB";
 /// killed by the operating system (exit 137) under both a 16 GiB and an 8 GiB
 /// ceiling, having driven the host into swap either way. That growth comes
 /// from arbitrary-precision arithmetic, whose allocations sit outside the
-/// accounted heap, so no value here catches it. Bounding the process is the
-/// job of the byte-cursor rework, not of this knob; until then a large enough
-/// artifact can still take a host down, which is why the wall-clock limit and
-/// the single-worker default below both stay in place.
+/// accounted heap, so no value here catches it. The packages the producer
+/// writes now keep every module small (see `WORKER_MEMORY_BUDGET_MB`), which
+/// is what the worker count below is derived from; a hostile or unusual
+/// package can still exceed it, so the wall-clock limit stays in place.
 const DEFAULT_MEMORY_LIMIT_MB: u64 = 16 * 1024;
 /// Overrides how many Lean workers `lake build` may run at once. Each worker
 /// gets the full heap ceiling above, so the concurrency and the ceiling
 /// multiply into the machine's real memory demand.
 pub(crate) const BUILD_JOBS_ENV: &str = "AVER_CERT_BUILD_JOBS";
-/// One worker at a time: the ceiling is sized for a single heavy elaboration,
-/// so anything above this needs a host that can absorb the product. A host
-/// with memory to spare raises it through the knob.
-const DEFAULT_BUILD_JOBS: u64 = 1;
+/// The worker count when the machine's available memory cannot be read.
+const FALLBACK_BUILD_JOBS: u64 = 1;
+/// The memory one Lean worker is budgeted when the worker count is derived
+/// from the machine, in MiB. The packages the producer writes keep every
+/// module of their build near 2 GiB at most (btc-listener, 1,093 certified
+/// exports: 2.0 GiB), and the rest is margin for Lake and the operating
+/// system. A package with larger modules can exceed it; a host that checks
+/// such packages sets `AVER_CERT_BUILD_JOBS` itself.
+const WORKER_MEMORY_BUDGET_MB: u64 = 4 * 1024;
 /// Upper bound for the override: 1 TiB. Past that nothing legitimate is
 /// being configured, and the bound keeps the flag rendering trivially sane.
 const MAX_MEMORY_LIMIT_MB: u64 = 1024 * 1024;
@@ -268,7 +273,8 @@ const BUILD_PREFIX: [&str; 1] = ["build"];
 
 fn build_jobs(environment: &impl Fn(&str) -> Option<OsString>) -> Result<u64, String> {
     let Some(value) = nonempty(environment(BUILD_JOBS_ENV)) else {
-        return Ok(DEFAULT_BUILD_JOBS);
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get() as u64);
+        return Ok(default_build_jobs(cores, available_memory_mb()));
     };
     let text = value.to_string_lossy();
     text.trim()
@@ -281,6 +287,77 @@ fn build_jobs(environment: &impl Fn(&str) -> Option<OsString>) -> Result<u64, St
                 text.trim()
             )
         })
+}
+
+/// The worker count without an override: as many workers as the machine has
+/// cores and as its available memory holds at [`WORKER_MEMORY_BUDGET_MB`]
+/// each, and at least one; one when the available memory is unknown.
+fn default_build_jobs(cores: u64, available_mb: Option<u64>) -> u64 {
+    match available_mb {
+        Some(mb) => (mb / WORKER_MEMORY_BUDGET_MB).min(cores).max(1),
+        None => FALLBACK_BUILD_JOBS,
+    }
+}
+
+/// The memory the operating system can give new processes now, in MiB:
+/// `MemAvailable` on Linux; free, inactive and speculative pages on macOS.
+/// `None` elsewhere, or when it cannot be read.
+fn available_memory_mb() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+        parse_meminfo_available_mb(&text)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("/usr/bin/vm_stat")
+            .env_clear()
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        parse_vm_stat_available_mb(&String::from_utf8_lossy(&output.stdout))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_meminfo_available_mb(text: &str) -> Option<u64> {
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("MemAvailable:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kib / 1024)
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn parse_vm_stat_available_mb(text: &str) -> Option<u64> {
+    let page: u64 = text
+        .lines()
+        .next()?
+        .split("page size of ")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    let pages = |label: &str| -> Option<u64> {
+        let line = text.lines().find(|line| line.starts_with(label))?;
+        line.split(':')
+            .nth(1)?
+            .trim()
+            .trim_end_matches('.')
+            .parse()
+            .ok()
+    };
+    let free = pages("Pages free:")? + pages("Pages inactive:")? + pages("Pages speculative:")?;
+    Some(free.checked_mul(page)? / (1024 * 1024))
 }
 
 fn memory_limit_mb(environment: &impl Fn(&str) -> Option<OsString>) -> Result<u64, String> {
@@ -525,7 +602,7 @@ mod tests {
             system_environment: Vec::new(),
             phase_timeout: DEFAULT_PHASE_TIMEOUT,
             memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
-            build_jobs: DEFAULT_BUILD_JOBS,
+            build_jobs: FALLBACK_BUILD_JOBS,
         };
         let command = runner.lake_command(
             Path::new("/checker/build"),
@@ -809,6 +886,44 @@ mod tests {
             assert!(error.contains(PHASE_TIMEOUT_ENV), "{error}");
             assert!(error.contains("at most"), "{error}");
         }
+    }
+
+    #[test]
+    fn build_jobs_default_follows_cores_and_available_memory() {
+        // Four workers' budgets in 16 GiB, bounded by the cores.
+        assert_eq!(default_build_jobs(12, Some(16 * 1024)), 4);
+        assert_eq!(default_build_jobs(2, Some(64 * 1024)), 2);
+        // Less than one budget still runs one worker.
+        assert_eq!(default_build_jobs(8, Some(1000)), 1);
+        assert_eq!(default_build_jobs(8, Some(0)), 1);
+        // Unknown memory falls back to one worker.
+        assert_eq!(default_build_jobs(8, None), 1);
+        // An explicit override wins over the derived default and is validated.
+        let overridden = runner_with_setting(BUILD_JOBS_ENV, Some("3")).unwrap();
+        assert_eq!(overridden.build_jobs, 3);
+        for invalid in ["0", "-1", "many"] {
+            let Err(error) = runner_with_setting(BUILD_JOBS_ENV, Some(invalid)) else {
+                panic!("malformed worker count `{invalid}` must fail closed");
+            };
+            assert!(error.contains(BUILD_JOBS_ENV), "{error}");
+        }
+        let derived = runner_with_setting(BUILD_JOBS_ENV, None).unwrap();
+        assert!(derived.build_jobs >= 1);
+    }
+
+    #[test]
+    fn available_memory_is_read_from_the_system_reports() {
+        let meminfo =
+            "MemTotal:       32768000 kB\nMemFree:  1000 kB\nMemAvailable:   16777216 kB\n";
+        assert_eq!(parse_meminfo_available_mb(meminfo), Some(16384));
+        assert_eq!(parse_meminfo_available_mb("MemTotal: 1 kB\n"), None);
+        let vm_stat = "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n\
+                       Pages free:                               65536.\n\
+                       Pages active:                            100000.\n\
+                       Pages inactive:                           65536.\n\
+                       Pages speculative:                            0.\n";
+        assert_eq!(parse_vm_stat_available_mb(vm_stat), Some(2048));
+        assert_eq!(parse_vm_stat_available_mb("garbage"), None);
     }
 
     #[test]
