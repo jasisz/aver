@@ -63,6 +63,8 @@ pub enum VerifyCaseOutcome {
 
 #[derive(Debug, Clone)]
 pub struct VerifyCaseResult {
+    /// Source identity carried through merging, planning, and execution.
+    pub case_id: Option<crate::ast::VerifyCaseId>,
     pub outcome: VerifyCaseOutcome,
     pub span: Option<SourceSpan>,
     pub case_expr: String,

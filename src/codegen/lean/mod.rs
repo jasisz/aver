@@ -205,8 +205,7 @@ pub(crate) fn recursive_pure_fn_names(ctx: &CodegenContext) -> HashSet<String> {
 }
 
 fn verify_counter_key(vb: &crate::ast::VerifyBlock) -> String {
-    // Shared with the CLI's VM ground-truth collection — see the doc on
-    // `verify_block_counter_key` for why the two sides must not drift.
+    // Presentation only: keep theorem numbering in source order.
     crate::codegen::common::verify_block_counter_key(vb)
 }
 

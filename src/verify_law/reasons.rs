@@ -16,6 +16,16 @@ pub fn sample_blocks(block: &VerifyBlock) -> Vec<VerifyBlock> {
         .map(|(index, reason)| {
             let mut result = block.clone();
             result.line = reason.line;
+            result.case_ids = block
+                .case_ids
+                .iter()
+                .map(|id| {
+                    id.map(|mut id| {
+                        id.explanation_index = Some(index);
+                        id
+                    })
+                })
+                .collect();
             result.case_spans = block
                 .cases
                 .iter()

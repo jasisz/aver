@@ -33,52 +33,33 @@ use crate::codegen::CodegenContext;
 
 use super::expr::{emit_expr, resolve_rewrite_output};
 
-/// The reason `aver verify` gave for not answering case `global_case_idx`,
-/// when it declined it.
-///
-/// A declined case must not reach the fallback this module documents. The
-/// fallback is the source RHS, so a declined case would be emitted as
-/// `impl(sample) = <the author's expected expression>` — a claim nothing
-/// checked, in exactly the shape the module exists to prevent, and precisely
-/// on the big inputs where the model is likeliest to exhaust fuel too. The
-/// caller states no theorem for such a case and records a `DeclinedClaim`.
+/// The reason the VM declined this source case. A miss keeps the source RHS.
 pub(super) fn decline_reason<'a>(
     vb: &VerifyBlock,
     ctx: &'a CodegenContext,
-    global_case_idx: usize,
+    case_index: usize,
 ) -> Option<&'a String> {
-    let key = (
-        ctx.active_module_scope(),
-        crate::codegen::common::verify_block_counter_key(vb),
-        global_case_idx,
-    );
+    let key = (ctx.active_module_scope(), vb.source_case_id(case_index)?);
     ctx.declined_cases.get(&key)
 }
 
-/// Whether `aver verify` passed case `global_case_idx` (the emitter's running
-/// per-key index), whatever its value.
-pub(super) fn vm_passed(vb: &VerifyBlock, ctx: &CodegenContext, global_case_idx: usize) -> bool {
-    let key = (
-        ctx.active_module_scope(),
-        crate::codegen::common::verify_block_counter_key(vb),
-        global_case_idx,
-    );
-    ctx.vm_passed_cases.contains(&key)
+/// Only an identified source case passed by the VM may be isolated.
+pub(super) fn vm_passed(vb: &VerifyBlock, ctx: &CodegenContext, case_index: usize) -> bool {
+    let Some(id) = vb.source_case_id(case_index) else {
+        return false;
+    };
+    ctx.vm_passed_cases
+        .contains(&(ctx.active_module_scope(), id))
 }
 
-/// Emit the expected side of case `global_case_idx` (the emitter's running
-/// per-key index: `case_index_start + idx`) from VM ground truth, if a safe
-/// literal is available. `None` → caller falls back to the source RHS.
+/// Emit this source case's VM expected value, if a safe literal is available.
+/// Missing identity or ground truth keeps the source RHS.
 pub(super) fn ground_truth_rhs(
     vb: &VerifyBlock,
     ctx: &CodegenContext,
-    global_case_idx: usize,
+    case_index: usize,
 ) -> Option<String> {
-    let key = (
-        ctx.active_module_scope(),
-        crate::codegen::common::verify_block_counter_key(vb),
-        global_case_idx,
-    );
+    let key = (ctx.active_module_scope(), vb.source_case_id(case_index)?);
     let repr = ctx.sample_expected.get(&key)?;
     let expr = parse_literal_expr(repr)?;
     if !is_safe_literal_expr(&expr) {

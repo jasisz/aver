@@ -612,6 +612,7 @@ fn empty_ctx_with_verify_case() -> CodegenContext {
             sb(Expr::Literal(Literal::Int(1))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -634,6 +635,7 @@ fn empty_ctx_with_two_verify_blocks_same_fn() -> CodegenContext {
             sb(Expr::Literal(Literal::Int(1))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -651,6 +653,7 @@ fn empty_ctx_with_two_verify_blocks_same_fn() -> CodegenContext {
             sb(Expr::Literal(Literal::Int(2))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -722,6 +725,7 @@ fn empty_ctx_with_verify_law() -> CodegenContext {
             ),
         ],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -1513,6 +1517,7 @@ fn transpile_auto_proves_reflexive_law_with_rfl() {
             sb(Expr::Literal(Literal::Int(1))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -1568,6 +1573,7 @@ fn transpile_auto_proves_identity_law_for_int_add_wrapper() {
             sb(Expr::Literal(Literal::Int(1))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -1646,6 +1652,7 @@ fn transpile_auto_proves_associative_law_for_int_add_wrapper() {
             )),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -1755,6 +1762,7 @@ fn transpile_auto_proves_sub_laws() {
             sb(Expr::Literal(Literal::Int(2))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -1803,6 +1811,7 @@ fn transpile_auto_proves_sub_laws() {
             )))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -1915,6 +1924,7 @@ fn transpile_auto_proves_unary_wrapper_equivalence_law() {
             )),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -2039,6 +2049,7 @@ fn transpile_auto_proves_direct_map_set_laws() {
             sb(Expr::Literal(Literal::Bool(true))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -2098,6 +2109,7 @@ fn transpile_auto_proves_direct_map_set_laws() {
             some(sb(Expr::Ident("v".to_string()))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -2426,6 +2438,7 @@ fn transpile_auto_proves_map_update_laws() {
             sb(Expr::Literal(Literal::Bool(true))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -2493,6 +2506,7 @@ fn transpile_auto_proves_map_update_laws() {
             ))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -2595,6 +2609,7 @@ fn transpile_parenthesizes_negative_int_call_args_in_law_samples() {
             )),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -2672,6 +2687,7 @@ fn verify_law_numbering_is_scoped_per_law_name() {
             sb(Expr::Literal(Literal::Int(1))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -2689,6 +2705,7 @@ fn verify_law_numbering_is_scoped_per_law_name() {
             sb(Expr::Literal(Literal::Int(2))),
         )],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],
@@ -5669,9 +5686,16 @@ verify polled
     // Once the VM passed the case, it is a theorem behind the isolation guard,
     // under a name no source identifier can take.
     let mut ctx = ctx_from_source(source, "WaitKeyed");
+    let id = ctx
+        .items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::Verify(vb) => vb.source_case_id(0),
+            _ => None,
+        })
+        .expect("parsed case identity");
     for scope in [None, Some("WaitKeyed".to_string())] {
-        ctx.vm_passed_cases
-            .insert((scope, "fn:polled".to_string(), 0));
+        ctx.vm_passed_cases.insert((scope, id));
     }
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
@@ -5716,3 +5740,6 @@ verify roll
         "{lean}"
     );
 }
+
+#[path = "tests/verify_identity.rs"]
+mod verify_identity;

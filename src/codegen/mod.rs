@@ -91,10 +91,8 @@ pub struct ModuleInfo {
 /// Identity of one emitted verify case in the whole program.
 ///
 /// `None` owns the entry module; `Some(prefix)` owns a dependency module.
-/// The textual counter key preserves the existing merge semantics within one
-/// module, while the scope prevents same-bare-name blocks in two modules from
-/// sharing VM ground truth or decline state.
-pub type VerifyCaseKey = (Option<String>, String, usize);
+/// Source identity survives merging; scope separates cases in different files.
+pub type VerifyCaseKey = (Option<String>, crate::ast::VerifyCaseId);
 
 impl ModuleInfo {
     /// Build the shared projection from parsed module items. Target-specific
@@ -586,7 +584,7 @@ pub struct CodegenContext {
     /// the CLI wired it — discovery feedback is strictly opt-in.
     pub discovered_lemmas: Vec<crate::codegen::lemma_discovery::CommittedLemma>,
     /// VM-computed ground-truth values for verify cases, keyed by
-    /// `(module_scope, common::verify_block_counter_key(vb), case_index)` →
+    /// `(module_scope, source_case_id)` →
     /// `aver_repr_literal` rendering of the case's expected (right-side)
     /// value. Set by the CLI on `aver proof --backend lean` from a Declared-
     /// mode `aver verify` run over every project module; empty everywhere else.
@@ -597,7 +595,7 @@ pub struct CodegenContext {
     /// kernel-certify a false equation. Entries exist only for cases that
     /// PASSED `aver verify`; failing/skipped cases keep the source RHS.
     pub sample_expected: std::collections::HashMap<VerifyCaseKey, String>,
-    /// `(module_scope, common::verify_block_counter_key(vb), case_index)` → the
+    /// `(module_scope, source_case_id)` → the
     /// reason `aver verify` gave for not answering that case.
     ///
     /// The counterpart to [`Self::sample_expected`], and the reason it is a

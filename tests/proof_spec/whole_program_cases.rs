@@ -324,3 +324,110 @@ fn a_mutual_countdown_keeps_the_zero_floor_fuel() {
         "a mutual group member keeps the zero-floor seed:\n{lean}"
     );
 }
+
+// Pure pick keeps the exported model computable. The unused operation givens
+// still separate stub worlds, so A/B/A exercises merging without an unrelated
+// noncomputable effect model obscuring whether Lean decides the false equation.
+const INTERLEAVED_CASES: &str = r#"module Store
+    exposes [pick]
+    effects [Random.int]
+
+fn low(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
+    Result.Ok(min)
+
+fn high(path: BranchPath, call: Int, min: Int, max: Int) -> Result<Int, String>
+    Result.Ok(max)
+
+fn pick(go: Bool) -> Int
+    1
+
+verify pick
+    given rnd: Random.int = [low]
+    pick(false) => 1
+
+verify pick
+    given rnd: Random.int = [high]
+    pick(false) => 2
+
+verify pick
+    given rnd: Random.int = [low]
+    pick(false) => 1
+"#;
+
+fn check_interleaved_case_identity(dependency: bool) {
+    let source_dir = tempfile::tempdir().expect("source directory");
+    let file = source_dir.path().join("main.av");
+    let (subject, lean_path, pick) = if dependency {
+        std::fs::create_dir(source_dir.path().join("infra")).unwrap();
+        std::fs::write(&file, "module Main\n    depends [Infra.Store]\n\nfn main() -> Int\n    Infra.Store.pick(false)\n").unwrap();
+        (
+            source_dir.path().join("infra/store.av"),
+            "Infra/Store.lean",
+            "Infra.Store.pick",
+        )
+    } else {
+        (file.clone(), "Store.lean", "pick")
+    };
+    // The all-true control must build, proving the negative check fails on the
+    // equation rather than a noncomputable model or another export failure.
+    for false_middle in [true, false] {
+        let source = if false_middle {
+            INTERLEAVED_CASES.to_string()
+        } else {
+            INTERLEAVED_CASES.replace("=> 2", "=> 1")
+        };
+        std::fs::write(&subject, source).unwrap();
+        let output_dir = tempfile::tempdir().expect("output directory");
+        let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+            .arg("proof")
+            .arg(&file)
+            .arg("--module-root")
+            .arg(source_dir.path())
+            .arg("-o")
+            .arg(output_dir.path())
+            .args(["--check", "--check-json", "--sorry-budget", "1000"])
+            .output()
+            .expect("run proof export");
+        let summary = summary_from(&run);
+        let lean = std::fs::read_to_string(output_dir.path().join(lean_path)).unwrap();
+        let equations: Vec<_> = lean
+            .lines()
+            .filter(|line| line.starts_with(&format!("example : {pick} false =")))
+            .collect();
+        assert_eq!(equations.len(), 3, "{lean}");
+        let expected = if false_middle { [1, 2, 1] } else { [1, 1, 1] };
+        for (equation, value) in equations.iter().zip(expected) {
+            assert!(
+                equation.contains(&format!("= ({value} : Int) := by")),
+                "{lean}"
+            );
+        }
+        assert!(
+            !lean.contains(aver::codegen::lean::isolate::ISOLATION_GUARD),
+            "{lean}"
+        );
+        assert_eq!(
+            summary["passed"],
+            !false_middle,
+            "{summary}\n{lean}\n{}",
+            format_output(&run)
+        );
+        assert_eq!(summary["model_panicked"], false, "{summary}");
+        assert_eq!(summary["sorries"], 0, "{summary}");
+        if false_middle {
+            assert!(summary["build_errors"].as_u64().unwrap() > 0, "{summary}");
+        } else {
+            assert_eq!(summary["build_errors"], 0, "{summary}");
+        }
+    }
+}
+
+#[test]
+fn interleaved_case_identity_in_path_named_dependency() {
+    check_interleaved_case_identity(true);
+}
+
+#[test]
+fn interleaved_case_identity_in_entry_module() {
+    check_interleaved_case_identity(false);
+}

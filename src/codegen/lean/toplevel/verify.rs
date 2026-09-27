@@ -185,8 +185,7 @@ pub fn emit_verify_block(
 
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
-        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, case_index_start + idx)
-        {
+        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, idx) {
             lines.push(record_declined_case(
                 vb,
                 ctx,
@@ -216,7 +215,7 @@ pub fn emit_verify_block(
         // without an entry (verify failed/skipped, Float-carrying value —
         // decimal repr isn't bit-exact — or a shape that doesn't round-trip)
         // keep the source RHS and rely on the `--check` panic gate.
-        let ground_truth = super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx);
+        let ground_truth = super::sample_literal::ground_truth_rhs(vb, ctx, idx);
         let has_ground_truth = ground_truth.is_some();
         // A case carrying `?` denotes an `Except` action (see
         // `emit_statement_lhs`), so both sides end up in the same monad.
@@ -270,7 +269,7 @@ pub fn emit_verify_block(
                         }
                     )
                 };
-                let vm_passed = super::sample_literal::vm_passed(vb, ctx, case_index_start + idx);
+                let vm_passed = super::sample_literal::vm_passed(vb, ctx, idx);
                 if theorem_params.is_empty() || !vm_passed {
                     // A case the VM failed, or never ran, stays an `example`
                     // outside any guard, so a counterexample fails the build
@@ -1603,9 +1602,8 @@ fn emit_verify_law_block(
     // case would carry the source RHS into it and make the whole conjunct a
     // statement nothing checked. The answered cases still get their granular
     // `_sample_N` theorems below.
-    let has_declined_case = (0..vb.cases.len()).any(|idx| {
-        super::sample_literal::decline_reason(vb, ctx, case_index_start + idx).is_some()
-    });
+    let has_declined_case = (0..vb.cases.len())
+        .any(|idx| super::sample_literal::decline_reason(vb, ctx, idx).is_some());
     if !vb.cases.is_empty() && lifted_vars.is_empty() && !has_declined_case {
         let domain_theorem_name = format!("{}_checked_domain", theorem_base);
         let domain_conjuncts: Vec<String> = vb
@@ -1642,7 +1640,7 @@ fn emit_verify_law_block(
                 // the carrier-typed VM literal matches the statement type.
                 let (right_str, right_propagates) = emit_statement_rhs(
                     &right_rw,
-                    super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx),
+                    super::sample_literal::ground_truth_rhs(vb, ctx, idx),
                     ctx,
                 );
                 let (left_str, right_str) =
@@ -1771,8 +1769,7 @@ fn emit_verify_law_block(
         ));
     }
     for idx in sample_indices {
-        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, case_index_start + idx)
-        {
+        if let Some(reason) = super::sample_literal::decline_reason(vb, ctx, idx) {
             lines.push(record_declined_case(
                 vb,
                 ctx,
@@ -1819,7 +1816,7 @@ fn emit_verify_law_block(
         let (right_str, right_propagates) = emit_statement_rhs(
             &right_rw,
             if lifted_vars.is_empty() {
-                super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
+                super::sample_literal::ground_truth_rhs(vb, ctx, idx)
             } else {
                 None
             },

@@ -8329,14 +8329,9 @@ pub(super) fn cmd_proof(
 /// the ground-truth table for `CodegenContext::sample_expected`: for every
 /// case that PASSES, the VM-computed expected (right-side) value, rendered
 /// with `aver_repr_literal`, keyed by
-/// `(module_scope, verify_block_counter_key, module_local_case_index)`.
-///
-/// The index space mirrors the Lean emitter exactly: per-key running
-/// counters over the merged blocks (plain `verify <fn>` blocks coalesce per
-/// fn in source order — `merge_verify_blocks` — matching the emitter's
-/// per-key counter continuation over unmerged items; law blocks each start
-/// at their own running offset, which also keeps duplicate same-named law
-/// blocks from cross-associating values).
+/// `(module_scope, source_case_id)`. The parser assigns identity before any
+/// merging, and the VM carries it into each result. No running counter or
+/// correspondence between result/block positions is used to recover identity.
 ///
 /// Skips, by design:
 /// - trace blocks (runtime-only projections; the emitter doesn't literalize
@@ -8351,7 +8346,7 @@ pub(super) fn cmd_proof(
 /// modules still keep their ground truth. Emission falls back to the source
 /// RHS for every miss, as before.
 fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTruth {
-    use aver::checker::{VerifyCaseOutcome, merge_verify_blocks};
+    use aver::checker::VerifyCaseOutcome;
 
     let mut out = VerifyGroundTruth::default();
     let mut cache = aver::source::ProgramLoadCache::default();
@@ -8381,8 +8376,7 @@ fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTru
         })
         .collect();
     for (path, scope, items) in units {
-        let merged = merge_verify_blocks(&items);
-        if merged.is_empty() {
+        if !items.iter().any(|item| matches!(item, TopLevel::Verify(_))) {
             continue;
         }
         let results = match aver::diagnostics::vm_verify::run_verify_for_items_vm(
@@ -8391,20 +8385,25 @@ fn collect_verify_ground_truth(file: &str, module_root: &str) -> VerifyGroundTru
             Some(module_root),
             &path,
         ) {
-            Ok(results) if results.len() == merged.len() => results,
+            Ok(results) => results,
             _ => continue,
         };
 
-        let mut counters: HashMap<String, usize> = HashMap::new();
-        for (block, result) in merged.iter().zip(&results) {
-            let block_key = aver::codegen::common::verify_block_counter_key(block);
-            let base = *counters.get(&block_key).unwrap_or(&0);
-            counters.insert(block_key.clone(), base + block.cases.len());
-            if block.trace {
-                continue;
-            }
+        let mut seen = HashSet::new();
+        for result in &results {
             for cr in &result.case_results {
-                let key = (scope.clone(), block_key.clone(), base + cr.case_index);
+                let Some(id) = cr.case_id else {
+                    continue;
+                };
+                let key = (scope.clone(), id);
+                if !seen.insert(key.clone()) {
+                    // Ambiguous provenance must never authorize a substitution
+                    // or isolation, even if one of the duplicate results passed.
+                    out.passed.remove(&key);
+                    out.expected.remove(&key);
+                    out.declined.remove(&key);
+                    continue;
+                }
                 // Exhaustive on purpose. A decline is not an absent value: the
                 // emitter must refuse the theorem rather than fall back to the
                 // author's expected expression.
@@ -11093,6 +11092,7 @@ fn build_candidate_law(
         line: 0,
         cases: vec![],
         case_spans: vec![],
+        case_ids: vec![],
         case_givens: vec![],
         case_hostile_origins: vec![],
         case_hostile_profiles: vec![],

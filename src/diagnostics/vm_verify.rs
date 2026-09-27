@@ -201,6 +201,9 @@ pub(crate) fn apply_hostile_expansion_with_registry(
         }
     }
 
+    // Hostile regeneration changes the sample set; it has no declared-case
+    // identity until that expansion explicitly preserves provenance.
+    block.case_ids.clear();
     block.cases = new_cases;
     block.case_spans = new_spans;
     block.case_givens = new_givens;
@@ -2125,6 +2128,7 @@ fn build_case_oracle_stubs(
 #[cfg(feature = "runtime")]
 fn single_case_plan(plan: &VmVerifyPlan, index: usize) -> VmVerifyPlan {
     let mut block = plan.block.clone();
+    block.case_ids = vec![block.source_case_id(index)];
     block.cases = vec![block.cases[index].clone()];
     block.case_spans = block.case_spans.get(index).cloned().into_iter().collect();
     block.case_givens = block.case_givens.get(index).cloned().into_iter().collect();
@@ -2409,6 +2413,7 @@ fn run_verify_vm(
                 outcome: VerifyCaseOutcome::SkippedAfterBaseFail,
                 span,
                 case_expr: case_str,
+                case_id: block.source_case_id(idx),
                 case_index: idx,
                 case_total,
                 law_context,
@@ -2490,6 +2495,7 @@ fn run_verify_vm(
                         outcome: VerifyCaseOutcome::Skipped,
                         span,
                         case_expr: case_str,
+                        case_id: block.source_case_id(idx),
                         case_index: idx,
                         case_total,
                         law_context,
@@ -2509,6 +2515,7 @@ fn run_verify_vm(
                         outcome: VerifyCaseOutcome::UnexpectedErr { err_repr },
                         span,
                         case_expr: case_str,
+                        case_id: block.source_case_id(idx),
                         case_index: idx,
                         case_total,
                         law_context,
@@ -2528,6 +2535,7 @@ fn run_verify_vm(
                         outcome: VerifyCaseOutcome::RuntimeError { error },
                         span,
                         case_expr: case_str,
+                        case_id: block.source_case_id(idx),
                         case_index: idx,
                         case_total,
                         law_context,
@@ -2550,6 +2558,7 @@ fn run_verify_vm(
                         },
                         span,
                         case_expr: case_str,
+                        case_id: block.source_case_id(idx),
                         case_index: idx,
                         case_total,
                         law_context,
@@ -2569,6 +2578,7 @@ fn run_verify_vm(
                         outcome: VerifyCaseOutcome::RuntimeError { error },
                         span,
                         case_expr: case_str,
+                        case_id: block.source_case_id(idx),
                         case_index: idx,
                         case_total,
                         law_context,
@@ -2647,6 +2657,7 @@ fn run_verify_vm(
                     },
                     span,
                     case_expr: case_str,
+                    case_id: block.source_case_id(idx),
                     case_index: idx,
                     case_total,
                     law_context,
@@ -2663,6 +2674,7 @@ fn run_verify_vm(
                         outcome: VerifyCaseOutcome::Pass,
                         span,
                         case_expr: case_str,
+                        case_id: block.source_case_id(idx),
                         case_index: idx,
                         case_total,
                         law_context,
@@ -2688,6 +2700,7 @@ fn run_verify_vm(
                         outcome: VerifyCaseOutcome::Mismatch { expected, actual },
                         span,
                         case_expr: case_str,
+                        case_id: block.source_case_id(idx),
                         case_index: idx,
                         case_total,
                         law_context,
@@ -2706,6 +2719,7 @@ fn run_verify_vm(
                     outcome: VerifyCaseOutcome::UnexpectedErr { err_repr },
                     span,
                     case_expr: case_str,
+                    case_id: block.source_case_id(idx),
                     case_index: idx,
                     case_total,
                     law_context,
@@ -2723,6 +2737,7 @@ fn run_verify_vm(
                     outcome: VerifyCaseOutcome::RuntimeError { error },
                     span,
                     case_expr: case_str,
+                    case_id: block.source_case_id(idx),
                     case_index: idx,
                     case_total,
                     law_context,
@@ -2790,6 +2805,7 @@ mod tests {
             line: 1,
             cases: vec![],
             case_spans: vec![],
+            case_ids: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
@@ -2838,6 +2854,7 @@ mod tests {
             line: 1,
             cases: vec![],
             case_spans: vec![],
+            case_ids: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
@@ -2882,6 +2899,7 @@ mod tests {
             line: 1,
             cases: vec![],
             case_spans: vec![],
+            case_ids: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
@@ -2917,6 +2935,7 @@ mod tests {
             line: 1,
             cases: vec![],
             case_spans: vec![],
+            case_ids: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
@@ -2948,6 +2967,7 @@ mod tests {
             line: 1,
             cases: vec![],
             case_spans: vec![],
+            case_ids: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
@@ -3168,6 +3188,7 @@ verify currentYear trace
                 line: 1,
                 cases: vec![],
                 case_spans: vec![],
+                case_ids: vec![],
                 case_givens: vec![],
                 case_hostile_origins: vec![],
                 case_hostile_profiles: vec![],
@@ -3256,6 +3277,7 @@ verify currentYear trace
             line: 1,
             cases: vec![],
             case_spans: vec![],
+            case_ids: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![vec![("Time.now".to_string(), "frozen".to_string())]],
