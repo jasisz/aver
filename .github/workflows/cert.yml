@@ -266,3 +266,12 @@ jobs:
           cargo nextest run -p aver-lang --features ${{ matrix.features || 'wasm' }} --test ${{ matrix.suite }}
           -E '${{ matrix.filter }}'
           --partition slice:${{ matrix.partition }}
+
+      - name: Run wasip2 certificate tests
+        # The verify/certify shards use only wasm, so their wasip2-only
+        # tripwire and snapshot are absent there. Reuse the hardening smoke
+        # lane's wasm,wasip2 build and Lean setup, without another job.
+        if: matrix.suite == 'cert_hardening_spec'
+        run: >-
+          cargo test -p aver-lang --features wasm,wasip2 --test cert_verify_spec
+          --test cert_certify_spec wasip2
