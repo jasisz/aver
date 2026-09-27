@@ -638,8 +638,23 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
         "producer-emitted wasip2 component certificate should verify:\n{report}"
     );
     assert!(
-        report.contains("CERTIFIED") && report.contains("1 certified export"),
-        "wasip2 verifier report should name the pure export beside WASI imports:\n{report}"
+        report.contains("CERTIFIED"),
+        "missing CERTIFIED for the wasip2 component:\n{report}"
+    );
+    // Disk brings in Bytes, and the embedded core exports its pure helper too.
+    // List-pattern admission makes allInRange certifiable. Pin the names in
+    // the manifest the verifier just checked, including any unexpected extras.
+    let mut certified_exports: Vec<_> = manifest["certified"]
+        .as_array()
+        .expect("certified export list")
+        .iter()
+        .map(|entry| entry["name"].as_str().expect("certified export name"))
+        .collect();
+    certified_exports.sort_unstable();
+    assert_eq!(
+        certified_exports,
+        ["Bytes_allInRange", "greet"],
+        "wasip2 certified export set changed:\n{report}"
     );
 }
 
