@@ -225,7 +225,16 @@ fn emit_string_pos_wrapper(fd: &FnDef, helper_name: &str, rank_budget: usize) ->
     ]
 }
 
-fn emit_int_countdown_wrapper(fd: &FnDef, helper_name: &str, param_index: usize) -> Vec<String> {
+/// The public def of a fuel-encoded Int countdown: the helper seeded with
+/// `natAbs(n) + 1`, or, for a countdown that stops at `floor` (see
+/// `crate::ir::FuelMetric::NatAbsOrFloorDistance`), with
+/// `max (natAbs(n) + 1) (natAbs(n - floor) + 2)`.
+fn emit_int_countdown_wrapper(
+    fd: &FnDef,
+    helper_name: &str,
+    param_index: usize,
+    floor: Option<&crate::ir::CountdownFloor>,
+) -> Vec<String> {
     let fn_name = aver_name_to_lean(&fd.name);
     let params = emit_fn_params(&fd.params);
     let ret_type = ret_type_or_unit(fd);
@@ -235,20 +244,16 @@ fn emit_int_countdown_wrapper(fd: &FnDef, helper_name: &str, param_index: usize)
         .get(param_index)
         .map(|(name, _)| aver_name_to_lean(name))
         .unwrap_or_else(|| "0".to_string());
-    // A countdown that stops at a floor other than zero gets a seed measured
-    // from that floor (see `countdown_invariant_floor`).
-    let seed = match crate::codegen::recursion::detect::countdown_invariant_floor(fd, param_index) {
+    let zero_floor = format!("((Int.natAbs {metric_name}) + 1)");
+    let seed = match floor {
         Some(floor) => {
-            // The floor is an Int literal or a parameter's name.
-            let floor = match &floor.node {
-                crate::ast::Expr::Literal(crate::ast::Literal::Int(n)) => format!("({n} : Int)"),
-                _ => crate::codegen::recursion::detect::local_name_of(&floor)
-                    .map(aver_name_to_lean)
-                    .unwrap_or_else(|| "0".to_string()),
+            let floor = match floor {
+                crate::ir::CountdownFloor::Literal(n) => format!("({n} : Int)"),
+                crate::ir::CountdownFloor::Param(name) => aver_name_to_lean(name),
             };
-            format!("((Int.natAbs ({metric_name} - {floor})) + 2)")
+            format!("(max {zero_floor} ((Int.natAbs ({metric_name} - {floor})) + 2))")
         }
-        None => format!("((Int.natAbs {metric_name}) + 1)"),
+        None => zero_floor,
     };
     vec![
         format!("def {} {} : {} :=", fn_name, params, ret_type),
@@ -932,7 +937,7 @@ pub(super) fn emit_native_guarded_int_countdown_fn(
     let main_name = aver_name_to_lean(&fd.name);
     let lean_aux_name = aver_name_to_lean(&aux_name);
     let Some((param_name, _)) = fd.params.get(param_index) else {
-        return emit_fuelized_int_countdown_fn(fd, ctx, param_index);
+        return emit_fuelized_int_countdown_fn(fd, ctx, param_index, None);
     };
     let lean_pname = aver_name_to_lean(param_name);
 
@@ -1015,6 +1020,7 @@ pub(super) fn emit_fuelized_int_countdown_fn(
     fd: &FnDef,
     ctx: &CodegenContext,
     param_index: usize,
+    floor: Option<&crate::ir::CountdownFloor>,
 ) -> String {
     let helper_name = fuel_helper_name(&fd.name);
     let params = emit_fn_params(&fd.params);
@@ -1030,7 +1036,7 @@ pub(super) fn emit_fuelized_int_countdown_fn(
         emit_doc_comment(&fd.desc),
         emit_fuel_helper_def(&helper_name, &params, &ret_type, &body, ""),
         vec![String::new()],
-        emit_int_countdown_wrapper(fd, &helper_name, param_index),
+        emit_int_countdown_wrapper(fd, &helper_name, param_index, floor),
     ]
     .into_iter()
     .flatten()
@@ -1212,7 +1218,10 @@ pub(super) fn emit_fuelized_mutual_int_countdown_group(
         .filter(|fd| is_pure_fn(fd))
         .flat_map(|fd| {
             let helper_name = fuel_helper_name(&fd.name);
-            let mut lines = emit_int_countdown_wrapper(fd, &helper_name, 0);
+            // No floor: `countdown_invariant_floor` reads only a function's
+            // own self-calls, and the members of a group share their fuel
+            // with the calls to each other.
+            let mut lines = emit_int_countdown_wrapper(fd, &helper_name, 0, None);
             lines.push(String::new());
             lines
         })

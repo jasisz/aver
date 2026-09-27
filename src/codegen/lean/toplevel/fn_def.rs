@@ -143,12 +143,21 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // recursing (fibTR sans-guard relies on its caller). Fuel
     // sidesteps the issue.
     if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
-        && let Some(crate::ir::RecursionContract::Fuel {
-            fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne { param },
-        }) = contract.recursion.as_ref()
-        && let Some(param_index) = fd.params.iter().position(|(n, _)| n == param)
+        && let Some(crate::ir::RecursionContract::Fuel { fuel_metric }) =
+            contract.recursion.as_ref()
     {
-        return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
+        let (param, floor) = match fuel_metric {
+            crate::ir::FuelMetric::NatAbsPlusOne { param } => (Some(param), None),
+            crate::ir::FuelMetric::NatAbsOrFloorDistance { param, floor } => {
+                (Some(param), Some(floor))
+            }
+            _ => (None, None),
+        };
+        if let Some(param_index) =
+            param.and_then(|param| fd.params.iter().position(|(n, _)| n == param))
+        {
+            return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index, floor));
+        }
     }
 
     // WellFoundedToNat — native well-founded def on `param.toNat`.

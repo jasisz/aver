@@ -2153,25 +2153,30 @@ fn populate_fn_contracts_for_scope(
         // Unguarded descent and negative ascent retain their fuel contract.
         if let RecursionPlan::IntCountdown { param_index } = plan {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
+                use crate::codegen::recursion::detect;
+                // A countdown that stops at a floor other than zero is seeded
+                // from that floor too; the metric says so.
+                let fuel_metric = match detect::countdown_invariant_floor(fd, *param_index) {
+                    Some(floor) => crate::ir::FuelMetric::NatAbsOrFloorDistance {
+                        param: param_name.clone(),
+                        floor,
+                    },
+                    None => crate::ir::FuelMetric::NatAbsPlusOne {
+                        param: param_name.clone(),
+                    },
+                };
                 ir.fn_contracts.insert(
                     canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(
-                            if crate::codegen::recursion::detect::has_guarded_subtractive_descent(
-                                fd,
-                                *param_index,
-                            ) {
+                            if detect::has_guarded_subtractive_descent(fd, *param_index) {
                                 RecursionContract::WellFoundedToNat {
                                     param: param_name.clone(),
                                     floor_div: None,
                                 }
                             } else {
-                                RecursionContract::Fuel {
-                                    fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne {
-                                        param: param_name.clone(),
-                                    },
-                                }
+                                RecursionContract::Fuel { fuel_metric }
                             },
                         ),
                     },
