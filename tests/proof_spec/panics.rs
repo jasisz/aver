@@ -1,5 +1,39 @@
 use super::*;
 
+#[test]
+fn bytes_fuel_helpers_build_with_local_panic_defaults() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping bytes fuel proof test: `lake` not available");
+        return;
+    }
+    // No sampled claim over this unbounded fuel group: this regression checks
+    // helper elaboration, while the existing refusal tests guard such claims.
+    let (summary, run, emitted) = super::cross_file::run_multi(
+        &[("probe.av", include_str!("../fixtures/bytes_fuel.av"))],
+        "probe.av",
+        &["BytesFuel.lean"],
+    );
+    assert!(run.status.success(), "{}", format_output(&run));
+    assert_eq!(summary["build_errors"].as_u64(), Some(0), "{summary}");
+    assert_eq!(summary["sorries"].as_u64(), Some(0), "{summary}");
+    assert_eq!(summary["passed"].as_bool(), Some(true), "{summary}");
+    let lean = &emitted["BytesFuel.lean"];
+    for name in ["joined", "joinedOnward"] {
+        assert!(lean.contains(&format!("def {name}__fuel")), "{lean}");
+    }
+    assert_eq!(
+        lean.matches("haveI : Inhabited Bytes.Bytes").count(),
+        2,
+        "{lean}"
+    );
+    assert_eq!(
+        lean.matches("panic! \"Aver proof fuel exhausted\"").count(),
+        2,
+        "{lean}"
+    );
+    assert!(!lean.contains("instance : Inhabited Bytes.Bytes"), "{lean}");
+}
+
 const UNBOUNDED_FUEL_PROBE_AV: &str = r#"module FuelProbe
     intent = "unproven fuel-bound soundness probe"
 

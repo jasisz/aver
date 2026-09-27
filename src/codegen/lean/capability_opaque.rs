@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use super::types::EMPTY_BYTES;
 use crate::ast::{Spanned, Type, TypeDef};
 use crate::codegen::CodegenContext;
 use crate::ir::FnId;
@@ -389,7 +390,7 @@ fn named_witness(
 ) -> Option<Witness> {
     if name == "Bytes" || name == "Bytes.Bytes" {
         return Some(Witness {
-            term: "⟨[], by simp [Bytes.allInRange]⟩".to_string(),
+            term: EMPTY_BYTES.to_string(),
             core: true,
         });
     }

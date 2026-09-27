@@ -3,6 +3,9 @@ use crate::types::Type;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
+/// The empty octet list as a `Bytes` value, with its refinement discharged.
+pub(super) const EMPTY_BYTES: &str = "⟨[], by simp [Bytes.allInRange]⟩";
+
 thread_local! {
     /// Type names of the canonical Peano ADTs in the program currently being
     /// transpiled to Lean. A canonical Peano type (`T { Zero; Succ(T) }`,

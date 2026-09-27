@@ -7,7 +7,7 @@ use super::render::{
     emit_doc_comment, emit_fn_param_names, emit_fn_params, indent_lines, ret_type_or_unit,
 };
 use super::type_def::type_measure_expr;
-use super::types::type_annotation_to_lean;
+use super::types::{EMPTY_BYTES, type_annotation_to_lean};
 use super::{
     emit_fn_def, emit_fn_def_proof, emit_mutual_group, emit_mutual_group_proof, is_pure_fn,
     is_recursive_type_def, sizeof_measure_param_indices, type_def_name,
@@ -187,6 +187,14 @@ fn emit_fuel_helper_def(
     outer_indent: &str,
 ) -> Vec<String> {
     let branch_indent = format!("{outer_indent}    ");
+    // Bytes has no global Inhabited instance. Supply it only at the panic
+    // site, including when the result is a product containing Bytes. Keep
+    // the panic marker intact for fuel detection and the model-panic gate.
+    let local_instance = if ret_type.contains("Bytes.Bytes") {
+        format!("haveI : Inhabited Bytes.Bytes := ⟨{EMPTY_BYTES}⟩; ")
+    } else {
+        String::new()
+    };
     [
         vec![format!(
             "{outer_indent}def {} (fuel : Nat) {} : {} :=",
@@ -194,7 +202,7 @@ fn emit_fuel_helper_def(
         )],
         vec![format!("{outer_indent}  match fuel with")],
         vec![format!(
-            "{outer_indent}  | 0 => panic! \"{}\"",
+            "{outer_indent}  | 0 => {local_instance}panic! \"{}\"",
             PROOF_FUEL_EXHAUSTED_MSG
         )],
         vec![format!("{outer_indent}  | {} + 1 =>", STRING_POS_FUEL_VAR)],
