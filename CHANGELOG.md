@@ -30,6 +30,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Changed — a large certificate checks faster
 
 - **`aver-cert check` of a large package takes about a third less time and less memory.** On an 800 KB module with 823 certified exports it went from 30 to 19 minutes and from 15.6 to 13.1 GB. The plans' acceptance is checked in several small proofs instead of one, distinct function indices and export names are checked in one pass instead of pairwise, the report's per-group data is computed once per group, and the axiom audit shares its work across all claims (5 minutes to 9 seconds). What a certificate proves is unchanged. The wall changed, so packages must be produced again.
+- **Each certified function's acceptance is now its own small proof, and reads only the part of the module its code sits in.** The checker reads the module as 1 KiB pieces and compares a function's code with its plan as one number. On an 800 KB module with 1,093 certified exports the per-function checks went from 161 to 107 seconds and the whole check from 20.4 to 19.5 minutes; what is accepted does not change.
 
 ### Added — source bridges for List arguments
 

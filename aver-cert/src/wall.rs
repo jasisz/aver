@@ -35,6 +35,8 @@ pub const CERT_ACCEPTED_ARTIFACT: &str =
 pub const CERT_DECLARED_LAYOUT: &str = include_str!("../assets/wall/current/DeclaredLayout.lean");
 pub const CERT_BYTE_WINDOW: &str = include_str!("../assets/wall/current/ByteWindow.lean");
 pub const CERT_SORTED_KEYS: &str = include_str!("../assets/wall/current/SortedKeys.lean");
+pub const CERT_SCALE_BYTES: &str = include_str!("../assets/wall/current/ScaleBytes.lean");
+pub const CERT_SCALE_LAYOUT: &str = include_str!("../assets/wall/current/ScaleLayout.lean");
 pub const CERT_CLAIM_AXES: &str = include_str!("../assets/wall/current/ClaimAxes.lean");
 pub const CERT_ACCEPTANCE_SOUNDNESS_CORE: &str =
     include_str!("../assets/wall/current/AcceptanceSoundnessCore.lean");
@@ -55,7 +57,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 25] = [
+pub const SOURCES: [Source; 27] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -141,6 +143,14 @@ pub const SOURCES: [Source; 25] = [
         contents: CERT_SCHEMA_CORE,
     },
     Source {
+        name: "ScaleBytes.lean",
+        contents: CERT_SCALE_BYTES,
+    },
+    Source {
+        name: "ScaleLayout.lean",
+        contents: CERT_SCALE_LAYOUT,
+    },
+    Source {
         name: "SortedKeys.lean",
         contents: CERT_SORTED_KEYS,
     },
@@ -160,10 +170,11 @@ pub const SOURCES: [Source; 25] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 23] = [
+pub const PRISTINE_ROOTS: [&str; 25] = [
     "CertPrelude",
     "CertDecode",
     "ByteWindow",
+    "ScaleBytes",
     "ArithTemplateDerisk",
     "WasmSlice",
     "Wasip2Envelope",
@@ -180,6 +191,7 @@ pub const PRISTINE_ROOTS: [&str; 23] = [
     "DeclaredLayout",
     "SortedKeys",
     "ClaimAxes",
+    "ScaleLayout",
     "AcceptanceSoundnessCore",
     "AcceptanceSoundness",
     "GrammarBridge",
@@ -243,18 +255,50 @@ pub fn resolve(id: &str) -> Option<&'static Wall> {
     (id == current_id()).then_some(&CURRENT)
 }
 
+/// Bytes per chunk of the checker-rendered module (`ScaleBytes.join`).
+pub const MODULE_CHUNK_BYTES: usize = 1024;
+
+/// Depth of the balanced join `modBytes` is written with: enough to halve any
+/// module down to single chunks.
+const MODULE_JOIN_DEPTH: usize = 32;
+
 /// Checker-authored Lean module containing the exact core module bytes. A
 /// certificate package never supplies this module; production verification
 /// and direct-Lake test harnesses materialize it from the artifact under test
 /// after target-specific envelope preparation.
+///
+/// The bytes are rendered as `chunks`: little-endian numerals of
+/// `MODULE_CHUNK_BYTES` bytes each (the last one shorter), cut at fixed
+/// offsets, never where the module's structure puts a boundary. `modBytes`
+/// is their join. A check that reads one entry reads it through
+/// `ScaleBytes.window`, which joins only the chunks the entry touches.
 pub fn render_artifact_bytes(bytes: &[u8]) -> String {
-    render_byte_module(
-        "ArtifactBytes",
-        "modBytes",
-        "modLen",
-        "Exact core Wasm module bytes consumed by the certificate wall.",
-        bytes,
+    let chunks = bytes
+        .chunks(MODULE_CHUNK_BYTES)
+        .map(hex_numeral)
+        .collect::<Vec<_>>()
+        .join(",\n   ");
+    format!(
+        "import ScaleBytes\n\nset_option maxRecDepth 200000\n\nnamespace AverCert.ArtifactBytes\n\n\
+         /-- Exact core Wasm module bytes consumed by the certificate wall, as\n    \
+         little-endian chunks of {MODULE_CHUNK_BYTES} bytes, chunk 0 the lowest. -/\n\
+         noncomputable def chunks : List Nat :=\n  [{chunks}]\n\n\
+         /-- The module bytes as one numeral: the chunks, joined. -/\n\
+         noncomputable def modBytes : Nat :=\n  \
+         AverCert.ScaleBytes.joinTree {MODULE_CHUNK_BYTES} {MODULE_JOIN_DEPTH} chunks\n\
+         def modLen : Nat := {}\n\nend AverCert.ArtifactBytes\n",
+        bytes.len()
     )
+}
+
+/// A little-endian hex numeral of `bytes`, the first byte lowest.
+fn hex_numeral(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(2 + bytes.len() * 2);
+    hex.push_str("0x");
+    for byte in bytes.iter().rev() {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
 }
 
 /// Checker-authored Lean module containing the exact delivered target artifact
@@ -313,11 +357,7 @@ fn render_byte_module(
             .chunks(BYTE_NUMERAL_CHUNK)
             .enumerate()
             .map(|(index, chunk)| {
-                let mut hex = String::with_capacity(2 + chunk.len() * 2);
-                hex.push_str("0x");
-                for byte in chunk.iter().rev() {
-                    hex.push_str(&format!("{byte:02x}"));
-                }
+                let hex = hex_numeral(chunk);
                 match index {
                     0 => hex,
                     _ => format!("({hex} <<< {})", 8 * BYTE_NUMERAL_CHUNK * index),

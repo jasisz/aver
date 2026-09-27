@@ -104,7 +104,7 @@ For wasip2 the same rule covers the component wrapper. The manifest declares the
 
 ## The Lean wall
 
-The wall is one hash-addressed unit of 25 Lean files. By module:
+The wall is one hash-addressed unit of 27 Lean files. By module:
 
 - `CertPrelude`, `InterpreterSequencing`: the wasm instruction model and its interpreter;
 - `CertDecode`, `WasmSlice`, `Wasip2Envelope`: decoders over the actual module and component bytes;
@@ -117,6 +117,8 @@ The wall is one hash-addressed unit of 25 Lean files. By module:
 - `DeclaredLayout`: the producer-declared module layout (where each function's code entry, type and export entry are), confirmed against the decoders once, with a proof that the checks reading it imply the decoder-based ones, so the declaration saves searching and decoding without changing what is accepted;
 - `ByteWindow`: section cuts, the producer-declared byte length of every entry of the type, export and code sections; each entry is decoded on its own window, which keeps the kernel's numerals entry-sized instead of section-sized, and the decoders are proved equal to lazy readings of the confirmed windows;
 - `SortedKeys`: the export accounting and closure isolation decided by walks over sorted numeric keys (a declared list already in order is not sorted again), and the distinctness of the planned function indices on a bitmap, with proofs that imply the checks they replace;
+- `ScaleBytes`: the module bytes as 1 KiB chunks, windows that read only the chunks an entry touches (`window_eq`: a window is the slice of the whole module), and byte lists packed a limb at a time;
+- `ScaleLayout`: the module framing over producer-declared section headers, the code section tiled by the declared layout with each entry decoded on its own window, every plan's code entry compared as a packed window, and the claim axes from per-plan role bits, each with a proof that it implies the check it replaces (`moduleFramingValid_of_framing`, `layoutConfirmed_of_tiled`, `entries_of_packed`, `checked_of_bits`);
 - `ArithTemplateDerisk`: the Int helper body templates;
 - `ListHelpers`: the List helper templates (`len`, `reverse`, `concat`, `take`, `drop`, `contains`, and `__aint_to_i64_sat`), the structured-control interpreter that runs them, and the theorems of what each run computes;
 - `AcceptedArtifactCore`, `AcceptedArtifact`: the derived obligations and the acceptance predicate;

@@ -36,6 +36,9 @@ pub struct Analysis {
     roles: Option<HostRoles>,
     string_roles: StringHostRoles,
     entries: Vec<PackageEntry>,
+    /// The helper roles each entry's lowering calls, as the bits of
+    /// `ScaleLayout.roleBits`, in `entries` order.
+    role_bits: Vec<u32>,
     types: PlanTypeTable,
     certified: Vec<CertifiedExport>,
     declined: Vec<(String, String)>,
@@ -747,8 +750,23 @@ pub fn analyze(
     let mut role_table = role_table;
     let m = MCtx::new(role_table.as_ref(), &facts.string_roles, &types, &fns);
     let mut calls = Vec::new();
+    // `ScaleLayout.roleBits`: which helper roles each lowering calls, in the
+    // wall's bit order.
+    let mut role_bits = Vec::with_capacity(entries.len());
     for e in &entries {
-        lowered_calls(&m.lower_plan(&e.plan), &mut calls);
+        let mut own = Vec::new();
+        lowered_calls(&m.lower_plan(&e.plan), &mut own);
+        let roles = [
+            m.box_, m.add, m.sub, m.mul, m.streq, m.concat, m.to_index, m.cmp, m.eq, m.divmod,
+        ];
+        role_bits.push(
+            roles
+                .iter()
+                .enumerate()
+                .filter(|(_, role)| own.contains(role))
+                .fold(0u32, |bits, (i, _)| bits | (1 << i)),
+        );
+        calls.extend(own);
     }
     // The List helpers the lowerings call, with the reverse helper `concat`
     // and `take` call; `contains` relies on its element type's equality
@@ -889,6 +907,7 @@ pub fn analyze(
         roles: role_table,
         string_roles: facts.string_roles.clone(),
         entries,
+        role_bits,
         types,
         certified,
         declined,

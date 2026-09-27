@@ -180,12 +180,18 @@ fn replace_once(path: &Path, needle: &str, replacement: &str) {
     std::fs::write(path, src.replacen(needle, replacement, 1)).unwrap();
 }
 
-fn find_named_file(root: &Path, name: &str) -> Option<PathBuf> {
+/// The first file called `name` under `root`, not looking inside directories
+/// called `skip`. `read_dir` order is the file system's, so a caller that
+/// means one of several copies must skip the others by directory.
+fn find_named_file(root: &Path, name: &str, skip: &str) -> Option<PathBuf> {
     for entry in std::fs::read_dir(root).ok()? {
         let entry = entry.ok()?;
         let path = entry.path();
         if entry.file_type().ok()?.is_dir() {
-            if let Some(found) = find_named_file(&path, name) {
+            if entry.file_name() == skip {
+                continue;
+            }
+            if let Some(found) = find_named_file(&path, name, skip) {
                 return Some(found);
             }
         } else if entry.file_name() == name {
@@ -244,7 +250,9 @@ fn cert_verify_rebuilds_after_cached_olean_corruption() {
         String::from_utf8_lossy(&first.stderr)
     );
 
-    let artifact_olean = find_named_file(&cache_dir, "Artifact.olean")
+    // The DATA cache's copy, not the per-module cache's (`v1-modules`), which
+    // a DATA cache hit never reads.
+    let artifact_olean = find_named_file(&cache_dir, "Artifact.olean", "v1-modules")
         .expect("successful verify should publish cached Artifact.olean");
     let mut corrupted = std::fs::read(&artifact_olean).unwrap();
     assert!(!corrupted.is_empty(), "Artifact.olean must not be empty");
@@ -2557,8 +2565,10 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
 
     let artifact_defs = aver::codegen::cert::wall::render_artifact_bytes(&padded)
         .replace("AverCert.ArtifactBytes", "LargeBytes");
+    // The rendered bytes import only `ScaleBytes`; the pin reads them with
+    // `WasmSlice`.
     let positive = format!(
-        "{artifact_defs}\n\
+        "import WasmSlice\n{artifact_defs}\n\
          theorem largePin : (AverCert.WasmSlice.funcBindingForExport LargeBytes.modBytes LargeBytes.modLen [97, 100, 100, 84, 119, 111]).map (·.codeEntry) = some {} := rfl\n\
          #print axioms largePin\n",
         render_list(&code_entry)
@@ -2566,12 +2576,12 @@ fn big_nat_code_entry_pin_closes_at_130kb_and_flipped_byte_fails() {
     std::fs::write(cert.join("LargePin.lean"), positive).unwrap();
     let prebuild = lake_for_cert(&cert)
         .current_dir(&cert)
-        .args(["build", "WasmSlice"])
+        .args(["build", "WasmSlice", "ScaleBytes"])
         .output()
-        .expect("build audited WasmSlice dependency");
+        .expect("build audited WasmSlice and ScaleBytes dependencies");
     assert!(
         prebuild.status.success(),
-        "WasmSlice dependency must build:\n{}{}",
+        "WasmSlice and ScaleBytes dependencies must build:\n{}{}",
         String::from_utf8_lossy(&prebuild.stdout),
         String::from_utf8_lossy(&prebuild.stderr)
     );
@@ -3038,7 +3048,8 @@ fn cert_plans_authority_declines_artifact_carried_axiom_bridge() {
     let cert = dir.join("cert");
     replace_once(
         &cert.join("Artifact.lean"),
-        "theorem axes_ok : AverCert.ClaimAxes.checked data = true := by decide +kernel",
+        "theorem axes_ok : AverCert.ClaimAxes.checked data = true :=\n  \
+         AverCert.ScaleLayout.checked_of_bits plans_roles (by decide +kernel)",
         "axiom artifactEvil : AverCert.ClaimAxes.checked data = true\n\n\
          theorem axes_ok : AverCert.ClaimAxes.checked data = true := artifactEvil",
     );
