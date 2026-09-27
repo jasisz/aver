@@ -952,8 +952,6 @@ struct BridgePlan {
     /// Per planned function: its position in `Plans.fnPlans` and its entry
     /// exactly as `Plans.lean` spells it.
     entries: BTreeMap<u32, (usize, String)>,
-    /// The export names of the obligations, in `Plans.fnPlans` order.
-    obligation_names: Vec<String>,
     /// The piece declarations `Plans.types` is written in, which the typing
     /// `simp` of an export theorem must unfold with it (the string segments
     /// excepted: typing never reads them).
@@ -1097,12 +1095,6 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
                 );
                 (e.func_idx, (index, entry))
             })
-            .collect(),
-        obligation_names: analysis
-            .entries
-            .iter()
-            .filter(|e| e.exported)
-            .map(|e| e.name.clone())
             .collect(),
     };
     if let Some(reason) = &model.failure {
@@ -2073,27 +2065,38 @@ fn render_export(
     let _ = param_binders;
 }
 
-/// `export_names_nodup`: the obligations' export names are pairwise
-/// distinct, decided once for the package on the names' characters (each
-/// literal is definitionally `String.ofList` of them), one number per name,
-/// sorted and walked once. A failure costs every bridge its credit, never the
-/// package.
-fn render_export_names_nodup(names: &[String]) -> String {
-    let chars = lean_char_lists(names, "\n       ");
+/// `BridgeNames.lean`: `export_names_nodup`, the obligations' export names
+/// pairwise distinct, read from the export accounting the byte facts already
+/// prove (`exports_ok`, in `exports_module`): it requires the names' numeric
+/// keys distinct (`SortedKeys.obligationNamesNodup_of_accounted`). Deciding
+/// it again over the names' characters cost btc-listener's 823 names about
+/// 45 s and most of a 9 GB module. A failure costs every bridge its credit,
+/// never the package.
+fn render_bridge_names(exports_module: &str) -> String {
     format!(
-        "{ISOLATE_DECLARATION}\n\
+        "-- The obligations' export names are pairwise distinct, read from the\n\
+         -- export accounting of the byte facts.\n\
+         import {exports_module}\n\
+         import SortedKeys\n\n\
+         set_option autoImplicit false\n\n\
+         namespace AverCert.Bridge\n\n\
          theorem export_names_nodup :\n    \
-         (AverCert.manifest.obligations.map (·.export_)).Nodup := by\n  \
-         first\n  \
-         | exact AverCert.GrammarBridge.names_nodup_of_sorted\n      \
-         {chars}\n      \
-         rfl (by decide +kernel)\n  \
-         | sorry\n\n"
+         (AverCert.manifest.obligations.map (·.export_)).Nodup :=\n  \
+         AverCert.SortedKeys.obligationNamesNodup_of_accounted AverCert.Artifact.exports_ok\n\n\
+         end AverCert.Bridge\n"
     )
 }
 
-/// The package module that carries the bridge proofs themselves.
+/// The package modules that carry the bridge proofs themselves,
+/// `BridgeProof0`, `BridgeProof1`, ….
 pub const BRIDGE_PROOF_MODULE: &str = "BridgeProof";
+/// Bridge theorems per `BridgeProof<i>` module, at most. The kernel does not
+/// return memory to the system inside one process, so a module's peak grows
+/// with its declarations: btc-listener's 636 bridges in one module took
+/// 297 s and 9 GB. Modules of about this size build in parallel.
+const BRIDGE_PROOFS_PER_MODULE: usize = 100;
+/// The module of `export_names_nodup`, which every bridge proof cites.
+pub const BRIDGE_NAMES_MODULE: &str = "BridgeNames";
 /// The decoders, images and rewrite lemmas every step slice imports.
 pub const BRIDGE_DEFS_MODULE: &str = "BridgeDefs";
 /// The step lemma slices, `BridgeSteps0`, `BridgeSteps1`, ….
@@ -2103,21 +2106,23 @@ const BRIDGE_STEPS_PER_MODULE: usize = 24;
 
 /// Render the package's bridge surface: `BridgeDefs.lean` (decoders, images
 /// and rewrite lemmas), the step lemmas in slices `BridgeSteps<i>.lean`,
-/// `BridgeProof.lean` (one bridge theorem per export) and `Bridge.lean` (the
-/// `_certified` corollaries the manifest names).
+/// `BridgeNames.lean` (the export names distinct), the bridge theorems in
+/// slices `BridgeProof<i>.lean` (one theorem per export) and `Bridge.lean`
+/// (the `_certified` corollaries the manifest names), which is returned
+/// apart from the other modules.
 ///
 /// Only the corollaries cite `AverCert.Final.cert`, and `Final` sits behind
-/// `Artifact.lean`, the byte-level proof whose build time grows with the
-/// module. Kept apart from it, the bridge proofs — the other long build of a
-/// large package — no longer wait for `Artifact.lean` (on btc-listener's
-/// 117 KB module the two took about eleven and five minutes, one after the
-/// other).
-/// `Bridge.lean` still imports every model root, since the checker admits a
-/// nested model file only on an import line of `Bridge.lean` or `Laws.lean`.
+/// every byte fact. The bridge proofs wait only for the module that proves
+/// the export accounting (`exports_module`), and each slice is a module of
+/// its own, so a parallel Lake builds the slices at once, beside the other
+/// byte facts. `Bridge.lean` still imports every model root, since the
+/// checker admits a nested model file only on an import line of
+/// `Bridge.lean` or `Laws.lean`.
 fn render_bridge_lean(
     plan: &BridgePlan,
     model_roots: &[String],
-) -> (String, String, Vec<(String, String)>) {
+    exports_module: &str,
+) -> (String, Vec<(String, String)>) {
     let mut s = String::from(
         "-- Plan-equals-source bridges of this certificate. Each bridge identifies\n\
          -- the plan an export's obligation evaluates with the transpiled source\n\
@@ -2185,10 +2190,7 @@ fn render_bridge_lean(
     // k5's 260 bridges.
     let mut parts = vec![(format!("{BRIDGE_DEFS_MODULE}.lean"), s)];
     let steps: Vec<&BridgedFn> = plan.fns.values().collect();
-    let mut s = String::from(
-        "-- Plan-equals-source bridges of this certificate: the export theorems,\n\
-         -- over the step lemmas of the slices imported below.\n",
-    );
+    let mut step_imports = String::new();
     for (i, slice) in steps.chunks(BRIDGE_STEPS_PER_MODULE).enumerate() {
         let name = format!("{BRIDGE_STEPS_MODULE}{i}");
         let mut part = format!(
@@ -2206,26 +2208,44 @@ fn render_bridge_lean(
         }
         part.push_str("end AverCert.Bridge\n");
         parts.push((format!("{name}.lean"), part));
-        s.push_str(&format!("import {name}\n"));
+        step_imports.push_str(&format!("import {name}\n"));
     }
-    s.push_str(&format!(
-        "\nset_option autoImplicit false\n\
-         set_option maxRecDepth 200000\n\
-         set_option linter.unusedSimpArgs false\n\
-         set_option linter.unusedVariables false\n\
-         set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
-         namespace AverCert.Bridge\n\n"
+    parts.push((
+        format!("{BRIDGE_NAMES_MODULE}.lean"),
+        render_bridge_names(exports_module),
     ));
-    s.push_str(&render_export_names_nodup(&plan.obligation_names));
+    // The bridge theorems, in slices of at most `BRIDGE_PROOFS_PER_MODULE`,
+    // evened out so that no slice is much smaller than the others.
+    let slices = plan.bridges.len().div_ceil(BRIDGE_PROOFS_PER_MODULE).max(1);
+    let per_slice = plan.bridges.len().div_ceil(slices).max(1);
     let mut corollaries = String::new();
-    for (bridge, func_idx) in &plan.bridges {
-        render_export(bridge, *func_idx, plan, &mut s, &mut corollaries);
+    let mut proof_imports = String::new();
+    for (i, slice) in plan.bridges.chunks(per_slice).enumerate() {
+        let name = format!("{BRIDGE_PROOF_MODULE}{i}");
+        let mut part = format!(
+            "-- One slice of the plan-equals-source bridges of this certificate: the\n\
+             -- export theorems, over the step lemmas of the slices imported below.\n\
+             import {BRIDGE_NAMES_MODULE}\n\
+             {step_imports}\n\
+             set_option autoImplicit false\n\
+             set_option maxRecDepth 200000\n\
+             set_option linter.unusedSimpArgs false\n\
+             set_option linter.unusedVariables false\n\
+             set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
+             namespace AverCert.Bridge\n\n"
+        );
+        for (bridge, func_idx) in slice {
+            render_export(bridge, *func_idx, plan, &mut part, &mut corollaries);
+        }
+        part.push_str("end AverCert.Bridge\n");
+        parts.push((format!("{name}.lean"), part));
+        proof_imports.push_str(&format!("import {name}\n"));
     }
-    s.push_str("end AverCert.Bridge\n");
     let mut bridge = format!(
         "-- The plan-equals-source claims of this certificate: each bridge theorem\n\
-         -- of `{BRIDGE_PROOF_MODULE}` conjoined with the artifact-level `Holds` fact.\n\
-         import {BRIDGE_PROOF_MODULE}\n\
+         -- of the `{BRIDGE_PROOF_MODULE}` slices conjoined with the artifact-level\n\
+         -- `Holds` fact.\n\
+         {proof_imports}\
          import Final\n"
     );
     for root in model_roots {
@@ -2233,7 +2253,7 @@ fn render_bridge_lean(
     }
     bridge.push_str("\nset_option autoImplicit false\n\n");
     bridge.push_str(&corollaries);
-    (s, bridge, parts)
+    (bridge, parts)
 }
 
 // ---- law coverage -------------------------------------------------------------
@@ -2517,7 +2537,8 @@ fn command_preamble_start(lines: &[&str], keyword_line: usize) -> usize {
 
 /// The rendered bridge Lean: the proofs module, the `Bridge.lean`
 /// corollaries, and the named part files the proofs import.
-type BridgeLean = (String, String, Vec<(String, String)>);
+/// `Bridge.lean` and every other module of the bridge surface.
+type BridgeLean = (String, Vec<(String, String)>);
 
 /// What `write_project` needs to render the bridge and law surfaces.
 struct Surfaces {
@@ -2573,12 +2594,13 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
     let bridges: Vec<SourceBridge> = plan.bridges.iter().map(|(b, _)| b.clone()).collect();
     let bridge_lean = (!plan.fns.is_empty() && !bridges.is_empty())
         .then(|| {
-            let (proofs, corollaries, parts) = render_bridge_lean(&plan, &roots);
+            let (corollaries, parts) =
+                render_bridge_lean(&plan, &roots, exports_fact_module(analysis));
             let parts = parts
                 .into_iter()
                 .map(|(name, text)| (name, isolate_theorems(&text)))
                 .collect();
-            (isolate_theorems(&proofs), isolate_theorems(&corollaries), parts)
+            (isolate_theorems(&corollaries), parts)
         });
     let info = ModelInfo::from_model(model);
     // The checker reads every law statement at the root, so each is rewritten
@@ -2951,10 +2973,18 @@ mod source_bridge_tests {
             "(List.forall_mem_cons.2 ⟨⟨_, by decide, step_3⟩, \
              (List.forall_mem_cons.2 ⟨⟨_, by decide, step_9⟩, (fun _ h => nomatch h)⟩)⟩)"
         );
-        let nodup = render_export_names_nodup(&["ab".to_string(), "a'\"".to_string()]);
+        let chars = lean_char_lists(&["ab".to_string(), "a'\"".to_string()], "\n       ");
+        assert_eq!(
+            chars, "[['a', 'b'],\n       ['a', (Char.ofNat 39), (Char.ofNat 34)]]",
+            "{chars}"
+        );
+        let names = render_bridge_names("ArtifactInterface");
         assert!(
-            nodup.contains("[['a', 'b'],\n       ['a', (Char.ofNat 39), (Char.ofNat 34)]]"),
-            "{nodup}"
+            names.contains("import ArtifactInterface\n")
+                && names.contains(
+                    "obligationNamesNodup_of_accounted AverCert.Artifact.exports_ok"
+                ),
+            "{names}"
         );
     }
 

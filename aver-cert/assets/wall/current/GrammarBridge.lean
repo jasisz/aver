@@ -33,7 +33,6 @@
    into exact answers above a declared call depth, for a closure without
    recursion. -/
 import AcceptedArtifactCore
-import SortedKeys
 
 namespace AverCert.GrammarBridge
 open AverCert.Schema AverCert.Grammar AverCert.TypeTable AverCert.AcceptedArtifact CertPrelude
@@ -56,10 +55,10 @@ The kernel has no fast path for String literals: deciding `a == b` rebuilds
 both UTF-8 byte arrays, in time quadratic in their length. Deciding
 `exportObligation` directly therefore compares the wanted name with every
 earlier export name. The lemmas below select it from pairwise-distinct names
-instead: the names are shown distinct ONCE per package, as character lists
-(a literal is definitionally `String.ofList` of its characters, which the
-kernel checks without building bytes), and each export's obligation then
-follows from membership and one literal-to-literal name equality. -/
+instead: the names are shown distinct ONCE per package, read from the export
+accounting of the byte facts (`SortedKeys.obligationNamesNodup_of_accounted`),
+and each export's obligation then follows from membership and one
+literal-to-literal name equality. -/
 
 theorem find?_export_of_nodup {os : List Obligation} {name : String} {o : Obligation}
     (hnd : (os.map (·.export_)).Nodup) (hmem : o ∈ os) (hname : o.export_ = name) :
@@ -73,34 +72,6 @@ theorem find?_export_of_nodup {os : List Obligation} {name : String} {o : Obliga
       · have hne : ¬ a.export_ = name := fun h =>
           hnd.1 (List.mem_map.mpr ⟨o, hrest, hname.trans h.symm⟩)
         simp [hne, ih hnd.2 hrest]
-
-/-- One number per code-point list: base `2^21` digits `c + 1`. A decided
-    `Nodup` over these numbers compares one numeral per pair; it needs no
-    injectivity, since distinct images already have distinct preimages. -/
-def natOfCodes : List Nat → Nat
-  | [] => 0
-  | c :: cs => (c + 1) + 2097152 * natOfCodes cs
-
-/-- Pairwise-distinct names, from pairwise-distinct character lists, decided
-    on one number per list. -/
-theorem names_nodup_of_chars {names : List String} (cs : List (List Char))
-    (h : names = cs.map String.ofList)
-    (hnd : (cs.map (fun c => natOfCodes (c.map Char.toNat))).Nodup) : names.Nodup := by
-  subst h
-  have hcs : cs.Nodup :=
-    List.Pairwise.of_map (fun c => natOfCodes (c.map Char.toNat))
-      (fun a b hab heq => hab (heq ▸ rfl)) hnd
-  exact List.Pairwise.map String.ofList (fun a b hab heq =>
-    hab (by simpa [String.toList_ofList] using congrArg String.toList heq)) hcs
-
-/-- `names_nodup_of_chars`, with the numbers sorted and walked once
-    (`SortedKeys.strictly`) instead of compared pairwise: `decide
-    List.Nodup` over a large package's names is a quadratic kernel walk. -/
-theorem names_nodup_of_sorted {names : List String} (cs : List (List Char))
-    (h : names = cs.map String.ofList)
-    (hs : _root_.AverCert.SortedKeys.strictly (_root_.AverCert.SortedKeys.msort
-      (cs.map (fun c => natOfCodes (c.map Char.toNat)))) = true) : names.Nodup :=
-  names_nodup_of_chars cs h (_root_.AverCert.SortedKeys.nodup_of_msort hs)
 
 /-- The obligation of a planned, exported entry, when the manifest's export
     names are pairwise distinct. -/

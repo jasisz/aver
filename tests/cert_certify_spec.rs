@@ -16,6 +16,8 @@ mod lean_required;
 
 use aver_cmd::aver_command;
 
+#[path = "support/bridge_slices.rs"]
+mod bridge_slices;
 #[path = "support/cert_wall.rs"]
 mod cert_wall;
 #[path = "support/scratch_dir.rs"]
@@ -611,8 +613,11 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
             }
         }
     }
-    let bridge_proof = std::fs::read_to_string(out_dir.join("cert").join("BridgeProof.lean"))
-        .expect("a bridged package emits BridgeProof.lean");
+    let bridge_proof = bridge_slices::bridge_proof_text(&out_dir.join("cert"));
+    assert!(
+        !bridge_proof.is_empty(),
+        "a bridged package emits BridgeProof<i>.lean slices"
+    );
     for entry in bridges {
         let export = entry["export"].as_str().unwrap();
         let object = entry.as_object().unwrap();
