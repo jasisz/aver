@@ -391,6 +391,14 @@ theorem map_termination_of_derived {artifact : ArtifactData} (h : obligationsDer
       (_root_.AverCert.SortedKeys.strictly_nodup hs)
   · rfl
 
+/-- Join checked consecutive report blocks. The final block checks the whole
+    remaining tail, so the joined equality cannot omit report entries. -/
+theorem report_cons {α : Type} {xs : List α} {k n : Nat} {head tail : List α}
+    (hhead : (xs.drop k).take n = head)
+    (htail : xs.drop (k + n) = tail) : xs.drop k = head ++ tail := by
+  rw [← hhead, ← htail, ← List.drop_drop]
+  exact (List.take_append_drop n (xs.drop k)).symm
+
 /-- All producer-selectable claim metadata the wall canonicalizes. -/
 def checked (artifact : ArtifactData) : Bool :=
   contractsMatch artifact

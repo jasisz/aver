@@ -1180,35 +1180,39 @@ fn checker_witness(sha: &str, candidates: &Candidates) -> String {
     )
 }
 
-/// The proof of the report-entries pin, whose left side the wall computes
-/// from every plan. The kernel decides it; the elaborator's defeq check on a large module runs past
-/// its default budget before it reaches the kernel, so the budget is raised
-/// for the pin's declaration alone. It moves a resource limit only: the kernel still checks
-/// the equation, and a runaway is stopped by the step's time limit.
-const KERNEL_REPORT_PROOF: &str = "by first | decide +kernel | rfl";
+/// Reuse the package's optional block proof at the checker's exact statement.
+/// If absent or of another type, compute the report directly. The selected
+/// proof's entire axiom closure is audited through the report pin, including
+/// any package block lemma. The larger heartbeat budget affects resources
+/// only: it neither changes the equation nor bypasses the kernel.
+const KERNEL_REPORT_PROOF: &str = "by first\n    \
+    | exact _root_.AverCert.Artifact.report_entries\n    \
+    | decide +kernel\n    \
+    | rfl";
 
 /// The proofs of the report pins computed per call group (facets, policies,
 /// termination witnesses). Deciding them as stated asks every exported plan
 /// for its group's members, a walk over all plans each time. Each is instead
 /// rewritten by a wall equation (`ClaimAxes.reportFacets_eq_fast`,
 /// `map_policy_of_derived`, `map_termination_of_derived`) to the same data
-/// computed once per group, and that is decided. The equations hold for every
-/// package, so the pin's statement, which the checker writes, is unchanged
-/// and a package can only make them slower. The obligations are the derived
+/// computed once per group. The package's optional block proof is tried at
+/// that exact equation before falling back to deciding it. The equations hold
+/// for every package, so the checker's pinned statement is unchanged.
+/// The obligations are the derived
 /// ones by the accepted certificate's `obligationsDerived` conjunct.
 const FACETS_REPORT_PROOF: &str = "_root_.Eq.trans\n    \
      (_root_.AverCert.ClaimAxes.reportFacets_eq_fast _root_.AverCert.Artifact.data)\n    \
-     (by decide +kernel)";
+     (by first | exact _root_.AverCert.Artifact.report_facets | decide +kernel)";
 const POLICIES_REPORT_PROOF: &str = "_root_.Eq.trans\n    \
      (_root_.AverCert.ClaimAxes.map_policy_of_derived (artifact := _root_.AverCert.Artifact.data)\n      \
      (_root_.And.left (_root_.And.right (_root_.And.right (_root_.And.right\n        \
      _root_.AverCert.Artifact.certificate)))))\n    \
-     (by decide +kernel)";
+     (by first | exact _root_.AverCert.Artifact.report_policies | decide +kernel)";
 const TERMINATIONS_REPORT_PROOF: &str = "_root_.Eq.trans\n    \
      (_root_.AverCert.ClaimAxes.map_termination_of_derived (artifact := _root_.AverCert.Artifact.data)\n      \
      (_root_.And.left (_root_.And.right (_root_.And.right (_root_.And.right\n        \
      _root_.AverCert.Artifact.certificate)))))\n    \
-     (by decide +kernel)";
+     (by first | exact _root_.AverCert.Artifact.report_terminations | decide +kernel)";
 
 /// Number of report pins [`checker_witness`] writes (they are numbered
 /// `report_pin_0 ..`); the audit walks every one of them.
