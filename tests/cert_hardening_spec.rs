@@ -441,7 +441,8 @@ fn cert_hardening_declines_a_package_module_hijacking_the_wall() {
     replace_once(
         &cert.join("Artifact.lean"),
         "theorem axes_ok : AverCert.ClaimAxes.checked data = true :=\n  \
-         AverCert.ScaleLayout.checked_of_bits plans_roles (by decide +kernel)",
+         AverCert.ScaleLayout.checked_of_bits plans_roles\n    \
+         (AverCert.ScaleTables.checkedBits_of_pols axes_pols (by decide +kernel))",
         "",
     );
     replace_once(
@@ -2031,8 +2032,8 @@ fn cert_hardening_declines_divmod_at_a_supertype_signature() {
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
     // The role types are their own declaration (`rest_roles`), read through
-    // the type section's cut.
-    assert!(report.contains("typesLazy"), "{report}");
+    // the type section by index.
+    assert!(report.contains("typeAt"), "{report}");
 }
 
 /// Compile the work-job fixture, whose module imports `aver:work/v1`.
@@ -2950,10 +2951,10 @@ fn cert_hardening_declines_a_sorry_backed_plans_part() {
     };
     replace_once(
         &cert.join("Artifact.lean"),
-        "AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans = true := by\n  \
-         decide +kernel\n\ntheorem rest_roles",
-        "AverCert.manifest.subject AverCert.manifest.types AverCert.manifest.fnPlans = true := by\n  \
-         sorry\n\ntheorem rest_roles",
+        "theorem rest_eqref : AverCert.TypeTable.eqrefConfined AverCert.manifest.types \
+         AverCert.manifest.fnPlans = true := by\n  decide +kernel",
+        "theorem rest_eqref : AverCert.TypeTable.eqrefConfined AverCert.manifest.types \
+         AverCert.manifest.fnPlans = true := by\n  sorry",
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "non-whitelisted axiom: sorryAx");
@@ -3429,6 +3430,6 @@ fn cert_hardening_declines_a_contains_without_its_equality_contract() {
     assert_declined(
         ok,
         &report,
-        "ScaleLayout.checkedBits data callBits = true\nis false",
+        "checkedPols data callBits axesPols = true\nis false",
     );
 }
