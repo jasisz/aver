@@ -9,7 +9,7 @@ on:
   pull_request:
     branches: [main]
   # The full matrix runs on a timer rather than on every push to main. It is
-  # 330 minutes of kernel work across 30 lanes, on a runner pool shared with
+  # Hundreds of minutes of kernel work, on a runner pool shared with
   # every other workflow here, so paying it per push made each pull request
   # queue behind roughly forty minutes of certification that almost never
   # changed. The guard in `decide` skips the run outright when main has not
@@ -147,6 +147,9 @@ jobs:
     # prefix out. A model or fixture added to the lists inside a suite lands in
     # an existing shard test, so these lanes never need editing for coverage —
     # only to add throughput.
+    # The hardening suite is also sliced, with every slice in PR smoke:
+    # the unsplit suite exceeded the job's hour limit while tests were still
+    # passing. All tests and verifier limits stay unchanged.
     name: Cert Kernel (${{ matrix.suite }}${{ matrix.lane && format(' {0}', matrix.lane) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -269,9 +272,10 @@ jobs:
 
       - name: Run wasip2 certificate tests
         # The verify/certify shards use only wasm, so their wasip2-only
-        # tripwire and snapshot are absent there. Reuse the hardening smoke
-        # lane's wasm,wasip2 build and Lean setup, without another job.
-        if: matrix.suite == 'cert_hardening_spec'
+        # tripwire and snapshot are absent there. Reuse the first hardening
+        # shard's wasm,wasip2 build and Lean setup, without another job
+        # or repeating these tests in every hardening shard.
+        if: matrix.wasip2_tests == true
         run: >-
           cargo test -p aver-lang --features wasm,wasip2 --test cert_verify_spec
           --test cert_certify_spec wasip2
