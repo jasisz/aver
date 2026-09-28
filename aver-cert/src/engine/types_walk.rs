@@ -46,6 +46,10 @@ struct TypeSection {
     entries: Vec<(usize, usize)>,
     /// Every type, in index order.
     types: Vec<TypeShape>,
+    /// The module offset and byte length of every subtype of the rec group
+    /// that opens the section (empty when the first entry is not a rec
+    /// group).
+    rec_subtypes: Vec<(usize, usize)>,
 }
 
 impl Cursor<'_> {
@@ -88,16 +92,19 @@ impl TypeSection {
                 start: s.at,
                 entries: Vec::new(),
                 types: Vec::new(),
+                rec_subtypes: Vec::new(),
             };
-            for _ in 0..count {
+            for entry in 0..count {
                 let begin = s.at;
-                let group = if s.bytes.get(s.at) == Some(&0x4e) {
+                let rec = s.bytes.get(s.at) == Some(&0x4e);
+                let group = if rec {
                     s.skip(1)?;
                     s.uleb()? as usize
                 } else {
                     1
                 };
                 for _ in 0..group {
+                    let sub_start = s.at;
                     if matches!(s.bytes.get(s.at), Some(0x50 | 0x4f)) {
                         s.skip(1)?;
                         for _ in 0..s.uleb()? {
@@ -139,6 +146,9 @@ impl TypeSection {
                         tag => return Err(format!("layout: composite type {tag:#x}")),
                     };
                     section.types.push(shape);
+                    if entry == 0 && rec {
+                        section.rec_subtypes.push((sub_start, s.at - sub_start));
+                    }
                 }
                 section.entries.push((s.at - begin, group));
             }
@@ -176,6 +186,9 @@ const TYPE_BLOCK: usize = 64;
 /// Functions classified per declaration.
 const STRING_BLOCK: usize = 64;
 
+/// Subtypes of the opening rec group decoded per declaration.
+const SUB_BLOCK: usize = 64;
+
 /// The declarations the walk checks, as Lean literals, and the walk's blocks:
 /// `ArtifactLayout`'s `typeCuts` pieces and `ArtifactTypes.lean`.
 pub(crate) struct TypeWalk {
@@ -188,6 +201,10 @@ pub(crate) struct TypeWalk {
     /// and the String byte arrays not yet met before it.
     blocks: Vec<(Vec<usize>, usize, usize, Vec<usize>)>,
     end: usize,
+    /// Every top-level entry's module offset and length.
+    top: Vec<(usize, usize)>,
+    /// The opening rec group's subtypes (`TypeSection::rec_subtypes`).
+    rec_subtypes: Vec<(usize, usize)>,
 }
 
 impl TypeWalk {
@@ -213,7 +230,9 @@ impl TypeWalk {
         let (mut t, mut off) = (0usize, section.start);
         let mut current: (Vec<usize>, usize, usize, Vec<usize>) = (Vec::new(), 0, off, sb.clone());
         let mut held = 0usize;
+        let mut top = Vec::with_capacity(section.entries.len());
         for &(len, group) in &section.entries {
+            top.push((off, len));
             if held > 0 && held + group > TYPE_BLOCK {
                 let next = (Vec::new(), t, off, sb.iter().copied().filter(|&x| x >= t).collect());
                 blocks.push(std::mem::replace(&mut current, next));
@@ -233,12 +252,14 @@ impl TypeWalk {
             type_count: section.types.len(),
             blocks,
             end: off,
+            top,
+            rec_subtypes: section.rec_subtypes,
         })
     }
 
-    /// `ArtifactLayout`'s type cut in blocks, and the declarations the walk
-    /// checks.
-    fn layout_decls(&self) -> String {
+    /// `ArtifactLayout`'s type cut in blocks, the declarations the walk
+    /// checks, and the type section's layouts by index.
+    fn layout_decls(&self) -> Result<String, String> {
         let pieces: String = self
             .blocks
             .iter()
@@ -250,7 +271,7 @@ impl TypeWalk {
                 .map(|b| format!("typeCuts_{b}"))
                 .collect::<Vec<_>>(),
         );
-        format!(
+        Ok(format!(
             "-- The type cut, in the blocks the type walk reads one declaration at a\n\
              -- time (`ArtifactTypes`), and the module offset of the first type.\n\
              {pieces}\
@@ -261,7 +282,25 @@ impl TypeWalk {
              -- producer data, every type checked against them by the type walk.\n\
              def stringArrays : List Nat := [{sb}]\n\n\
              def shapeBits : Nat :=\n  {bits}\n\n\
-             def shapeSigs : List (Nat × CertDecode.StringHost.Sig) :=\n  [{sigs}]\n\n",
+             def shapeSigs : List (Nat × CertDecode.StringHost.Sig) :=\n  [{sigs}]\n\n\
+             -- Every top-level entry of the type section, and every subtype of the\n\
+             -- rec group that opens it, by module offset and length (packed tables,\n\
+             -- {LAYOUT_WIDTH} bits per entry): producer data, confirmed against the cut\n\
+             -- and the bytes (`ScaleTables.typesTiled`, `recTiled`, `subOk`, `notRec`).\n\
+             def typeLayout : Layout :=\n  \
+               {{ imports := 0, count := {top_count}, width := {LAYOUT_WIDTH}, types := 0,\n    \
+                 offsets := {top_offs},\n    \
+                 lengths := {top_lens} }}\n\n\
+             def recLayout : Layout :=\n  \
+               {{ imports := 0, count := {rec_count}, width := {LAYOUT_WIDTH}, types := 0,\n    \
+                 offsets := {rec_offs},\n    \
+                 lengths := {rec_lens} }}\n\n",
+            top_count = self.top.len(),
+            top_offs = packed_hex(self.top.iter().map(|&(o, _)| o as u64))?,
+            top_lens = packed_hex(self.top.iter().map(|&(_, l)| l as u64))?,
+            rec_count = self.rec_subtypes.len(),
+            rec_offs = packed_hex(self.rec_subtypes.iter().map(|&(o, _)| o as u64))?,
+            rec_lens = packed_hex(self.rec_subtypes.iter().map(|&(_, l)| l as u64))?,
             start = self.start,
             sb = self
                 .string_arrays
@@ -271,7 +310,7 @@ impl TypeWalk {
                 .join(", "),
             bits = self.shape_bits,
             sigs = self.shape_sigs.join(",\n   "),
-        )
+        ))
     }
 }
 
@@ -315,6 +354,36 @@ fn render_type_theorems(walk: &TypeWalk) -> (String, Vec<String>, String) {
     for b in (0..walk.blocks.len() - 1).rev() {
         term = format!("AverCert.ScaleTypes.walkTypes_cons types_block_{b}\n    ({term})");
     }
+    // The type section by index: the top-level entries tile the cut, every
+    // entry after the first is a single subtype, the rec group's subtypes tile
+    // it, and every subtype decodes on its window, `SUB_BLOCK` per declaration.
+    const CS: &str = "AverCert.ArtifactBytes.chunks";
+    blocks.push(format!(
+        "theorem types_tiled : AverCert.ScaleTables.typesTiled typeLayout typeStart typeCuts = true := by\n  \
+         decide +kernel\n\n\
+         theorem types_single : AverCert.ScaleLayout.allRange\n    \
+         (AverCert.ScaleTables.notRec {CS} typeLayout) 1 (typeLayout.count - 1) = true := by\n  \
+         decide +kernel\n\n\
+         theorem rec_tiled : AverCert.ScaleTables.recTiled {CS} typeLayout recLayout = true := by\n  \
+         decide +kernel\n\n"
+    ));
+    let rec_count = walk.rec_subtypes.len();
+    let starts: Vec<usize> = (0..rec_count).step_by(SUB_BLOCK).collect();
+    const SUB: &str = "(AverCert.ScaleTables.subOk AverCert.ArtifactBytes.chunks recLayout)";
+    for &k in &starts {
+        blocks.push(format!(
+            "theorem rec_block_{k} : AverCert.ScaleLayout.allRange {SUB} {k} {} = true := by\n  \
+             decide +kernel\n\n",
+            SUB_BLOCK.min(rec_count - k)
+        ));
+    }
+    let rec_join = join_ranges(
+        &starts,
+        rec_count,
+        "AverCert.ScaleLayout.allRange_join",
+        |k| format!("rec_block_{k}"),
+        "AverCert.ScaleLayout.allRange_zero _ 0",
+    );
     let head = "-- The type section read in blocks, each top-level entry on its own chunk\n\
          -- window (`ScaleTypes.walkTypes`), every type checked against the String\n\
          -- byte arrays, the shape bits and the helper-shaped signatures declared\n\
@@ -332,7 +401,22 @@ fn render_type_theorems(walk: &TypeWalk) -> (String, Vec<String>, String) {
          theorem types_cut : CertDecode.decodeTypes {BYTES} =\n    \
            AverCert.ByteWindow.typesLazy {BYTES} typeCuts :=\n  \
            AverCert.ByteWindow.decodeTypes_eq_lazy\n    \
-           (AverCert.ScaleTypes.typesCutOk_of_walk bytes_eq chunks_fit types_head types_walk)\n\n",
+           (AverCert.ScaleTypes.typesCutOk_of_walk bytes_eq chunks_fit types_head types_walk)\n\n\
+         theorem rec_subs : AverCert.ScaleLayout.allRange {SUB} 0 recLayout.count = true :=\n  \
+           {rec_join}\n\n\
+         -- The type section by index: the rec group's subtypes, then the single\n\
+         -- entries, each decoded on its own window.\n\
+         theorem types_at : CertDecode.decodeTypes {BYTES} =\n    \
+           some (AverCert.ByteWindow.typeInfoOf (AverCert.ScaleTables.subEntries {CS} recLayout ++\n      \
+           AverCert.ScaleTables.topEntries {CS} typeLayout)) :=\n  \
+           AverCert.ScaleTables.decodeTypes_of_layout bytes_eq chunks_fit types_head types_walk\n    \
+           types_tiled rec_tiled rec_subs types_single\n\n\
+         theorem type_matches (check : CertDecode.TypeEntry → Bool) (t : Nat) :\n    \
+           AverCert.WasmSlice.typeSectionMatches check {BYTES} t =\n      \
+           match AverCert.ScaleTables.typeAt {CS} typeLayout recLayout t with\n      \
+           | some e => check e\n      \
+           | none => false :=\n  \
+           AverCert.ScaleTables.typeSectionMatches_at types_at (by decide) check t\n\n",
         count = walk.type_count,
         end = walk.end,
     );

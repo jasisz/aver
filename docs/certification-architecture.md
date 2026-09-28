@@ -104,7 +104,7 @@ For wasip2 the same rule covers the component wrapper. The manifest declares the
 
 ## The Lean wall
 
-The wall is one hash-addressed unit of 27 Lean files. By module:
+The wall is one hash-addressed unit of 31 Lean files. By module:
 
 - `CertPrelude`, `InterpreterSequencing`: the wasm instruction model and its interpreter;
 - `CertDecode`, `WasmSlice`, `Wasip2Envelope`: decoders over the actual module and component bytes;
@@ -120,6 +120,8 @@ The wall is one hash-addressed unit of 27 Lean files. By module:
 - `ScaleBytes`: the module bytes as 1 KiB chunks, windows that read only the chunks an entry touches (`window_eq`: a window is the slice of the whole module), and byte lists packed a limb at a time;
 - `ScaleLayout`: the module framing over producer-declared section headers, the code section tiled by the declared layout with each entry decoded on its own window, every plan's code entry compared as a packed window, and the claim axes from per-plan role bits, each with a proof that it implies the check it replaces (`moduleFramingValid_of_framing`, `layoutConfirmed_of_tiled`, `entries_of_packed`, `checked_of_bits`);
 - `ScaleExports`: the export section, sorted by name key, read in blocks of entries on their own windows, with the declared-uncertified names read as ASCII bytes and the planned exports left to their plans' sites, and a proof that this gives the export accounting (`exportsAccounted_of_walk`);
+- `ScaleClosure`: the certified closure folded over producer-declared callee lists, each checked against its function's code on its own window, with a proof that this gives `closureIsolation` (`closureIsolation_of_callees`);
+- `ScaleTables`: the data section in blocks of segments on their own windows (`dataConfirmed_of_blocks`), and the type section read by index through declared layouts of its top-level entries and of the opening rec group's subtypes (`decodeTypes_of_layout`, `typeTableConfirmed_of_layout`);
 - `ArithTemplateDerisk`: the Int helper body templates;
 - `ListHelpers`: the List helper templates (`len`, `reverse`, `concat`, `take`, `drop`, `contains`, and `__aint_to_i64_sat`), the structured-control interpreter that runs them, and the theorems of what each run computes;
 - `AcceptedArtifactCore`, `AcceptedArtifact`: the derived obligations and the acceptance predicate;

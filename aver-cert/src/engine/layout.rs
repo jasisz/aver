@@ -33,6 +33,10 @@ struct ModuleLayout {
     export_start: usize,
     /// The bytes of every export's name, in section order.
     export_names: Vec<Vec<u8>>,
+    /// The module offset of the data section's first segment, and every
+    /// segment's byte length; `None` when a segment is not passive (the wall
+    /// then declines whatever the package declares).
+    data_cuts: Option<(usize, Vec<usize>)>,
 }
 
 struct Cursor<'a> {
@@ -127,6 +131,7 @@ impl ModuleLayout {
             section_headers: Vec::new(),
             export_start: 0,
             export_names: Vec::new(),
+            data_cuts: Some((0, Vec::new())),
         };
         let mut c = Cursor { bytes, at: 8 };
         while c.at < bytes.len() {
@@ -178,6 +183,25 @@ impl ModuleLayout {
                         if kind == 0 {
                             layout.export_positions.entry(name).or_insert(position);
                         }
+                    }
+                }
+                11 => {
+                    let count = s.uleb()?;
+                    let data_start = s.at;
+                    let mut cuts = Vec::new();
+                    for _ in 0..count {
+                        let start = s.at;
+                        if s.byte()? != 0x01 {
+                            cuts.clear();
+                            layout.data_cuts = None;
+                            break;
+                        }
+                        let n = s.uleb()? as usize;
+                        s.skip(n)?;
+                        cuts.push(s.at - start);
+                    }
+                    if layout.data_cuts.is_some() {
+                        layout.data_cuts = Some((data_start, cuts));
                     }
                 }
                 10 => {
@@ -440,7 +464,7 @@ fn render_artifact_layout(
          -- and the helper roles its lowering calls, and every section header's\n\
          -- offset. Producer data: the framing and the code tiling are confirmed\n\
          -- against the staged bytes below, and the plan checks confirm the rest.\n\
-         import ScaleTypes\n\
+         import ScaleTables\n\
          import ArtifactBytes\n\n\
          set_option maxRecDepth 200000\n\n\
          namespace AverCert.Artifact\n\
@@ -513,12 +537,22 @@ fn render_artifact_layout(
                 .collect::<Vec<_>>()
         ),
         headers = nat_list(&layout.section_headers),
-        type_decls = types.layout_decls(),
+        type_decls = types.layout_decls()?,
         export_start = layout.export_start,
         sites = sites.join(",\n   "),
         bytes = "AverCert.ArtifactBytes.modBytes AverCert.ArtifactBytes.modLen",
     );
     let strings = render_string_blocks(analysis, count, layout.imports);
+    let data = layout.data_cuts.as_ref().map(render_data_blocks);
+    // The Int helpers' export entries, which the host role check finds by
+    // name: each read at its declared site instead.
+    let helper_sites = ["__rt_aint_from_i64", "__aint_to_index", "__aint_cmp"]
+        .into_iter()
+        .filter_map(|name| {
+            let p = *layout.export_positions.get(name)?;
+            Some((name, export_offsets[p], layout.export_cuts[p]))
+        })
+        .collect();
     Ok(LayoutParts {
         text,
         extra,
@@ -526,6 +560,8 @@ fn render_artifact_layout(
         sites,
         walk,
         strings,
+        data,
+        helper_sites,
     })
 }
 
@@ -539,6 +575,81 @@ pub(crate) struct LayoutParts {
     sites: Vec<String>,
     walk: ExportWalk,
     strings: String,
+    /// `rest_data` and the data section's blocks, when every segment is
+    /// passive.
+    data: Option<String>,
+    /// The export entry of each Int helper the module exports, by name, module
+    /// offset and length.
+    helper_sites: Vec<(&'static str, usize, usize)>,
+}
+
+/// Data segments read per declaration.
+const DATA_BLOCK: usize = 64;
+
+/// `rest_data` from the data section read in blocks of [`DATA_BLOCK`]
+/// segments, each on its own chunk window (`ScaleTables.dataBlock`), with
+/// every declared String segment checked in the block its index falls in,
+/// and every plan's String literals declared (`ScaleTables.litsDeclared`).
+fn render_data_blocks((start, cuts): &(usize, Vec<usize>)) -> String {
+    const SS: &str = "AverCert.manifest.types.strSegs";
+    let blocks: Vec<&[usize]> = cuts.chunks(DATA_BLOCK).collect();
+    let mut out = format!(
+        "-- The data section: the offset of its first segment and every segment's\n\
+         -- length, in blocks of {DATA_BLOCK}. Producer data, confirmed below.\n\
+         def dataStart : Nat := {start}\n\n"
+    );
+    for (b, block) in blocks.iter().enumerate() {
+        out.push_str(&format!(
+            "def dataCuts_{b} : List Nat :=\n  [{}]\n\n",
+            nat_list(block)
+        ));
+    }
+    let names: Vec<String> = (0..blocks.len()).map(|b| format!("dataCuts_{b}")).collect();
+    out.push_str(&format!(
+        "def dataCuts : List Nat :=\n  {}\n\n\
+         theorem data_head : AverCert.ScaleTables.sectionHead AverCert.ArtifactBytes.chunks\n    \
+         AverCert.ArtifactBytes.modLen headers 11 dataStart dataCuts = true := by\n  \
+         decide +kernel\n\n",
+        right_nested(&names)
+    ));
+    let (mut k, mut off) = (0usize, *start);
+    for (b, block) in blocks.iter().enumerate() {
+        let from = if b == 0 {
+            "dataStart".to_string()
+        } else {
+            off.to_string()
+        };
+        let (k1, off1) = (k + block.len(), off + block.iter().sum::<usize>());
+        out.push_str(&format!(
+            "theorem data_block_{b} : AverCert.ScaleTables.dataBlock AverCert.ArtifactBytes.chunks\n    \
+             {SS} {k} {from} dataCuts_{b} = some ({k1}, {off1}) := by\n  \
+             decide +kernel\n\n"
+        ));
+        (k, off) = (k1, off1);
+    }
+    let mut join = if blocks.is_empty() {
+        "AverCert.ScaleTables.dataOk_nil".to_string()
+    } else {
+        format!("AverCert.ScaleTables.dataOk_last data_block_{}", blocks.len() - 1)
+    };
+    for b in (0..blocks.len().saturating_sub(1)).rev() {
+        join = format!("AverCert.ScaleTables.dataOk_cons data_block_{b}\n    ({join})");
+    }
+    out.push_str(&format!(
+        "theorem data_ok : AverCert.ScaleTables.DataOk AverCert.ArtifactBytes.chunks\n    \
+         {SS} 0 dataStart dataCuts :=\n  {join}\n\n\
+         theorem data_bound : {SS}.all (fun x => decide (x.2 < dataCuts.length)) = true := by\n  \
+         decide +kernel\n\n\
+         theorem data_lits : AverCert.manifest.fnPlans.all\n    \
+         (fun e => AverCert.ScaleTables.litsDeclared {SS} e.plan) = true := by\n  \
+         decide +kernel\n\n\
+         theorem rest_data : AverCert.TypeTable.dataConfirmed AverCert.ArtifactBytes.modBytes\n    \
+         AverCert.ArtifactBytes.modLen AverCert.manifest.subject AverCert.manifest.types\n    \
+         AverCert.manifest.fnPlans = true :=\n  \
+         AverCert.ScaleTables.dataConfirmed_of_blocks bytes_eq chunks_fit data_head data_ok\n    \
+         data_bound data_lits\n\n"
+    ));
+    out
 }
 
 /// A byte-per-8-bits bitmap as a hex numeral, bit 0 lowest.

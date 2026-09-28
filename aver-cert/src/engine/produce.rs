@@ -25,6 +25,8 @@ pub struct CertifiedExport {
     pub name: String,
     pub func_idx: u32,
     pub total: bool,
+    /// Total with the `mul` totality role (`ClaimAxes.checked`'s `mulTotal`).
+    pub total_mul: bool,
     pub facets: Vec<&'static str>,
 }
 
@@ -834,6 +836,7 @@ pub fn analyze(
             name: e.name.clone(),
             func_idx: e.func_idx,
             total: group_total[&e.group].is_some(),
+            total_mul: group_total[&e.group] == Some(true),
             facets,
         });
     }
