@@ -98,8 +98,74 @@
   },
   {
     "suite": "cert_hardening_spec",
-    "lane": "",
-    "mode": "cargo",
+    "lane": "hardening-1/8",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "1/8",
+    "features": "wasm,wasip2",
+    "wasip2_tests": true,
+    "smoke": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "hardening-2/8",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "2/8",
+    "features": "wasm,wasip2",
+    "smoke": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "hardening-3/8",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "3/8",
+    "features": "wasm,wasip2",
+    "smoke": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "hardening-4/8",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "4/8",
+    "features": "wasm,wasip2",
+    "smoke": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "hardening-5/8",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "5/8",
+    "features": "wasm,wasip2",
+    "smoke": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "hardening-6/8",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "6/8",
+    "features": "wasm,wasip2",
+    "smoke": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "hardening-7/8",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "7/8",
+    "features": "wasm,wasip2",
+    "smoke": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "hardening-8/8",
+    "mode": "nextest",
+    "filter": "all()",
+    "partition": "8/8",
     "features": "wasm,wasip2",
     "smoke": true
   },
