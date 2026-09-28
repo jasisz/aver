@@ -1304,7 +1304,7 @@ fn render_final() -> String {
 }
 
 fn render_artifact_certificate() -> String {
-    "import Artifact\nimport Final\n\n\
+    "import Artifact\nimport Final\nimport ArtifactReports\n\n\
      namespace AverCert.Artifact\n\n\
      theorem certificate : AverCert.AcceptedArtifact.accepted data :=\n  \
      ⟨AverCert.Final.cert, envelope_ok, rfl, rfl, plans_ok, roles_ok, strings_ok, axes_ok, whole_ok⟩\n\n\
@@ -1584,6 +1584,9 @@ pub fn write_project(
         write(&cert_dir, &name, &text)?;
     }
     write(&cert_dir, "Final.lean", &render_final())?;
+    for (name, text) in render_report_blocks(analysis) {
+        write(&cert_dir, &name, &text)?;
+    }
     write(
         &cert_dir,
         "ArtifactCertificate.lean",

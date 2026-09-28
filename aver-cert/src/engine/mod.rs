@@ -114,4 +114,5 @@ include!("layout.rs");
 include!("types_walk.rs");
 #[cfg(feature = "engine")]
 include!("render_package.rs");
+include!("render_reports.rs");
 include!("law_claims.rs");

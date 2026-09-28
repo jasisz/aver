@@ -125,7 +125,7 @@ The wall is one hash-addressed unit of 31 Lean files. By module:
 - `ArithTemplateDerisk`: the Int helper body templates;
 - `ListHelpers`: the List helper templates (`len`, `reverse`, `concat`, `take`, `drop`, `contains`, and `__aint_to_i64_sat`), the structured-control interpreter that runs them, and the theorems of what each run computes;
 - `AcceptedArtifactCore`, `AcceptedArtifact`: the derived obligations and the acceptance predicate;
-- `ClaimAxes`: the required runtime contracts and the report data, with equations that compute the per-group report data once per call group;
+- `ClaimAxes`: the required runtime contracts and the report data, with equations that compute the per-group report data once per call group, and `report_cons`, which joins consecutive report blocks without truncating the last tail. The package can supply these block proofs; the witness still pins the full lists to JSON and audits every selected proof;
 - `AcceptanceSoundnessCore`, `AcceptanceSoundness`: `fn_claim_discharges`, `accept_sound` and `accepted_nonvacuous`;
 - `GrammarBridge`: the source-bridge statement kinds and proof engines;
 - `ModelPrelude`: the checker-owned pieces of the source model that the token gate refuses in package text.

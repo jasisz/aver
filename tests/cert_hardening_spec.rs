@@ -126,11 +126,15 @@ fn lake_available() -> bool {
 
 /// Emit the baseline certificate into a fresh scratch directory.
 fn baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
+    baseline_source(prefix, TINY)
+}
+
+fn baseline_source(prefix: &str, source: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
     if !lake_available() {
         return None;
     }
     let dir = temp_dir(prefix);
-    std::fs::write(dir.join("tiny.av"), TINY).unwrap();
+    std::fs::write(dir.join("tiny.av"), source).unwrap();
     let out = dir.join("out");
     let compile = aver_command()
         .current_dir(&*dir)
@@ -309,6 +313,68 @@ fn cert_hardening_declines_a_sorry_backed_report_pin() {
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "non-whitelisted axiom: sorryAx");
+}
+
+/// Report blocks supply proofs only. Omitting their import leaves the same
+/// report checked by the witness's direct-computation fallback.
+#[test]
+fn cert_hardening_checks_without_optional_report_proofs() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-report-fallback") else {
+        return;
+    };
+    let (ok, with_blocks) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "{with_blocks}");
+    replace_once(
+        &cert.join("ArtifactCertificate.lean"),
+        "import ArtifactReports\n",
+        "",
+    );
+    let (ok, without_blocks) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "{without_blocks}");
+    assert_eq!(with_blocks, without_blocks);
+}
+
+/// A block lemma is reached by the report pin's axiom audit, even though it
+/// is not a dependency of the accepted-artifact theorem itself.
+#[test]
+fn cert_hardening_declines_a_sorry_backed_report_block() {
+    let Some((_dir, wasm, cert)) = baseline("certharden-report-block-axiom") else {
+        return;
+    };
+    replace_once(
+        &cert.join("ArtifactReportBlocks0.lean"),
+        "= report_facets_0 := by\n  decide +kernel",
+        "= report_facets_0 := by\n  sorry",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "non-whitelisted axiom: sorryAx");
+}
+
+/// Exercise the join at 64 entries and its non-empty final tail. A missing
+/// entry at that boundary must fail the block's own kernel equality.
+#[test]
+fn cert_hardening_report_blocks_check_the_last_export() {
+    let names = (0..65).map(|i| format!("f{i}")).collect::<Vec<_>>();
+    let mut source = format!(
+        "module ReportBlocks\n    intent = \"A report across a block boundary.\"\n    exposes [{}]\n\n",
+        names.join(", ")
+    );
+    for (i, name) in names.iter().enumerate() {
+        source.push_str(&format!("fn {name}(x: Int) -> Int\n    x + {i}\n\n"));
+    }
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-report-tail", &source) else {
+        return;
+    };
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok && report.contains("65 checked exports"), "{report}");
+    let block = cert.join("ArtifactReportBlocks0.lean");
+    let text = std::fs::read_to_string(&block).unwrap();
+    let start = text.find("def report_entries_1 :").expect("second block");
+    let value = start + text[start..].find("[(").expect("report entry pair");
+    let end = value + text[value..].find(']').unwrap() + 1;
+    std::fs::write(&block, format!("{}[]{}", &text[..value], &text[end..])).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "= report_entries_1");
 }
 
 /// A law-claim that conjoins the bridge of a function its statement never
