@@ -59,6 +59,7 @@ const FIXTURES: &[&str] = &[
 const S1_FIXTURES: &[&str] = &[
     "arity3",
     "bool_window",
+    "bridge_body_calls",
     "cell_at",
     "cert_goals",
     "certempty",

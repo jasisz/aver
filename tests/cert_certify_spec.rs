@@ -16,6 +16,8 @@ mod lean_required;
 
 use aver_cmd::aver_command;
 
+#[path = "support/bridge_incremental.rs"]
+mod bridge_incremental;
 #[path = "support/bridge_slices.rs"]
 mod bridge_slices;
 #[path = "support/cert_wall.rs"]
@@ -1655,6 +1657,24 @@ fn certify_straight_line_fixture_lake_builds_kernel_clean() {
     // The package's acceptance root builds on the core axiom whitelist, with
     // no `sorryAx` anywhere in it.
     assert_certificate_target_builds(&out_dir.join("cert"), "straight-line certprobe");
+}
+
+#[test]
+fn certify_step_bodies_reuse_cache_after_an_independent_function_edit() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping bridge cache test: `lake` not available");
+        return;
+    }
+    bridge_incremental::check_independent_edit();
+}
+
+#[test]
+fn certify_parametric_step_bodies_close_decoded_sum_calls() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping bridge body test: `lake` not available");
+        return;
+    }
+    bridge_incremental::check_decoded_sum_calls();
 }
 
 /// A recursion multiplying by a large constant is certified at L3 with the

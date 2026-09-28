@@ -16,6 +16,8 @@ fn plan_with_functions(count: u32) -> BridgePlan {
                 BridgedFn {
                     func_idx: f,
                     model: format!("M.f{f}"),
+                    model_root: "AverModel.M".into(),
+                    body: PlanExpr::Literal(PlanLit::Int(0)).lean(),
                     params: Vec::new(),
                     result: SourceEncoder::Int,
                     callees: Vec::new(),
@@ -114,4 +116,58 @@ fn internal_callees_import_once_in_numeric_slice_order() {
     plan.fns.get_mut(&index(0)).unwrap().callees = vec![index(264), index(48)];
     plan.fns.get_mut(&index(264)).unwrap().callees = vec![index(264)];
     assert_eq!(proof_imports(&plan), [vec![0, 2, 11]]);
+}
+
+#[test]
+fn expensive_step_bodies_do_not_import_program_wide_tables() {
+    let plan = plan_with_functions(48);
+    let (_, parts) = render_bridge_lean(&plan, &["AverModel.M".into()], "ArtifactInterface");
+    let bodies: Vec<_> = parts.iter().filter(|(name, _)| name.starts_with("BridgeBodies")).collect();
+    assert_eq!(bodies.len(), 2, "heavy body proofs have independently cached modules");
+    for (_, text) in bodies {
+        assert!(!text.contains("import Manifest\n"));
+        assert!(!text.contains("import Plans\n"));
+        assert!(!text.contains("import BridgeDefs\n"));
+        assert!(!text.contains("AverCert.Plans.fnPlans"));
+        assert!(text.contains("(I : AverCert.GrammarBridge.Table)"));
+    }
+}
+
+#[test]
+fn image_slices_import_the_recorded_model_files_not_namespaces() {
+    let mut plan = plan_with_functions(48);
+    for (ordinal, b) in plan.fns.values_mut().enumerate() {
+        b.model_root = if ordinal < 24 { "AverModel.Left" } else { "AverModel.Right" }.into();
+    }
+    let (_, parts) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let part = |name: &str| &parts.iter().find(|(path, _)| path == name).unwrap().1;
+    assert!(part("BridgeImages0.lean").contains("import AverModel.Left\n"));
+    assert!(!part("BridgeImages0.lean").contains("import AverModel.Right\n"));
+    assert!(part("BridgeBodies0.lean").contains("import BridgeImages0\n"));
+    assert!(!part("BridgeBodies0.lean").contains("import BridgeImages1\n"));
+    assert!(part("BridgeBodies1.lean").contains("import BridgeImages1\n"));
+    assert!(!part("BridgeBodies1.lean").contains("import BridgeImages0\n"));
+
+    // A cross-slice call adds the callee's image, but not its proof body.
+    plan.fns.get_mut(&index(0)).unwrap().callees.push(index(24));
+    let (_, changed) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let body = &changed.iter().find(|(path, _)| path == "BridgeBodies0.lean").unwrap().1;
+    assert!(body.contains("import BridgeImages1\n"));
+    assert!(!body.contains("import BridgeBodies1\n"));
+}
+
+#[test]
+fn changing_one_body_leaves_disjoint_heavy_slices_identical() {
+    let mut plan = plan_with_functions(48);
+    let (_, before) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    plan.fns.get_mut(&index(0)).unwrap().body = PlanExpr::Literal(PlanLit::Int(1)).lean();
+    let (_, after) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let changed: Vec<_> = before.iter().zip(&after)
+        .filter_map(|((name, old), (new_name, new))| {
+            assert_eq!(name, new_name);
+            (old != new).then_some(name.as_str())
+        }).collect();
+    assert_eq!(changed, ["BridgeBodies0.lean"]);
+    let binding = &after.iter().find(|(name, _)| name == "BridgeSteps0.lean").unwrap().1;
+    assert!(binding.contains("⟨AverCert.Plans.fn100, rfl, stepBody_100 I I_100⟩"));
 }

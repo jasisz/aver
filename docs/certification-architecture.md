@@ -35,7 +35,14 @@ The producer runs inside `aver compile --certify` and is not trusted.
 3. Offered functions are grouped into call SCCs, callees first. Exported functions become obligations; internal callees are planned and bound by function index.
 4. `render_package.rs` writes the package. When the package declares source-bridges or law-claims, it also ships the Lean source model and the bridge proofs (`source_bridges.rs`, `law_claims.rs`).
 
-Source-bridge proofs are split into `BridgeSteps<i>` (step lemmas) and `BridgeProof<i>` (export theorems). Each proof slice imports only the step slices containing functions in its exports' transitive call closures, including internal callees and recursive components. Unrelated step slices therefore do not delay that proof slice's build. The shared `BridgeDefs` still imports the complete model and manifest; this is narrower proof scheduling, not function-local cache invalidation. `Bridge.lean` keeps direct imports of every model root for the checker's model-file admission.
+Source-bridge package assembly (`source_bridge_parts.rs`) separates heavy proofs from artifact-wide tables:
+
+- `BridgeSupport` contains artifact-independent decoders and evaluation lemmas. `BridgeImages<i>` contains source decoders/images and imports their actual model files.
+- `BridgeBodies<i>` proves each function body parametrically in the source image table, assuming the images of only that function and its direct callees. It imports their image slices, shared support and string literals, but neither `Plans`, `Manifest` nor the complete image table. Unrelated body proofs can survive a source edit in the trusted developer cache.
+- `BridgeSteps<i>` binds those body lemmas to the complete image table in `BridgeDefs` and the authoritative plans in `Plans`. The kernel checks the plan lookup and definitional equality of each proof-local body with the selected plan body; the local body is not another plan authority.
+- `BridgeProof<i>` assembles the unchanged export theorems. Each slice imports only the step slices in its exports' transitive call closures, including internal callees and recursive components.
+
+Image and body slices use the same 24-function partition as steps. Model-module dependencies, shared `BridgeLits` and partition shifts remain sources of invalidation; bindings and export assembly still depend on global tables. This changes producer scheduling and cache reuse, not the schema, wall, checker or acceptance policy. `Bridge.lean` keeps direct imports of every model root for the checker's model-file admission.
 
 Before it ships a model file, the producer runs the checker's own file-name, case-collision and token rules on it (`aver-cert/src/lean_gate.rs`). The two sides share one implementation, so the producer drops or declines exactly what the checker would refuse.
 

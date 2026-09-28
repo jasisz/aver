@@ -357,6 +357,23 @@
   },
   "laws": []
  },
+ "tools/certkit/fixtures/bridge_body_calls.av": {
+  "bridges": [
+   "answered",
+   "classify",
+   "pressed",
+   "recognised",
+   "switched"
+  ],
+  "certified": {
+   "answered": "L1",
+   "classify": "L1",
+   "pressed": "L1",
+   "recognised": "L1",
+   "switched": "L1"
+  },
+  "laws": []
+ },
  "tools/certkit/fixtures/cell_at.av": {
   "bridges": [],
   "certified": {},
