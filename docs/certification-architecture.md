@@ -35,6 +35,8 @@ The producer runs inside `aver compile --certify` and is not trusted.
 3. Offered functions are grouped into call SCCs, callees first. Exported functions become obligations; internal callees are planned and bound by function index.
 4. `render_package.rs` writes the package. When the package declares source-bridges or law-claims, it also ships the Lean source model and the bridge proofs (`source_bridges.rs`, `law_claims.rs`).
 
+Source-bridge proofs are split into `BridgeSteps<i>` (step lemmas) and `BridgeProof<i>` (export theorems). Each proof slice imports only the step slices containing functions in its exports' transitive call closures, including internal callees and recursive components. Unrelated step slices therefore do not delay that proof slice's build. The shared `BridgeDefs` still imports the complete model and manifest; this is narrower proof scheduling, not function-local cache invalidation. `Bridge.lean` keeps direct imports of every model root for the checker's model-file admission.
+
 Before it ships a model file, the producer runs the checker's own file-name, case-collision and token rules on it (`aver-cert/src/lean_gate.rs`). The two sides share one implementation, so the producer drops or declines exactly what the checker would refuse.
 
 ## Ownership of inputs
