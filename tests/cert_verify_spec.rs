@@ -3066,7 +3066,8 @@ fn cert_plans_authority_declines_artifact_carried_axiom_bridge() {
     replace_once(
         &cert.join("Artifact.lean"),
         "theorem axes_ok : AverCert.ClaimAxes.checked data = true :=\n  \
-         AverCert.ScaleLayout.checked_of_bits plans_roles (by decide +kernel)",
+         AverCert.ScaleLayout.checked_of_bits plans_roles\n    \
+         (AverCert.ScaleTables.checkedBits_of_pols axes_pols (by decide +kernel))",
         "axiom artifactEvil : AverCert.ClaimAxes.checked data = true\n\n\
          theorem axes_ok : AverCert.ClaimAxes.checked data = true := artifactEvil",
     );
