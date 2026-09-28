@@ -2116,10 +2116,11 @@ const BRIDGE_STEPS_PER_MODULE: usize = 24;
 ///
 /// Only the corollaries cite `AverCert.Final.cert`, and `Final` sits behind
 /// every byte fact. The bridge proofs wait only for the module that proves
-/// the export accounting (`exports_module`), and each slice is a module of
-/// its own, so a parallel Lake builds the slices at once, beside the other
-/// byte facts. `Bridge.lean` still imports every model root, since the
-/// checker admits a nested model file only on an import line of
+/// the export accounting (`exports_module`) and the step slices in their
+/// callees' closures, so a parallel Lake can start a proof slice before
+/// unrelated steps finish, beside the other byte facts. `Bridge.lean`
+/// still imports every model root, since the checker admits a nested model
+/// file only on an import line of
 /// `Bridge.lean` or `Laws.lean`.
 fn render_bridge_lean(
     plan: &BridgePlan,
@@ -2207,7 +2208,7 @@ fn render_bridge_lean(
         (format!("{BRIDGE_LITS_MODULE}.lean"), lits),
     ];
     let steps: Vec<&BridgedFn> = plan.fns.values().collect();
-    let mut step_imports = String::new();
+    let mut step_owners = BTreeMap::new();
     for (i, slice) in steps.chunks(BRIDGE_STEPS_PER_MODULE).enumerate() {
         let name = format!("{BRIDGE_STEPS_MODULE}{i}");
         let mut part = format!(
@@ -2222,11 +2223,11 @@ fn render_bridge_lean(
              namespace AverCert.Bridge\n\n"
         );
         for b in slice {
+            step_owners.insert(b.func_idx, i);
             render_step(b, &plan.fns, &lit_index, plan.with_default, &mut part);
         }
         part.push_str("end AverCert.Bridge\n");
         parts.push((format!("{name}.lean"), part));
-        step_imports.push_str(&format!("import {name}\n"));
     }
     parts.push((
         format!("{BRIDGE_NAMES_MODULE}.lean"),
@@ -2240,6 +2241,19 @@ fn render_bridge_lean(
     let mut proof_imports = String::new();
     for (i, slice) in plan.bridges.chunks(per_slice).enumerate() {
         let name = format!("{BRIDGE_PROOF_MODULE}{i}");
+        // `render_export` cites exactly `step_f` for every function in this
+        // closure, including internal callees and recursive components.
+        // Route through the actual step partition: function indices need
+        // not be contiguous. Stable numeric order also deduplicates imports.
+        let needed_steps: BTreeSet<usize> = slice
+            .iter()
+            .flat_map(|(_, f)| closure_of(*f, &plan.fns))
+            .map(|f| step_owners[&f])
+            .collect();
+        let step_imports: String = needed_steps
+            .iter()
+            .map(|i| format!("import {BRIDGE_STEPS_MODULE}{i}\n"))
+            .collect();
         let mut part = format!(
             "-- One slice of the plan-equals-source bridges of this certificate: the\n\
              -- export theorems, over the step lemmas of the slices imported below.\n\
@@ -2662,6 +2676,10 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
         declined_laws,
     }
 }
+
+#[cfg(test)]
+#[path = "source_bridge_import_tests.rs"]
+mod source_bridge_import_tests;
 
 #[cfg(test)]
 mod source_bridge_tests {
