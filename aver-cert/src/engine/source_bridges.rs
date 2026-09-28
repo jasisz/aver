@@ -250,6 +250,7 @@ fn parse_atom(tokens: &[String], at: &mut usize) -> Option<LTy> {
 struct LeanDef {
     qualified: String,
     namespace: String,
+    module: String,
     params: Vec<String>,
     ret: String,
     body: String,
@@ -329,8 +330,8 @@ impl ModelInfo {
     fn from_model(model: &SourceModel) -> Self {
         let mut info = Self::default();
         for (path, content) in &model.files {
-            if path.ends_with(".lean") {
-                info.parse(content);
+            if let Ok(root) = crate::lean_gate::lean_module_root(path) {
+                info.parse(content, &format!("{MODEL_PACKAGE_DIR}.{root}"));
             }
         }
         // Flat wasm names: the entry module's functions keep their bare name,
@@ -361,7 +362,7 @@ impl ModelInfo {
         info
     }
 
-    fn parse(&mut self, content: &str) {
+    fn parse(&mut self, content: &str, module: &str) {
         let mut namespaces: Vec<String> = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
         let mut i = 0;
@@ -449,6 +450,7 @@ impl ModelInfo {
                         LeanDef {
                             qualified,
                             namespace: ns.clone(),
+                            module: module.to_string(),
                             params,
                             ret,
                             body,
@@ -912,6 +914,11 @@ fn rcases_pattern(enc: &SourceEncoder) -> Option<String> {
 struct BridgedFn {
     func_idx: u32,
     model: String,
+    /// The actual model file, not inferred from the source namespace.
+    model_root: String,
+    /// A proof-local copy of the body in the same plan grammar. The thin
+    /// step binding must identify it with `Plans.fn{func_idx}.body`.
+    body: String,
     params: Vec<SourceEncoder>,
     result: SourceEncoder,
     /// Direct callees, deduplicated.
@@ -1160,6 +1167,8 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
             Ok(BridgedFn {
                 func_idx: e.func_idx,
                 model: def.qualified.clone(),
+                model_root: def.module.clone(),
+                body,
                 params,
                 result,
                 recursive: callees.contains(&e.func_idx),
@@ -1373,7 +1382,7 @@ fn render_image_table(fns: &BTreeMap<u32, BridgedFn>, s: &mut String) {
 }
 
 /// The fixed lemmas every step proof rewrites with, rendered once into
-/// `BridgeDefs.lean`: arm-by-arm evaluation of a match (one rewrite per
+/// `BridgeSupport.lean`: arm-by-arm evaluation of a match (one rewrite per
 /// pattern kind, so a symbolic subject never unfolds `patMatch`), a plan `if`
 /// as a Lean `if`, splitting an `if` without naming its condition, and the
 /// normal forms that meet the source's spelling (`==`, `!=`, String `+`,
@@ -1711,7 +1720,7 @@ end StepLemmas
 "#;
 
 /// The decoders of a List argument of Ints, Bools or Strings, rendered into
-/// `BridgeDefs.lean` ahead of the functions' decoders that call them: the
+/// `BridgeSupport.lean` ahead of the functions' decoders that call them: the
 /// whole value, one cons cell at a time. Their lemmas are in [`STEP_LEMMAS`].
 const LIST_DECODERS: &str = r#"section ListDecoders
 open AverCert.Grammar
@@ -1775,7 +1784,7 @@ const STEP_NORM: &str = "_root_.bne, dec_eq_beq, dec_ne_bne, strBytes_eq_iff, st
 /// function unfolded once (on the right only, for a self-recursive one). No
 /// rung searches: each is bounded by the plan's size, so a leaf that does not
 /// close fails fast and falls to `sorry`.
-fn render_step(
+fn render_step_body(
     b: &BridgedFn,
     fns: &BTreeMap<u32, BridgedFn>,
     lit_index: &BTreeMap<Vec<u8>, usize>,
@@ -1783,6 +1792,17 @@ fn render_step(
     s: &mut String,
 ) {
     let f = b.func_idx;
+    s.push_str(&format!(
+        "-- Proof-local body; the step binding checks it against Plans.fn{f}.\n\
+         def body_{f} : AverCert.Grammar.Expr :=\n  {}\n\n",
+        b.body
+    ));
+    let images: String = image_dependencies(b)
+        .iter()
+        .map(|g| format!(
+            "\n    (I_{g} : ∀ a : _root_.List AverCert.Grammar.SVal, I {g} a = (dec_{g} a).map img_{g})"
+        ))
+        .collect();
     let callees = b
         .callees
         .iter()
@@ -1876,14 +1896,20 @@ fn render_step(
              | (simp only [{unfold_list}{forward}{constants}]; rfl)"
         )
     };
+    // Match encoders emitted in different image modules have distinct
+    // auxiliary definitions. A simplification leaf can leave them equal
+    // only definitionally; the final `rfl` closes that equality in the kernel.
     s.push_str(&format!(
         "/-- One step of `{m}`: its plan body, with every call answered by the\n    \
          callees' images, returns its own image. -/\n\
-         theorem step_{f} : AverCert.GrammarBridge.Step AverCert.Plans.fnPlans I [{callees}] {f} := by\n  \
+         theorem stepBody_{f} (I : AverCert.GrammarBridge.Table){images} :\n    \
+           ∀ (F : AverCert.GrammarBridge.Table) (a : _root_.List AverCert.Grammar.SVal)\n      \
+             (w : AverCert.Grammar.SVal), I {f} a = _root_.Option.some w →\n        \
+             AverCert.Grammar.eval (AverCert.GrammarBridge.over I [{callees}] F)\n          \
+               (AverCert.Grammar.argsEnv a) body_{f} = _root_.Option.some w := by\n  \
          first\n  \
          | (set_option maxHeartbeats {cap} in\n      \
-             (refine ⟨AverCert.Plans.fn{f}, rfl, ?_⟩\n       \
-              intro F a w h\n       \
+             (intro F a w h\n       \
               simp only [I_{f}, _root_.Option.map_eq_some_iff] at h\n       \
               obtain ⟨y, hy, rfl⟩ := h\n       \
               unfold dec_{f} at hy\n       \
@@ -1897,17 +1923,39 @@ fn render_step(
                    | (rcases decListBool_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩))\n            \
                    | (rcases decListString_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩)))))\n       \
               all_goals (try subst hy)\n       \
-              all_goals simp only [AverCert.Plans.fn{f}, eval_ite, eval_optDefault, eval_resDefault]\n       \
+              all_goals simp only [body_{f}, eval_ite, eval_optDefault, eval_resDefault]\n       \
               all_goals simp only [img_{f}, {STEP_EVAL}, I_{f}{callee_simps}{backward}]\n       \
               all_goals (repeat' (refine ite_eq_of (fun h => ?_) (fun h => ?_)))\n       \
               all_goals (try subst_vars)\n       \
               all_goals\n         \
                 first\n           \
                 | {leaf}\n       \
+              all_goals rfl\n       \
               done))\n  \
          | sorry\n\n",
         m = b.model,
         cap = STEP_HEARTBEATS,
+    ));
+}
+
+/// Only the function itself and its direct callees constrain the image
+/// table of a body proof. Self calls share the function's own hypothesis.
+fn image_dependencies(b: &BridgedFn) -> BTreeSet<u32> {
+    std::iter::once(b.func_idx).chain(b.callees.iter().copied()).collect()
+}
+
+/// Bind the cached body theorem to the authoritative plan and image tables.
+/// Lean checks both the plan lookup and the equality of the local body with
+/// the selected plan body here; the public bridge statement is unchanged.
+fn render_step_binding(b: &BridgedFn, s: &mut String) {
+    let f = b.func_idx;
+    let callees = b.callees.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
+    let images: String = image_dependencies(b).iter().map(|g| format!(" I_{g}")).collect();
+    s.push_str(&format!(
+        "theorem step_{f} : AverCert.GrammarBridge.Step AverCert.Plans.fnPlans I [{callees}] {f} := by\n  \
+         first\n  \
+         | exact ⟨AverCert.Plans.fn{f}, rfl, stepBody_{f} I{images}⟩\n  \
+         | sorry\n\n"
     ));
 }
 
@@ -2098,7 +2146,7 @@ pub const BRIDGE_PROOF_MODULE: &str = "BridgeProof";
 const BRIDGE_PROOFS_PER_MODULE: usize = 50;
 /// The module of `export_names_nodup`, which every bridge proof cites.
 pub const BRIDGE_NAMES_MODULE: &str = "BridgeNames";
-/// The decoders, images and rewrite lemmas every step slice imports.
+/// The complete image and depth tables the thin step bindings import.
 pub const BRIDGE_DEFS_MODULE: &str = "BridgeDefs";
 /// The String literals' bytes every step slice imports.
 pub const BRIDGE_LITS_MODULE: &str = "BridgeLits";
@@ -2107,186 +2155,8 @@ pub const BRIDGE_STEPS_MODULE: &str = "BridgeSteps";
 /// Step lemmas per slice module.
 const BRIDGE_STEPS_PER_MODULE: usize = 24;
 
-/// Render the package's bridge surface: `BridgeDefs.lean` (decoders, images
-/// and rewrite lemmas), the step lemmas in slices `BridgeSteps<i>.lean`,
-/// `BridgeNames.lean` (the export names distinct), the bridge theorems in
-/// slices `BridgeProof<i>.lean` (one theorem per export) and `Bridge.lean`
-/// (the `_certified` corollaries the manifest names), which is returned
-/// apart from the other modules.
-///
-/// Only the corollaries cite `AverCert.Final.cert`, and `Final` sits behind
-/// every byte fact. The bridge proofs wait only for the module that proves
-/// the export accounting (`exports_module`) and the step slices in their
-/// callees' closures, so a parallel Lake can start a proof slice before
-/// unrelated steps finish, beside the other byte facts. `Bridge.lean`
-/// still imports every model root, since the checker admits a nested model
-/// file only on an import line of
-/// `Bridge.lean` or `Laws.lean`.
-fn render_bridge_lean(
-    plan: &BridgePlan,
-    model_roots: &[String],
-    exports_module: &str,
-) -> (String, Vec<(String, String)>) {
-    let mut s = String::from(
-        "-- Plan-equals-source bridges of this certificate. Each bridge identifies\n\
-         -- the plan an export's obligation evaluates with the transpiled source\n\
-         -- function the model modules and the law-claims speak about, through\n\
-         -- the source-value encoders the checker renders. Producer data: the\n\
-         -- checker re-states every bridge from structure and audits its axioms.\n\
-         import Manifest\n\
-         import GrammarBridge\n",
-    );
-    for root in model_roots {
-        s.push_str(&format!("import {root}\n"));
-    }
-    s.push_str(&format!(
-        "\nset_option autoImplicit false\n\
-         set_option maxRecDepth 200000\n\
-         set_option linter.unusedSimpArgs false\n\
-         set_option linter.unusedVariables false\n\
-         set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
-         namespace AverCert.Bridge\n\n"
-    ));
-    s.push_str(LIST_DECODERS);
-    for b in plan.fns.values() {
-        render_fn_defs(b, &mut s);
-    }
-    render_image_table(&plan.fns, &mut s);
-    s.push_str(STEP_LEMMAS);
-    s.push('\n');
-    // The depth of every function whose call closure has no recursion.
-    s.push_str("/-- Call depth over the acyclic part of the call graph. -/\ndef depth : _root_.Nat → _root_.Nat := fun g =>\n  match g with\n");
-    for (f, d) in &plan.depth {
-        s.push_str(&format!("  | {f} => {d}\n"));
-    }
-    s.push_str("  | _ => 0\n\n");
-    // The bytes of every String literal the plans mention, as rewrite
-    // lemmas: `simp` cannot evaluate `strBytes "…"` itself. They depend on
-    // nothing but the wall, so they are a module of their own that Lake
-    // builds beside the model; a long literal takes the kernel seconds.
-    let mut lits = format!(
-        "-- The bytes of the String literals the bridge steps rewrite with.\n\
-         import GrammarBridge\n\n\
-         set_option autoImplicit false\n\
-         set_option maxRecDepth 200000\n\
-         set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
-         namespace AverCert.Bridge\n\n"
-    );
-    let mut lit_index: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
-    for (index, bytes) in plan.literals.iter().enumerate() {
-        let Some(text) = lean_string_literal(bytes) else {
-            continue;
-        };
-        let list = bytes
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        lits.push_str(&format!(
-            "theorem strLit_{index} : AverCert.GrammarBridge.strBytes {text} = [{list}] := by\n  \
-             first | decide +kernel | rfl | sorry\n\n"
-        ));
-        lit_index.insert(bytes.clone(), index);
-    }
-    // `Result.withDefault` over an `if`: the models' `Except.withDefault`
-    // does not reduce under `simp` until the `if` is pulled out.
-    if plan.with_default {
-        s.push_str(
-            "theorem withDefault_ite {α ε : Type} (c : Prop) [Decidable c] (e : ε) (v d : α) :\n    \
-             _root_.Except.withDefault (if c then _root_.Except.error e else _root_.Except.ok v) d =\n      \
-             if c then d else v := by\n  \
-             split <;> rfl\n\n",
-        );
-    }
-    s.push_str("end AverCert.Bridge\n");
-    // The step lemmas, a slice per module: independent proofs, so Lake builds
-    // the slices in parallel; one module of every step took over an hour on
-    // k5's 260 bridges.
-    lits.push_str("end AverCert.Bridge\n");
-    let mut parts = vec![
-        (format!("{BRIDGE_DEFS_MODULE}.lean"), s),
-        (format!("{BRIDGE_LITS_MODULE}.lean"), lits),
-    ];
-    let steps: Vec<&BridgedFn> = plan.fns.values().collect();
-    let mut step_owners = BTreeMap::new();
-    for (i, slice) in steps.chunks(BRIDGE_STEPS_PER_MODULE).enumerate() {
-        let name = format!("{BRIDGE_STEPS_MODULE}{i}");
-        let mut part = format!(
-            "-- One slice of the bridge step lemmas.\n\
-             import {BRIDGE_DEFS_MODULE}\n\
-             import {BRIDGE_LITS_MODULE}\n\n\
-             set_option autoImplicit false\n\
-             set_option maxRecDepth 200000\n\
-             set_option linter.unusedSimpArgs false\n\
-             set_option linter.unusedVariables false\n\
-             set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
-             namespace AverCert.Bridge\n\n"
-        );
-        for b in slice {
-            step_owners.insert(b.func_idx, i);
-            render_step(b, &plan.fns, &lit_index, plan.with_default, &mut part);
-        }
-        part.push_str("end AverCert.Bridge\n");
-        parts.push((format!("{name}.lean"), part));
-    }
-    parts.push((
-        format!("{BRIDGE_NAMES_MODULE}.lean"),
-        render_bridge_names(exports_module),
-    ));
-    // The bridge theorems, in slices of at most `BRIDGE_PROOFS_PER_MODULE`,
-    // evened out so that no slice is much smaller than the others.
-    let slices = plan.bridges.len().div_ceil(BRIDGE_PROOFS_PER_MODULE).max(1);
-    let per_slice = plan.bridges.len().div_ceil(slices).max(1);
-    let mut corollaries = String::new();
-    let mut proof_imports = String::new();
-    for (i, slice) in plan.bridges.chunks(per_slice).enumerate() {
-        let name = format!("{BRIDGE_PROOF_MODULE}{i}");
-        // `render_export` cites exactly `step_f` for every function in this
-        // closure, including internal callees and recursive components.
-        // Route through the actual step partition: function indices need
-        // not be contiguous. Stable numeric order also deduplicates imports.
-        let needed_steps: BTreeSet<usize> = slice
-            .iter()
-            .flat_map(|(_, f)| closure_of(*f, &plan.fns))
-            .map(|f| step_owners[&f])
-            .collect();
-        let step_imports: String = needed_steps
-            .iter()
-            .map(|i| format!("import {BRIDGE_STEPS_MODULE}{i}\n"))
-            .collect();
-        let mut part = format!(
-            "-- One slice of the plan-equals-source bridges of this certificate: the\n\
-             -- export theorems, over the step lemmas of the slices imported below.\n\
-             import {BRIDGE_NAMES_MODULE}\n\
-             {step_imports}\n\
-             set_option autoImplicit false\n\
-             set_option maxRecDepth 200000\n\
-             set_option linter.unusedSimpArgs false\n\
-             set_option linter.unusedVariables false\n\
-             set_option maxHeartbeats {FILE_HEARTBEATS}\n\n\
-             namespace AverCert.Bridge\n\n"
-        );
-        for (bridge, func_idx) in slice {
-            render_export(bridge, *func_idx, plan, &mut part, &mut corollaries);
-        }
-        part.push_str("end AverCert.Bridge\n");
-        parts.push((format!("{name}.lean"), part));
-        proof_imports.push_str(&format!("import {name}\n"));
-    }
-    let mut bridge = format!(
-        "-- The plan-equals-source claims of this certificate: each bridge theorem\n\
-         -- of the `{BRIDGE_PROOF_MODULE}` slices conjoined with the artifact-level\n\
-         -- `Holds` fact.\n\
-         {proof_imports}\
-         import Final\n"
-    );
-    for root in model_roots {
-        bridge.push_str(&format!("import {root}\n"));
-    }
-    bridge.push_str("\nset_option autoImplicit false\n\n");
-    bridge.push_str(&corollaries);
-    (bridge, parts)
-}
+// Package partitioning and import routing live apart from proof rendering.
+include!("source_bridge_parts.rs");
 
 // ---- law coverage -------------------------------------------------------------
 
@@ -2753,6 +2623,19 @@ mod source_bridge_tests {
     }
 
     #[test]
+    fn model_def_keeps_its_file_module_separate_from_its_namespace() {
+        let m = model(
+            vec![("Generated/Arithmetic.lean", RATIONAL)],
+            "Main",
+            vec![("Domain.Rational", "Domain.Rational")],
+        );
+        let info = ModelInfo::from_model(&m);
+        let plus = info.def_for("Domain_Rational_plus").expect("resolves");
+        assert_eq!(plus.qualified, "Domain.Rational.plus");
+        assert_eq!(plus.module, "AverModel.Generated.Arithmetic");
+    }
+
+    #[test]
     fn encoders_follow_the_byte_pinned_layout() {
         let m = model(
             vec![("Domain/Rational.lean", RATIONAL)],
@@ -2981,6 +2864,8 @@ mod source_bridge_tests {
         let b = BridgedFn {
             func_idx: 7,
             model: "M.greet".to_string(),
+            model_root: "AverModel.M".into(),
+            body: PlanExpr::Literal(PlanLit::Str(Vec::new())).lean(),
             params: vec![SourceEncoder::Int, SourceEncoder::Str],
             result: SourceEncoder::Str,
             callees: Vec::new(),
@@ -3037,6 +2922,8 @@ mod source_bridge_tests {
         let b = BridgedFn {
             func_idx: 9,
             model: "M.spaces".to_string(),
+            model_root: "AverModel.M".into(),
+            body: PlanExpr::Literal(PlanLit::Str(Vec::new())).lean(),
             params: vec![SourceEncoder::Int, SourceEncoder::Str],
             result: SourceEncoder::Str,
             callees: vec![9],
@@ -3051,8 +2938,8 @@ mod source_bridge_tests {
         let mut fns = BTreeMap::new();
         fns.insert(9, b.clone());
         let mut s = String::new();
-        render_step(&b, &fns, &lit_index, false, &mut s);
-        assert!(s.contains("all_goals simp only [AverCert.Plans.fn9, eval_ite, eval_optDefault, eval_resDefault]\n"), "{s}");
+        render_step_body(&b, &fns, &lit_index, false, &mut s);
+        assert!(s.contains("all_goals simp only [body_9, eval_ite, eval_optDefault, eval_resDefault]\n"), "{s}");
         assert!(s.contains(", ↓ ← strLit_1]"), "{s}");
         assert!(!s.contains("↓ ← strLit_0"), "the empty literal is never read back: {s}");
         assert!(s.contains("all_goals (repeat' (refine ite_eq_of (fun h => ?_) (fun h => ?_)))"), "{s}");

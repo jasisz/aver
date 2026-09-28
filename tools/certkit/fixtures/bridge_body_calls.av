@@ -1,0 +1,63 @@
+module BridgeBodyCalls
+    intent =
+        "Source bridges for decoded String calls returning encoded sums."
+        "The caller's proof must close definitionally equal match encoders"
+        "after symbolic simplification, without a concrete global image table."
+    exposes [Mode, State, Choice, Event, classify, recognised, answered, switched, pressed]
+
+type Mode
+    Alpha
+    Beta
+    Gamma
+    Delta
+
+record State
+    mode: Mode
+    confirming: Bool
+
+type Choice
+    Keep
+    Change
+    Stop
+
+record Event
+    state: State
+    choice: Choice
+
+fn classify(key: String) -> Option<Mode>
+    match key
+        "alpha" -> Option.Some(Mode.Alpha)
+        "beta" -> Option.Some(Mode.Beta)
+        "gamma" -> Option.Some(Mode.Gamma)
+        "delta" -> Option.Some(Mode.Delta)
+        _ -> Option.None
+
+fn recognised(key: Option<String>) -> Option<Mode>
+    match key
+        Option.None -> Option.None
+        Option.Some(text) -> classify(text)
+
+fn answered(key: String) -> Event
+    match key
+        "y" -> Event(state = State(mode = Mode.Alpha, confirming = false), choice = Choice.Stop)
+        _ -> Event(state = State(mode = Mode.Alpha, confirming = false), choice = Choice.Change)
+
+fn switched(state: State, key: String) -> Event
+    match key
+        "a" -> Event(state = State(mode = Mode.Alpha, confirming = false), choice = Choice.Change)
+        "b" -> Event(state = State(mode = Mode.Beta, confirming = false), choice = Choice.Change)
+        _ -> Event(state = state, choice = Choice.Keep)
+
+fn pressed(state: State, key: String) -> Event
+    match state.confirming
+        true -> answered(key)
+        false -> switched(state, key)
+
+verify recognised
+    recognised(Option.None) => Option.None
+    recognised(Option.Some("beta")) => Option.Some(Mode.Beta)
+    recognised(Option.Some("unknown")) => Option.None
+
+verify pressed
+    pressed(State(mode = Mode.Delta, confirming = true), "y").choice => Choice.Stop
+    pressed(State(mode = Mode.Alpha, confirming = false), "b").state.mode => Mode.Beta

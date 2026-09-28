@@ -5867,21 +5867,21 @@ fn cert_tripwire_declines_tampered_source_bridges() {
     // The `first | … | sorry` in the emitted proof is what makes a step that
     // cannot close a not-credited bridge instead of a failed build, and the
     // step is cited only by the bridges whose call closure reaches it. The
-    // step lemmas are emitted in slices (`BridgeSteps<k>.lean`), so the
-    // tamper finds the slice that carries this one.
+    // expensive body lemmas are emitted in `BridgeBodies<k>.lean` and
+    // bound to Plans by BridgeSteps, so find the body slice carrying this one.
     let step_doc = "/-- One step of `Domain.Rational.isNonPos`";
     let (steps_file, steps_lean) = std::fs::read_dir(&cert)
         .unwrap()
         .filter_map(|entry| {
             let name = entry.ok()?.file_name().to_string_lossy().to_string();
-            (name.starts_with("BridgeSteps") && name.ends_with(".lean")).then_some(name)
+            (name.starts_with("BridgeBodies") && name.ends_with(".lean")).then_some(name)
         })
         .map(|name| {
             let text = std::fs::read_to_string(cert.join(&name)).unwrap();
             (name, text)
         })
         .find(|(_, text)| text.contains(step_doc))
-        .expect("expected the isNonPos step lemma in a BridgeSteps slice");
+        .expect("expected the isNonPos step lemma in a BridgeBodies slice");
     let at = steps_lean.find(step_doc).unwrap();
     let name_at = steps_lean[at..].find("theorem ").expect("the step lemma") + at + 8;
     let name_end = steps_lean[name_at..].find(' ').expect("its name ends") + name_at;
@@ -5913,22 +5913,27 @@ fn cert_tripwire_declines_tampered_source_bridges() {
 
 /// Replace one emitted theorem's tactic proof with `sorry`, leaving its
 /// statement — and every other declaration in the file — exactly as emitted.
-/// The theorem is found by its `theorem <name> :` header and ends at the blank
-/// line before the next doc comment.
+/// The theorem is found by its `theorem <name>` header (with optional
+/// parameters) and ends before the next generated declaration.
 fn sorry_out_theorem(lean: &str, name: &str) -> String {
-    let header = format!("theorem {name} :");
+    let header = format!("theorem {name} ");
     let at = lean
         .find(&header)
         .unwrap_or_else(|| panic!("expected the theorem {name}"));
     let rest = &lean[at..];
     let assign = rest.find(" := by\n").expect("expected a tactic proof");
     // The next declaration opens with its `#guard_msgs` isolation line, its
-    // doc comment, or the namespace's `end`.
-    let end = ["\n\n#guard_msgs", "\n\n/--", "\nend AverCert"]
-        .iter()
-        .filter_map(|next| rest[assign..].find(next))
-        .min()
-        .expect("expected the theorem to end before the next declaration")
+    // doc comment, proof-local body comment, or the namespace's `end`.
+    let end = [
+        "\n\n#guard_msgs",
+        "\n\n/--",
+        "\n\n-- Proof-local body;",
+        "\nend AverCert",
+    ]
+    .iter()
+    .filter_map(|next| rest[assign..].find(next))
+    .min()
+    .expect("expected the theorem to end before the next declaration")
         + assign;
     format!(
         "{}{} := by\n  sorry{}",
