@@ -171,3 +171,48 @@ fn changing_one_body_leaves_disjoint_heavy_slices_identical() {
     let binding = &after.iter().find(|(name, _)| name == "BridgeSteps0.lean").unwrap().1;
     assert!(binding.contains("⟨AverCert.Plans.fn100, rfl, stepBody_100 I I_100⟩"));
 }
+
+#[test]
+fn export_assembly_is_parametric_and_imports_only_its_own_images() {
+    let mut plan = plan_with_functions(73);
+    // The first export also calls an internal function in the last image
+    // slice. Assembly assumes its step, without importing its body or image.
+    plan.fns.get_mut(&index(0)).unwrap().callees.push(index(72));
+    let (_, parts) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let assembly: Vec<_> = parts.iter()
+        .filter(|(name, _)| name.starts_with("BridgeAssembly")).collect();
+    assert_eq!(assembly.len(), 2);
+    let first = &assembly[0].1;
+    assert!(first.contains("import BridgeImages0\n"));
+    assert!(first.contains("import BridgeImages1\n"));
+    assert!(!first.contains("import BridgeImages3\n"));
+    assert!(first.contains("(step_604 : AverCert.GrammarBridge.Step fns I [] 604)"));
+    for (_, text) in assembly {
+        for global in ["Manifest", "Plans", "BridgeDefs", "BridgeNames", "BridgeSteps"] {
+            assert!(!text.contains(&format!("import {global}")), "{global}");
+        }
+        assert!(!text.contains("AverCert.Plans"));
+        assert!(text.contains("(fns : _root_.List AverCert.Schema.FnEntry)"));
+        assert!(text.contains("(I : AverCert.GrammarBridge.Table)"));
+    }
+    let binding = &parts.iter().find(|(name, _)| name == "BridgeProof0.lean").unwrap().1;
+    assert!(binding.contains("import BridgeAssembly0\n"));
+    assert!(binding.contains("assembly_100 AverCert.Plans.fnPlans I I_100 step_100 step_604"));
+}
+
+#[test]
+fn exact_assembly_carries_only_its_closures_depths() {
+    let mut plan = plan_with_functions(2);
+    plan.bridges[0].0.kind = BridgeKind::Exact;
+    plan.depth.insert(index(0), 0);
+    let (_, before) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    // An unrelated function's depth must not invalidate this proof.
+    plan.depth.insert(index(1), 99);
+    let (_, after) = render_bridge_lean(&plan, &[], "ArtifactInterface");
+    let assembly = |parts: Vec<(String, String)>| parts.into_iter()
+        .find(|(name, _)| name == "BridgeAssembly0.lean").unwrap().1;
+    let first = assembly(before);
+    assert!(first.contains("AverCert.GrammarBridge.exact_of_step fns I"));
+    assert!(first.contains("AverCert.GrammarBridge.bridge_of_step fns I"));
+    assert_eq!(first, assembly(after));
+}

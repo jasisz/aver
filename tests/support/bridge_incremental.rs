@@ -5,14 +5,16 @@ use super::scratch_dir::temp_dir;
 use std::path::{Path, PathBuf};
 
 fn leaf_module(module: &str, prefix: &str, edited: bool) -> String {
-    let names = (0..48)
+    // Four export-assembly slices leave a pure Right slice even if the
+    // entry function shares the final slice; body slices hold 24 functions.
+    let names = (0..96)
         .map(|i| format!("{prefix}{i}"))
         .collect::<Vec<_>>()
         .join(", ");
     let mut source = format!(
         "module {module}\n    intent = \"Independent leaves for bridge cache regression.\"\n    exposes [{names}]\n\n"
     );
-    for i in 0..48 {
+    for i in 0..96 {
         let delta = if edited && i == 0 { 2 } else { 1 };
         source.push_str(&format!(
             "fn {prefix}{i}(x: Int) -> Int\n    x + {delta}\n\n"
@@ -79,24 +81,46 @@ pub fn check_independent_edit() {
     let before = compile(&root, "before");
     // Pick a pure Right slice without assuming where the entry function is
     // placed in the compiler's function-index order.
-    let body = std::fs::read_dir(before.join("cert"))
+    let parts: Vec<_> = std::fs::read_dir(before.join("cert"))
         .unwrap()
         .map(|e| e.unwrap().path())
-        .find(|path| {
+        .filter(|path| {
             let name = path.file_name().unwrap().to_str().unwrap();
-            if !name.starts_with("BridgeBodies") || !name.ends_with(".lean") {
+            if !(name.starts_with("BridgeBodies") || name.starts_with("BridgeAssembly"))
+                || !name.ends_with(".lean")
+            {
                 return false;
             }
             let text = std::fs::read_to_string(path).unwrap();
             text.contains("`Cache.Right.")
                 && !text.contains("`Cache.Left.")
                 && !text.contains("`StepCache.entry`")
+                // Export and image partitions have different widths. An
+                // export-only Right slice may still import a mixed image
+                // slice at the Left/Right boundary and legitimately rebuild.
+                && text.lines().filter_map(|line| line.strip_prefix("import BridgeImages"))
+                    .all(|suffix| {
+                        let image = std::fs::read_to_string(
+                            before.join("cert").join(format!("BridgeImages{suffix}.lean"))
+                        ).unwrap();
+                        !image.contains("import AverModel.Cache.Left\n")
+                            && !image.contains("import AverModel.StepCache\n")
+                    })
         })
-        .expect("an independent Right body slice");
-    let name = body.file_stem().unwrap().to_str().unwrap();
-    let source_before = std::fs::read_to_string(&body).unwrap();
-    let first = check(&root, &before, 97);
-    assert!(first.contains(&format!("Built {name} (")), "{first}");
+        .collect();
+    for prefix in ["BridgeBodies", "BridgeAssembly"] {
+        assert!(
+            parts
+                .iter()
+                .any(|p| p.file_stem().unwrap().to_str().unwrap().starts_with(prefix)),
+            "an independent Right {prefix} slice"
+        );
+    }
+    let first = check(&root, &before, 193);
+    for part in &parts {
+        let name = part.file_stem().unwrap().to_str().unwrap();
+        assert!(first.contains(&format!("Built {name} (")), "{first}");
+    }
 
     // Exactly one function changes, in the other source module.
     std::fs::write(root.join("cache/left.av"), leaf_module("Left", "a", true)).unwrap();
@@ -105,15 +129,18 @@ pub fn check_independent_edit() {
         std::fs::read(before.join("main.wasm")).unwrap(),
         std::fs::read(after.join("main.wasm")).unwrap()
     );
-    assert_eq!(
-        source_before,
-        std::fs::read_to_string(after.join("cert").join(body.file_name().unwrap())).unwrap()
-    );
-    let second = check(&root, &after, 97);
-    assert!(
-        !second.contains(&format!("Built {name} (")),
-        "unchanged body was rebuilt:\n{second}"
-    );
+    let second = check(&root, &after, 193);
+    for part in &parts {
+        assert_eq!(
+            std::fs::read_to_string(part).unwrap(),
+            std::fs::read_to_string(after.join("cert").join(part.file_name().unwrap())).unwrap()
+        );
+        let name = part.file_stem().unwrap().to_str().unwrap();
+        assert!(
+            !second.contains(&format!("Built {name} (")),
+            "unchanged {name} was rebuilt:\n{second}"
+        );
+    }
 }
 
 pub fn check_decoded_sum_calls() {
