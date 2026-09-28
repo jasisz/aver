@@ -45,13 +45,29 @@ fn render_bridge_literals(plan: &BridgePlan) -> (String, BTreeMap<Vec<u8>, usize
         "The bytes of the String literals the bridge steps rewrite with.",
         &BTreeSet::from(["GrammarBridge".into()]),
     );
+    // A String literal is definitionally String.ofList of its characters.
+    // Reduce their UTF-8 encoding directly: evaluating List.toByteArray in
+    // the kernel repeatedly appends to its growing accumulator. This lemma
+    // avoids that work without changing strBytes or trusting producer bytes.
+    s.push_str(
+        "-- Read UTF-8 bytes directly from the literal's characters.\n\
+         theorem strBytes_ofList (cs : List Char) :\n    \
+         AverCert.GrammarBridge.strBytes (String.ofList cs) =\n      \
+         (cs.flatMap String.utf8EncodeChar).map UInt8.toNat := by\n  \
+         unfold AverCert.GrammarBridge.strBytes\n  \
+         rw [String.toByteArray_ofList]\n  \
+         unfold List.utf8Encode\n  \
+         rw [List.toList_data_toByteArray]\n\n"
+    );
     let mut index = BTreeMap::new();
     for (i, bytes) in plan.literals.iter().enumerate() {
         let Some(text) = lean_string_literal(bytes) else { continue };
+        // lean_string_literal has already checked that this is UTF-8.
+        let chars = lean_char_list(std::str::from_utf8(bytes).unwrap());
         let list = bytes.iter().map(u8::to_string).collect::<Vec<_>>().join(", ");
         s.push_str(&format!(
             "theorem strLit_{i} : AverCert.GrammarBridge.strBytes {text} = [{list}] := by\n  \
-             first | decide +kernel | rfl | sorry\n\n"
+             first | exact (strBytes_ofList {chars}).trans (by decide +kernel) | sorry\n\n"
         ));
         index.insert(bytes.clone(), i);
     }
@@ -163,4 +179,32 @@ fn render_bridge_lean(
     bridge.push_str("\nset_option autoImplicit false\n\n");
     bridge.push_str(&corollaries);
     (bridge, parts)
+}
+
+#[cfg(test)]
+mod literal_proof_tests {
+    use super::*;
+
+    #[test]
+    fn literal_proofs_encode_characters_without_building_byte_arrays() {
+        let literals = [b"".to_vec(), b"a'\"\\\n\r\t".to_vec(), "é中🦀".as_bytes().to_vec(), vec![0xff]];
+        let plan = BridgePlan {
+            fns: BTreeMap::new(), bridges: Vec::new(), declined: Vec::new(),
+            depth: BTreeMap::new(), literals: literals.into_iter().collect(),
+            with_default: false, entries: BTreeMap::new(), type_pieces: Vec::new(),
+        };
+        let (text, index) = render_bridge_literals(&plan);
+        assert_eq!(index.len(), 3, "invalid UTF-8 is still not a String literal");
+        assert_eq!(text.matches("theorem strBytes_ofList").count(), 1);
+        assert!(text.contains("String.toByteArray_ofList"));
+        assert!(text.contains("List.toList_data_toByteArray"));
+        assert!(text.contains("(strBytes_ofList []).trans (by decide +kernel)"));
+        assert!(text.contains("['a', (Char.ofNat 39), (Char.ofNat 34), (Char.ofNat 92), (Char.ofNat 10), (Char.ofNat 13), (Char.ofNat 9)]"));
+        assert!(text.contains("[(Char.ofNat 233), (Char.ofNat 20013), (Char.ofNat 129408)]"));
+        assert!(text.contains("[195, 169, 228, 184, 173, 240, 159, 166, 128]"));
+        for (bytes, i) in index {
+            let literal = lean_string_literal(&bytes).unwrap();
+            assert!(text.contains(&format!("theorem strLit_{i} : AverCert.GrammarBridge.strBytes {literal} =")));
+        }
+    }
 }
