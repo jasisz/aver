@@ -35,6 +35,10 @@ The producer runs inside `aver compile --certify` and is not trusted.
 3. Offered functions are grouped into call SCCs, callees first. Exported functions become obligations; internal callees are planned and bound by function index.
 4. `render_package.rs` writes the package. When the package declares source-bridges or law-claims, it also ships the Lean source model and the bridge proofs (`source_bridges.rs`, `law_claims.rs`).
 
+Export accounting (`export_walk.rs`) emits `ExportChars`, a producer-supplied helper that reads declared names directly from their characters, avoiding intermediate UTF-8 byte-array construction. Its generic kernel-checked equivalence proof preserves the wall's `ScaleExports.walkExports` exactly, including ASCII rejection, byte windows, ordering, certified-entry bits and consumption of the declared list. Block theorem statements still name the original walk and manifest entries. The helper is replayed with the package; neither the wall nor the checker changes.
+
+Measure cold-proof changes with both a fragment diagnostic and full `aver-cert verify` using `AVER_CERT_DATA_CACHE=off` and `AVER_CERT_PRELUDE_CACHE=off`. An import-seeded replay isolates declaration cost but excludes its imports; only the complete run measures the cold verdict including fresh kernel replay. Keep artifact bytes, manifest, verifier and complete credit/decline reports equal, time package generation separately, and record competing machine load. A fragment's percentage is not the whole certificate's percentage.
+
 Source-bridge package assembly (`source_bridge_parts.rs`) separates heavy proofs from artifact-wide tables:
 
 - `BridgeSupport` contains artifact-independent decoders and evaluation lemmas. `BridgeImages<i>` contains source decoders/images and imports their actual model files.

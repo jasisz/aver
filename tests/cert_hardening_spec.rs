@@ -199,6 +199,16 @@ fn assert_declined(ok: bool, report: &str, reason: &str) {
     );
 }
 
+/// Export accounting can fail in the wall's walk or in its proved-equivalent
+/// character helper. The diagnostic must still identify that check; rejection
+/// itself and the build-failure reason are asserted separately by each test.
+fn assert_export_walk_error(report: &str) {
+    assert!(
+        report.contains("walkExports") || report.contains("ExportChars.walk"),
+        "{report}"
+    );
+}
+
 /// The honest certificate verifies end to end with every claim credited, so
 /// the declines below are about their tamper and nothing else.
 #[test]
@@ -1438,7 +1448,7 @@ fn cert_hardening_declines_unsorted_exports() {
     }
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("walkExports"), "{report}");
+    assert_export_walk_error(&report);
 }
 
 /// The export walk is written in blocks, each a declaration that states where
@@ -3205,7 +3215,7 @@ fn cert_hardening_declines_declared_names_out_of_order() {
     });
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("walkExports"), "{report}");
+    assert_export_walk_error(&report);
 }
 
 /// A declared-uncertified name left out of the declared list, in both
@@ -3221,7 +3231,7 @@ fn cert_hardening_declines_a_missing_declared_name() {
     });
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("walkExports"), "{report}");
+    assert_export_walk_error(&report);
 }
 
 /// A declared-uncertified name whose manifest spelling is not its export's
@@ -3249,7 +3259,7 @@ fn cert_hardening_declines_a_declared_name_that_is_not_its_export() {
     replace_once(&cert.join("Manifest.lean"), "(\"size\", ", "(\"sizf\", ");
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("walkExports"), "{report}");
+    assert_export_walk_error(&report);
 }
 
 /// A declared-uncertified name listed twice, the same in all three places:
@@ -3265,7 +3275,7 @@ fn cert_hardening_declines_a_duplicate_declared_name() {
     });
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
-    assert!(report.contains("walkExports"), "{report}");
+    assert_export_walk_error(&report);
 }
 
 /// A program calling every List helper the plan grammar admits, over Lists
