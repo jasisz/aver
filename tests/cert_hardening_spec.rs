@@ -3096,10 +3096,13 @@ fn cert_hardening_checks_a_bridge_moved_to_another_slice_unchanged() {
     );
 }
 
-/// Two slices declaring the same bridge theorems collide when `Bridge.lean`
-/// imports both: the package does not build, and nothing is credited.
+/// Lean permits different modules to declare the same theorem with identical
+/// type and universe parameters (Lean's import-time `subsumesInfo`). Bridge
+/// assembly slices now contain only such theorems, with definitions factored
+/// into their dependencies. Re-importing an identical slice must not mint
+/// additional bridge or law credits; the manifest's pinned claims decide them.
 #[test]
-fn cert_hardening_declines_a_duplicated_bridge_slice() {
+fn cert_hardening_credits_identical_bridge_slices_once() {
     let Some((_dir, wasm, cert)) = baseline("certharden-bridge-dup") else {
         return;
     };
@@ -3114,8 +3117,12 @@ fn cert_hardening_declines_a_duplicated_bridge_slice() {
         "import BridgeProof0\nimport BridgeProof1\n",
     );
     let (ok, report) = aver_cert("check", &wasm, &cert);
-    assert_declined(ok, &report, "did not build");
-    assert!(!report.contains("CERTIFIED"), "{report}");
+    assert!(ok, "identical bridge theorems remain valid:\n{report}");
+    assert!(
+        report.contains("source-bridges: 2 of 2 credited")
+            && report.contains("bridged-laws: 2 of 2 credited"),
+        "identical slices must not add claims:\n{report}"
+    );
 }
 
 /// A bridge slice `Bridge.lean` imports but the package does not ship: the

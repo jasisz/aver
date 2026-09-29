@@ -106,11 +106,9 @@ fn render_bridge_lean(
         parts.push((format!("{name}.lean"), s));
         defs_imports.insert(name);
     }
-    let mut defs = bridge_part_header("The complete source image and call-depth tables.", &defs_imports);
+    let mut defs = bridge_part_header("The complete source image table.", &defs_imports);
     render_image_table(&plan.fns, &mut defs);
-    defs.push_str("/-- Call depth over the acyclic part of the call graph. -/\ndef depth : _root_.Nat → _root_.Nat := fun g =>\n  match g with\n");
-    for (f, d) in &plan.depth { defs.push_str(&format!("  | {f} => {d}\n")); }
-    defs.push_str("  | _ => 0\n\nend AverCert.Bridge\n");
+    defs.push_str("end AverCert.Bridge\n");
     parts.push((format!("{BRIDGE_DEFS_MODULE}.lean"), defs));
 
     for (i, slice) in steps.chunks(BRIDGE_STEPS_PER_MODULE).enumerate() {
@@ -143,6 +141,14 @@ fn render_bridge_lean(
     let mut proof_imports = String::new();
     for (i, slice) in plan.bridges.chunks(per_slice).enumerate() {
         let name = format!("{BRIDGE_PROOF_MODULE}{i}");
+        let images: BTreeSet<_> = slice.iter()
+            .map(|(_, f)| format!("{BRIDGE_IMAGES_MODULE}{}", owners[f])).collect();
+        let mut assembly = bridge_part_header(
+            "Cached export assembly, parametric in the plan and image tables.", &images,
+        );
+        for (bridge, f) in slice { render_export_assembly(bridge, *f, plan, &mut assembly); }
+        assembly.push_str("end AverCert.Bridge\n");
+        parts.push((format!("{BRIDGE_ASSEMBLY_MODULE}{i}.lean"), assembly));
         let needed_steps: BTreeSet<usize> = slice.iter()
             .flat_map(|(_, f)| closure_of(*f, &plan.fns)).map(|f| owners[&f]).collect();
         // Keep numeric order, not the lexical order of module names.
@@ -152,6 +158,7 @@ fn render_bridge_lean(
             "-- One slice of the plan-equals-source bridges of this certificate: the\n\
              -- export theorems, over the step lemmas of the slices imported below.\n\
              import {BRIDGE_NAMES_MODULE}\n\
+             import {BRIDGE_ASSEMBLY_MODULE}{i}\n\
              {step_imports}\n\
              set_option autoImplicit false\n\
              set_option maxRecDepth 200000\n\

@@ -1989,74 +1989,14 @@ fn render_export(
     corollaries: &mut String,
 ) {
     let b = &plan.fns[&func_idx];
-    let closure = closure_of(func_idx, &plan.fns);
-    let members = closure
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
     let binders = binder_names(b.params.len());
     let intro = if binders.is_empty() {
         String::new()
     } else {
         format!("intro {}; ", binders.join(" "))
     };
-    // Splitting every sum, option or result the encoding matches on (at any
-    // depth) into its constructors lets the encoded argument reduce.
-    // Every split applies to every goal the earlier ones left (`<;>`): with
-    // `;` the second parameter was split in the first goal only.
-    let splits: Vec<String> = b
-        .params
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| rcases_pattern(p).map(|pat| format!("rcases x{i} with {pat}")))
-        .collect();
-    let split_cases = if splits.is_empty() {
-        String::new()
-    } else {
-        format!("{}; ", splits.join(" <;> "))
-    };
-    // The image may leave an equation between two copies of the encoder's
-    // match (the statement's and `img_f`'s), or a conjunction of such for a
-    // record: equal by unfolding, so `rfl` on each conjunct.
-    let image_simps = format!(
-        "I_{func_idx}, dec_{func_idx}, img_{func_idx}, AverCert.GrammarBridge.decodeStr_strBytes, \
-         decListInt_enc, decListBool_enc, decListString_enc"
-    );
-    let image = format!(
-        "(by {split_cases}all_goals first | rfl | (simp [{image_simps}]; done) | \
-         (simp [{image_simps}] <;> (repeat' apply And.intro) <;> rfl))"
-    );
-    let steps = render_steps_proof(&closure);
-    let kind_proof = match bridge.kind {
-        BridgeKind::Exact => {
-            let depth = plan.depth[&func_idx];
-            format!(
-                "refine ⟨{bound}, ?_⟩; \
-                 intro fuel hk{bs}; \
-                 exact AverCert.GrammarBridge.exact_of_step AverCert.Plans.fnPlans I [{members}] depth \
-                 {steps} \
-                 fuel {func_idx} (by decide) (Nat.lt_of_lt_of_le (by decide +kernel) hk) _ _ {image}",
-                bound = depth + 1,
-                bs = if binders.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", binders.join(" "))
-                },
-            )
-        }
-        BridgeKind::Adequate => format!(
-            "intro fuel{bs} v h; \
-             exact AverCert.GrammarBridge.bridge_of_step AverCert.Plans.fnPlans I [{members}] \
-             {steps} \
-             fuel {func_idx} (by decide) _ v _ h {image}",
-            bs = if binders.is_empty() {
-                String::new()
-            } else {
-                format!(" {}", binders.join(" "))
-            },
-        ),
-    };
+    let split_cases = export_split_cases(b);
+    let kind_proof = export_assembly_binding(func_idx, plan);
     let typing = format!(
         "{intro}{split_cases}all_goals simp [{TYPING_SIMPS}{pieces}, AverCert.Plans.fn{func_idx}]",
         pieces = plan
@@ -2110,7 +2050,6 @@ fn render_export(
         bridge.params.len(),
     ));
     c.push_str(", _root_.AverCert.Final.cert⟩\n\n");
-    let _ = param_binders;
 }
 
 /// `BridgeNames.lean`: `export_names_nodup`, the obligations' export names
@@ -2146,7 +2085,7 @@ pub const BRIDGE_PROOF_MODULE: &str = "BridgeProof";
 const BRIDGE_PROOFS_PER_MODULE: usize = 50;
 /// The module of `export_names_nodup`, which every bridge proof cites.
 pub const BRIDGE_NAMES_MODULE: &str = "BridgeNames";
-/// The complete image and depth tables the thin step bindings import.
+/// The complete image table the thin step bindings import.
 pub const BRIDGE_DEFS_MODULE: &str = "BridgeDefs";
 /// The String literals' bytes every step slice imports.
 pub const BRIDGE_LITS_MODULE: &str = "BridgeLits";
@@ -2157,6 +2096,7 @@ const BRIDGE_STEPS_PER_MODULE: usize = 24;
 
 // Package partitioning and import routing live apart from proof rendering.
 include!("source_bridge_parts.rs");
+include!("source_bridge_assembly.rs");
 
 // ---- law coverage -------------------------------------------------------------
 
