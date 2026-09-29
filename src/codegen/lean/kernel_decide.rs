@@ -60,6 +60,12 @@
 //! - **Oversized cases.** Kernel reduction is real work and, unlike the
 //!   elaborator, it has no heartbeat limit to stop it — see
 //!   [`KERNEL_DECIDE_TERM_BUDGET`].
+//! - **Numeric recursion.** A short equation with a scalar result can build
+//!   arbitrarily large intermediate data through an integer countdown or a
+//!   sequence growing toward a numeric bound. Term size does not bound that
+//!   work. Such sample cones stay native even when their definitions are
+//!   transparent. Structural traversal of bounded data keeps its kernel path;
+//!   universal law statements and proof strategies are unchanged.
 //!
 //! The remaining question is per-builtin, and two tables answer it: does the
 //! lowering REDUCE in the kernel ([`builtin_reduces_in_kernel`], pinned
@@ -381,7 +387,7 @@ impl Walk<'_> {
         if !self.seen_fns.insert(fn_id) {
             return true;
         }
-        if self.opaque_fns.contains(&fn_id) {
+        if self.opaque_fns.contains(&fn_id) || self.has_numeric_recursion(fn_id) {
             return false;
         }
         let Some(rfd) = self.ctx.resolved_program.fn_by_id(fn_id) else {
@@ -419,6 +425,35 @@ impl Walk<'_> {
             }
         }
         true
+    }
+
+    /// A termination proof is not a practical reduction bound: `10000` is a
+    /// five-character term but can drive ten thousand allocations. Reuse the
+    /// checked recursion contract, not a callee-name or source-text heuristic.
+    fn has_numeric_recursion(&self, fn_id: FnId) -> bool {
+        use crate::ir::{FuelMetric, RecursionContract};
+        let contract = self
+            .ctx
+            .proof_ir
+            .fn_contracts
+            .get(&fn_id)
+            .and_then(|contract| contract.recursion.as_ref());
+        match contract {
+            Some(RecursionContract::Fuel {
+                fuel_metric:
+                    FuelMetric::SeqLenPlusOne { .. }
+                    | FuelMetric::SizeOfPlusOne
+                    | FuelMetric::StringLenMinusPos { .. },
+            }) => false,
+            Some(
+                RecursionContract::Fuel { .. }
+                | RecursionContract::WellFoundedToNat { .. }
+                | RecursionContract::WellFoundedSequenceGap { .. }
+                | RecursionContract::LinearRecurrence2
+                | RecursionContract::Native { .. },
+            ) => true,
+            None => self.ctx.recursive_fns.contains(&fn_id),
+        }
     }
 
     fn exprs(&mut self, items: &[Spanned<ResolvedExpr>]) -> bool {
@@ -475,6 +510,17 @@ impl Walk<'_> {
             ResolvedExpr::TailCall { target, args } => {
                 self.enqueue(*target);
                 self.exprs(args)
+            }
+            ResolvedExpr::Call(ResolvedCallee::Builtin(name), args)
+                if matches!(recognize_builtin(name), Some(Builtin::StringSplit)) =>
+            {
+                // AverString.split has transparent empty/single-character
+                // branches. Longer separators reach Lean's opaque splitOn
+                // implementation; an unknown separator must stay native too.
+                args.get(1).is_some_and(|arg| {
+                    matches!(&arg.node, ResolvedExpr::Literal(Literal::Str(separator))
+                        if separator.chars().nth(1).is_none())
+                }) && self.exprs(args)
             }
             ResolvedExpr::Call(callee, args) => self.callee(callee) && self.exprs(args),
         }
@@ -827,8 +873,11 @@ fn builtin_reduces_in_kernel(builtin: Builtin) -> bool {
         // String — prelude helpers plus Lean core operations that unfold on
         // concrete strings.
         StringLen | StringCharAt | StringChars | StringSlice | StringStartsWith
-        | StringEndsWith | StringSplit | StringJoin | StringToUpper | StringToLower
-        | StringFromInt | StringByteLength | StringToUtf8 | StringFromUtf8 => true,
+        | StringEndsWith | StringJoin | StringToUpper | StringToLower | StringFromInt
+        | StringByteLength | StringToUtf8 | StringFromUtf8 => true,
+        // Only the literal empty/single-character delimiter branches reduce;
+        // Walk::expr checks their actual argument before admitting the call.
+        StringSplit => false,
         // Probed stuck on Lean 4.32: `containsSubstr` goes through
         // `String.Slice` iteration, `trim`/`replace` through `String.Pos`
         // arithmetic — the kernel does not get these to `isTrue`/`isFalse`.

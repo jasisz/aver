@@ -9017,11 +9017,19 @@ fn run_proof_check(
             &mut proof_reports,
         );
     }
-    if proof_sources.is_some() {
-        let _ = std::fs::write(
-            std::path::Path::new(output_dir).join("proof_backend.log"),
-            format!("{stdout}{stderr}"),
-        );
+    if proof_sources.is_some() || !output.status.success() {
+        let log_path = std::path::Path::new(output_dir).join("proof_backend.log");
+        let saved = std::fs::write(&log_path, format!("{stdout}{stderr}"));
+        if !output.status.success() {
+            eprintln!(
+                "--check: lake build failed ({}); proof coverage was not audited. {}",
+                output.status,
+                match saved {
+                    Ok(()) => format!("Build log: {}", log_path.display()),
+                    Err(error) => format!("Could not save build log: {error}"),
+                }
+            );
+        }
     }
     if check_json {
         let mut obj = serde_json::Map::new();
@@ -9034,6 +9042,11 @@ fn run_proof_check(
         }
         obj.insert("sorries".into(), sorries.into());
         obj.insert("build_errors".into(), lean_build_errors.into());
+        // A killed compiler or another process failure may emit no source-
+        // located diagnostic. Zero `build_errors` does not mean a clean build.
+        obj.insert("build_succeeded".into(), output.status.success().into());
+        obj.insert("build_status".into(), output.status.to_string().into());
+        obj.insert("build_exit_code".into(), output.status.code().into());
         // Proofs that failed to elaborate behind the isolation guard: already
         // in `build_errors`, `sorries` and `sorry_laws`; listed here so a
         // reader can tell them from a caught `sorry`. Emitted only when there
