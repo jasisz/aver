@@ -18,6 +18,8 @@ use aver_cmd::aver_command;
 
 #[path = "support/bridge_incremental.rs"]
 mod bridge_incremental;
+#[path = "support/bridge_literals.rs"]
+mod bridge_literals;
 #[path = "support/bridge_slices.rs"]
 mod bridge_slices;
 #[path = "support/cert_wall.rs"]
