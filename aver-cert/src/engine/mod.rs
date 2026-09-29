@@ -111,6 +111,8 @@ include!("source_bridges.rs");
 #[cfg(feature = "engine")]
 include!("layout.rs");
 #[cfg(feature = "engine")]
+include!("export_walk.rs");
+#[cfg(feature = "engine")]
 include!("types_walk.rs");
 #[cfg(feature = "engine")]
 include!("render_package.rs");

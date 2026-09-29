@@ -24,6 +24,8 @@ mod bridge_literals;
 mod bridge_slices;
 #[path = "support/cert_wall.rs"]
 mod cert_wall;
+#[path = "support/export_walk.rs"]
+mod export_walk;
 #[path = "support/scratch_dir.rs"]
 mod scratch_dir;
 
