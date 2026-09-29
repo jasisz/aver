@@ -61,6 +61,8 @@ mod int_literals;
 mod isolation;
 #[path = "proof_spec/k5_sticky.rs"]
 mod k5_sticky;
+#[path = "proof_spec/kernel_work_budget.rs"]
+mod kernel_work_budget;
 #[path = "proof_spec/knowledge_provider.rs"]
 mod knowledge_provider;
 #[cfg(unix)]
