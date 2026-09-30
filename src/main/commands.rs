@@ -5159,6 +5159,21 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: &aver::ir::SymbolTable)
                 )
                 .unwrap();
             }
+            Some(RecursionContract::WellFoundedIntPhase {
+                param,
+                bound,
+                worker,
+            }) => {
+                let gap = bound
+                    .as_ref()
+                    .map_or_else(|| param.clone(), |bound| format!("{bound} - {param}"));
+                let (offset, rank) = if *worker { (" - 1", 1) } else { ("", 0) };
+                writeln!(
+                    out,
+                    "WellFoundedIntPhase {{ measure: (toNat({gap}{offset}), {rank}) }}"
+                )
+                .unwrap();
+            }
             Some(RecursionContract::WellFoundedToNat { param, floor_div }) => match floor_div {
                 Some(shrink) => writeln!(
                     out,

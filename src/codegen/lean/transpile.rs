@@ -29,9 +29,9 @@ use super::{
 /// Lifted functions that call each other are grouped by the same SCC
 /// analysis pure components use and emitted in one `mutual … end` block, so
 /// no member is a forward reference Lean rejects. An effectful function has
-/// no recursion contract (those are planned for pure functions), so a group
-/// takes the contract-less path a pure group takes: `partial` members, and
-/// the component is kernel-opaque for the sampled-claim classifier.
+/// no pure recursion contract. Checked two-phase integer walks are recognized
+/// on the lifted bodies and emitted with native termination measures; other
+/// groups keep `partial` members and remain kernel-opaque for case proofs.
 #[allow(clippy::too_many_arguments)]
 fn emit_lifted_effectful_functions(
     ctx: &CodegenContext,
@@ -139,7 +139,10 @@ fn emit_lifted_effectful_functions(
             let component: Vec<&crate::ast::FnDef> =
                 unit.iter().map(|&i| &lifted_fns[i].1).collect();
             let code = if component.len() > 1 {
-                Some(toplevel::emit_mutual_group(&component, ctx))
+                Some(
+                    toplevel::emit_native_int_phase_group(&component, ctx)
+                        .unwrap_or_else(|| toplevel::emit_mutual_group(&component, ctx)),
+                )
             } else {
                 let fd = component[0];
                 // A self call (a tail-recursive loop) has no termination
@@ -293,11 +296,16 @@ const KERNEL_OPAQUE_TOKENS: [&str; 5] = ["partial def", "opaque ", "unsafe ", "s
 ///
 /// Reads the fact off the emitted TEXT rather than re-deriving it from the
 /// source shape, so a new emission strategy cannot silently widen the
-/// kernel-decided set. Mutual groups are rejected wholesale: whether fuelized
-/// or well-founded, their compiled recursor is not something to bet a user's
-/// `lake build` on.
+/// kernel-decided set. Most mutual groups remain conservatively opaque. A
+/// checked two-phase Int walk emitted with native termination equations can
+/// simplify a concrete case with free oracles; numeric recursion still has
+/// the separate kernel-work budget in `kernel_decide`.
 fn component_is_kernel_opaque(comp: &[&crate::ast::FnDef], emitted: &[String]) -> bool {
-    comp.len() > 1
+    let native_int_phase = crate::codegen::recursion::detect_int_phase(comp).is_some()
+        && emitted
+            .iter()
+            .any(|code| code_has_non_comment_token(code, "termination_by"));
+    (comp.len() > 1 && !native_int_phase)
         || emitted
             .iter()
             .any(|code| code_has_kernel_opaque_token(code))

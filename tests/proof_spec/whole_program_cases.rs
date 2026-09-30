@@ -5,9 +5,8 @@
 //!   budget to find the `DecidableEq` it is decided through.
 //! - An Int countdown that stops at a floor other than zero needs fuel
 //!   measured from that floor; `natAbs(to) + 1` ran out on a true case.
-//! - A case with a symbolic oracle whose branch `simp` cannot evaluate is
-//!   isolated and charged, not a build error, when the VM passed it. A case
-//!   the VM failed is a counterexample and still fails the build.
+//! - Closed byte-key computations eliminate the symbolic oracle without a
+//!   sorry. A case the VM failed is a counterexample and still fails the build.
 
 use super::*;
 
@@ -93,7 +92,7 @@ verify lookup
 "#;
 
 #[test]
-fn whole_program_case_shapes_build_and_charge_the_unfinished_case() {
+fn whole_program_case_shapes_build_without_unfinished_cases() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping whole-program case shapes test: `lake` not available");
         return;
@@ -116,7 +115,7 @@ fn whole_program_case_shapes_build_and_charge_the_unfinished_case() {
         .arg("--check")
         .arg("--check-json")
         .arg("--sorry-budget")
-        .arg("1")
+        .arg("0")
         .output()
         .expect("run proof export");
     let summary = summary_from(&run);
@@ -125,9 +124,7 @@ fn whole_program_case_shapes_build_and_charge_the_unfinished_case() {
     let _ = std::fs::remove_dir_all(&source_dir);
     let _ = std::fs::remove_dir_all(&output_dir);
 
-    // The build succeeds: the big-tuple case and the three countdown cases
-    // are proved, and the one case simp cannot finish is charged as one
-    // isolated sorry instead of failing the module.
+    // The tuple, countdowns and UTF-8 branch all prove without sorries.
     assert_eq!(
         (
             summary["passed"].as_bool(),
@@ -135,20 +132,14 @@ fn whole_program_case_shapes_build_and_charge_the_unfinished_case() {
             summary["build_errors"].as_u64(),
             summary["model_panicked"].as_bool(),
         ),
-        (Some(true), Some(1), Some(1), Some(false)),
+        (Some(true), Some(0), Some(0), Some(false)),
         "{summary}\n{lean}"
     );
-    assert_eq!(
-        summary["isolated_errors"],
-        serde_json::json!(["Shapes.__aver_verify_lookup_1"]),
+    assert!(
+        summary.get("isolated_errors").is_none(),
         "{summary}\n{lean}"
     );
-    // The case is reported as a case, not as a law.
-    assert_eq!(
-        summary["isolated_cases"],
-        serde_json::json!(["Shapes.__aver_verify_lookup_1"]),
-        "{summary}\n{lean}"
-    );
+    assert!(summary.get("isolated_cases").is_none(), "{summary}\n{lean}");
     assert!(summary.get("sorry_laws").is_none(), "{summary}\n{lean}");
     assert!(
         lean.contains("set_option synthInstance.maxSize 4096 in\nexample : absorbed "),

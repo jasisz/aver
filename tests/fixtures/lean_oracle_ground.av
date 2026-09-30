@@ -1,0 +1,56 @@
+module AverProofCases
+    intent = "Concrete byte and string computations select branches without consulting an oracle."
+    depends [Bytes]
+    effects [Disk.readText]
+
+record Answer
+    text: String
+
+fn lookup(key: Bytes) -> Result<Answer, String>
+    ? "A short key has a local answer."
+    ! [Disk.readText]
+    match Bytes.len(key) > 3
+        true -> Result.Ok(Answer(text = Disk.readText(Bytes.toHex(key))?))
+        false -> Result.Ok(Answer(text = "short"))
+
+fn textOf(answer: Answer) -> String
+    answer.text
+
+verify lookup
+    lookup(Bytes.fromHex("abcd")?) => Result.Ok(Answer(text = "short"))
+    textOf(lookup(Bytes.fromHex("00aF")?)?) => "short"
+
+fn byName(name: String) -> Result<String, String>
+    ? "UTF-8 conversion does not require reading a short name."
+    ! [Disk.readText]
+    match Bytes.len(String.toUtf8(name)) > 3
+        true -> Disk.readText(name)
+        false -> Result.Ok("short")
+
+verify byName
+    byName("ab") => Result.Ok("short")
+    byName("é") => Result.Ok("short")
+
+fn expandedKey(n: Int) -> String
+    match n <= 0
+        true -> ""
+        false -> "{expandedKey(n - 1)}a"
+
+fn byExpanded(n: Int) -> Result<String, String>
+    ? "A whole closed key should normalize before its intermediate strings."
+    ! [Disk.readText]
+    match String.len(expandedKey(n)) <= 128
+        true -> Result.Ok("short")
+        false -> Disk.readText(expandedKey(n))
+
+verify byExpanded
+    byExpanded(128) => Result.Ok("short")
+
+// A user module/function may share the helper's readable name, not its
+// compiler-reserved namespace. Its law must still get only kernel credit.
+fn nativeGround(n: Int) -> Int
+    n
+
+verify nativeGround law identity
+    given n: Int = [0, 1]
+    nativeGround(n) => n

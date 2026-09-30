@@ -2315,6 +2315,27 @@ fn populate_fn_contracts_for_scope(
         //   call frame; rank distinguishes members. No bound param —
         //   the empty params vec signals "frame-level measure".
         match plan {
+            RecursionPlan::MutualIntPhase {
+                param_index,
+                bound_index,
+                worker,
+            } => {
+                if let Some((param, _)) = fd.params.get(*param_index) {
+                    ir.fn_contracts.insert(
+                        canonical_key,
+                        FnContract {
+                            source_name: fn_name.clone(),
+                            recursion: Some(RecursionContract::WellFoundedIntPhase {
+                                param: param.clone(),
+                                bound: bound_index
+                                    .and_then(|i| fd.params.get(i).map(|(n, _)| n.clone())),
+                                worker: *worker,
+                            }),
+                        },
+                    );
+                }
+                continue;
+            }
             RecursionPlan::MutualIntCountdown => {
                 let params = fd
                     .params

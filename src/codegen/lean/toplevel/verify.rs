@@ -244,15 +244,16 @@ pub fn emit_verify_block(
                         .tactic_for(&left, &left_str, &right_str, has_ground_truth, ctx)
                         .to_string()
                 } else {
-                    // The symbolic oracle is absent from every passing plain
-                    // case after the concrete branch reduces. `simp` removes
-                    // it before native evaluation; if a future case actually
-                    // depends on the oracle, the remaining free variable makes
-                    // `native_decide` fail closed. `+decide` lets simp settle
-                    // a closed branch condition its lemmas do not rewrite
-                    // (`AverMap.len [] = 0`); without it the condition stays a
-                    // hypothesis beside the oracle and `native_decide` refuses
-                    // the goal for its free variable.
+                    // Passing plain cases never dispatch the symbolic oracle.
+                    // Normalize closed data computations (hex/UTF-8 keys,
+                    // fixture maps) with proved native equalities before simp
+                    // descends into their intermediate values or selects a
+                    // branch. Container reduction stays post-order to avoid
+                    // cycling through unfolded helpers. Neither simproc evaluates
+                    // a free oracle and never enters a universal law proof.
+                    // Unfold the Except functor too: simp can rewrite a `?`
+                    // bind into `f <$> Except.ok value`, which otherwise keeps
+                    // the oracle syntactically present inside `f`.
                     // Qualified names escape per segment: a dependency's
                     // `Domain.ByteField.at` is defined as `at'`.
                     let unfolds = super::verify_cases::plain_case_unfold_names(&left, ctx)
@@ -261,7 +262,7 @@ pub fn emit_verify_block(
                         .collect::<Vec<_>>()
                         .join(", ");
                     format!(
-                        "simp +decide [{}] <;> native_decide",
+                        "simp +decide [↓ _root_.__AverProofCases.nativeGroundValue, _root_.__AverProofCases.nativeGround, Functor.map, Bind.bind, Pure.pure, Except.instMonad, Except.map, Except.bind, Except.pure, {}] <;> native_decide",
                         if unfolds.is_empty() {
                             aver_name_to_lean(&vb.fn_name)
                         } else {
@@ -285,11 +286,9 @@ pub fn emit_verify_block(
                 } else {
                     // Whether `simp` gets the oracle out of the goal depends
                     // on how far it can evaluate the concrete branch, which
-                    // the export cannot know in advance: a key built through
-                    // `String`-to-bytes or hex parsing leaves the branch
-                    // condition standing (and the oracle free, so
-                    // `native_decide` refuses the goal), and a large fixture
-                    // can run simp out of heartbeats, which no `first`
+                    // the export cannot know in advance: an unsupported data
+                    // computation can leave the oracle free, and a large
+                    // fixture can exhaust simp's heartbeats, which no `first`
                     // catches. The VM passed this case, so either is a proof
                     // the export could not finish, never a counterexample:
                     // the case is a named theorem behind the isolation

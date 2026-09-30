@@ -1753,12 +1753,19 @@ pub(super) fn generate_toolchain() -> String {
 /// constants, byte for byte (`aver-cert/assets/wall/current/ModelPrelude.lean`).
 pub(crate) const CERT_MODEL_PRELUDE_MODULE: &str = "ModelPrelude";
 
+#[cfg(test)]
+mod verify_ground_tests;
+
 pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
     let needs_order_kit = union_body.contains("aver_int_order");
+    let needs_case_ground = !cert_model && union_body.contains("__AverProofCases.nativeGround");
     let needs_bits = crate::codegen::builtin_helpers::needed_helpers(union_body, false)
         .iter()
         .any(|helper| helper.key == "AverBits");
     let mut parts = Vec::new();
+    if needs_case_ground {
+        parts.push("import Lean".to_string());
+    }
     // A certificate model takes both pieces from the checker's wall: the gate
     // would refuse the attribute and the macro in the model's own text.
     if cert_model && (needs_order_kit || needs_bits) {
@@ -1812,6 +1819,9 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
     // builtin call.
     if needs_order_kit && !cert_model {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
+    }
+    if needs_case_ground {
+        parts.push(include_str!("prelude/verify_ground.lean").to_string());
     }
     parts.join("\n\n")
 }

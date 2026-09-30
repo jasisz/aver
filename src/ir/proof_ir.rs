@@ -263,6 +263,15 @@ pub struct FnContract {
 /// the lowerer having proved preservation + decrease.
 #[derive(Debug, Clone)]
 pub enum RecursionContract {
+    /// A two-member Int walk with a checked unit step. The guarded member
+    /// delegates unchanged; the worker progresses and returns. Measure is
+    /// `(gap + offset).toNat` with a phase rank, where gap is `bound - param`
+    /// for an ascending walk or `param` for a countdown bounded by zero.
+    WellFoundedIntPhase {
+        param: String,
+        bound: Option<String>,
+        worker: bool,
+    },
     /// A list or string grows by at least one element at every self-call while its length
     /// is strictly below an unchanged integer bound. The natural part of the
     /// remaining gap decreases, including calls that overshoot the bound.

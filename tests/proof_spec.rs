@@ -45,6 +45,8 @@ mod dependency_effects;
 mod entry_opens;
 #[path = "proof_spec/export_structure.rs"]
 mod export_structure;
+#[path = "proof_spec/fixed_seed_equivalence.rs"]
+mod fixed_seed_equivalence;
 #[path = "proof_spec/floor_citations.rs"]
 mod floor_citations;
 #[path = "proof_spec/floor_window.rs"]
@@ -84,6 +86,10 @@ mod literalization;
 mod manifest_compare;
 #[path = "proof_spec/map_set_laws.rs"]
 mod map_set_laws;
+#[path = "proof_spec/mutual_int_phase.rs"]
+mod mutual_int_phase;
+#[path = "proof_spec/oracle_ground.rs"]
+mod oracle_ground;
 #[path = "proof_spec/oracle_verify.rs"]
 mod oracle_verify;
 #[path = "proof_spec/panics.rs"]
@@ -543,15 +549,11 @@ fn a_cycle_mixing_an_int_countdown_with_a_list_descent_builds_with_a_measure() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
-/// A cycle with no measure: one call hands on a list that GREW, and the
-/// `Int` that really bounds the recursion is spent without a guard.
-///
-/// The group lowers with fuel, which builds, and the claims behind it are
-/// declined rather than evaluated under a seed that is not a bound — with
-/// the refusal naming the call the exporter could not see shrink. Before
-/// this change the refusal named only the functions.
+/// The old size-only recognizer declined this growing-list cycle because
+/// the worker has no local positivity guard. The two-phase counter measure
+/// proves termination without measuring the list or assuming a worker guard.
 #[test]
-fn a_cycle_with_no_measure_is_declined_naming_the_call_that_fails() {
+fn a_growing_list_cycle_has_a_native_two_phase_counter_measure() {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
@@ -566,24 +568,18 @@ fn a_cycle_with_no_measure_is_declined_naming_the_call_that_fails() {
     assert_eq!(
         (
             summary["build_errors"].as_u64(),
-            summary["declined"].as_u64(),
+            summary["declined"].as_u64().unwrap_or(0),
             summary["sorries"].as_u64(),
         ),
-        (Some(0), Some(1), Some(0)),
-        "the cycle must build with fuel and decline its claim:\n{}",
+        (Some(0), 0, Some(0)),
+        "the cycle must close using a proved counter measure:\n{}",
         format_output(&run)
     );
-    let declined = summary["declined_claims"]
-        .as_array()
-        .expect("declined_claims array");
-    assert_eq!(declined[0]["claim"], "settle");
-    let reason = declined[0]["reason"].as_str().unwrap_or_default();
-    assert!(
-        reason.contains(
-            "the call from `pad` to `settle` passes `List.prepend(0, ys)` for `xs`, which is not a parameter of `pad` or a smaller part of one"
-        ),
-        "the refusal must name the call that fails: {reason}"
-    );
+    let lean = std::fs::read_to_string(output_dir.join("MutualCycleGrownList.lean")).unwrap();
+    assert!(lean.contains("termination_by ((n).toNat, 0)"), "{lean}");
+    assert!(lean.contains("termination_by ((n - 1).toNat, 1)"), "{lean}");
+    assert!(!lean.contains("__fuel"), "{lean}");
+    assert_eq!(summary["passed"], true, "{summary}");
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 

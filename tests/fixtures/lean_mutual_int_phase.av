@@ -1,0 +1,51 @@
+module MutualIntPhase
+    intent = "A guarded counter and a worker alternate without losing their termination measure."
+    effects [Disk.readText]
+
+fn row(name: String) -> Result<String, String>
+    ? "A fixture is local; another name consults the oracle."
+    ! [Disk.readText]
+    match name == "fixture"
+        true -> Result.Ok("x")
+        false -> Disk.readText(name)
+
+fn scan(name: String, from: Int, target: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "Walk upward to target through the worker."
+    ! [Disk.readText]
+    match from >= target
+        true -> Result.Ok(acc)
+        false -> advance(name, from, target, acc)
+
+fn advance(name: String, position: Int, end: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "Read one row and advance, including when called beyond the end."
+    ! [Disk.readText]
+    value = row(name)?
+    scan(name, position + 1, end, List.prepend(value, acc))
+
+verify scan
+    scan("fixture", 0, 3, []) => Result.Ok(["x", "x", "x"])
+    scan("fixture", -2, 1, []) => Result.Ok(["x", "x", "x"])
+    scan("fixture", 100, 13, []) => Result.Ok([])
+
+verify advance
+    advance("fixture", 100, 13, []) => Result.Ok(["x"])
+
+fn down(name: String, left: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "Walk downward, with the counter after a non-integer parameter."
+    ! [Disk.readText]
+    match left <= 0
+        true -> Result.Ok(acc)
+        false -> takeRow(name, left, acc)
+
+fn takeRow(name: String, remaining: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "The second phase consumes a row and decrements the counter."
+    ! [Disk.readText]
+    value = row(name)?
+    down(name, remaining - 1, List.prepend(value, acc))
+
+verify down
+    down("fixture", 3, []) => Result.Ok(["x", "x", "x"])
+    down("fixture", -2, []) => Result.Ok([])
+
+verify takeRow
+    takeRow("fixture", -2, []) => Result.Ok(["x"])

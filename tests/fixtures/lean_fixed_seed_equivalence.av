@@ -1,0 +1,19 @@
+module FixedSeedEquivalence
+    intent = "Two structural workers agree at the same fixed accumulator seed."
+
+fn decoded(bytes: List<Int>, acc: Int) -> Int
+    match bytes
+        [] -> acc
+        [head, ..tail] -> decoded(tail, acc * 256 + head)
+
+fn numberFrom(octets: List<Int>, value: Int) -> Int
+    match octets
+        [] -> value
+        [octet, ..rest] -> numberFrom(rest, value * 256 + octet)
+
+fn numberIn(bytes: List<Int>) -> Int
+    numberFrom(bytes, 0)
+
+verify decoded law agreesWithNumberIn
+    given bytes: List<Int> = [[], [1], [255], [1, 2], [255, 255, 255, 255]]
+    decoded(bytes, 0) => numberIn(bytes)
