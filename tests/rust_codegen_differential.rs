@@ -417,6 +417,17 @@ fn bool_match_named_default_arm_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// An interpolated String in a module-level statement. The interpolation
+/// pass lowered function bodies only, so a top-level `"a{1}b"`, bound or
+/// bare, reached the Rust walker as a raw interpolation and the crate got
+/// `compile_error!("MIR walker could not render a top-level statement")`.
+/// Found by the nightly `fuzz_codegen_rust` run.
+#[test]
+fn top_level_interpolation_matches_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/top_level_interpolation_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// A match on a tuple literal whose arms carry list, literal or Option
 /// patterns in the tuple's elements — `([], 0)`, `([next, ..rest], n)`,
 /// `(true, 0)`, `(Option.Some(task), 0)`, `(Option.None, _)` — and one
