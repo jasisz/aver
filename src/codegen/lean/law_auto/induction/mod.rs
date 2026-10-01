@@ -1387,7 +1387,7 @@ fn qualify_module_calls(law: &VerifyLaw, module: &crate::codegen::ModuleInfo) ->
         })
     };
     VerifyLaw {
-        when: law.when.as_ref().map(&qualify),
+        when: law.when.as_ref().map(qualify),
         because: law.because.iter().map(&qualify).collect(),
         lhs: qualify(&law.lhs),
         rhs: qualify(&law.rhs),
