@@ -3129,3 +3129,26 @@ fn certify_accounts_the_work_imports_and_certifies_the_job_body() {
     let (ok, report) = check_certificate(&out_dir.join("main.wasm"), &out_dir.join("cert"));
     assert!(ok && report.contains("CHECKED"), "{report}");
 }
+
+#[test]
+fn a_program_that_fails_its_run_or_reads_its_turns_is_certified() {
+    // `Run.fail`, the loop's `Run.failure` reading and the three `Run.lastTurn`
+    // marks are host imports like the job and wait ones: effects stay outside
+    // the claims, and the pure functions of such a program are certified. A
+    // registry without them refused the whole module at the envelope.
+    for fixture in ["run_fail", "run_last_turn"] {
+        let (out_dir, manifest) = certify_fixture(
+            &format!("tests/fixtures/{fixture}/main.av"),
+            &["--module-root", &format!("tests/fixtures/{fixture}")],
+            &format!("certify-{fixture}"),
+        );
+        let certified = manifest["certified"].as_array().map_or(0, Vec::len);
+        assert!(certified > 0, "{fixture}: nothing certified:\n{manifest}");
+        if !lean_required::lake_available() {
+            eprintln!("skipping {fixture} certificate check: `lake` not available");
+            continue;
+        }
+        let (ok, report) = check_certificate(&out_dir.join("main.wasm"), &out_dir.join("cert"));
+        assert!(ok, "{fixture}: certificate check failed:\n{report}");
+    }
+}

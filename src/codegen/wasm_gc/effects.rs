@@ -977,26 +977,10 @@ impl EffectName {
 /// the `aver:work/v1` imports a module with job kinds carries.  This
 /// keeps certificate interface accounting synchronized with the actual host
 /// import ABI instead of maintaining a second Rust-side registry.
-///
-/// `Run.fail` and the loop's `Run.failure` reading are the exception: the
-/// verifier does not admit their two recorder imports, so a module that ends
-/// its run with a reason is refused at the certificate envelope, fail-closed,
-/// until the wall admits them. The same holds for the three imports of a
-/// program that reads `Run.lastTurn`.
 #[cfg(test)]
 fn capability_registry() -> Vec<(&'static str, &'static str)> {
     EffectName::ALL
         .iter()
-        .filter(|effect| {
-            !matches!(
-                effect,
-                EffectName::RunFail
-                    | EffectName::RunFailure
-                    | EffectName::RunWaitStarts
-                    | EffectName::RunWaitEnds
-                    | EffectName::RunLastTurn
-            )
-        })
         .map(|effect| effect.import_pair())
         .chain(
             super::work_abi::IMPORTS
