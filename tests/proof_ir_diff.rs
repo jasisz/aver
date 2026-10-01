@@ -32,6 +32,9 @@ mod bounded_unfolding;
 #[path = "proof_ir_diff/law_applications.rs"]
 mod law_applications;
 
+#[path = "proof_ir_diff/mutual_int_phase.rs"]
+mod mutual_int_phase;
+
 fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
     // Proof-mode minimal pipeline: rewrite stages off (would alter

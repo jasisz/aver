@@ -1,7 +1,7 @@
 module MutualCycleGrownList
     intent =
-        "A recursion cycle with no measure the exporter can state: one call hands on a list that GREW, and the Int that really bounds the recursion is spent without a guard."
-        "The exporter must neither state a measure it cannot prove nor evaluate the cycle under a fuel seed that is not a bound. It declines the claims and names the call it could not see shrink."
+        "A growing-list cycle that is bounded by a two-phase counter."
+        "The worker spends the counter without its own guard, but its shifted measure makes direct calls outside the boundary total too."
     exposes [settle]
     depends []
     effects []

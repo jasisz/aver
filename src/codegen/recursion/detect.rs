@@ -2561,7 +2561,19 @@ pub fn analyze_plans_in_scope(
         }
 
         if component.len() > 1 {
-            if supports_mutual_int_countdown(&component) {
+            if let Some((param_index, bound_index, guarded)) = super::int_phase::detect(&component)
+            {
+                for (index, fd) in component.iter().enumerate() {
+                    plans.insert(
+                        fd.name.clone(),
+                        RecursionPlan::MutualIntPhase {
+                            param_index,
+                            bound_index,
+                            worker: index != guarded,
+                        },
+                    );
+                }
+            } else if supports_mutual_int_countdown(&component) {
                 for fd in &component {
                     plans.insert(fd.name.clone(), RecursionPlan::MutualIntCountdown);
                 }
@@ -2590,7 +2602,7 @@ pub fn analyze_plans_in_scope(
                 issues.push(ProofModeIssue {
                     line,
                     message: format!(
-                        "unsupported mutual recursion group (currently supported in proof mode: Int countdown on first param): {}",
+                        "unsupported mutual recursion group (supported: Int countdown, two-phase Int walk, ranked String+position or structural descent): {}",
                         names
                     ),
                 });
@@ -2702,7 +2714,7 @@ pub fn analyze_plans_in_scope(
             issues.push(ProofModeIssue {
                 line: fd.line,
                 message: format!(
-                    "recursive function '{}' is outside proof subset (currently supported: Int countdown, guard-validated Int floor-division countdown by a literal divisor, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)",
+                    "recursive function '{}' is outside proof subset (currently supported: Int countdown, guard-validated Int floor-division countdown by a literal divisor, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, two-phase Int walk, mutual String+position, and ranked sizeOf recursion)",
                     fd.name
                 ),
             });

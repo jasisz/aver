@@ -18,6 +18,7 @@ use super::shared::law_simp_defs_blind;
 use crate::ast::{TypeDef, TypeVariant, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
+mod fixed_seed;
 mod floor_bound;
 mod keystone;
 mod multicite;
@@ -4630,6 +4631,10 @@ fn emit_list_induction(
                 *proof_lines = wrapped;
             }
         };
+
+        if let Some(rung) = fixed_seed::rung(law, ctx, intro_names, &simp_list) {
+            splice_leading_rung(&mut proof_lines, rung);
+        }
 
         if let Some((multivar_support, rung)) =
             emit_synchronous_multivar_induction(vb, law, ctx, intro_names, &law_uid)

@@ -11,6 +11,7 @@
 
 pub mod cycle_measure;
 pub mod detect;
+mod int_phase;
 mod sequence_growth;
 
 use std::collections::HashSet;
@@ -19,6 +20,7 @@ use crate::ast::{Expr, FnBody, MatchArm, Spanned, Stmt, StrPart, TailCallData};
 use crate::codegen::common::expr_to_dotted_name;
 
 pub use detect::analyze_plans_in_scope;
+pub(crate) use int_phase::detect as detect_int_phase;
 
 /// Classification for a single recursive fn (or a whole mutual-recursion
 /// SCC, in which case every fn in the SCC gets its own plan from the
@@ -127,6 +129,15 @@ pub enum RecursionPlan {
     /// Mutual recursion SCC where the first `Int` parameter decreases
     /// by 1 across every inter-fn call.
     MutualIntCountdown,
+    /// A guarded counter delegates unchanged to a worker, which takes one
+    /// step and returns. The worker's gap has offset -1 and rank 1; the
+    /// guard's gap has offset 0 and rank 0. `None` bounds a countdown by zero;
+    /// `Some` bounds an ascending walk by a preserved parameter.
+    MutualIntPhase {
+        param_index: usize,
+        bound_index: Option<usize>,
+        worker: bool,
+    },
     /// Mutual recursion SCC where the first `String` is preserved and
     /// the second `Int` either advances or stays the same across
     /// rank-decreasing edges.

@@ -449,6 +449,7 @@ impl Walk<'_> {
                 RecursionContract::Fuel { .. }
                 | RecursionContract::WellFoundedToNat { .. }
                 | RecursionContract::WellFoundedSequenceGap { .. }
+                | RecursionContract::WellFoundedIntPhase { .. }
                 | RecursionContract::LinearRecurrence2
                 | RecursionContract::Native { .. },
             ) => true,

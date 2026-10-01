@@ -620,6 +620,9 @@ pub(in crate::codegen::lean) fn emit_native_mutual_group(
     fns: &[&FnDef],
     ctx: &CodegenContext,
 ) -> Option<String> {
+    if let Some(code) = super::int_phase::emit_native_int_phase_group(fns, ctx) {
+        return Some(code);
+    }
     if !fns
         .iter()
         .all(|fd| is_pure_fn(fd) && matches!(contract_lex_params_rank(ctx, fd), Some(([], _))))

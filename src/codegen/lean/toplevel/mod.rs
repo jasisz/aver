@@ -1,6 +1,7 @@
 /// Top-level Aver items → Lean 4 items (defs, inductives, structures, examples).
 mod fn_def;
 pub(in crate::codegen::lean) mod fuel;
+mod int_phase;
 mod lex_list;
 mod render;
 mod type_def;
@@ -11,6 +12,7 @@ pub(super) use fn_def::emit_native_mutual_group;
 pub use fn_def::{emit_fn_def, emit_fn_def_proof, emit_mutual_group, emit_mutual_group_proof};
 pub use fuel::PROOF_FUEL_EXHAUSTED_MSG;
 pub(super) use fuel::{law_fuel_simp_names, law_string_pos_rank};
+pub(super) use int_phase::emit_native_int_phase_group;
 pub use type_def::{
     cert_model_deriving, emit_inhabited_instance, emit_recursive_decidable_eq,
     emit_recursive_measure, emit_type_def_in_scope,
