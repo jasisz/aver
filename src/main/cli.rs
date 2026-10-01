@@ -257,8 +257,10 @@ pub(super) enum Commands {
         /// bridge, no preview-1 adapter. Same effect set as
         /// `aver compile --target wasip2`: `Console.{print, error, warn,
         /// readLine}`, `Time.{unixMs, now, sleep}`, `Random.{int, float}`,
-        /// `Args.get`, `Env.get`, all `Disk.*`, `Http.*`, and `Tcp.*`.
-        /// `Terminal` and `Env.set` are rejected
+        /// `Args.get`, `Env.get`, all `Disk.*`, `Http.*`, and the
+        /// connected-socket `Tcp.*` operations. `Tcp.beginConnect`,
+        /// `dialled`, `listen`, `accept`, `peerAddress`, `closeDial` and
+        /// `closeListener`, `Terminal` and `Env.set` are rejected
         /// (see docs/wasip2.md "Why X is rejected, not stubbed").
         #[arg(long = "wasip2", conflicts_with_all = ["self_host", "profile", "wasm_gc"])]
         wasip2: bool,
@@ -712,11 +714,11 @@ pub(super) enum Commands {
         #[arg(long, requires = "check_mode")]
         declined_budget: Option<usize>,
         /// Emit a structured JSON summary
-        /// (`{backend, errors, sorries, budget, passed, ...}`) to stdout
-        /// instead of streaming the verifier's raw output. Implies check
-        /// mode, so it works without `--check`. The additive
-        /// `build_errors` field (hard lake/lean errors distinct from
-        /// sorries) is informational and never changes exit codes. Exit codes
+        /// (`{backend, build_errors, sorries, budget, passed, ...}`) to
+        /// stdout instead of streaming the verifier's raw output. Implies
+        /// check mode, so it works without `--check`. `build_errors`
+        /// counts hard lake/lean errors distinct from sorries and never
+        /// changes exit codes. Exit codes
         /// unchanged: 0 within budget, 1 over, 2 on harness failure.
         #[arg(long)]
         check_json: bool,

@@ -7536,9 +7536,10 @@ fn certificate_source_model(
 ///
 /// Effect surface today: `Console.print/error/warn`,
 /// `Console.readLine`, `Time.unixMs/now/sleep`, `Random.int/float`,
-/// `Args.get`, `Env.get`, all `Disk.*`, `Http.*`, and `Tcp.*`.
-/// Effects that the wasip2 pipeline cannot lower (`Terminal.*`,
-/// `Env.set`, and `Process.*`) are rejected at this command's entry — see
+/// `Args.get`, `Env.get`, all `Disk.*`, `Http.*`, and the
+/// connected-socket `Tcp.*` operations. Effects that the wasip2 pipeline
+/// cannot lower (`Terminal.*`, `Env.set`, `Process.*`, and the `Tcp`
+/// dial, listen, accept and peer-address operations) are rejected at this command's entry — see
 /// `docs/wasip2.md` "Why X is rejected, not stubbed" for the
 /// dynamic-host vs static-target axis.
 #[allow(clippy::too_many_arguments)]
