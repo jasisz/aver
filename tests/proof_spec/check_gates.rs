@@ -981,9 +981,9 @@ fn proof_check_without_explain_emits_no_open_goals_key() {
 fn proof_check_sorry_laws_names_failing_law_not_a_proven_one() {
     // Regression for the P4 cold-start report. `warehouse_failing_law.av` has a
     // HEALTHY law (`applyAll.matchesTotalDelta`, kernel-proven) alongside a
-    // FAILING one (`applyAll.appendHomomorphism`, an append-homomorphism the
-    // engine sorry-floors). The gate build reports `sorries:1`. The check-json
-    // must (1) NAME the failing law in `sorry_laws` — the answer the reporter had
+    // FAILING one (`applyAll.driftAtMostOne`, true on its samples but false for
+    // `[Move.Receive(5)]`, so no prover can close it and it sorry-floors). The
+    // gate build reports `sorries:1`. The check-json must (1) NAME the failing law in `sorry_laws` — the answer the reporter had
     // to reconstruct by hand with `lake build` + grep — and (2) under `--explain`
     // NEVER key the proven law's residual as the open goal. In the report the
     // coarse probe surfaced `applyAll.matchesTotalDelta`'s residual as the open
@@ -1013,7 +1013,7 @@ fn proof_check_sorry_laws_names_failing_law_not_a_proven_one() {
     assert_eq!(
         sorry_laws,
         &vec![serde_json::Value::String(
-            "applyAll.appendHomomorphism".to_string()
+            "applyAll.driftAtMostOne".to_string()
         )],
         "`sorry_laws` must name exactly the failing law:\n{summary}"
     );
@@ -1026,7 +1026,7 @@ fn proof_check_sorry_laws_names_failing_law_not_a_proven_one() {
         );
         for k in open_goals.keys() {
             assert_eq!(
-                k, "applyAll.appendHomomorphism",
+                k, "applyAll.driftAtMostOne",
                 "open_goals may only key the failing law:\n{summary}"
             );
         }
@@ -1034,7 +1034,7 @@ fn proof_check_sorry_laws_names_failing_law_not_a_proven_one() {
     // A residual borrowed from the proven law is probe context, never the failure.
     if let Some(probe_of) = summary.get("probe_of").and_then(|v| v.as_object()) {
         assert!(
-            !probe_of.contains_key("applyAll.appendHomomorphism"),
+            !probe_of.contains_key("applyAll.driftAtMostOne"),
             "the failing law is not probe context:\n{summary}"
         );
     }

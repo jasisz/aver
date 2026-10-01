@@ -75,6 +75,34 @@ pub fn emit_fn_def(
     Some(lines.join("\n"))
 }
 
+/// `true` when a self-call passes, at `index`, a local that the body also
+/// matches on, as `sorted` does with `[y, ..z] -> match z` and `sorted(z)`.
+/// Lean's structural equations for that shape make `simp` loop on the nested
+/// cons, so such a function keeps its length measure.
+fn recursive_arg_rematched(fd: &FnDef, index: usize) -> bool {
+    use crate::codegen::recursion::detect::{call_matches, collect_calls_from_body, local_name_of};
+    let rec_args: HashSet<&str> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .filter_map(|(_, args)| args.get(index).and_then(|a| local_name_of(a)))
+        .collect();
+    if rec_args.is_empty() {
+        return false;
+    }
+    let mut rematched = false;
+    for stmt in fd.body.stmts() {
+        let (Stmt::Binding(_, _, expr) | Stmt::Expr(expr)) = stmt;
+        crate::call_graph::walk_expr(expr, &mut |node| {
+            if let Expr::Match { subject, .. } = node
+                && local_name_of(subject).is_some_and(|name| rec_args.contains(name))
+            {
+                rematched = true;
+            }
+        });
+    }
+    rematched
+}
+
 /// Proof-mode function emission. Reads the contract decision from
 /// `ctx.proof_ir.fn_contracts` and dispatches to the matching emit fn
 /// (native guarded, fuel-encoded, pair-state Nat worker, etc.). Falls
@@ -346,14 +374,24 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
             Some(crate::ir::RecursionContract::Fuel {
                 fuel_metric: crate::ir::FuelMetric::SeqLenPlusOne { param },
             }) => {
-                // ListStructural — Lean structural recursion on
-                // `<param>.length`. The `+1` framing in the IR is
-                // ignored here; Lean's elaborator wants the bare
-                // length measure.
+                // The shared length contract covers both literal cons tails
+                // and computed non-growing slices. Only the scoped literal-
+                // tail recognizer justifies Lean's structural recursor; slices
+                // retain their kernel-checked length measure. Avoid the extra
+                // well-founded proof reductions on every literal-tail step.
                 let lean_param = aver_name_to_lean(param);
-                lines.push(format!("termination_by {}.length", lean_param));
-                lines.push("decreasing_by".to_string());
-                lines.push(format!("  {}", super::lex_list::CHECKED_LIST_DECREASE));
+                let structural =
+                    crate::codegen::recursion::detect::single_list_structural_param_index(fd)
+                        .is_some_and(|index| {
+                            fd.params[index].0 == *param && !recursive_arg_rematched(fd, index)
+                        });
+                if structural {
+                    lines.push(format!("termination_by structural {}", lean_param));
+                } else {
+                    lines.push(format!("termination_by {}.length", lean_param));
+                    lines.push("decreasing_by".to_string());
+                    lines.push(format!("  {}", super::lex_list::CHECKED_LIST_DECREASE));
+                }
             }
             _ => {}
         }

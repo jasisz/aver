@@ -3411,7 +3411,7 @@ fn proof_mode_accepts_single_list_structural_recursion_on_nonfirst_param() {
 
     let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
     let lean = generated_lean_file(&out);
-    assert!(lean.contains("termination_by xs.length"));
+    assert!(lean.contains("termination_by structural xs"));
     assert!(!lean.contains("partial def lenFrom"));
 }
 
@@ -4571,7 +4571,7 @@ fn quicksort_example_stays_inside_proof_subset() {
     let lean = generated_lean_file(&out);
     assert!(lean.contains("def isOrderedFrom"));
     assert!(!lean.contains("partial def isOrderedFrom"));
-    assert!(lean.contains("termination_by xs.length"));
+    assert!(lean.contains("termination_by structural xs"));
 }
 
 #[test]

@@ -611,9 +611,12 @@ fn emit_length_lemma(lemma: &LengthLemma) -> String {
     ));
     lines.push(format!("  intro {}", intro_names));
     lines.push(format!("  induction {} with", first));
-    lines.push(format!("  | nil => simp [{}]", lemma.helper_lean));
+    // Rewrite the visible constructor equation, not the recursor's body.
+    // Structural compilation can introduce an auxiliary `_f`; unfolding the
+    // definition itself leaves that helper between `split` and the guard.
+    lines.push(format!("  | nil => simp [{}.eq_1]", lemma.helper_lean));
     lines.push(format!(
-        "  | cons x rest ih => simp only [{}]; split",
+        "  | cons x rest ih => simp only [{}.eq_2]; split",
         lemma.helper_lean
     ));
     lines.push("                      · simp only [List.length_cons]; omega".to_string());

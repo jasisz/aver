@@ -1,0 +1,52 @@
+module OracleParentChain
+    intent = "Reproduce a fixture parent walk whose general effectful definition has no descent invariant."
+    effects [Disk.readText]
+
+record Link
+    parent: String
+    height: Int
+    bits: Int
+
+record Lineage
+    lastBits: Int
+
+type Store
+    Memory(Map<String, Link>)
+    Live(String)
+
+fn linked(store: Store, blockId: String) -> Result<Option<Link>, String>
+    ? "Memory is local; a live parent name comes from the oracle."
+    ! [Disk.readText]
+    match store
+        Store.Memory(held) -> Result.Ok(Map.get(held, blockId))
+        Store.Live(prefix) -> Result.Ok(Option.Some(Link(parent = Disk.readText("{prefix}/{blockId}")?, height = 1, bits = 7)))
+
+fn lastRealBits(store: Store, blockId: String, limit: Int) -> Result<Int, String>
+    ? "Find a non-limit ancestor or a boundary, without assuming parent heights decrease."
+    ! [Disk.readText]
+    link = linked(store, blockId)?
+    match link
+        Option.None -> Result.Ok(limit)
+        Option.Some(found) -> realOrBack(store, found, limit)
+
+fn realOrBack(store: Store, found: Link, limit: Int) -> Result<Int, String>
+    ? "A limit-valued non-boundary link follows its parent. Cyclic Memory maps are legal."
+    ! [Disk.readText]
+    match Bool.or(found.bits != limit, Int.mod(found.height, 2016) == 0)
+        true -> Result.Ok(found.bits)
+        false -> lastRealBits(store, found.parent, limit)
+
+fn fixture() -> Store
+    ? "A terminating instance does not make every legal Store acyclic."
+    Store.Memory(Map.fromList([("leaf", Link(parent = "root", height = 1, bits = 7)), ("root", Link(parent = "missing", height = 0, bits = 13))]))
+
+fn lineage(store: Store, blockId: String, limit: Int) -> Result<Lineage, String>
+    ? "Wrap the walk's value, like Headers.withLast; this is not a forwarding alias."
+    ! [Disk.readText]
+    bits = lastRealBits(store, blockId, limit)?
+    Result.Ok(Lineage(lastBits = bits))
+
+verify lineage
+    lineage(fixture(), "leaf", 7)?.lastBits => 13
+    lineage(fixture(), "root", 7)?.lastBits => 13
+    lineage(fixture(), "missing", 7)?.lastBits => 7
