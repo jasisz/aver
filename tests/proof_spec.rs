@@ -90,6 +90,8 @@ mod map_set_laws;
 mod mutual_int_phase;
 #[path = "proof_spec/oracle_ground.rs"]
 mod oracle_ground;
+#[path = "proof_spec/oracle_unmeasured_recursion.rs"]
+mod oracle_unmeasured_recursion;
 #[path = "proof_spec/oracle_verify.rs"]
 mod oracle_verify;
 #[path = "proof_spec/panics.rs"]
@@ -108,12 +110,16 @@ mod scc_list_drop;
 mod source_only;
 #[path = "proof_spec/source_recursion.rs"]
 mod source_recursion;
+#[path = "proof_spec/structural_list.rs"]
+mod structural_list;
 #[path = "proof_spec/subject_if_split.rs"]
 mod subject_if_split;
 #[path = "proof_spec/sum_case_split.rs"]
 mod sum_case_split;
 #[path = "proof_spec/transition_histories.rs"]
 mod transition_histories;
+#[path = "proof_spec/unicode_case.rs"]
+mod unicode_case;
 #[path = "proof_spec/waterfall.rs"]
 mod waterfall;
 #[path = "proof_spec/wf_fuel.rs"]

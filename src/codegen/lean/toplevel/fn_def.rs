@@ -346,14 +346,22 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
             Some(crate::ir::RecursionContract::Fuel {
                 fuel_metric: crate::ir::FuelMetric::SeqLenPlusOne { param },
             }) => {
-                // ListStructural — Lean structural recursion on
-                // `<param>.length`. The `+1` framing in the IR is
-                // ignored here; Lean's elaborator wants the bare
-                // length measure.
+                // The shared length contract covers both literal cons tails
+                // and computed non-growing slices. Only the scoped literal-
+                // tail recognizer justifies Lean's structural recursor; slices
+                // retain their kernel-checked length measure. Avoid the extra
+                // well-founded proof reductions on every literal-tail step.
                 let lean_param = aver_name_to_lean(param);
-                lines.push(format!("termination_by {}.length", lean_param));
-                lines.push("decreasing_by".to_string());
-                lines.push(format!("  {}", super::lex_list::CHECKED_LIST_DECREASE));
+                let structural =
+                    crate::codegen::recursion::detect::single_list_structural_param_index(fd)
+                        .is_some_and(|index| fd.params[index].0 == *param);
+                if structural {
+                    lines.push(format!("termination_by structural {}", lean_param));
+                } else {
+                    lines.push(format!("termination_by {}.length", lean_param));
+                    lines.push("decreasing_by".to_string());
+                    lines.push(format!("  {}", super::lex_list::CHECKED_LIST_DECREASE));
+                }
             }
             _ => {}
         }
