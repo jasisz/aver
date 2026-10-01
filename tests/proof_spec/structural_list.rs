@@ -1,5 +1,6 @@
 //! Literal cons-tail descent should use Lean's structural recursor, while
-//! computed slices retain their checked list-length measure.
+//! computed slices, and a tail the body matches on again, retain their checked
+//! list-length measure.
 
 use super::*;
 
@@ -24,6 +25,19 @@ fn pairs(values: List<Int>, acc: List<Int>) -> List<Int>
 verify pairs
     pairs([1, 2, 3, 4], []) => [3, 7]
     pairs([1, 2, 3], []) => [3, 3]
+
+fn ascending(values: List<Int>) -> Bool
+    match values
+        [] -> true
+        [first, ..afterFirst] -> match afterFirst
+            [] -> true
+            [second, ..rest] -> match first <= second
+                true -> ascending(afterFirst)
+                false -> false
+
+verify ascending
+    ascending([1, 2, 3]) => true
+    ascending([2, 1]) => false
 
 fn sliced(values: List<Int>, count: Int) -> Int
     match values
@@ -57,7 +71,7 @@ fn literal_tail_walks_are_structural_but_computed_slices_stay_well_founded() {
     );
     assert_eq!(
         lean.matches("termination_by values.length").count(),
-        1,
+        2,
         "{lean}"
     );
     assert!(
