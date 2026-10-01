@@ -42,13 +42,36 @@ fn render_export_assembly(bridge: &SourceBridge, f: u32, plan: &BridgePlan, s: &
     );
     let model_at = format!("AverCert.AcceptedArtifact.modelOf fns fuel {f} {args}");
     let split_cases = export_split_cases(b);
-    let image_simps = format!(
+    let mut image_simps = format!(
         "I_{f}, dec_{f}, img_{f}, AverCert.GrammarBridge.decodeStr_strBytes, \
          decListInt_enc, decListBool_enc, decListString_enc"
     );
+    if !b.elem_decoders.is_empty() {
+        image_simps.push_str(", decList");
+        for k in &b.elem_decoders {
+            image_simps.push_str(&format!(", decElem_{k}_enc, decList_{k}_enc"));
+        }
+    }
+    // The statement spells an encoding with a `match` (a List of sums or
+    // options) through its own auxiliary matcher, which no `…_enc` lemma
+    // states syntactically; `erw` reads the List back up to unfolding it.
+    let erased = if b.elem_decoders.is_empty() {
+        String::new()
+    } else {
+        let each = b
+            .elem_decoders
+            .iter()
+            .map(|k| format!("erw [decList_{k}_enc]"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!(
+            " | (simp only [I_{f}, dec_{f}] <;> (repeat' (first | {each})) <;> \
+             simp [{image_simps}]; done)"
+        )
+    };
     let image = format!(
         "(by {split_cases}all_goals first | rfl | (simp [{image_simps}]; done) | \
-         (simp [{image_simps}] <;> (repeat' apply And.intro) <;> rfl))"
+         (simp [{image_simps}] <;> (repeat' apply And.intro) <;> rfl){erased})"
     );
     let (statement, proof) = match bridge.kind {
         BridgeKind::Exact => {
