@@ -55,6 +55,17 @@ def lowerChars (before : Bool) : List Char → List Char
     let next := if ignorable c then before else cased c
     head ++ lowerChars next cs
 
-def toLower (s : String) : String := String.ofList (lowerChars false s.toList)
-def toUpper (s : String) : String := String.ofList (s.toList.flatMap upperChar)
+def lowerAsciiStable (c : Char) : Bool :=
+  c.toNat < 128 && !(65 <= c.toNat && c.toNat <= 90)
+
+def upperAsciiStable (c : Char) : Bool :=
+  c.toNat < 128 && !(97 <= c.toNat && c.toNat <= 122)
+
+def toLower (s : String) : String :=
+  -- Keep already-normalized ASCII literals intact during kernel reduction.
+  -- Non-ASCII text must retain expansions and contextual final sigma.
+  if s.toList.all lowerAsciiStable then s else String.ofList (lowerChars false s.toList)
+
+def toUpper (s : String) : String :=
+  if s.toList.all upperAsciiStable then s else String.ofList (s.toList.flatMap upperChar)
 "#;

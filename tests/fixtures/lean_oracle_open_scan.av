@@ -1,0 +1,38 @@
+module OracleOpenScan
+    intent = "Reproduce a finite fixture scan whose live oracle has no guaranteed missing row."
+    effects [Disk.readText]
+
+type Store
+    Memory(Map<Int, String>)
+    Live(String)
+
+fn named(store: Store, height: Int) -> Result<Option<String>, String>
+    ? "A finite Memory map has gaps; a live oracle may always return another row."
+    ! [Disk.readText]
+    match store
+        Store.Memory(held) -> Result.Ok(Map.get(held, height))
+        Store.Live(prefix) -> Result.Ok(Option.Some(Disk.readText("{prefix}/{height}")?))
+
+fn cleared(store: Store, height: Int, acc: List<Int>) -> Result<List<Int>, String>
+    ? "Stop at the first missing row, without a fixed upper height."
+    ! [Disk.readText]
+    row = named(store, height)?
+    sweeping(store, height, row, acc)
+
+fn sweeping(store: Store, height: Int, row: Option<String>, acc: List<Int>) -> Result<List<Int>, String>
+    ? "An existing row advances the unbounded scan."
+    ! [Disk.readText]
+    match row
+        Option.None -> Result.Ok(acc)
+        Option.Some(_) -> cleared(store, height + 1, List.prepend(height, acc))
+
+fn observed(store: Store, from: Int) -> Result<Int, String>
+    ? "Observe the scan's result rather than directly forwarding a partial function."
+    ! [Disk.readText]
+    heights = cleared(store, from, [])?
+    Result.Ok(List.len(heights))
+
+verify observed
+    observed(Store.Memory(Map.fromList([])), 0) => Result.Ok(0)
+    observed(Store.Memory(Map.fromList([(0, "a"), (1, "b")])), 0) => Result.Ok(2)
+    observed(Store.Memory(Map.fromList([(-1, "a"), (0, "b")])), -1) => Result.Ok(2)

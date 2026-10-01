@@ -43,11 +43,10 @@ verify applyAll law matchesTotalDelta
     given moves: List<Move> = [[], [Move.Receive(1)], [Move.Ship(2), Move.Receive(3)]]
     applyAll(stock, moves) => stock + totalDelta(moves)
 
-verify applyAll law appendHomomorphism
+verify applyAll law driftAtMostOne
     given stock: Int = -1..1
-    given a: List<Move> = [[], [Move.Receive(1)], [Move.Ship(2), Move.Receive(3)]]
-    given b: List<Move> = [[], [Move.Ship(4)]]
-    applyAll(applyAll(stock, a), b) => stock + totalDelta(List.concat(a, b))
+    given moves: List<Move> = [[], [Move.Receive(1)], [Move.Ship(2), Move.Receive(3)]]
+    applyAll(stock, moves) - stock <= 1 => true
 
 fn main() -> Unit
     ! [Console.print]

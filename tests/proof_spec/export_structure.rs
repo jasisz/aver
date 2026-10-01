@@ -1112,7 +1112,7 @@ fn proof_export_two_cons_peel_is_structural_not_partial() {
     // and every verify case over it was pushed to `native_decide`.
     //
     // Both halves are pinned here because they fail independently: the
-    // emitted definition (total `def` + `termination_by xs.length`) and the
+    // emitted definition (total `def` + `termination_by structural xs`) and the
     // per-case tactic routing that follows from it.
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1159,8 +1159,8 @@ fn proof_export_two_cons_peel_is_structural_not_partial() {
         "expected a total `def` for the two-cell peel:\n{lean}"
     );
     assert!(
-        lean.contains("termination_by xs.length"),
-        "the structural emission must state the list-length measure:\n{lean}"
+        lean.contains("termination_by structural xs"),
+        "the literal cons-tail walk must use structural termination:\n{lean}"
     );
     for line in lean.lines().filter(|l| l.starts_with("example : ")) {
         assert!(

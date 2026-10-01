@@ -1672,7 +1672,7 @@ pub(super) fn emit_clique_position_monotonicity_law(
             ctx,
         )
     };
-    let when_render = law.when.as_ref().map(&render)?;
+    let when_render = law.when.as_ref().map(render)?;
     let lhs_render = render(&law.lhs);
     let rhs_render = render(&law.rhs);
     let proj_acc = proj(target_idx, r);
