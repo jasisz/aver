@@ -1,0 +1,10 @@
+module TopLevelInterpolation
+    intent = "An interpolated String at module level, bound and bare, as the nightly codegen_rust fuzz found it."
+
+"discarded {1 + 1}"
+
+greeting = "a{1}b{true}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(greeting)

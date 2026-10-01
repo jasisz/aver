@@ -46,12 +46,18 @@ use crate::ast::{Expr, Literal, Spanned, Stmt, StrPart, TopLevel, Type};
 /// `Expr::InterpolatedStr` in place with the buffer pipeline above.
 pub fn lower_interpolation_pass(items: &mut [TopLevel]) {
     for item in items.iter_mut() {
-        if let TopLevel::FnDef(fd) = item {
-            let body_arc = std::sync::Arc::make_mut(&mut fd.body);
-            let crate::ast::FnBody::Block(stmts) = body_arc;
-            for stmt in stmts.iter_mut() {
-                lower_in_stmt(stmt);
+        match item {
+            TopLevel::FnDef(fd) => {
+                let body_arc = std::sync::Arc::make_mut(&mut fd.body);
+                let crate::ast::FnBody::Block(stmts) = body_arc;
+                for stmt in stmts.iter_mut() {
+                    lower_in_stmt(stmt);
+                }
             }
+            // A module-level statement is lowered like a body statement:
+            // every backend reads it after this pass.
+            TopLevel::Stmt(stmt) => lower_in_stmt(stmt),
+            _ => {}
         }
     }
 }
