@@ -711,7 +711,7 @@ fn join_row(row: &[Alt]) -> (Vec<Bind>, Vec<String>, Vec<String>) {
     (binders, patterns, sources)
 }
 
-/// The step lemmas' decoder of a List argument with these elements.
+/// The step lemmas' own decoder of a List argument of Ints, Bools or Strings.
 fn list_decoder(elem: &SourceEncoder) -> Option<&'static str> {
     match elem {
         SourceEncoder::Int => Some("decListInt"),
@@ -721,7 +721,54 @@ fn list_decoder(elem: &SourceEncoder) -> Option<&'static str> {
     }
 }
 
-fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
+/// The element decoders of the List arguments whose elements are records,
+/// tuples, sums, options, results or Lists: one `decElem_k` per distinct
+/// element encoder, decoded one cons cell at a time by the generic `decList`
+/// of `BridgeSupport`. The element decoder is derived from the element's
+/// encoder, which is derived from the plan's element TYPE, never from a name:
+/// a List argument whose plan type is another element type gets another
+/// encoder, so another decoder and another statement.
+#[derive(Debug, Default, Clone)]
+struct ElemDecoders {
+    /// In dependency order: a decoder's nested List elements come first.
+    elems: Vec<ElemDecoder>,
+    /// The decoders the shapes being derived name, at any depth.
+    touched: BTreeSet<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct ElemDecoder {
+    enc: SourceEncoder,
+    alts: Vec<Alt>,
+}
+
+impl ElemDecoders {
+    /// The decoder term of a List of `elem`, registering its element decoder.
+    fn list_term(&mut self, elem: &SourceEncoder) -> Result<String, String> {
+        if let Some(own) = list_decoder(elem) {
+            return Ok(format!("AverCert.Bridge.{own}"));
+        }
+        let k = match self.elems.iter().position(|d| d.enc == *elem) {
+            Some(k) => k,
+            None => {
+                let mut fresh = 0;
+                let alts = alts(elem, &mut fresh, self)?;
+                self.elems.push(ElemDecoder {
+                    enc: elem.clone(),
+                    alts,
+                });
+                self.elems.len() - 1
+            }
+        };
+        self.touched.insert(k);
+        Ok(format!(
+            "(AverCert.Bridge.decList {} AverCert.Bridge.decElem_{k})",
+            elem.grammar_ty()
+        ))
+    }
+}
+
+fn alts(enc: &SourceEncoder, fresh: &mut usize, decoders: &mut ElemDecoders) -> Result<Vec<Alt>, String> {
     const SVAL: &str = "_root_.AverCert.Grammar.SVal";
     let leaf = |ctor: &str, fresh: &mut usize| {
         let name = format!("t{fresh}");
@@ -747,11 +794,12 @@ fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
                 source: t,
             }])
         }
-        // A List of Ints, Bools or Strings is matched as a whole value and
-        // decoded one cons cell at a time by the step lemmas' `decList…`;
-        // a step splits it into its empty and cons shapes (`decList…_cases`).
+        // A List is matched as a whole value and decoded one cons cell at a
+        // time: by the step lemmas' `decList…` for Ints, Bools or Strings, by
+        // the generic `decList` over the element's own decoder otherwise. A
+        // step splits it into its empty and cons shapes (`…_split`).
         SourceEncoder::List(elem) => {
-            let decoder = list_decoder(elem).ok_or_else(|| {
+            let decoder = decoders.list_term(elem).map_err(|_| {
                 format!(
                     "a `list` argument of `{}` elements has no decoder in this version",
                     elem.kind()
@@ -761,7 +809,7 @@ fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
             let t = format!("t{fresh}");
             *fresh += 1;
             Ok(vec![Alt {
-                binds: vec![(v.clone(), t.clone(), format!("AverCert.Bridge.{decoder}"))],
+                binds: vec![(v.clone(), t.clone(), decoder)],
                 pattern: v,
                 source: t,
             }])
@@ -776,7 +824,7 @@ fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
         } => {
             let parts = fields
                 .iter()
-                .map(|(_, f)| alts(f, fresh))
+                .map(|(_, f)| alts(f, fresh, decoders))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(product(parts)?
                 .into_iter()
@@ -793,7 +841,7 @@ fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
         SourceEncoder::Tuple { tid, elems } => {
             let parts = elems
                 .iter()
-                .map(|f| alts(f, fresh))
+                .map(|f| alts(f, fresh, decoders))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(product(parts)?
                 .into_iter()
@@ -812,7 +860,7 @@ fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
             for (index, (ctor, fields)) in ctors.iter().enumerate() {
                 let parts = fields
                     .iter()
-                    .map(|f| alts(f, fresh))
+                    .map(|f| alts(f, fresh, decoders))
                     .collect::<Result<Vec<_>, _>>()?;
                 for row in product(parts)? {
                     let (binds, patterns, sources) = join_row(&row);
@@ -840,7 +888,7 @@ fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
                 pattern: format!("{SVAL}.none {ty}"),
                 source: "_root_.Option.none".into(),
             }];
-            for alt in alts(elem, fresh)? {
+            for alt in alts(elem, fresh, decoders)? {
                 out.push(Alt {
                     binds: alt.binds,
                     pattern: format!("{SVAL}.some {ty} ({})", alt.pattern),
@@ -852,14 +900,14 @@ fn alts(enc: &SourceEncoder, fresh: &mut usize) -> Result<Vec<Alt>, String> {
         SourceEncoder::Result { ok, err } => {
             let (t, e) = (ok.grammar_ty(), err.grammar_ty());
             let mut out = Vec::new();
-            for alt in alts(ok, fresh)? {
+            for alt in alts(ok, fresh, decoders)? {
                 out.push(Alt {
                     binds: alt.binds,
                     pattern: format!("{SVAL}.ok {t} {e} ({})", alt.pattern),
                     source: format!("(_root_.Except.ok {})", alt.source),
                 });
             }
-            for alt in alts(err, fresh)? {
+            for alt in alts(err, fresh, decoders)? {
                 out.push(Alt {
                     binds: alt.binds,
                     pattern: format!("{SVAL}.err {t} {e} ({})", alt.pattern),
@@ -906,6 +954,52 @@ fn rcases_pattern(enc: &SourceEncoder) -> Option<String> {
     }
 }
 
+/// Most List fields of one List element a step splits into their empty and
+/// cons shapes (each split doubles the step's goals).
+const MAX_ELEM_LIST_SPLITS: usize = 2;
+
+/// The `rcases` pattern a step takes the head of a decoded List apart with:
+/// [`rcases_pattern`]'s constructor splits, and the List fields of records
+/// and tuples split into their empty and cons shapes too (a plan matching on
+/// a field of the head meets a cons cell or an empty List, as it does for a
+/// List argument), at most `budget` of them.
+fn elem_split_pattern(enc: &SourceEncoder, budget: &mut usize) -> Option<String> {
+    let sub = |e: &SourceEncoder, budget: &mut usize| {
+        elem_split_pattern(e, budget).unwrap_or_else(|| "_".to_string())
+    };
+    match enc {
+        SourceEncoder::List(_) if *budget > 0 => {
+            *budget -= 1;
+            Some("(_ | ⟨_, _⟩)".to_string())
+        }
+        SourceEncoder::Record { fields, .. } => {
+            let parts: Vec<String> = fields.iter().map(|(_, f)| sub(f, budget)).collect();
+            parts.iter().any(|p| p != "_").then(|| format!("⟨{}⟩", parts.join(", ")))
+        }
+        SourceEncoder::Tuple { elems, .. } => {
+            let parts: Vec<String> = elems.iter().map(|f| sub(f, budget)).collect();
+            parts.iter().any(|p| p != "_").then(|| format!("⟨{}⟩", parts.join(", ")))
+        }
+        SourceEncoder::Sum { ctors, .. } => Some(format!(
+            "({})",
+            ctors
+                .iter()
+                .map(|(_, fields)| format!(
+                    "⟨{}⟩",
+                    fields.iter().map(|f| sub(f, budget)).collect::<Vec<_>>().join(", ")
+                ))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        )),
+        SourceEncoder::Option(e) => Some(format!("(⟨⟩ | {})", sub(e, budget))),
+        SourceEncoder::Result { ok, err } => {
+            let e = sub(err, budget);
+            Some(format!("({e} | {})", sub(ok, budget)))
+        }
+        _ => None,
+    }
+}
+
 // ---- planning ---------------------------------------------------------------
 
 /// Everything the renderer needs for one bridged function (exported or an
@@ -936,6 +1030,12 @@ struct BridgedFn {
     /// Nullary source definitions its model definition mentions, fully
     /// qualified: the plan carries them inlined as their values.
     constants: Vec<String>,
+    /// The element decoders (`decElem_k`) its argument shapes name.
+    elem_decoders: BTreeSet<usize>,
+    /// Whether its plan calls a List helper (`len`, `reverse`, `concat`,
+    /// `take`, `drop`, `contains`), whose results the step evaluates over
+    /// encoded Lists.
+    list_helpers: bool,
 }
 
 /// One decoder argument shape: the atomic values it decodes, its argument
@@ -963,6 +1063,10 @@ struct BridgePlan {
     /// `simp` of an export theorem must unfold with it (the string segments
     /// excepted: typing never reads them).
     type_pieces: Vec<String>,
+    /// The element decoders of the bridged functions' List arguments, and
+    /// the model modules that declare their element types.
+    elems: ElemDecoders,
+    elem_roots: BTreeSet<String>,
 }
 
 /// The largest plan a bridge is attempted for. A step proof unfolds the
@@ -1071,6 +1175,25 @@ fn closure_of(start: u32, fns: &BTreeMap<u32, BridgedFn>) -> Vec<u32> {
     seen.into_iter().collect()
 }
 
+/// The plan builtins that call a List helper.
+const LIST_HELPER_BUILTINS: [&str; 6] =
+    [".listLen", ".listReverse", ".listConcat", ".listTake", ".listDrop", ".listContains"];
+
+/// A function's decoder shapes, and the element decoders they name.
+fn decoder_shapes(
+    params: &[SourceEncoder],
+    elems: &mut ElemDecoders,
+) -> Result<(Vec<DecoderShape>, BTreeSet<usize>), String> {
+    elems.touched.clear();
+    let mut fresh = 0;
+    let parts = params
+        .iter()
+        .map(|p| alts(p, &mut fresh, elems))
+        .collect::<Result<Vec<_>, _>>()?;
+    let shapes = product(parts)?.iter().map(|row| join_row(row)).collect();
+    Ok((shapes, std::mem::take(&mut elems.touched)))
+}
+
 fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
     let mut declined: Vec<(String, String)> = Vec::new();
     let mut plan = BridgePlan {
@@ -1080,6 +1203,8 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
         depth: BTreeMap::new(),
         literals: BTreeSet::new(),
         with_default: false,
+        elems: ElemDecoders::default(),
+        elem_roots: BTreeSet::new(),
         type_pieces: analysis
             .types
             .lean_piece_names("types")
@@ -1128,16 +1253,10 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
                      one-step bridge proof unfolds in bounded time"
                 ));
             }
-            // The step lemmas do not yet unfold a List helper call, so such a
-            // bridge could only fall to `sorry` after spending its whole budget.
             let body = e.plan.body.lean();
-            if [".listLen", ".listReverse", ".listConcat", ".listTake", ".listDrop", ".listContains"]
+            let list_helpers = LIST_HELPER_BUILTINS
                 .iter()
-                .any(|b| body.contains(&format!("(.builtin {b})")))
-            {
-                return Err("the plan calls a List helper, which the bridge proofs do not unfold yet"
-                    .to_string());
-            }
+                .any(|b| body.contains(&format!("(.builtin {b})")));
             let def = info.def_for(&flat)?;
             if def.params.len() != e.plan.params.len() {
                 return Err(format!(
@@ -1155,12 +1274,9 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
             let lret = parse_lean_ty(&def.ret)
                 .ok_or_else(|| format!("unreadable Lean result type `{}`", def.ret))?;
             let result = info.encoder(&e.plan.ret, &lret, &def.namespace, &analysis.types, &mut Vec::new())?;
-            let mut fresh = 0;
-            let parts = params
-                .iter()
-                .map(|p| alts(p, &mut fresh))
-                .collect::<Result<Vec<_>, _>>()?;
-            let shapes = product(parts)?.iter().map(|row| join_row(row)).collect();
+            // Validated here; the shapes are derived again, over the one
+            // element-decoder table of the surviving functions, below.
+            let (shapes, elem_decoders) = decoder_shapes(&params, &mut ElemDecoders::default())?;
             let mut literals = BTreeSet::new();
             string_literals(&e.plan.body, &mut literals);
             let callees = direct_callees(&e.plan.body);
@@ -1177,6 +1293,8 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
                 shapes,
                 literals,
                 constants: info.inlined_constants(def),
+                elem_decoders,
+                list_helpers,
             })
         })();
         match derived {
@@ -1215,6 +1333,17 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
                 .unwrap_or_else(|| format!("#{c}"));
             reasons.insert(f, format!("callee `{callee}` has no source bridge"));
         }
+    }
+    // One element-decoder table, over the surviving functions alone and in
+    // their order, so it is the same for the same bridged functions.
+    for b in plan.fns.values_mut() {
+        let (shapes, elem_decoders) = decoder_shapes(&b.params, &mut plan.elems)
+            .expect("the shapes derived once derive again");
+        b.shapes = shapes;
+        if !elem_decoders.is_empty() {
+            plan.elem_roots.insert(b.model_root.clone());
+        }
+        b.elem_decoders = elem_decoders;
     }
     // Depth over the functions whose closure has no recursion.
     fn depth_of(
@@ -1691,6 +1820,17 @@ theorem hasTy_listString (M : MCtx) (l : List String) :
       (.list .string) :=
   hasTy_listEnc M .string _ (fun y => by simp [HasTy]) l
 
+/-- An encoded List inhabits its List type exactly when every element's
+    encoding inhabits the element type: a rewrite, so `simp` decides the
+    element typing under the binder instead of discharging a side goal. -/
+theorem hasTy_listEnc_iff {α : Type} (M : MCtx) (t : Ty) (e : α → SVal) :
+    ∀ l : List α, HasTy M (List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l) (.list t) ↔
+      ∀ y ∈ l, HasTy M (e y) t
+  | [] => by simp [HasTy]
+  | y :: ys => by
+      simp only [List.foldr]
+      simp [HasTy, hasTy_listEnc_iff M t e ys]
+
 /-! Arm-by-arm evaluation of a List match. -/
 
 theorem arms_emptyList_nil (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (t : Ty)
@@ -1716,6 +1856,161 @@ theorem arms_cons_cons (F : Nat → List SVal → Option SVal) (env : Nat → Op
   by_cases h1 : hd = noSlot <;> by_cases h2 : tl = noSlot <;>
     simp [evalArms, patMatch, bindVals, h1, h2]
 
+/-! A List of records, tuples, sums, options, results or Lists is decoded by
+    `decList` over its element's decoder. Given that the element decoder
+    reads back the element encoding and decodes nothing else, `decList` reads
+    back the List encoding (`…_enc`), decodes nothing else (`…_sound`), and
+    splits like the scalar ones (`…_split`). -/
+
+theorem decList_enc {α : Type} (t : Ty) (d : SVal → Option α) (e : α → SVal)
+    (h : ∀ x, d (e x) = some x) :
+    ∀ l : List α, decList t d (List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l) = some l
+  | [] => by simp [decList]
+  | y :: ys => by simp [decList, h, decList_enc t d e h ys]
+
+theorem decList_sound {α : Type} (t : Ty) (d : SVal → Option α) (e : α → SVal)
+    (h : ∀ v x, d v = some x → v = e x) :
+    ∀ (a : List α) {v : SVal}, decList t d v = some a →
+      v = List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) a := by
+  intro a
+  induction a with
+  | nil =>
+      intro v hv
+      unfold decList at hv
+      split at hv
+      · split at hv
+        · subst_vars; rfl
+        · simp at hv
+      · split at hv
+        · simp only [Option.bind_eq_some_iff, Option.map_eq_some_iff] at hv
+          obtain ⟨_, _, _, _, hv⟩ := hv
+          cases hv
+        · simp at hv
+      · simp at hv
+  | cons x tl ih =>
+      intro v hv
+      unfold decList at hv
+      split at hv
+      · split at hv <;> simp at hv
+      · split at hv
+        · simp only [Option.bind_eq_some_iff, Option.map_eq_some_iff, List.cons.injEq] at hv
+          obtain ⟨x', hx, tl', hr, rfl, rfl⟩ := hv
+          subst_vars
+          simp only [List.foldr, h _ _ hx, ih hr]
+        · simp at hv
+      · simp at hv
+
+theorem decList_split {α : Type} (t : Ty) (d : SVal → Option α) (e : α → SVal)
+    (h : ∀ v x, d v = some x → v = e x) {v : SVal} {a : List α} (hv : decList t d v = some a) :
+    (v = .nil t ∧ a = []) ∨ ∃ x tl, v = .cons t (e x)
+      (List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) tl) ∧ a = x :: tl := by
+  have hs := decList_sound t d e h _ hv
+  cases a with
+  | nil => exact Or.inl ⟨hs, rfl⟩
+  | cons x tl => exact Or.inr ⟨x, tl, by simpa [List.foldr] using hs, rfl⟩
+
+/-! The List helpers over encoded Lists: a helper reads its List arguments
+    with `listOf?` and builds its result with `consAll`; on an encoding both
+    meet the source's `List` function again (`…_enc`). A cons cell of an
+    encoding is first read as the encoding of the longer List
+    (`cons_map_…`, one per element encoding, so no higher-order unification
+    has to guess the encoding from one element). -/
+
+theorem listOf_enc {α : Type} (t : Ty) (e : α → SVal) (l : List α) :
+    listOf? (List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l) = some (t, l.map e) := by
+  induction l with
+  | nil => rfl
+  | cons y ys ih => simp [listOf?, ih]
+
+theorem enc_consAll {α : Type} (t : Ty) (e : α → SVal) (l : List α) :
+    List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l = consAll t (l.map e) := by
+  induction l with
+  | nil => rfl
+  | cons y ys ih => simp [consAll, ih]
+
+theorem consAll_enc {α : Type} (t : Ty) (e : α → SVal) (l : List α) :
+    consAll t (l.map e) = List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l :=
+  (enc_consAll t e l).symm
+
+theorem reverse_enc {α : Type} (t : Ty) (e : α → SVal) (l : List α) :
+    consAll t (l.map e).reverse =
+      List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l.reverse := by
+  rw [enc_consAll, List.map_reverse]
+
+theorem take_enc {α : Type} (t : Ty) (e : α → SVal) (l : List α) (n : Nat) :
+    consAll t ((l.map e).take n) =
+      List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) (l.take n) := by
+  rw [enc_consAll, List.map_take]
+
+theorem drop_enc {α : Type} (t : Ty) (e : α → SVal) (l : List α) (n : Nat) :
+    consAll t ((l.map e).drop n) =
+      List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) (l.drop n) := by
+  rw [enc_consAll, List.map_drop]
+
+theorem append_enc {α : Type} (t : Ty) (e : α → SVal) (l m : List α) :
+    consAll t (l.map e ++ m.map e) =
+      List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) (l ++ m) := by
+  rw [enc_consAll, List.map_append]
+
+theorem listOf_nil_int : listOf? (SVal.nil .int) = some (.int, ([] : List Int).map (fun z => SVal.i z)) := rfl
+
+theorem listOf_nil_bool : listOf? (SVal.nil .bool) = some (.bool, ([] : List Bool).map (fun z => SVal.b z)) := rfl
+
+theorem listOf_nil_string : listOf? (SVal.nil .string) =
+    some (.string, ([] : List String).map (fun z => SVal.s (AverCert.GrammarBridge.strBytes z))) := rfl
+
+/-- The empty String literal, whose bytes the steps never read back. -/
+theorem decodeStr_empty : AverCert.GrammarBridge.decodeStr (SVal.s []) = some "" :=
+  AverCert.GrammarBridge.decodeStr_eq_some.mpr rfl
+
+theorem cons_map_int (x : Int) (l : List Int) :
+    SVal.i x :: l.map (fun z => SVal.i z) = (x :: l).map (fun z => SVal.i z) := rfl
+
+theorem cons_map_bool (x : Bool) (l : List Bool) :
+    SVal.b x :: l.map (fun z => SVal.b z) = (x :: l).map (fun z => SVal.b z) := rfl
+
+theorem cons_map_string (x : String) (l : List String) :
+    SVal.s (AverCert.GrammarBridge.strBytes x) :: l.map (fun z => SVal.s (AverCert.GrammarBridge.strBytes z)) =
+      (x :: l).map (fun z => SVal.s (AverCert.GrammarBridge.strBytes z)) := rfl
+
+/-- `contains` compares by `svEq`; the source compares with `==`. -/
+theorem svEq_int (x a : Int) : svEq (.i x) (.i a) = (a == x) := by
+  by_cases h : x = a
+  · subst h; simp [svEq]
+  · have h' : ¬a = x := fun e => h e.symm
+    simp [svEq, h, h']
+
+theorem svEq_bool (x a : Bool) : svEq (.b x) (.b a) = (a == x) := by
+  cases a <;> cases x <;> rfl
+
+theorem svEq_string (x a : String) :
+    svEq (.s (AverCert.GrammarBridge.strBytes x)) (.s (AverCert.GrammarBridge.strBytes a)) = (a == x) := by
+  by_cases h : x = a
+  · subst h; simp [svEq]
+  · have h' : ¬a = x := fun e => h e.symm
+    have hb : ¬AverCert.GrammarBridge.strBytes x = AverCert.GrammarBridge.strBytes a :=
+      fun e => h (AverCert.GrammarBridge.strBytes_inj e)
+    simp [svEq, hb, h']
+
+theorem any_svEq_int (l : List Int) (a : Int) :
+    (l.map SVal.i).any (fun v => svEq v (.i a)) = l.contains a := by
+  induction l with
+  | nil => rfl
+  | cons y ys ih => rw [List.map_cons, List.any_cons, List.contains_cons, ih, svEq_int]
+
+theorem any_svEq_bool (l : List Bool) (a : Bool) :
+    (l.map SVal.b).any (fun v => svEq v (.b a)) = l.contains a := by
+  induction l with
+  | nil => rfl
+  | cons y ys ih => rw [List.map_cons, List.any_cons, List.contains_cons, ih, svEq_bool]
+
+theorem any_svEq_string (l : List String) (a : String) :
+    (l.map (fun y => SVal.s (AverCert.GrammarBridge.strBytes y))).any
+      (fun v => svEq v (.s (AverCert.GrammarBridge.strBytes a))) = l.contains a := by
+  induction l with
+  | nil => rfl
+  | cons y ys ih => rw [List.map_cons, List.any_cons, List.contains_cons, ih, svEq_string]
+
 end StepLemmas
 "#;
 
@@ -1739,6 +2034,14 @@ noncomputable def decListString : SVal → Option (List String)
   | .nil .string => some []
   | .cons .string hv r =>
       (AverCert.GrammarBridge.decodeStr hv).bind (fun x => (decListString r).map (fun t => x :: t))
+  | _ => none
+
+/-- A List of any other element type, over the decoder of one element: the
+    cons cells must carry exactly the List's element type. -/
+noncomputable def decList {α : Type} (t : Ty) (d : SVal → Option α) : SVal → Option (List α)
+  | .nil t' => if t' = t then some [] else none
+  | .cons t' hv r =>
+      if t' = t then (d hv).bind (fun x => (decList t d r).map (fun tl => x :: tl)) else none
   | _ => none
 
 end ListDecoders
@@ -1771,6 +2074,16 @@ const STEP_EVAL: &str = "AverCert.Grammar.eval, AverCert.Grammar.evalArgs, arms_
      _root_.List.isEmpty_cons, _root_.Bool.false_eq_true, AverCert.Grammar.consAll, \
      decListInt, decListBool, decListString, decListInt_enc, decListBool_enc, decListString_enc";
 
+/// What a step whose plan calls a List helper evaluates the helper with: the
+/// helper reads its List arguments back as Lists and builds an encoding
+/// again (see the List-helper lemmas of [`STEP_LEMMAS`]).
+const LIST_HELPER_EVAL: &str = ", AverCert.Grammar.listOf?, ↓listOf_nil_int, ↓listOf_nil_bool, \
+     ↓listOf_nil_string, listOf_enc, cons_map_int, \
+     cons_map_bool, cons_map_string, reverse_enc, take_enc, drop_enc, append_enc, consAll_enc, \
+     _root_.List.length_map, _root_.List.any_nil, any_svEq_int, any_svEq_bool, any_svEq_string, \
+     _root_.List.reverse_nil, _root_.List.take_nil, _root_.List.drop_nil, _root_.List.nil_append, \
+     _root_.List.length_nil";
+
 /// Normal forms a leaf closes with, on top of the source definition.
 const STEP_NORM: &str = "_root_.bne, dec_eq_beq, dec_ne_bne, strBytes_eq_iff, str_toString, \
      str_hadd, _root_.String.append_assoc, decListInt, decListBool, decListString";
@@ -1789,9 +2102,55 @@ fn render_step_body(
     fns: &BTreeMap<u32, BridgedFn>,
     lit_index: &BTreeMap<Vec<u8>, usize>,
     with_default: bool,
+    elems: &ElemDecoders,
     s: &mut String,
 ) {
     let f = b.func_idx;
+    // The element decoders the step meets: its own arguments' (split by
+    // their `…_split`) and its callees' (whose decoders read an encoding
+    // back by their `…_enc`). Empty for a function without such a List, so
+    // its proof text is exactly what it was before element decoders.
+    let mut met: BTreeSet<usize> = b.elem_decoders.clone();
+    for c in &b.callees {
+        if let Some(callee) = fns.get(c) {
+            met.extend(callee.elem_decoders.iter().copied());
+        }
+    }
+    let mut elem_simps = String::new();
+    // An element encoding reads back by `…_enc` before its decoder unfolds
+    // (a pre-rewrite); a literal element, which is no encoding, by unfolding.
+    if !met.is_empty() {
+        elem_simps.push_str(", decList, decodeStr_empty");
+        for k in &met {
+            elem_simps.push_str(&format!(", ↓decElem_{k}_enc, decList_{k}_enc, decElem_{k}"));
+        }
+    }
+    if b.list_helpers {
+        elem_simps.push_str(LIST_HELPER_EVAL);
+        for k in &met {
+            elem_simps.push_str(&format!(", ↓listOf_nil_{k}, cons_map_{k}"));
+        }
+    }
+    let mut splits_lists = false;
+    let elem_splits: String = b
+        .elem_decoders
+        .iter()
+        .map(|k| {
+            // A head that is itself a List stays whole: its own decoder
+            // already reads it back, and a helper meets it as an encoding.
+            let mut budget = MAX_ELEM_LIST_SPLITS;
+            let enc = &elems.elems[*k].enc;
+            let head = (!matches!(enc, SourceEncoder::List(_)))
+                .then(|| elem_split_pattern(enc, &mut budget))
+                .flatten()
+                .unwrap_or_else(|| "_".to_string());
+            splits_lists |= budget < MAX_ELEM_LIST_SPLITS;
+            format!(
+                "\n            \
+                 | (rcases decList_{k}_split hl with (⟨rfl, rfl⟩ | ⟨{head}, _, rfl, rfl⟩))"
+            )
+        })
+        .collect();
     s.push_str(&format!(
         "-- Proof-local body; the step binding checks it against Plans.fn{f}.\n\
          def body_{f} : AverCert.Grammar.Expr :=\n  {}\n\n",
@@ -1865,7 +2224,10 @@ fn render_step_body(
         })
         .map(|c| format!(", img_{c}"))
         .collect();
-    let norm = format!("{STEP_NORM}{empty}{constants}{with_default}{list_images}");
+    if splits_lists {
+        elem_simps.push_str(", _root_.List.foldr_cons, _root_.List.foldr_nil");
+    }
+    let norm = format!("{STEP_NORM}{empty}{constants}{with_default}{list_images}{elem_simps}");
     // A self-recursive source function is unfolded once, on the right: `simp`
     // with its equation would unfold the recursive call on the left as well.
     // The last rung of the other leaves meets a constant the source writes by
@@ -1875,6 +2237,17 @@ fn render_step_body(
     // `natAbs n` under `0 < n`): equal arguments, by `omega`.
     let fuel = if b.fuel {
         format!("\n           | (simp [{unfold_list}, {norm}, *] <;> congr 1 <;> omega)")
+    } else {
+        String::new()
+    };
+    // A plan that matches on a helper's result meets an encoding of a List
+    // the source matches on too: split the source's match, and evaluate the
+    // plan's arms again on the shape it fixes.
+    let helper_split = if b.list_helpers {
+        format!(
+            "\n           | (unfold {unfold_words}; split <;> simp_all [{norm}, {STEP_EVAL}, \
+             I_{f}{callee_simps}]; done)"
+        )
     } else {
         String::new()
     };
@@ -1891,7 +2264,7 @@ fn render_step_body(
              | (simp only [{unfold_list}{forward}{constants}]; done)\n           \
              | (simp [{unfold_list}, {norm}, *]; done){fuel}\n           \
              | (simp_all [{unfold_list}, {norm}]; done)\n           \
-             | (simp_all [{unfold_list}, {norm}] <;> omega)\n           \
+             | (simp_all [{unfold_list}, {norm}] <;> omega){helper_split}\n           \
              | (unfold {unfold_words}; split <;> simp_all [{norm}])\n           \
              | (simp only [{unfold_list}{forward}{constants}]; rfl)"
         )
@@ -1921,10 +2294,10 @@ fn render_step_body(
                    first\n            \
                    | (rcases decListInt_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩))\n            \
                    | (rcases decListBool_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩))\n            \
-                   | (rcases decListString_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩)))))\n       \
+                   | (rcases decListString_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩)){elem_splits})))\n       \
               all_goals (try subst hy)\n       \
               all_goals simp only [body_{f}, eval_ite, eval_optDefault, eval_resDefault]\n       \
-              all_goals simp only [img_{f}, {STEP_EVAL}, I_{f}{callee_simps}{backward}]\n       \
+              all_goals simp only [img_{f}, {STEP_EVAL}, I_{f}{callee_simps}{elem_simps}{backward}]\n       \
               all_goals (repeat' (refine ite_eq_of (fun h => ?_) (fun h => ?_)))\n       \
               all_goals (try subst_vars)\n       \
               all_goals\n         \
@@ -1997,8 +2370,12 @@ fn render_export(
     };
     let split_cases = export_split_cases(b);
     let kind_proof = export_assembly_binding(func_idx, plan);
+    // An encoded List of records, tuples, sums or Lists inhabits its List
+    // type exactly when every element encoding inhabits the element type,
+    // which the same `simp` decides under the binder.
+    let list_typing = if b.elem_decoders.is_empty() { "" } else { ", AverCert.Bridge.hasTy_listEnc_iff" };
     let typing = format!(
-        "{intro}{split_cases}all_goals simp [{TYPING_SIMPS}{pieces}, AverCert.Plans.fn{func_idx}]",
+        "{intro}{split_cases}all_goals simp [{TYPING_SIMPS}{list_typing}{pieces}, AverCert.Plans.fn{func_idx}]",
         pieces = plan
             .type_pieces
             .iter()
@@ -2626,12 +3003,12 @@ mod source_bridge_tests {
         );
         // Decoder shapes: a sum expands per constructor.
         let mut fresh = 0;
-        let shapes = alts(&op, &mut fresh).expect("alts");
+        let shapes = alts(&op, &mut fresh, &mut ElemDecoders::default()).expect("alts");
         assert_eq!(shapes.len(), 2);
         assert_eq!(shapes[0].source, "(_root_.Domain.Rational.Op.add t0)");
         assert_eq!(shapes[1].source, "_root_.Domain.Rational.Op.zero");
         // A String is matched whole and decoded by the wall's `decodeStr`.
-        let strs = alts(&SourceEncoder::Str, &mut fresh).expect("a String decodes");
+        let strs = alts(&SourceEncoder::Str, &mut fresh, &mut ElemDecoders::default()).expect("a String decodes");
         assert_eq!(strs.len(), 1);
         assert_eq!(
             strs[0].binds,
@@ -2641,17 +3018,31 @@ mod source_bridge_tests {
                 "AverCert.GrammarBridge.decodeStr".to_string()
             )]
         );
-        assert!(alts(&SourceEncoder::Float, &mut fresh).is_err());
-        let ints = alts(&SourceEncoder::List(Box::new(SourceEncoder::Int)), &mut fresh)
+        assert!(alts(&SourceEncoder::Float, &mut fresh, &mut ElemDecoders::default()).is_err());
+        let ints = alts(&SourceEncoder::List(Box::new(SourceEncoder::Int)), &mut fresh, &mut ElemDecoders::default())
             .expect("a List of Ints decodes");
         assert_eq!(ints.len(), 1);
         assert_eq!(ints[0].binds[0].2, "AverCert.Bridge.decListInt");
+        // A List of Lists, or of records, decodes through the generic
+        // `decList` over one element decoder per element ENCODER: the same
+        // element encoder shares its decoder, another element type gets
+        // another one, and an element without a decoder declines.
+        let mut elems = ElemDecoders::default();
+        let nested = SourceEncoder::List(Box::new(SourceEncoder::List(Box::new(SourceEncoder::Int))));
+        let lists = alts(&nested, &mut fresh, &mut elems).expect("a List of Lists decodes");
+        assert_eq!(
+            lists[0].binds[0].2,
+            "(AverCert.Bridge.decList (_root_.AverCert.Grammar.Ty.list _root_.AverCert.Grammar.Ty.int) \
+             AverCert.Bridge.decElem_0)"
+        );
+        let records = SourceEncoder::List(Box::new(fraction.clone()));
+        let again = alts(&records, &mut fresh, &mut elems).expect("a List of records decodes");
+        assert!(again[0].binds[0].2.ends_with("AverCert.Bridge.decElem_1)"), "{again:?}");
+        alts(&nested, &mut fresh, &mut elems).expect("decodes again");
+        assert_eq!(elems.elems.len(), 2, "one decoder per element encoder");
+        assert_eq!(elems.elems[1].enc, fraction);
         assert!(
-            alts(
-                &SourceEncoder::List(Box::new(SourceEncoder::List(Box::new(SourceEncoder::Int)))),
-                &mut fresh
-            )
-            .is_err()
+            alts(&SourceEncoder::List(Box::new(SourceEncoder::Float)), &mut fresh, &mut elems).is_err()
         );
     }
 
@@ -2797,8 +3188,8 @@ mod source_bridge_tests {
     fn decoders_and_steps_render_their_exact_text() {
         let mut fresh = 0;
         let parts = vec![
-            alts(&SourceEncoder::Int, &mut fresh).unwrap(),
-            alts(&SourceEncoder::Str, &mut fresh).unwrap(),
+            alts(&SourceEncoder::Int, &mut fresh, &mut ElemDecoders::default()).unwrap(),
+            alts(&SourceEncoder::Str, &mut fresh, &mut ElemDecoders::default()).unwrap(),
         ];
         let shapes = product(parts).unwrap().iter().map(|row| join_row(row)).collect();
         let b = BridgedFn {
@@ -2814,6 +3205,8 @@ mod source_bridge_tests {
             literals: BTreeSet::new(),
             recursive: false,
             constants: Vec::new(),
+            elem_decoders: BTreeSet::new(),
+            list_helpers: false,
         };
         let mut s = String::new();
         render_fn_defs(&b, &mut s);
@@ -2872,13 +3265,15 @@ mod source_bridge_tests {
             literals,
             recursive: true,
             constants: vec!["M.width".to_string()],
+            elem_decoders: BTreeSet::new(),
+            list_helpers: false,
         };
         let lit_index: BTreeMap<Vec<u8>, usize> =
             [(Vec::new(), 0), (b" ".to_vec(), 1)].into_iter().collect();
         let mut fns = BTreeMap::new();
         fns.insert(9, b.clone());
         let mut s = String::new();
-        render_step_body(&b, &fns, &lit_index, false, &mut s);
+        render_step_body(&b, &fns, &lit_index, false, &ElemDecoders::default(), &mut s);
         assert!(s.contains("all_goals simp only [body_9, eval_ite, eval_optDefault, eval_resDefault]\n"), "{s}");
         assert!(s.contains(", ↓ ← strLit_1]"), "{s}");
         assert!(!s.contains("↓ ← strLit_0"), "the empty literal is never read back: {s}");

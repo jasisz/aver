@@ -26,6 +26,8 @@ fn plan_with_functions(count: u32) -> BridgePlan {
                     literals: BTreeSet::new(),
                     recursive: false,
                     constants: Vec::new(),
+                    elem_decoders: BTreeSet::new(),
+                    list_helpers: false,
                 },
             )
         })
@@ -64,6 +66,8 @@ fn plan_with_functions(count: u32) -> BridgePlan {
         with_default: false,
         entries,
         type_pieces: Vec::new(),
+        elems: ElemDecoders::default(),
+        elem_roots: BTreeSet::new(),
     }
 }
 

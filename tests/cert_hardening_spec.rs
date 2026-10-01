@@ -48,7 +48,10 @@
 //! * a List literal's cons helper declared as a user function of the same
 //!   signature, a cons helper whose plan is not the cons plan, and the cons
 //!   helpers of two instantiations exchanged;
-//! * a bridge whose List argument encoder names another element type;
+//! * a bridge whose List argument encoder names another element type, a
+//!   List-of-records bridge whose element encoder names another type, a
+//!   List-helper bridge naming a source function that does not call the
+//!   plan's helper, and a source model whose helper is not the plan's;
 //! * a duplicate planned function index that passes every per-plan check,
 //!   call groups numbered against the plans' order (which must check
 //!   unchanged), a conjunct of the plans' acceptance proved by `sorry`,
@@ -3385,6 +3388,181 @@ fn cert_hardening_accepts_list_helpers() {
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the List-helper certificate must check:\n{report}");
     assert!(report.contains("11 checked exports"), "{report}");
+    assert!(
+        report.contains("source-bridges: 11 of 11 credited"),
+        "every helper call meets its source List function:\n{report}"
+    );
+}
+
+/// A bridge names its source function: `revI`'s bridge claiming the plan
+/// that reverses computes `twice`, a source function of the same signature
+/// that never reverses. The checker renders and pins that statement, the
+/// package's theorem is about `revI`, and the package is refused.
+#[test]
+fn cert_hardening_declines_a_helper_bridge_naming_a_source_without_the_helper() {
+    let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-bridge-model") else {
+        return;
+    };
+    replace_once(
+        &cert.join("cert-manifest.json"),
+        "\"model\": \"Helpers.revI\"",
+        "\"model\": \"Helpers.twice\"",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "the checker-owned Lean witness failed");
+}
+
+/// The source model is package data: a model whose `revI` takes a prefix
+/// instead of reversing leaves the plan, the bytes and every other bridge
+/// alone, and costs exactly `revI`'s bridge its credit — the step proof meets
+/// a source that is not the plan's helper and falls to `sorry`.
+#[test]
+fn cert_hardening_uncredits_a_helper_bridge_whose_source_calls_another_helper() {
+    let Some((_dir, wasm, cert)) = helpers_baseline("certharden-helpers-model-helper") else {
+        return;
+    };
+    replace_once(
+        &cert.join("AverModel/Helpers.lean"),
+        "def revI (xs : List Int) : List Int :=\n  xs.reverse",
+        "def revI (xs : List Int) : List Int :=\n  xs.take 1",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(
+        ok,
+        "a wrong source model touches no export verdict:\n{report}"
+    );
+    assert!(
+        report.contains("source-bridges: 10 of 11 credited")
+            && report.contains("source-bridge not credited: revI (proof depends on sorryAx)"),
+        "exactly the bridge through the wrong definition loses its credit:\n{report}"
+    );
+}
+
+/// Lists of records, of records with a List field, and of Lists: each List
+/// argument decodes through the generic `decList` over its element's own
+/// decoder, so every export has a source bridge, and the law over a List of
+/// Lists is on bytes through `sizes`' bridge.
+const RECS: &str = "module Recs
+    intent = \"Lists of records and Lists of Lists.\"
+    exposes [total, firstName, withEntry, anyTagged, sizes]
+
+record Entry
+    name: String
+    amount: Int
+    tags: List<String>
+
+fn total(es: List<Entry>) -> Int
+    ? \"Sum of the amounts.\"
+    match es
+        [] -> 0
+        [e, ..rest] -> e.amount + total(rest)
+
+fn firstName(es: List<Entry>) -> String
+    ? \"The first name, or nothing.\"
+    match es
+        [] -> \"\"
+        [e, .._] -> e.name
+
+fn withEntry(es: List<Entry>, n: String) -> List<Entry>
+    ? \"One more entry in front.\"
+    List.prepend(Entry(name = n, amount = 1, tags = []), es)
+
+fn anyTagged(es: List<Entry>) -> Bool
+    ? \"Some entry carries a tag.\"
+    match es
+        [] -> false
+        [e, ..rest] -> match e.tags
+            [] -> anyTagged(rest)
+            [_, .._] -> true
+
+fn sizes(xss: List<List<Int>>) -> Int
+    ? \"The number of Ints in all the Lists.\"
+    match xss
+        [] -> 0
+        [xs, ..rest] -> List.len(xs) + sizes(rest)
+
+verify sizes law neverNegative
+    given xss: List<List<Int>> = [[], [[1]], [[1, 2], []]]
+    sizes(xss) >= 0 => true
+";
+
+/// Emit the List-of-records certificate into a fresh scratch directory.
+fn recs_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
+    if !lake_available() {
+        return None;
+    }
+    let dir = temp_dir(prefix);
+    std::fs::write(dir.join("recs.av"), RECS).unwrap();
+    let out = dir.join("out");
+    let compile = aver_command()
+        .current_dir(&*dir)
+        .args([
+            "compile",
+            "recs.av",
+            "--target",
+            "wasm-gc",
+            "--certify",
+            "-o",
+        ])
+        .arg(&out)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    Some((dir, out.join("recs.wasm"), out.join("cert")))
+}
+
+#[test]
+fn cert_hardening_accepts_list_of_records_bridges() {
+    let Some((_dir, wasm, cert)) = recs_baseline("certharden-recs-clean") else {
+        return;
+    };
+    let elems = std::fs::read_to_string(cert.join("BridgeElems.lean")).unwrap();
+    assert!(
+        elems.contains("noncomputable def decElem_0 ")
+            && elems.contains("noncomputable def decElem_1 "),
+        "one element decoder per element encoder:\n{elems}"
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "the List-of-records certificate must check:\n{report}");
+    assert!(report.contains("5 checked exports"), "{report}");
+    assert!(
+        report.contains("source-bridges: 5 of 5 credited"),
+        "every List of records or Lists decodes:\n{report}"
+    );
+    assert!(
+        report.contains("bridged-laws: 1 of 1 credited"),
+        "the law over a List of Lists is on bytes:\n{report}"
+    );
+}
+
+/// The element decoder follows the element TYPE of the plan, through the
+/// encoder the manifest transports: declaring `total`'s List of `Entry` a
+/// List of Ints states a bridge about a model function that takes a List of
+/// records. The checker's statement no longer elaborates, and the package is
+/// refused.
+#[test]
+fn cert_hardening_declines_a_record_list_bridge_with_another_element_encoder() {
+    let Some((_dir, wasm, cert)) = recs_baseline("certharden-recs-bridge-elem") else {
+        return;
+    };
+    let path = cert.join("cert-manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let bridge = json["sourceBridges"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|b| b["export"] == "total")
+        .expect("`total` has a bridge");
+    assert_eq!(bridge["params"][0]["elem"]["kind"], "record");
+    bridge["params"][0]["elem"] = serde_json::json!({"kind": "int"});
+    std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "the checker-owned Lean witness failed");
 }
 
 /// A role row naming another instantiation's helper: `List<Int>`'s reverse
