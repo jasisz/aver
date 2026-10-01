@@ -20,6 +20,9 @@ pub enum PlanTy {
     Vec(Box<PlanTy>),
     List(Box<PlanTy>),
     Opaque(u32),
+    /// `Bytes`: the packed `(array (mut i8))` of its octets
+    /// (`Schema.TypeTable.bytesArr`).
+    Bytes,
 }
 
 /// `Grammar.Lit`.
@@ -66,9 +69,66 @@ pub enum PlanBuiltin {
     ListTake,
     ListDrop,
     ListContains,
+    /// The packed `Bytes` operations (`Grammar.Builtin.bytesOfList` ...):
+    /// MIR's `Bytes(values = xs)` (pack), `bytes.values` (unpack),
+    /// `List.len(bytes.values)` (inline `array.len`), and a construction over
+    /// `List.concat` / `take` / `drop` of projections (the preserving helpers).
+    BytesOfList,
+    BytesValues,
+    BytesLen,
+    BytesConcat,
+    BytesTake,
+    BytesDrop,
+}
+
+/// `Grammar.BytesRole`: the per-type helpers of the packed `Bytes` array.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PlanBytesRole {
+    Pack,
+    Unpack,
+    Concat,
+    Take,
+    Drop,
+}
+
+impl PlanBytesRole {
+    pub fn lean(self) -> &'static str {
+        match self {
+            PlanBytesRole::Pack => ".pack",
+            PlanBytesRole::Unpack => ".unpack",
+            PlanBytesRole::Concat => ".concat",
+            PlanBytesRole::Take => ".take",
+            PlanBytesRole::Drop => ".drop",
+        }
+    }
 }
 
 impl PlanBuiltin {
+    /// `Grammar.Builtin.isBytes`.
+    pub fn is_bytes(self) -> bool {
+        matches!(
+            self,
+            PlanBuiltin::BytesOfList
+                | PlanBuiltin::BytesValues
+                | PlanBuiltin::BytesLen
+                | PlanBuiltin::BytesConcat
+                | PlanBuiltin::BytesTake
+                | PlanBuiltin::BytesDrop
+        )
+    }
+
+    /// The `Bytes` helper a `Bytes` builtin calls (`BytesLen` calls none).
+    pub fn bytes_role(self) -> Option<PlanBytesRole> {
+        Some(match self {
+            PlanBuiltin::BytesOfList => PlanBytesRole::Pack,
+            PlanBuiltin::BytesValues => PlanBytesRole::Unpack,
+            PlanBuiltin::BytesConcat => PlanBytesRole::Concat,
+            PlanBuiltin::BytesTake => PlanBytesRole::Take,
+            PlanBuiltin::BytesDrop => PlanBytesRole::Drop,
+            _ => return None,
+        })
+    }
+
     /// The List helper a List builtin calls.
     pub fn list_role(self) -> Option<PlanListRole> {
         Some(match self {
@@ -234,6 +294,16 @@ pub struct PlanTypeTable {
     /// `__aint_to_i64_sat`, which a `List.take` / `List.drop` count goes
     /// through (`Schema.TypeTable.intSat`), pinned to its template.
     pub int_sat: Option<u32>,
+    /// The packed `Bytes` array type (`Schema.TypeTable.bytesArr`), confirmed
+    /// as `(array (mut i8))`.
+    pub bytes_arr: Option<u32>,
+    /// The `Bytes` helpers the plans' `Bytes` builtins call
+    /// (`Schema.TypeTable.bytesHelpers`), by role. The acceptance pins each
+    /// body to the wall's template.
+    pub bytes_helpers: Vec<(PlanBytesRole, u32)>,
+    /// `__aint_to_i64_checked`, which `pack` calls
+    /// (`Schema.TypeTable.intChk`), pinned to its template.
+    pub int_chk: Option<u32>,
 }
 
 /// One user function as the compiler printed it: its wasm function index, its
@@ -295,6 +365,7 @@ impl PlanTy {
             PlanTy::Vec(t) => format!("(.vec {})", t.lean()),
             PlanTy::List(t) => format!("(.list {})", t.lean()),
             PlanTy::Opaque(t) => format!("(.opaque {t})"),
+            PlanTy::Bytes => ".bytes".into(),
         }
     }
 }
@@ -353,6 +424,12 @@ impl PlanCallee {
                     PlanBuiltin::ListTake => ".listTake",
                     PlanBuiltin::ListDrop => ".listDrop",
                     PlanBuiltin::ListContains => ".listContains",
+                    PlanBuiltin::BytesOfList => ".bytesOfList",
+                    PlanBuiltin::BytesValues => ".bytesValues",
+                    PlanBuiltin::BytesLen => ".bytesLen",
+                    PlanBuiltin::BytesConcat => ".bytesConcat",
+                    PlanBuiltin::BytesTake => ".bytesTake",
+                    PlanBuiltin::BytesDrop => ".bytesDrop",
                 }
             ),
             PlanCallee::Intrinsic(i) => format!(
@@ -725,13 +802,31 @@ impl PlanTypeTable {
             Some(i) => format!(",\n    intSat := some {i}"),
             None => String::new(),
         };
+        let bytes = {
+            let mut out = String::new();
+            if let Some(i) = self.bytes_arr {
+                out.push_str(&format!(",\n    bytesArr := some {i}"));
+            }
+            if !self.bytes_helpers.is_empty() {
+                let items = self
+                    .bytes_helpers
+                    .iter()
+                    .map(|(r, i)| format!("({}, {i})", r.lean()))
+                    .collect::<Vec<_>>();
+                out.push_str(&format!(",\n    bytesHelpers := [{}]", items.join(", ")));
+            }
+            if let Some(i) = self.int_chk {
+                out.push_str(&format!(",\n    intChk := some {i}"));
+            }
+            out
+        };
         let pieces = decls
             .lines()
             .filter_map(|line| line.strip_prefix("def "))
             .filter_map(|rest| rest.split_once(" :").map(|(n, _)| n.to_string()))
             .collect();
         let text = format!(
-            "{decls}def {name} : TypeTable :=\n  {{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := {records},\n    sums := {sums},\n    options := {options}, results := {results},\n    vecs := {vecs}, lists := {lists}, opaques := {opaques},\n    strSegs := {segs}{cons}{helpers}{sat} }}\n\n",
+            "{decls}def {name} : TypeTable :=\n  {{ carrier := {}, mag := {}, str := {}, strVec := {},\n    records := {records},\n    sums := {sums},\n    options := {options}, results := {results},\n    vecs := {vecs}, lists := {lists}, opaques := {opaques},\n    strSegs := {segs}{cons}{helpers}{sat}{bytes} }}\n\n",
             lean_opt_nat(self.carrier),
             lean_opt_nat(self.mag),
             lean_opt_nat(self.str_),

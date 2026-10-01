@@ -54,6 +54,11 @@ def helperAssoc (M : MCtx) (h : HostFns) : List (Nat × (Nat × (List WVal → O
   M.listHelpers.map fun x =>
     (x.2.2, (x.2.1.arity, _root_.AverCert.ListHelpers.helperSem M h.eq h.stringEq x.2.1 x.1))
 
+/-- The `Bytes` helpers' entries of the host table: each declared helper is
+    its template, run by the wall (`BytesHelpers.bytesSem`). -/
+def bytesAssoc (M : MCtx) : List (Nat × (Nat × (List WVal → Option WVal))) :=
+  M.bytesHelpers.map fun x => (x.2, (x.1.arity, _root_.AverCert.BytesHelpers.bytesSem M x.1))
+
 /-- The host table an obligation runs against, as an association list keyed
     by role index: the wall's own `boxRef` at the box index, the contract
     functions at their role indices, and the trap-only function at the (never
@@ -64,14 +69,14 @@ def hostAssoc (M : MCtx) (h : HostFns) : List (Nat × (Nat × (List WVal → Opt
    (M.concat, (1, h.stringConcat M.str)), (M.streq, (2, h.stringEq)),
    (M.toIndex, (1, h.toIndex)), (M.divmod, (3, h.divmod)),
    (M.toI64Sat, (1, _root_.AverCert.ListHelpers.satSem M.carrier))] ++
-  helperAssoc M h
+  helperAssoc M h ++ bytesAssoc M
 
 def hostOf (M : MCtx) (h : HostFns) : HostTbl := fun f => (hostAssoc M h).lookup f
 
 /-- The role indices of a lowering context, in `hostAssoc` order. -/
 def roleIndices (M : MCtx) : List Nat :=
   [M.box, M.add, M.sub, M.mul, M.neg, M.cmp, M.eq, M.concat, M.streq, M.toIndex, M.divmod,
-   M.toI64Sat] ++ M.listHelpers.map (·.2.2)
+   M.toI64Sat] ++ M.listHelpers.map (·.2.2) ++ M.bytesHelpers.map (·.2)
 
 /-- The emitted code of every planned function: its plan's lowering. -/
 def codeOf (M : MCtx) (fns : List FnEntry) : CodeTbl := fun f => (planOf fns f).map (fnCode M)
@@ -279,13 +284,45 @@ def helperSig (M : MCtx) (r : ListRole) (t : Ty) :
       | .bool => some ([l, .numeric 0x7f], [.numeric 0x7f])
       | _ => none
 
+/-- The function type of the `Bytes` helper of role `r`: the packed array
+    reference, the `List<Int>` cons struct for `pack` / `unpack`, and `i64`
+    for a count. -/
+def bytesSig (M : MCtx) (r : BytesRole) :
+    List _root_.CertDecode.ValType × List _root_.CertDecode.ValType :=
+  let b := refN M.bytesArr
+  let l := refN (M.listStruct .int)
+  match r with
+  | .pack => ([l], [b])
+  | .unpack => ([b], [l])
+  | .concat => ([b, b], [b])
+  | .take | .drop => ([b, .numeric 0x7e], [b])
+
+/-- Every declared `Bytes` helper, and `__aint_to_i64_checked` when declared,
+    is pinned by TEMPLATE equality to the wall's template
+    (`BytesHelpers.bBodyBytes` of `BytesHelpers.bytesCode`), with the function
+    type its role fixes. The template is also what the host table runs
+    (`BytesHelpers.bytesSem`). -/
+def bytesHelpersPinnedWith (bodyAt : Nat → Option (List Nat))
+    (tyOk : Nat → List _root_.CertDecode.ValType → List _root_.CertDecode.ValType → Bool)
+    (M : MCtx) : Bool :=
+  M.bytesHelpers.all (fun x =>
+    (_root_.AverCert.BytesHelpers.bBodyBytes M (_root_.AverCert.BytesHelpers.bytesCode M x.1)).any
+        (fun b => bodyAt x.2 == some b) &&
+    tyOk x.2 (bytesSig M x.1).1 (bytesSig M x.1).2) &&
+  (decide (4294967296 ≤ M.toI64Chk) ||
+    ((_root_.AverCert.BytesHelpers.bBodyBytes M
+        (_root_.AverCert.BytesHelpers.chkCode M.carrier)).any
+        (fun b => bodyAt M.toI64Chk == some b) &&
+      tyOk M.toI64Chk [refN M.carrier] [.numeric 0x7e]))
+
 /-- Every declared List helper, and `__aint_to_i64_sat` when declared, is
     pinned by TEMPLATE equality: its code body is exactly the bytes of the
     wall's template for its role and instantiation
     (`ListHelpers.hBodyBytes`), and its function type is the one its role
     fixes. The template is also what the host table runs
     (`ListHelpers.helperSem`), so the pinned bytes and the proved meaning are
-    of the same instruction tree. -/
+    of the same instruction tree. The `Bytes` helpers are pinned with them
+    (`bytesHelpersPinnedWith`). -/
 def listHelpersPinnedWith (bodyAt : Nat → Option (List Nat))
     (tyOk : Nat → List _root_.CertDecode.ValType → List _root_.CertDecode.ValType → Bool)
     (M : MCtx) : Bool :=
@@ -296,7 +333,8 @@ def listHelpersPinnedWith (bodyAt : Nat → Option (List Nat))
   (decide (4294967296 ≤ M.toI64Sat) ||
     ((_root_.AverCert.ListHelpers.hBodyBytes M (_root_.AverCert.ListHelpers.satCode M.carrier)).any
         (fun b => bodyAt M.toI64Sat == some b) &&
-      tyOk M.toI64Sat [refN M.carrier] [.numeric 0x7e]))
+      tyOk M.toI64Sat [refN M.carrier] [.numeric 0x7e])) &&
+  bytesHelpersPinnedWith bodyAt tyOk M
 
 /-- `listHelpersPinnedWith` over the module's code and type sections. -/
 def listHelpersPinned (n len : Nat) (M : MCtx) : Bool :=

@@ -17,9 +17,9 @@
 use std::collections::HashMap;
 
 use aver_cert::{
-    FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBuiltin, PlanCallee, PlanCtor, PlanExpr,
-    PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl, PlanTy,
-    PlanTypeTable, PlannedFn,
+    FnPlan, ModulePlans, PLAN_NO_SLOT, PlanBinOp, PlanBuiltin, PlanBytesRole, PlanCallee, PlanCtor,
+    PlanExpr, PlanIntrinsic, PlanLazy, PlanListRole, PlanLit, PlanPat, PlanRecordDecl, PlanSumDecl,
+    PlanTy, PlanTypeTable, PlannedFn,
 };
 
 use crate::ast::{BinOp, Literal, Spanned};
@@ -74,8 +74,18 @@ pub trait PlanLayout {
     fn tuple(&self, canonical: &str) -> Option<u32>;
     fn map(&self, canonical: &str) -> Option<u32>;
     /// A type name the emitter represents specially (packed sequence,
-    /// raw-`i64` carrier, capability resource): never printed.
+    /// raw-`i64` carrier, capability resource): never printed, except the
+    /// octet packed sequence (`bytes_array`).
     fn special(&self, name: &str) -> bool;
+    /// The packed array type of a proof-packed `List<Int>` refinement whose
+    /// elements are octets (the standard library's `Bytes`), under any
+    /// spelling of its name.
+    fn bytes_array(&self, name: &str) -> Option<u32>;
+    /// The function index of that type's `role` helper
+    /// (`packed_sequences.rs`).
+    fn bytes_helper(&self, name: &str, role: PlanBytesRole) -> Option<u32>;
+    /// `__aint_to_i64_checked`, which the `pack` helper calls per element.
+    fn int_chk(&self) -> Option<u32>;
     fn record(&self, name: &str) -> Option<RecordLayout>;
     fn sum(&self, name: &str) -> Option<SumLayout>;
     /// A user constructor: its owning sum's name and its index in
@@ -238,6 +248,7 @@ impl TypeTableBuilder {
             PlanTy::Vec(x) => t.vecs.iter().find(|v| &v.0 == x.as_ref()).map(|v| v.1),
             PlanTy::List(x) => t.lists.iter().find(|l| &l.0 == x.as_ref()).map(|l| l.1),
             PlanTy::Opaque(tid) => t.opaques.iter().find(|o| o.0 == *tid).map(|o| o.1),
+            PlanTy::Bytes => t.bytes_arr,
             PlanTy::Bool | PlanTy::Float | PlanTy::Eqref => None,
         }
     }
@@ -363,6 +374,9 @@ impl TypeTableBuilder {
     }
 
     fn named(&mut self, layout: &dyn PlanLayout, name: &str) -> Result<PlanTy, String> {
+        if let Some(arr) = layout.bytes_array(name) {
+            return self.bytes_ty(arr);
+        }
         if layout.special(name) {
             return Err(format!("type `{name}` has a special representation"));
         }
@@ -482,6 +496,47 @@ impl TypeTableBuilder {
             self.list_helper(layout, canonical, elem, PlanListRole::Reverse)?;
         }
         if matches!(role, PlanListRole::Take | PlanListRole::Drop) && self.table.int_sat.is_none() {
+            self.table.int_sat = Some(layout.int_sat().ok_or("__aint_to_i64_sat is not emitted")?);
+        }
+        Ok(())
+    }
+
+    /// The `Bytes` type at its packed array `arr`: one octet array per module.
+    fn bytes_ty(&mut self, arr: u32) -> Result<PlanTy, String> {
+        match self.table.bytes_arr {
+            None => self.table.bytes_arr = Some(arr),
+            Some(a) if a == arr => {}
+            Some(_) => return Err("a second octet packed sequence type".into()),
+        }
+        Ok(PlanTy::Bytes)
+    }
+
+    /// Declare the `role` helper of the packed type `name`, the checked
+    /// conversion `pack` calls, and `__aint_to_i64_sat` for a take / drop
+    /// count.
+    fn bytes_helper(
+        &mut self,
+        layout: &dyn PlanLayout,
+        name: &str,
+        role: PlanBytesRole,
+    ) -> Result<(), String> {
+        let f = layout
+            .bytes_helper(name, role)
+            .ok_or_else(|| format!("Bytes helper ({role:?}): `{name}` has none"))?;
+        match self.table.bytes_helpers.iter().find(|x| x.0 == role) {
+            None => self.table.bytes_helpers.push((role, f)),
+            Some(x) if x.1 == f => {}
+            Some(_) => return Err(format!("Bytes helper ({role:?}) at two indices")),
+        }
+        if role == PlanBytesRole::Pack && self.table.int_chk.is_none() {
+            self.table.int_chk = Some(
+                layout
+                    .int_chk()
+                    .ok_or("__aint_to_i64_checked is not emitted")?,
+            );
+        }
+        if matches!(role, PlanBytesRole::Take | PlanBytesRole::Drop) && self.table.int_sat.is_none()
+        {
             self.table.int_sat = Some(layout.int_sat().ok_or("__aint_to_i64_sat is not emitted")?);
         }
         Ok(())
@@ -665,6 +720,108 @@ impl Printer<'_> {
         }
     }
 
+    /// The octet packed type a `Project` reads its carrier from: the base's
+    /// packed array and the record's one field (`mir_packed_carrier_projection`).
+    fn bytes_projection<'e>(
+        &self,
+        e: &'e Spanned<MirExpr>,
+    ) -> Option<(&'e Spanned<MirExpr>, String, u32)> {
+        let MirExpr::Project(p) = &e.node else {
+            return None;
+        };
+        let base_ty = stamped(&p.node.base).ok()?;
+        let arr = self.layout.bytes_array(&base_ty)?;
+        let field = self.layout.record(&base_ty)?.fields.first()?.0.clone();
+        (p.node.field == field).then_some((p.node.base.as_ref(), base_ty, arr))
+    }
+
+    fn builtin_of(&self, e: &Spanned<MirExpr>) -> Option<String> {
+        let MirExpr::Call(c) = &e.node else {
+            return None;
+        };
+        let MirCallee::Builtin(b) = &c.node.callee else {
+            return None;
+        };
+        self.layout.builtin_name(*b)
+    }
+
+    /// `is_mir_packed_carrier_expr`: a carrier projection of the packed type
+    /// `arr`, or `List.concat` / `take` / `drop` the emitter keeps packed.
+    fn is_packed(&self, e: &Spanned<MirExpr>, arr: u32) -> bool {
+        if let Some((_, _, a)) = self.bytes_projection(e) {
+            return a == arr;
+        }
+        let MirExpr::Call(c) = &e.node else {
+            return false;
+        };
+        match (self.builtin_of(e).as_deref(), c.node.args.as_slice()) {
+            (Some("List.concat"), [l, r]) => self.is_packed(l, arr) && self.is_packed(r, arr),
+            (Some("List.take" | "List.drop"), [src, _]) => self.is_packed(src, arr),
+            _ => false,
+        }
+    }
+
+    /// A packed carrier expression (`emit_mir_packed_carrier_expr`) as the
+    /// `Bytes` builtins over the projections' bases.
+    fn packed(&mut self, e: &Spanned<MirExpr>, name: &str) -> Result<PlanExpr, String> {
+        if let Some((base, _, _)) = self.bytes_projection(e) {
+            return self.expr(base);
+        }
+        let MirExpr::Call(c) = &e.node else {
+            return Err("packed carrier expression lost its shape".into());
+        };
+        match (self.builtin_of(e).as_deref(), c.node.args.as_slice()) {
+            (Some("List.concat"), [l, r]) => {
+                self.types
+                    .bytes_helper(self.layout, name, PlanBytesRole::Concat)?;
+                Ok(PlanExpr::Call(
+                    PlanCallee::Builtin(PlanBuiltin::BytesConcat),
+                    vec![self.packed(l, name)?, self.packed(r, name)?],
+                ))
+            }
+            (Some(op @ ("List.take" | "List.drop")), [src, n]) => {
+                let (b, role) = if op == "List.take" {
+                    (PlanBuiltin::BytesTake, PlanBytesRole::Take)
+                } else {
+                    (PlanBuiltin::BytesDrop, PlanBytesRole::Drop)
+                };
+                self.types.bytes_helper(self.layout, name, role)?;
+                Ok(PlanExpr::Call(
+                    PlanCallee::Builtin(b),
+                    vec![self.packed(src, name)?, self.expr(n)?],
+                ))
+            }
+            _ => Err("packed carrier expression lost its shape".into()),
+        }
+    }
+
+    /// `Bytes(values = v)` (`emit_mir_record_create`'s packed path): a packed
+    /// carrier expression stays packed, any other value is packed by `pack`.
+    fn bytes_create(
+        &mut self,
+        name: &str,
+        arr: u32,
+        fields: &[crate::ir::mir::MirRecordField],
+    ) -> Result<PlanExpr, String> {
+        self.types.bytes_ty(arr)?;
+        let [field] = fields else {
+            return Err("RecordCreate of a packed record without its one field".into());
+        };
+        if stamped(&field.value)?.trim() == crate::ir::INTERNAL_BYTE_PAYLOAD_TYPE {
+            return Err("RecordCreate of a packed record from a byte payload".into());
+        }
+        if self.is_packed(&field.value, arr) {
+            return self.packed(&field.value, name);
+        }
+        self.ty("List<Int>")?;
+        self.types
+            .bytes_helper(self.layout, name, PlanBytesRole::Pack)?;
+        Ok(PlanExpr::Call(
+            PlanCallee::Builtin(PlanBuiltin::BytesOfList),
+            vec![self.expr(&field.value)?],
+        ))
+    }
+
     fn expr(&mut self, expr: &Spanned<MirExpr>) -> Result<PlanExpr, String> {
         Ok(match &expr.node {
             MirExpr::Literal(lit) => PlanExpr::Literal(match &lit.node {
@@ -712,6 +869,21 @@ impl Printer<'_> {
                             "Bool.or" => PlanCallee::Builtin(PlanBuiltin::BoolOr),
                             "Bool.not" => PlanCallee::Builtin(PlanBuiltin::BoolNot),
                             "List.prepend" => PlanCallee::Builtin(PlanBuiltin::ListPrepend),
+                            // `List.len(bytes.values)`: the emitter reads the
+                            // packed array's length inline.
+                            "List.len"
+                                if call.args.len() == 1
+                                    && self.bytes_projection(&call.args[0]).is_some() =>
+                            {
+                                let (base, _, arr) = self
+                                    .bytes_projection(&call.args[0])
+                                    .expect("checked by the guard");
+                                self.types.bytes_ty(arr)?;
+                                return Ok(PlanExpr::Call(
+                                    PlanCallee::Builtin(PlanBuiltin::BytesLen),
+                                    vec![self.expr(base)?],
+                                ));
+                            }
                             "List.len" | "List.reverse" | "List.concat" | "List.take"
                             | "List.drop" | "List.contains" => {
                                 let b = match name.as_str() {
@@ -812,6 +984,9 @@ impl Printer<'_> {
             ),
             MirExpr::RecordCreate(r) => {
                 let rec = &r.node;
+                if let Some(arr) = self.layout.bytes_array(&rec.type_name) {
+                    return self.bytes_create(&rec.type_name, arr, &rec.fields);
+                }
                 let (tid, declared) = self.types.record_tid(self.layout, &rec.type_name)?;
                 if declared.len() < 2 {
                     return Err("RecordCreate of a one-field record (newtype)".into());
@@ -826,6 +1001,17 @@ impl Printer<'_> {
             }
             MirExpr::Project(p) => {
                 let base_ty = stamped(&p.node.base)?;
+                if let Some(arr) = self.layout.bytes_array(&base_ty) {
+                    // `bytes.values`: the emitter calls `unpack`.
+                    self.types.bytes_ty(arr)?;
+                    self.ty("List<Int>")?;
+                    self.types
+                        .bytes_helper(self.layout, &base_ty, PlanBytesRole::Unpack)?;
+                    return Ok(PlanExpr::Call(
+                        PlanCallee::Builtin(PlanBuiltin::BytesValues),
+                        vec![self.expr(&p.node.base)?],
+                    ));
+                }
                 let (tid, declared) = self.types.record_tid(self.layout, &base_ty)?;
                 if declared.len() < 2 {
                     return Err("Project of a one-field record (newtype)".into());

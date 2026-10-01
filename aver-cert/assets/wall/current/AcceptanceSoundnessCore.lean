@@ -97,7 +97,7 @@ theorem lookup_none {β : Type} :
 
 theorem hostAssoc_keys (M : MCtx) (h : HostFns) :
     (hostAssoc M h).map (·.1) = roleIndices M := by
-  simp [hostAssoc, roleIndices, helperAssoc, Function.comp_def]
+  simp [hostAssoc, roleIndices, helperAssoc, bytesAssoc, Function.comp_def]
 
 /-- Under distinct role indices, the host table resolves every role to its own
     function; under disjointness, every planned index to nothing. -/
@@ -117,6 +117,8 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
     hostOf M h M.toI64Sat = some (1, _root_.AverCert.ListHelpers.satSem M.carrier) ∧
     (∀ x ∈ M.listHelpers, hostOf M h x.2.2 =
       some (x.2.1.arity, _root_.AverCert.ListHelpers.helperSem M h.eq h.stringEq x.2.1 x.1)) ∧
+    (∀ x ∈ M.bytesHelpers, hostOf M h x.2 =
+      some (x.1.arity, _root_.AverCert.BytesHelpers.bytesSem M x.1)) ∧
     ∀ e ∈ fns, hostOf M h e.funcIdx = none := by
   have hkeys : ((hostAssoc M h).map (·.1)).Nodup := by
     rw [hostAssoc_keys]
@@ -127,6 +129,8 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
+    fun x hx => L (by simp only [hostAssoc, List.mem_append]; left; right
+                      exact List.mem_map.mpr ⟨x, hx, rfl⟩),
     fun x hx => L (by simp only [hostAssoc, List.mem_append]; right
                       exact List.mem_map.mpr ⟨x, hx, rfl⟩), ?_⟩
   intro e he

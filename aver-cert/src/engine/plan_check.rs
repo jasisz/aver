@@ -37,6 +37,10 @@ struct MCtx<'a> {
     divmod: u64,
     /// `__aint_to_i64_sat` (`MCtx.toI64Sat`).
     to_i64_sat: u64,
+    /// The packed `Bytes` array (`MCtx.bytesArr`) and `__aint_to_i64_checked`
+    /// (`MCtx.toI64Chk`).
+    bytes_arr: u64,
+    to_i64_chk: u64,
     tt: &'a PlanTypeTable,
     sigs: HashMap<u32, (Vec<PlanTy>, PlanTy)>,
 }
@@ -72,6 +76,8 @@ impl<'a> MCtx<'a> {
             to_index: idx_or(19, role(|r| r.to_index_idx)),
             divmod: idx_or(23, role(|r| r.divmod_idx)),
             to_i64_sat: idx_or(24, tt.int_sat),
+            bytes_arr: idx_or(25, tt.bytes_arr),
+            to_i64_chk: idx_or(26, tt.int_chk),
             tt,
             sigs,
         }
@@ -187,6 +193,7 @@ fn has_default(t: &PlanTy) -> bool {
             | PlanTy::Float
             | PlanTy::List(_)
             | PlanTy::Vec(_)
+            | PlanTy::Bytes
     )
 }
 
@@ -343,6 +350,22 @@ impl MCtx<'_> {
             (PlanBuiltin::ListContains, [PlanTy::List(t), t2]) => {
                 (t.as_ref() == t2 && contains_eq(t) && has(R::Contains, t)).then_some(PlanTy::Bool)
             }
+            (PlanBuiltin::BytesOfList, [PlanTy::List(t)]) if **t == PlanTy::Int => self
+                .bytes_helper(PlanBytesRole::Pack)
+                .map(|_| PlanTy::Bytes),
+            (PlanBuiltin::BytesValues, [PlanTy::Bytes]) => self
+                .bytes_helper(PlanBytesRole::Unpack)
+                .map(|_| list(&PlanTy::Int)),
+            (PlanBuiltin::BytesLen, [PlanTy::Bytes]) => Some(PlanTy::Int),
+            (PlanBuiltin::BytesConcat, [PlanTy::Bytes, PlanTy::Bytes]) => self
+                .bytes_helper(PlanBytesRole::Concat)
+                .map(|_| PlanTy::Bytes),
+            (PlanBuiltin::BytesTake, [PlanTy::Bytes, PlanTy::Int]) => self
+                .bytes_helper(PlanBytesRole::Take)
+                .map(|_| PlanTy::Bytes),
+            (PlanBuiltin::BytesDrop, [PlanTy::Bytes, PlanTy::Int]) => self
+                .bytes_helper(PlanBytesRole::Drop)
+                .map(|_| PlanTy::Bytes),
             _ => None,
         }
     }
@@ -773,7 +796,8 @@ fn inhab_ty(r: &BTreeSet<u32>, s: &BTreeSet<u32>, t: &PlanTy) -> bool {
         | PlanTy::Opaque(_)
         | PlanTy::Option(_)
         | PlanTy::List(_)
-        | PlanTy::Vec(_) => true,
+        | PlanTy::Vec(_)
+        | PlanTy::Bytes => true,
         PlanTy::Result(x, e) => inhab_ty(r, s, x) || inhab_ty(r, s, e),
         PlanTy::Record(tid) => r.contains(tid),
         PlanTy::Sum(tid) => s.contains(tid),
@@ -885,6 +909,7 @@ enum WI {
     I32And,
     I32Or,
     I32LtU,
+    I64ExtendI32U,
     F64Const(u64),
     F64Eq,
     F64Lt,
@@ -1015,6 +1040,7 @@ impl MCtx<'_> {
             PlanTy::Float => vec![BI::Op(WI::F64Const(0))],
             PlanTy::List(x) => vec![BI::NullOf(self.list_struct(x))],
             PlanTy::Vec(x) => vec![BI::NullOf(self.vec_struct(x))],
+            PlanTy::Bytes => vec![BI::NullOf(self.bytes_arr)],
             _ => vec![],
         }
     }
@@ -1076,6 +1102,28 @@ impl MCtx<'_> {
                     }
                     (PlanBuiltin::ListContains, Some([PlanTy::List(t), _])) => {
                         out.extend(self.helper_call(PlanListRole::Contains, t))
+                    }
+                    (PlanBuiltin::BytesOfList, _) => {
+                        out.extend(self.bytes_call(PlanBytesRole::Pack))
+                    }
+                    (PlanBuiltin::BytesValues, _) => {
+                        out.extend(self.bytes_call(PlanBytesRole::Unpack))
+                    }
+                    (PlanBuiltin::BytesLen, _) => out.extend(ops(vec![
+                        WI::ArrayLen,
+                        WI::I64ExtendI32U,
+                        WI::Call(self.box_),
+                    ])),
+                    (PlanBuiltin::BytesConcat, _) => {
+                        out.extend(self.bytes_call(PlanBytesRole::Concat))
+                    }
+                    (PlanBuiltin::BytesTake, _) => {
+                        out.push(BI::Op(WI::Call(self.to_i64_sat)));
+                        out.extend(self.bytes_call(PlanBytesRole::Take));
+                    }
+                    (PlanBuiltin::BytesDrop, _) => {
+                        out.push(BI::Op(WI::Call(self.to_i64_sat)));
+                        out.extend(self.bytes_call(PlanBytesRole::Drop));
                     }
                     _ => {}
                 }
@@ -1645,6 +1693,7 @@ impl MCtx<'_> {
             PlanTy::Vec(x) => heap(self.vec_struct(x), out),
             PlanTy::List(x) => heap(self.list_struct(x), out),
             PlanTy::Opaque(tid) => heap(self.opaque_struct(*tid), out),
+            PlanTy::Bytes => heap(self.bytes_arr, out),
         }
     }
 
@@ -1704,6 +1753,7 @@ impl MCtx<'_> {
             WI::I32And => out.push(0x71),
             WI::I32Or => out.push(0x72),
             WI::I32LtU => out.push(0x49),
+            WI::I64ExtendI32U => out.push(0xad),
             WI::F64Const(bits) => {
                 out.push(0x44);
                 out.extend(bits.to_le_bytes())
@@ -1801,6 +1851,7 @@ impl MCtx<'_> {
             PlanTy::Vec(x) => r(self.vec_struct(x)),
             PlanTy::List(x) => r(self.list_struct(x)),
             PlanTy::Opaque(tid) => r(self.opaque_struct(*tid)),
+            PlanTy::Bytes => r(self.bytes_arr),
         }
     }
 }
@@ -2092,11 +2143,26 @@ enum HI {
     IfThen(Vec<HI>),
     IfElseI64(Vec<HI>, Vec<HI>),
     Ret,
+    // The `Bytes` helpers' instructions (`BytesHelpers.lean`).
+    I32Add,
+    I32Sub,
+    WrapI64,
+    ExtU,
+    I64LtU,
+    Unreachable,
+    IfElseI32(Vec<HI>, Vec<HI>),
+    NewBytes(u64),
+    GetU(u64),
+    /// `local.get k; args; array.set ty`.
+    SetAt(u32, u64, Vec<HI>),
+    /// `local.get k; args; array.copy ty ty`.
+    CopyTo(u32, u64, Vec<HI>),
 }
 
 /// `ListHelpers.HLocal`: a helper's declared local.
 enum HLocal {
     I64,
+    I32,
     Ref(u64),
     Val(PlanTy),
 }
@@ -2433,7 +2499,56 @@ impl MCtx<'_> {
                     out.push(0x0b);
                 }
                 HI::Ret => out.push(0x0f),
+                HI::I32Add => out.push(0x6a),
+                HI::I32Sub => out.push(0x6b),
+                HI::WrapI64 => out.push(0xa7),
+                HI::ExtU => out.push(0xad),
+                HI::I64LtU => out.push(0x54),
+                HI::Unreachable => out.push(0x00),
+                HI::IfElseI32(t, e) => {
+                    out.extend([0x04, 0x7f]);
+                    self.enc_h(t, out)?;
+                    out.push(0x05);
+                    self.enc_h(e, out)?;
+                    out.push(0x0b);
+                }
+                HI::NewBytes(ty) => {
+                    out.extend([0xfb, 0x07]);
+                    uleb(*ty, out)?
+                }
+                HI::GetU(ty) => {
+                    out.extend([0xfb, 0x0d]);
+                    uleb(*ty, out)?
+                }
+                HI::SetAt(k, ty, args) => {
+                    out.push(0x20);
+                    uleb(u64::from(*k), out)?;
+                    self.enc_h(args, out)?;
+                    out.extend([0xfb, 0x0e]);
+                    uleb(*ty, out)?
+                }
+                HI::CopyTo(k, ty, args) => {
+                    out.push(0x20);
+                    uleb(u64::from(*k), out)?;
+                    self.enc_h(args, out)?;
+                    out.extend([0xfb, 0x11]);
+                    uleb(*ty, out)?;
+                    uleb(*ty, out)?
+                }
             }
+        }
+        Some(())
+    }
+
+    fn h_local(&self, t: &HLocal, out: &mut Vec<u8>) -> Option<()> {
+        match t {
+            HLocal::I64 => out.push(0x7e),
+            HLocal::I32 => out.push(0x7f),
+            HLocal::Ref(ht) => {
+                out.push(0x63);
+                s33(*ht, out)?
+            }
+            HLocal::Val(t) => self.val_ty(t, out)?,
         }
         Some(())
     }
@@ -2444,14 +2559,7 @@ impl MCtx<'_> {
         uleb(c.locals.len() as u64, &mut entry)?;
         for t in &c.locals {
             entry.push(0x01);
-            match t {
-                HLocal::I64 => entry.push(0x7e),
-                HLocal::Ref(ht) => {
-                    entry.push(0x63);
-                    s33(*ht, &mut entry)?
-                }
-                HLocal::Val(t) => self.val_ty(t, &mut entry)?,
-            }
+            self.h_local(t, &mut entry)?;
         }
         self.enc_h(&c.body, &mut entry)?;
         entry.push(0x0b);
@@ -2477,5 +2585,289 @@ impl MCtx<'_> {
             Some(f) => vec![BI::Op(WI::Call(u64::from(f)))],
             None => vec![],
         }
+    }
+}
+
+// ---- `Bytes` helper templates (`BytesHelpers.lean`) -------------------------
+
+/// `BytesHelpers.BCode`: a helper whose locals are declared in groups.
+struct BCode {
+    groups: Vec<(u32, HLocal)>,
+    body: Vec<HI>,
+}
+
+fn h_i32c(k: i64) -> HI {
+    h_op(WI::I32Const(k))
+}
+
+/// `BytesHelpers.packCode`.
+fn pack_code(l: u64, b: u64, chk: u64) -> BCode {
+    let count = vec![
+        h_lg(1),
+        h_op(WI::RefIsNull),
+        HI::BrIf(1),
+        h_lg(2),
+        h_i32c(1),
+        HI::I32Add,
+        h_ls(2),
+        h_lg(1),
+        h_op(WI::StructGet(l, 1)),
+        h_ls(1),
+        HI::Br(0),
+    ];
+    let fill = vec![
+        h_lg(1),
+        h_op(WI::RefIsNull),
+        HI::BrIf(1),
+        HI::SetAt(
+            3,
+            b,
+            vec![
+                h_lg(4),
+                h_lg(1),
+                h_op(WI::StructGet(l, 0)),
+                h_op(WI::Call(chk)),
+                HI::WrapI64,
+            ],
+        ),
+        h_lg(4),
+        h_i32c(1),
+        HI::I32Add,
+        h_ls(4),
+        h_lg(1),
+        h_op(WI::StructGet(l, 1)),
+        h_ls(1),
+        HI::Br(0),
+    ];
+    BCode {
+        groups: vec![
+            (1, HLocal::Ref(l)),
+            (1, HLocal::I32),
+            (1, HLocal::Ref(b)),
+            (1, HLocal::I32),
+        ],
+        body: vec![
+            h_lg(0),
+            h_ls(1),
+            h_i32c(0),
+            h_ls(2),
+            HI::Block(vec![HI::Loop(count)]),
+            h_lg(2),
+            HI::NewBytes(b),
+            h_ls(3),
+            h_lg(0),
+            h_ls(1),
+            h_i32c(0),
+            h_ls(4),
+            HI::Block(vec![HI::Loop(fill)]),
+            h_lg(3),
+        ],
+    }
+}
+
+/// `BytesHelpers.unpackCode`.
+fn unpack_code(l: u64, b: u64, box_: u64) -> BCode {
+    let body = vec![
+        h_lg(2),
+        h_op(WI::I32Eqz),
+        HI::BrIf(1),
+        h_lg(2),
+        h_i32c(1),
+        HI::I32Sub,
+        h_ls(2),
+        h_lg(0),
+        h_lg(2),
+        HI::GetU(b),
+        HI::ExtU,
+        h_op(WI::Call(box_)),
+        h_lg(1),
+        h_op(WI::StructNew(l)),
+        h_ls(1),
+        HI::Br(0),
+    ];
+    BCode {
+        groups: vec![(1, HLocal::Ref(l)), (1, HLocal::I32)],
+        body: vec![
+            HI::B(BI::NullOf(l)),
+            h_ls(1),
+            h_lg(0),
+            h_op(WI::ArrayLen),
+            h_ls(2),
+            HI::Block(vec![HI::Loop(body)]),
+            h_lg(1),
+        ],
+    }
+}
+
+/// `BytesHelpers.catCodeB`.
+fn bytes_cat_code(b: u64) -> BCode {
+    BCode {
+        groups: vec![(2, HLocal::I32), (1, HLocal::Ref(b))],
+        body: vec![
+            h_lg(0),
+            h_op(WI::ArrayLen),
+            h_ls(2),
+            h_lg(1),
+            h_op(WI::ArrayLen),
+            h_ls(3),
+            h_lg(2),
+            h_lg(3),
+            HI::I32Add,
+            HI::NewBytes(b),
+            h_ls(4),
+            HI::CopyTo(4, b, vec![h_i32c(0), h_lg(0), h_i32c(0), h_lg(2)]),
+            HI::CopyTo(4, b, vec![h_lg(2), h_lg(1), h_i32c(0), h_lg(3)]),
+            h_lg(4),
+        ],
+    }
+}
+
+/// `BytesHelpers.clampB`.
+fn bytes_clamp() -> Vec<HI> {
+    vec![
+        h_lg(1),
+        h_op(WI::I64Const(0)),
+        h_op(WI::I64GtS),
+        HI::IfThen(vec![
+            h_lg(1),
+            h_lg(2),
+            HI::ExtU,
+            HI::I64LtU,
+            HI::IfElseI32(vec![h_lg(1), HI::WrapI64], vec![h_lg(2)]),
+            h_ls(3),
+        ]),
+    ]
+}
+
+/// `BytesHelpers.takeCodeB`.
+fn bytes_take_code(b: u64) -> BCode {
+    let mut body = vec![h_lg(0), h_op(WI::ArrayLen), h_ls(2), h_i32c(0), h_ls(3)];
+    body.extend(bytes_clamp());
+    body.extend([
+        h_lg(3),
+        HI::NewBytes(b),
+        h_ls(4),
+        HI::CopyTo(4, b, vec![h_i32c(0), h_lg(0), h_i32c(0), h_lg(3)]),
+        h_lg(4),
+    ]);
+    BCode {
+        groups: vec![(2, HLocal::I32), (1, HLocal::Ref(b))],
+        body,
+    }
+}
+
+/// `BytesHelpers.dropCodeB`.
+fn bytes_drop_code(b: u64) -> BCode {
+    let mut body = vec![h_lg(0), h_op(WI::ArrayLen), h_ls(2), h_i32c(0), h_ls(3)];
+    body.extend(bytes_clamp());
+    body.extend([
+        h_lg(2),
+        h_lg(3),
+        HI::I32Sub,
+        h_ls(4),
+        h_lg(4),
+        HI::NewBytes(b),
+        h_ls(5),
+        HI::CopyTo(5, b, vec![h_i32c(0), h_lg(0), h_lg(3), h_lg(4)]),
+        h_lg(5),
+    ]);
+    BCode {
+        groups: vec![(3, HLocal::I32), (1, HLocal::Ref(b))],
+        body,
+    }
+}
+
+/// `BytesHelpers.chkCode`: `__aint_to_i64_checked`.
+fn chk_code(c: u64) -> BCode {
+    BCode {
+        groups: vec![],
+        body: vec![
+            h_lg(0),
+            h_op(WI::StructGet(c, 1)),
+            h_op(WI::RefIsNull),
+            HI::IfElseI64(
+                vec![h_lg(0), h_op(WI::StructGet(c, 0))],
+                vec![HI::Unreachable],
+            ),
+        ],
+    }
+}
+
+impl MCtx<'_> {
+    /// `MCtx.bytesHelper`: the declared `Bytes` helper of `role`.
+    fn bytes_helper(&self, r: PlanBytesRole) -> Option<u32> {
+        self.tt
+            .bytes_helpers
+            .iter()
+            .find(|x| x.0 == r)
+            .map(|x| x.1)
+    }
+
+    /// `GrammarLower.bytesCall`.
+    fn bytes_call(&self, r: PlanBytesRole) -> Vec<BI> {
+        match self.bytes_helper(r) {
+            Some(f) => vec![BI::Op(WI::Call(u64::from(f)))],
+            None => vec![],
+        }
+    }
+
+    /// `BytesHelpers.bytesCode`.
+    fn bytes_code(&self, r: PlanBytesRole) -> BCode {
+        let l = self.list_struct(&PlanTy::Int);
+        let b = self.bytes_arr;
+        match r {
+            PlanBytesRole::Pack => pack_code(l, b, self.to_i64_chk),
+            PlanBytesRole::Unpack => unpack_code(l, b, self.box_),
+            PlanBytesRole::Concat => bytes_cat_code(b),
+            PlanBytesRole::Take => bytes_take_code(b),
+            PlanBytesRole::Drop => bytes_drop_code(b),
+        }
+    }
+
+    /// `BytesHelpers.bytesInnerCalls`: `unpack` boxes each byte.
+    fn bytes_inner_calls(&self, r: PlanBytesRole) -> Vec<u64> {
+        match r {
+            PlanBytesRole::Unpack => vec![self.box_],
+            _ => vec![],
+        }
+    }
+
+    /// `AcceptedArtifact.bytesSig`, as decoded value types.
+    fn bytes_sig(&self, r: PlanBytesRole) -> Option<(Vec<ValT>, Vec<ValT>)> {
+        let rn = |i: u64| u32::try_from(i).ok().map(ValT::RefNull);
+        let b = rn(self.bytes_arr)?;
+        let l = rn(self.list_struct(&PlanTy::Int))?;
+        Some(match r {
+            PlanBytesRole::Pack => (vec![l], vec![b]),
+            PlanBytesRole::Unpack => (vec![b], vec![l]),
+            PlanBytesRole::Concat => (vec![b, b], vec![b]),
+            PlanBytesRole::Take | PlanBytesRole::Drop => (vec![b, ValT::I64], vec![b]),
+        })
+    }
+
+    /// `BytesHelpers.bBodyBytes`, with the code entry's size prefix.
+    fn b_entry_bytes(&self, c: &BCode) -> Option<Vec<u8>> {
+        let mut entry = Vec::new();
+        uleb(c.groups.len() as u64, &mut entry)?;
+        for (n, t) in &c.groups {
+            uleb(u64::from(*n), &mut entry)?;
+            self.h_local(t, &mut entry)?;
+        }
+        self.enc_h(&c.body, &mut entry)?;
+        entry.push(0x0b);
+        let mut out = Vec::new();
+        uleb(entry.len() as u64, &mut out)?;
+        out.extend(entry);
+        Some(out)
+    }
+
+    /// The code entry the `Bytes` helper of role `r` must have.
+    fn bytes_entry_bytes(&self, r: PlanBytesRole) -> Option<Vec<u8>> {
+        self.b_entry_bytes(&self.bytes_code(r))
+    }
+
+    /// The code entry `__aint_to_i64_checked` must have.
+    fn chk_entry_bytes(&self) -> Option<Vec<u8>> {
+        self.b_entry_bytes(&chk_code(self.carrier))
     }
 }

@@ -227,13 +227,22 @@ def helperCall (M : MCtx) (r : ListRole) (t : Ty) : List BI :=
   | some f => [.op (.call f)]
   | none => []
 
+/-- A call of the declared `Bytes` helper of role `r`, or nothing when the
+    type table declares none (the typing requires one). -/
+def bytesCall (M : MCtx) (r : BytesRole) : List BI :=
+  match M.bytesHelper r with
+  | some f => [.op (.call f)]
+  | none => []
+
 /-- The instruction a builtin call ends with, given its argument types:
     one `i32` instruction for the Bool builtins, `struct.new` of the tail's
     cons struct for `List.prepend`, and a call of the List helper for the
     List builtins (`emit_mir_builtin_call`'s per-`List<T>` dispatch):
     `List.len` then boxes the helper's `i64` (`__aint_from_i64`), and
     `List.take` / `List.drop` first saturate their Int count to an `i64`
-    (`__aint_to_i64_sat`). -/
+    (`__aint_to_i64_sat`). A `Bytes` builtin calls its helper (a `take` /
+    `drop` count saturated first), and `bytesLen` is the emitter's fused
+    `List.len(bytes.values)`: `array.len`, zero-extended, boxed. -/
 def builtinTail (M : MCtx) : Builtin → Option (List Ty) → List BI
   | .boolAnd, _ => [.op .i32And]
   | .boolOr, _ => [.op .i32Or]
@@ -245,6 +254,12 @@ def builtinTail (M : MCtx) : Builtin → Option (List Ty) → List BI
   | .listTake, some [.list t, _] => .op (.call M.toI64Sat) :: helperCall M .take t
   | .listDrop, some [.list t, _] => .op (.call M.toI64Sat) :: helperCall M .drop t
   | .listContains, some [.list t, _] => helperCall M .contains t
+  | .bytesOfList, _ => bytesCall M .pack
+  | .bytesValues, _ => bytesCall M .unpack
+  | .bytesLen, _ => [.op .arrayLen, .op .i64ExtendI32U, .op (.call M.box)]
+  | .bytesConcat, _ => bytesCall M .concat
+  | .bytesTake, _ => .op (.call M.toI64Sat) :: bytesCall M .take
+  | .bytesDrop, _ => .op (.call M.toI64Sat) :: bytesCall M .drop
   | _, _ => []
 
 /-- The `f64` comparison of a Float `BinOp`. -/
@@ -296,6 +311,7 @@ def dfltB (M : MCtx) : Ty → List BI
   | .float => [.op (.f64Const 0)]
   | .list t => [.nullOf (M.listStruct t)]
   | .vec t => [.nullOf (M.vecStruct t)]
+  | .bytes => [.nullOf M.bytesArr]
   | _ => []
 
 /-- Read field `i` of the struct `idx` held (as `eqref`) in the subject
@@ -647,6 +663,7 @@ def encW : WInstr → Option (List Nat)
   | .i32And => some [0x71]
   | .i32Or => some [0x72]
   | .i32LtU => some [0x49]
+  | .i64ExtendI32U => some [0xad]
   | .f64Const bits => some ([0x44] ++ u64le bits)
   | .f64Eq => some [0x61]
   | .f64Lt => some [0x63]
@@ -679,6 +696,7 @@ def valTy (M : MCtx) : Ty → Option (List Nat)
   | .vec t => (s33HeapIdx (M.vecStruct t)).map ([0x63] ++ ·)
   | .list t => (s33HeapIdx (M.listStruct t)).map ([0x63] ++ ·)
   | .opaque tid => (s33HeapIdx (M.opaqueStruct tid)).map ([0x63] ++ ·)
+  | .bytes => (s33HeapIdx M.bytesArr).map ([0x63] ++ ·)
 
 mutual
   def encBI (M : MCtx) : BI → Option (List Nat)

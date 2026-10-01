@@ -1247,6 +1247,12 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
             .cloned()
             .unwrap_or_else(|| e.name.clone());
         let derived = (|| -> Result<BridgedFn, String> {
+            // The source model has no `Bytes` encoding and the step lemmas no
+            // `Bytes` builtin, so such a bridge could only fall to `sorry`.
+            if e.plan.body.lean().contains("(.builtin .bytes") {
+                return Err("the plan calls a Bytes builtin, which the bridge proofs do not model yet"
+                    .to_string());
+            }
             if plan_nodes(&e.plan.body) > MAX_BRIDGE_PLAN_NODES {
                 return Err(format!(
                     "the plan has more than {MAX_BRIDGE_PLAN_NODES} nodes, beyond what the \

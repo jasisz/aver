@@ -119,7 +119,7 @@ For wasip2 the same rule covers the component wrapper. The manifest declares the
 
 ## The Lean wall
 
-The wall is one hash-addressed unit of 31 Lean files. By module:
+The wall is one hash-addressed unit of 32 Lean files. By module:
 
 - `CertPrelude`, `InterpreterSequencing`: the wasm instruction model and its interpreter;
 - `CertDecode`, `WasmSlice`, `Wasip2Envelope`: decoders over the actual module and component bytes;
@@ -139,6 +139,7 @@ The wall is one hash-addressed unit of 31 Lean files. By module:
 - `ScaleTables`: the data section in blocks of segments on their own windows (`dataConfirmed_of_blocks`), and the type section read by index through declared layouts of its top-level entries and of the opening rec group's subtypes (`decodeTypes_of_layout`, `typeTableConfirmed_of_layout`);
 - `ArithTemplateDerisk`: the Int helper body templates;
 - `ListHelpers`: the List helper templates (`len`, `reverse`, `concat`, `take`, `drop`, `contains`, and `__aint_to_i64_sat`), the structured-control interpreter that runs them, and the theorems of what each run computes;
+- `BytesHelpers`: the packed `Bytes` helper templates (`pack`, `unpack`, `concat`, `take`, `drop`, and `__aint_to_i64_checked`), with the theorems of what each run computes;
 - `AcceptedArtifactCore`, `AcceptedArtifact`: the derived obligations and the acceptance predicate;
 - `ClaimAxes`: the required runtime contracts and the report data, with equations that compute the per-group report data once per call group, and `report_cons`, which joins consecutive report blocks without truncating the last tail. The package can supply these block proofs; the witness still pins the full lists to JSON and audits every selected proof;
 - `AcceptanceSoundnessCore`, `AcceptanceSoundness`: `fn_claim_discharges`, `accept_sound` and `accepted_nonvacuous`;

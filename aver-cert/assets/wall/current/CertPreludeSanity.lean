@@ -321,6 +321,15 @@ example : wRunF h a c [.i32Or] l [.i32v 1, .i32v 1] = some (.ok l [.i32v 1]) := 
   simp [wRunF, b32]
 example : wRunF h a c [.i32Or] l [.i32v 2, .i32v 0] = none := by simp [wRunF]
 example : wRunF h a c [.i32Or] l [.i32v 0, .i32v (-1)] = none := by simp [wRunF]
+-- `i64.extend_i32_u`: the unsigned reading of an i32 word, stuck off one.
+example : wRunF h a c [.i64ExtendI32U] l [.i32v 5] = some (.ok l [.i64v 5]) := by
+  simp [wRunF, i32Word, toU32]
+example : wRunF h a c [.i64ExtendI32U] l [.i32v (Int.negSucc 0)] =
+    some (.ok l [.i64v 4294967295]) := by
+  simp only [wRunF]; rfl
+example : wRunF h a c [.i64ExtendI32U] l [.i32v 4294967296] = none := by
+  simp [wRunF, i32Word]
+example : wRunF h a c [.i64ExtendI32U] l [.i64v 5] = none := by simp [wRunF]
 
 end OneGrammarOps
 

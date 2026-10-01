@@ -113,6 +113,9 @@ inductive WInstr where
   -- literal compare's Small arm), `i32.eqz` (`Bool.not`, and `!=` over
   -- `__aint_eq`), `i32.ne` (Bool `!=`) and `i32.or` (`Bool.or`).
   | i64Ne | i32Eqz | i32Ne | i32Or
+  -- `i64.extend_i32_u`: the `Bytes` length read (`array.len` of the packed
+  -- byte array, zero-extended before the box).
+  | i64ExtendI32U
   | f64Add | f64Sub | f64Mul | f64Div
   | f64Eq | f64Lt | f64Le | f64Ge | f64Gt
   | ifElse (thenB elseB : List WInstr)
@@ -149,6 +152,19 @@ def initLocals (c : WCode) (args : List WVal) : List WVal :=
 
 @[inline] def f (b : UInt64) : Float := Float.ofBits b
 @[inline] def b32 (p : Bool) : WVal := .i32v (if p then 1 else 0)
+
+/-- An `i32` word read signed or unsigned: `-2^31 ≤ a < 2^32`. Decided on
+    the constructors of `Int`, so the kernel never subtracts a symbolic value
+    from a large literal (which it would do one unit at a time). -/
+def i32Word : Int → Bool
+  | .ofNat n => n.blt 4294967296
+  | .negSucc n => n.blt 2147483648
+
+/-- The unsigned reading of an `i32` word: a negative word `-(n+1)` is
+    `2^32 - 1 - n`. -/
+def toU32 : Int → Int
+  | .ofNat n => .ofNat n
+  | .negSucc n => .ofNat (4294967295 - n)
 
 /-- Structural interpreter: recursion only on the instruction tree; calls go
     through `host` (concrete contracts) or the opaque `callee`. -/
@@ -291,6 +307,14 @@ def wRunF (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee) :
       | .i32v b :: .i32v a :: st' =>
           if (a = 0 ∨ a = 1) ∧ (b = 0 ∨ b = 1) then
             wRunF host ar callee rest locals (b32 (a = 1 ∨ b = 1) :: st')
+          else none
+      | _ => none
+  | .i64ExtendI32U :: rest, locals, st =>
+      -- Exact on an i32 operand read signed or unsigned (`-2^31 ≤ a < 2^32`):
+      -- the unsigned reading of its 32 bits. STUCK on anything else.
+      match st with
+      | .i32v a :: st' =>
+          if i32Word a then wRunF host ar callee rest locals (.i64v (toU32 a) :: st')
           else none
       | _ => none
   | .i32LtS :: rest, locals, st =>

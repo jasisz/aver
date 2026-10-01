@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::codegen::cert::{PlanLayout, PlanListRole, RecordLayout, SumLayout};
+use crate::codegen::cert::{PlanBytesRole, PlanLayout, PlanListRole, RecordLayout, SumLayout};
 use crate::ir::{BuiltinId, CtorId, FnId, SymbolTable};
 
 use super::types::TypeRegistry;
@@ -106,6 +106,28 @@ impl PlanLayout for CertLayout<'_> {
             || registry.is_eligible_carrier(name)
             || registry.is_capability_resource(name)
             || (self.sum_entry(name).is_some() && registry.newtype_underlying(name).is_some())
+    }
+
+    fn bytes_array(&self, name: &str) -> Option<u32> {
+        let packed = self.registry.packed_sequence(name)?;
+        (packed.layout.element == crate::codegen::proof_lower::PackedIntElement::U8)
+            .then_some(packed.type_idx)
+    }
+
+    fn bytes_helper(&self, name: &str, role: PlanBytesRole) -> Option<u32> {
+        let canonical = self.registry.canonical_type_name(name);
+        let ops = self.fn_map.packed_sequence_ops_lookup(canonical)?;
+        Some(match role {
+            PlanBytesRole::Pack => ops.pack,
+            PlanBytesRole::Unpack => ops.unpack,
+            PlanBytesRole::Concat => ops.concat,
+            PlanBytesRole::Take => ops.take,
+            PlanBytesRole::Drop => ops.drop,
+        })
+    }
+
+    fn int_chk(&self) -> Option<u32> {
+        self.registry.aint_to_i64_checked_fn_idx
     }
 
     fn record(&self, name: &str) -> Option<RecordLayout> {

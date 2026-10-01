@@ -700,6 +700,9 @@ def tableBody (cst : Option (Option Nat)) (glen : Nat) (tt : TypeTable) : Bool :
   (match tt.str with
    | some i => arrayIsL look i (.packed 0x78)
    | none => true) &&
+  (match tt.bytesArr with
+   | some i => arrayIsL look i (.packed 0x78)
+   | none => true) &&
   (match tt.strVec, tt.str with
    | some v, some i => arrayIsL look v (refTo i)
    | none, _ => true

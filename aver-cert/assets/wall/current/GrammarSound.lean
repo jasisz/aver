@@ -35,6 +35,7 @@
    byte pin `GrammarLower.S3Pin`, which the acceptance must check. -/
 import GrammarLower
 import ListHelpers
+import BytesHelpers
 import InterpreterSequencing
 
 set_option maxHeartbeats 4000000
@@ -97,6 +98,24 @@ def ListSpec {C : Nat} (S : CarrierSpec C) (M : MCtx) (r : ListRole) (t : Ty)
       SRepr S M x wx → g [wList (M.listStruct t) ws, wx] = some v →
       v = b32 (vs.any fun y => svEq y x)
 
+open AverCert.ListHelpers (wList) in
+open AverCert.BytesHelpers (bytesW smallW RelI) in
+/-- What a caller knows of the declared `Bytes` helper of role `r`: what
+    `BytesHelpers` proves the helper's template computes, over packed byte
+    arrays (`M.bytesArr`) and `List<Int>` cons cells. -/
+def BytesSpec {C : Nat} (S : CarrierSpec C) (M : MCtx) (r : BytesRole)
+    (g : List WVal → Option WVal) : Prop :=
+  match r with
+  | .pack => ∀ ns ws v, RelI S.Repr ns ws → g [wList (M.listStruct .int) ws] = some v →
+      v = bytesW M.bytesArr (ns.map byteOf) ∧ ns.length < 2147483648
+  | .unpack => ∀ bs v, (∀ b ∈ bs, b < 256) → bs.length < 2147483648 →
+      g [bytesW M.bytesArr bs] = some v → v = wList (M.listStruct .int) (smallW M.carrier bs)
+  | .concat => ∀ a b v, g [bytesW M.bytesArr a, bytesW M.bytesArr b] = some v →
+      v = bytesW M.bytesArr (a ++ b) ∧ a.length + b.length < 2147483648
+  | .take => ∀ a c v, a.length < 2147483648 → g [bytesW M.bytesArr a, .i64v c] = some v →
+      v = bytesW M.bytesArr (a.take c.toNat)
+  | .drop => ∀ a c v, a.length < 2147483648 → g [bytesW M.bytesArr a, .i64v c] = some v →
+      v = bytesW M.bytesArr (a.drop c.toNat)
 
 /-- The runtime helpers the String and Vector nodes call, at their indices,
     each with the contract `Schema.Obligation.holds` already assumes of it:
@@ -123,6 +142,9 @@ structure XHost {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop
   /-- Every declared List helper, the wall's run of its pinned template. -/
   listHelper : ∀ r t f, M.listHelper r t = some f →
     ∃ g, host f = some (r.arity, g) ∧ ListSpec S M r t g
+  /-- Every declared `Bytes` helper, the wall's run of its pinned template. -/
+  bytesHelper : ∀ r f, M.bytesHelper r = some f →
+    ∃ g, host f = some (r.arity, g) ∧ BytesSpec S M r g
 
 /-- Assume–guarantee contract of a code function `f` at signature `sig` for
     one opaque `callee`: the ONLY thing a caller knows about `f`. -/
@@ -622,7 +644,7 @@ theorem hasTy_list {M : MCtx} {v : SVal} {t : Ty} (h : HasTy M v (.list t)) :
     type. -/
 theorem builtin_step (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     {C : Nat} {S : CarrierSpec C} {M : MCtx}
-    (bi : Builtin) (hnl : bi.listRole = none) (ts : List Ty) (T : Ty)
+    (bi : Builtin) (hnl : bi.listRole = none) (hnb : bi.isBytes = false) (ts : List Ty) (T : Ty)
     (hty : builtinTy M bi ts = some T)
     (svs : List SVal) (ws : List WVal) (hT : HasTyL M svs ts) (hr : SReprL S M svs ws)
     (wl st : List WVal) (out : Out)
@@ -694,7 +716,8 @@ theorem builtin_step (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee
         ⟨wh, wt, rfl, hwh, hwt⟩, rfl⟩
       rcases hasTy_list htl with rfl | ⟨x, r, rfl, _, _⟩ <;> rfl
     · cases hty
-  all_goals first | cases hty | simp [Builtin.listRole] at hnl
+  all_goals first | (simp [Builtin.isBytes] at hnb; done) | cases hty |
+    (simp [Builtin.listRole] at hnl; done)
 
 /-! ## Strings and Floats -/
 
@@ -2309,6 +2332,258 @@ theorem listBuiltin_step (R : XHost S M host)
 
 end ListStep
 
+section BytesStep
+variable {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
+open AverCert.ListHelpers (wList satOk)
+open AverCert.BytesHelpers (bytesW smallW RelI)
+
+theorem hasTy_bytes {v : SVal} (h : HasTy M v .bytes) : ∃ bs, v = .bytes bs ∧ ∀ b ∈ bs, b < 256 := by
+  cases v <;> simp only [HasTy] at h
+  exact ⟨_, rfl, h⟩
+
+/-- A represented, typed `Bytes` argument: its octets and their packed array. -/
+theorem bytes_arg {v : SVal} {w : WVal} (hv : HasTy M v .bytes) (hw : SRepr S M v w) :
+    ∃ bs, v = .bytes bs ∧ (∀ b ∈ bs, b < 256) ∧ bs.length < 2147483648 ∧
+      w = bytesW M.bytesArr bs := by
+  obtain ⟨bs, rfl, hb⟩ := hasTy_bytes hv
+  obtain ⟨hl, rfl⟩ := hw
+  exact ⟨bs, rfl, hb, hl, rfl⟩
+
+/-- Typed Ints as Ints, related to their words. -/
+theorem ints_rel : ∀ {vs : List SVal} {ws : List WVal}, HasTyAll M vs .int → SReprL S M vs ws →
+    ∃ ns, vs = ns.map .i ∧ RelI S.Repr ns ws
+  | [], [], _, _ => ⟨[], rfl, trivial⟩
+  | v :: vs, w :: ws, ht, hr => by
+      obtain ⟨n, rfl⟩ := hasTy_int ht.1
+      obtain ⟨ns, rfl, hns⟩ := ints_rel ht.2 hr.2
+      exact ⟨n :: ns, rfl, hr.1.1, hns⟩
+  | [], _ :: _, _, hr => by simp [SReprL] at hr
+  | _ :: _, [], _, hr => by simp [SReprL] at hr
+
+theorem intsOf_map : ∀ ns : List Int, intsOf (ns.map .i) = some ns
+  | [] => rfl
+  | n :: ns => by simp [intsOf, intsOf_map ns]
+
+theorem byteOf_lt' (n : Int) : byteOf n < 256 := by unfold byteOf; omega
+
+theorem bytesW_eq (B : Nat) (bs : List Nat) :
+    bytesW B bs = .arr B (bs.map fun (b : Nat) => .i32v (b : Int)) := rfl
+
+/-- The boxed bytes `unpack` returns represent the bytes as Ints. -/
+theorem sreprL_small (hC : M.carrier = C) : ∀ bs : List Nat, (∀ b ∈ bs, b < 256) →
+    SReprL S M (bs.map fun (b : Nat) => SVal.i (b : Int)) (smallW M.carrier bs)
+  | [], _ => trivial
+  | b :: bs, hb => by
+      refine ⟨⟨?_, ?_⟩, sreprL_small hC bs fun x hx => hb x (List.mem_cons_of_mem _ hx)⟩
+      · rw [hC]; exact S.smallIntro _
+      · rw [hC]
+        have := hb b List.mem_cons_self
+        exact (S.canonSmall _).2 ⟨by omega, by omega⟩
+
+theorem nat_take_sat {bs : List Nat} {n c : Int} (hs : satOk n c)
+    (hl : bs.length < 9223372036854775808) : bs.take c.toNat = bs.take n.toNat := by
+  have h := hs bs.length hl
+  rcases Nat.le_total c.toNat bs.length with h1 | h1 <;>
+    rcases Nat.le_total n.toNat bs.length with h2 | h2
+  · rw [Nat.min_eq_left h1, Nat.min_eq_left h2] at h; rw [h]
+  · rw [Nat.min_eq_left h1, Nat.min_eq_right h2] at h
+    rw [h, List.take_of_length_le (Nat.le_refl _), List.take_of_length_le h2]
+  · rw [Nat.min_eq_right h1, Nat.min_eq_left h2] at h
+    rw [← h, List.take_of_length_le h1, List.take_of_length_le (Nat.le_refl _)]
+  · rw [List.take_of_length_le h1, List.take_of_length_le h2]
+
+theorem nat_drop_sat {bs : List Nat} {n c : Int} (hs : satOk n c)
+    (hl : bs.length < 9223372036854775808) : bs.drop c.toNat = bs.drop n.toNat := by
+  have h := hs bs.length hl
+  rcases Nat.le_total c.toNat bs.length with h1 | h1 <;>
+    rcases Nat.le_total n.toNat bs.length with h2 | h2
+  · rw [Nat.min_eq_left h1, Nat.min_eq_left h2] at h; rw [h]
+  · rw [Nat.min_eq_left h1, Nat.min_eq_right h2] at h
+    rw [h, List.drop_of_length_le (Nat.le_refl _), List.drop_of_length_le h2]
+  · rw [Nat.min_eq_right h1, Nat.min_eq_left h2] at h
+    rw [← h, List.drop_of_length_le h1, List.drop_of_length_le (Nat.le_refl _)]
+  · rw [List.drop_of_length_le h1, List.drop_of_length_le h2]
+
+/-- A `Bytes` builtin's tail after its arguments: the helper call (the
+    saturated count first, for `take` / `drop`), or `bytesLen`'s inline
+    `array.len` and box, computes the builtin's meaning. -/
+theorem bytesBuiltin_step (R : XHost S M host) (hC : M.carrier = C)
+    (box : List WVal → Option WVal) (hBox : host M.box = some (1, box))
+    (hBoxC : ∀ n w, -(2 ^ 63 : Int) ≤ n → n < 2 ^ 63 → box [.i64v n] = some w →
+      CanonRepr S n w)
+    (ar : Nat → Option Nat) (callee : Callee)
+    (bi : Builtin) (hbi : bi.isBytes = true)
+    (ts : List Ty) (T : Ty) (hty : builtinTy M bi ts = some T)
+    (svs : List SVal) (ws : List WVal) (hT : HasTyL M svs ts) (hr : SReprL S M svs ws)
+    (wl st : List WVal) (out : Out)
+    (hrun : wRunF host ar callee (eraseL (builtinTail M bi (some ts))) wl (ws.reverse ++ st) =
+      some out) :
+    ∃ sv w, builtinEval bi svs = some sv ∧ HasTy M sv T ∧ SRepr S M sv w ∧
+      out = .ok wl (w :: st) := by
+  have h63 : (2 : Int) ^ 63 = 9223372036854775808 := by decide
+  cases bi <;> simp [Builtin.isBytes] at hbi
+  · -- `Bytes(values = xs)`
+    obtain ⟨f, rfl, rfl, hf⟩ := AverCert.BytesHelpers.builtinTy_bytesOfList hty
+    obtain ⟨xs, rfl, hxs⟩ := hasTyL_one hT
+    obtain ⟨w0, rfl, hw0⟩ := sreprL_one hr
+    obtain ⟨vs, wsl, rfl, hvs, rfl, hrep⟩ := list_arg hxs hw0
+    obtain ⟨ns, rfl, hns⟩ := ints_rel hvs hrep
+    obtain ⟨g, hg, hspec⟩ := R.bytesHelper .pack f hf
+    simp only [BytesSpec] at hspec
+    simp only [BytesRole.arity] at hg
+    simp only [builtinTail, bytesCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hgr : g [wList (M.listStruct .int) wsl] with
+    | none => simp [wRunF, hg, popArgs_one, hgr] at hrun
+    | some v =>
+        obtain ⟨rfl, hl⟩ := hspec ns wsl v hns hgr
+        simp [wRunF, hg, popArgs_one, hgr] at hrun
+        subst hrun
+        refine ⟨.bytes (ns.map byteOf), _, ?_, ?_, ⟨by simpa using hl, rfl⟩, rfl⟩
+        · simp [builtinEval, listOf_consAll, intsOf_map]
+        · intro b hb
+          obtain ⟨n, _, rfl⟩ := List.mem_map.1 hb
+          exact byteOf_lt' n
+  · -- `bytes.values`
+    obtain ⟨f, rfl, rfl, hf⟩ := AverCert.BytesHelpers.builtinTy_bytesValues hty
+    obtain ⟨xs, rfl, hxs⟩ := hasTyL_one hT
+    obtain ⟨w0, rfl, hw0⟩ := sreprL_one hr
+    obtain ⟨bs, rfl, hbs, hl, rfl⟩ := bytes_arg hxs hw0
+    obtain ⟨g, hg, hspec⟩ := R.bytesHelper .unpack f hf
+    simp only [BytesSpec] at hspec
+    simp only [BytesRole.arity] at hg
+    simp only [builtinTail, bytesCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hgr : g [bytesW M.bytesArr bs] with
+    | none => simp [wRunF, hg, popArgs_one, hgr] at hrun
+    | some v =>
+        have hv := hspec bs v hbs hl hgr
+        subst hv
+        simp [wRunF, hg, popArgs_one, hgr] at hrun
+        subst hrun
+        refine ⟨consAll .int (bs.map fun (b : Nat) => .i (b : Int)), _, ?_, ?_, ?_, rfl⟩
+        · simp [builtinEval]
+        · exact hasTy_consAll (hasTyAll_iff.2 fun v hv => by
+            obtain ⟨b, _, rfl⟩ := List.mem_map.1 hv
+            trivial)
+        · exact (srepr_consAll .int _ _).2 ⟨_, rfl, sreprL_small hC bs hbs⟩
+  · -- `List.len(bytes.values)`
+    obtain ⟨rfl, rfl⟩ := AverCert.BytesHelpers.builtinTy_bytesLen hty
+    obtain ⟨xs, rfl, hxs⟩ := hasTyL_one hT
+    obtain ⟨w0, rfl, hw0⟩ := sreprL_one hr
+    obtain ⟨bs, rfl, hbs, hl, rfl⟩ := bytes_arg hxs hw0
+    have hw : i32Word (bs.length : Int) = true := AverCert.BytesHelpers.i32Word_of (by omega) (by omega)
+    have hu : toU32 (bs.length : Int) = bs.length := AverCert.BytesHelpers.toU32_of_nonneg (by omega)
+    simp only [builtinTail, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append, bytesW] at hrun
+    cases hbr : box [.i64v (bs.length : Int)] with
+    | none => simp [wRunF, hw, hu, hBox, popArgs_one, hbr] at hrun
+    | some w =>
+        simp [wRunF, hw, hu, hBox, popArgs_one, hbr] at hrun
+        subst hrun
+        have hc := hBoxC _ _ (by omega) (by rw [h63]; omega) hbr
+        exact ⟨.i bs.length, w, by simp [builtinEval], trivial, hc, rfl⟩
+  · -- `Bytes(values = List.concat(a.values, b.values))`
+    obtain ⟨f, rfl, rfl, hf⟩ := AverCert.BytesHelpers.builtinTy_bytesConcat hty
+    obtain ⟨xs, ys, rfl, hxs, hys⟩ := hasTyL_two hT
+    obtain ⟨w0, w1, rfl, hw0, hw1⟩ := sreprL_two hr
+    obtain ⟨a, rfl, ha, hla, rfl⟩ := bytes_arg hxs hw0
+    obtain ⟨b, rfl, hb, hlb, rfl⟩ := bytes_arg hys hw1
+    obtain ⟨g, hg, hspec⟩ := R.bytesHelper .concat f hf
+    simp only [BytesSpec] at hspec
+    simp only [BytesRole.arity] at hg
+    simp only [builtinTail, bytesCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hgr : g [bytesW M.bytesArr a, bytesW M.bytesArr b] with
+    | none => simp [wRunF, hg, popArgs_two, hgr] at hrun
+    | some v =>
+        obtain ⟨rfl, hl⟩ := hspec a b v hgr
+        simp [wRunF, hg, popArgs_two, hgr] at hrun
+        subst hrun
+        refine ⟨.bytes (a ++ b), _, by simp [builtinEval], ?_, ⟨by simpa using hl, rfl⟩, rfl⟩
+        intro x hx
+        rcases List.mem_append.1 hx with h | h
+        · exact ha x h
+        · exact hb x h
+  · -- `Bytes(values = List.take(bytes.values, n))`
+    obtain ⟨f, rfl, rfl, hf⟩ := AverCert.BytesHelpers.builtinTy_bytesTake hty
+    obtain ⟨xs, xn, rfl, hxs, hxn⟩ := hasTyL_two hT
+    obtain ⟨w0, wn, rfl, hw0, hwn⟩ := sreprL_two hr
+    obtain ⟨a, rfl, ha, hla, rfl⟩ := bytes_arg hxs hw0
+    obtain ⟨n, rfl⟩ := hasTy_int hxn
+    obtain ⟨gs, hgs, hsat⟩ := R.toI64Sat
+    obtain ⟨g, hg, hspec⟩ := R.bytesHelper .take f hf
+    simp only [BytesSpec] at hspec
+    simp only [BytesRole.arity] at hg
+    simp only [builtinTail, bytesCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hsr : gs [wn] with
+    | none => simp [wRunF, hgs, popArgs_one, popArgs_two, hsr] at hrun
+    | some vc =>
+        obtain ⟨c, rfl, hc⟩ := hsat n wn _ hwn hsr
+        cases hgr : g [bytesW M.bytesArr a, .i64v c] with
+        | none => simp [wRunF, hgs, hg, popArgs_one, popArgs_two, hsr, hgr] at hrun
+        | some v =>
+            have hv := hspec a c v hla hgr
+            subst hv
+            simp [wRunF, hgs, hg, popArgs_one, popArgs_two, hsr, hgr] at hrun
+            subst hrun
+            rw [nat_take_sat hc (by omega)]
+            refine ⟨.bytes (a.take n.toNat), _, by simp [builtinEval], ?_, ⟨?_, rfl⟩, rfl⟩
+            · exact fun x hx => ha x (List.mem_of_mem_take hx)
+            · simp; omega
+  · -- `Bytes(values = List.drop(bytes.values, n))`
+    obtain ⟨f, rfl, rfl, hf⟩ := AverCert.BytesHelpers.builtinTy_bytesDrop hty
+    obtain ⟨xs, xn, rfl, hxs, hxn⟩ := hasTyL_two hT
+    obtain ⟨w0, wn, rfl, hw0, hwn⟩ := sreprL_two hr
+    obtain ⟨a, rfl, ha, hla, rfl⟩ := bytes_arg hxs hw0
+    obtain ⟨n, rfl⟩ := hasTy_int hxn
+    obtain ⟨gs, hgs, hsat⟩ := R.toI64Sat
+    obtain ⟨g, hg, hspec⟩ := R.bytesHelper .drop f hf
+    simp only [BytesSpec] at hspec
+    simp only [BytesRole.arity] at hg
+    simp only [builtinTail, bytesCall, hf, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+      List.nil_append, List.cons_append, List.singleton_append] at hrun
+    cases hsr : gs [wn] with
+    | none => simp [wRunF, hgs, popArgs_one, popArgs_two, hsr] at hrun
+    | some vc =>
+        obtain ⟨c, rfl, hc⟩ := hsat n wn _ hwn hsr
+        cases hgr : g [bytesW M.bytesArr a, .i64v c] with
+        | none => simp [wRunF, hgs, hg, popArgs_one, popArgs_two, hsr, hgr] at hrun
+        | some v =>
+            have hv := hspec a c v hla hgr
+            subst hv
+            simp [wRunF, hgs, hg, popArgs_one, popArgs_two, hsr, hgr] at hrun
+            subst hrun
+            rw [nat_drop_sat hc (by omega)]
+            refine ⟨.bytes (a.drop n.toNat), _, by simp [builtinEval], ?_, ⟨?_, rfl⟩, rfl⟩
+            · exact fun x hx => ha x (List.mem_of_mem_drop hx)
+            · simp; omega
+
+open AverCert.BytesHelpers in
+/-- What the wall's run of each `Bytes` helper template computes, as the
+    grammar's simulation theorem consumes it: the `BytesHelpers` theorems. -/
+theorem bytesSem_spec {C : Nat} (S : CarrierSpec C) (M : MCtx) (hC : M.carrier = C)
+    (r : BytesRole) : BytesSpec S M r (bytesSem M r) := by
+  subst hC
+  cases r
+  · intro ns ws v hr hv
+    exact packSem_spec S _ _ _ ns ws hr v hv
+  · intro bs v hbs hl hv
+    rw [bytesSem, unpackSem_eq _ _ _ _ bs hbs hl] at hv
+    exact (Option.some.inj hv).symm
+  · intro a b v hv
+    obtain ⟨rfl, hl⟩ := catSemB_spec _ _ _ v hv
+    exact ⟨by simp [bytesW], by simpa using hl⟩
+  · intro a c v hl hv
+    have := takeSemB_spec _ _ c (by simpa using hl) v hv
+    rw [this]; simp [bytesW, List.map_take]
+  · intro a c v hl hv
+    have := dropSemB_spec _ _ c (by simpa using hl) v hv
+    rw [this]; simp [bytesW, List.map_drop]
+
+end BytesStep
+
 section Agreement
 variable {C : Nat} (S : CarrierSpec C)
   (box add sub mul cmp eq neg : List WVal → Option WVal)
@@ -2538,9 +2813,16 @@ theorem agreement_step :
       simp only [seqOut] at hseq
       cases hlr : bi.listRole with
       | none =>
-          obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
-            builtin_step host ar callee bi hlr ts T hbt svs ws hTs hrep wl1 st out hseq
-          exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
+          cases hib : bi.isBytes with
+          | false =>
+              obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
+                builtin_step host ar callee bi hlr hib ts T hbt svs ws hTs hrep wl1 st out hseq
+              exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
+          | true =>
+              obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
+                bytesBuiltin_step R hCarrier box hBox Ctr.hBox ar callee bi hib ts T hbt svs ws
+                  hTs hrep wl1 st out hseq
+              exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
       | some r =>
           obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
             listBuiltin_step R box hBox Ctr.hBox ar callee bi r hlr ts T hbt svs ws hTs hrep
@@ -3002,6 +3284,7 @@ theorem agreement_step :
           | vec _ => simp [ctorTy] at hct
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
+          | bytes => simp [ctorTy] at hct
           | sum tid' =>
           simp only [ctorTy] at hct
           split at hct
@@ -3037,6 +3320,7 @@ theorem agreement_step :
           | vec _ => simp [ctorTy] at hct
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
+          | bytes => simp [ctorTy] at hct
           | option t =>
           simp only [ctorTy] at hct
           split at hct
@@ -3073,6 +3357,7 @@ theorem agreement_step :
           | vec _ => simp [ctorTy] at hct
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
+          | bytes => simp [ctorTy] at hct
           | option t =>
           simp only [ctorTy] at hct
           split at hct
@@ -3109,6 +3394,7 @@ theorem agreement_step :
           | vec _ => simp [ctorTy] at hct
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
+          | bytes => simp [ctorTy] at hct
           | result t e =>
           simp only [ctorTy] at hct
           split at hct
@@ -3150,6 +3436,7 @@ theorem agreement_step :
           | vec _ => simp [ctorTy] at hct
           | list _ => simp [ctorTy] at hct
           | «opaque» _ => simp [ctorTy] at hct
+          | bytes => simp [ctorTy] at hct
           | result t e =>
           simp only [ctorTy] at hct
           split at hct
