@@ -79,7 +79,7 @@ fn literal_tail_walks_are_structural_but_computed_slices_stay_well_founded() {
         !lean.contains("partial def") && !lean.contains("__fuel"),
         "{lean}"
     );
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping structural list proof check: `lake` not available");
         return;
     }

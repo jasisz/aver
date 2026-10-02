@@ -6,6 +6,10 @@ use super::*;
 #[test]
 fn proof_uses_project_toolchain_without_an_elan_default() {
     let pin = include_str!("../../aver-cert/assets/wall/current/lean-toolchain").trim();
+    if !lean_required::tool_available("elan") {
+        eprintln!("skipping toolchain isolation test: Elan is not installed");
+        return;
+    }
     let Ok(which) = Command::new("elan")
         .env("ELAN_TOOLCHAIN", pin)
         .args(["which", "lake"])

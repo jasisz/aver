@@ -240,7 +240,7 @@ verify spin
 /// when-laws were sampled-domain-bounded — `universal` was false.
 #[test]
 fn proof_floor_window_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping floor-window proof test: `lake` not available");
         return;
     }
@@ -291,7 +291,7 @@ fn proof_floor_window_lean_closes_kernel_genuine() {
 /// shared factor on the LEFT of the divisor product.
 #[test]
 fn proof_floor_arith_witness_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping floor-arith-witness proof test: `lake` not available");
         return;
     }
@@ -426,7 +426,7 @@ fn proof_export_divisor_shape_positivity_universal() {
 /// (`proof_divisor_shape_pool_law_is_load_bearing`); here it is present.
 #[test]
 fn proof_divisor_shape_positivity_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping divisor-shape proof test: `lake` not available");
         return;
     }
@@ -525,7 +525,7 @@ fn proof_export_divisor_shape_positivity_witness_universal() {
 /// name leak in the derivation would break here.
 #[test]
 fn proof_divisor_shape_positivity_witness_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping divisor-shape witness proof test: `lake` not available");
         return;
     }
@@ -664,7 +664,7 @@ verify floorDiv law cancelPow2
     let pool_law =
         "\nverify pow2 law positive\n    given k: Int = [0, 1, 3]\n    pow2(k) >= 1 holds\n";
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     for with_pool in [true, false] {
@@ -695,7 +695,7 @@ verify floorDiv law cancelPow2
 
 #[test]
 fn imported_floor_window_uses_its_owners_recursion_contract() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let root = temp_output_dir("aver-floor-window-owner");

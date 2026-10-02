@@ -10,7 +10,7 @@ use super::*;
 /// provable laws are universal and the nonlinear one keeps its sampled proof.
 #[test]
 fn proof_given_over_refinement_record_builds() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping refinement given proof test: `lake` not available");
         return;
     }

@@ -30,7 +30,7 @@ fn summary_from(output: &std::process::Output) -> serde_json::Value {
 /// Export `source` as module `name` with `--check`, and return the summary
 /// and the generated entry file.
 fn prove(name: &str, source: &str, extra: &[&str]) -> Option<(serde_json::Value, String)> {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping generic oracle proof test: `lake` not available");
         return None;
     }

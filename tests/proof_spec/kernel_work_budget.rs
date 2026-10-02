@@ -103,7 +103,7 @@ verify dynamic
             .unwrap_or_else(|| panic!("missing {name}:\n{lean}"));
         assert!(case.ends_with(&format!(":= by {tactic}")), "{case}");
     }
-    if Command::new("lake").arg("--version").output().is_ok() {
+    if lean_required::lake_available() {
         let build = Command::new("lake")
             .arg("build")
             .current_dir(&out)
@@ -158,7 +158,7 @@ fn recursive_dependency_samples_stay_native_and_keep_sibling_law_credit() {
             && line.ends_with(":= by decide +kernel")),
         "an unrelated nonrecursive function stays kernel-decided:\n{entry}"
     );
-    if Command::new("lake").arg("--version").output().is_ok() {
+    if lean_required::lake_available() {
         let checked = run(true);
         let json = String::from_utf8_lossy(&checked.stdout);
         let summary: serde_json::Value = serde_json::from_str(

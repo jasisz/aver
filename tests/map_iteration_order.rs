@@ -14,6 +14,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::{format_output, repo_root};
 
@@ -54,7 +56,7 @@ fn run_aver(args: &[&str]) -> std::process::Output {
 }
 
 fn lake_available() -> bool {
-    Command::new("lake").arg("--version").output().is_ok()
+    lean_required::lake_available()
 }
 
 /// Generate a Lean project for `fixture` and return the emitted module text.

@@ -374,7 +374,10 @@ elab "#aver_reserved_tokens" : command => do
         };
         let mut output = match run_probe() {
             Ok(output) => output,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                crate::codegen::lean::tests::lean_not_found();
+                return;
+            }
             Err(error) => panic!("run Lean token probe: {error}"),
         };
         // On a runner that has never used the pinned toolchain, this first

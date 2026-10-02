@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn conditional_probe_handles_an_empty_unfold_set_with_sibling_lemmas() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-empty-simp");
@@ -37,7 +37,7 @@ fn conditional_probe_handles_an_empty_unfold_set_with_sibling_lemmas() {
 
 #[test]
 fn cited_accumulator_equations_do_not_loop_as_simp_rules_in_reasons() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-cited-accumulator");
@@ -60,7 +60,7 @@ fn cited_accumulator_equations_do_not_loop_as_simp_rules_in_reasons() {
 
 #[test]
 fn imported_empty_list_comparisons_keep_types_in_samples_and_guards() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-empty-list-comparisons");

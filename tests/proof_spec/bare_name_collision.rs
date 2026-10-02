@@ -54,7 +54,7 @@ fn proof_export_resolves_bare_names_in_the_emitted_module_first() {
 /// module ahead of it in the dependency list.
 #[test]
 fn proof_bare_name_collision_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping bare-name collision proof test: `lake` not available");
         return;
     }

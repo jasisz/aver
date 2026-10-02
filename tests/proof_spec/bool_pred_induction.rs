@@ -89,7 +89,7 @@ fn proof_export_bool_pred_induction_closers_carry_the_bool_bridge() {
 /// credit.
 #[test]
 fn proof_bool_pred_induction_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Bool predicate induction proof test: `lake` not available");
         return;
     }

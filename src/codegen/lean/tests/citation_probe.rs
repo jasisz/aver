@@ -74,7 +74,10 @@ fn citation_probe_audits_actual_closures_through_globals_and_local_lets() {
         .output()
     {
         Ok(output) => output,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            super::lean_not_found();
+            return;
+        }
         Err(error) => panic!("run pinned citation probe: {error}"),
     };
     let transcript = format!(

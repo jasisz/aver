@@ -243,7 +243,7 @@ fn check_container(
     module_file: &str,
     prefix: &str,
 ) -> Option<(serde_json::Value, String)> {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping container-induction test: `lake` not available");
         return None;
     }

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn guarded_floor_citations_compose_without_losing_their_premises() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-law-floor-citations");

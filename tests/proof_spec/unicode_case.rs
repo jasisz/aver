@@ -97,7 +97,7 @@ fn ascii_identity_paths_match_vm_without_losing_unicode_context_or_expansions() 
         "{}",
         format_output(&verify)
     );
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Unicode proof comparison: `lake` not available");
         return;
     }

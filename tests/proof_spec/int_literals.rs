@@ -44,7 +44,7 @@ fn proof_export_keeps_int_literals_int() {
 /// shape, `0 - 1` included, builds and agrees with the VM.
 #[test]
 fn proof_int_literal_soundness_laws_are_not_proved() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Int literal soundness test: `lake` not available");
         return;
     }

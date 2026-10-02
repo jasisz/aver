@@ -17,7 +17,7 @@ fn proof_export_escapes_lean_reserved_identifiers_end_to_end() {
         .arg("lean")
         .arg("-o")
         .arg(&root);
-    if Command::new("lake").arg("--version").output().is_ok() {
+    if lean_required::lake_available() {
         command.arg("--check");
     }
     let output = command
@@ -544,7 +544,7 @@ fn embedded_bytes_and_crypto_digest_preserve_refinements_in_the_proof_export() {
         .arg("lean")
         .arg("-o")
         .arg(&lean_out);
-    if Command::new("lake").arg("--version").output().is_ok() {
+    if lean_required::lake_available() {
         lean_command.arg("--check");
     }
     let lean = lean_command
@@ -618,7 +618,7 @@ fn proof_export_preserves_container_and_nested_refinements_end_to_end() {
         .arg("lean")
         .arg("-o")
         .arg(&lean_out);
-    if Command::new("lake").arg("--version").output().is_ok() {
+    if lean_required::lake_available() {
         lean_command.arg("--check");
     }
     let lean = lean_command
@@ -785,64 +785,11 @@ fn proof_export_gates_trace_projection_law_lhs_as_runtime_only() {
 }
 
 #[test]
-fn proof_export_lean_chunks_large_checked_domain_conjunction() {
-    // Emission-shape half of the large-domain fix (the live build/credit
-    // half lives in `check_gates`): a 512-cell given product must emit
-    // its checked-domain conjunction as `_checked_domain_part<N>`
-    // theorems of at most 32 conjuncts each — one 512-conjunct theorem
-    // exceeds the elaborator's recursion depth during `Decidable`
-    // synthesis and the whole file fails to build. Fast (no lake).
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out = temp_output_dir("aver-large-domain-shape-out");
-    let run = Command::new(aver_bin)
-        .current_dir(&repo_root)
-        .arg("proof")
-        .arg("--examples")
-        .arg("tests/fixtures/large_domain_law.av")
-        .arg("--backend")
-        .arg("lean")
-        .arg("-o")
-        .arg(&out)
-        .output()
-        .expect("expected `aver proof` to run");
-    assert!(run.status.success(), "{}", format_output(&run));
-    let lean = std::fs::read_to_string(out.join("LargeDomainLaw.lean"))
-        .expect("read emitted LargeDomainLaw.lean");
-    assert!(
-        !lean.contains("theorem tripleSum_law_mirror_checked_domain :"),
-        "512 conjuncts must not emit as a single checked-domain theorem; got:\n{}",
-        lean.lines().take(40).collect::<Vec<_>>().join("\n")
-    );
-    // 512 cases / 32-conjunct chunks = 16 part theorems, all proved.
-    for part in 1..=16 {
-        assert!(
-            lean.contains(&format!(
-                "theorem tripleSum_law_mirror_checked_domain_part{} :",
-                part
-            )),
-            "missing checked-domain part theorem {part}"
-        );
-    }
-    assert!(
-        !lean.contains("tripleSum_law_mirror_checked_domain_part17"),
-        "expected exactly 16 part theorems"
-    );
-    for line in lean.lines() {
-        if line.contains("_checked_domain_part") {
-            let conjuncts = line.matches(" ∧ ").count() + 1;
-            assert!(
-                conjuncts <= 32,
-                "part theorem exceeds the 32-conjunct chunk bound ({conjuncts}):\n{line}"
-            );
-        }
-    }
-    let _ = std::fs::remove_dir_all(&out);
-}
-
-#[test]
 fn proof_export_lean_chunks_large_checked_domain_in_every_verify_mode() {
-    // Mode-parameterized twin of the chunking pin above. The
+    // Emission-shape half of the large-domain fix (the live build/credit
+    // half lives in `check_gates`): a 512-cell given product must emit its
+    // checked-domain conjunction as `_checked_domain_part<N>` theorems of at
+    // most 32 conjuncts each. The
     // `maxRecDepth` wall is NOT specific to `native_decide`'s
     // `Decidable` synthesis: plain elaboration of the nested-∧
     // STATEMENT recurses once per conjunct, so a 512-conjunct theorem
@@ -902,6 +849,16 @@ fn proof_export_lean_chunks_large_checked_domain_in_every_verify_mode() {
             !lean.contains("tripleSum_law_mirror_checked_domain_part17"),
             "mode {mode:?}: expected exactly 16 part theorems"
         );
+        for line in lean.lines() {
+            if line.contains("_checked_domain_part") {
+                let conjuncts = line.matches(" ∧ ").count() + 1;
+                assert!(
+                    conjuncts <= 32,
+                    "mode {mode:?}: part theorem exceeds the 32-conjunct chunk bound \
+                     ({conjuncts}):\n{line}"
+                );
+            }
+        }
         let _ = std::fs::remove_dir_all(&out);
     }
 }
@@ -1044,7 +1001,7 @@ fn proof_export_of_a_set_shaped_map_builds() {
         .arg("lean")
         .arg("-o")
         .arg(&root);
-    let lake = Command::new("lake").arg("--version").output().is_ok();
+    let lake = lean_required::lake_available();
     if lake {
         command
             .arg("--check")
@@ -1141,7 +1098,7 @@ fn proof_export_two_cons_peel_is_structural_not_partial() {
         .arg("lean")
         .arg("-o")
         .arg(&root);
-    let lake = Command::new("lake").arg("--version").output().is_ok();
+    let lake = lean_required::lake_available();
     if lake {
         command.arg("--check");
     } else {
@@ -1215,7 +1172,7 @@ fn proof_export_types_with_a_refined_field_take_the_decidable_eq_route() {
         .arg("lean")
         .arg("-o")
         .arg(&root);
-    let lake = Command::new("lake").arg("--version").output().is_ok();
+    let lake = lean_required::lake_available();
     if lake {
         command.arg("--check").arg("--check-json");
     } else {

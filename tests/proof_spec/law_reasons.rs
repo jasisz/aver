@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn citations_remain_available_in_the_final_implication_after_a_reason() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-law-final-citation");
@@ -27,7 +27,7 @@ fn citations_remain_available_in_the_final_implication_after_a_reason() {
 
 #[test]
 fn reasons_are_audited_separately_and_cannot_hide_behind_an_easy_goal() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-law-reasons");
@@ -84,7 +84,7 @@ fn reasons_are_audited_separately_and_cannot_hide_behind_an_easy_goal() {
 
 #[test]
 fn imported_citations_respect_visibility_and_prove_through_a_module_boundary() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-law-reasons-imports");
@@ -198,7 +198,7 @@ fn wasm_checks_declared_explanations_even_when_the_claim_is_true() {
 
 #[test]
 fn reasons_close_computed_list_facts_with_explicit_forward_citations() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-law-reasons-digits");
@@ -249,7 +249,7 @@ fn hostile_checks_explanations_under_the_original_guard() {
 
 #[test]
 fn true_false_restatement_and_tainted_citation_do_not_launder_credit() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-law-reasons-edges");
@@ -315,7 +315,7 @@ fn explanations_require_bool_purity_and_acyclic_known_dependencies() {
 
 #[test]
 fn guarded_countdown_equations_support_citations_and_accumulator_laws() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-guarded-countdown");
@@ -350,7 +350,7 @@ fn guarded_countdown_equations_support_citations_and_accumulator_laws() {
 
 #[test]
 fn imported_record_reason_retains_its_owner_when_entry_has_the_same_type_name() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-imported-record-reason");
@@ -407,45 +407,32 @@ verify copy law copied
 }
 
 #[test]
-fn constant_citations_preserve_arguments_and_require_every_premise() {
-    if Command::new("lake").arg("--version").output().is_err() {
-        return;
-    }
-    let dir = temp_output_dir("aver-law-constant-citation");
-    let (summary, run) = run_lean_check_json_with_args(
-        "tests/fixtures/law_reason_constant_citation.av",
-        &dir,
-        0,
-        &[],
-        &[],
-    );
-    assert!(!run.status.success(), "the missing guard must fail");
-    assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
-    assert_eq!(summary["universal_laws"], 2, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
-    for step in ["because1", "implication"] {
-        assert_eq!(
-            summary["obligations"][format!("product.nonnegative.{step}")],
-            "universal",
-            "{summary}"
-        );
-    }
-    assert_eq!(
-        summary["obligations"]["product.missingFactorGuard.because1"], "failed",
-        "{summary}"
-    );
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
 fn explain_reports_source_requirements_without_changing_proof_credit() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-source-explain-citation");
     let fixture = "tests/fixtures/law_reason_constant_citation.av";
-    let (plain, _) = run_lean_check_json_with_args(fixture, &dir, 0, &[], &[]);
+    let (plain, plain_run) = run_lean_check_json_with_args(fixture, &dir, 0, &[], &[]);
     assert!(plain.get("explanations").is_none());
+    // Constant citations keep their arguments and need every premise: the
+    // two well-guarded steps are universal, the step missing a factor guard
+    // fails, and nothing is a build error.
+    assert!(!plain_run.status.success(), "the missing guard must fail");
+    assert_eq!(plain["build_errors"], 0, "{}", format_output(&plain_run));
+    assert_eq!(plain["universal_laws"], 2, "{plain}");
+    assert_eq!(plain["bounded_laws"], 0, "{plain}");
+    for step in ["because1", "implication"] {
+        assert_eq!(
+            plain["obligations"][format!("product.nonnegative.{step}")],
+            "universal",
+            "{plain}"
+        );
+    }
+    assert_eq!(
+        plain["obligations"]["product.missingFactorGuard.because1"], "failed",
+        "{plain}"
+    );
     let counted_source = std::fs::read(dir.join("ConstantCitation.lean")).unwrap();
     let (explained, run) = run_lean_check_json_with_args(fixture, &dir, 0, &[], &["--explain"]);
     assert_eq!(
@@ -537,7 +524,7 @@ fn explain_reports_source_requirements_without_changing_proof_credit() {
 
 #[test]
 fn explain_locates_private_imported_steps_and_marks_failed_previous_reasons() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-source-explain-private-import");
@@ -567,7 +554,7 @@ fn explain_locates_private_imported_steps_and_marks_failed_previous_reasons() {
 
 #[test]
 fn guided_singleton_helpers_remain_citable_without_laundering_false_claims() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-guided-singleton-citation");

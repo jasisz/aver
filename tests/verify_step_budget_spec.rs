@@ -24,6 +24,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::{format_output, repo_root};
 
@@ -616,7 +618,7 @@ fn audit_reports_a_decline_under_its_own_count_and_fails() {
 /// Lean build to have actually run says so rather than asserting on the
 /// instruction the command prints when it cannot.
 fn lake_available() -> bool {
-    Command::new("lake").arg("--version").output().is_ok()
+    lean_required::lake_available()
 }
 
 // ── f. the proof lane refuses instead of pinning the source RHS ─────────

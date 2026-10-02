@@ -123,7 +123,7 @@ fn proof_export_fuel_cites_earlier_when_law_with_its_premise_discharged() {
 /// it — so the count is the real signal.
 #[test]
 fn proof_fuel_when_cites_ladder_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping fuel-when-cites proof test: `lake` not available");
         return;
     }

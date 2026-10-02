@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn mutual_int_phases_with_symbolic_oracles_prove_without_sorries() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping mutual Int phases: `lake` not available");
         return;
     }
@@ -47,7 +47,7 @@ fn mutual_int_phases_with_symbolic_oracles_prove_without_sorries() {
 
 #[test]
 fn native_mutual_phases_do_not_hide_false_results_or_effect_errors() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let original = include_str!("../fixtures/lean_mutual_int_phase.av");

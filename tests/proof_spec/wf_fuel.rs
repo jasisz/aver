@@ -186,7 +186,7 @@ fn proof_export_wf_fuel_declines_composite_countdown_arg_honestly() {
 /// reported build errors (heartbeat timeouts) and no tier at all.
 #[test]
 fn proof_wf_fuel_induction_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping wf-fuel proof test: `lake` not available");
         return;
     }

@@ -7,7 +7,7 @@ use super::*;
 /// unfolds the cone of both sides in each case and closes with `omega`.
 #[test]
 fn proof_law_over_payload_sum_splits_by_constructor() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping sum case split proof test: `lake` not available");
         return;
     }

@@ -22,7 +22,7 @@ use super::*;
 /// laws). The list is built as a list now; the probe must build.
 #[test]
 fn proof_list_prefix_guard_lean_closes_fixed_window_laws() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping list-prefix proof test: `lake` not available");
         return;
     }

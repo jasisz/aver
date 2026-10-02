@@ -47,7 +47,10 @@ fn definitional_unfolding_keeps_decidable_instances_valid_for_rewrite_and_apply(
         .output()
     {
         Ok(output) => output,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            super::lean_not_found();
+            return;
+        }
         Err(error) => panic!("run pinned Lean normalization regression: {error}"),
     };
     let transcript = format!(

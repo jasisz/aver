@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn batch_reasons_keep_element_transformations_opaque() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let file = "tests/fixtures/law_reason_opaque_steps.av";
@@ -40,7 +40,7 @@ fn batch_reasons_keep_element_transformations_opaque() {
 
 #[test]
 fn slice_aliases_share_descent_and_induction_on_the_remaining_input() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let file = "tests/fixtures/law_reason_slice_aliases.av";
@@ -88,7 +88,7 @@ fn slice_aliases_share_descent_and_induction_on_the_remaining_input() {
 
 #[test]
 fn sampled_slice_guards_keep_checked_element_types() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-empty-slice-guard");
@@ -102,7 +102,7 @@ fn sampled_slice_guards_keep_checked_element_types() {
 
 #[test]
 fn guided_laws_see_all_nonrecursive_match_alternatives() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-lookup-reasons");
@@ -123,7 +123,7 @@ fn guided_laws_see_all_nonrecursive_match_alternatives() {
 
 #[test]
 fn singleton_computed_lists_reuse_checked_length_descent() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let file = "tests/fixtures/law_reason_singleton_list.av";
@@ -168,7 +168,7 @@ fn singleton_computed_lists_reuse_checked_length_descent() {
 
 #[test]
 fn nested_reason_cases_preserve_branch_premises_before_ordered_facts() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let file = "tests/fixtures/law_reason_match_branches.av";
@@ -201,7 +201,7 @@ fn nested_reason_cases_preserve_branch_premises_before_ordered_facts() {
 
 #[test]
 fn local_match_reasons_fall_back_to_the_checked_list_measure() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-local-match-reasons");
@@ -234,7 +234,7 @@ fn local_match_reasons_fall_back_to_the_checked_list_measure() {
 
 #[test]
 fn guided_laws_reuse_native_mutual_list_equations() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-mutual-slice-reasons");
@@ -256,7 +256,7 @@ fn guided_laws_reuse_native_mutual_list_equations() {
 
 #[test]
 fn slice_reasons_use_integer_counts_without_losing_their_premises() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-slice-reasons");
@@ -292,7 +292,7 @@ fn slice_reasons_use_integer_counts_without_losing_their_premises() {
 #[test]
 fn guarded_slice_explanations_pass_and_reject_a_missing_guard() {
     let fixture = "tests/fixtures/law_reasons_slices.av";
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-guarded-slice-lean");
@@ -356,7 +356,7 @@ fn guarded_slice_explanations_pass_and_reject_a_missing_guard() {
 
 #[test]
 fn list_descent_outlives_a_sibling_counter() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-list-counter-lean");
@@ -377,7 +377,7 @@ fn list_descent_outlives_a_sibling_counter() {
 
 #[test]
 fn recursive_explanations_use_checked_induction_and_keep_all_premises() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-recursive-law-reasons");
@@ -465,7 +465,7 @@ fn recursive_explanations_use_checked_induction_and_keep_all_premises() {
 
 #[test]
 fn nondecreasing_reason_cannot_turn_passing_samples_into_a_proof() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let file = "tests/fixtures/law_reasons_nondecreasing.av";
@@ -492,7 +492,7 @@ fn nondecreasing_reason_cannot_turn_passing_samples_into_a_proof() {
 
 #[test]
 fn recursive_reason_resolves_imported_helpers_despite_local_name_collisions() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-recursive-reason-import");
@@ -518,7 +518,7 @@ fn recursive_reason_resolves_imported_helpers_despite_local_name_collisions() {
 
 #[test]
 fn structural_equality_reasons_preserve_float_nonreflexivity() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-reason-equality");
@@ -548,7 +548,7 @@ fn structural_equality_reasons_preserve_float_nonreflexivity() {
 
 #[test]
 fn structural_filter_reason_uses_checked_mutual_equations() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-reason-filter");
@@ -568,7 +568,7 @@ fn structural_filter_reason_uses_checked_mutual_equations() {
 
 #[test]
 fn imported_structural_equality_and_mutual_equations_keep_their_owner() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-imported-filter-reason");
@@ -609,7 +609,7 @@ verify key law importedFilter
 
 #[test]
 fn integer_descent_keeps_recursive_guards_and_rejects_false_explanations() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let file = "tests/fixtures/law_reason_integer_descent.av";

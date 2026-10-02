@@ -1492,9 +1492,8 @@ proptest! {
     /// `int_expr` generator. After the Int = ℤ migration both backends use
     /// arbitrary-precision integers (no wrapping), so they MUST agree on
     /// every input — including the i64-overflow cases this generator produces
-    /// (the no-wrap proof at the property level). The VM-vs-wasm-gc arm above
-    /// stays `#[ignore]`'d because wasm-gc still wraps; this arm is un-gated
-    /// because the VM↔Rust pair has converged on Int = ℤ.
+    /// (the no-wrap proof at the property level), the same contract the
+    /// VM-vs-wasm-gc arm above holds.
     #[test]
     fn cross_int_arithmetic_vm_vs_rust(expr in int_expr(3)) {
         let source = wrap_program(&format!("String.fromInt({})", expr));

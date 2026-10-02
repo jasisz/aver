@@ -6,6 +6,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
 
@@ -987,7 +989,7 @@ fn spike_lean_check_builds_with_zero_errors_and_no_sorry() {
 }
 
 fn assert_lean_check_clean(fixture_name: &str, lean_file: &str, names: &[&str]) {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping yield Lean check: `lake` not available");
         return;
     }

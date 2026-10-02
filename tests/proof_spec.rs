@@ -1,5 +1,7 @@
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::format_output;
 
@@ -159,7 +161,7 @@ fn assert_proof_builds_with_sorry_budget(
     prefix: &str,
     expected_sorries: usize,
 ) {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
     }
@@ -319,7 +321,7 @@ fn run_lean_check_json_with_args(
 /// fail-safe pipeline end-to-end.
 #[test]
 fn proof_minimize_collapses_grind_portfolios_and_stays_passing() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping --minimize test: `lake` not available");
         return;
     }
@@ -525,7 +527,7 @@ fn a_four_member_cycle_builds() {
 /// nothing about its termination.
 #[test]
 fn a_cycle_mixing_an_int_countdown_with_a_list_descent_builds_with_a_measure() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
     }
@@ -564,7 +566,7 @@ fn a_cycle_mixing_an_int_countdown_with_a_list_descent_builds_with_a_measure() {
 /// proves termination without measuring the list or assuming a worker guard.
 #[test]
 fn a_growing_list_cycle_has_a_native_two_phase_counter_measure() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
     }
@@ -623,7 +625,7 @@ fn cycle_measures(fixture: &str, module: &str, prefix: &str) -> (Vec<String>, se
 /// different patterns overlap, so the callee counts one parameter.
 #[test]
 fn two_matches_on_one_list_are_not_counted_twice() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
     }
@@ -654,7 +656,7 @@ fn two_matches_on_one_list_are_not_counted_twice() {
 /// the binary before this change.
 #[test]
 fn a_tail_of_a_tail_is_not_counted_beside_the_tail() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
     }
@@ -690,7 +692,7 @@ fn a_tail_of_a_tail_is_not_counted_beside_the_tail() {
 /// looked for, and the claims were declined with a reason naming no call.
 #[test]
 fn a_list_grown_on_a_call_the_measure_does_not_count_is_not_looked_at() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
     }
@@ -727,7 +729,7 @@ fn a_list_grown_on_a_call_the_measure_does_not_count_is_not_looked_at() {
 /// a panic.
 #[test]
 fn a_countdown_the_fuel_seed_does_not_count_is_declined_not_run_dry() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
     }
@@ -766,7 +768,7 @@ fn a_countdown_the_fuel_seed_does_not_count_is_declined_not_run_dry() {
 /// module builds, nothing panics, and the one declined claim is `claim`,
 /// with a refusal that says each of `reasons`.
 fn assert_cycle_declined(fixture: &str, prefix: &str, claim: &str, reasons: &[&str]) {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
     }

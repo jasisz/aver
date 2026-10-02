@@ -21,7 +21,7 @@ fn summary_from(output: &std::process::Output) -> serde_json::Value {
 
 #[test]
 fn lean_plain_verify_on_unreached_capability_arm_builds() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping capability proof test: `lake` not available");
         return;
     }
@@ -141,7 +141,7 @@ fn main() -> Unit
 
 #[test]
 fn lean_lifts_qualified_dependency_capability_calls() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping capability proof test: `lake` not available");
         return;
     }

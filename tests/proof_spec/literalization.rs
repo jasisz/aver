@@ -57,7 +57,7 @@ fn proof_lean_verify_case_expected_side_is_literalized_from_vm_ground_truth() {
     // Lake-gated half: the literalized export still builds green and the
     // check passes — literalization must not change what a correct model
     // proves.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping literalization build half: `lake` not available");
         let _ = std::fs::remove_dir_all(&src);
         let _ = std::fs::remove_dir_all(&out);

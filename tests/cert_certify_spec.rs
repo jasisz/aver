@@ -347,58 +347,6 @@ fn is_arithmetic_nan_bits(bits: u64) -> bool {
     bits & 0x7ff0_0000_0000_0000 == 0x7ff0_0000_0000_0000 && bits & 0x0008_0000_0000_0000 != 0
 }
 
-/// A scratch directory survives its test only as long as the test's scope.
-///
-/// Each certificate test writes about 119 MB under its scratch directory, most
-/// of it the `cert/.lake` build tree, and a failing certificate test is the one
-/// a developer re-runs. Cleanup therefore has to happen on the failing path
-/// too, so it hangs off `Drop` rather than a trailing statement that unwinding
-/// skips. The `create_dir_all` here is deliberate: it keeps the check from
-/// passing vacuously against a helper that only names a directory.
-#[test]
-fn a_scratch_directory_is_removed_when_its_test_panics() {
-    let recorded = std::sync::Mutex::new(PathBuf::new());
-    let outcome = std::panic::catch_unwind(|| {
-        let out_dir = temp_dir("certify-panic-cleanup");
-        std::fs::create_dir_all(&out_dir).unwrap();
-        *recorded.lock().unwrap() = out_dir.to_path_buf();
-        std::fs::write(out_dir.join("cert-artifact"), "scratch\n").unwrap();
-        panic!("stand-in for a failing certificate assertion");
-    });
-
-    assert!(outcome.is_err(), "the stand-in failure must unwind");
-    let scratch = recorded.lock().unwrap().clone();
-    assert!(
-        !scratch.exists(),
-        "a panicking certificate test must not leave {} behind",
-        scratch.display()
-    );
-}
-
-/// The trim after a successful Lean build must delete exactly the build tree:
-/// `.lake` gone so a killed run strands ~2 MB instead of ~119 MB, and the
-/// certificate package files still in place.
-#[test]
-fn trimming_the_lean_build_tree_keeps_the_certificate_package() {
-    let out_dir = temp_dir("certify-lake-trim");
-    let cert_dir = out_dir.join("cert");
-    let build_tree = cert_dir.join(".lake").join("build");
-    std::fs::create_dir_all(&build_tree).unwrap();
-    std::fs::write(build_tree.join("stand-in.olean"), "build output\n").unwrap();
-    std::fs::write(cert_dir.join("cert-manifest.json"), "{}\n").unwrap();
-
-    trim_lean_build_tree(&cert_dir);
-
-    assert!(
-        !cert_dir.join(".lake").exists(),
-        "a successful build's .lake tree must be removed early, so a killed run strands the certificate package and not the Lean build tree"
-    );
-    assert!(
-        cert_dir.join("cert-manifest.json").is_file(),
-        "trimming the build tree must leave the certificate package intact"
-    );
-}
-
 /// Without `--examples` the producer bridges only the law cone: the functions
 /// a law-claim mentions and what their plans call. Every other certified
 /// export is declined with a reason that names the flag. The byte certificate

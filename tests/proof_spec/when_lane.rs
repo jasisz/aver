@@ -27,7 +27,7 @@ use super::*;
 /// Classical.choice, Quot.sound}.
 #[test]
 fn proof_nonlinear_nonneg_laws_close_via_generic_primitive() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping nonlinear-wall proof test: `lake` not available");
         return;
     }
@@ -65,7 +65,7 @@ fn proof_nonlinear_nonneg_laws_close_via_generic_primitive() {
 /// and the check passes. Live lake.
 #[test]
 fn proof_wide_domain_law_partitions_and_builds_green() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping wide-domain proof test: `lake` not available");
         return;
     }

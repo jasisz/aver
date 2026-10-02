@@ -9,7 +9,7 @@ use super::*;
 /// folded. Both laws are universal.
 #[test]
 fn proof_cited_law_applies_before_its_head_unfolds() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cited-head proof test: `lake` not available");
         return;
     }

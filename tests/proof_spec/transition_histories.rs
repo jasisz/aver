@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn cited_transitions_compose_and_missing_event_guards_stay_open() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let file = "tests/fixtures/cited_transition_histories.av";

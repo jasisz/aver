@@ -5632,6 +5632,18 @@ fn portOf(r: Reader, p: Plain) -> Int
     assert!(model.contains("instance : Inhabited Plain"), "{model}");
 }
 
+/// A Lean-backed unit test whose `lean` is not on `PATH` skips, so a developer
+/// without Lean can still run the suite. The Lean lanes set
+/// `AVER_CERT_REQUIRE_LEAN=1`; there a missing `lean` fails the test instead.
+pub(in crate::codegen::lean) fn lean_not_found() {
+    if std::env::var("AVER_CERT_REQUIRE_LEAN").is_ok_and(|value| value == "1") {
+        panic!(
+            "`lean` is not available, and AVER_CERT_REQUIRE_LEAN=1 requires every \
+             Lean-backed test to run"
+        );
+    }
+}
+
 mod untranslate_context;
 
 mod citation_probe;

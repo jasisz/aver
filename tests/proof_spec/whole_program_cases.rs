@@ -93,7 +93,7 @@ verify lookup
 
 #[test]
 fn whole_program_case_shapes_build_without_unfinished_cases() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping whole-program case shapes test: `lake` not available");
         return;
     }
@@ -199,7 +199,7 @@ fn lookup_verify_1() -> Int
 
 #[test]
 fn a_false_oracle_case_fails_the_check_at_any_sorry_budget() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping false oracle case test: `lake` not available");
         return;
     }
@@ -273,7 +273,7 @@ verify down
 
 #[test]
 fn a_mutual_countdown_keeps_the_zero_floor_fuel() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping mutual floor test: `lake` not available");
         return;
     }
@@ -349,7 +349,7 @@ verify pick
 "#;
 
 fn check_interleaved_case_identity(dependency: bool) {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping interleaved case identity test: `lake` not available");
         return;
     }

@@ -45,7 +45,7 @@ fn run_checked_proof(
 
 #[test]
 fn pure_bytes_capability_is_noncomputable_and_its_default_matching_case_is_declined() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping capability opacity proof test: `lake` not available");
         return;
     }
@@ -186,7 +186,7 @@ verify twice law doubling
 
 #[test]
 fn pure_capability_nonempty_witnesses_cover_every_supported_result_family() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping capability result-family proof test: `lake` not available");
         return;
     }
@@ -399,7 +399,7 @@ verify handleCall
 
 #[test]
 fn laws_over_a_provider_cone_are_declined_as_a_whole() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping capability law proof test: `lake` not available");
         return;
     }
@@ -549,7 +549,7 @@ verify twice law doubling
 
 #[test]
 fn provider_cones_are_followed_through_modules_products_and_given_values() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping capability cone proof test: `lake` not available");
         return;
     }

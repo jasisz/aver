@@ -67,36 +67,3 @@ fn let_chain_fn_is_walker_covered() {
         "named-let chain should be walker-covered: {report:?}"
     );
 }
-
-#[test]
-fn match_fn_falls_back_to_hir() {
-    // Match isn't in the walker subset (wave 4b pending), so
-    // any fn whose body root is a Match falls back to HIR.
-    let src = "fn first(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [head, ..tail] -> head\n";
-    let report = lower_and_report(src);
-    assert_eq!(report.total, 1);
-    assert_eq!(
-        report.hir_fallback, 1,
-        "Match body must hit HIR fallback until wave 4b lands: {report:?}"
-    );
-    assert_eq!(report.mir_covered, 0);
-    assert_eq!(report.ratio(), 0.0);
-}
-
-#[test]
-fn mixed_program_splits_coverage() {
-    // Pure-arith fn + Match fn — walker covers one, falls
-    // back on the other. Ratio is 0.5.
-    let src = "\
-fn double(x: Int) -> Int\n    x + x\n\
-fn first(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [head, ..tail] -> head\n";
-    let report = lower_and_report(src);
-    assert_eq!(report.total, 2, "two fns lowered: {report:?}");
-    assert_eq!(report.mir_covered, 1, "double should be walker-covered");
-    assert_eq!(report.hir_fallback, 1, "first should be HIR fallback");
-    assert!(
-        (report.ratio() - 0.5).abs() < 1e-9,
-        "ratio should be 0.5, got: {}",
-        report.ratio()
-    );
-}

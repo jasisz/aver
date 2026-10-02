@@ -21,7 +21,7 @@ verify quad law fourfold
 
 #[test]
 fn compare_manifest_names_the_changed_definition_under_a_failed_law() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source = tempfile::tempdir().unwrap();

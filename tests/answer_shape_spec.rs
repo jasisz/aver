@@ -248,30 +248,17 @@ fn assert_manifest_rejects(label: &str, manifest: &str, expected: &str) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The module that answers a capability says so in its own header, so the
-/// manifest key that used to say it is refused with the header to write.
-#[test]
-fn an_answer_binding_in_the_manifest_is_refused_with_the_header_to_write() {
-    assert_manifest_rejects(
-        "answer-key",
-        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Pool\"\nanswer = \"Ledger\"\n",
-        "Write `answers [Pool]` in the header of module 'Ledger' and remove this binding",
-    );
-}
-
 /// The job seam is gone: an answer module begins a job itself and parks the
-/// request on it.
+/// request on it. Every retired key (`task`, `started`, `landed`, `answer`)
+/// is refused by the manifest parser, pinned by its unit tests in
+/// `src/config/providers.rs`; one key here keeps the refusal reaching the CLI.
 #[test]
 fn the_job_seam_keys_are_refused_with_the_repair() {
-    for key in ["task", "started", "landed"] {
-        assert_manifest_rejects(
-            key,
-            &format!(
-                "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\n{key} = \"Ledger.f\"\n"
-            ),
-            &format!("declares `{key}`; the job seam is gone"),
-        );
-    }
+    assert_manifest_rejects(
+        "task",
+        "[providers]\nschema = 1\n\n[[providers.bindings]]\ncapability = \"Validation\"\nwork = \"Node.validate\"\ntask = \"Ledger.f\"\n",
+        "declares `task`; the job seam is gone",
+    );
 }
 
 #[test]

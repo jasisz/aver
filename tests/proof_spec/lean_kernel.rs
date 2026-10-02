@@ -12,7 +12,7 @@ fn proof_lean_failing_verify_case_with_question_mark_cannot_build_green() {
     // Emitting the case inside a Result `do` block makes the left side reduce
     // to `Except.error` while the expected side reads `Except.ok`, so the
     // kernel rejects it.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping failing-case export test: `lake` not available");
         return;
     }
@@ -106,7 +106,7 @@ fn proof_lean_failing_law_sample_with_question_mark_cannot_build_green() {
     // "the build is red" proves nothing on its own. Assert instead that the
     // kernel rejects the two statements that mirror what `aver verify` ran:
     // `_checked_domain` and the failing `_sample_N`.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping failing-law export test: `lake` not available");
         return;
     }
@@ -206,7 +206,7 @@ verify f law zero
 
 #[test]
 fn proof_lean_nested_question_mark_agrees_with_bound_form_on_error_path() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping nested question-mark test: `lake` not available");
         return;
     }
@@ -345,7 +345,7 @@ fn proof_lean_peano_lift_nat_arith_kernel_clean() {
     // universal — `#print axioms = [propext]`, not the bounded `native_decide`
     // fallback. We pin the lift mechanics (no `inductive Nat`, no `__fuel`) AND
     // a clean pass, which together imply the structural-Nat proof.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean peano-lift test: `lake` not available");
         return;
     }
@@ -418,7 +418,7 @@ fn proof_lean_mutual_recursive_adt_predicate_uses_native_termination_kernel_clea
     // fuel-congruence lemma, so the law stayed bounded (`sorry`). Proof side is
     // fail-closed: a wrong measure only makes Lean reject the `termination_by`
     // (SCC stays open), never a false theorem — so trying native here is safe.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping native-termination ADT test: `lake` not available");
         return;
     }
@@ -488,7 +488,7 @@ fn proof_lean_proves_peano_arith_identity_via_nat_lift_kernel_clean() {
     // a misrecognized op fails its bridge proof (honest `sorry`), never a false
     // theorem. Result is a GENUINE universal (`universal:true`,
     // `#print axioms`-clean of `ofReduceBool`). (TIP isaplanner prop_07.)
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean peano-arith test: `lake` not available");
         return;
     }
@@ -557,7 +557,7 @@ fn proof_lean_proves_comparison_lift_le_and_lt_kernel_clean() {
     // `b`). Pins the two committed corpus instances that were Lean-open before:
     // prop_69 `n ≤ m+n` and prop_65 `i < S(m+i)`. Both must be GENUINE
     // universals (`universal:true`, `#print axioms` free of ofReduceBool).
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean comparison-lift test: `lake` not available");
         return;
     }
@@ -606,7 +606,7 @@ fn proof_lean_proves_mul_distributivity_via_nat_lift_kernel_clean() {
     // bridge `times a b = a * b` (whose succ case uses the `+` bridge). `*` is
     // nonlinear — omega can't and core Lean has no `ring` — so distributivity
     // closes via core `Nat.mul_add` after the bridges rewrite. GENUINE universal.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean mul-lift test: `lake` not available");
         return;
     }
@@ -673,7 +673,7 @@ fn proof_lean_rejects_noncanonical_peano_ops_no_bridge() {
     // may be emitted — if one were, its kernel proof would be a false claim.
     // (The bridge is also kernel-checked, so even a hypothetical misfire could
     // not mint a theorem; this pins the recognizer's conservativeness directly.)
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean negative-recognizer test: `lake` not available");
         return;
     }
@@ -731,7 +731,7 @@ fn proof_lean_proves_count_plus_concat_homomorphism_kernel_clean() {
     // Bool scrutinee and closes both arms with the IH + `omega`. The result is
     // a GENUINE universal (`#print axioms = [propext]`, `universal:true`), not
     // a bounded `native_decide`. (TIP isaplanner prop_02.)
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean count-homomorphism test: `lake` not available");
         return;
     }
@@ -804,7 +804,7 @@ fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
     // The compiler only CITES the earlier law; it does not invent the rev
     // anti-homomorphism. (Before #B this closed via a synthesized `rev` algebra
     // template — that content synthesizer is gone; the decomposition replaces it.)
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean rev kernel test: `lake` not available");
         return;
     }
@@ -872,7 +872,7 @@ fn proof_lean_proves_string_length_additivity_kernel_clean() {
     // universal (`universal:true`), not a bounded `native_decide`. (Revert
     // the emitter and this law degrades to `universal:false` — the rung is
     // load-bearing.)
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean string-length-additivity test: `lake` not available");
         return;
     }
@@ -939,7 +939,7 @@ fn proof_lean_proves_string_concat_monoid_kernel_clean() {
     // `++`, then the Lean-core `String.append_empty`/`empty_append`/
     // `append_assoc` finish. Each currently fell to a bare `sorry`
     // (BackendDispatch).
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean string-concat-monoid test: `lake` not available");
         return;
     }
@@ -1010,7 +1010,7 @@ fn proof_lean_min_associativity_closes_without_build_error() {
     // So min-associativity now closes as a universal AND a failing min/max
     // case can never crash the build. (Revert the rung change and this
     // task becomes `universal: no` via a Lean build error.)
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean min-associativity test: `lake` not available");
         return;
     }
@@ -1071,7 +1071,7 @@ fn proof_lean_int_abs_lowers_int_honest_so_nesting_builds() {
     // (`Int.abs(-5)`) would otherwise default the receiver to `Nat`. (Revert
     // the lowering and this module fails to build / `native_decide` chokes on
     // `Nat.natAbs`.)
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean int-abs lowering test: `lake` not available");
         return;
     }
@@ -1131,7 +1131,7 @@ fn proof_lean_proves_empty_map_facts_kernel_clean() {
     // the `AverMap.*` accessor and parks it on a sorry. The empty-map-precise
     // `emit_map_empty_fact_law` rung (before the prelude rung) closes it with
     // a bounded `simp only [cone, AverMap.get/has/len, []-lemmas]`.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean empty-map-facts test: `lake` not available");
         return;
     }
@@ -1202,7 +1202,7 @@ fn proof_lean_proves_int_comparison_identities_kernel_clean() {
     // sign-split first (unchanged for arithmetic laws), then a comparison
     // normaliser (`COMPARISON_NORMALIZERS` + `omega`), then a `sorry` floor.
     // (Revert and these become a Lean build error, not even a caught sorry.)
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean int-comparison test: `lake` not available");
         return;
     }
@@ -1270,7 +1270,7 @@ fn proof_lean_proves_int_abs_identities_kernel_clean() {
     // (+ a full-`simp` fallback for the Bool `>= 0` wrapper), `sorry`-floored.
     // Before this rung they hard-failed the build (idempotence/non-neg) or
     // sorried (multiplicativity).
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean int-abs-identities test: `lake` not available");
         return;
     }
@@ -1337,7 +1337,7 @@ fn proof_lean_proves_map_set_nonempty_kernel_clean() {
     // `AverMap.len_set_ge_one` (stated in the exact lowered goal shape and
     // demand-shipped). The `emit_map_len_set_positive_law` rung discharges the
     // law with `exact AverMap.len_set_ge_one _ _ _`. Was a bare sorry before.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean map-set-nonempty test: `lake` not available");
         return;
     }
@@ -1404,7 +1404,7 @@ fn proof_lean_proves_fact_acc_kernel_clean_universal() {
     // law with the core `Nat.mul_*` lemmas — no Mathlib. Result is a GENUINE
     // universal (`universal:true`, `#print axioms` clean of `sorryAx` /
     // `ofReduceBool`). Regression guard for the whole Peano-Nat path.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean fact-acc test: `lake` not available");
         return;
     }
@@ -1468,7 +1468,7 @@ fn proof_lean_proves_list_prod_kernel_clean_universal() {
     // closes with the core `Int.mul_*` associativity/commutativity lemmas (no
     // Mathlib). Regression guard that the close is chosen by the combine op,
     // not hardcoded to the `List` driver's original additive `omega`.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean list-prod test: `lake` not available");
         return;
     }
@@ -1526,7 +1526,7 @@ fn proof_lean_speculative_proves_single_list_conditional_universal() {
     // sorries, `#print axioms` clean of `sorryAx`. The helper `sumCons` is the
     // homomorphism the conditional law decomposes through. Regression guard for
     // the whole single-list conditional try-universal-fall-back-to-sampled path.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean speculative-universal test: `lake` not available");
         return;
     }
@@ -1593,7 +1593,7 @@ fn proof_lean_proves_nat_tri_kernel_clean_universal() {
     // `triTR` must emit as a terminating `def`. Regression guard that the
     // Peano-`Nat` driver is no longer wired only alongside the multiplicative
     // close.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean nat-tri test: `lake` not available");
         return;
     }
@@ -1651,7 +1651,7 @@ fn proof_lean_lifts_aliased_peano_type_to_nat_and_proves_universal() {
     // `Nat`), so the factorial wrapper-over-recursion law closes kernel-clean.
     // Regression guard: before the type-annotation lift, the binder type
     // (`Num`) disagreed with the lifted `Nat` literals and the proof failed.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping lean aliased-peano test: `lake` not available");
         return;
     }
@@ -1723,7 +1723,7 @@ fn proof_lean_frac_order_transitivity_chain_foreign_witness_kernel_clean() {
     // links — one strict, one non-strict `isNonNeg (minus …)` — plus a closed
     // ground top link). `universal:true` means `#print axioms` is
     // `ofReduceBool`-free.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping frac-order-transitivity witness test: `lake` not available");
         return;
     }
@@ -1890,7 +1890,7 @@ fn proof_lean_multi_literal_string_pos_skipper_graduates_native_kernel_clean() {
     // error here — this test is the floor). Replaces the pre-graduation
     // fuel-stability-lemma net: the `__fuel` wrapper and its `_stable` lemma are
     // gone (native `.induct` is strictly stronger).
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping multi-literal skipper graduation test: `lake` not available");
         return;
     }
@@ -1979,7 +1979,7 @@ fn proof_lean_mixed_advance_skipper_stays_fueled_stability_lemma_kernel_clean() 
     // `_stable` skeleton is pos+1-uniform, so on the mixed step it degrades to
     // its designed fail-soft `sorry` floor (uncited by any law, so no universal
     // credit is tainted); under `--sorry-budget 1` the check passes.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping mixed-advance fueled-stability test: `lake` not available");
         return;
     }
@@ -2058,7 +2058,7 @@ fn proof_lean_crypto_sha256_model_axiom_closure_is_core_only() {
     // axiom-whitelist gate. A static text check cannot catch every
     // reintroduction path (e.g. a tactic that expands to native
     // evaluation), so this probes the real axiom closure via the kernel.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping crypto sha256 axiom probe: `lake` not available");
         return;
     }
@@ -2266,7 +2266,7 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
         }
     }
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping crypto kernel-decide build + axiom audit: `lake` not available");
         let _ = std::fs::remove_dir_all(&root);
         return;
@@ -2401,7 +2401,7 @@ fn proof_lean_float_verify_cases_stay_native_decide() {
             "case `{needle}` must be closed by `{tactic}`:\n{line}"
         );
     }
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Float verify-tactic build: `lake` not available");
         let _ = std::fs::remove_dir_all(&out);
         return;
@@ -2505,7 +2505,7 @@ fn proof_lean_index_guarded_builtins_reduce_in_kernel() {
         );
     }
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping kernel-decide decline panic gate: `lake` not available");
         let _ = std::fs::remove_dir_all(&out);
         return;

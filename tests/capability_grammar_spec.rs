@@ -26,6 +26,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::aver_bin;
 
@@ -55,13 +57,6 @@ fn parse_error(src: &str) -> String {
         .parse()
         .expect_err("expected a parse error")
         .to_string()
-}
-
-fn tool_available(name: &str) -> bool {
-    Command::new(name)
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
 }
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -1104,7 +1099,7 @@ verify twice law doubling
         "--output",
         output.to_str().expect("utf-8 output"),
     ]);
-    if tool_available("lake") {
+    if lean_required::lake_available() {
         proof_command.arg("--check");
     }
     let proof = proof_command
@@ -1180,7 +1175,7 @@ verify same law deterministicProvider
     // The law samples the provider: its cases would be decided by whatever
     // value Lean compiled the opaque operation to, so the exporter declines
     // the claim as a whole and `--check` charges that refusal.
-    if tool_available("lake") {
+    if lean_required::lake_available() {
         proof_command.args(["--check", "--declined-budget", "1"]);
     }
     let proof = proof_command
@@ -1437,7 +1432,7 @@ verify succeeds law providerMayMint
         "--output",
         output.to_str().expect("utf-8 output"),
     ]);
-    if tool_available("lake") {
+    if lean_required::lake_available() {
         proof_command.arg("--check");
     }
     let proof = proof_command

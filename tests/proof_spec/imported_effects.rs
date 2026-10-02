@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn imported_in_place_effects_have_universal_mapping_and_splice_laws() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source =
@@ -49,7 +49,7 @@ fn imported_in_place_effects_have_universal_mapping_and_splice_laws() {
 
 #[test]
 fn equal_imported_results_do_not_hide_lost_or_reordered_effects() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let fixture =

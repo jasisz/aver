@@ -49,7 +49,7 @@ fn proof_export_orders_law_theorems_by_citation() {
 /// Live Lean gate: all three laws certify, the round trip included.
 #[test]
 fn proof_citation_order_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping citation-order proof test: `lake` not available");
         return;
     }

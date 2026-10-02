@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-knowledge-laws");
@@ -51,7 +51,7 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
 
 #[test]
 fn conflicting_sum_updates_cannot_launder_sample_success_into_a_proof() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-map-conflicting-changes");
@@ -91,7 +91,7 @@ verify apply law missingAgreement
 
 #[test]
 fn distinct_key_writes_commute_for_all_supported_scalar_orders() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-map-commutation");
@@ -145,7 +145,7 @@ example (v w : Int) :
 /// `propext`, `Quot.sound`, `Classical.choice`.
 #[test]
 fn map_set_facts_close_the_three_store_laws_universally() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-map-set-laws");

@@ -10,7 +10,7 @@ use super::*;
 /// `omega`.
 #[test]
 fn proof_subject_if_split_keeps_the_induction_hypothesis() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping subject-split proof test: `lake` not available");
         return;
     }

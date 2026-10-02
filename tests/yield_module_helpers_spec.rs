@@ -2,6 +2,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
 use std::path::Path;
@@ -201,7 +203,7 @@ fn the_disk_loading_frontend_composes_imports_without_command_preparation() {
 
 #[test]
 fn lean_proves_the_imported_helpers_first_request_universally() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Lean check: lake not available");
         return;
     }

@@ -141,7 +141,7 @@ fn concrete_applications_reject_a_missing_domain_guard_and_a_false_supplier() {
             "{label}: {}",
             format_output(&samples)
         );
-        if Command::new("lake").arg("--version").output().is_ok() {
+        if lean_required::lake_available() {
             let output = Command::new(env!("CARGO_BIN_EXE_aver"))
                 .args([
                     "proof",

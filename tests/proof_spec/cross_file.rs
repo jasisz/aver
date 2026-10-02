@@ -92,7 +92,7 @@ fn cross_file_consumer_proves_via_dep_law() {
     // is invisible across the boundary. This is the measured regression
     // guard: it is RED on `main` without the feature (see the revert-test
     // evidence in /tmp/crossfile/impl_report.md).
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cross-file split-probe test: `lake` not available");
         return;
     }
@@ -126,7 +126,7 @@ fn cross_file_dep_law_emitted_and_self_consistent() {
     // itself (the self-reference that makes it structurally recursive and
     // fails Lean's termination check). Asserts the generated sources, then
     // that the whole project builds clean.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cross-file emit test: `lake` not available");
         return;
     }
@@ -232,7 +232,7 @@ fn cross_file_unproven_dep_law_grants_no_false_credit() {
     // is whether the dep law is itself proven. That contrast IS the
     // soundness proof: credit rides on the dep law's own kernel
     // certificate, never on mere exposure.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cross-file soundness test: `lake` not available");
         return;
     }
@@ -285,7 +285,7 @@ fn cross_file_out_of_cone_dep_law_not_admitted() {
     // ladder; the dep `Lib.qrev_law_qrevSpec` must NOT appear in its proof.
     // Tightness is the other half of soundness: the pool may only ever
     // ADD relevant lemmas, never perturb an unrelated law.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cross-file out-of-cone test: `lake` not available");
         return;
     }
@@ -446,7 +446,7 @@ fn cross_file_bare_name_collision_dep_law_not_admitted() {
     // `Other.qrev_law_qrevSpec` is never cited in the consumer's proof. Both
     // dependency laws are nevertheless emitted in their declaring modules;
     // admission controls proof reuse, not whether a module is checked.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cross-file bare-name-collision test: `lake` not available");
         return;
     }
@@ -538,7 +538,7 @@ fn cross_file_private_dep_law_not_admitted() {
     // cone reaches `revAcc` transitively (through the exposed `rev`), the
     // private law never reaches the consumer citation pool. It is still emitted
     // and checked as a declaration owned by `Lib`.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cross-file visibility test: `lake` not available");
         return;
     }
@@ -607,7 +607,7 @@ fn cross_file_uncited_unproven_dep_law_fails_its_own_module() {
     // law is emitted, falls to `sorry`, and is charged to its qualified
     // identity. Consumer citation still controls which law may help another
     // proof; it no longer controls whether the declaring module is checked.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping cross-file uncited-unproven test: `lake` not available");
         return;
     }
@@ -708,7 +708,7 @@ fn run_forward_ref_variant(variant: &str) -> (serde_json::Value, std::process::O
 
 #[test]
 fn cross_file_forward_citation_is_reordered_backward_end_to_end() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping citation-closure topology end-to-end test: `lake` not available");
         return;
     }
@@ -788,7 +788,7 @@ fn cross_file_forward_citation_is_reordered_backward_end_to_end() {
 /// builds clean under the pinned toolchain.
 #[test]
 fn cross_file_reserved_module_name_escapes_and_builds() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping reserved-module-name test: `lake` not available");
         return;
     }
@@ -886,7 +886,7 @@ fn cross_file_reserved_module_name_escapes_and_builds() {
 /// then that the law KEEPS its universal credit end-to-end.
 #[test]
 fn entry_reserved_module_name_escapes_and_builds() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping reserved-entry-name test: `lake` not available");
         return;
     }
@@ -1007,7 +1007,7 @@ const CONSUMER_USES_TYPE_DEP: &str = "module Consumer\n\
 
 #[test]
 fn cross_file_reserved_module_name_dep_law_is_admitted_and_cited() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping reserved-module dep-law citation test: `lake` not available");
         return;
     }

@@ -13,6 +13,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
 
@@ -80,7 +82,7 @@ fn the_guide_example_verifies_and_the_loop_adds_no_law() {
 
 #[test]
 fn the_guide_example_reaches_the_lean_wall_without_an_open_law() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping the Lean wall: `lake` is not available");
         return;
     }

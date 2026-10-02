@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn citation_attempt_decodes_a_private_imported_record_in_its_own_scope() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-citation-private-record");
@@ -104,7 +104,7 @@ fn copy(value: Int) -> Int
 
 #[test]
 fn automatic_citation_attempt_keeps_a_sorry_tainted_pool_unestablished() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-citation-automatic-tainted");
@@ -201,7 +201,7 @@ verify product law missingFactorGuard
 
 #[test]
 fn automatic_citation_attempt_reports_the_actual_missing_premise() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-citation-automatic-healthy");

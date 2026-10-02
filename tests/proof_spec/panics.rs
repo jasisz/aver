@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn bytes_fuel_helpers_build_with_local_panic_defaults() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping bytes fuel proof test: `lake` not available");
         return;
     }
@@ -324,7 +324,7 @@ fn proof_check_charges_non_fuel_prelude_panic_as_hard_failure() {
 /// without a model panic.
 #[test]
 fn proof_check_accepts_total_first_code_point_in_lake_build() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping non-fuel panic toolchain test: `lake` not available");
         return;
     }
@@ -404,7 +404,7 @@ fn proof_check_accepts_total_first_code_point_in_lake_build() {
 /// gate going silently blind.
 #[test]
 fn lake_build_false_greens_on_forced_fuel_exhaustion_and_scan_catches_it() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping fuel-exhaustion toolchain test: `lake` not available");
         return;
     }
