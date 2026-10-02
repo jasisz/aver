@@ -29,17 +29,24 @@
 //!    instantiation. The shim has no imports, one `funcref` table of N slots
 //!    exported as `$imports`, and N functions, function `i` exported as `"i"`
 //!    and doing nothing but pass its parameters to slot `i` through
-//!    `call_indirect`; it is instantiated with no arguments. The fixup imports
-//!    functions `"" "0"` to `"" "N-1"` and the N-slot table `"" "$imports"`,
-//!    and has one active element segment writing import `i` to slot `i` and
-//!    nothing else; it is instantiated with one bundle of a shim's `$imports`
-//!    table and N `canon lower` functions under `"0"` to `"N-1"`. A start
+//!    `call_indirect`. The fixup imports functions `"" "0"` to `"" "N-1"`
+//!    and the N-slot table `"" "$imports"`, and has one active element
+//!    segment writing import `i` to slot `i` and nothing else. A start
 //!    function, a data segment, a memory, a global, a table initializer, any
 //!    other function body or element segment, or an imported or aliased core
 //!    module is refused;
-//! 6. a nested component is only a re-export shim: it imports functions and
-//!    types and exports those same imports, with no code, instances or
-//!    canonical functions of its own.
+//! 6. the helpers are wired by identity, as `wit-component` wires them: at
+//!    most one shim instance, made with no arguments before the declared
+//!    module; each import bundle `M` of the declared module hands it, per
+//!    function `N`, the shim's next trampoline in slot order, a lower of the
+//!    imported instance `M`'s function `N`, or a `resource.drop`; and one
+//!    fixup instance, made after the declared module, given the shim's table
+//!    and for each slot `i` the lower of exactly the import slot `i` was
+//!    handed for. A shim without its fixup is refused;
+//! 7. a nested component is only a re-export shim defined in the component:
+//!    it imports functions and types and exports those same imports, with no
+//!    code, instances or canonical functions of its own. An imported or
+//!    aliased component is refused.
 //!
 //! Anything outside these shapes is refused. The walk runs after
 //! `wasmparser::Validator` has accepted the component, so every index it reads
@@ -57,8 +64,8 @@ use wasmparser::{
 enum CoreModule {
     /// The manifest-declared module.
     Declared,
-    /// The `wit-component` shim module.
-    Shim,
+    /// The `wit-component` shim module, with this many slots.
+    Shim(u32),
     /// The `wit-component` fixup module, filling a table of this many slots.
     Fixup(u32),
     /// Any other module. Instantiating it is refused for this reason.
@@ -70,11 +77,10 @@ enum CoreModule {
 enum CoreInstance {
     /// The one instance of the declared module.
     Declared,
-    /// An instance of the shim module.
+    /// The one instance of the shim module.
     Shim,
-    /// A `from_exports` bundle in the shape the fixup module takes: a shim's
-    /// `$imports` table and this many lowered functions.
-    FixupArgs(u32),
+    /// A `from_exports` bundle; its exports are `TopLevel::bundles[_]`.
+    Bundle(usize),
     /// Any other instance.
     Plain,
 }
@@ -84,10 +90,14 @@ enum CoreInstance {
 enum CoreItem {
     /// The export of this name of the declared instance.
     Declared(String),
-    /// The `$imports` table of a shim instance.
+    /// The `$imports` table of the shim instance.
     ShimTable,
-    /// A `canon lower` function.
-    Lowered,
+    /// The shim instance's trampoline for this slot.
+    Trampoline(u32),
+    /// A `canon lower` of this component function.
+    Lowered(Lifted),
+    /// A `canon resource.drop`.
+    ResourceDrop,
     Plain,
 }
 
@@ -97,9 +107,18 @@ enum CoreItem {
 /// unknown, is refused.
 type ReexportShim = Vec<(String, String)>;
 
-/// A component function: the declared instance's core export it lifts, if
-/// it is such a lift.
-type Lifted = Option<String>;
+/// Where a component function comes from.
+#[derive(Clone, PartialEq, Eq)]
+enum Lifted {
+    /// A `canon lift` of the declared instance's core export of this name.
+    Lift(String),
+    /// Export `name` of the component instance imported as `instance`.
+    Imported {
+        instance: String,
+        name: String,
+    },
+    Other,
+}
 
 /// A component instance. `Built` instances list their function fields with
 /// the core export each one lifts.
@@ -108,6 +127,8 @@ enum ComponentInstanceOrigin {
         funcs: Vec<(String, Lifted)>,
         other_fields: bool,
     },
+    /// The component instance imported under this name.
+    Imported(String),
     Opaque,
 }
 
@@ -143,6 +164,14 @@ struct TopLevel {
     helper_refusal: Option<String>,
     /// The declared instance's core exports that a `canon lift` exposes.
     lifted: Vec<String>,
+    /// The exports of each `from_exports` core instance.
+    bundles: Vec<Vec<(String, CoreItem)>>,
+    /// The slot count of the shim instance, once instantiated.
+    shim_slots: Option<u32>,
+    /// For each shim slot in order, the declared module's import
+    /// `(module, name)` it was handed for.
+    wired: Vec<(String, String)>,
+    fixup_instantiated: bool,
 }
 
 fn at<'a, T>(items: &'a [T], index: u32, space: &str) -> Result<&'a T, String> {
@@ -222,7 +251,7 @@ pub(crate) fn confirm_declared_core_binding(
             Payload::ComponentImportSection(reader) => {
                 for import in reader {
                     let import = import.map_err(|e| e.to_string())?;
-                    top.add_import(import.ty)?;
+                    top.add_import(import.name.0, import.ty)?;
                 }
             }
             Payload::ComponentInstanceSection(reader) => {
@@ -268,10 +297,16 @@ pub(crate) fn confirm_declared_core_binding(
             "declared embedded core module is never instantiated by the component".to_string(),
         );
     }
-    match top.unbound_export.or(top.helper_refusal) {
-        Some(error) => Err(error),
-        None => Ok(top.lifted),
+    if let Some(error) = top.unbound_export.or(top.helper_refusal) {
+        return Err(error);
     }
+    if top.shim_slots.is_some() && !top.fixup_instantiated {
+        return Err(
+            "the wit-component shim module is instantiated but no fixup fills its table"
+                .to_string(),
+        );
+    }
+    Ok(top.lifted)
 }
 
 impl TopLevel {
@@ -297,29 +332,35 @@ impl TopLevel {
                                     .to_string(),
                             );
                         }
+                        for arg in args.iter() {
+                            self.wire_declared_import(arg.name, arg.index)?;
+                        }
                         CoreInstance::Declared
                     }
-                    CoreModule::Shim => {
+                    CoreModule::Shim(slots) => {
+                        if self.shim_slots.is_some() {
+                            return Err(
+                                "the wit-component shim module is instantiated more than once"
+                                    .to_string(),
+                            );
+                        }
+                        if self.declared_instantiations > 0 {
+                            return Err(
+                                "the wit-component shim module is instantiated after the declared embedded core module"
+                                    .to_string(),
+                            );
+                        }
                         if !args.is_empty() {
                             return Err(
                                 "the wit-component shim module is instantiated with arguments"
                                     .to_string(),
                             );
                         }
+                        self.shim_slots = Some(slots);
                         CoreInstance::Shim
                     }
                     CoreModule::Fixup(slots) => {
-                        let given = match &*args {
-                            [arg] if arg.name.is_empty() => {
-                                Some(*at(&self.core_instances, arg.index, "core instance")?)
-                            }
-                            _ => None,
-                        };
-                        if given != Some(CoreInstance::FixupArgs(slots)) {
-                            return Err(format!(
-                                "the wit-component fixup module is not instantiated with exactly one bundle of a shim's `$imports` table and {slots} lowered functions"
-                            ));
-                        }
+                        self.check_fixup(slots, &args)?;
                         CoreInstance::Plain
                     }
                     CoreModule::Other(reason) => {
@@ -340,35 +381,116 @@ impl TopLevel {
                         ));
                     }
                 }
-                self.fixup_args(&exports)
-                    .map_or(CoreInstance::Plain, CoreInstance::FixupArgs)
+                let mut bundle = Vec::with_capacity(exports.len());
+                for export in exports.iter() {
+                    let space = &self.core_items[core_space(export.kind)];
+                    bundle.push((
+                        export.name.to_string(),
+                        at(space, export.index, "core item")?.clone(),
+                    ));
+                }
+                self.bundles.push(bundle);
+                CoreInstance::Bundle(self.bundles.len() - 1)
             }
         };
         self.core_instances.push(origin);
         Ok(())
     }
 
-    /// The slot count, when `exports` is the bundle the fixup module takes:
-    /// a shim's `$imports` table, then lowered functions `"0"`, `"1"`, ...
-    fn fixup_args(&self, exports: &[wasmparser::Export<'_>]) -> Option<u32> {
-        let item = |export: &wasmparser::Export<'_>| {
-            self.core_items[core_space(export.kind)].get(usize::try_from(export.index).ok()?)
-        };
-        let (table, funcs) = exports.split_first()?;
-        let shape = table.name == "$imports"
-            && table.kind == ExternalKind::Table
-            && item(table) == Some(&CoreItem::ShimTable)
-            && !funcs.is_empty()
-            && funcs.iter().enumerate().all(|(slot, func)| {
-                func.name == slot.to_string()
-                    && func.kind == ExternalKind::Func
-                    && item(func) == Some(&CoreItem::Lowered)
-            });
-        if shape {
-            u32::try_from(funcs.len()).ok()
-        } else {
-            None
+    /// The exports of the `from_exports` core instance `index`.
+    fn bundle(&self, index: u32) -> Option<&[(String, CoreItem)]> {
+        match at(&self.core_instances, index, "core instance").ok()? {
+            CoreInstance::Bundle(bundle) => Some(&self.bundles[*bundle]),
+            _ => None,
         }
+    }
+
+    /// The declared module's import instance `module` must be a bundle whose
+    /// every function is wired as `wit-component` wires it: the next shim
+    /// slot in order (the fixup later fills that slot with the lowered
+    /// import), a `canon lower` of the component instance `module`'s function
+    /// of the same name, or a `resource.drop` under `[resource-drop]...`.
+    fn wire_declared_import(&mut self, module: &str, index: u32) -> Result<(), String> {
+        let bundle = self.bundle(index).ok_or_else(|| {
+            format!(
+                "the declared embedded core module's import {module:?} is not a bundle of wired functions"
+            )
+        })?;
+        let mut wired = Vec::new();
+        for (name, item) in bundle {
+            let next = u32::try_from(self.wired.len() + wired.len()).ok();
+            let ok = match item {
+                CoreItem::Trampoline(slot) => {
+                    wired.push((module.to_string(), name.clone()));
+                    Some(*slot) == next
+                }
+                CoreItem::Lowered(Lifted::Imported {
+                    instance,
+                    name: field,
+                }) => instance == module && field == name,
+                CoreItem::ResourceDrop => name.starts_with("[resource-drop]"),
+                _ => false,
+            };
+            if !ok {
+                return Err(format!(
+                    "the declared embedded core module's import {module:?} {name:?} is not wired as wit-component wires it"
+                ));
+            }
+        }
+        self.wired.extend(wired);
+        Ok(())
+    }
+
+    /// The fixup is instantiated once, after the declared module, with one
+    /// bundle: the shim's `$imports` table, then for each slot `i` in order
+    /// the `canon lower` of the component function the declared module
+    /// imports through slot `i`. Every shim slot is so filled.
+    fn check_fixup(
+        &mut self,
+        slots: u32,
+        args: &[wasmparser::InstantiationArg<'_>],
+    ) -> Result<(), String> {
+        let refuse = |what: &str| {
+            Err(format!(
+                "the wit-component fixup module is not instantiated as wit-component instantiates it: {what}"
+            ))
+        };
+        if self.fixup_instantiated {
+            return refuse("it is instantiated more than once");
+        }
+        if self.declared_instantiations == 0 {
+            return refuse("it is instantiated before the declared embedded core module");
+        }
+        if self.shim_slots != Some(slots) || self.wired.len() != slots as usize {
+            return refuse(
+                "its slots are not exactly the shim's slots the declared module imports through",
+            );
+        }
+        let bundle = match args {
+            [arg] if arg.name.is_empty() => self.bundle(arg.index),
+            _ => None,
+        };
+        let Some((table, funcs)) = bundle.and_then(<[_]>::split_first) else {
+            return refuse("it is not given one bundle of the shim table and lowered functions");
+        };
+        if *table != ("$imports".to_string(), CoreItem::ShimTable)
+            || funcs.len() != self.wired.len()
+        {
+            return refuse("it is not given the shim's `$imports` table and one function per slot");
+        }
+        for (slot, ((name, item), (module, field))) in funcs.iter().zip(&self.wired).enumerate() {
+            let expected = CoreItem::Lowered(Lifted::Imported {
+                instance: module.clone(),
+                name: field.clone(),
+            });
+            if *name != slot.to_string() || *item != expected {
+                return refuse(&format!(
+                    "slot {slot} is not given the lowered {module:?} {field:?} the declared module imports through it"
+                ));
+            }
+        }
+        self.fixup_instantiated = true;
+        Ok(())
     }
 
     fn add_alias(&mut self, alias: ComponentAlias<'_>) -> Result<(), String> {
@@ -380,7 +502,12 @@ impl TopLevel {
             } => {
                 let item = match at(&self.core_instances, instance_index, "core instance")? {
                     CoreInstance::Declared => CoreItem::Declared(name.to_string()),
-                    CoreInstance::Shim if kind == ExternalKind::Table => CoreItem::ShimTable,
+                    CoreInstance::Shim if kind == ExternalKind::Table && name == "$imports" => {
+                        CoreItem::ShimTable
+                    }
+                    CoreInstance::Shim if kind == ExternalKind::Func => {
+                        name.parse().map_or(CoreItem::Plain, CoreItem::Trampoline)
+                    }
                     _ => CoreItem::Plain,
                 };
                 self.core_items[core_space(kind)].push(item);
@@ -397,8 +524,12 @@ impl TopLevel {
                             ComponentInstanceOrigin::Built { funcs, .. } => funcs
                                 .iter()
                                 .find(|(field, _)| field == name)
-                                .and_then(|(_, lifted)| lifted.clone()),
-                            ComponentInstanceOrigin::Opaque => None,
+                                .map_or(Lifted::Other, |(_, lifted)| lifted.clone()),
+                            ComponentInstanceOrigin::Imported(instance) => Lifted::Imported {
+                                instance: instance.clone(),
+                                name: name.to_string(),
+                            },
+                            ComponentInstanceOrigin::Opaque => Lifted::Other,
                         };
                         self.funcs.push(lifted);
                     }
@@ -474,22 +605,24 @@ impl TopLevel {
                     ));
                 }
                 let lifted = match at(&self.core_items[FUNC_SPACE], core_func_index, "core func")? {
-                    CoreItem::Declared(name) => Some(name.clone()),
-                    _ => None,
+                    CoreItem::Declared(name) => {
+                        self.lifted.push(name.clone());
+                        Lifted::Lift(name.clone())
+                    }
+                    _ => Lifted::Other,
                 };
-                if let Some(name) = &lifted {
-                    self.lifted.push(name.clone());
-                }
                 self.funcs.push(lifted);
             }
-            CanonicalFunction::Lower { options, .. } => {
+            CanonicalFunction::Lower {
+                func_index,
+                options,
+            } => {
                 self.check_lower_options(&options)?;
-                self.core_items[FUNC_SPACE].push(CoreItem::Lowered);
+                let lowered = at(&self.funcs, func_index, "component func")?.clone();
+                self.core_items[FUNC_SPACE].push(CoreItem::Lowered(lowered));
             }
-            CanonicalFunction::ResourceNew { .. }
-            | CanonicalFunction::ResourceDrop { .. }
-            | CanonicalFunction::ResourceRep { .. } => {
-                self.core_items[FUNC_SPACE].push(CoreItem::Plain)
+            CanonicalFunction::ResourceDrop { .. } => {
+                self.core_items[FUNC_SPACE].push(CoreItem::ResourceDrop)
             }
             _ => {
                 return Err(
@@ -501,7 +634,7 @@ impl TopLevel {
         Ok(())
     }
 
-    fn add_import(&mut self, ty: ComponentTypeRef) -> Result<(), String> {
+    fn add_import(&mut self, name: &str, ty: ComponentTypeRef) -> Result<(), String> {
         match ty {
             ComponentTypeRef::Module(_) => {
                 return Err(
@@ -509,8 +642,10 @@ impl TopLevel {
                         .to_string(),
                 );
             }
-            ComponentTypeRef::Func(_) => self.funcs.push(None),
-            ComponentTypeRef::Instance(_) => self.instances.push(ComponentInstanceOrigin::Opaque),
+            ComponentTypeRef::Func(_) => self.funcs.push(Lifted::Other),
+            ComponentTypeRef::Instance(_) => self
+                .instances
+                .push(ComponentInstanceOrigin::Imported(name.to_string())),
             ComponentTypeRef::Component(_) => {
                 return Err(
                     "wasip2 component imports a component, whose code this checker cannot see"
@@ -635,11 +770,11 @@ impl TopLevel {
     /// the declared instance's core export `core_name`.
     fn require_lift_of(&mut self, shown: &str, core_name: &str, lifted: &Lifted) {
         let error = match lifted {
-            Some(lifted) if lifted == core_name => return,
-            Some(lifted) => format!(
+            Lifted::Lift(lifted) if lifted == core_name => return,
+            Lifted::Lift(lifted) => format!(
                 "component export `{shown}` lifts core export {lifted:?} of the declared embedded core module; it must lift {core_name:?}"
             ),
-            None => format!(
+            Lifted::Imported { .. } | Lifted::Other => format!(
                 "component export `{shown}` is not lifted from the declared embedded core module"
             ),
         };
@@ -764,7 +899,7 @@ impl ModuleScan {
         if let Some(what) = self.refused {
             CoreModule::Other(format!("it has {what}"))
         } else if self.is_shim() {
-            CoreModule::Shim
+            CoreModule::Shim(u32::try_from(self.funcs.len()).unwrap_or(u32::MAX))
         } else if let Some(slots) = self.fixup_slots() {
             CoreModule::Fixup(slots)
         } else {
@@ -1003,21 +1138,14 @@ mod tests {
         (func $lf (type $t) (canon lift (core func $f)))
         (export "f" (func $lf)))"#;
 
-    /// The `wit-component` shape: a helper module instantiated beside the
-    /// main one, the world export lifted from the main module and handed out
-    /// through a re-export shim component with imported and exported types.
+    /// The `wit-component` export shape: the world export lifted from the
+    /// main module and handed out through a re-export shim component with
+    /// imported and exported types.
     const SHIMMED: &str = r#"(component
         (core module $main
             (memory (export "memory") 1)
             (func (export "wasi:cli/run@0.2.4#run") (result i32) i32.const 0)
             (func (export "cabi_post_run") (param i32)))
-        (core module $helper
-            (type (func))
-            (table 1 1 funcref)
-            (export "0" (func 0))
-            (export "$imports" (table 0))
-            (func (type 0) i32.const 0 call_indirect (type 0)))
-        (core instance $h (instantiate $helper))
         (core instance $main (instantiate $main))
         (alias core export $main "memory" (core memory $mem))
         (alias core export $main "cabi_post_run" (core func $post))
@@ -1050,12 +1178,6 @@ mod tests {
         let bytes = component(SHIMMED);
         let ranges = module_ranges(&bytes);
         confirm_declared_core_binding(&bytes, ranges[0].clone()).unwrap();
-        // The helper module is instantiated but nothing is lifted from it.
-        let helper = refusal(&bytes, ranges[1].clone());
-        assert!(
-            helper.contains("is not lifted from the declared"),
-            "{helper}"
-        );
     }
 
     #[test]
@@ -1246,8 +1368,8 @@ mod tests {
     fn refuses_a_lower_with_an_encoding_aver_does_not_emit() {
         for encoding in ["string-encoding=utf16", "string-encoding=latin1+utf16"] {
             let bytes = component(&patched("").replace(
-                "(canon lower (func $host) (memory $mem) (realloc $realloc))",
-                &format!("(canon lower (func $host) (memory $mem) (realloc $realloc) {encoding})"),
+                "(canon lower (func $get) (memory $mem) (realloc $realloc))",
+                &format!("(canon lower (func $get) (memory $mem) (realloc $realloc) {encoding})"),
             ));
             let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
             assert!(
@@ -1330,42 +1452,60 @@ mod tests {
         );
     }
 
-    /// The `wit-component` import shape: main imports a host function through
-    /// a shim module's table, and a fixup module (no functions, no start)
-    /// fills that table with the host function lowered into main's memory.
-    /// `{after}` is spliced in after the fixup instantiation.
+    /// The `wit-component` import shape, as Aver emits it: the main module
+    /// imports `host.get` and `host.put` through the shim's trampolines (slots
+    /// 0 and 1) and `host.now` as a direct lower; after main is instantiated,
+    /// the fixup fills each slot with the host function lowered into main's
+    /// memory. `{after}` is spliced in after the fixup instantiation.
     fn patched(after: &str) -> String {
         format!(
             r#"(component
-            (import "host" (func $host (result string)))
+            (import "host" (instance $hi
+                (export "get" (func (result string)))
+                (export "put" (func (result string)))
+                (export "now" (func (result u32)))
+                (export "later" (func (result u32)))))
+            (alias export $hi "get" (func $get))
+            (alias export $hi "put" (func $put))
+            (alias export $hi "now" (func $now))
             (core module $main
                 (import "host" "get" (func (param i32)))
+                (import "host" "now" (func (result i32)))
+                (import "host" "put" (func (param i32)))
                 (memory (export "memory") 1)
                 (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 0)
                 (func (export "f") (result i32) i32.const 0))
             (core module $shim
                 (type $t (func (param i32)))
-                (table 1 1 funcref)
+                (table 2 2 funcref)
                 (export "0" (func 0))
+                (export "1" (func 1))
                 (export "$imports" (table 0))
-                (func (type $t) local.get 0 i32.const 0 call_indirect (type $t)))
+                (func (type $t) local.get 0 i32.const 0 call_indirect (type $t))
+                (func (type $t) local.get 0 i32.const 1 call_indirect (type $t)))
             (core module $fixup
                 (import "" "0" (func (param i32)))
-                (import "" "$imports" (table 1 1 funcref))
-                (elem (i32.const 0) func 0))
+                (import "" "1" (func (param i32)))
+                (import "" "$imports" (table 2 2 funcref))
+                (elem (i32.const 0) func 0 1))
             (core module $helper
                 (import "" "0" (func (param i32)))
                 (func $s i32.const 0 call 0)
                 (start $s))
             (core instance $si (instantiate $shim))
-            (alias core export $si "0" (core func $indirect))
-            (core instance $hostbundle (export "get" (func $indirect)))
+            (alias core export $si "0" (core func $t0))
+            (alias core export $si "1" (core func $t1))
+            (core func $nowl (canon lower (func $now)))
+            (core instance $hostbundle
+                (export "get" (func $t0)) (export "now" (func $nowl)) (export "put" (func $t1)))
             (core instance $main (instantiate $main (with "host" (instance $hostbundle))))
             (alias core export $main "memory" (core memory $mem))
             (alias core export $main "cabi_realloc" (core func $realloc))
             (alias core export $si "$imports" (core table $table))
-            (core func $lowered (canon lower (func $host) (memory $mem) (realloc $realloc)))
-            (core instance $args (export "$imports" (table $table)) (export "0" (func $lowered)))
+            (core func $getl (canon lower (func $get) (memory $mem) (realloc $realloc)))
+            (core func $putl (canon lower (func $put) (memory $mem) (realloc $realloc)))
+            (core instance $args
+                (export "$imports" (table $table)) (export "0" (func $getl)) (export "1" (func $putl)))
             (core instance $fix (instantiate $fixup (with "" (instance $args))))
             {after}
             (alias core export $main "f" (core func $f))
@@ -1376,9 +1516,90 @@ mod tests {
     }
 
     #[test]
+    fn refuses_helper_wiring_wit_component_does_not_emit() {
+        let base = patched("");
+        let swap = |from: &str, to: &str| {
+            assert!(base.contains(from), "{from}");
+            base.replace(from, to)
+        };
+        let args = r#"(export "$imports" (table $table)) (export "0" (func $getl)) (export "1" (func $putl))"#;
+        let host =
+            r#"(export "get" (func $t0)) (export "now" (func $nowl)) (export "put" (func $t1))"#;
+        for (label, text, reason) in [
+            (
+                "fixup slots swapped",
+                swap(
+                    args,
+                    r#"(export "$imports" (table $table)) (export "0" (func $putl)) (export "1" (func $getl))"#,
+                ),
+                r#"slot 0 is not given the lowered "host" "get""#,
+            ),
+            (
+                "fixup slot given a trampoline",
+                swap(
+                    args,
+                    r#"(export "$imports" (table $table)) (export "0" (func $t0)) (export "1" (func $putl))"#,
+                ),
+                "slot 0 is not given",
+            ),
+            (
+                "trampolines out of slot order",
+                swap(
+                    host,
+                    r#"(export "get" (func $t1)) (export "now" (func $nowl)) (export "put" (func $t0))"#,
+                ),
+                r#"import "host" "get" is not wired"#,
+            ),
+            (
+                "direct lower of another function",
+                swap(
+                    "(core func $nowl (canon lower (func $now)))",
+                    "(alias export $hi \"later\" (func $later))
+                     (core func $nowl (canon lower (func $later)))",
+                ),
+                r#"import "host" "now" is not wired"#,
+            ),
+            (
+                "no fixup",
+                swap(
+                    "(core instance $fix (instantiate $fixup (with \"\" (instance $args))))",
+                    "",
+                ),
+                "no fixup fills its table",
+            ),
+            (
+                "second fixup",
+                swap(
+                    "(core instance $fix (instantiate $fixup (with \"\" (instance $args))))",
+                    "(core instance $fix (instantiate $fixup (with \"\" (instance $args))))
+                     (core instance $fix2 (instantiate $fixup (with \"\" (instance $args))))",
+                ),
+                "instantiated more than once",
+            ),
+            (
+                "second shim",
+                swap(
+                    "(core instance $si (instantiate $shim))",
+                    "(core instance $si (instantiate $shim)) (core instance $si2 (instantiate $shim))",
+                ),
+                "shim module is instantiated more than once",
+            ),
+        ] {
+            let bytes = component(&text);
+            let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+            assert!(error.contains(reason), "{label}: {error}");
+        }
+    }
+
+    #[test]
     fn accepts_a_table_patched_with_lowered_imports() {
         let bytes = component(&patched(""));
-        confirm_declared_core_binding(&bytes, module_ranges(&bytes)[0].clone()).unwrap();
+        let ranges = module_ranges(&bytes);
+        confirm_declared_core_binding(&bytes, ranges[0].clone()).unwrap();
+        // Declaring the shim instead: its trampolines are handed out as
+        // the main module's imports.
+        let error = refusal(&bytes, ranges[1].clone());
+        assert!(error.contains("re-bundled as \"get\""), "{error}");
     }
 
     const NOT_A_HELPER: &str =
@@ -1415,70 +1636,56 @@ mod tests {
 
     #[test]
     fn refuses_helper_modules_outside_the_wit_component_shapes() {
-        // SHIMMED instantiates a lone shim module; `patched` a shim and fixup.
-        let shim = r#"(core module $helper
-            (type (func))
-            (table 1 1 funcref)
-            (export "0" (func 0))
-            (export "$imports" (table 0))
-            (func (type 0) i32.const 0 call_indirect (type 0)))"#;
-        let fixup = r#"(core module $fixup
-                (import "" "0" (func (param i32)))
-                (import "" "$imports" (table 1 1 funcref))
-                (elem (i32.const 0) func 0))"#;
+        let shim = "(func (type $t) local.get 0 i32.const 1 call_indirect (type $t)))";
+        let fixup = "(elem (i32.const 0) func 0 1))";
         let altered = |from: &str, to: &str, module: &str| {
-            let base = if module == shim {
-                SHIMMED.to_string()
-            } else {
-                patched("")
-            };
+            let base = patched("");
             assert!(base.contains(module) && module.contains(from), "{from}");
             base.replace(module, &module.replace(from, to))
         };
+        // A broken shim is not a shim: its instantiation is refused, and its
+        // table and trampolines are not the shim's, so the declared module's
+        // wiring is refused first.
+        let shim_refusal = "is not wired as wit-component wires it";
         for (label, text, reason) in [
             (
                 "shim body does more",
                 altered(
-                    "i32.const 0 call_indirect",
-                    "i32.const 0 drop i32.const 0 call_indirect",
+                    "i32.const 1 call_indirect",
+                    "i32.const 1 drop i32.const 1 call_indirect",
                     shim,
                 ),
-                NOT_A_HELPER,
+                shim_refusal,
             ),
             (
                 "shim calls another slot",
                 altered(
-                    "i32.const 0 call_indirect",
                     "i32.const 1 call_indirect",
+                    "i32.const 0 call_indirect",
                     shim,
-                )
-                .replace("(table 1 1 funcref)", "(table 2 2 funcref)"),
-                NOT_A_HELPER,
+                ),
+                shim_refusal,
             ),
             (
                 "shim with a start",
-                altered(
-                    "(export \"$imports\" (table 0))",
-                    "(export \"$imports\" (table 0)) (start 1) (func)",
-                    shim,
-                ),
-                "it has a start function",
+                altered("(type $t)))", "(type $t)) (func $go) (start $go))", shim),
+                shim_refusal,
             ),
             (
                 "fixup at another offset",
-                altered(
-                    "(elem (i32.const 0) func 0)",
-                    "(elem (i32.const 1) func 0)",
-                    fixup,
-                )
-                .replace("(table 1 1 funcref)", "(table 2 2 funcref)"),
+                altered("(i32.const 0)", "(i32.const 1)", fixup).replace("func 0 1)", "func 0)"),
+                NOT_A_HELPER,
+            ),
+            (
+                "fixup writes slots out of order",
+                altered("func 0 1", "func 1 0", fixup),
                 NOT_A_HELPER,
             ),
             (
                 "fixup with a second segment",
                 altered(
-                    "(elem (i32.const 0) func 0)",
-                    "(elem (i32.const 0) func 0) (elem (i32.const 0) func 0)",
+                    "(elem (i32.const 0) func 0 1))",
+                    "(elem (i32.const 0) func 0 1) (elem (i32.const 0) func 0))",
                     fixup,
                 ),
                 NOT_A_HELPER,
@@ -1486,8 +1693,8 @@ mod tests {
             (
                 "fixup with code",
                 altered(
-                    "(elem (i32.const 0) func 0)",
-                    "(elem (i32.const 0) func 0) (func)",
+                    "(elem (i32.const 0) func 0 1))",
+                    "(elem (i32.const 0) func 0 1) (func))",
                     fixup,
                 ),
                 NOT_A_HELPER,
@@ -1495,8 +1702,8 @@ mod tests {
             (
                 "fixup with data",
                 altered(
-                    "(elem (i32.const 0) func 0)",
-                    "(elem (i32.const 0) func 0) (memory 1) (data (i32.const 0) \"x\")",
+                    "(elem (i32.const 0) func 0 1))",
+                    "(elem (i32.const 0) func 0 1) (memory 1) (data (i32.const 0) \"x\"))",
                     fixup,
                 ),
                 "it has",
@@ -1509,16 +1716,22 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_fixup_that_writes_something_other_than_lowered_imports() {
-        // The fixup's slot gets the shim's own trampoline instead of the
-        // lowered import, and a fixup given no bundle at all.
-        let bytes = component(&patched("").replace(
-            r#"(core instance $args (export "$imports" (table $table)) (export "0" (func $lowered)))"#,
-            r#"(core instance $args (export "$imports" (table $table)) (export "0" (func $indirect)))"#,
+    fn refuses_a_broken_shim_instantiated_on_its_own() {
+        let bytes = component(&DIRECT.replace(
+            "(export \"f\" (func $lf)))",
+            "(core module $shim
+                (type $t (func))
+                (table 1 1 funcref)
+                (export \"0\" (func 0))
+                (export \"$imports\" (table 0))
+                (func (type $t) i32.const 0 call_indirect (type $t))
+                (start 0))
+             (core instance $si (instantiate $shim))
+             (export \"f\" (func $lf)))",
         ));
         let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
         assert!(
-            error.contains("fixup module is not instantiated with exactly"),
+            error.contains(NOT_A_HELPER) && error.contains("it has a start function"),
             "{error}"
         );
     }
