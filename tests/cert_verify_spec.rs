@@ -704,6 +704,33 @@ fn push_section(component: &mut Vec<u8>, id: u8, payload: &[u8]) -> usize {
     start
 }
 
+/// Parses `text`, whose first top-level core module is an empty placeholder,
+/// puts `core` in its place, and returns the component and where `core`
+/// starts. Index spaces do not depend on a module's contents, so the
+/// component keeps its structure.
+fn component_around_core(text: &str, core: &[u8]) -> (Vec<u8>, usize) {
+    let bytes = wat::parse_str(text).expect("attack component parses");
+    let range = wasmparser::Parser::new(0)
+        .parse_all(&bytes)
+        .find_map(|payload| match payload.unwrap() {
+            wasmparser::Payload::ModuleSection {
+                unchecked_range, ..
+            } => Some(unchecked_range),
+            _ => None,
+        })
+        .expect("placeholder module");
+    let mut size = Vec::new();
+    push_leb(range.len(), &mut size);
+    let header = range.start - 1 - size.len();
+    let mut component = bytes[..header].to_vec();
+    let start = push_section(&mut component, 1, core);
+    component.extend_from_slice(&bytes[range.end..]);
+    wasmparser::Validator::new()
+        .validate_all(&component)
+        .expect("attack component validates");
+    (component, start)
+}
+
 /// Envelope substitution: a component that runs one module while its
 /// manifest declares another. The honest certified core of a produced wasip2
 /// package is planted in a component whose only export, `answer`, is lifted
@@ -715,7 +742,14 @@ fn push_section(component: &mut Vec<u8>, id: u8, payload: &[u8]) -> usize {
 ///   - inside a custom section (not a module of the component at all);
 ///   - as an extra top-level module nothing instantiates;
 ///   - as an instantiated module the export does not come from;
-///   - as a module inside a nested component.
+///   - as a module inside a nested component;
+/// and, with the honest core as the module the component does run:
+///   - an uncertified core export lifted under a certified export's name;
+///   - a second instance of the declared core;
+///   - an adapter module that imports the declared export, changes its result,
+///     and is the module the export is lifted from;
+///   - a host function lowered into the declared core's memory and handed to
+///     a helper module whose start function calls it.
 #[cfg(feature = "wasip2")]
 #[test]
 fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_does_not_run() {
@@ -803,6 +837,71 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
         (component, start)
     };
 
+    let renamed = component_around_core(
+        r#"(component
+            (core module $honest)
+            (core instance $i (instantiate $honest))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (export "greet" (func $lifted)))"#,
+        &honest_core,
+    );
+    let twice = component_around_core(
+        r#"(component
+            (core module $honest)
+            (core instance $a (instantiate $honest))
+            (core instance $b (instantiate $honest))
+            (alias core export $a "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+    let lowered = component_around_core(
+        r#"(component
+            (import "host" (func $host (param "s" string)))
+            (core module $honest)
+            (core module $helper
+                (import "" "write" (func (param i32 i32)))
+                (func $go i32.const 0 i32.const 4 call 0)
+                (start $go))
+            (core instance $i (instantiate $honest))
+            (alias core export $i "memory" (core memory $mem))
+            (core func $low (canon lower (func $host) (memory $mem)))
+            (core instance $bundle (export "write" (func $low)))
+            (core instance $h (instantiate $helper (with "" (instance $bundle))))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+
+    let adapter = component_around_core(
+        r#"(component
+            (core module $honest)
+            (core module $adapter
+                (import "core" "run" (func $inner (result i32)))
+                (func (export "run") (result i32) call $inner i32.eqz))
+            (core instance $i (instantiate $honest))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $inner))
+            (core instance $bundle (export "run" (func $inner)))
+            (core instance $a (instantiate $adapter (with "core" (instance $bundle))))
+            (alias core export $a "run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+
     for (label, (component, start), reason) in [
         (
             "custom-section",
@@ -819,6 +918,22 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
             "nested-component",
             nested,
             "nested component is not a re-export shim",
+        ),
+        (
+            "renamed-export",
+            renamed,
+            "component export `greet` lifts core export `wasi:cli/run@0.2.4#run`",
+        ),
+        ("second-instance", twice, "instantiated more than once"),
+        (
+            "adapter-module",
+            adapter,
+            "an export of the declared embedded core module is re-bundled as `run`",
+        ),
+        (
+            "lowered-into-core-memory",
+            lowered,
+            "is passed to a core module that runs code",
         ),
     ] {
         assert_eq!(&component[start..start + core_len], &honest_core[..]);

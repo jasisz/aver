@@ -11,15 +11,23 @@
 //! 1. the declared range is exactly the payload of one top-level core module
 //!    section of the component (its position in the core-module index space is
 //!    the declared module);
-//! 2. the declared module is instantiated at least once;
-//! 3. every function the component exports, directly or as a field of an
-//!    exported instance, is a `canon lift` of a function exported by an
-//!    instance of the declared module, and the lift's memory, realloc,
-//!    post-return and callback options also come from such an instance;
+//! 2. the declared module is instantiated exactly once;
+//! 3. every function the component exports is a `canon lift` of the core
+//!    export of the same name of that one instance, under the `wit-component`
+//!    naming: a top-level function export `f` lifts core export `f`, and field
+//!    `f` of an exported instance `i` lifts core export `i#f`. The lift's
+//!    memory, realloc, post-return and callback options come from the same
+//!    instance;
 //! 4. no instance of the declared module, and no item exported by one, is
-//!    handed to another core instantiation, so other core modules (the
-//!    `wit-component` shim and fixup) cannot reach its state;
-//! 5. a nested component is only a re-export shim: it imports functions and
+//!    handed to another core instantiation;
+//! 5. a canonical function whose options capture the declared instance's
+//!    memory or functions (a `canon lower` writing into its memory) is handed
+//!    only to a table patcher: a module with no functions of its own and no
+//!    start function, as the `wit-component` fixup module is. After the first
+//!    such instantiation, every later core instantiation must be a table
+//!    patcher too, so no start function runs once the lowered functions are
+//!    reachable through a patched table;
+//! 6. a nested component is only a re-export shim: it imports functions and
 //!    types and exports those same imports, with no code, instances or
 //!    canonical functions of its own.
 //!
@@ -29,16 +37,38 @@
 
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentExternalKind, ComponentInstance,
-    ComponentTypeRef, ExternalKind, Instance, Parser, Payload,
+    ComponentType, ComponentTypeRef, ExternalKind, Instance, Parser, Payload,
 };
+
+/// A core module in the component's core module index space.
+#[derive(Clone, Copy)]
+struct CoreModule {
+    declared: bool,
+    /// No defined functions and no start function: instantiating it runs no
+    /// code, so it can only place what it imports into tables (`elem`).
+    table_patcher: bool,
+}
 
 /// Where a core instance comes from.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CoreInstance {
-    /// `instantiate <declared module>`.
+    /// The one instance of the declared module.
     Declared,
-    /// Any other module's instance, or a `from_exports` bundle.
-    Other,
+    /// A `from_exports` bundle holding a function that captures the declared
+    /// instance's memory or functions.
+    Tainted,
+    /// Any other instance.
+    Plain,
+}
+
+/// A core item (function, table, memory, global or tag).
+#[derive(Clone, PartialEq, Eq)]
+enum CoreItem {
+    /// The export of this name of the declared instance.
+    Declared(String),
+    /// A canonical function whose options capture the declared instance.
+    Tainted,
+    Plain,
 }
 
 /// What a nested component is. Only re-export shims are understood.
@@ -49,35 +79,29 @@ enum NestedComponent {
     Opaque,
 }
 
+/// A component function: the declared instance's core export it lifts, if
+/// it is such a lift.
+type Lifted = Option<String>;
+
 /// A component instance. `Built` instances list their function fields with
-/// whether each one is lifted from the declared module.
+/// the core export each one lifts.
 enum ComponentInstanceOrigin {
     Built {
-        funcs: Vec<(String, bool)>,
+        funcs: Vec<(String, Lifted)>,
         other_fields: bool,
     },
     Opaque,
 }
 
-impl ComponentInstanceOrigin {
-    fn is_bound(&self) -> bool {
-        match self {
-            Self::Built {
-                funcs,
-                other_fields,
-            } => !*other_fields && funcs.iter().all(|(_, bound)| *bound),
-            Self::Opaque => false,
-        }
-    }
-}
-
 const CORE_SPACES: usize = 5;
+const FUNC_SPACE: usize = 0;
+const MEMORY_SPACE: usize = 2;
 
 fn core_space(kind: ExternalKind) -> usize {
     match kind {
-        ExternalKind::Func | ExternalKind::FuncExact => 0,
+        ExternalKind::Func | ExternalKind::FuncExact => FUNC_SPACE,
         ExternalKind::Table => 1,
-        ExternalKind::Memory => 2,
+        ExternalKind::Memory => MEMORY_SPACE,
         ExternalKind::Global => 3,
         ExternalKind::Tag => 4,
     }
@@ -85,20 +109,17 @@ fn core_space(kind: ExternalKind) -> usize {
 
 #[derive(Default)]
 struct TopLevel {
-    /// Core module index space: `true` at the declared module.
-    core_modules: Vec<bool>,
+    core_modules: Vec<CoreModule>,
     core_instances: Vec<CoreInstance>,
-    /// Core item index spaces (func, table, memory, global, tag): `true` when
-    /// the item is an export of a declared-module instance.
-    core_items: [Vec<bool>; CORE_SPACES],
-    /// Component function index space: `true` when lifted from the declared
-    /// module.
-    funcs: Vec<bool>,
+    core_items: [Vec<CoreItem>; CORE_SPACES],
+    funcs: Vec<Lifted>,
     instances: Vec<ComponentInstanceOrigin>,
     components: Vec<NestedComponent>,
     declared_instantiations: usize,
-    /// The first component export not lifted from the declared module. It is
-    /// reported after the checks on the declaration itself.
+    /// A table patcher has received a tainted bundle.
+    patched: bool,
+    /// The first component export not lifted from the declared module under
+    /// its own name. It is reported after the checks on the declaration.
     unbound_export: Option<String>,
 }
 
@@ -129,18 +150,30 @@ pub(crate) fn confirm_declared_core_binding(
             continue;
         }
         match payload {
-            Payload::CustomSection(_)
-            | Payload::ComponentTypeSection(_)
-            | Payload::CoreTypeSection(_) => {}
+            Payload::CustomSection(_) | Payload::CoreTypeSection(_) => {}
+            Payload::ComponentTypeSection(reader) => {
+                for ty in reader {
+                    let ty = ty.map_err(|e| e.to_string())?;
+                    if let ComponentType::Resource { dtor: Some(_), .. } = ty {
+                        return Err(
+                            "wasip2 component defines a resource with a destructor, which this checker does not admit"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
             Payload::ModuleSection {
                 unchecked_range, ..
             } => {
-                let is_declared = unchecked_range == core_range;
-                if is_declared {
+                let declared = unchecked_range == core_range;
+                if declared {
                     declared_seen = true;
                 }
-                top.core_modules.push(is_declared);
-                skip_nested_module(&mut payloads)?;
+                let table_patcher = scan_nested_module(&mut payloads)?;
+                top.core_modules.push(CoreModule {
+                    declared,
+                    table_patcher,
+                });
             }
             Payload::ComponentSection { .. } => {
                 let shim = read_reexport_shim(&mut payloads)?;
@@ -223,34 +256,62 @@ impl TopLevel {
     fn add_core_instance(&mut self, instance: Instance<'_>) -> Result<(), String> {
         let origin = match instance {
             Instance::Instantiate { module_index, args } => {
+                let module = *at(&self.core_modules, module_index, "core module")?;
+                let mut tainted_args = false;
                 for arg in args.iter() {
-                    if *at(&self.core_instances, arg.index, "core instance")?
-                        == CoreInstance::Declared
-                    {
-                        return Err(format!(
-                            "an instance of the declared embedded core module is passed as import `{}` to another core instantiation",
-                            arg.name
-                        ));
+                    match at(&self.core_instances, arg.index, "core instance")? {
+                        CoreInstance::Declared => {
+                            return Err(format!(
+                                "an instance of the declared embedded core module is passed as import `{}` to another core instantiation",
+                                arg.name
+                            ));
+                        }
+                        CoreInstance::Tainted => tainted_args = true,
+                        CoreInstance::Plain => {}
                     }
                 }
-                if *at(&self.core_modules, module_index, "core module")? {
+                if tainted_args && !module.table_patcher {
+                    return Err(
+                        "a function that captures the declared embedded core module's memory or functions is passed to a core module that runs code"
+                            .to_string(),
+                    );
+                }
+                if self.patched && !module.table_patcher {
+                    return Err(
+                        "a core module that runs code is instantiated after a table was patched with functions that capture the declared embedded core module"
+                            .to_string(),
+                    );
+                }
+                self.patched |= tainted_args;
+                if module.declared {
                     self.declared_instantiations += 1;
+                    if self.declared_instantiations > 1 {
+                        return Err(
+                            "declared embedded core module is instantiated more than once"
+                                .to_string(),
+                        );
+                    }
                     CoreInstance::Declared
                 } else {
-                    CoreInstance::Other
+                    CoreInstance::Plain
                 }
             }
             Instance::FromExports(exports) => {
+                let mut origin = CoreInstance::Plain;
                 for export in exports.iter() {
                     let space = &self.core_items[core_space(export.kind)];
-                    if *at(space, export.index, "core item")? {
-                        return Err(format!(
-                            "an export of the declared embedded core module is re-bundled as `{}` into another core instance",
-                            export.name
-                        ));
+                    match at(space, export.index, "core item")? {
+                        CoreItem::Declared(_) => {
+                            return Err(format!(
+                                "an export of the declared embedded core module is re-bundled as `{}` into another core instance",
+                                export.name
+                            ));
+                        }
+                        CoreItem::Tainted => origin = CoreInstance::Tainted,
+                        CoreItem::Plain => {}
                     }
                 }
-                CoreInstance::Other
+                origin
             }
         };
         self.core_instances.push(origin);
@@ -262,11 +323,14 @@ impl TopLevel {
             ComponentAlias::CoreInstanceExport {
                 kind,
                 instance_index,
-                ..
+                name,
             } => {
-                let declared = *at(&self.core_instances, instance_index, "core instance")?
-                    == CoreInstance::Declared;
-                self.core_items[core_space(kind)].push(declared);
+                let item = match at(&self.core_instances, instance_index, "core instance")? {
+                    CoreInstance::Declared => CoreItem::Declared(name.to_string()),
+                    CoreInstance::Tainted => CoreItem::Tainted,
+                    CoreInstance::Plain => CoreItem::Plain,
+                };
+                self.core_items[core_space(kind)].push(item);
             }
             ComponentAlias::InstanceExport {
                 kind,
@@ -276,14 +340,14 @@ impl TopLevel {
                 let instance = at(&self.instances, instance_index, "component instance")?;
                 match kind {
                     ComponentExternalKind::Func => {
-                        let bound = match instance {
+                        let lifted = match instance {
                             ComponentInstanceOrigin::Built { funcs, .. } => funcs
                                 .iter()
                                 .find(|(field, _)| field == name)
-                                .is_some_and(|(_, bound)| *bound),
-                            ComponentInstanceOrigin::Opaque => false,
+                                .and_then(|(_, lifted)| lifted.clone()),
+                            ComponentInstanceOrigin::Opaque => None,
                         };
-                        self.funcs.push(bound);
+                        self.funcs.push(lifted);
                     }
                     ComponentExternalKind::Instance => {
                         self.instances.push(ComponentInstanceOrigin::Opaque)
@@ -291,7 +355,10 @@ impl TopLevel {
                     ComponentExternalKind::Component => {
                         self.components.push(NestedComponent::Opaque)
                     }
-                    ComponentExternalKind::Module => self.core_modules.push(false),
+                    ComponentExternalKind::Module => self.core_modules.push(CoreModule {
+                        declared: false,
+                        table_patcher: false,
+                    }),
                     ComponentExternalKind::Type => {}
                     ComponentExternalKind::Value => {
                         return Err(
@@ -308,6 +375,28 @@ impl TopLevel {
         Ok(())
     }
 
+    /// Whether every stateful option of a canonical function names an item
+    /// of the declared instance (`all`), and whether any does (`any`).
+    fn options_from_declared(&self, options: &[CanonicalOption]) -> Result<(bool, bool), String> {
+        let (mut all, mut any) = (true, false);
+        for option in options {
+            let (space, index) = match *option {
+                CanonicalOption::Memory(index) => (MEMORY_SPACE, index),
+                CanonicalOption::Realloc(index)
+                | CanonicalOption::PostReturn(index)
+                | CanonicalOption::Callback(index) => (FUNC_SPACE, index),
+                _ => continue,
+            };
+            let declared = matches!(
+                at(&self.core_items[space], index, "core item")?,
+                CoreItem::Declared(_)
+            );
+            all &= declared;
+            any |= declared;
+        }
+        Ok((all, any))
+    }
+
     fn add_canonical(&mut self, function: CanonicalFunction) -> Result<(), String> {
         match function {
             CanonicalFunction::Lift {
@@ -315,29 +404,43 @@ impl TopLevel {
                 options,
                 ..
             } => {
-                let mut bound = *at(&self.core_items[0], core_func_index, "core func")?;
-                for option in options.iter() {
-                    let (space, index) = match *option {
-                        CanonicalOption::Memory(index) => (2, index),
-                        CanonicalOption::Realloc(index)
-                        | CanonicalOption::PostReturn(index)
-                        | CanonicalOption::Callback(index) => (0, index),
-                        _ => continue,
-                    };
-                    bound &= *at(&self.core_items[space], index, "core item")?;
-                }
-                self.funcs.push(bound);
+                let (all, _) = self.options_from_declared(&options)?;
+                let lifted = match at(&self.core_items[FUNC_SPACE], core_func_index, "core func")? {
+                    CoreItem::Declared(name) if all => Some(name.clone()),
+                    _ => None,
+                };
+                self.funcs.push(lifted);
             }
-            // Every other canonical function defines a core function.
-            _ => self.core_items[0].push(false),
+            CanonicalFunction::Lower { options, .. } => {
+                let (_, any) = self.options_from_declared(&options)?;
+                self.core_items[FUNC_SPACE].push(if any {
+                    CoreItem::Tainted
+                } else {
+                    CoreItem::Plain
+                });
+            }
+            CanonicalFunction::ResourceNew { .. }
+            | CanonicalFunction::ResourceDrop { .. }
+            | CanonicalFunction::ResourceRep { .. } => {
+                self.core_items[FUNC_SPACE].push(CoreItem::Plain)
+            }
+            _ => {
+                return Err(
+                    "wasip2 component uses a canonical built-in this checker does not admit"
+                        .to_string(),
+                );
+            }
         }
         Ok(())
     }
 
     fn add_import(&mut self, ty: ComponentTypeRef) -> Result<(), String> {
         match ty {
-            ComponentTypeRef::Module(_) => self.core_modules.push(false),
-            ComponentTypeRef::Func(_) => self.funcs.push(false),
+            ComponentTypeRef::Module(_) => self.core_modules.push(CoreModule {
+                declared: false,
+                table_patcher: false,
+            }),
+            ComponentTypeRef::Func(_) => self.funcs.push(None),
             ComponentTypeRef::Instance(_) => self.instances.push(ComponentInstanceOrigin::Opaque),
             ComponentTypeRef::Component(_) => self.components.push(NestedComponent::Opaque),
             ComponentTypeRef::Type(_) => {}
@@ -371,7 +474,7 @@ impl TopLevel {
                             })?;
                         funcs.push((
                             export.clone(),
-                            *at(&self.funcs, arg.index, "component func")?,
+                            at(&self.funcs, arg.index, "component func")?.clone(),
                         ));
                     }
                     ComponentInstanceOrigin::Built {
@@ -387,14 +490,9 @@ impl TopLevel {
                     match export.kind {
                         ComponentExternalKind::Func => funcs.push((
                             export.name.0.to_string(),
-                            *at(&self.funcs, export.index, "component func")?,
+                            at(&self.funcs, export.index, "component func")?.clone(),
                         )),
                         ComponentExternalKind::Type => {}
-                        ComponentExternalKind::Instance => {
-                            other_fields |=
-                                !at(&self.instances, export.index, "component instance")?
-                                    .is_bound();
-                        }
                         _ => other_fields = true,
                     }
                 }
@@ -417,31 +515,39 @@ impl TopLevel {
         // An export also defines a new index in its sort's index space.
         match kind {
             ComponentExternalKind::Func => {
-                let bound = *at(&self.funcs, index, "component func")?;
-                if !bound {
-                    self.unbound_export.get_or_insert(format!(
-                        "component export `{name}` is not lifted from the declared embedded core module"
-                    ));
-                }
-                self.funcs.push(bound);
+                let lifted = at(&self.funcs, index, "component func")?.clone();
+                self.require_lift_of(name, name, &lifted);
+                self.funcs.push(lifted);
             }
             ComponentExternalKind::Instance => {
-                let instance = at(&self.instances, index, "component instance")?;
-                let exported = match instance {
-                    ComponentInstanceOrigin::Built { funcs, .. } if instance.is_bound() => {
-                        ComponentInstanceOrigin::Built {
-                            funcs: funcs.clone(),
-                            other_fields: false,
-                        }
-                    }
-                    _ => {
-                        self.unbound_export.get_or_insert(format!(
-                            "component export `{name}` is an instance whose functions are not all lifted from the declared embedded core module"
-                        ));
-                        ComponentInstanceOrigin::Opaque
-                    }
+                let exported = match at(&self.instances, index, "component instance")? {
+                    ComponentInstanceOrigin::Built {
+                        funcs,
+                        other_fields: false,
+                    } => Some(funcs.clone()),
+                    _ => None,
                 };
-                self.instances.push(exported);
+                match exported {
+                    Some(funcs) => {
+                        for (field, lifted) in &funcs {
+                            self.require_lift_of(
+                                &format!("{name}.{field}"),
+                                &format!("{name}#{field}"),
+                                lifted,
+                            );
+                        }
+                        self.instances.push(ComponentInstanceOrigin::Built {
+                            funcs,
+                            other_fields: false,
+                        });
+                    }
+                    None => {
+                        self.unbound_export.get_or_insert(format!(
+                            "component export `{name}` is an instance this checker cannot trace to the declared embedded core module"
+                        ));
+                        self.instances.push(ComponentInstanceOrigin::Opaque);
+                    }
+                }
             }
             ComponentExternalKind::Type => {}
             ComponentExternalKind::Module
@@ -454,16 +560,37 @@ impl TopLevel {
         }
         Ok(())
     }
+
+    /// Records a refusal unless the exported function `shown` lifts exactly
+    /// the declared instance's core export `core_name`.
+    fn require_lift_of(&mut self, shown: &str, core_name: &str, lifted: &Lifted) {
+        let error = match lifted {
+            Some(lifted) if lifted == core_name => return,
+            Some(lifted) => format!(
+                "component export `{shown}` lifts core export `{lifted}` of the declared embedded core module; it must lift `{core_name}`"
+            ),
+            None => format!(
+                "component export `{shown}` is not lifted from the declared embedded core module"
+            ),
+        };
+        self.unbound_export.get_or_insert(error);
+    }
 }
 
-/// Skips the payloads of a nested core module up to and including its end.
-fn skip_nested_module<'a>(
+/// Reads the payloads of a nested core module up to and including its end,
+/// and returns whether it is a table patcher (no functions, no start).
+fn scan_nested_module<'a>(
     payloads: &mut impl Iterator<Item = wasmparser::Result<Payload<'a>>>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    let mut table_patcher = true;
     for payload in payloads {
         let payload = payload.map_err(|error| format!("wasip2 component parse error: {error}"))?;
-        if let Payload::End(_) = payload {
-            return Ok(());
+        match payload {
+            Payload::End(_) => return Ok(table_patcher),
+            Payload::StartSection { .. } => table_patcher = false,
+            Payload::FunctionSection(reader) if reader.count() > 0 => table_patcher = false,
+            Payload::CodeSectionStart { count, .. } if count > 0 => table_patcher = false,
+            _ => {}
         }
     }
     Err("wasip2 component ends inside a core module".to_string())
@@ -588,14 +715,14 @@ mod tests {
     const SHIMMED: &str = r#"(component
         (core module $main
             (memory (export "memory") 1)
-            (func (export "run") (result i32) i32.const 0)
+            (func (export "wasi:cli/run@0.2.4#run") (result i32) i32.const 0)
             (func (export "cabi_post_run") (param i32)))
         (core module $helper (func (export "g")))
         (core instance $h (instantiate $helper))
         (core instance $main (instantiate $main))
         (alias core export $main "memory" (core memory $mem))
         (alias core export $main "cabi_post_run" (core func $post))
-        (alias core export $main "run" (core func $run))
+        (alias core export $main "wasi:cli/run@0.2.4#run" (core func $run))
         (type $rt (result))
         (type $ft (func (result $rt)))
         (func $run (type $ft) (canon lift (core func $run) (memory $mem) (post-return $post)))
@@ -626,7 +753,10 @@ mod tests {
         confirm_declared_core_binding(&bytes, ranges[0].clone()).unwrap();
         // The helper module is instantiated but nothing is lifted from it.
         let helper = refusal(&bytes, ranges[1].clone());
-        assert!(helper.contains("are not all lifted"), "{helper}");
+        assert!(
+            helper.contains("is not lifted from the declared"),
+            "{helper}"
+        );
     }
 
     #[test]
@@ -744,7 +874,7 @@ mod tests {
                 ),
         );
         let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
-        assert!(error.contains("are not all lifted"), "{error}");
+        assert!(error.contains("is not lifted from the declared"), "{error}");
     }
 
     #[test]
@@ -805,5 +935,196 @@ mod tests {
         );
         let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
         assert!(error.contains("re-bundled as `memory`"), "{error}");
+    }
+
+    /// The `wit-component` import shape: main imports a host function through
+    /// a shim module's table, and a fixup module (no functions, no start)
+    /// fills that table with the host function lowered into main's memory.
+    /// `{after}` is spliced in after the fixup instantiation.
+    fn patched(after: &str) -> String {
+        format!(
+            r#"(component
+            (import "host" (func $host (result string)))
+            (core module $main
+                (import "host" "get" (func (param i32)))
+                (memory (export "memory") 1)
+                (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 0)
+                (func (export "f") (result i32) i32.const 0))
+            (core module $shim
+                (table (export "$imports") 1 1 funcref)
+                (type $t (func (param i32)))
+                (func (export "0") (param i32) local.get 0 i32.const 0 call_indirect (type $t)))
+            (core module $fixup
+                (import "" "0" (func (param i32)))
+                (import "" "$imports" (table 1 1 funcref))
+                (elem (i32.const 0) func 0))
+            (core module $helper
+                (import "" "0" (func (param i32)))
+                (func $s i32.const 0 call 0)
+                (start $s))
+            (core instance $si (instantiate $shim))
+            (alias core export $si "0" (core func $indirect))
+            (core instance $hostbundle (export "get" (func $indirect)))
+            (core instance $main (instantiate $main (with "host" (instance $hostbundle))))
+            (alias core export $main "memory" (core memory $mem))
+            (alias core export $main "cabi_realloc" (core func $realloc))
+            (alias core export $si "$imports" (core table $table))
+            (core func $lowered (canon lower (func $host) (memory $mem) (realloc $realloc)))
+            (core instance $args (export "0" (func $lowered)) (export "$imports" (table $table)))
+            (core instance $fix (instantiate $fixup (with "" (instance $args))))
+            {after}
+            (alias core export $main "f" (core func $f))
+            (type $ft (func (result bool)))
+            (func $lf (type $ft) (canon lift (core func $f)))
+            (export "f" (func $lf)))"#
+        )
+    }
+
+    #[test]
+    fn accepts_a_table_patched_with_lowered_imports() {
+        let bytes = component(&patched(""));
+        confirm_declared_core_binding(&bytes, module_ranges(&bytes)[0].clone()).unwrap();
+    }
+
+    #[test]
+    fn refuses_a_lowered_import_handed_to_a_module_with_code() {
+        // Codex: a helper whose start calls the lowered function writes the
+        // host's string through main's realloc into main's memory.
+        let bytes = component(&patched(
+            r#"(core instance $evil (instantiate $helper (with "" (instance $args))))"#,
+        ));
+        let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+        assert!(
+            error.contains("passed to a core module that runs code"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn refuses_running_code_after_the_table_is_patched() {
+        // The patched shim function reaches the lowered import; a later
+        // module's start could call it.
+        let bytes = component(&patched(
+            r#"(core instance $late (export "0" (func $indirect)))
+               (core instance $evil (instantiate $helper (with "" (instance $late))))"#,
+        ));
+        let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+        assert!(error.contains("after a table was patched"), "{error}");
+    }
+
+    #[test]
+    fn refuses_exporting_a_core_export_under_another_name() {
+        // Codex: the certified `greet` returns false; an uncertified `other`
+        // returns true and is exported as `greet`.
+        let bytes = component(
+            r#"(component
+            (core module $m
+                (func (export "greet") (result i32) i32.const 0)
+                (func (export "other") (result i32) i32.const 1))
+            (core instance $i (instantiate $m))
+            (alias core export $i "other" (core func $other))
+            (type $t (func (result bool)))
+            (func $lf (type $t) (canon lift (core func $other)))
+            (export "greet" (func $lf)))"#,
+        );
+        let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+        assert!(
+            error.contains("lifts core export `other`") && error.contains("must lift `greet`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn refuses_an_instance_field_lifted_from_another_core_export() {
+        let bytes = component(
+            &SHIMMED
+                .replace(
+                    r#"(alias core export $main "wasi:cli/run@0.2.4#run" (core func $run))"#,
+                    r#"(alias core export $main "cabi_realloc_other" (core func $run))"#,
+                )
+                .replace(
+                    r#"(func (export "cabi_post_run") (param i32)))"#,
+                    r#"(func (export "cabi_post_run") (param i32))
+            (func (export "cabi_realloc_other") (result i32) i32.const 1))"#,
+                ),
+        );
+        let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+        assert!(
+            error.contains("lifts core export `cabi_realloc_other`")
+                && error.contains("must lift `wasi:cli/run@0.2.4#run`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn refuses_a_second_instance_of_the_declared_module() {
+        // Codex: lift from instance A, memory option from instance B.
+        let bytes = component(
+            r#"(component
+            (core module $m
+                (memory (export "memory") 1)
+                (func (export "f") (result i32) i32.const 0))
+            (core instance $a (instantiate $m))
+            (core instance $b (instantiate $m))
+            (alias core export $b "memory" (core memory $mem))
+            (alias core export $a "f" (core func $f))
+            (type $t (func (result string)))
+            (func $lf (type $t) (canon lift (core func $f) (memory $mem)))
+            (export "f" (func $lf)))"#,
+        );
+        let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+        assert!(error.contains("instantiated more than once"), "{error}");
+    }
+
+    #[test]
+    fn refuses_a_resource_with_a_destructor() {
+        let bytes = component(
+            r#"(component
+            (core module $m
+                (func (export "dtor") (param i32))
+                (func (export "f") (result i32) i32.const 0))
+            (core instance $i (instantiate $m))
+            (alias core export $i "dtor" (core func $dtor))
+            (type $r (resource (rep i32) (dtor (func $dtor))))
+            (alias core export $i "f" (core func $f))
+            (type $t (func (result bool)))
+            (func $lf (type $t) (canon lift (core func $f)))
+            (export "f" (func $lf)))"#,
+        );
+        let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+        assert!(error.contains("resource with a destructor"), "{error}");
+    }
+
+    #[test]
+    fn refuses_an_adapter_module_that_wraps_the_declared_export() {
+        // Red team round 2: the declared `answer` (false) runs, but a second
+        // module imports it, negates it, and its result is exported.
+        let adapter = |wiring: &str| {
+            format!(
+                r#"(component
+                (core module $m (func (export "answer") (result i32) i32.const 0))
+                (core module $adapter
+                    (import "m" "answer" (func $inner (result i32)))
+                    (func (export "answer") (result i32) call $inner i32.eqz))
+                (core instance $i (instantiate $m))
+                {wiring}
+                (alias core export $a "answer" (core func $f))
+                (type $t (func (result bool)))
+                (func $lf (type $t) (canon lift (core func $f)))
+                (export "answer" (func $lf)))"#
+            )
+        };
+        let bundled = component(&adapter(
+            r#"(alias core export $i "answer" (core func $inner))
+               (core instance $b (export "answer" (func $inner)))
+               (core instance $a (instantiate $adapter (with "m" (instance $b))))"#,
+        ));
+        let error = refusal(&bundled, module_ranges(&bundled)[0].clone());
+        assert!(error.contains("re-bundled as `answer`"), "{error}");
+        let direct = component(&adapter(
+            r#"(core instance $a (instantiate $adapter (with "m" (instance $i))))"#,
+        ));
+        let error = refusal(&direct, module_ranges(&direct)[0].clone());
+        assert!(error.contains("passed as import `m`"), "{error}");
     }
 }
