@@ -5,8 +5,8 @@
 //! modules and jobs in `aver.toml`") promise that every `aver` and `toml`
 //! block there is cut, as it stands, from a program that checks, verifies and
 //! runs. Those programs are `tests/fixtures/run_guide_example/` and
-//! `tests/fixtures/run_families/`; the one hand-driven block comes from
-//! `tests/fixtures/yield_spike/`. This suite
+//! `tests/fixtures/run_families/`; the one block that tests a process with
+//! request stubs comes from `tests/fixtures/yield_verify_stubs/`. This suite
 //! holds the promise from both ends: the fixture is checked, verified, run and
 //! format-checked with the binary under test, and every fenced block of those
 //! two sections is a contiguous substring of one fixture file.
@@ -24,7 +24,7 @@ use std::process::{Command, Output};
 
 const EXAMPLE: &str = "tests/fixtures/run_guide_example";
 const FAMILIES: &str = "tests/fixtures/run_families";
-const HAND_DRIVEN: &str = "tests/fixtures/yield_spike/main.av";
+const PROCESS_CASES: &str = "tests/fixtures/yield_verify_stubs/main.av";
 const LANGUAGE_GUIDE: &str = ".claude/commands/aver.md";
 const TOOLING_GUIDE: &str = ".claude/commands/aver-tooling.md";
 const LANGUAGE_SECTION: &str = "### Processes, answer modules and the coordinator";
@@ -288,7 +288,7 @@ fn sources() -> Vec<(String, String)> {
         .map(|entry| entry.expect("directory entry").path())
         .collect();
     files.sort();
-    files.push(repo_root().join(HAND_DRIVEN));
+    files.push(repo_root().join(PROCESS_CASES));
     files
         .into_iter()
         .map(|path| {
@@ -306,7 +306,7 @@ fn assert_every_block_is_a_cut(guide: &str, heading: &str) {
         assert!(
             cut,
             "{guide}: this block of {heading:?} is not a contiguous cut of any file in \
-             {EXAMPLE} or of {HAND_DRIVEN}; edit the fixture first, then paste from it:\n{block}"
+             {EXAMPLE} or of {PROCESS_CASES}; edit the fixture first, then paste from it:\n{block}"
         );
     }
 }

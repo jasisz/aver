@@ -6,7 +6,8 @@ pub mod session;
 pub use entry::{encode_entry_args, parse_entry_call, recording_stem};
 pub use json::{
     JsonValue, first_diff_path, format_json, json_to_string, json_to_value, json_values_to_values,
-    parse_json, value_to_json, value_to_json_lossy, values_to_json, values_to_json_lossy,
+    parse_json, replay_args_equivalent, replay_json_equivalent, value_to_json, value_to_json_lossy,
+    values_to_json, values_to_json_lossy,
 };
 pub use runtime::{EffectReplayMode, EffectReplayState, ReplayFailure};
 pub use session::{

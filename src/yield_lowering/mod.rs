@@ -343,14 +343,18 @@ pub fn qualified_start_name(callee: &str) -> String {
     }
 }
 
-/// Decision 4: a yielding function is called only through its generated
-/// entry points, so a plain call to one — in this module or in a
-/// dependency — is an error carrying the recipe, never a missing-effect
+/// How a program runs a yielding function: from another yielding function,
+/// which nests its protocol, or as a process the generated loop seats. The
+/// generated `__` entry points are the compiler's, so the recipe never
+/// names them.
+pub const YIELD_CALL_RECIPE: &str = "call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`";
+
+/// Decision 4: a plain call to a yielding function — in this module or in
+/// a dependency — is an error carrying the recipe, never a missing-effect
 /// complaint about `yield`.
 pub fn direct_call_recipe(caller: &str, callee: &str) -> String {
     format!(
-        "Function '{caller}' calls '{callee}' directly, but '{callee}' yields; call '{}(...)' and answer its requests",
-        qualified_start_name(callee)
+        "Function '{caller}' calls '{callee}' directly, but '{callee}' yields; {YIELD_CALL_RECIPE}"
     )
 }
 
@@ -358,10 +362,7 @@ pub fn direct_call_recipe(caller: &str, callee: &str) -> String {
 /// gone from the module's surface, and the protocol standing in its place
 /// is the evidence of why.
 pub fn removed_call_recipe(callee: &str) -> String {
-    format!(
-        "'{callee}' yields; call '{}(...)' and answer its requests",
-        qualified_start_name(callee)
-    )
+    format!("'{callee}' yields; {YIELD_CALL_RECIPE}")
 }
 
 fn error_at(line: usize, message: String) -> TypeError {
@@ -1013,8 +1014,7 @@ fn scan_expr(
         {
             let name = build::dotted_name(expr).expect("matched a process name");
             errors.push(error_at(expr.line, format!(
-                "Yield function '{name}' cannot be passed as a function value; call it directly inside another yield function, or drive '{}(...)' explicitly",
-                qualified_start_name(&name)
+                "Yield function '{name}' cannot be passed as a function value; call it directly inside another yield function, or seat it as a process in the entry module and run it with `Run.all()`"
             )));
         }
         _ => expr_walk::for_each_child(expr, &mut |child| {
@@ -1056,9 +1056,8 @@ fn scan_verify(vb: &VerifyBlock, yield_fns: &HashSet<String>, errors: &mut Vec<T
                 errors.push(error_at(
                     e.line,
                     format!(
-                        "verify block for '{}' calls '{name}' directly, but '{name}' yields; call '{}(...)' and answer its requests, or verify the generated answer functions",
-                        vb.fn_name,
-                        start_name(name)
+                        "verify block for '{}' calls '{name}' directly, but '{name}' yields; test it in a cases-form `verify {name}` that stubs every request with `given`, or run it as a process",
+                        vb.fn_name
                     ),
                 ));
             }

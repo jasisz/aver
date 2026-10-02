@@ -1,10 +1,13 @@
 //! Executable source/protocol observations are independent of effect providers.
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 use aver_cmd::{aver_bin, format_output, repo_root};
 use std::process::Command;
 
 fn fixture() -> tempfile::TempDir {
+    compiler_fixtures::allow();
     let dir = tempfile::tempdir().unwrap();
     for name in ["main.av", "pool.av", "pooled.av"] {
         std::fs::copy(
@@ -59,6 +62,7 @@ verify timeOrder
 }
 
 fn check(args: &[&str]) {
+    compiler_fixtures::allow();
     let dir = fixture();
     let out = Command::new(aver_bin())
         .arg("verify")
@@ -78,17 +82,20 @@ fn check(args: &[&str]) {
 
 #[test]
 fn prefixes_preserve_positions_remainders_and_in_place_effects() {
+    compiler_fixtures::allow();
     check(&[]);
 }
 
 #[cfg(feature = "wasm")]
 #[test]
 fn generated_observers_run_on_wasm_gc() {
+    compiler_fixtures::allow();
     check(&["--wasm-gc"]);
 }
 
 #[test]
 fn original_private_source_is_retained_under_its_module() {
+    compiler_fixtures::allow();
     let dir = fixture();
     let source = std::fs::read_to_string(dir.path().join("main.av")).unwrap();
     let mut items = aver::source::parse_source(&source).unwrap();
@@ -135,6 +142,7 @@ fn original_private_source_is_retained_under_its_module() {
 
 #[test]
 fn imported_observers_keep_private_helpers_in_the_owning_module() {
+    compiler_fixtures::allow();
     let root = repo_root().join("tests/fixtures/yield_request_trace_imports");
     let mut backends = vec![vec![]];
     if cfg!(feature = "wasm") {
@@ -155,6 +163,7 @@ fn imported_observers_keep_private_helpers_in_the_owning_module() {
 
 #[test]
 fn recursive_imports_without_owning_module_contracts_are_explicitly_rejected() {
+    compiler_fixtures::allow();
     let dir = tempfile::tempdir().unwrap();
     let source = repo_root().join("tests/fixtures/yield_module_helpers");
     for name in ["looper.av", "pool.av", "pooled.av"] {
@@ -179,6 +188,7 @@ fn recursive_imports_without_owning_module_contracts_are_explicitly_rejected() {
 
 #[test]
 fn tail_helper_boundaries_preserve_answers_and_align_imported_prefixes() {
+    compiler_fixtures::allow();
     let root = repo_root().join("tests/fixtures/yield_tail_traces");
     let mut backends = vec![vec![]];
     if cfg!(feature = "wasm") {
@@ -199,6 +209,7 @@ fn tail_helper_boundaries_preserve_answers_and_align_imported_prefixes() {
 
 #[test]
 fn recursive_helpers_preserve_subtraces_across_calls_and_tail_entry() {
+    compiler_fixtures::allow();
     let root = repo_root().join("tests/fixtures/yield_recursive_traces");
     let mut backends = vec![vec![]];
     if cfg!(feature = "wasm") {
@@ -221,6 +232,7 @@ fn recursive_helpers_preserve_subtraces_across_calls_and_tail_entry() {
 
 #[test]
 fn importing_a_finite_parent_uses_its_private_recursive_helper_contract() {
+    compiler_fixtures::allow();
     let dir = tempfile::tempdir().unwrap();
     let fixture = repo_root().join("tests/fixtures/yield_recursive_traces");
     for name in ["pool.av", "pooled.av"] {
@@ -260,6 +272,7 @@ verify __clientSourceTrace law correspondence
 
 #[test]
 fn local_recursion_with_a_finite_import_requires_the_owning_splice_law() {
+    compiler_fixtures::allow();
     let fixture = repo_root().join("tests/fixtures/yield_recursive_traces");
     let dir = tempfile::tempdir().unwrap();
     for name in ["pool.av", "pooled.av"] {
@@ -301,6 +314,7 @@ fn read(n: Int) -> Int
 
 #[test]
 fn imported_recursive_contracts_preserve_repeated_calls_private_helpers_and_foreign_tokens() {
+    compiler_fixtures::allow();
     let root = repo_root().join("tests/fixtures/yield_recursive_imports");
     let mut backends = vec![vec![]];
     if cfg!(feature = "wasm") {

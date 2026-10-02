@@ -123,6 +123,22 @@ pub(in crate::runtime::wasm_gc) fn provider_value_to_json(
             let Type::Map(key_ty, value_ty) = ty else {
                 return Err(expected_shape(ty, value));
             };
+            // The VM's rule, so one map records the same on every backend:
+            // String keys become object properties (the empty map is `{}`
+            // whatever its keys), any other key keeps its type in `$map`.
+            if values.is_empty() || matches!(**key_ty, Type::Str) {
+                let mut object = Map::new();
+                for (key, value) in values {
+                    let ProviderValue::String(key) = key else {
+                        return Err(expected_shape(key_ty, key));
+                    };
+                    object.insert(
+                        key.clone(),
+                        provider_value_to_json(value, value_ty, scope, providers)?,
+                    );
+                }
+                return Ok(JsonValue::Object(object));
+            }
             Ok(marker(
                 "$map",
                 JsonValue::Array(
@@ -361,6 +377,23 @@ pub(in crate::runtime::wasm_gc) fn provider_value_from_json(
                 .map(|value| provider_value_from_json(value, inner, scope, providers))
                 .collect::<Result<_, _>>()?,
         )),
+        (Type::Map(key, value), JsonValue::Object(object))
+            if marker_payload(json, "$map").is_none() =>
+        {
+            let mut values = Vec::with_capacity(object.len());
+            for (name, item) in object {
+                values.push((
+                    provider_value_from_json(
+                        &JsonValue::String(name.clone()),
+                        key,
+                        scope,
+                        providers,
+                    )?,
+                    provider_value_from_json(item, value, scope, providers)?,
+                ));
+            }
+            Ok(ProviderValue::Map(values))
+        }
         (Type::Map(key, value), _) => {
             let pairs = json_array(marker_payload(json, "$map"), "$map")?;
             let mut values = Vec::with_capacity(pairs.len());

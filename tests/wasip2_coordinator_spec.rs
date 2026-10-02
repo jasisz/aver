@@ -5,6 +5,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
 use std::fs;
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn fixture(name: &str) -> PathBuf {
+    compiler_fixtures::allow();
     repo_root().join("tests/fixtures").join(name)
 }
 

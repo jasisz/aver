@@ -1710,7 +1710,14 @@ mod tests {
         );
         let main_path = std::path::Path::new(&root).join("main.av");
         let source = std::fs::read_to_string(&main_path).expect("read fixture entry");
-        let items = parse_source(&source).expect("parse fixture entry");
+        // The entry drives the generated protocol by name, which only a
+        // compiler fixture may do, so it is parsed as one.
+        let tokens = crate::lexer::Lexer::new(&source)
+            .tokenize()
+            .expect("lex fixture entry");
+        let items = crate::parser::Parser::new_compiler_generated(tokens)
+            .parse()
+            .expect("parse fixture entry");
         let mut cache = ProgramLoadCache::default();
         let program = load_program_with_cache(
             &main_path,

@@ -434,3 +434,183 @@ fn first_diff_path_inner(expected: &JsonValue, got: &JsonValue, path: &str) -> O
         }
     }
 }
+
+/// Whether two recorded argument lists name the same values.
+///
+/// A map has one encoding in a recording: an object when every key is a
+/// String (so the empty map is `{}`) and a `$map` list of pairs otherwise.
+/// Older wasm-gc recordings wrote every map as `$map`, the empty one as
+/// `{"$map":[]}`, so a `$map` whose keys are all Strings is read as the
+/// object it stands for; everything else compares exactly.
+pub fn replay_args_equivalent(recorded: &[JsonValue], got: &[JsonValue]) -> bool {
+    recorded.len() == got.len()
+        && recorded
+            .iter()
+            .zip(got)
+            .all(|(recorded, got)| replay_json_equivalent(recorded, got))
+}
+
+/// One recorded value against another, under the map rule above.
+pub fn replay_json_equivalent(recorded: &JsonValue, got: &JsonValue) -> bool {
+    if recorded == got {
+        return true;
+    }
+    let recorded_map = string_keyed_map(recorded);
+    let got_map = string_keyed_map(got);
+    if recorded_map.is_some() || got_map.is_some() {
+        let as_object = |converted: Option<Map<String, JsonValue>>, original: &JsonValue| {
+            converted.or_else(|| match original {
+                JsonValue::Object(obj) if marker_single_key(obj).is_none() => Some(obj.clone()),
+                _ => None,
+            })
+        };
+        let (Some(a), Some(b)) = (as_object(recorded_map, recorded), as_object(got_map, got))
+        else {
+            return false;
+        };
+        return objects_equivalent(&a, &b);
+    }
+    match (recorded, got) {
+        (JsonValue::Object(a), JsonValue::Object(b)) => objects_equivalent(a, b),
+        (JsonValue::Array(a), JsonValue::Array(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b)
+                    .all(|(left, right)| replay_json_equivalent(left, right))
+        }
+        _ => false,
+    }
+}
+
+fn objects_equivalent(a: &Map<String, JsonValue>, b: &Map<String, JsonValue>) -> bool {
+    a.len() == b.len()
+        && a.iter().all(|(key, left)| {
+            b.get(key).is_some_and(|right| {
+                if matches!(key.as_str(), "$record" | "$variant" | "$capabilityResource") {
+                    marker_payload_equivalent(left, right)
+                } else {
+                    replay_json_equivalent(left, right)
+                }
+            })
+        })
+}
+
+/// A record, variant or resource payload: its `type` may have been
+/// recorded under its short name where this run names it qualified (an
+/// older wasm-gc recording wrote `Item` for `Wait.Item`), the rule the
+/// generated Rust replayer applies too; everything else compares as above.
+fn marker_payload_equivalent(recorded: &JsonValue, got: &JsonValue) -> bool {
+    let (JsonValue::Object(recorded_obj), JsonValue::Object(got_obj)) = (recorded, got) else {
+        return replay_json_equivalent(recorded, got);
+    };
+    recorded_obj.len() == got_obj.len()
+        && recorded_obj.iter().all(|(key, recorded_value)| {
+            let Some(got_value) = got_obj.get(key) else {
+                return false;
+            };
+            match (key.as_str(), recorded_value, got_value) {
+                ("type", JsonValue::String(recorded_tag), JsonValue::String(got_tag)) => {
+                    recorded_tag == got_tag
+                        || got_tag
+                            .rsplit_once('.')
+                            .is_some_and(|(_, bare)| bare == recorded_tag)
+                }
+                _ => replay_json_equivalent(recorded_value, got_value),
+            }
+        })
+}
+
+/// A `$map` whose keys are all Strings, as the object it stands for.
+fn string_keyed_map(value: &JsonValue) -> Option<Map<String, JsonValue>> {
+    let JsonValue::Object(obj) = value else {
+        return None;
+    };
+    let Some(("$map", JsonValue::Array(pairs))) = marker_single_key(obj) else {
+        return None;
+    };
+    let mut out = Map::new();
+    for pair in pairs {
+        let JsonValue::Array(pair) = pair else {
+            return None;
+        };
+        let [JsonValue::String(key), value] = pair.as_slice() else {
+            return None;
+        };
+        out.insert(key.clone(), value.clone());
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn int_map(entries: &[(i64, i64)]) -> Value {
+        Value::Map(
+            entries
+                .iter()
+                .map(|(k, v)| (Value::int(*k), Value::int(*v)))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn an_empty_map_records_as_an_empty_object_whatever_its_key_type() {
+        assert_eq!(
+            value_to_json(&Value::Map(HashMap::new())).unwrap(),
+            serde_json::json!({})
+        );
+        assert_eq!(
+            value_to_json(&int_map(&[(2, 20), (1, 10)])).unwrap(),
+            serde_json::json!({"$map": [[1, 10], [2, 20]]})
+        );
+        let strings = Value::Map(HashMap::from([(Value::Str("a".into()), Value::int(1))]));
+        assert_eq!(
+            value_to_json(&strings).unwrap(),
+            serde_json::json!({"a": 1})
+        );
+    }
+
+    #[test]
+    fn a_string_keyed_map_marker_matches_the_object_it_stands_for() {
+        let empty_object = serde_json::json!({});
+        let empty_marker = serde_json::json!({"$map": []});
+        assert!(replay_args_equivalent(
+            &[empty_object.clone(), serde_json::json!(0)],
+            &[empty_marker.clone(), serde_json::json!(0)],
+        ));
+        assert!(replay_json_equivalent(&empty_marker, &empty_object));
+        assert!(replay_json_equivalent(
+            &serde_json::json!({"$map": [["a", 1]]}),
+            &serde_json::json!({"a": 1}),
+        ));
+        assert!(replay_json_equivalent(
+            &serde_json::json!({"$some": {"$map": []}}),
+            &serde_json::json!({"$some": {}}),
+        ));
+        // An Int-keyed map stays typed, and different maps stay different.
+        assert!(!replay_json_equivalent(
+            &serde_json::json!({"$map": [[1, 1]]}),
+            &serde_json::json!({"1": 1}),
+        ));
+        assert!(!replay_json_equivalent(
+            &serde_json::json!({"$map": []}),
+            &serde_json::json!({"a": 1}),
+        ));
+        assert!(!replay_json_equivalent(
+            &serde_json::json!({"$map": []}),
+            &serde_json::json!({"$some": 1}),
+        ));
+    }
+
+    #[test]
+    fn a_short_recorded_type_tag_matches_the_qualified_name_it_is_short_for() {
+        let item = |tag: &str| serde_json::json!({"$variant": {"type": tag, "name": "Job", "fields": [0]}});
+        assert!(replay_json_equivalent(&item("Item"), &item("Wait.Item")));
+        assert!(!replay_json_equivalent(&item("Wait.Item"), &item("Item")));
+        assert!(!replay_json_equivalent(
+            &item("Other.Item"),
+            &item("Wait.Item")
+        ));
+    }
+}

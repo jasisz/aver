@@ -8,6 +8,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 #[path = "support/loopback_peer.rs"]
 mod loopback_peer;
 
@@ -34,12 +36,14 @@ fn temp_dir(prefix: &str) -> PathBuf {
 }
 
 fn fixture(name: &str) -> PathBuf {
+    compiler_fixtures::allow();
     repo_root().join("tests/fixtures").join(name)
 }
 
 /// `aver run <fixture>/main.av` on one target. `target` is `&[]` for the VM,
 /// `&["--wasm-gc"]` or `&["--wasip2"]` for a wasm one.
 fn run(name: &str, target: &[&str], program_args: &[&str]) -> Result<String, String> {
+    compiler_fixtures::allow();
     let dir = fixture(name);
     let mut command = Command::new(aver_bin());
     command
