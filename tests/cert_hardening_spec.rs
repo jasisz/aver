@@ -195,10 +195,13 @@ fn append(path: &Path, text: &str) {
     std::fs::write(path, contents).unwrap();
 }
 
+/// The checker indents every continuation line of a reason, so a reason that
+/// spans lines is matched with whitespace runs collapsed.
 fn assert_declined(ok: bool, report: &str, reason: &str) {
     assert!(!ok, "the tampered certificate must be declined:\n{report}");
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        report.contains(reason),
+        flat(report).contains(&flat(reason)),
         "declined for the wrong reason (expected `{reason}`):\n{report}"
     );
 }

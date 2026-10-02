@@ -14,9 +14,9 @@ use crate::cache::{
     ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial, ModuleOutputCache,
 };
 use crate::lean_process::LeanRunner;
+use crate::output::{self, Stream, Style};
 use crate::prelude_cache::PristineWallCache;
 use crate::{format, lean_gate, wall};
-use colored::Colorize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -182,6 +182,9 @@ struct TrustedReport {
     profile: String,
     abi: String,
     artifact_hash: String,
+    /// The manifest this check read and verified. `explain` renders from it
+    /// and never reads the package again after the verdict.
+    manifest: Value,
 }
 
 struct CertifiedCandidate {
@@ -239,6 +242,8 @@ struct PreparedArtifact<'a> {
     target_artifact_bytes: &'a [u8],
     /// Core wasm module bytes consumed by the existing wasm decoder wall.
     core_module_bytes: &'a [u8],
+    /// Core exports the delivered component lifts (wasip2 only).
+    lifted_core_exports: Vec<String>,
 }
 
 /// One manifest law-claim: the checker-owned witness re-elaborates the
@@ -418,7 +423,7 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
     };
     let text = format!(
         "{} ({} {status} export{}, level {}{law_clause}{bridged_law_clause}{bridge_clause})",
-        artifact.display(),
+        shown_path(artifact),
         count,
         if count == 1 { "" } else { "s" },
         level,
@@ -521,7 +526,7 @@ fn trusted_check(
     replay_mode: ReplayMode,
 ) -> Result<TrustedReport, String> {
     let bytes = std::fs::read(artifact)
-        .map_err(|error| format!("cannot read artifact {}: {error}", artifact.display()))?;
+        .map_err(|error| format!("cannot read artifact {}: {error}", shown_path(artifact)))?;
     let manifest = read_manifest(cert_dir)?;
 
     let schema_version = manifest_u64(&manifest, "schema_version")?;
@@ -539,12 +544,13 @@ fn trusted_check(
         artifact_hash: actual_hash,
         target_artifact_bytes,
         core_module_bytes,
+        lifted_core_exports,
     } = prepare_artifact_for_target(artifact_target, &bytes, target_envelope)?;
     let pinned_hash = manifest_str(&manifest, "wasm_sha256")?;
     if pinned_hash != actual_hash {
         return Err(format!(
             "artifact hash mismatch: {} hashes to {actual_hash}, certificate pins {pinned_hash}",
-            artifact.display()
+            shown_path(artifact)
         ));
     }
 
@@ -567,17 +573,35 @@ fn trusted_check(
         .and_then(Value::as_str)
         .ok_or_else(|| "cert-manifest.json `format.wall_id` must be a string".to_string())?;
     let selected_wall = wall::resolve(wall_id).ok_or_else(|| {
-        format!("unsupported certificate wall `{wall_id}`; no embedded wall matches")
+        format!(
+            "unsupported certificate wall `{}`; no embedded wall matches",
+            display_safe(wall_id)
+        )
     })?;
     let artifact_root = manifest_str(&manifest, "artifact_certificate_root")?;
     if artifact_root != format::ARTIFACT_CERTIFICATE_ROOT {
         return Err(format!(
-            "artifact certificate root mismatch: certificate pins {artifact_root}, checker expects {}",
+            "artifact certificate root mismatch: certificate pins {}, checker expects {}",
+            display_safe(artifact_root),
             format::ARTIFACT_CERTIFICATE_ROOT
         ));
     }
 
     let candidates = read_candidates(&manifest, identity, target_envelope.map(|env| env.inner))?;
+    // A certified export is a claim about core wasm values. Aver never lifts
+    // one into the component, so the checker has no component signature to
+    // hold a lift of it to, and a lift could hand it arguments outside the
+    // certified domain (a `u32` where the core expects a Bool).
+    if let Some(certified) = candidates
+        .certified
+        .iter()
+        .find(|candidate| lifted_core_exports.contains(&candidate.name))
+    {
+        return Err(format!(
+            "wasip2 component lifts certified core export `{}`; Aver lifts only its world entry points, so this checker admits no component signature for a certified export",
+            display_safe(&certified.name)
+        ));
+    }
     let lean = LeanRunner::new(selected_wall.toolchain)?;
     let stage_started = std::time::Instant::now();
     let build = assemble_build(
@@ -592,9 +616,10 @@ fn trusted_check(
     // is trusted local state, and the strict verdict does not rest on it.
     let caches_allowed = replay_mode == ReplayMode::TrustBuiltOleans;
     if !caches_allowed && crate::cache::any_cache_configured() {
-        eprintln!(
+        output::plain(
+            Stream::Err,
             "note: aver-cert verify ignores AVER_CERT_DATA_CACHE and AVER_CERT_PRELUDE_CACHE; \
-             only `check` uses a build cache"
+             only `check` uses a build cache",
         );
     }
     let cache_pins = [("wasm_sha256", pinned_hash), ("wall_id", wall_id)];
@@ -755,6 +780,7 @@ fn trusted_check(
         profile: candidates.profile,
         abi: candidates.abi,
         artifact_hash: actual_hash,
+        manifest,
     })
 }
 
@@ -1451,7 +1477,7 @@ const AUDIT_TEMPLATE: &str = include_str!("checker_audit.lean");
 fn read_manifest(cert_dir: &Path) -> Result<Value, String> {
     let path = cert_dir.join("cert-manifest.json");
     let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        .map_err(|error| format!("cannot read {}: {error}", shown_path(&path)))?;
     serde_json::from_str(&text)
         .map_err(|error| format!("cert-manifest.json is not valid JSON: {error}"))
 }
@@ -1486,7 +1512,7 @@ fn require_supported_identity(identity: &ManifestIdentity) -> Result<ArtifactTar
     if identity.profile != format::PROFILE_ID {
         return Err(format!(
             "unsupported certificate profile `{}`; this checker accepts {}",
-            identity.profile,
+            display_safe(&identity.profile),
             format::PROFILE_ID
         ));
     }
@@ -1500,11 +1526,12 @@ fn require_supported_identity(identity: &ManifestIdentity) -> Result<ArtifactTar
         }
         format::TARGET_WASM_GC | format::TARGET_WASIP2 => Err(format!(
             "unsupported certificate ABI `{}` for target `{}`",
-            identity.abi, identity.target
+            display_safe(&identity.abi),
+            display_safe(&identity.target)
         )),
         _ => Err(format!(
             "unsupported certificate target `{}`; this checker accepts {}, {}",
-            identity.target,
+            display_safe(&identity.target),
             format::TARGET_WASM_GC,
             format::TARGET_WASIP2
         )),
@@ -1570,6 +1597,7 @@ fn prepare_wasm_gc_artifact(bytes: &[u8]) -> Result<PreparedArtifact<'_>, String
         artifact_hash: sha256_hex(bytes),
         target_artifact_bytes: bytes,
         core_module_bytes: bytes,
+        lifted_core_exports: Vec::new(),
     })
 }
 
@@ -1599,7 +1627,8 @@ fn read_wasip2_component_envelope(manifest: &Value) -> Result<Wasip2EnvelopeDecl
         })?;
     if kind != format::WASIP2_COMPONENT_ENVELOPE_KIND {
         return Err(format!(
-            "unsupported wasip2 component envelope kind `{kind}`; this checker expects {}",
+            "unsupported wasip2 component envelope kind `{}`; this checker expects {}",
+            display_safe(kind),
             format::WASIP2_COMPONENT_ENVELOPE_KIND
         ));
     }
@@ -1621,7 +1650,8 @@ fn prepare_wasip2_artifact_with_declared_envelope<'a>(
     }
     // This is only a well-formedness gate for the delivered target artifact.
     // It must not be used to locate the embedded core; the core slice below is
-    // derived solely from the manifest-declared envelope lengths.
+    // derived solely from the manifest-declared envelope lengths, and the
+    // binding gate after it only confirms that declaration.
     wasmparser::Validator::new()
         .validate_all(component_bytes)
         .map_err(|error| format!("artifact is not a valid WebAssembly component: {error}"))?;
@@ -1651,11 +1681,21 @@ fn prepare_wasip2_artifact_with_declared_envelope<'a>(
         .map_err(|error| {
             format!("declared embedded core module is not valid WebAssembly: {error}")
         })?;
+    // The lengths say where the declared core is; they do not say that the
+    // component runs it. Confirm the declared slice is the top-level core
+    // module every component export is lifted from.
+    let core_start = usize::try_from(declaration.prefix_len)
+        .map_err(|_| "wasip2 component envelope prefix does not fit in usize".to_string())?;
+    let lifted_core_exports = crate::wasip2_binding::confirm_declared_core_binding(
+        component_bytes,
+        core_start..core_start + core_module_bytes.len(),
+    )?;
 
     Ok(PreparedArtifact {
         artifact_hash: sha256_hex(component_bytes),
         target_artifact_bytes: component_bytes,
         core_module_bytes,
+        lifted_core_exports,
     })
 }
 
@@ -1687,7 +1727,7 @@ fn read_candidates(
             "simulatesModelTotally" => ".simulatesModelTotally",
             other => {
                 return Err(format!(
-                    "certified export `{name}` uses unsupported policy `{other}`"
+                    "certified export {name:?} uses unsupported policy {other:?}"
                 ));
             }
         };
@@ -1696,12 +1736,12 @@ fn read_candidates(
             ("simulatesModel", None) | ("simulatesModelTotally", Some(_)) => {}
             ("simulatesModel", Some(_)) => {
                 return Err(format!(
-                    "partial export `{name}` must not carry a termination witness"
+                    "partial export {name:?} must not carry a termination witness"
                 ));
             }
             ("simulatesModelTotally", None) => {
                 return Err(format!(
-                    "total export `{name}` is missing `termination_witness`"
+                    "total export {name:?} is missing `termination_witness`"
                 ));
             }
             _ => unreachable!(),
@@ -1899,7 +1939,7 @@ fn read_candidates(
         if !seen_corollaries.insert(law.corollary.as_str()) {
             return Err(format!(
                 "law-claims declare duplicate corollary `{}`",
-                law.corollary
+                display_safe(&law.corollary)
             ));
         }
     }
@@ -2017,7 +2057,7 @@ fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String>
     if let Err(field) = lean_gate::law_claim_identifiers(&law.label, &law.theorem, &law.corollary) {
         return Err(format!(
             "law-claim `{}` field `{field}` is not a plain dotted Lean identifier",
-            law.label
+            display_safe(&law.label)
         ));
     }
     if law.corollary != law.label.replace('.', "_") {
@@ -2628,7 +2668,7 @@ fn assemble_build(
     let mut flat_files: Vec<(String, PathBuf)> = Vec::new();
     let mut subdirectories: Vec<(String, PathBuf)> = Vec::new();
     let entries = std::fs::read_dir(cert_dir)
-        .map_err(|error| format!("cannot read cert dir {}: {error}", cert_dir.display()))?;
+        .map_err(|error| format!("cannot read cert dir {}: {error}", shown_path(cert_dir)))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("cert dir read: {error}"))?;
         let Ok(kind) = entry.file_type() else {
@@ -2666,7 +2706,7 @@ fn assemble_build(
         reject_shadowed_root(&root, selected_wall)?;
         note_staged_path(&mut staged_paths, name)?;
         let contents = std::fs::read(path)
-            .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
+            .map_err(|error| format!("cannot read cert file {name:?}: {error}"))?;
         scan_for_code_exec(name, &contents)?;
         if matches!(
             name.as_str(),
@@ -2675,7 +2715,7 @@ fn assemble_build(
             collect_import_lines(&String::from_utf8_lossy(&contents), &mut admitted);
         }
         std::fs::write(build.path.join(name), contents)
-            .map_err(|error| format!("cannot stage {name}: {error}"))?;
+            .map_err(|error| format!("cannot stage {name:?}: {error}"))?;
         roots.push(root);
     }
 
@@ -2706,17 +2746,17 @@ fn assemble_build(
         }
         note_staged_path(&mut staged_paths, relative)?;
         let contents = std::fs::read(path)
-            .map_err(|error| format!("cannot read cert file {relative}: {error}"))?;
+            .map_err(|error| format!("cannot read cert file {relative:?}: {error}"))?;
         scan_for_code_exec(relative, &contents)?;
         let destination = relative
             .split('/')
             .fold(build.path.clone(), |path, segment| path.join(segment));
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot stage {relative}: {error}"))?;
+                .map_err(|error| format!("cannot stage {relative:?}: {error}"))?;
         }
         std::fs::write(destination, contents)
-            .map_err(|error| format!("cannot stage {relative}: {error}"))?;
+            .map_err(|error| format!("cannot stage {relative:?}: {error}"))?;
         roots.push(root);
     }
     build.package_roots = roots.clone();
@@ -2844,7 +2884,7 @@ fn note_staged_path(
 ) -> Result<(), String> {
     if let Some(previous) = staged.insert(relative.to_ascii_lowercase(), relative.to_string()) {
         return Err(format!(
-            "cert files `{previous}` and `{relative}` collide case-insensitively"
+            "cert files {previous:?} and {relative:?} collide case-insensitively"
         ));
     }
     Ok(())
@@ -2871,11 +2911,11 @@ fn collect_nested_lean_files(
 ) -> Result<(), String> {
     if depth > MAX_NESTED_DEPTH {
         return Err(format!(
-            "cert subdirectory `{relative}` exceeds the maximum nesting depth of {MAX_NESTED_DEPTH}"
+            "cert subdirectory {relative:?} exceeds the maximum nesting depth of {MAX_NESTED_DEPTH}"
         ));
     }
     let entries = std::fs::read_dir(dir)
-        .map_err(|error| format!("cannot read cert dir {}: {error}", dir.display()))?;
+        .map_err(|error| format!("cannot read cert dir {}: {error}", shown_path(dir)))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("cert dir read: {error}"))?;
         let Ok(kind) = entry.file_type() else {
@@ -2907,7 +2947,7 @@ fn scan_for_code_exec(name: &str, contents: &[u8]) -> Result<(), String> {
     let text = String::from_utf8_lossy(contents);
     if let Some(token) = lean_gate::code_exec_token(&text) {
         return Err(format!(
-            "cert data file `{name}` contains refused construct `{token}`"
+            "cert data file {name:?} contains refused construct `{token}`"
         ));
     }
     Ok(())
@@ -3088,10 +3128,19 @@ fn report_step_timing(phase: &str, elapsed: std::time::Duration, stdout: &[u8]) 
     }
     for line in String::from_utf8_lossy(stdout).lines() {
         if line.contains("Built ") || line.contains("Replayed ") {
-            eprintln!("aver-cert timing:   {}", line.trim());
+            output::line(
+                Stream::Err,
+                "aver-cert timing:  ",
+                Style::Plain,
+                line.trim(),
+                Style::Plain,
+            );
         }
     }
-    eprintln!("aver-cert timing: {phase}: {:.1}s", elapsed.as_secs_f64());
+    output::plain(
+        Stream::Err,
+        &format!("aver-cert timing: {phase}: {:.1}s", elapsed.as_secs_f64()),
+    );
 }
 
 fn tail(text: &str, lines: usize) -> String {
@@ -3153,6 +3202,12 @@ fn surface_build_failure(text: &str, lines: usize) -> String {
     diagnostics.join("\n")
 }
 
+/// A path as the checker prints it: quoted, with control characters and
+/// quotes escaped, so a file name cannot add or forge a line of the report.
+pub(crate) fn shown_path(path: &Path) -> String {
+    format!("{path:?}")
+}
+
 fn display_safe(value: &str) -> String {
     value
         .chars()
@@ -3175,45 +3230,66 @@ const INT_INPUT_DOMAIN_LINE: &str = "domain: every Int input (an argument, or a 
      runtime's normal form; a non-canonical word is outside the certified domain. Every \
      Int result is proved canonical.";
 
+/// A blank line, then an `explain` section title.
+fn section(title: &'static str, style: Style) {
+    output::plain(Stream::Out, "");
+    output::line(Stream::Out, title, style, "", Style::Plain);
+}
+
 pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> {
     let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
-    println!("{}", "Artifact certificate".bold());
-    println!("  artifact: {}", artifact.display());
-    println!("  pinned sha256: {}", report.artifact_hash);
-    println!(
-        "  target: {}    profile: {}    abi: {}",
-        report.target, report.profile, report.abi
+    output::line(
+        Stream::Out,
+        "Artifact certificate",
+        Style::Bold,
+        "",
+        Style::Plain,
+    );
+    output::plain(
+        Stream::Out,
+        &format!("  artifact: {}", shown_path(artifact)),
+    );
+    output::plain(
+        Stream::Out,
+        &format!("  pinned sha256: {}", report.artifact_hash),
+    );
+    output::plain(
+        Stream::Out,
+        &format!(
+            "  target: {}    profile: {}    abi: {}",
+            report.target, report.profile, report.abi
+        ),
     );
     if report.exports.is_empty() {
-        println!("\n{}", "NO CERTIFIED EXPORTS".yellow().bold());
+        section("NO CERTIFIED EXPORTS", Style::Yellow);
         return Ok(Explanation::NoExports);
     }
-    println!("\n{}", "CERTIFIED".green().bold());
+    section("CERTIFIED", Style::Green);
     for export in report.exports {
-        println!("  {}", export.name.bold());
-        println!("    policy: {}", export.policy);
-        println!("    {}", export.face);
-        println!("    {}", export.certified_model);
+        output::line(Stream::Out, " ", Style::Plain, &export.name, Style::Bold);
+        output::plain(Stream::Out, &format!("    policy: {}", export.policy));
+        output::plain(Stream::Out, &format!("    {}", export.face));
+        output::plain(Stream::Out, &format!("    {}", export.certified_model));
     }
     // The one assumption every certified theorem makes about its INPUTS rather
     // than about a helper: the wall's value relation reads an Int through
     // `CanonRepr`, so an Int carrier word the host passes in is taken to be in
     // the runtime's normal form. It is the same for every export, so it is
     // stated once.
-    println!("\n{}", "Certified domain".yellow().bold());
-    println!("  {INT_INPUT_DOMAIN_LINE}");
+    section("Certified domain", Style::Yellow);
+    output::plain(Stream::Out, &format!("  {INT_INPUT_DOMAIN_LINE}"));
     if !report.contracts.is_empty() {
-        println!("\n{}", "Runtime contracts".yellow().bold());
+        section("Runtime contracts", Style::Yellow);
         for contract in report.contracts {
-            println!("  - {contract}");
+            output::plain(Stream::Out, &format!("  - {contract}"));
         }
     }
 
-    let manifest = read_manifest(cert_dir)?;
+    let manifest = report.manifest;
     if let Some(laws) = manifest.get("laws").and_then(Value::as_array)
         && !laws.is_empty()
     {
-        println!("\n{}", "LAW-CLAIMS".green().bold());
+        section("LAW-CLAIMS", Style::Green);
         for entry in laws {
             let label = entry
                 .get("label")
@@ -3225,19 +3301,20 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                 .and_then(Value::as_str)
                 .map(display_safe)
                 .unwrap_or_else(|| "<unknown>".to_string());
-            println!("  {}", label.bold());
-            println!("    {statement}");
+            output::line(Stream::Out, " ", Style::Plain, &label, Style::Bold);
+            output::plain(Stream::Out, &format!("    {statement}"));
         }
-        println!(
+        output::plain(
+            Stream::Out,
             "  these are the DECLARED claims; per-claim credit is decided by \
-             `aver cert check` / `aver cert verify`"
+             `aver cert check` / `aver cert verify`",
         );
     }
     // The bridge statements come from the report, not from a manifest read:
     // the manifest carries structure, and the text below is exactly what the
     // checker rendered from it and pinned the package's corollary at.
     if !report.source_bridges.is_empty() {
-        println!("\n{}", "SOURCE-BRIDGES".green().bold());
+        section("SOURCE-BRIDGES", Style::Green);
         for bridge in &report.source_bridges {
             let credit = if bridge.offending.is_empty() {
                 "credited".to_string()
@@ -3247,19 +3324,26 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                     display_safe(&bridge.offending.join(", "))
                 )
             };
-            println!(
-                "  {}  ≡ {}  ({})  [{credit}]",
-                display_safe(&bridge.export).bold(),
-                display_safe(&bridge.model),
-                bridge.kind.tag()
+            output::plain(
+                Stream::Out,
+                &format!(
+                    "  {}  ≡ {}  ({})  [{credit}]",
+                    display_safe(&bridge.export),
+                    display_safe(&bridge.model),
+                    bridge.kind.tag()
+                ),
             );
-            println!("    {}", display_safe(&bridge.statement));
+            output::plain(
+                Stream::Out,
+                &format!("    {}", display_safe(&bridge.statement)),
+            );
         }
-        println!(
+        output::plain(
+            Stream::Out,
             "  the statement under each bridge is RENDERED BY THE CHECKER from the \
              manifest's declared structure, never read from the package; a credited \
              bridge is one whose proof of exactly that statement uses no axiom \
-             outside the kernel whitelist"
+             outside the kernel whitelist",
         );
     }
     // Declared-only, like `source_level_only`: why a compute-face export got no
@@ -3270,10 +3354,7 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
         .and_then(Value::as_array)
         && !declined.is_empty()
     {
-        println!(
-            "\n{}",
-            "SOURCE-BRIDGES DECLINED (informational)".yellow().bold()
-        );
+        section("SOURCE-BRIDGES DECLINED (informational)", Style::Yellow);
         for entry in declined {
             let export = entry
                 .get("export")
@@ -3285,14 +3366,17 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                 .and_then(Value::as_str)
                 .map(display_safe)
                 .unwrap_or_else(|| "unspecified".to_string());
-            println!("  {export}: {reason}");
+            output::plain(Stream::Out, &format!("  {export}: {reason}"));
         }
-        println!("  these exports keep `model: plan`; the reasons are declared, not checked");
+        output::plain(
+            Stream::Out,
+            "  these exports keep `model: plan`; the reasons are declared, not checked",
+        );
     }
     if let Some(declined) = manifest.get("source_level_only").and_then(Value::as_array)
         && !declined.is_empty()
     {
-        println!("\n{}", "DECLINED (informational)".yellow().bold());
+        section("DECLINED (informational)", Style::Yellow);
         for entry in declined {
             let name = entry
                 .get("name")
@@ -3304,7 +3388,7 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                 .and_then(Value::as_str)
                 .map(display_safe)
                 .unwrap_or_else(|| "unspecified".to_string());
-            println!("  {name}: {reason}");
+            output::plain(Stream::Out, &format!("  {name}: {reason}"));
         }
     }
     Ok(Explanation::Certified)
@@ -3796,12 +3880,13 @@ mod tests {
                 profile: String::new(),
                 abi: String::new(),
                 artifact_hash: String::new(),
+                manifest: Value::Null,
             },
             "checked",
         );
         assert_eq!(
             summary.text,
-            "app.wasm (0 checked exports, level L1; source-bridges: 1 of 2 credited)"
+            "\"app.wasm\" (0 checked exports, level L1; source-bridges: 1 of 2 credited)"
         );
         assert_eq!(
             summary.uncredited_bridges,
@@ -3823,10 +3908,11 @@ mod tests {
                 profile: String::new(),
                 abi: String::new(),
                 artifact_hash: String::new(),
+                manifest: Value::Null,
             },
             "checked",
         );
-        assert_eq!(bare.text, "app.wasm (0 checked exports, level L1)");
+        assert_eq!(bare.text, "\"app.wasm\" (0 checked exports, level L1)");
         assert!(bare.uncredited_laws.is_empty());
     }
 
@@ -3853,12 +3939,13 @@ mod tests {
                 profile: String::new(),
                 abi: String::new(),
                 artifact_hash: String::new(),
+                manifest: Value::Null,
             },
             "checked",
         );
         assert_eq!(
             summary.text,
-            "app.wasm (0 checked exports, level L1; law-claims: 1 of 2 credited)"
+            "\"app.wasm\" (0 checked exports, level L1; law-claims: 1 of 2 credited)"
         );
         assert_eq!(
             summary.uncredited_laws,
@@ -3901,12 +3988,13 @@ mod tests {
                 profile: String::new(),
                 abi: String::new(),
                 artifact_hash: String::new(),
+                manifest: Value::Null,
             },
             "checked",
         );
         assert_eq!(
             summary.text,
-            "app.wasm (0 checked exports, level L1; law-claims: 2 of 2 credited; \
+            "\"app.wasm\" (0 checked exports, level L1; law-claims: 2 of 2 credited; \
              bridged-laws: 1 of 2 credited)"
         );
         assert!(summary.uncredited_laws.is_empty());
@@ -4252,12 +4340,16 @@ mod tests {
     #[test]
     fn wasip2_declared_envelope_preparation_splits_component_without_discovery() {
         let core = b"\0asm\x01\0\0\0";
-        let component = component_with_embedded_core(core);
+        let mut component = component_with_embedded_core(core);
+        let prefix_len = component.len() - core.len();
+        // One core instance section: `instantiate` module 0 with no imports.
+        let instance_section = [2, 4, 1, 0, 0, 0];
+        component.extend_from_slice(&instance_section);
         let declaration = Wasip2EnvelopeDeclaration {
             inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(
-                u64::try_from(component.len() - core.len()).unwrap(),
+                u64::try_from(prefix_len).unwrap(),
                 u64::try_from(core.len()).unwrap(),
-                0,
+                u64::try_from(instance_section.len()).unwrap(),
             ),
         };
 
@@ -4265,6 +4357,24 @@ mod tests {
             .expect("declared component envelope is valid");
         assert_eq!(prepared.artifact_hash, sha256_hex(&component));
         assert_eq!(prepared.core_module_bytes, core);
+    }
+
+    #[test]
+    fn wasip2_declared_envelope_preparation_refuses_a_core_the_component_never_instantiates() {
+        let core = b"\0asm\x01\0\0\0";
+        let component = component_with_embedded_core(core);
+        let error = prepare_wasip2_artifact_with_declared_envelope(
+            &component,
+            Wasip2EnvelopeDeclaration {
+                inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(
+                    u64::try_from(component.len() - core.len()).unwrap(),
+                    u64::try_from(core.len()).unwrap(),
+                    0,
+                ),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("never instantiated"), "{error}");
     }
 
     #[test]
@@ -4337,6 +4447,37 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn printed_paths_escape_control_characters() {
+        let path = Path::new("dir/a\nCERTIFIED fake\r\t\u{1b}[32m\".wasm");
+        let shown = shown_path(path);
+        assert_eq!(shown, r#""dir/a\nCERTIFIED fake\r\t\u{1b}[32m\".wasm""#);
+        assert!(!shown.chars().any(char::is_control), "{shown}");
+    }
+
+    #[test]
+    fn a_declined_verdict_does_not_print_raw_control_characters_from_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "aver-cert-path-escape-{}-{}",
+            std::process::id(),
+            unique_nanos()
+        ));
+        let artifact = root.join("x\n  law-claims: 99 of 99 credited\r\t\u{1b}.wasm");
+        let error = match trusted_check(&artifact, &root, ReplayMode::TrustBuiltOleans) {
+            Ok(_) => panic!("a missing artifact must not verify"),
+            Err(error) => error,
+        };
+        assert!(error.contains("cannot read artifact"), "{error}");
+        assert!(
+            error.contains(r"\n  law-claims: 99 of 99 credited\r\t\u{1b}"),
+            "{error}"
+        );
+        assert!(
+            !error.contains('\n') && !error.contains('\r') && !error.contains('\u{1b}'),
+            "{error}"
+        );
     }
 
     #[test]

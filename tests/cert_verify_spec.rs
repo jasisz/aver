@@ -682,6 +682,579 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
     );
 }
 
+/// An artifact file name carrying a newline, a carriage return, a tab and an
+/// escape character must not add or forge a line of the report: the checker
+/// prints every path quoted with those characters escaped, on the green
+/// verdict and on a refusal alike.
+#[test]
+fn cert_tripwire_prints_artifact_paths_with_control_characters_escaped() {
+    let Some(out_dir) = tripwire_baseline("certverify-path-escape") else {
+        return;
+    };
+    let cert = out_dir.join("cert");
+    let hostile = "probe\n  law-claims: 99 of 99 credited\r\t\u{1b}[32m.wasm";
+    let escaped = r#"probe\n  law-claims: 99 of 99 credited\r\t\u{1b}[32m.wasm""#;
+    let artifact = out_dir.join(hostile);
+    let bytes = std::fs::read(out_dir.join("certprobe2.wasm")).unwrap();
+    std::fs::write(&artifact, &bytes).unwrap();
+
+    let assert_no_forged_line = |report: &str| {
+        assert!(report.contains(escaped), "path not escaped:\n{report}");
+        assert!(
+            !report.contains('\r') && !report.contains('\u{1b}') && !report.contains('\t'),
+            "raw control character in report:\n{report:?}"
+        );
+        assert!(
+            !report
+                .lines()
+                .any(|line| line.starts_with("  law-claims: 99 of 99 credited")),
+            "the file name forged a report line:\n{report}"
+        );
+    };
+
+    let (ok, report) = aver_check(&artifact, &cert);
+    assert!(ok, "the honest artifact must still check:\n{report}");
+    assert!(report.contains("CHECKED"), "{report}");
+    assert_no_forged_line(&report);
+
+    // Flip a byte of an export name, which validation does not read, so the
+    // refusal is the hash mismatch that prints the path.
+    let mut flipped = bytes.clone();
+    let at = flipped
+        .windows(5)
+        .position(|win| win == b"sumTo")
+        .expect("the `sumTo` export name should be present in the wasm");
+    flipped[at] ^= 1;
+    std::fs::write(&artifact, &flipped).unwrap();
+    let (ok, report) = aver_check(&artifact, &cert);
+    assert!(!ok, "a flipped byte must not check:\n{report}");
+    assert!(report.contains("artifact hash mismatch"), "{report}");
+    assert_no_forged_line(&report);
+}
+
+fn push_leb(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+/// Appends a section `id` holding `payload` and returns where the payload
+/// starts in the result.
+fn push_section(component: &mut Vec<u8>, id: u8, payload: &[u8]) -> usize {
+    component.push(id);
+    push_leb(payload.len(), component);
+    let start = component.len();
+    component.extend_from_slice(payload);
+    start
+}
+
+/// Parses `text`, whose first top-level core module is an empty placeholder,
+/// puts `core` in its place, and returns the component and where `core`
+/// starts. Index spaces do not depend on a module's contents, so the
+/// component keeps its structure.
+fn component_around_core(text: &str, core: &[u8]) -> (Vec<u8>, usize) {
+    let bytes = wat::parse_str(text).expect("attack component parses");
+    let range = wasmparser::Parser::new(0)
+        .parse_all(&bytes)
+        .find_map(|payload| match payload.unwrap() {
+            wasmparser::Payload::ModuleSection {
+                unchecked_range, ..
+            } => Some(unchecked_range),
+            _ => None,
+        })
+        .expect("placeholder module");
+    let mut size = Vec::new();
+    push_leb(range.len(), &mut size);
+    let header = range.start - 1 - size.len();
+    let mut component = bytes[..header].to_vec();
+    let start = push_section(&mut component, 1, core);
+    component.extend_from_slice(&bytes[range.end..]);
+    wasmparser::Validator::new()
+        .validate_all(&component)
+        .expect("attack component validates");
+    (component, start)
+}
+
+#[cfg(feature = "wasip2")]
+/// Copies the produced wasip2 package at `out_dir` next to `component`, whose
+/// declared core is the `core_len` bytes at `start`, and rebinds every hash
+/// and envelope length that pins the delivered component. Returns the
+/// artifact path and the directory holding `cert/`.
+fn plant_wasip2_component(
+    out_dir: &Path,
+    stem: &str,
+    label: &str,
+    component: &[u8],
+    start: usize,
+    core_len: usize,
+    honest_lean_envelope: &str,
+) -> (PathBuf, ScratchDir) {
+    let dir = temp_dir(&format!("certverify-wasip2-substitution-{label}"));
+    copy_dir(&out_dir.join("cert"), &dir.join("cert"));
+    let artifact = dir.join(format!("{stem}.component.wasm"));
+    std::fs::write(&artifact, component).unwrap();
+    rebind_cert_wasm_hash(&dir, component);
+    let manifest_path = dir.join("cert").join("cert-manifest.json");
+    let mut forged: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    let suffix_len = component.len() - start - core_len;
+    forged["wasip2ComponentEnvelope"]["prefix_len"] = start.into();
+    forged["wasip2ComponentEnvelope"]["suffix_len"] = suffix_len.into();
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&forged).unwrap(),
+    )
+    .unwrap();
+    replace_once(
+        &dir.join("cert").join("Artifact.lean"),
+        honest_lean_envelope,
+        &format!(
+            "wasip2ComponentEnvelope := some {{ prefixLen := {start}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix_len} }}"
+        ),
+    );
+    (artifact, dir)
+}
+
+/// Envelope substitution: a component that runs one module while its
+/// manifest declares another. The honest certified core of a produced wasip2
+/// package is planted in a component whose only export, `answer`, is lifted
+/// from a different module that returns `true`, and the manifest's envelope
+/// (and every hash pinning it) is rebound to point at the planted copy. Each
+/// placement is a valid component, so only the binding of the declared core to
+/// the component's exports can tell them apart, and each is DECLINED with its
+/// own reason before Lean runs:
+///   - inside a custom section (not a module of the component at all);
+///   - as an extra top-level module nothing instantiates;
+///   - as an instantiated module the export does not come from;
+///   - as a module inside a nested component;
+/// and, with the honest core as the module the component does run:
+///   - an uncertified core export lifted under a certified export's name;
+///   - a second instance of the declared core;
+///   - an adapter module that imports the declared export, changes its result,
+///     and is the module the export is lifted from;
+///   - a host function lowered into the declared core's memory and handed to
+///     a helper module whose start function calls it;
+///   - a helper module whose active data segment traps at instantiation, so
+///     the certified core never runs;
+///   - an imported component, whose code the checker cannot see, instantiated
+///     beside the declared core.
+#[cfg(feature = "wasip2")]
+#[test]
+fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_does_not_run() {
+    if !tripwire_lake_available() {
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-wasip2-envelope-substitution");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tests/fixtures/wasip2_carrierless.av")
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("--examples")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --target wasip2 --certify runs");
+    assert!(
+        compile.status.success(),
+        "wasip2 producer failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let honest_component =
+        std::fs::read(out_dir.join("wasip2_carrierless.component.wasm")).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let envelope = &manifest["wasip2ComponentEnvelope"];
+    let field = |name: &str| usize::try_from(envelope[name].as_u64().unwrap()).unwrap();
+    let (prefix, core_len, suffix) = (
+        field("prefix_len"),
+        field("embedded_core_module_len"),
+        field("suffix_len"),
+    );
+    let honest_core = honest_component[prefix..prefix + core_len].to_vec();
+    let honest_lean_envelope = format!(
+        "wasip2ComponentEnvelope := some {{ prefixLen := {prefix}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix} }}"
+    );
+
+    // The component the attacker actually ships: its one module answers true.
+    let actual = wat::parse_str(
+        r#"(component
+            (core module $actual (func (export "answer") (result i32) i32.const 1))
+            (core instance $i (instantiate $actual))
+            (alias core export $i "answer" (core func $answer))
+            (type $t (func (result bool)))
+            (func $lifted (type $t) (canon lift (core func $answer)))
+            (export "answer" (func $lifted)))"#,
+    )
+    .expect("attack component parses");
+
+    let custom = {
+        let mut component = actual.clone();
+        let mut payload = Vec::new();
+        let name = b"certified-decoy-core";
+        push_leb(name.len(), &mut payload);
+        payload.extend_from_slice(name);
+        let offset = payload.len();
+        payload.extend_from_slice(&honest_core);
+        let start = push_section(&mut component, 0, &payload) + offset;
+        (component, start)
+    };
+    let unused = {
+        let mut component = actual.clone();
+        let start = push_section(&mut component, 1, &honest_core);
+        (component, start)
+    };
+    let instantiated = {
+        let mut component = actual.clone();
+        let start = push_section(&mut component, 1, &honest_core);
+        // `instantiate` core module 1 (the planted copy) with no imports.
+        push_section(&mut component, 2, &[1, 0x00, 1, 0]);
+        (component, start)
+    };
+    let nested = {
+        let mut inner = b"\0asm\x0d\0\x01\0".to_vec();
+        let inner_start = push_section(&mut inner, 1, &honest_core);
+        let mut component = actual.clone();
+        let start = push_section(&mut component, 4, &inner) + inner_start;
+        (component, start)
+    };
+
+    let renamed = component_around_core(
+        r#"(component
+            (core module $honest)
+            (core instance $i (instantiate $honest))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (export "greet" (func $lifted)))"#,
+        &honest_core,
+    );
+    let twice = component_around_core(
+        r#"(component
+            (core module $honest)
+            (core instance $a (instantiate $honest))
+            (core instance $b (instantiate $honest))
+            (alias core export $a "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+    let lowered = component_around_core(
+        r#"(component
+            (import "host" (func $host (param "s" string)))
+            (core module $honest)
+            (core module $helper
+                (import "" "write" (func (param i32 i32)))
+                (func $go i32.const 0 i32.const 4 call 0)
+                (start $go))
+            (core instance $i (instantiate $honest))
+            (alias core export $i "memory" (core memory $mem))
+            (core func $low (canon lower (func $host) (memory $mem)))
+            (core instance $bundle (export "write" (func $low)))
+            (core instance $h (instantiate $helper (with "" (instance $bundle))))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+
+    let trapping = component_around_core(
+        r#"(component
+            (core module $honest)
+            (core module $data (memory 0) (data (i32.const 0) "x"))
+            (core instance $i (instantiate $honest))
+            (core instance $d (instantiate $data))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+
+    let imported_component = component_around_core(
+        r#"(component
+            (import "c" (component $c))
+            (core module $honest)
+            (core instance $i (instantiate $honest))
+            (instance $ci (instantiate $c))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+
+    let adapter = component_around_core(
+        r#"(component
+            (core module $honest)
+            (core module $adapter
+                (import "core" "run" (func $inner (result i32)))
+                (func (export "run") (result i32) call $inner i32.eqz))
+            (core instance $i (instantiate $honest))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $inner))
+            (core instance $bundle (export "run" (func $inner)))
+            (core instance $a (instantiate $adapter (with "core" (instance $bundle))))
+            (alias core export $a "run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+
+    for (label, (component, start), reason) in [
+        (
+            "custom-section",
+            custom,
+            "is not a top-level core module section",
+        ),
+        ("unused-module", unused, "never instantiated"),
+        (
+            "instantiated-unexported",
+            instantiated,
+            "component export `answer` is not lifted from the declared embedded core module",
+        ),
+        (
+            "nested-component",
+            nested,
+            "nested component is not a re-export shim",
+        ),
+        (
+            "renamed-export",
+            renamed,
+            "component export `greet` lifts core export \"wasi:cli/run@0.2.4#run\"",
+        ),
+        ("second-instance", twice, "instantiated more than once"),
+        (
+            "adapter-module",
+            adapter,
+            "an export of the declared embedded core module is re-bundled as \"run\"",
+        ),
+        (
+            "lowered-into-core-memory",
+            lowered,
+            "nor a wit-component shim or fixup module: it has a start function",
+        ),
+        (
+            "imported-component",
+            imported_component,
+            "wasip2 component imports a component",
+        ),
+        (
+            "trapping-data-segment",
+            trapping,
+            "nor a wit-component shim or fixup module: it has data segments",
+        ),
+    ] {
+        assert_eq!(&component[start..start + core_len], &honest_core[..]);
+        let (artifact, dir) = plant_wasip2_component(
+            &out_dir,
+            "wasip2_carrierless",
+            label,
+            &component,
+            start,
+            core_len,
+            &honest_lean_envelope,
+        );
+        let (ok, report) = aver_verify(&artifact, &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: substituted envelope must not verify:\n{report}"
+        );
+        assert!(
+            !report.contains("CERTIFIED"),
+            "{label}: substituted envelope printed a green verdict:\n{report}"
+        );
+        assert!(
+            report.contains(reason),
+            "{label}: expected the binding refusal `{reason}`:\n{report}"
+        );
+    }
+}
+
+/// A name with a newline inside the delivered component reaches the refusal
+/// through the validator's own message. Every line the checker prints passes
+/// one output sanitizer, so on the refusal no line of the report starts with a
+/// verdict word, under `verify` and `check` alike.
+#[cfg(feature = "wasip2")]
+#[test]
+fn cert_tripwire_prints_a_component_name_with_a_newline_escaped() {
+    if !tripwire_lake_available() {
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-wasip2-newline-name");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tests/fixtures/wasip2_carrierless.av")
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --target wasip2 --certify runs");
+    assert!(compile.status.success(), "wasip2 producer failed");
+    let component = wat::parse_str(
+        r#"(component
+            (core module $m (func (export "f") (result i32) i32.const 0))
+            (core instance $i (instantiate $m))
+            (alias core export $i "f" (core func $f))
+            (type $t (func (result bool)))
+            (func $lf (type $t) (canon lift (core func $f)))
+            (export "x\nCERTIFIED fake\nCHECKED fake" (func $lf)))"#,
+    )
+    .expect("component text parses");
+    let artifact = out_dir.join("wasip2_carrierless.component.wasm");
+    std::fs::write(&artifact, &component).unwrap();
+    for (label, (ok, report)) in [
+        ("verify", aver_verify(&artifact, &out_dir.join("cert"))),
+        ("check", aver_check(&artifact, &out_dir.join("cert"))),
+    ] {
+        assert!(!ok, "{label}: the component must be refused:\n{report}");
+        assert!(
+            report.contains("CERTIFIED fake"),
+            "{label}: expected the validator's message about the name:\n{report}"
+        );
+        assert!(
+            !report
+                .lines()
+                .any(|line| line.starts_with("CERTIFIED") || line.starts_with("CHECKED")),
+            "{label}: the name forged a verdict line:\n{report}"
+        );
+    }
+}
+
+/// A certified export lifted into the component. The certified `flip` is a
+/// claim about a core `i32` holding a Bool; lifted as `(u32) -> u32`, a caller
+/// can hand it 2, outside the certified domain. Aver lifts only its world
+/// entry points, so the checker knows no component signature for a certified
+/// export and DECLINES the lift before Lean runs, whatever type it carries.
+#[cfg(feature = "wasip2")]
+#[test]
+fn cert_tripwire_declines_a_wasip2_lift_of_a_certified_export() {
+    if !tripwire_lake_available() {
+        return;
+    }
+    let out_dir = temp_dir("certverify-wasip2-certified-lift");
+    let source = out_dir.join("wasip2_flip.av");
+    std::fs::write(
+        &source,
+        "module Wasip2Flip\n    intent = \"A certified Bool export.\"\n    exposes [flip, main]\n\n\
+         fn flip(b: Bool) -> Bool\n    ? \"Negate.\"\n    match b\n        true -> false\n        false -> true\n\n\
+         verify flip\n    flip(true) => false\n\n\
+         fn main() -> Bool\n    flip(true)\n",
+    )
+    .unwrap();
+    let compile = aver_command()
+        .arg("compile")
+        .arg(&source)
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("--examples")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --target wasip2 --certify runs");
+    assert!(
+        compile.status.success(),
+        "wasip2 producer failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let honest_component = std::fs::read(out_dir.join("wasip2_flip.component.wasm")).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "flip"),
+        "the fixture must certify `flip`"
+    );
+    let envelope = &manifest["wasip2ComponentEnvelope"];
+    let field = |name: &str| usize::try_from(envelope[name].as_u64().unwrap()).unwrap();
+    let (prefix, core_len, suffix) = (
+        field("prefix_len"),
+        field("embedded_core_module_len"),
+        field("suffix_len"),
+    );
+    let honest_core = honest_component[prefix..prefix + core_len].to_vec();
+    let honest_lean_envelope = format!(
+        "wasip2ComponentEnvelope := some {{ prefixLen := {prefix}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix} }}"
+    );
+    let lifted = |ty: &str| {
+        component_around_core(
+            &format!(
+                r#"(component
+                (core module $honest)
+                (core instance $i (instantiate $honest))
+                (alias core export $i "flip" (core func $flip))
+                (type $ft {ty})
+                (func $lifted (type $ft) (canon lift (core func $flip)))
+                (export "flip" (func $lifted)))"#
+            ),
+            &honest_core,
+        )
+    };
+    for (label, (component, start)) in [
+        ("u32", lifted(r#"(func (param "b" u32) (result u32))"#)),
+        ("bool", lifted(r#"(func (param "b" bool) (result bool))"#)),
+    ] {
+        let (artifact, dir) = plant_wasip2_component(
+            &out_dir,
+            "wasip2_flip",
+            &format!("certified-lift-{label}"),
+            &component,
+            start,
+            core_len,
+            &honest_lean_envelope,
+        );
+        let (ok, report) = aver_verify(&artifact, &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: a lifted certified export must not verify:\n{report}"
+        );
+        assert!(
+            !report.contains("CERTIFIED"),
+            "{label}: a lifted certified export printed a green verdict:\n{report}"
+        );
+        assert!(
+            report.contains("wasip2 component lifts certified core export `flip`"),
+            "{label}: expected the certified-lift refusal:\n{report}"
+        );
+    }
+}
+
 /// Emits the nested-module fixture baseline: a project whose dotted module
 /// dependency (`Nested.Deep.Util`) makes the certificate carry a nested model
 /// file (`AverModel/Nested/Deep/Util.lean`) that the bridge modules import by
@@ -1852,6 +2425,32 @@ fn cert_tripwire_declines_hostile_cert_file_name() {
     assert!(
         out.contains("bad name.lean") && out.contains("^[A-Za-z][A-Za-z0-9_]*\\.lean$"),
         "wrong reason (n):\n{out}"
+    );
+}
+
+/// (n') The filename gate's refusal prints the name escaped: a file name with
+/// a newline cannot append a forged verdict line to the report.
+#[test]
+fn cert_tripwire_prints_a_hostile_cert_file_name_escaped() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-n-escape") else {
+        return;
+    };
+    let dir = temp_dir("neg-n-escape");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("X\nCERTIFIED fake.lean"),
+        "-- inert\ndef x : Nat := 0\n",
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "hostile cert file name must fail:\n{out}");
+    assert!(
+        out.contains(r#""X\nCERTIFIED fake.lean""#),
+        "file name not escaped:\n{out}"
+    );
+    assert!(
+        !out.lines().any(|line| line.starts_with("CERTIFIED")),
+        "the file name forged a report line:\n{out}"
     );
 }
 

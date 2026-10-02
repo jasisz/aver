@@ -22,9 +22,13 @@ mod cache;
 #[cfg(feature = "verify")]
 mod lean_process;
 #[cfg(feature = "verify")]
+pub mod output;
+#[cfg(feature = "verify")]
 mod prelude_cache;
 #[cfg(feature = "verify")]
 mod verifier;
+#[cfg(feature = "verify")]
+mod wasip2_binding;
 #[cfg(feature = "verify")]
 pub use verifier::{
     ARTIFACT_DECODE_LINE, CheckVerdict, Explanation, Verdict, check, explain, verify,

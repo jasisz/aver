@@ -263,7 +263,7 @@ pub fn admitted_deriving_end(chars: &[char], start: usize) -> Option<usize> {
 pub fn lean_module_root(name: &str) -> Result<String, String> {
     let stem = name
         .strip_suffix(".lean")
-        .ok_or_else(|| format!("cert file `{name}` is not a Lean file"))?;
+        .ok_or_else(|| format!("cert file {name:?} is not a Lean file"))?;
     let segments: Vec<&str> = stem.split('/').collect();
     let valid = segments.iter().all(|segment| {
         let mut chars = segment.chars();
@@ -274,7 +274,7 @@ pub fn lean_module_root(name: &str) -> Result<String, String> {
         Ok(segments.join("."))
     } else {
         Err(format!(
-            "cert file name `{name}` must match ^[A-Za-z][A-Za-z0-9_]*\\.lean$ in every path segment"
+            "cert file name {name:?} must match ^[A-Za-z][A-Za-z0-9_]*\\.lean$ in every path segment"
         ))
     }
 }
@@ -721,6 +721,15 @@ fn first_refused(chars: &[char], tokens: &[Token]) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn module_root_refusals_print_the_name_escaped() {
+        for name in ["X\nCERTIFIED fake.lean", "X\nCERTIFIED fake"] {
+            let error = lean_module_root(name).unwrap_err();
+            assert!(!error.contains('\n'), "{error:?}");
+            assert!(error.contains(r#""X\nCERTIFIED fake"#), "{error:?}");
+        }
+    }
 
     fn refused(text: &str) -> Option<&'static str> {
         code_exec_token(text)

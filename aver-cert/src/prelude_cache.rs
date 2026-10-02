@@ -174,14 +174,20 @@ fn populate(
         let built = lean
             .run_lake(&temp, "proof library cache build", &["build"])
             .map_err(|error| match error {
-                LeanStepError::Timeout { limit, .. } => eprintln!(
-                    "warning: the proof library cache build exceeded its {}-second limit; \
-                     continuing without the cache",
-                    limit.as_secs()
+                LeanStepError::Timeout { limit, .. } => crate::output::plain(
+                    crate::output::Stream::Err,
+                    &format!(
+                        "warning: the proof library cache build exceeded its {}-second limit; \
+                         continuing without the cache",
+                        limit.as_secs()
+                    ),
                 ),
-                LeanStepError::Failed(reason) => eprintln!(
-                    "warning: the proof library cache build could not run; \
-                     continuing without the cache: {reason}"
+                LeanStepError::Failed(reason) => crate::output::plain(
+                    crate::output::Stream::Err,
+                    &format!(
+                        "warning: the proof library cache build could not run; \
+                         continuing without the cache: {reason}"
+                    ),
                 ),
             })?;
         if !built.status.success() || !temp.join(".lake").is_dir() {

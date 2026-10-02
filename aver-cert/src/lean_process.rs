@@ -128,7 +128,7 @@ impl LeanRunner {
         let elan_home = std::fs::canonicalize(&elan_home).map_err(|error| {
             format!(
                 "cannot resolve trusted Elan home {}: {error}",
-                elan_home.display()
+                crate::verifier::shown_path(&elan_home)
             )
         })?;
         let elan_name = format!("elan{}", std::env::consts::EXE_SUFFIX);
@@ -136,13 +136,13 @@ impl LeanRunner {
         let elan = std::fs::canonicalize(&elan).map_err(|error| {
             format!(
                 "cannot resolve trusted Elan executable {}: {error}; install Elan there or set ELAN_HOME",
-                elan.display()
+                crate::verifier::shown_path(&elan)
             )
         })?;
         if !elan.is_file() {
             return Err(format!(
                 "trusted Elan executable is not a regular file: {}",
-                elan.display()
+                crate::verifier::shown_path(&elan)
             ));
         }
 
@@ -184,7 +184,7 @@ impl LeanRunner {
         let work_dir = std::fs::canonicalize(work_dir).map_err(|error| {
             LeanStepError::Failed(format!(
                 "cannot resolve checker-owned Lean work dir {}: {error}",
-                work_dir.display()
+                crate::verifier::shown_path(work_dir)
             ))
         })?;
         let temp_dir = work_dir.join(format!(
@@ -201,7 +201,7 @@ impl LeanRunner {
         builder.create(&temp_dir).map_err(|error| {
             LeanStepError::Failed(format!(
                 "cannot create checker-owned Lean temp dir {}: {error}",
-                temp_dir.display()
+                crate::verifier::shown_path(&temp_dir)
             ))
         })?;
 
