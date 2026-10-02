@@ -682,6 +682,56 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
     );
 }
 
+/// An artifact file name carrying a newline, a carriage return, a tab and an
+/// escape character must not add or forge a line of the report: the checker
+/// prints every path quoted with those characters escaped, on the green
+/// verdict and on a refusal alike.
+#[test]
+fn cert_tripwire_prints_artifact_paths_with_control_characters_escaped() {
+    let Some(out_dir) = tripwire_baseline("certverify-path-escape") else {
+        return;
+    };
+    let cert = out_dir.join("cert");
+    let hostile = "probe\n  law-claims: 99 of 99 credited\r\t\u{1b}[32m.wasm";
+    let escaped = r#"probe\n  law-claims: 99 of 99 credited\r\t\u{1b}[32m.wasm""#;
+    let artifact = out_dir.join(hostile);
+    let bytes = std::fs::read(out_dir.join("certprobe2.wasm")).unwrap();
+    std::fs::write(&artifact, &bytes).unwrap();
+
+    let assert_no_forged_line = |report: &str| {
+        assert!(report.contains(escaped), "path not escaped:\n{report}");
+        assert!(
+            !report.contains('\r') && !report.contains('\u{1b}') && !report.contains('\t'),
+            "raw control character in report:\n{report:?}"
+        );
+        assert!(
+            !report
+                .lines()
+                .any(|line| line.starts_with("  law-claims: 99 of 99 credited")),
+            "the file name forged a report line:\n{report}"
+        );
+    };
+
+    let (ok, report) = aver_check(&artifact, &cert);
+    assert!(ok, "the honest artifact must still check:\n{report}");
+    assert!(report.contains("CHECKED"), "{report}");
+    assert_no_forged_line(&report);
+
+    // Flip a byte of an export name, which validation does not read, so the
+    // refusal is the hash mismatch that prints the path.
+    let mut flipped = bytes.clone();
+    let at = flipped
+        .windows(5)
+        .position(|win| win == b"sumTo")
+        .expect("the `sumTo` export name should be present in the wasm");
+    flipped[at] ^= 1;
+    std::fs::write(&artifact, &flipped).unwrap();
+    let (ok, report) = aver_check(&artifact, &cert);
+    assert!(!ok, "a flipped byte must not check:\n{report}");
+    assert!(report.contains("artifact hash mismatch"), "{report}");
+    assert_no_forged_line(&report);
+}
+
 fn push_leb(mut value: usize, out: &mut Vec<u8>) {
     loop {
         let byte = (value & 0x7f) as u8;

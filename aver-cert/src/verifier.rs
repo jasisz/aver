@@ -418,7 +418,7 @@ fn summarize_report(artifact: &Path, report: TrustedReport, status: &'static str
     };
     let text = format!(
         "{} ({} {status} export{}, level {}{law_clause}{bridged_law_clause}{bridge_clause})",
-        artifact.display(),
+        shown_path(artifact),
         count,
         if count == 1 { "" } else { "s" },
         level,
@@ -521,7 +521,7 @@ fn trusted_check(
     replay_mode: ReplayMode,
 ) -> Result<TrustedReport, String> {
     let bytes = std::fs::read(artifact)
-        .map_err(|error| format!("cannot read artifact {}: {error}", artifact.display()))?;
+        .map_err(|error| format!("cannot read artifact {}: {error}", shown_path(artifact)))?;
     let manifest = read_manifest(cert_dir)?;
 
     let schema_version = manifest_u64(&manifest, "schema_version")?;
@@ -544,7 +544,7 @@ fn trusted_check(
     if pinned_hash != actual_hash {
         return Err(format!(
             "artifact hash mismatch: {} hashes to {actual_hash}, certificate pins {pinned_hash}",
-            artifact.display()
+            shown_path(artifact)
         ));
     }
 
@@ -1451,7 +1451,7 @@ const AUDIT_TEMPLATE: &str = include_str!("checker_audit.lean");
 fn read_manifest(cert_dir: &Path) -> Result<Value, String> {
     let path = cert_dir.join("cert-manifest.json");
     let text = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        .map_err(|error| format!("cannot read {}: {error}", shown_path(&path)))?;
     serde_json::from_str(&text)
         .map_err(|error| format!("cert-manifest.json is not valid JSON: {error}"))
 }
@@ -1697,7 +1697,7 @@ fn read_candidates(
             "simulatesModelTotally" => ".simulatesModelTotally",
             other => {
                 return Err(format!(
-                    "certified export `{name}` uses unsupported policy `{other}`"
+                    "certified export {name:?} uses unsupported policy {other:?}"
                 ));
             }
         };
@@ -1706,12 +1706,12 @@ fn read_candidates(
             ("simulatesModel", None) | ("simulatesModelTotally", Some(_)) => {}
             ("simulatesModel", Some(_)) => {
                 return Err(format!(
-                    "partial export `{name}` must not carry a termination witness"
+                    "partial export {name:?} must not carry a termination witness"
                 ));
             }
             ("simulatesModelTotally", None) => {
                 return Err(format!(
-                    "total export `{name}` is missing `termination_witness`"
+                    "total export {name:?} is missing `termination_witness`"
                 ));
             }
             _ => unreachable!(),
@@ -2027,7 +2027,7 @@ fn validate_law_candidate(mut law: LawCandidate) -> Result<LawCandidate, String>
     if let Err(field) = lean_gate::law_claim_identifiers(&law.label, &law.theorem, &law.corollary) {
         return Err(format!(
             "law-claim `{}` field `{field}` is not a plain dotted Lean identifier",
-            law.label
+            display_safe(&law.label)
         ));
     }
     if law.corollary != law.label.replace('.', "_") {
@@ -2638,7 +2638,7 @@ fn assemble_build(
     let mut flat_files: Vec<(String, PathBuf)> = Vec::new();
     let mut subdirectories: Vec<(String, PathBuf)> = Vec::new();
     let entries = std::fs::read_dir(cert_dir)
-        .map_err(|error| format!("cannot read cert dir {}: {error}", cert_dir.display()))?;
+        .map_err(|error| format!("cannot read cert dir {}: {error}", shown_path(cert_dir)))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("cert dir read: {error}"))?;
         let Ok(kind) = entry.file_type() else {
@@ -2676,7 +2676,7 @@ fn assemble_build(
         reject_shadowed_root(&root, selected_wall)?;
         note_staged_path(&mut staged_paths, name)?;
         let contents = std::fs::read(path)
-            .map_err(|error| format!("cannot read cert file {name}: {error}"))?;
+            .map_err(|error| format!("cannot read cert file {name:?}: {error}"))?;
         scan_for_code_exec(name, &contents)?;
         if matches!(
             name.as_str(),
@@ -2685,7 +2685,7 @@ fn assemble_build(
             collect_import_lines(&String::from_utf8_lossy(&contents), &mut admitted);
         }
         std::fs::write(build.path.join(name), contents)
-            .map_err(|error| format!("cannot stage {name}: {error}"))?;
+            .map_err(|error| format!("cannot stage {name:?}: {error}"))?;
         roots.push(root);
     }
 
@@ -2716,17 +2716,17 @@ fn assemble_build(
         }
         note_staged_path(&mut staged_paths, relative)?;
         let contents = std::fs::read(path)
-            .map_err(|error| format!("cannot read cert file {relative}: {error}"))?;
+            .map_err(|error| format!("cannot read cert file {relative:?}: {error}"))?;
         scan_for_code_exec(relative, &contents)?;
         let destination = relative
             .split('/')
             .fold(build.path.clone(), |path, segment| path.join(segment));
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot stage {relative}: {error}"))?;
+                .map_err(|error| format!("cannot stage {relative:?}: {error}"))?;
         }
         std::fs::write(destination, contents)
-            .map_err(|error| format!("cannot stage {relative}: {error}"))?;
+            .map_err(|error| format!("cannot stage {relative:?}: {error}"))?;
         roots.push(root);
     }
     build.package_roots = roots.clone();
@@ -2854,7 +2854,7 @@ fn note_staged_path(
 ) -> Result<(), String> {
     if let Some(previous) = staged.insert(relative.to_ascii_lowercase(), relative.to_string()) {
         return Err(format!(
-            "cert files `{previous}` and `{relative}` collide case-insensitively"
+            "cert files {previous:?} and {relative:?} collide case-insensitively"
         ));
     }
     Ok(())
@@ -2881,11 +2881,11 @@ fn collect_nested_lean_files(
 ) -> Result<(), String> {
     if depth > MAX_NESTED_DEPTH {
         return Err(format!(
-            "cert subdirectory `{relative}` exceeds the maximum nesting depth of {MAX_NESTED_DEPTH}"
+            "cert subdirectory {relative:?} exceeds the maximum nesting depth of {MAX_NESTED_DEPTH}"
         ));
     }
     let entries = std::fs::read_dir(dir)
-        .map_err(|error| format!("cannot read cert dir {}: {error}", dir.display()))?;
+        .map_err(|error| format!("cannot read cert dir {}: {error}", shown_path(dir)))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("cert dir read: {error}"))?;
         let Ok(kind) = entry.file_type() else {
@@ -2917,7 +2917,7 @@ fn scan_for_code_exec(name: &str, contents: &[u8]) -> Result<(), String> {
     let text = String::from_utf8_lossy(contents);
     if let Some(token) = lean_gate::code_exec_token(&text) {
         return Err(format!(
-            "cert data file `{name}` contains refused construct `{token}`"
+            "cert data file {name:?} contains refused construct `{token}`"
         ));
     }
     Ok(())
@@ -3163,6 +3163,12 @@ fn surface_build_failure(text: &str, lines: usize) -> String {
     diagnostics.join("\n")
 }
 
+/// A path as the checker prints it: quoted, with control characters and
+/// quotes escaped, so a file name cannot add or forge a line of the report.
+pub(crate) fn shown_path(path: &Path) -> String {
+    format!("{path:?}")
+}
+
 fn display_safe(value: &str) -> String {
     value
         .chars()
@@ -3188,7 +3194,7 @@ const INT_INPUT_DOMAIN_LINE: &str = "domain: every Int input (an argument, or a 
 pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> {
     let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
     println!("{}", "Artifact certificate".bold());
-    println!("  artifact: {}", artifact.display());
+    println!("  artifact: {}", shown_path(artifact));
     println!("  pinned sha256: {}", report.artifact_hash);
     println!(
         "  target: {}    profile: {}    abi: {}",
@@ -3811,7 +3817,7 @@ mod tests {
         );
         assert_eq!(
             summary.text,
-            "app.wasm (0 checked exports, level L1; source-bridges: 1 of 2 credited)"
+            "\"app.wasm\" (0 checked exports, level L1; source-bridges: 1 of 2 credited)"
         );
         assert_eq!(
             summary.uncredited_bridges,
@@ -3836,7 +3842,7 @@ mod tests {
             },
             "checked",
         );
-        assert_eq!(bare.text, "app.wasm (0 checked exports, level L1)");
+        assert_eq!(bare.text, "\"app.wasm\" (0 checked exports, level L1)");
         assert!(bare.uncredited_laws.is_empty());
     }
 
@@ -3868,7 +3874,7 @@ mod tests {
         );
         assert_eq!(
             summary.text,
-            "app.wasm (0 checked exports, level L1; law-claims: 1 of 2 credited)"
+            "\"app.wasm\" (0 checked exports, level L1; law-claims: 1 of 2 credited)"
         );
         assert_eq!(
             summary.uncredited_laws,
@@ -3916,7 +3922,7 @@ mod tests {
         );
         assert_eq!(
             summary.text,
-            "app.wasm (0 checked exports, level L1; law-claims: 2 of 2 credited; \
+            "\"app.wasm\" (0 checked exports, level L1; law-claims: 2 of 2 credited; \
              bridged-laws: 1 of 2 credited)"
         );
         assert!(summary.uncredited_laws.is_empty());
@@ -4369,6 +4375,37 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn printed_paths_escape_control_characters() {
+        let path = Path::new("dir/a\nCERTIFIED fake\r\t\u{1b}[32m\".wasm");
+        let shown = shown_path(path);
+        assert_eq!(shown, r#""dir/a\nCERTIFIED fake\r\t\u{1b}[32m\".wasm""#);
+        assert!(!shown.chars().any(char::is_control), "{shown}");
+    }
+
+    #[test]
+    fn a_declined_verdict_does_not_print_raw_control_characters_from_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "aver-cert-path-escape-{}-{}",
+            std::process::id(),
+            unique_nanos()
+        ));
+        let artifact = root.join("x\n  law-claims: 99 of 99 credited\r\t\u{1b}.wasm");
+        let error = match trusted_check(&artifact, &root, ReplayMode::TrustBuiltOleans) {
+            Ok(_) => panic!("a missing artifact must not verify"),
+            Err(error) => error,
+        };
+        assert!(error.contains("cannot read artifact"), "{error}");
+        assert!(
+            error.contains(r"\n  law-claims: 99 of 99 credited\r\t\u{1b}"),
+            "{error}"
+        );
+        assert!(
+            !error.contains('\n') && !error.contains('\r') && !error.contains('\u{1b}'),
+            "{error}"
+        );
     }
 
     #[test]
