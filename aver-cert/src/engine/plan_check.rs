@@ -41,6 +41,8 @@ struct MCtx<'a> {
     /// (`MCtx.toI64Chk`).
     bytes_arr: u64,
     to_i64_chk: u64,
+    /// `String.fromInt` (`MCtx.fromInt`).
+    from_int: u64,
     tt: &'a PlanTypeTable,
     sigs: HashMap<u32, (Vec<PlanTy>, PlanTy)>,
 }
@@ -78,6 +80,7 @@ impl<'a> MCtx<'a> {
             to_i64_sat: idx_or(24, tt.int_sat),
             bytes_arr: idx_or(25, tt.bytes_arr),
             to_i64_chk: idx_or(26, tt.int_chk),
+            from_int: idx_or(27, tt.str_from_int),
             tt,
             sigs,
         }
@@ -366,6 +369,7 @@ impl MCtx<'_> {
             (PlanBuiltin::BytesDrop, [PlanTy::Bytes, PlanTy::Int]) => self
                 .bytes_helper(PlanBytesRole::Drop)
                 .map(|_| PlanTy::Bytes),
+            (PlanBuiltin::StrFromInt, [PlanTy::Int]) => Some(PlanTy::Str),
             _ => None,
         }
     }
@@ -551,6 +555,23 @@ impl MCtx<'_> {
                 PlanTy::List(t) => self.ty_list_arms(n, g, tail, &t, arms),
                 _ => None,
             },
+            PlanExpr::Try(x, ret) => match (self.ty_of(n, g, false, x)?, ret) {
+                (PlanTy::Result(t, er), PlanTy::Result(t2, er2))
+                    if er == *er2 && has_default(t2) && has_default(&er) =>
+                {
+                    Some(*t)
+                }
+                _ => None,
+            },
+            PlanExpr::Scope(x) => {
+                if !tail {
+                    return None;
+                }
+                let t = self.ty_of(n, g, true, x)?;
+                let mut rets = Vec::new();
+                bare_tries(x, &mut rets);
+                rets.iter().all(|r| **r == t).then_some(t)
+            }
         }
     }
 
@@ -755,12 +776,47 @@ fn params_gamma(ps: &[PlanTy]) -> Gamma {
         .collect()
 }
 
+/// `Grammar.bareTries`: the return types of the `try_` nodes outside any
+/// `scope`.
+fn bare_tries<'e>(e: &'e PlanExpr, out: &mut Vec<&'e PlanTy>) {
+    match e {
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::Scope(_) => {}
+        PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
+            bare_tries(v, out);
+            bare_tries(b, out);
+        }
+        PlanExpr::Call(_, args)
+        | PlanExpr::TailCall(_, args)
+        | PlanExpr::RecordCreate(_, args)
+        | PlanExpr::Construct(_, _, args)
+        | PlanExpr::Interp(args)
+        | PlanExpr::List(_, args) => args.iter().for_each(|a| bare_tries(a, out)),
+        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => bare_tries(x, out),
+        PlanExpr::If(c, t, el) => {
+            bare_tries(c, out);
+            bare_tries(t, out);
+            bare_tries(el, out);
+        }
+        PlanExpr::Match(s, arms) => {
+            bare_tries(s, out);
+            arms.iter().for_each(|(_, b)| bare_tries(b, out));
+        }
+        PlanExpr::Try(x, ret) => {
+            out.push(ret);
+            bare_tries(x, out);
+        }
+    }
+}
+
 /// `Grammar.planTyped`.
 fn plan_typed(m: &MCtx<'_>, p: &FnPlan) -> bool {
     let np = p.params.len();
+    let mut bare = Vec::new();
+    bare_tries(&p.body, &mut bare);
     np <= p.nslots as usize
         && (p.nslots as usize) <= np + p.locals.len()
         && m.ty_of(p.nslots, &params_gamma(&p.params), true, &p.body) == Some(p.ret.clone())
+        && bare.is_empty()
 }
 
 // ---- `TypeTable.declsWellFormed`: no vacuous obligation ----
@@ -921,6 +977,7 @@ enum WI {
     ArrayNewFixed(u64, u32),
     RefTest(u64),
     RefCast(u64),
+    Ret,
 }
 
 /// `GrammarLower.BI`.
@@ -1125,6 +1182,7 @@ impl MCtx<'_> {
                         out.push(BI::Op(WI::Call(self.to_i64_sat)));
                         out.extend(self.bytes_call(PlanBytesRole::Drop));
                     }
+                    (PlanBuiltin::StrFromInt, _) => out.push(BI::Op(WI::Call(self.from_int))),
                     _ => {}
                 }
                 out
@@ -1479,7 +1537,41 @@ impl MCtx<'_> {
                 out.extend(items.iter().map(|_| BI::Op(WI::Call(u64::from(f)))));
                 out
             }
+            PlanExpr::Try(inner, ret) => match (self.ty_of(n, g, false, inner), ret) {
+                (Some(PlanTy::Result(t, er)), PlanTy::Result(t2, er2)) => {
+                    let mut out = self.lower(x, g, false, inner);
+                    out.push(BI::Op(WI::LocalSet(x.subj)));
+                    out.extend(self.try_tail(x, &t, &er, t2, er2));
+                    out
+                }
+                _ => vec![],
+            },
+            PlanExpr::Scope(inner) => self.lower(x, g, tail, inner),
         }
+    }
+
+    /// `GrammarLower.tryB`: the tag test of the subject in the scratch, then
+    /// the `Ok` payload or a fresh `Err` of the enclosing return type and
+    /// `return`.
+    fn try_tail(&self, x: &LCtx, t: &PlanTy, er: &PlanTy, t2: &PlanTy, er2: &PlanTy) -> Vec<BI> {
+        let rs = self.res_struct(t, er);
+        let mut out = tag_test(x.subj, rs);
+        let then_b = ops(vec![
+            WI::LocalGet(x.subj),
+            WI::RefCast(rs),
+            WI::StructGet(rs, 1),
+        ]);
+        let mut else_b = ops(vec![WI::I32Const(0)]);
+        else_b.extend(self.dflt(t2));
+        else_b.extend(ops(vec![
+            WI::LocalGet(x.subj),
+            WI::RefCast(rs),
+            WI::StructGet(rs, 2),
+            WI::StructNew(self.res_struct(t2, er2)),
+            WI::Ret,
+        ]));
+        out.push(BI::If(Some(t.clone()), then_b, else_b));
+        out
     }
 
     fn lower_int_arms(
@@ -1781,6 +1873,7 @@ impl MCtx<'_> {
                 out.extend([0xfb, 0x16]);
                 s33(*t, out)?
             }
+            WI::Ret => out.push(0x0f),
         }
         Some(())
     }
@@ -1891,7 +1984,10 @@ fn call_targets(e: &PlanExpr, out: &mut Vec<u32>) {
             call_targets(l, out);
             call_targets(r, out);
         }
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => call_targets(x, out),
+        PlanExpr::Neg(x)
+        | PlanExpr::Project(_, _, x)
+        | PlanExpr::Try(x, _)
+        | PlanExpr::Scope(x) => call_targets(x, out),
         PlanExpr::If(c, t, el) => {
             call_targets(c, out);
             call_targets(t, out);
@@ -1925,7 +2021,10 @@ fn literal_list_types(e: &PlanExpr, out: &mut Vec<PlanTy>) {
         | PlanExpr::RecordCreate(_, args)
         | PlanExpr::Construct(_, _, args)
         | PlanExpr::Interp(args) => args.iter().for_each(|a| literal_list_types(a, out)),
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => literal_list_types(x, out),
+        PlanExpr::Neg(x)
+        | PlanExpr::Project(_, _, x)
+        | PlanExpr::Try(x, _)
+        | PlanExpr::Scope(x) => literal_list_types(x, out),
         PlanExpr::If(c, t, el) => {
             literal_list_types(c, out);
             literal_list_types(t, out);
@@ -1973,7 +2072,10 @@ fn string_lits<'e>(e: &'e PlanExpr, out: &mut Vec<&'e [u8]>) {
             string_lits(l, out);
             string_lits(r, out);
         }
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => string_lits(x, out),
+        PlanExpr::Neg(x)
+        | PlanExpr::Project(_, _, x)
+        | PlanExpr::Try(x, _)
+        | PlanExpr::Scope(x) => string_lits(x, out),
         PlanExpr::If(c, t, el) => {
             string_lits(c, out);
             string_lits(t, out);
@@ -2086,7 +2188,7 @@ fn facets_e(e: &PlanExpr, out: &mut BTreeSet<&'static str>) {
             facets_e(l, out);
             facets_e(r, out);
         }
-        PlanExpr::Neg(x) => facets_e(x, out),
+        PlanExpr::Neg(x) | PlanExpr::Try(x, _) | PlanExpr::Scope(x) => facets_e(x, out),
         PlanExpr::If(c, t, el) => {
             facets_e(c, out);
             facets_e(t, out);
@@ -2157,6 +2259,18 @@ enum HI {
     SetAt(u32, u64, Vec<HI>),
     /// `local.get k; args; array.copy ty ty`.
     CopyTo(u32, u64, Vec<HI>),
+    // The `String.fromInt` template's instructions (`StringHelpers.lean`).
+    /// `if (result (ref null ht))`.
+    IfElseRef(u64, Vec<HI>, Vec<HI>),
+    /// `array.new ty`.
+    NewFill(u64),
+    I64Sub,
+    I64DivU,
+    I64RemU,
+    /// Pinned by its bytes, not run.
+    Dead(Vec<HI>),
+    /// An instruction only encoded, by its bytes.
+    RawOp(Vec<u8>),
 }
 
 /// `ListHelpers.HLocal`: a helper's declared local.
@@ -2535,6 +2649,23 @@ impl MCtx<'_> {
                     uleb(*ty, out)?;
                     uleb(*ty, out)?
                 }
+                HI::IfElseRef(ht, t, e) => {
+                    out.extend([0x04, 0x63]);
+                    s33(*ht, out)?;
+                    self.enc_h(t, out)?;
+                    out.push(0x05);
+                    self.enc_h(e, out)?;
+                    out.push(0x0b);
+                }
+                HI::NewFill(ty) => {
+                    out.extend([0xfb, 0x06]);
+                    uleb(*ty, out)?
+                }
+                HI::I64Sub => out.push(0x7d),
+                HI::I64DivU => out.push(0x80),
+                HI::I64RemU => out.push(0x82),
+                HI::Dead(b) => self.enc_h(b, out)?,
+                HI::RawOp(b) => out.extend(b),
             }
         }
         Some(())
@@ -2790,6 +2921,293 @@ fn chk_code(c: u64) -> BCode {
                 vec![HI::Unreachable],
             ),
         ],
+    }
+}
+
+// ---- the `String.fromInt` template (`StringHelpers.lean`) ----
+
+/// `StringHelpers.countB`.
+fn from_int_count() -> Vec<HI> {
+    vec![
+        h_lg(3),
+        h_op(WI::I64Eqz),
+        HI::BrIf(1),
+        h_lg(4),
+        h_i32c(1),
+        HI::I32Add,
+        h_ls(4),
+        h_lg(3),
+        h_op(WI::I64Const(10)),
+        HI::I64DivU,
+        h_ls(3),
+        HI::Br(0),
+    ]
+}
+
+/// `StringHelpers.fillB`.
+fn from_int_fill(s: u64) -> Vec<HI> {
+    vec![
+        h_lg(6),
+        h_lg(7),
+        h_op(WI::I32LtS),
+        HI::BrIf(1),
+        HI::SetAt(
+            8,
+            s,
+            vec![
+                h_lg(6),
+                h_i32c(48),
+                h_lg(3),
+                h_op(WI::I64Const(10)),
+                HI::I64RemU,
+                HI::WrapI64,
+                HI::I32Add,
+            ],
+        ),
+        h_lg(3),
+        h_op(WI::I64Const(10)),
+        HI::I64DivU,
+        h_ls(3),
+        h_lg(6),
+        h_i32c(1),
+        HI::I32Sub,
+        h_ls(6),
+        HI::Br(0),
+    ]
+}
+
+/// `StringHelpers.nonzeroB`.
+fn from_int_nonzero(s: u64) -> Vec<HI> {
+    vec![
+        h_lg(1),
+        h_op(WI::I64Const(0)),
+        h_op(WI::I64LtS),
+        HI::IfElseI32(vec![h_i32c(1)], vec![h_i32c(0)]),
+        h_ls(7),
+        h_lg(7),
+        HI::IfElseI64(
+            vec![h_op(WI::I64Const(0)), h_lg(1), HI::I64Sub],
+            vec![h_lg(1)],
+        ),
+        h_ls(2),
+        h_lg(2),
+        h_ls(3),
+        h_i32c(0),
+        h_ls(4),
+        HI::Block(vec![HI::Loop(from_int_count())]),
+        h_lg(4),
+        h_lg(7),
+        HI::I32Add,
+        h_ls(5),
+        h_lg(5),
+        HI::NewBytes(s),
+        h_ls(8),
+        h_lg(5),
+        h_i32c(1),
+        HI::I32Sub,
+        h_ls(6),
+        h_lg(2),
+        h_ls(3),
+        HI::Block(vec![HI::Loop(from_int_fill(s))]),
+        h_lg(7),
+        HI::IfThen(vec![HI::SetAt(8, s, vec![h_i32c(0), h_i32c(45)])]),
+        h_lg(8),
+    ]
+}
+
+/// `StringHelpers.bigB`: pinned, not run.
+fn from_int_big(c: u64, g: u64, s: u64) -> Vec<HI> {
+    let ge_u = || HI::RawOp(vec![0x4f]);
+    let aget = || h_op(WI::ArrayGet(g));
+    vec![
+        h_lg(0),
+        h_op(WI::StructGet(c, 2)),
+        h_i32c(0),
+        h_op(WI::I32LtS),
+        HI::IfElseI32(vec![h_i32c(1)], vec![h_i32c(0)]),
+        h_ls(7),
+        h_lg(0),
+        h_op(WI::StructGet(c, 1)),
+        h_op(WI::ArrayLen),
+        h_ls(10),
+        h_lg(10),
+        HI::NewBytes(g),
+        h_ls(9),
+        h_i32c(0),
+        h_ls(11),
+        HI::Block(vec![HI::Loop(vec![
+            h_lg(11),
+            h_lg(10),
+            ge_u(),
+            HI::BrIf(1),
+            HI::SetAt(
+                9,
+                g,
+                vec![h_lg(11), h_lg(0), h_op(WI::StructGet(c, 1)), h_lg(11), aget()],
+            ),
+            h_lg(11),
+            h_i32c(1),
+            HI::I32Add,
+            h_ls(11),
+            HI::Br(0),
+        ])]),
+        h_lg(10),
+        h_i32c(10),
+        HI::RawOp(vec![0x6c]),
+        HI::NewBytes(s),
+        h_ls(16),
+        h_i32c(0),
+        h_ls(17),
+        HI::Block(vec![HI::Loop(vec![
+            h_op(WI::I64Const(0)),
+            h_ls(13),
+            h_lg(10),
+            h_ls(11),
+            HI::Block(vec![HI::Loop(vec![
+                h_lg(11),
+                h_op(WI::I32Eqz),
+                HI::BrIf(1),
+                h_lg(11),
+                h_i32c(1),
+                HI::I32Sub,
+                h_ls(11),
+                h_lg(13),
+                h_op(WI::I64Const(32)),
+                HI::RawOp(vec![0x86]),
+                h_lg(9),
+                h_lg(11),
+                aget(),
+                h_op(WI::I64Const(4_294_967_295)),
+                HI::RawOp(vec![0x83]),
+                HI::RawOp(vec![0x84]),
+                h_ls(12),
+                h_lg(12),
+                h_op(WI::I64Const(10)),
+                HI::I64DivU,
+                h_ls(14),
+                h_lg(12),
+                h_op(WI::I64Const(10)),
+                HI::I64RemU,
+                h_ls(13),
+                HI::SetAt(9, g, vec![h_lg(11), h_lg(14)]),
+                HI::Br(0),
+            ])]),
+            HI::SetAt(
+                16,
+                s,
+                vec![h_lg(17), h_i32c(48), h_lg(13), HI::WrapI64, HI::I32Add],
+            ),
+            h_lg(17),
+            h_i32c(1),
+            HI::I32Add,
+            h_ls(17),
+            h_i32c(1),
+            h_ls(15),
+            h_i32c(0),
+            h_ls(11),
+            HI::Block(vec![HI::Loop(vec![
+                h_lg(11),
+                h_lg(10),
+                ge_u(),
+                HI::BrIf(1),
+                h_lg(9),
+                h_lg(11),
+                aget(),
+                h_op(WI::I64Const(0)),
+                h_op(WI::I64Ne),
+                HI::IfThen(vec![h_i32c(0), h_ls(15), HI::Br(2)]),
+                h_lg(11),
+                h_i32c(1),
+                HI::I32Add,
+                h_ls(11),
+                HI::Br(0),
+            ])]),
+            h_lg(15),
+            HI::BrIf(1),
+            HI::Br(0),
+        ])]),
+        h_lg(17),
+        h_lg(7),
+        HI::I32Add,
+        h_ls(5),
+        h_lg(5),
+        HI::NewBytes(s),
+        h_ls(8),
+        h_lg(7),
+        HI::IfThen(vec![HI::SetAt(8, s, vec![h_i32c(0), h_i32c(45)])]),
+        h_i32c(0),
+        h_ls(6),
+        HI::Block(vec![HI::Loop(vec![
+            h_lg(6),
+            h_lg(17),
+            ge_u(),
+            HI::BrIf(1),
+            HI::SetAt(
+                8,
+                s,
+                vec![
+                    h_lg(7),
+                    h_lg(6),
+                    HI::I32Add,
+                    h_lg(16),
+                    h_lg(17),
+                    h_i32c(1),
+                    HI::I32Sub,
+                    h_lg(6),
+                    HI::I32Sub,
+                    HI::GetU(s),
+                ],
+            ),
+            h_lg(6),
+            h_i32c(1),
+            HI::I32Add,
+            h_ls(6),
+            HI::Br(0),
+        ])]),
+        h_lg(8),
+    ]
+}
+
+/// `StringHelpers.fromIntCode` over the carrier `c`, its magnitude array `g`
+/// and `$string` `s`.
+fn from_int_code(c: u64, g: u64, s: u64) -> BCode {
+    let small = vec![
+        h_lg(0),
+        h_op(WI::StructGet(c, 0)),
+        h_ls(1),
+        h_lg(1),
+        h_op(WI::I64Eqz),
+        HI::IfElseRef(
+            s,
+            vec![h_i32c(48), h_i32c(1), HI::NewFill(s)],
+            from_int_nonzero(s),
+        ),
+    ];
+    BCode {
+        groups: vec![
+            (3, HLocal::I64),
+            (4, HLocal::I32),
+            (1, HLocal::Ref(s)),
+            (1, HLocal::Ref(g)),
+            (2, HLocal::I32),
+            (3, HLocal::I64),
+            (1, HLocal::I32),
+            (1, HLocal::Ref(s)),
+            (1, HLocal::I32),
+        ],
+        body: vec![
+            h_lg(0),
+            h_op(WI::StructGet(c, 1)),
+            h_op(WI::RefIsNull),
+            HI::IfElseRef(s, small, vec![HI::Dead(from_int_big(c, g, s))]),
+        ],
+    }
+}
+
+impl MCtx<'_> {
+    /// The code entry `String.fromInt` must have.
+    fn int_formatter_entry_bytes(&self) -> Option<Vec<u8>> {
+        self.b_entry_bytes(&from_int_code(self.carrier, self.mag, self.str_))
     }
 }
 

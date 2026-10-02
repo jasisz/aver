@@ -109,7 +109,8 @@ def mctxOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) : MCtx :=
     toI64Sat := idxOr 24 tt.intSat
     bytesArr := idxOr 25 tt.bytesArr
     bytesHelpers := tt.bytesHelpers
-    toI64Chk := idxOr 26 tt.intChk }
+    toI64Chk := idxOr 26 tt.intChk
+    fromInt := idxOr 27 tt.strFromInt }
 
 /-! ## The opening rec group, raw and decoded
 

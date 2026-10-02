@@ -115,6 +115,8 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
     hostOf M h M.toIndex = some (1, h.toIndex) ∧
     hostOf M h M.divmod = some (3, h.divmod) ∧
     hostOf M h M.toI64Sat = some (1, _root_.AverCert.ListHelpers.satSem M.carrier) ∧
+    hostOf M h M.fromInt =
+      some (1, _root_.AverCert.StringHelpers.fromIntSem M.carrier M.mag M.str) ∧
     (∀ x ∈ M.listHelpers, hostOf M h x.2.2 =
       some (x.2.1.arity, _root_.AverCert.ListHelpers.helperSem M h.eq h.stringEq x.2.1 x.1)) ∧
     (∀ x ∈ M.bytesHelpers, hostOf M h x.2 =
@@ -129,6 +131,7 @@ theorem host_facts {M : MCtx} {fns : List FnEntry} (h : HostFns)
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
     L (by simp [hostAssoc]), L (by simp [hostAssoc]), L (by simp [hostAssoc]),
+    L (by simp [hostAssoc]),
     fun x hx => L (by simp only [hostAssoc, List.mem_append]; left; right
                       exact List.mem_map.mpr ⟨x, hx, rfl⟩),
     fun x hx => L (by simp only [hostAssoc, List.mem_append]; right

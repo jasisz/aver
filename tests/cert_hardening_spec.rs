@@ -3783,7 +3783,8 @@ fn cert_hardening_accepts_bytes_helpers() {
     }
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the Bytes-helper certificate must check:\n{report}");
-    assert!(report.contains("20 checked exports"), "{report}");
+    // `Bytes_fromList` interpolates an Int into its error, which now certifies.
+    assert!(report.contains("21 checked exports"), "{report}");
 }
 
 /// A role row naming another helper of the same type: `take` declared at the
@@ -3895,6 +3896,219 @@ fn cert_hardening_declines_a_tampered_bytes_helper_body() {
         .expect("the take helper tests its count")
         + body.start;
     bytes[at + 3] = 0x01;
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A program whose functions return early through `?`: in an argument
+/// (`bumped`) and in a binding and an argument (`twice`).
+const TRY: &str = "module TryProbe
+    intent = \"Early returns.\"
+    exposes [half, bumped, twice]
+
+fn half(n: Int) -> Result<Int, String>
+    ? \"The number itself, if it is not negative.\"
+    match n >= 0
+        true -> Result.Ok(n)
+        false -> Result.Err(\"negative\")
+
+fn bumped(n: Int) -> Result<Int, String>
+    ? \"One more than half, through an early return in an argument.\"
+    Result.Ok(half(n)? + 1)
+
+fn twice(n: Int) -> Result<Int, String>
+    ? \"Two early returns: a binding and an argument.\"
+    a = half(n)?
+    Result.Ok(a + half(a - 1)?)
+";
+
+/// The honest certificate checks: both early-returning bodies are planned
+/// under a `scope`, and the three functions check.
+#[test]
+fn cert_hardening_accepts_early_returns() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-try-clean", TRY) else {
+        return;
+    };
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    for row in ["(.scope ", "(.try_ (.call (.fn "] {
+        assert!(plans.contains(row), "`{row}` is planned:\n{plans}");
+    }
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "the early-return certificate must check:\n{report}");
+    assert!(report.contains("3 checked exports"), "{report}");
+}
+
+/// The bytes of `bumped`'s `?` and where its `Err` branch starts: the first
+/// `else; i32.const 0` of its body, the tag of the `Err` it returns.
+fn try_err_branch(bytes: &[u8], cert: &Path) -> (std::ops::Range<usize>, usize) {
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let bumped: u32 = number_after(&plans, "⟨\"bumped\", true, ").parse().unwrap();
+    let (body, _) = code_body_and_imports(bytes, bumped);
+    assert!(!body.is_empty(), "bumped is a defined function");
+    let at = bytes[body.clone()]
+        .windows(3)
+        .position(|w| w == [0x05, 0x41, 0x00])
+        .expect("the `?` rebuilds an `Err` in its `else`")
+        + body.start;
+    (body, at)
+}
+
+/// The `?` returns an `Ok` instead: the tag of the value it returns early
+/// becomes `1`. The module stays valid and is restamped; the plan's lowering
+/// no longer matches the code entry.
+#[test]
+fn cert_hardening_declines_an_early_return_of_the_other_variant() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-try-variant", TRY) else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let (_, at) = try_err_branch(&bytes, &cert);
+    bytes[at + 2] = 0x01;
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The `?` does not return: its `return` becomes `unreachable`, so an `Err`
+/// traps instead of leaving the function. The plan still says `try_`.
+#[test]
+fn cert_hardening_declines_an_early_return_that_does_not_return() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-try-noreturn", TRY) else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let (body, at) = try_err_branch(&bytes, &cert);
+    let ret = bytes[at..body.end]
+        .windows(2)
+        .position(|w| w == [0x0f, 0x0b])
+        .expect("the `Err` branch ends with `return`")
+        + at;
+    bytes[ret] = 0x00;
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A plan whose `?` names another return type: the `Err` it says it returns
+/// is a `Result<Bool, String>`, which no code entry builds.
+#[test]
+fn cert_hardening_declines_an_early_return_at_another_type() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-try-type", TRY) else {
+        return;
+    };
+    replace_once(
+        &cert.join("Plans.lean"),
+        "[(.local 0)]) (.result .int .string))",
+        "[(.local 0)]) (.result .bool .string))",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A program interpolating Ints: alone, and among String parts.
+const INTERP: &str = "module InterpProbe
+    intent = \"Int interpolation.\"
+    exposes [show, label]
+
+fn show(n: Int) -> String
+    ? \"The number in decimal.\"
+    \"n = {n}\"
+
+fn label(n: Int, s: String) -> String
+    ? \"Mixed parts.\"
+    \"{s}: {n + 1}!\"
+";
+
+/// The honest certificate checks: each Int part calls the declared
+/// `String.fromInt`, pinned to its template.
+#[test]
+fn cert_hardening_accepts_int_interpolation() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-interp-clean", INTERP) else {
+        return;
+    };
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    for row in ["strFromInt := some ", "(.call (.builtin .strFromInt) "] {
+        assert!(plans.contains(row), "`{row}` is planned:\n{plans}");
+    }
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(
+        ok,
+        "the Int-interpolation certificate must check:\n{report}"
+    );
+    assert!(report.contains("2 checked exports"), "{report}");
+}
+
+/// `String.fromInt` declared at a planned function's index: one index
+/// cannot be both the pinned helper and a plan.
+#[test]
+fn cert_hardening_declines_the_int_formatter_at_a_planned_function() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-interp-index", INTERP) else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let from_int = number_after(&text, "strFromInt := some ");
+    let show = number_after(&text, "⟨\"show\", true, ");
+    replace_once(
+        &plans,
+        &format!("strFromInt := some {from_int}"),
+        &format!("strFromInt := some {show}"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The bytes of the declared `String.fromInt` and the position of `needle`
+/// in them.
+fn from_int_site(bytes: &[u8], cert: &Path, needle: &[u8]) -> usize {
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let from_int: u32 = number_after(&plans, "strFromInt := some ").parse().unwrap();
+    let (body, _) = code_body_and_imports(bytes, from_int);
+    assert!(!body.is_empty(), "String.fromInt is a defined function");
+    bytes[body.clone()]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .expect("the helper has the instruction")
+        + body.start
+}
+
+/// A tampered Small branch: the fill loop writes each digit from `1`
+/// instead of `0`. The module stays valid and is restamped; the template pin
+/// sees the change.
+#[test]
+fn cert_hardening_declines_a_tampered_int_formatter() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-interp-body", INTERP) else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    // `local.get 6; i32.const 48; local.get 3; i64.const 10; i64.rem_u`.
+    let at = from_int_site(
+        &bytes,
+        &cert,
+        &[0x20, 0x06, 0x41, 0x30, 0x20, 0x03, 0x42, 0x0a, 0x82],
+    );
+    bytes[at + 3] = 0x31;
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The Big branch is pinned though the wall does not run it: its digit
+/// buffer's size `len * 10` becomes `len + 10`.
+#[test]
+fn cert_hardening_declines_a_tampered_big_int_branch() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-interp-big", INTERP) else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    // `local.get 10; i32.const 10; i32.mul`.
+    let at = from_int_site(&bytes, &cert, &[0x20, 0x0a, 0x41, 0x0a, 0x6c]);
+    bytes[at + 4] = 0x6a;
     validate(&bytes);
     restamp(&wasm, &cert, &bytes);
     let (ok, report) = aver_cert("check", &wasm, &cert);

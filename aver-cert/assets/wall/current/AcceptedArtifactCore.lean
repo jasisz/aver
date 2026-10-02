@@ -10,6 +10,7 @@
 -- is accounted for.
 import TypeTable
 import GrammarTotal
+import StringHelpers
 import WasmSlice
 import CertDecode
 import ArithTemplateDerisk
@@ -68,7 +69,8 @@ def hostAssoc (M : MCtx) (h : HostFns) : List (Nat × (Nat × (List WVal → Opt
    (M.mul, (2, h.mul)), (M.neg, (1, fun _ => none)), (M.cmp, (2, h.cmp)), (M.eq, (2, h.eq)),
    (M.concat, (1, h.stringConcat M.str)), (M.streq, (2, h.stringEq)),
    (M.toIndex, (1, h.toIndex)), (M.divmod, (3, h.divmod)),
-   (M.toI64Sat, (1, _root_.AverCert.ListHelpers.satSem M.carrier))] ++
+   (M.toI64Sat, (1, _root_.AverCert.ListHelpers.satSem M.carrier)),
+   (M.fromInt, (1, _root_.AverCert.StringHelpers.fromIntSem M.carrier M.mag M.str))] ++
   helperAssoc M h ++ bytesAssoc M
 
 def hostOf (M : MCtx) (h : HostFns) : HostTbl := fun f => (hostAssoc M h).lookup f
@@ -76,7 +78,7 @@ def hostOf (M : MCtx) (h : HostFns) : HostTbl := fun f => (hostAssoc M h).lookup
 /-- The role indices of a lowering context, in `hostAssoc` order. -/
 def roleIndices (M : MCtx) : List Nat :=
   [M.box, M.add, M.sub, M.mul, M.neg, M.cmp, M.eq, M.concat, M.streq, M.toIndex, M.divmod,
-   M.toI64Sat] ++ M.listHelpers.map (·.2.2) ++ M.bytesHelpers.map (·.2)
+   M.toI64Sat, M.fromInt] ++ M.listHelpers.map (·.2.2) ++ M.bytesHelpers.map (·.2)
 
 /-- The emitted code of every planned function: its plan's lowering. -/
 def codeOf (M : MCtx) (fns : List FnEntry) : CodeTbl := fun f => (planOf fns f).map (fnCode M)
@@ -144,6 +146,8 @@ def consPinned (tt : TypeTable) (fns : List FnEntry) : Bool :=
     | .construct _ _ args => argsTargets args
     | .interp parts => argsTargets parts
     | .list _ items => argsTargets items
+    | .try_ e _ => callTargets e
+    | .scope e => callTargets e
   def argsTargets : List Expr → List Nat
     | [] => []
     | e :: es => callTargets e ++ argsTargets es
@@ -334,6 +338,11 @@ def listHelpersPinnedWith (bodyAt : Nat → Option (List Nat))
     ((_root_.AverCert.ListHelpers.hBodyBytes M (_root_.AverCert.ListHelpers.satCode M.carrier)).any
         (fun b => bodyAt M.toI64Sat == some b) &&
       tyOk M.toI64Sat [refN M.carrier] [.numeric 0x7e])) &&
+  (decide (4294967296 ≤ M.fromInt) ||
+    ((_root_.AverCert.BytesHelpers.bBodyBytes M
+        (_root_.AverCert.StringHelpers.fromIntCode M.carrier M.mag M.str)).any
+        (fun b => bodyAt M.fromInt == some b) &&
+      tyOk M.fromInt [refN M.carrier] [refN M.str])) &&
   bytesHelpersPinnedWith bodyAt tyOk M
 
 /-- `listHelpersPinnedWith` over the module's code and type sections. -/

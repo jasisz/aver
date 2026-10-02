@@ -88,6 +88,9 @@ structure TypeTable where
   /-- `__aint_to_i64_checked`, which the `pack` helper calls, pinned to its
       template. -/
   intChk : Option Nat := none
+  /-- `String.fromInt`, which an `Int` interpolation part calls, pinned to its
+      template (`AcceptedArtifact.listHelpersPinned`). -/
+  strFromInt : Option Nat := none
 deriving Repr
 
 /-- One planned function: the plan is the function's MIR body printed 1:1

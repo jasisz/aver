@@ -29,6 +29,13 @@
    The String and Vector nodes call three more runtime helpers, taken with
    exactly the contracts `Schema.Obligation.holds` already assumes of them
    (`XHost`): `__wasmgc_concat_n`, `__wasmgc_string_eq`, `__aint_to_index`.
+   An Int interpolation part calls `String.fromInt`, whose meaning is the
+   wall's run of its pinned template (`StringHelpers.fromIntSem_spec`).
+
+   A `try_` may return early from any position: `agreement` then concludes
+   the escape disjunct `Esc` (the run returned, the source evaluation failed,
+   and its early return `escv` is represented by the returned value), which
+   every node propagates and a `scope` turns into its value.
 
    The interpreter's `ref.test` is exact while wasm GC tests subtyping; the
    S-3 section below shows the two agree on constructor structs under the
@@ -73,6 +80,14 @@ def LRel (env : Nat → Option SVal) (wl : List WVal) : Prop :=
 def Res (tail : Bool) (env : Nat → Option SVal) (st : List WVal) (sv : SVal) : Out → Prop
   | .ok wl' st' => ∃ w, st' = w :: st ∧ SRepr S M sv w ∧ LRel S M X env wl'
   | .ret w => tail = true ∧ SRepr S M sv w
+
+/-- An early return out of a node (a `try_` meeting an `Err`): the run
+    returned `w`, the source evaluation `ev` failed, and the escape `es` is a
+    value `w` represents, at the return type of one of the `try_` nodes `tys`
+    it passed through (`bareTries`). -/
+def Esc {α : Type} (ev : Option α) (es : Option SVal) (tys : List Ty) : Out → Prop
+  | .ret w => ev = none ∧ ∃ x, es = some x ∧ SRepr S M x w ∧ ∃ R ∈ tys, HasTy M x R
+  | .ok _ _ => False
 
 end Rel
 
@@ -145,6 +160,11 @@ structure XHost {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop
   /-- Every declared `Bytes` helper, the wall's run of its pinned template. -/
   bytesHelper : ∀ r f, M.bytesHelper r = some f →
     ∃ g, host f = some (r.arity, g) ∧ BytesSpec S M r g
+  /-- `String.fromInt`, the wall's run of its pinned template
+      (`StringHelpers.fromIntSem_spec`): the decimal bytes of a represented
+      Int. -/
+  fromInt : ∃ g, host M.fromInt = some (1, g) ∧
+    ∀ n w v, S.Repr n w → g [w] = some v → v = strW M (decBytes n)
 
 /-- Assume–guarantee contract of a code function `f` at signature `sig` for
     one opaque `callee`: the ONLY thing a caller knows about `f`. -/
@@ -412,6 +432,59 @@ theorem res_false {env : Nat → Option SVal} {st : List WVal} {sv : SVal} {out 
       exact ⟨wl', w, rfl, hw, hl⟩
   | ret w => exact absurd h.1 (by simp)
 
+/-- An early return out of a part is one out of the whole: the run is the
+    part's `return`, the whole's evaluation fails where the part's does, the
+    whole returns the part's escape, through the part's `try_` nodes. -/
+theorem esc_lift {α β : Type} {ev : Option α} {ev' : Option β} {es es' : Option SVal}
+    {tys tys' : List Ty} {out : Out} (h : Esc S M ev es tys out)
+    (hev : ev = none → ev' = none) (hes : ∀ x, es = some x → es' = some x)
+    (htys : ∀ R ∈ tys, R ∈ tys') : Esc S M ev' es' tys' out := by
+  cases out with
+  | ok _ _ => exact h.elim
+  | ret w =>
+      obtain ⟨h1, x, hx, hw, R, hR, hxR⟩ := h
+      exact ⟨hev h1, x, hes x hx, hw, R, htys R hR, hxR⟩
+
+/-- The same, past the rest of the run: a `return` skips it. -/
+theorem esc_up {host : HostTbl} {ar : Nat → Option Nat} {callee : Callee} {ys : List WInstr}
+    {α β : Type} {ev : Option α} {ev' : Option β} {es es' : Option SVal}
+    {tys tys' : List Ty} {o out : Out} (h : Esc S M ev es tys o)
+    (hseq : seqOut host ar callee ys (some o) = some out)
+    (hev : ev = none → ev' = none) (hes : ∀ x, es = some x → es' = some x)
+    (htys : ∀ R ∈ tys, R ∈ tys') : Esc S M ev' es' tys' out := by
+  cases o with
+  | ok _ _ => exact h.elim
+  | ret w =>
+      simp only [seqOut, Option.some.injEq] at hseq
+      subst hseq
+      exact esc_lift h hev hes htys
+
+/-- An early return is a `return`. -/
+theorem esc_ret {α : Type} {ev : Option α} {es : Option SVal} {tys : List Ty} {out : Out}
+    (h : Esc S M ev es tys out) : ∃ w, out = .ret w := by
+  cases out with
+  | ok _ _ => exact h.elim
+  | ret w => exact ⟨w, rfl⟩
+
+/-- No early return leaves a node without a bare `try_`. -/
+theorem esc_nil {α : Type} {ev : Option α} {es : Option SVal} {out : Out}
+    (h : Esc S M ev es [] out) : False := by
+  cases out with
+  | ok _ _ => exact h
+  | ret w =>
+      obtain ⟨_, _, _, _, R, hR, _⟩ := h
+      cases hR
+
+/-- An early return is never a successful evaluation. -/
+theorem esc_some {α : Type} {ev : Option α} {v : α} {es : Option SVal} {tys : List Ty}
+    {out : Out} (h : Esc S M ev es tys out) (hv : ev = some v) : False := by
+  cases out with
+  | ok _ _ => exact h
+  | ret w =>
+      obtain ⟨h1, _⟩ := h
+      rw [hv] at h1
+      cases h1
+
 end LRelLemmas
 
 theorem envTy_upd {M : MCtx} {env : Nat → Option SVal}
@@ -644,7 +717,8 @@ theorem hasTy_list {M : MCtx} {v : SVal} {t : Ty} (h : HasTy M v (.list t)) :
     type. -/
 theorem builtin_step (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     {C : Nat} {S : CarrierSpec C} {M : MCtx}
-    (bi : Builtin) (hnl : bi.listRole = none) (hnb : bi.isBytes = false) (ts : List Ty) (T : Ty)
+    (bi : Builtin) (hnl : bi.listRole = none) (hnb : bi.isBytes = false)
+    (hfi : bi ≠ .strFromInt) (ts : List Ty) (T : Ty)
     (hty : builtinTy M bi ts = some T)
     (svs : List SVal) (ws : List WVal) (hT : HasTyL M svs ts) (hr : SReprL S M svs ws)
     (wl st : List WVal) (out : Out)
@@ -716,8 +790,44 @@ theorem builtin_step (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee
         ⟨wh, wt, rfl, hwh, hwt⟩, rfl⟩
       rcases hasTy_list htl with rfl | ⟨x, r, rfl, _, _⟩ <;> rfl
     · cases hty
-  all_goals first | (simp [Builtin.isBytes] at hnb; done) | cases hty |
+  all_goals first | (simp [Builtin.isBytes] at hnb; done) | exact absurd rfl hfi | cases hty |
     (simp [Builtin.listRole] at hnl; done)
+
+/-- An `Int` interpolation part: the `String.fromInt` helper returns the
+    decimal bytes of the Int (`XHost.fromInt`). -/
+theorem fromInt_step {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
+    (R : XHost S M host) (ar : Nat → Option Nat) (callee : Callee) (ts : List Ty) (T : Ty)
+    (hty : builtinTy M .strFromInt ts = some T)
+    (svs : List SVal) (ws : List WVal) (hT : HasTyL M svs ts) (hr : SReprL S M svs ws)
+    (wl st : List WVal) (out : Out)
+    (hrun : wRunF host ar callee (eraseL (builtinTail M .strFromInt (some ts))) wl
+      (ws.reverse ++ st) = some out) :
+    ∃ sv w, builtinEval .strFromInt svs = some sv ∧ HasTy M sv T ∧ SRepr S M sv w ∧
+      out = .ok wl (w :: st) := by
+  obtain ⟨rfl, rfl⟩ : ts = [.int] ∧ T = .string := by
+    rcases ts with _ | ⟨t, _ | ⟨t', ts'⟩⟩
+    · simp [builtinTy] at hty
+    · cases t <;> simp [builtinTy] at hty
+      subst hty
+      exact ⟨rfl, rfl⟩
+    · simp [builtinTy] at hty
+  obtain ⟨a, svs1, rfl, ha, hT1⟩ := hasTyL_cons_inv hT
+  have := hasTyL_nil_inv hT1; subst this
+  obtain ⟨wa, ws1, rfl, hwa, hr1⟩ := sreprL_cons_inv hr
+  have := sreprL_nil_inv hr1; subst this
+  obtain ⟨x, rfl⟩ := hasTy_int ha
+  obtain ⟨g, hg, hgs⟩ := R.fromInt
+  simp only [builtinTail, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+    List.nil_append, List.cons_append] at hrun
+  cases hq : g [wa] with
+  | none => simp [wRunF, hg, popArgs_one, hq] at hrun
+  | some r =>
+      simp [wRunF, hg, popArgs_one, hq] at hrun
+      subst hrun
+      have hrr := hgs x wa r hwa.1 hq
+      subst hrr
+      exact ⟨.s (decBytes x), strW M (decBytes x), by simp [builtinEval], by simp [HasTy],
+        by simp [SRepr], rfl⟩
 
 /-! ## Strings and Floats -/
 
@@ -1448,6 +1558,48 @@ theorem tyOf_list_inv {t : Ty} {items : List Expr} {T : Ty}
       · simp at h
     · simp at h
 
+theorem tyOf_try_inv {e : Expr} {R T : Ty}
+    (h : tyOf M n Γ tail (.try_ e R) = some T) :
+    ∃ er t', tyOf M n Γ false e = some (.result T er) ∧ R = .result t' er ∧
+      t'.hasDefault = true ∧ er.hasDefault = true := by
+  simp only [tyOf] at h
+  cases he : tyOf M n Γ false e with
+  | none => simp [he] at h
+  | some te =>
+      rw [he] at h
+      cases te with
+      | result t E =>
+          cases R with
+          | result t' E' =>
+              simp only at h
+              split at h
+              · rename_i hc
+                obtain ⟨rfl, h2, h3⟩ := hc
+                simp only [Option.some.injEq] at h
+                subst h
+                exact ⟨E, t', rfl, rfl, h2, h3⟩
+              · cases h
+          | _ => simp at h
+      | _ => simp at h
+
+theorem tyOf_scope_inv {e : Expr} {T : Ty}
+    (h : tyOf M n Γ tail (.scope e) = some T) :
+    tail = true ∧ tyOf M n Γ true e = some T ∧ ∀ R ∈ bareTries e, R = T := by
+  simp only [tyOf] at h
+  split at h
+  · rename_i ht
+    split at h
+    · rename_i T' hte
+      split at h
+      · rename_i hall
+        cases h
+        refine ⟨ht, hte, fun R hR => ?_⟩
+        have := List.all_eq_true.mp hall R hR
+        simpa using this
+      · cases h
+    · cases h
+  · cases h
+
 theorem tyOf_construct_inv {c : CtorTag} {ty : Ty} {args : List Expr} {T : Ty}
     (h : tyOf M n Γ tail (.construct c ty args) = some T) :
     ∃ ts, tysOf M n Γ args = some ts ∧ ctorTy M c ty ts = some T := by
@@ -1691,6 +1843,63 @@ theorem evalRes_err {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {ob eb : Nat} {t 
       | none => none := by
   rcases resPick_spec h with ⟨rfl, rfl, rfl | ⟨rfl, rfl⟩⟩ | ⟨rfl, rfl, rfl | ⟨rfl, rfl⟩⟩ <;>
     simp [evalArms, patMatch, bindVals, noSlot] <;> rfl
+
+/-! The same arm picks for the early return of the arm that runs. -/
+
+theorem escvList_nil {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {hd tl : Nat} {t : Ty}
+    (h : listPick p1 p2 = some (swap, hd, tl)) :
+    escvArms F env (.nil t) (.cons p1 b1 (.cons p2 b2 .nil)) =
+      escv F env (if swap then b2 else b1) := by
+  rcases listPick_spec h with ⟨rfl, rfl, rfl | ⟨rfl, rfl, rfl⟩⟩ | ⟨rfl, rfl, rfl | rfl⟩ <;>
+    simp [escvArms, patMatch, bindVals]
+
+theorem escvList_cons {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {hd tl : Nat} {t : Ty}
+    {x r : SVal} (h : listPick p1 p2 = some (swap, hd, tl)) :
+    escvArms F env (.cons t x r) (.cons p1 b1 (.cons p2 b2 .nil)) =
+      match bindVals env [hd, tl] [x, r] with
+      | some env' => escv F env' (if swap then b1 else b2)
+      | none => none := by
+  rcases listPick_spec h with ⟨rfl, rfl, rfl | ⟨rfl, rfl, rfl⟩⟩ | ⟨rfl, rfl, rfl | rfl⟩ <;>
+    simp [escvArms, patMatch, bindVals, noSlot] <;> rfl
+
+theorem escvOpt_some {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {sb : Nat} {t : Ty}
+    {x : SVal} (h : optPick p1 p2 = some (swap, sb)) :
+    escvArms F env (.some t x) (.cons p1 b1 (.cons p2 b2 .nil)) =
+      match bindVals env [sb] [x] with
+      | some env' => escv F env' (if swap then b2 else b1)
+      | none => none := by
+  rcases optPick_spec h with ⟨rfl, rfl, rfl | rfl⟩ | ⟨rfl, rfl, rfl | ⟨rfl, rfl⟩⟩ <;>
+    simp [escvArms, patMatch, bindVals, noSlot] <;> rfl
+
+theorem escvOpt_none {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {sb : Nat} {t : Ty}
+    (h : optPick p1 p2 = some (swap, sb)) :
+    escvArms F env (.none t) (.cons p1 b1 (.cons p2 b2 .nil)) =
+      escv F env (if swap then b1 else b2) := by
+  rcases optPick_spec h with ⟨rfl, rfl, rfl | rfl⟩ | ⟨rfl, rfl, rfl | ⟨rfl, rfl⟩⟩ <;>
+    simp [escvArms, patMatch, bindVals]
+
+theorem escvRes_ok {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {ob eb : Nat} {t e : Ty}
+    {x : SVal} (h : resPick p1 p2 = some (swap, ob, eb)) :
+    escvArms F env (.ok t e x) (.cons p1 b1 (.cons p2 b2 .nil)) =
+      match bindVals env [ob] [x] with
+      | some env' => escv F env' (if swap then b2 else b1)
+      | none => none := by
+  rcases resPick_spec h with ⟨rfl, rfl, rfl | ⟨rfl, rfl⟩⟩ | ⟨rfl, rfl, rfl | ⟨rfl, rfl⟩⟩ <;>
+    simp [escvArms, patMatch, bindVals, noSlot] <;> rfl
+
+theorem escvRes_err {p1 p2 : Pat} {b1 b2 : Expr} {swap : Bool} {ob eb : Nat} {t e : Ty}
+    {x : SVal} (h : resPick p1 p2 = some (swap, ob, eb)) :
+    escvArms F env (.err t e x) (.cons p1 b1 (.cons p2 b2 .nil)) =
+      match bindVals env [eb] [x] with
+      | some env' => escv F env' (if swap then b1 else b2)
+      | none => none := by
+  rcases resPick_spec h with ⟨rfl, rfl, rfl | ⟨rfl, rfl⟩⟩ | ⟨rfl, rfl, rfl | ⟨rfl, rfl⟩⟩ <;>
+    simp [escvArms, patMatch, bindVals, noSlot] <;> rfl
+
+/-- The `try_` nodes of a two-arm match are those of its two bodies. -/
+theorem bareTriesA_two (p1 p2 : Pat) (b1 b2 : Expr) (R : Ty) :
+    R ∈ bareTriesA (.cons p1 b1 (.cons p2 b2 .nil)) ↔ R ∈ bareTries b1 ∨ R ∈ bareTries b2 := by
+  simp [bareTriesA]
 
 end ShapeEval
 
@@ -2631,8 +2840,9 @@ variable (n : Nat)
       LRel S M X env wl →
       wRunF host ar callee (lowerW M X Γ tail e) wl st = some out →
       (_ : sizeOf e < n := by agreement_size) →
-      ∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out)
+      (∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (eval F env e) (escv F env e) (bareTries e) out)
   (agreementArgs :
     ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
       (wl st : List WVal) (out : Out),
@@ -2641,9 +2851,10 @@ variable (n : Nat)
       LRel S M X env wl →
       wRunF host ar callee (lowerArgsW M X Γ es) wl st = some out →
       (_ : sizeOf es < n := by agreement_size) →
-      ∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
+      (∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
         evalArgs F env es = some svs ∧ HasTyL M svs Ts ∧
-        SReprL S M svs ws ∧ LRel S M X env wl')
+        SReprL S M svs ws ∧ LRel S M X env wl') ∨
+        Esc S M (evalArgs F env es) (escvArgs F env es) (bareTriesL es) out)
   (agreementIntArms :
     ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (sc : List BI) (bt : Option Ty) (x : Int),
@@ -2655,8 +2866,9 @@ variable (n : Nat)
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
       (_ : sizeOf arms < n := by agreement_size) →
-      ∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out)
+      (∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.i x) arms) (escvArms F env (.i x) arms) (bareTriesA arms) out)
   (agreementBoolArms :
     ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (x : Bool),
@@ -2665,8 +2877,9 @@ variable (n : Nat)
       wRunF host ar callee (eraseL (lowerBoolArms M X Γ tail bt arms)) wl (b32 x :: st) =
         some out →
       (_ : sizeOf arms < n := by agreement_size) →
-      ∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out)
+      (∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.b x) arms) (escvArms F env (.b x) arms) (bareTriesA arms) out)
   (agreementOptArms :
     ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (t : Ty) (sv : SVal) (w : WVal),
@@ -2675,8 +2888,9 @@ variable (n : Nat)
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerOptArms M X Γ tail bt t arms)) wl st = some out →
       (_ : sizeOf arms < n := by agreement_size) →
-      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
-        Res S M X tail env st sv' out)
+      (∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∨
+        Esc S M (evalArms F env sv arms) (escvArms F env sv arms) (bareTriesA arms) out)
   (agreementResArms :
     ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (t e : Ty) (sv : SVal) (w : WVal),
@@ -2685,8 +2899,9 @@ variable (n : Nat)
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerResArms M X Γ tail bt t e arms)) wl st = some out →
       (_ : sizeOf arms < n := by agreement_size) →
-      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
-        Res S M X tail env st sv' out)
+      (∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∨
+        Esc S M (evalArms F env sv arms) (escvArms F env sv arms) (bareTriesA arms) out)
   (agreementVarArms :
     ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (tid cv : Nat) (fs : List SVal)
@@ -2700,8 +2915,9 @@ variable (n : Nat)
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerVarArms M X Γ tail bt tid arms)) wl st = some out →
       (_ : sizeOf arms < n := by agreement_size) →
-      ∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out)
+      (∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.variant tid cv fs) arms) (escvArms F env (.variant tid cv fs) arms) (bareTriesA arms) out)
   (agreementStrArms :
     ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (x : List Nat),
@@ -2710,8 +2926,9 @@ variable (n : Nat)
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerStrArms M X Γ tail bt arms)) wl st = some out →
       (_ : sizeOf arms < n := by agreement_size) →
-      ∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out)
+      (∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.s x) arms) (escvArms F env (.s x) arms) (bareTriesA arms) out)
   (agreementTupArms :
     ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (tid : Nat) (fs : List SVal) (ws : List WVal)
@@ -2722,8 +2939,9 @@ variable (n : Nat)
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerTupArms M X Γ tail tid arms)) wl st = some out →
       (_ : sizeOf arms < n := by agreement_size) →
-      ∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out)
+      (∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.record tid fs) arms) (escvArms F env (.record tid fs) arms) (bareTriesA arms) out)
 include agreement agreementArgs agreementIntArms agreementBoolArms agreementOptArms agreementResArms agreementVarArms agreementStrArms agreementTupArms
 
 theorem agreement_step :
@@ -2733,8 +2951,9 @@ theorem agreement_step :
       EnvTy M env Γ →
       LRel S M X env wl →
       wRunF host ar callee (lowerW M X Γ tail e) wl st = some out →
-      ∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (eval F env e) (escv F env e) (bareTries e) out
   | .literal (.int k), hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨hband, rfl⟩ := tyOf_litInt_inv hty
       have hk : -(2 ^ 63 : Int) ≤ k ∧ k < 2 ^ 63 := by
@@ -2744,7 +2963,7 @@ theorem agreement_step :
       | some r =>
           simp [lowerW, lowerB, eraseL, eraseI, wRunF, hBox, popArgs, hb] at hrun
           subst hrun
-          refine ⟨.i k, by simp [eval], by simp [HasTy], res_ok ?_ hl⟩
+          refine Or.inl ⟨.i k, by simp [eval], by simp [HasTy], res_ok ?_ hl⟩
           simp only [SRepr]
           exact Ctr.hBox k r hk.1 hk.2 hb
   | .literal (.bool v), hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
@@ -2752,19 +2971,19 @@ theorem agreement_step :
       subst hT
       simp [lowerW, lowerB, eraseL, eraseI, wRunF] at hrun
       subst hrun
-      exact ⟨.b v, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr, b32]) hl⟩
+      exact Or.inl ⟨.b v, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr, b32]) hl⟩
   | .literal (.float bits), hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       have hT := tyOf_litFloat_inv hty
       subst hT
       simp [lowerW, lowerB, eraseL, eraseI, wRunF] at hrun
       subst hrun
-      exact ⟨.f bits, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr]) hl⟩
+      exact Or.inl ⟨.f bits, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr]) hl⟩
   | .literal (.str bytes), hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       have hT := tyOf_litStr_inv hty
       subst hT
       simp [lowerW, lowerB, strLitB, eraseL, eraseI, wRunF] at hrun
       subst hrun
-      refine ⟨.s bytes, by simp [eval], by simp [HasTy], res_ok ?_ hl⟩
+      refine Or.inl ⟨.s bytes, by simp [eval], by simp [HasTy], res_ok ?_ hl⟩
       simp [SRepr, strW, Function.comp_def]
   | .local i, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       simp only [tyOf] at hty
@@ -2772,28 +2991,37 @@ theorem agreement_step :
       obtain ⟨_, w, hw, hrep⟩ := hl.2 i sv hsv
       simp [lowerW, lowerB, eraseL, eraseI, wRunF, hw] at hrun
       subst hrun
-      exact ⟨sv, by simp [eval, hsv], hT, res_ok hrep hl⟩
+      exact Or.inl ⟨sv, by simp [eval, hsv], hT, res_ok hrep hl⟩
   | .let_ b v body, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨hbn, hΓb, Tv, htv, htb⟩ := tyOf_let_inv hty
       simp only [lowerW, lowerB, htv, eraseL_append, List.append_assoc] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨sv1, hev1, hT1, hres1⟩ := agreement v Γ env false Tv wl st o1 htv henv hl h1
+      rcases agreement v Γ env false Tv wl st o1 htv henv hl h1 with ⟨sv1, hev1, hT1, hres1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
       simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append, wRunF] at hseq
       have henv' : EnvTy M (upd env b sv1) (upd Γ b Tv) := envTy_upd henv hT1
       have hl' := lrel_bind hl1 hbn hw1
-      obtain ⟨sv, hev, hT, hres⟩ :=
-        agreement body (upd Γ b Tv) (upd env b sv1) tail T (wl1.set b w1) st out htb henv' hl'
-          hseq
+      rcases agreement body (upd Γ b Tv) (upd env b sv1) tail T (wl1.set b w1) st out htb henv' hl'
+          hseq with ⟨sv, hev, hT, hres⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+          (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+          (fun R hR => by simp [bareTries, hR]))
       have hfree := envTy_free henv hΓb
-      exact ⟨sv, by simp [eval, hev1, hev], hT, res_of_upd hfree hres⟩
+      exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, res_of_upd hfree hres⟩
   | .call (.fn f) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨sig, hsig, hts, rfl⟩ := tyOf_callFn_inv hty
       obtain ⟨hhost, har, hspec⟩ := hCallees f sig hsig
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-        agreementArgs args Γ env sig.params wl st o1 hts henv hl h1
+      rcases agreementArgs args Γ env sig.params wl st o1 hts henv hl h1 with
+        ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       have hlen : sig.params.length = ws.length := by
         rw [← hasTyL_length hTs, sreprL_length hrep]
       simp only [seqOut, eraseL, eraseI] at hseq
@@ -2803,42 +3031,57 @@ theorem agreement_step :
           simp [wRunF, hhost, har, hlen, popArgs_rev, hr] at hseq
           subst hseq
           obtain ⟨sv, hm, hsv, hT⟩ := hspec svs ws r hTs hrep hr
-          exact ⟨sv, by simp [eval, hevs, hm], hT, res_ok hsv hl1⟩
+          exact Or.inl ⟨sv, by simp [eval, hevs, hm], hT, res_ok hsv hl1⟩
   | .call (.builtin bi) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨ts, hts, hbt⟩ := tyOf_callBuiltin_inv hty
       simp only [lowerW, lowerB, eraseL_append, hts] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-        agreementArgs args Γ env ts wl st o1 hts henv hl h1
+      rcases agreementArgs args Γ env ts wl st o1 hts henv hl h1 with
+        ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       simp only [seqOut] at hseq
+      by_cases hfi : bi = .strFromInt
+      · subst hfi
+        obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
+          fromInt_step R ar callee ts T hbt svs ws hTs hrep wl1 st out hseq
+        exact Or.inl ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
       cases hlr : bi.listRole with
       | none =>
           cases hib : bi.isBytes with
           | false =>
               obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
-                builtin_step host ar callee bi hlr hib ts T hbt svs ws hTs hrep wl1 st out hseq
-              exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
+                builtin_step host ar callee bi hlr hib hfi ts T hbt svs ws hTs hrep wl1 st out hseq
+              exact Or.inl ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
           | true =>
               obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
                 bytesBuiltin_step R hCarrier box hBox Ctr.hBox ar callee bi hib ts T hbt svs ws
                   hTs hrep wl1 st out hseq
-              exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
+              exact Or.inl ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
       | some r =>
           obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
             listBuiltin_step R box hBox Ctr.hBox ar callee bi r hlr ts T hbt svs ws hTs hrep
               wl1 st out hseq
-          exact ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
+          exact Or.inl ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
   | .call (.intrinsic ie) args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨a, k, rfl, hk0, hband, hta, rfl⟩ := tyOf_intrinsic_inv hty
       simp only [lowerW, lowerB, lowerArgsB, eraseL_append, List.append_nil,
         List.append_assoc] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨sva, heva, hTa, hresa⟩ := agreement a Γ env false .int wl st o1 hta henv hl h1
+      rcases agreement a Γ env false .int wl st o1 hta henv hl h1 with
+        ⟨sva, heva, hTa, hresa⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, evalArgs, h])
+          (fun x hx => by simp [escv, escvArgs, hx])
+          (fun R hR => by simp [bareTries, bareTriesL, hR]))
       obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
       simp only [seqOut] at hseq
       obtain ⟨o2, h2, hseq2⟩ := run_split hseq
-      obtain ⟨svd, hevd, hTd, hresd⟩ := agreement (.literal (.int k)) Γ env false .int wl1
-        (wa :: st) o2 (by simp [tyOf, hband]) henv hl1 h2
+      rcases agreement (.literal (.int k)) Γ env false .int wl1
+        (wa :: st) o2 (by simp [tyOf, hband]) henv hl1 h2 with ⟨svd, hevd, hTd, hresd⟩ | hE
+      rotate_left
+      · exact (esc_nil (by simpa only [bareTries] using hE)).elim
       obtain ⟨wl2, wd, rfl, hwd, hl2⟩ := res_false hresd
       simp only [seqOut, eraseL, eraseI] at hseq2
       obtain ⟨x, rfl⟩ := hasTy_int hTa
@@ -2846,15 +3089,18 @@ theorem agreement_step :
       subst hevd
       obtain ⟨w, sv, hsv, rfl, hw⟩ := intrinsic_run R ar callee ie x k hk0 wa wd
         (by simpa [SRepr] using hwa) (by simpa [SRepr] using hwd) wl2 st out hseq2
-      refine ⟨sv, by simp [eval, evalArgs, heva, hsv], ?_, res_ok hw hl2⟩
+      refine Or.inl ⟨sv, by simp [eval, evalArgs, heva, hsv], ?_, res_ok hw hl2⟩
       cases ie <;> simp [intrinsicEval, hk0] at hsv <;> subst hsv <;> simp [HasTy]
   | .tailCall f args, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨rfl, sig, hsig, hts, rfl⟩ := tyOf_tailCall_inv hty
       obtain ⟨hhost, har, hspec⟩ := hCallees f sig hsig
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-        agreementArgs args Γ env sig.params wl st o1 hts henv hl h1
+      rcases agreementArgs args Γ env sig.params wl st o1 hts henv hl h1 with
+        ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       have hlen : sig.params.length = ws.length := by
         rw [← hasTyL_length hTs, sreprL_length hrep]
       simp only [seqOut, eraseL, eraseI] at hseq
@@ -2864,7 +3110,7 @@ theorem agreement_step :
           simp [wRunF, har, hlen, popArgs_rev, hr] at hseq
           subst hseq
           obtain ⟨sv, hm, hsv, hT⟩ := hspec svs ws r hTs hrep hr
-          exact ⟨sv, by simp [eval, hevs, hm], hT, ⟨rfl, hsv⟩⟩
+          exact Or.inl ⟨sv, by simp [eval, hevs, hm], hT, ⟨rfl, hsv⟩⟩
   | .binOp op l r, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       rcases tyOf_binOp_inv hty with ⟨htl, htr, hT⟩ | ⟨htl, htr, hop, rfl⟩ |
         ⟨htl, htr, hop, rfl⟩ | ⟨htl, htr, hsop⟩
@@ -2892,14 +3138,17 @@ theorem agreement_step :
                   have hout := cmpArm_step S host ar callee op.flip (flip_isArith hA) kk i wl st
                     m w out hband hw hrep hrun
                   subst hout
-                  refine ⟨.b (cmpDen op kk m), ?_, by simp [HasTy], res_ok ?_ hl⟩
+                  refine Or.inl ⟨.b (cmpDen op kk m), ?_, by simp [HasTy], res_ok ?_ hl⟩
                   · simp [eval, hsv, intBin_cmp hA]
                   · simp [SRepr, cmpDen_flip]
               | none =>
                   simp only [hsr, hCarrier, eraseL_append, List.append_assoc] at hrun
                   obtain ⟨o1, h1, hseq⟩ := run_split hrun
-                  obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-                    agreement r Γ env false .int wl st o1 htr henv hl h1
+                  rcases agreement r Γ env false .int wl st o1 htr henv hl h1 with
+                    ⟨sv1, hev1, hT1, hres1⟩ | hE
+                  rotate_left
+                  · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                      (fun x hx => by simp [escv, eval, hx]) (fun R hR => by simp [bareTries, hR]))
                   obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
                   obtain ⟨m, rfl⟩ := hasTy_int hT1
                   simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append,
@@ -2908,7 +3157,7 @@ theorem agreement_step :
                   have hout := cmpArm_step S host ar callee op.flip (flip_isArith hA) kk X.cmp
                     (wl1.set X.cmp w1) st m w1 out hband hget hw1 hseq
                   subst hout
-                  refine ⟨.b (cmpDen op kk m), ?_, by simp [HasTy],
+                  refine Or.inl ⟨.b (cmpDen op kk m), ?_, by simp [HasTy],
                     res_ok ?_ (lrel_set_free w1 hl1 hl1.1.1)⟩
                   · simp [eval, hev1, intBin_cmp hA]
                   · simp [SRepr, cmpDen_flip]
@@ -2932,14 +3181,17 @@ theorem agreement_step :
                       have hout := cmpArm_step S host ar callee op hA kk i wl st m w out hband hw
                         hrep hrun
                       subst hout
-                      refine ⟨.b (cmpDen op m kk), ?_, by simp [HasTy], res_ok ?_ hl⟩
+                      refine Or.inl ⟨.b (cmpDen op m kk), ?_, by simp [HasTy], res_ok ?_ hl⟩
                       · simp [eval, hsv, intBin_cmp hA]
                       · simp [SRepr]
                   | none =>
                       simp only [hsl, hCarrier, eraseL_append, List.append_assoc] at hrun
                       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-                      obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-                        agreement l Γ env false .int wl st o1 htl henv hl h1
+                      rcases agreement l Γ env false .int wl st o1 htl henv hl h1 with
+                        ⟨sv1, hev1, hT1, hres1⟩ | hE
+                      rotate_left
+                      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                          (fun x hx => by simp [escv, eval, hx]) (fun R hR => by simp [bareTries, hR]))
                       obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
                       obtain ⟨m, rfl⟩ := hasTy_int hT1
                       simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append,
@@ -2948,20 +3200,27 @@ theorem agreement_step :
                       have hout := cmpArm_step S host ar callee op hA kk X.cmp (wl1.set X.cmp w1) st m w1
                         out hband hget hw1 hseq
                       subst hout
-                      refine ⟨.b (cmpDen op m kk), ?_, by simp [HasTy],
+                      refine Or.inl ⟨.b (cmpDen op m kk), ?_, by simp [HasTy],
                         res_ok ?_ (lrel_set_free w1 hl1 hl1.1.1)⟩
                       · simp [eval, hev1, intBin_cmp hA]
                       · simp [SRepr]
               | none =>
                   simp only [hlk, hrk, eraseL_append, eraseL_ops, List.append_assoc] at hrun
                   obtain ⟨o1, h1, hseq⟩ := run_split hrun
-                  obtain ⟨sva, heva, hTa, hresa⟩ :=
-                    agreement l Γ env false .int wl st o1 htl henv hl h1
+                  rcases agreement l Γ env false .int wl st o1 htl henv hl h1 with
+                    ⟨sva, heva, hTa, hresa⟩ | hE
+                  rotate_left
+                  · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                      (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
                   obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
                   simp only [seqOut] at hseq
                   obtain ⟨o2, h2, hseq2⟩ := run_split hseq
-                  obtain ⟨svb, hevb, hTb, hresb⟩ :=
-                    agreement r Γ env false .int wl1 (wa :: st) o2 htr henv hl1 h2
+                  rcases agreement r Γ env false .int wl1 (wa :: st) o2 htr henv hl1 h2 with
+                    ⟨svb, hevb, hTb, hresb⟩ | hE
+                  rotate_left
+                  · exact Or.inr (esc_up hE hseq2 (fun h => by simp [eval, heva, h])
+                      (fun x hx => by simp [escv, escv_none_of_eval heva, heva, hx])
+                      (fun R hR => by simp [bareTries, hR]))
                   obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
                   simp only [seqOut] at hseq2
                   obtain ⟨x, rfl⟩ := hasTy_int hTa
@@ -2969,35 +3228,51 @@ theorem agreement_step :
                   have hout := intCmpTail_step S box add sub mul cmp eq Ctr host ar callee M hCmp
                     hEq op hA x y wa wb hwa hwb wl2 st out hseq2
                   subst hout
-                  refine ⟨.b (cmpDen op x y), ?_, by simp [HasTy], res_ok (by simp [SRepr]) hl2⟩
+                  refine Or.inl ⟨.b (cmpDen op x y), ?_, by simp [HasTy], res_ok (by simp [SRepr]) hl2⟩
                   simp [eval, heva, hevb, intBin_cmp hA]
         · -- arithmetic
           simp only [hA, ↓reduceIte] at hT hrun
           subst hT
           simp only [eraseL_append, eraseL, eraseI, List.append_assoc] at hrun
           obtain ⟨o1, h1, hseq⟩ := run_split hrun
-          obtain ⟨sva, heva, hTa, hresa⟩ := agreement l Γ env false .int wl st o1 htl henv hl h1
+          rcases agreement l Γ env false .int wl st o1 htl henv hl h1 with
+            ⟨sva, heva, hTa, hresa⟩ | hE
+          rotate_left
+          · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+              (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
           obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
           simp only [seqOut] at hseq
           obtain ⟨o2, h2, hseq2⟩ := run_split hseq
-          obtain ⟨svb, hevb, hTb, hresb⟩ :=
-            agreement r Γ env false .int wl1 (wa :: st) o2 htr henv hl1 h2
+          rcases agreement r Γ env false .int wl1 (wa :: st) o2 htr henv hl1 h2 with
+            ⟨svb, hevb, hTb, hresb⟩ | hE
+          rotate_left
+          · exact Or.inr (esc_up hE hseq2 (fun h => by simp [eval, heva, h])
+              (fun x hx => by simp [escv, escv_none_of_eval heva, heva, hx])
+              (fun R hR => by simp [bareTries, hR]))
           obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
           simp only [seqOut] at hseq2
           obtain ⟨x, rfl⟩ := hasTy_int hTa
           obtain ⟨y, rfl⟩ := hasTy_int hTb
           obtain ⟨w, rfl, hw, hTw⟩ := arith_step S box add sub mul cmp eq Ctr host ar callee M
             hAdd hSub hMul op hA x y wa wb hwa hwb wl2 st out hseq2
-          exact ⟨intBin op x y, by simp [eval, heva, hevb], hTw, res_ok hw hl2⟩
+          exact Or.inl ⟨intBin op x y, by simp [eval, heva, hevb], hTw, res_ok hw hl2⟩
       · -- Bool operands
         simp only [lowerW, lowerB, htl, eraseL_append, eraseL, eraseI, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sva, heva, hTa, hresa⟩ := agreement l Γ env false .bool wl st o1 htl henv hl h1
+        rcases agreement l Γ env false .bool wl st o1 htl henv hl h1 with
+          ⟨sva, heva, hTa, hresa⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
         simp only [seqOut] at hseq
         obtain ⟨o2, h2, hseq2⟩ := run_split hseq
-        obtain ⟨svb, hevb, hTb, hresb⟩ :=
-          agreement r Γ env false .bool wl1 (wa :: st) o2 htr henv hl1 h2
+        rcases agreement r Γ env false .bool wl1 (wa :: st) o2 htr henv hl1 h2 with
+          ⟨svb, hevb, hTb, hresb⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq2 (fun h => by simp [eval, heva, h])
+            (fun x hx => by simp [escv, escv_none_of_eval heva, heva, hx])
+            (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
         simp only [seqOut] at hseq2
         obtain ⟨x, rfl⟩ := hasTy_bool hTa
@@ -3006,17 +3281,25 @@ theorem agreement_step :
         have hwb' := srepr_b hwb
         subst hwa' hwb'
         obtain ⟨v, hbb, rfl⟩ := boolCmp_step host ar callee op hop x y wl2 st out hseq2
-        exact ⟨.b v, by simp [eval, heva, hevb, hbb], by simp [HasTy],
+        exact Or.inl ⟨.b v, by simp [eval, heva, hevb, hbb], by simp [HasTy],
           res_ok (by simp [SRepr]) hl2⟩
       · -- Float operands: one `f64` comparison
         simp only [lowerW, lowerB, htl, eraseL_append, eraseL, eraseI, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sva, heva, hTa, hresa⟩ := agreement l Γ env false .float wl st o1 htl henv hl h1
+        rcases agreement l Γ env false .float wl st o1 htl henv hl h1 with
+          ⟨sva, heva, hTa, hresa⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
         simp only [seqOut] at hseq
         obtain ⟨o2, h2, hseq2⟩ := run_split hseq
-        obtain ⟨svb, hevb, hTb, hresb⟩ :=
-          agreement r Γ env false .float wl1 (wa :: st) o2 htr henv hl1 h2
+        rcases agreement r Γ env false .float wl1 (wa :: st) o2 htr henv hl1 h2 with
+          ⟨svb, hevb, hTb, hresb⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq2 (fun h => by simp [eval, heva, h])
+            (fun x hx => by simp [escv, escv_none_of_eval heva, heva, hx])
+            (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
         simp only [seqOut] at hseq2
         obtain ⟨x, rfl⟩ := hasTy_float hTa
@@ -3024,17 +3307,25 @@ theorem agreement_step :
         simp only [SRepr] at hwa hwb
         subst hwa hwb
         obtain ⟨v, hfb, rfl⟩ := floatCmp_step host ar callee op hop x y wl2 st out hseq2
-        exact ⟨.b v, by simp [eval, heva, hevb, hfb], by simp [HasTy],
+        exact Or.inl ⟨.b v, by simp [eval, heva, hevb, hfb], by simp [HasTy],
           res_ok (by simp [SRepr]) hl2⟩
       · -- String operands: concatenation, or byte equality
         simp only [lowerW, lowerB, htl, eraseL_append, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sva, heva, hTa, hresa⟩ := agreement l Γ env false .string wl st o1 htl henv hl h1
+        rcases agreement l Γ env false .string wl st o1 htl henv hl h1 with
+          ⟨sva, heva, hTa, hresa⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
         simp only [seqOut] at hseq
         obtain ⟨o2, h2, hseq2⟩ := run_split hseq
-        obtain ⟨svb, hevb, hTb, hresb⟩ :=
-          agreement r Γ env false .string wl1 (wa :: st) o2 htr henv hl1 h2
+        rcases agreement r Γ env false .string wl1 (wa :: st) o2 htr henv hl1 h2 with
+          ⟨svb, hevb, hTb, hresb⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq2 (fun h => by simp [eval, heva, h])
+            (fun x hx => by simp [escv, escv_none_of_eval heva, heva, hx])
+            (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
         simp only [seqOut] at hseq2
         obtain ⟨x, rfl⟩ := hasTy_string hTa
@@ -3046,16 +3337,20 @@ theorem agreement_step :
             (bs := x ++ y) ⟨rfl, rfl, trivial⟩ (by simp [strCat]) wl2 st out
             (by simpa [strOpTail] using hseq2)
           subst hout
-          exact ⟨.s (x ++ y), by simp [eval, heva, hevb, strBin], by simp [HasTy],
+          exact Or.inl ⟨.s (x ++ y), by simp [eval, heva, hevb, strBin], by simp [HasTy],
             res_ok (by simp [SRepr]) hl2⟩
         · obtain ⟨v, hsb, rfl⟩ := streq_step R op hs hne x y wl2 st out hseq2
-          exact ⟨.b v, by simp [eval, heva, hevb, hsb], by simp [HasTy],
+          exact Or.inl ⟨.b v, by simp [eval, heva, hevb, hsb], by simp [HasTy],
             res_ok (by simp [SRepr]) hl2⟩
   | .neg e, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨hte, rfl⟩ := tyOf_neg_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨sv1, hev1, hT1, hres1⟩ := agreement e Γ env false .int wl st o1 hte henv hl h1
+      rcases agreement e Γ env false .int wl st o1 hte henv hl h1 with
+        ⟨sv1, hev1, hT1, hres1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
       obtain ⟨x, rfl⟩ := hasTy_int hT1
       simp only [seqOut, eraseL, eraseI] at hseq
@@ -3065,14 +3360,18 @@ theorem agreement_step :
           simp [wRunF, hNeg, popArgs_one, hr] at hseq
           subst hseq
           have hw1' : CanonRepr S x w1 := by simpa [SRepr] using hw1
-          refine ⟨.i (-x), by simp [eval, hev1], by simp [HasTy], res_ok ?_ hl1⟩
+          refine Or.inl ⟨.i (-x), by simp [eval, hev1], by simp [HasTy], res_ok ?_ hl1⟩
           simp only [SRepr]
           exact hNegC x w1 r hw1' hr
   | .ifThenElse c t e, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨htc, htt, hte⟩ := tyOf_ite_inv hty
       simp only [lowerW, lowerB, eraseL_append, eraseL, eraseI] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨svc, hevc, hTc, hresc⟩ := agreement c Γ env false .bool wl st o1 htc henv hl h1
+      rcases agreement c Γ env false .bool wl st o1 htc henv hl h1 with
+        ⟨svc, hevc, hTc, hresc⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       obtain ⟨wl1, wc, rfl, hwc, hl1⟩ := res_false hresc
       obtain ⟨v, rfl⟩ := hasTy_bool hTc
       have hwc' := srepr_b hwc
@@ -3082,26 +3381,37 @@ theorem agreement_step :
           simp only [seqOut, b32, Bool.false_eq_true, ↓reduceIte] at hseq
           rw [wRunF_ifElse_single] at hseq
           simp only [↓reduceIte] at hseq
-          obtain ⟨sv, hev, hT, hres⟩ := agreement e Γ env tail T wl1 st out hte henv hl1 hseq
-          exact ⟨sv, by simp [eval, hevc, hev], hT, hres⟩
+          rcases agreement e Γ env tail T wl1 st out hte henv hl1 hseq with
+            ⟨sv, hev, hT, hres⟩ | hE
+          · exact Or.inl ⟨sv, by simp [eval, hevc, hev], hT, hres⟩
+          · exact Or.inr (esc_lift hE (fun h => by simp [eval, hevc, h])
+              (fun x hx => by simp [escv, escv_none_of_eval hevc, hevc, hx])
+              (fun R hR => by simp [bareTries, hR]))
       | true =>
           simp only [seqOut, b32, ↓reduceIte] at hseq
           rw [wRunF_ifElse_single] at hseq
           simp only [Int.reduceEq, ↓reduceIte] at hseq
-          obtain ⟨sv, hev, hT, hres⟩ := agreement t Γ env tail T wl1 st out htt henv hl1 hseq
-          exact ⟨sv, by simp [eval, hevc, hev], hT, hres⟩
+          rcases agreement t Γ env tail T wl1 st out htt henv hl1 hseq with
+            ⟨sv, hev, hT, hres⟩ | hE
+          · exact Or.inl ⟨sv, by simp [eval, hevc, hev], hT, hres⟩
+          · exact Or.inr (esc_lift hE (fun h => by simp [eval, hevc, h])
+              (fun x hx => by simp [escv, escv_none_of_eval hevc, hevc, hx])
+              (fun R hR => by simp [bareTries, hR]))
   | .recordCreate tid fs, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨fts, hR, hts, h2, rfl⟩ := tyOf_rec_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-        agreementArgs fs Γ env fts wl st o1 hts henv hl h1
+      rcases agreementArgs fs Γ env fts wl st o1 hts henv hl h1 with
+        ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       have hlen : fs.length = ws.length := by
         rw [← tysOf_length hts, ← hasTyL_length hTs, sreprL_length hrep]
       simp only [seqOut, eraseL, eraseI] at hseq
       simp only [hlen, wRunF, popArgs_rev, Option.some.injEq] at hseq
       subst hseq
-      refine ⟨.record tid svs, by simp [eval, hevs], ?_, res_ok ?_ hl1⟩
+      refine Or.inl ⟨.record tid svs, by simp [eval, hevs], ?_, res_ok ?_ hl1⟩
       · simp only [HasTy, true_and]
         exact ⟨fts, hR, hTs⟩
       · exact (srepr_record hR h2 _ _).mpr ⟨ws, rfl, hrep⟩
@@ -3109,8 +3419,11 @@ theorem agreement_step :
       obtain ⟨htb, fts, hR, h2, hi⟩ := tyOf_proj_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-        agreement base Γ env false (.record tid) wl st o1 htb henv hl h1
+      rcases agreement base Γ env false (.record tid) wl st o1 htb henv hl h1 with
+        ⟨sv1, hev1, hT1, hres1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
       obtain ⟨fs, fts', rfl, hR', hfs⟩ := hasTy_record hT1
       rw [hR] at hR'
@@ -3121,7 +3434,7 @@ theorem agreement_step :
       simp only [seqOut, eraseL, eraseI] at hseq
       simp [wRunF, hw] at hseq
       subst hseq
-      exact ⟨sv, by simp [eval, hev1, hsv], hTsv, res_ok hwr hl1⟩
+      exact Or.inl ⟨sv, by simp [eval, hev1, hsv], hTsv, res_ok hwr hl1⟩
 
   | .call (.lazy _) [], hsz, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOf] at hty
   | .call (.lazy _) [_], hsz, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOf] at hty
@@ -3145,8 +3458,12 @@ theorem agreement_step :
               subst T
               simp only [lowerW, lowerB, hvg, hdg, hto, eraseL_append, List.append_assoc] at hrun
               obtain ⟨o1, h1, hseq⟩ := run_split hrun
-              obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-                agreement o Γ env false (.option t) wl st o1 hto henv hl h1
+              rcases agreement o Γ env false (.option t) wl st o1 hto henv hl h1 with
+                ⟨sv1, hev1, hT1, hres1⟩ | hE
+              rotate_left
+              · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                  (fun x hx => by simp [escv, hx])
+                  (fun R hR => by simp [bareTries, bareTriesL, hR]))
               obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
               simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append] at hseq
               rw [run_localSet] at hseq
@@ -3159,8 +3476,12 @@ theorem agreement_step :
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
                 rw [wRunF_ifElse_single] at hseq
                 simp only [Int.reduceEq, ↓reduceIte] at hseq
-                obtain ⟨sv, hev, hT, hres⟩ := agreement d Γ env false t _ st out htd henv hl2 hseq
-                exact ⟨sv, by simp [eval, hev1, hev], hT, res_any_tail hres⟩
+                rcases agreement d Γ env false t _ st out htd henv hl2 hseq with
+                  ⟨sv, hev, hT, hres⟩ | hE
+                · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, res_any_tail hres⟩
+                · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+                    (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+                    (fun R hR => by simp [bareTries, bareTriesL, hR]))
               · simp only [SRepr] at hw1
                 obtain ⟨xw, rfl, hxw⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw] _ st hss)] at hseq
@@ -3168,7 +3489,7 @@ theorem agreement_step :
                 rw [wRunF_ifElse_single] at hseq
                 simp [wRunF, hss] at hseq
                 subst hseq
-                exact ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
+                exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
             · cases hlz
         | resWithDefault =>
             obtain ⟨t, e, rfl⟩ : ∃ t e, to = .result t e := by
@@ -3183,8 +3504,12 @@ theorem agreement_step :
               subst T
               simp only [lowerW, lowerB, hvg, hdg, hto, eraseL_append, List.append_assoc] at hrun
               obtain ⟨o1, h1, hseq⟩ := run_split hrun
-              obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-                agreement o Γ env false (.result t e) wl st o1 hto henv hl h1
+              rcases agreement o Γ env false (.result t e) wl st o1 hto henv hl h1 with
+                ⟨sv1, hev1, hT1, hres1⟩ | hE
+              rotate_left
+              · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                  (fun x hx => by simp [escv, hx])
+                  (fun R hR => by simp [bareTries, bareTriesL, hR]))
               obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
               simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append] at hseq
               rw [run_localSet] at hseq
@@ -3198,18 +3523,22 @@ theorem agreement_step :
                 rw [wRunF_ifElse_single] at hseq
                 simp [wRunF, hss] at hseq
                 subst hseq
-                exact ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
+                exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
               · simp only [SRepr] at hw1
                 obtain ⟨dd, xw, rfl, hxw⟩ := hw1
                 rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd, xw] _ st hss)] at hseq
                 simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte] at hseq
                 rw [wRunF_ifElse_single] at hseq
                 simp only [Int.reduceEq, ↓reduceIte] at hseq
-                obtain ⟨sv, hev, hT, hres⟩ := agreement d Γ env false t _ st out htd henv hl2 hseq
-                exact ⟨sv, by simp [eval, hev1, hev], hT, res_any_tail hres⟩
+                rcases agreement d Γ env false t _ st out htd henv hl2 hseq with
+                  ⟨sv, hev, hT, hres⟩ | hE
+                · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, res_any_tail hres⟩
+                · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+                    (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+                    (fun R hR => by simp [bareTries, bareTriesL, hR]))
             · cases hlz
       · -- `Option.withDefault(Vector.get(v, i), <literal>)`, fused
-        obtain ⟨rfl, rfl, -⟩ := vecGetOr?_some hvg
+        obtain ⟨rfl, rfl, lit, rfl⟩ := vecGetOr?_some hvg
         obtain ⟨vv, hvv, hTv⟩ := envTy_get henv hΓv
         obtain ⟨iv, hiv, hTi⟩ := envTy_get henv hΓi
         obtain ⟨vs, rfl, hall⟩ := hasTy_vec hTv
@@ -3218,11 +3547,14 @@ theorem agreement_step :
         obtain ⟨_, wi, hwi, hri⟩ := hl.2 i _ hiv
         simp only [lowerW, lowerB, hvg, hΓv] at hrun
         rcases vecGetOr_step R hwv hrv hwi hri hrun with ⟨hin, x, wx, hx, hwx, rfl⟩ | ⟨hout, hd⟩
-        · refine ⟨x, ?_, hasTyAll_get hall hx, res_ok hwx hl⟩
+        · refine Or.inl ⟨x, ?_, hasTyAll_get hall hx, res_ok hwx hl⟩
           obtain ⟨hlt, hx'⟩ := List.getElem?_eq_some_iff.mp hx
           simp [eval, evalArgs, hvv, hiv, builtinEval, hin, List.getElem?_eq_getElem hlt, hx']
-        · obtain ⟨sv, hev, hT, hres⟩ := agreement d Γ env false T wl st out htd henv hl hd
-          refine ⟨sv, ?_, hT, res_any_tail hres⟩
+        · rcases agreement (.literal lit) Γ env false T wl st out htd henv hl hd with
+            ⟨sv, hev, hT, hres⟩ | hE
+          rotate_left
+          · exact (esc_nil (by simpa only [bareTries] using hE)).elim
+          refine Or.inl ⟨sv, ?_, hT, res_any_tail hres⟩
           simp [eval, evalArgs, hvv, hiv, builtinEval, hout, hev]
       · -- `Result.withDefault(Int.div/mod(a, b), k)`, fused: the three
         -- operands once each, then the zero test and `__aint_divmod`
@@ -3237,17 +3569,28 @@ theorem agreement_step :
         simp only [lowerW, lowerB, hvg, hdg, lowerArgsB, htail, eraseL_append, List.append_nil,
           List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sva, heva, hTa, hresa⟩ := agreement a Γ env false .int wl st o1 hta henv hl h1
+        rcases agreement a Γ env false .int wl st o1 hta henv hl h1 with
+          ⟨sva, heva, hTa, hresa⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, evalArgs, h])
+            (fun x hx => by simp [escv, escvArgs, hx])
+            (fun R hR => by simp [bareTries, bareTriesL, hR]))
         obtain ⟨wl1, wa, rfl, hwa, hl1⟩ := res_false hresa
         simp only [seqOut] at hseq
         obtain ⟨o2, h2, hseq2⟩ := run_split hseq
-        obtain ⟨svb, hevb, hTb, hresb⟩ :=
-          agreement b Γ env false .int wl1 (wa :: st) o2 htb henv hl1 h2
+        rcases agreement b Γ env false .int wl1 (wa :: st) o2 htb henv hl1 h2 with
+          ⟨svb, hevb, hTb, hresb⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq2 (fun h => by simp [eval, evalArgs, heva, h])
+            (fun x hx => by simp [escv, escvArgs, escv_none_of_eval heva, heva, hx])
+            (fun R hR => by simp [bareTries, bareTriesL, hR]))
         obtain ⟨wl2, wb, rfl, hwb, hl2⟩ := res_false hresb
         simp only [seqOut] at hseq2
         obtain ⟨o3, h3, hseq3⟩ := run_split hseq2
-        obtain ⟨svd, hevd, hTd, hresd⟩ := agreement (.literal (.int k)) Γ env false .int wl2
-          (wb :: wa :: st) o3 htd henv hl2 h3
+        rcases agreement (.literal (.int k)) Γ env false .int wl2
+          (wb :: wa :: st) o3 htd henv hl2 h3 with ⟨svd, hevd, hTd, hresd⟩ | hE
+        rotate_left
+        · exact (esc_nil (by simpa only [bareTries] using hE)).elim
         obtain ⟨wl3, wd, rfl, hwd, hl3⟩ := res_false hresd
         simp only [seqOut] at hseq3
         obtain ⟨x, rfl⟩ := hasTy_int hTa
@@ -3261,7 +3604,7 @@ theorem agreement_step :
         have hl4 := lrel_set_free wa (lrel_set_free wb (lrel_set_free wd hl3
           (show X.n ≤ X.cmp + 3 by omega)) (show X.n ≤ X.cmp + 2 by omega))
           (show X.n ≤ X.cmp + 1 by omega)
-        refine ⟨if y = 0 then .i k else if m then .i (x % y) else .i (x / y), ?_, ?_,
+        refine Or.inl ⟨if y = 0 then .i k else if m then .i (x % y) else .i (x / y), ?_, ?_,
           res_ok ?_ hl4⟩
         · by_cases hy : y = 0 <;> cases m <;>
             simp [eval, evalArgs, heva, hevb, builtinEval, hy]
@@ -3294,14 +3637,17 @@ theorem agreement_step :
             cases hct
             simp only [lowerW, lowerB, eraseL_append] at hrun
             obtain ⟨o1, h1, hseq⟩ := run_split hrun
-            obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-              agreementArgs args Γ env ts wl st o1 hts henv hl h1
+            rcases agreementArgs args Γ env ts wl st o1 hts henv hl h1 with
+              ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+            rotate_left
+            · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
             have hlen : args.length = ws.length := by
               rw [← tysOf_length hts, ← hasTyL_length hTs, sreprL_length hrep]
             simp only [seqOut, eraseL, eraseI] at hseq
             simp only [hlen, wRunF, popArgs_rev, Option.some.injEq] at hseq
             subst hseq
-            refine ⟨.variant tid k svs, by simp [eval, hevs, ctorVal], ?_, res_ok ?_ hl1⟩
+            refine Or.inl ⟨.variant tid k svs, by simp [eval, hevs, ctorVal], ?_, res_ok ?_ hl1⟩
             · simp only [HasTy, true_and]
               exact ⟨ts, hcf, hTs⟩
             · simp only [SRepr]
@@ -3330,8 +3676,11 @@ theorem agreement_step :
             simp only [lowerW, lowerB, eraseL_append, List.append_assoc] at hrun
             simp only [eraseL, eraseI, List.cons_append, List.nil_append, wRunF] at hrun
             obtain ⟨o1, h1, hseq⟩ := run_split hrun
-            obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-              agreementArgs args Γ env [t] wl (.i32v 1 :: st) o1 hts henv hl h1
+            rcases agreementArgs args Γ env [t] wl (.i32v 1 :: st) o1 hts henv hl h1 with
+              ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+            rotate_left
+            · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
             obtain ⟨v, svs', rfl, hv, hTs'⟩ := hasTyL_cons_inv hTs
             have := hasTyL_nil_inv hTs'
             subst this
@@ -3340,7 +3689,7 @@ theorem agreement_step :
             subst this
             simp [seqOut, wRunF, popArgs_two] at hseq
             subst hseq
-            refine ⟨.some t v, by simp [eval, hevs, ctorVal], by simp [HasTy, hv], res_ok ?_ hl1⟩
+            refine Or.inl ⟨.some t v, by simp [eval, hevs, ctorVal], by simp [HasTy, hv], res_ok ?_ hl1⟩
             simp only [SRepr]
             exact ⟨w, rfl, hw⟩
           · cases hct
@@ -3369,15 +3718,18 @@ theorem agreement_step :
             obtain ⟨dd, hdd⟩ := dflt_run host ar callee (M := M) t hdt wl (.i32v 0 :: st)
             rw [run_seq_eq hdd] at hrun
             obtain ⟨o1, h1, hseq⟩ := run_split hrun
-            obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-              agreementArgs args Γ env [] wl (dd :: .i32v 0 :: st) o1 hts henv hl h1
+            rcases agreementArgs args Γ env [] wl (dd :: .i32v 0 :: st) o1 hts henv hl h1 with
+              ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+            rotate_left
+            · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
             have := hasTyL_nil_inv hTs
             subst this
             have := sreprL_nil_inv hrep
             subst this
             simp [seqOut, eraseL, eraseI, wRunF, popArgs_two] at hseq
             subst hseq
-            refine ⟨.none t, by simp [eval, hevs, ctorVal], by simp [HasTy], res_ok ?_ hl1⟩
+            refine Or.inl ⟨.none t, by simp [eval, hevs, ctorVal], by simp [HasTy], res_ok ?_ hl1⟩
             simp only [SRepr]
             exact ⟨dd, rfl⟩
           · cases hct
@@ -3404,8 +3756,11 @@ theorem agreement_step :
             simp only [lowerW, lowerB, eraseL_append, List.append_assoc] at hrun
             simp only [eraseL, eraseI, List.cons_append, List.nil_append, wRunF] at hrun
             obtain ⟨o1, h1, hseq⟩ := run_split hrun
-            obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-              agreementArgs args Γ env [t] wl (.i32v 1 :: st) o1 hts henv hl h1
+            rcases agreementArgs args Γ env [t] wl (.i32v 1 :: st) o1 hts henv hl h1 with
+              ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+            rotate_left
+            · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
             obtain ⟨v, svs', rfl, hv, hTs'⟩ := hasTyL_cons_inv hTs
             have := hasTyL_nil_inv hTs'
             subst this
@@ -3418,7 +3773,7 @@ theorem agreement_step :
             rw [run_seq_eq hdd] at hseq
             simp [eraseL, eraseI, wRunF, popArgs_three] at hseq
             subst hseq
-            refine ⟨.ok t e v, by simp [eval, hevs, ctorVal], by simp [HasTy, hv],
+            refine Or.inl ⟨.ok t e v, by simp [eval, hevs, ctorVal], by simp [HasTy, hv],
               res_ok ?_ hl1⟩
             simp only [SRepr]
             exact ⟨w, dd, rfl, hw⟩
@@ -3448,8 +3803,11 @@ theorem agreement_step :
             obtain ⟨dd, hdd⟩ := dflt_run host ar callee (M := M) t hdt wl (.i32v 0 :: st)
             rw [run_seq_eq hdd] at hrun
             obtain ⟨o1, h1, hseq⟩ := run_split hrun
-            obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-              agreementArgs args Γ env [e] wl (dd :: .i32v 0 :: st) o1 hts henv hl h1
+            rcases agreementArgs args Γ env [e] wl (dd :: .i32v 0 :: st) o1 hts henv hl h1 with
+              ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+            rotate_left
+            · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+                (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
             obtain ⟨v, svs', rfl, hv, hTs'⟩ := hasTyL_cons_inv hTs
             have := hasTyL_nil_inv hTs'
             subst this
@@ -3458,7 +3816,7 @@ theorem agreement_step :
             subst this
             simp [seqOut, eraseL, eraseI, wRunF, popArgs_three] at hseq
             subst hseq
-            refine ⟨.err t e v, by simp [eval, hevs, ctorVal], by simp [HasTy, hv],
+            refine Or.inl ⟨.err t e v, by simp [eval, hevs, ctorVal], by simp [HasTy, hv],
               res_ok ?_ hl1⟩
             simp only [SRepr]
             exact ⟨dd, w, rfl, hw⟩
@@ -3473,70 +3831,97 @@ theorem agreement_step :
           (tyOf M X.n Γ tail (.match_ s arms)) hfl
         have hrun0 := hrun
         rw [hys, eraseL_append] at hrun0
-        obtain ⟨o1, h1, _⟩ := run_split hrun0
-        obtain ⟨sv1, hev1, hT1, _⟩ := agreement s Γ env false .int wl st o1 hts henv hl h1
+        obtain ⟨o1, h1, hseq0⟩ := run_split hrun0
+        rcases agreement s Γ env false .int wl st o1 hts henv hl h1 with ⟨sv1, hev1, hT1, _⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq0 (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨x, rfl⟩ := hasTy_int hT1
         have hsc : ∀ wl0 st0 out0, LRel S M X env wl0 →
             wRunF host ar callee (eraseL (lowerB M X Γ false s)) wl0 st0 = some out0 →
             ∃ wl1 w, out0 = .ok wl1 (w :: st0) ∧ CanonRepr S x w ∧
               LRel S M X env wl1 := by
           intro wl0 st0 out0 hl0 hr0
-          obtain ⟨sv0, hev0, _, hres0⟩ := agreement s Γ env false .int wl0 st0 out0 hts henv hl0 hr0
+          rcases agreement s Γ env false .int wl0 st0 out0 hts henv hl0 hr0 with
+            ⟨sv0, hev0, _, hres0⟩ | hE
+          rotate_left
+          · exact (esc_some hE hev1).elim
           rw [hev1] at hev0
           cases hev0
           obtain ⟨wl1, w, rfl, hw, hl1⟩ := res_false hres0
           exact ⟨wl1, w, rfl, by simpa [SRepr] using hw, hl1⟩
-        obtain ⟨sv, hev, hT, hres⟩ :=
-          agreementIntArms arms Γ env tail T wl st out (lowerB M X Γ false s) _ x hsc hta henv hl
-            hrun
-        exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        rcases agreementIntArms arms Γ env tail T wl st out (lowerB M X Γ false s) _ x hsc hta henv hl
+            hrun with ⟨sv, hev, hT, hres⟩ | hE
+        · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+            (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+            (fun R hR => by simp [bareTries, hR]))
       · -- Bool: one `if` on the subject
         simp only [lowerW, lowerB, hts, eraseL_append] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sv1, hev1, hT1, hres1⟩ := agreement s Γ env false .bool wl st o1 hts henv hl h1
+        rcases agreement s Γ env false .bool wl st o1 hts henv hl h1 with
+          ⟨sv1, hev1, hT1, hres1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         obtain ⟨x, rfl⟩ := hasTy_bool hT1
         have hw1' := srepr_b hw1
         subst hw1'
         simp only [seqOut] at hseq
-        obtain ⟨sv, hev, hT, hres⟩ :=
-          agreementBoolArms arms Γ env tail T wl1 st out _ x hta henv hl1 hseq
-        exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        rcases agreementBoolArms arms Γ env tail T wl1 st out _ x hta henv hl1 hseq with ⟨sv, hev, hT, hres⟩ | hE
+        · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+            (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+            (fun R hR => by simp [bareTries, hR]))
       · -- Option: stash, tag test, payload binder
         simp only [lowerW, lowerB, hts, eraseL_append, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-          agreement s Γ env false (.option t) wl st o1 hts henv hl h1
+        rcases agreement s Γ env false (.option t) wl st o1 hts henv hl h1 with
+          ⟨sv1, hev1, hT1, hres1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append] at hseq
         rw [run_localSet] at hseq
         have hss : (wl1.set X.subj w1)[X.subj]? = some w1 := by
           obtain ⟨ys, hys⟩ := lowerOptArms_head (bt := tyOf M X.n Γ tail (.match_ s arms)) hta
           exact stash_read hys hseq
-        obtain ⟨sv, hev, hT, hres⟩ :=
-          agreementOptArms arms Γ env tail T (wl1.set X.subj w1) st out _ t sv1 w1 hss hw1 hT1
-            hta henv (lrel_set_free w1 hl1 hl1.1.2.1) hseq
-        exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        rcases agreementOptArms arms Γ env tail T (wl1.set X.subj w1) st out _ t sv1 w1 hss hw1 hT1
+            hta henv (lrel_set_free w1 hl1 hl1.1.2.1) hseq with ⟨sv, hev, hT, hres⟩ | hE
+        · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+            (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+            (fun R hR => by simp [bareTries, hR]))
       · -- Result: stash, tag test, payload binders
         simp only [lowerW, lowerB, hts, eraseL_append, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-          agreement s Γ env false (.result t e) wl st o1 hts henv hl h1
+        rcases agreement s Γ env false (.result t e) wl st o1 hts henv hl h1 with
+          ⟨sv1, hev1, hT1, hres1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append] at hseq
         rw [run_localSet] at hseq
         have hss : (wl1.set X.subj w1)[X.subj]? = some w1 := by
           obtain ⟨ys, hys⟩ := lowerResArms_head (bt := tyOf M X.n Γ tail (.match_ s arms)) hta
           exact stash_read hys hseq
-        obtain ⟨sv, hev, hT, hres⟩ :=
-          agreementResArms arms Γ env tail T (wl1.set X.subj w1) st out _ t e sv1 w1 hss hw1 hT1
-            hta henv (lrel_set_free w1 hl1 hl1.1.2.1) hseq
-        exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        rcases agreementResArms arms Γ env tail T (wl1.set X.subj w1) st out _ t e sv1 w1 hss hw1 hT1
+            hta henv (lrel_set_free w1 hl1 hl1.1.2.1) hseq with ⟨sv, hev, hT, hres⟩ | hE
+        · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+            (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+            (fun R hR => by simp [bareTries, hR]))
       · -- user variant: stash, `ref.test` cascade
         simp only [lowerW, lowerB, hts, eraseL_append, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-          agreement s Γ env false (.sum tid) wl st o1 hts henv hl h1
+        rcases agreement s Γ env false (.sum tid) wl st o1 hts henv hl h1 with
+          ⟨sv1, hev1, hT1, hres1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         obtain ⟨cv, fs, fts, rfl, hcf, hfs⟩ := hasTy_sum hT1
         simp only [SRepr] at hw1
@@ -3548,16 +3933,22 @@ theorem agreement_step :
           obtain ⟨ys, hys⟩ :=
             lowerVarArms_head (bt := tyOf M X.n Γ tail (.match_ s arms)) hta hlen2
           exact stash_read hys hseq
-        obtain ⟨sv, hev, hT, hres⟩ :=
-          agreementVarArms arms Γ env tail T _ st out _ tid cv fs ws fts hss hws hcf hfs
+        rcases agreementVarArms arms Γ env tail T _ st out _ tid cv fs ws fts hss hws hcf hfs
             (varExhaustive_covers hex hcf)
             (fun c fc hc heq => sumOk_inj hok hc hcf heq) hta henv
-            (lrel_set_free _ hl1 hl1.1.2.1) hseq
-        exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+            (lrel_set_free _ hl1 hl1.1.2.1) hseq with ⟨sv, hev, hT, hres⟩ | hE
+        · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+            (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+            (fun R hR => by simp [bareTries, hR]))
       · -- String: stash, literal cascade through `__wasmgc_string_eq`
         simp only [lowerW, lowerB, hts, eraseL_append, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sv1, hev1, hT1, hres1⟩ := agreement s Γ env false .string wl st o1 hts henv hl h1
+        rcases agreement s Γ env false .string wl st o1 hts henv hl h1 with
+          ⟨sv1, hev1, hT1, hres1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         obtain ⟨x, rfl⟩ := hasTy_string hT1
         simp only [SRepr] at hw1
@@ -3570,15 +3961,20 @@ theorem agreement_step :
           obtain ⟨ys, hys⟩ := lowerStrArms_head M X Γ tail (tyOf M X.n Γ tail (.match_ s
             (.cons (.litStr k) b r))) k b r
           exact stash_read hys hseq
-        obtain ⟨sv, hev, hT, hres⟩ :=
-          agreementStrArms arms Γ env tail T _ st out _ x hss hta henv
-            (lrel_set_free _ hl1 hl1.1.2.1) hseq
-        exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        rcases agreementStrArms arms Γ env tail T _ st out _ x hss hta henv
+            (lrel_set_free _ hl1 hl1.1.2.1) hseq with ⟨sv, hev, hT, hres⟩ | hE
+        · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+            (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+            (fun R hR => by simp [bareTries, hR]))
       · -- tuple destructure: stash, bind the components
         simp only [lowerW, lowerB, hts, eraseL_append, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-          agreement s Γ env false (.record tid) wl st o1 hts henv hl h1
+        rcases agreement s Γ env false (.record tid) wl st o1 hts henv hl h1 with
+          ⟨sv1, hev1, hT1, hres1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         obtain ⟨fs, fts, rfl, hR, hfs⟩ := hasTy_record hT1
         obtain ⟨bs, b, h2, hany, harms⟩ := tyTupArms_shape hR hta
@@ -3590,17 +3986,22 @@ theorem agreement_step :
           obtain ⟨ys, hys⟩ := lowerTupArms_head (M := M) (X := X) (Γ := Γ) (tail := tail)
             (tid := tid) hany harms
           exact stash_read hys hseq
-        obtain ⟨sv, hev, hT, hres⟩ :=
-          agreementTupArms arms Γ env tail T _ st out tid fs ws fts hss hws hR hfs hta henv
-            (lrel_set_free _ hl1 hl1.1.2.1) hseq
-        exact ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        rcases agreementTupArms arms Γ env tail T _ st out tid fs ws fts hss hws hR hfs hta henv
+            (lrel_set_free _ hl1 hl1.1.2.1) hseq with ⟨sv, hev, hT, hres⟩ | hE
+        · exact Or.inl ⟨sv, by simp [eval, hev1, hev], hT, hres⟩
+        · exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, h])
+            (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hx])
+            (fun R hR => by simp [bareTries, hR]))
       · -- List: stash, `ref.is_null`, then the head and tail binders
         obtain ⟨p1, b1, p2, b2, swap, hd, tl, Γc, rfl, hpk, hbt, hte, htc⟩ :=
           tyListArms_shape hta
         simp only [lowerW, lowerB, hts, eraseL_append, List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨sv1, hev1, hT1, hres1⟩ :=
-          agreement s Γ env false (.list t) wl st o1 hts henv hl h1
+        rcases agreement s Γ env false (.list t) wl st o1 hts henv hl h1 with
+          ⟨sv1, hev1, hT1, hres1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append] at hseq
         rw [run_localSet] at hseq
@@ -3617,11 +4018,18 @@ theorem agreement_step :
               simp only [b32, ↓reduceIte] at hseq
               rw [wRunF_ifElse_single] at hseq
               simp only [Int.reduceEq, ↓reduceIte] at hseq
-              obtain ⟨sv, hev, hT, hres⟩ := agreement b1 Γ env tail T _ st out hte henv hl2 hseq
-              refine ⟨sv, ?_, hT, hres⟩
-              have hA := evalList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
-              simp only [Bool.false_eq_true, ↓reduceIte] at hA
-              simp [eval, hev1, hA, hev]
+              rcases agreement b1 Γ env tail T _ st out hte henv hl2 hseq with ⟨sv, hev, hT, hres⟩ | hE
+              · refine Or.inl ⟨sv, ?_, hT, hres⟩
+                have hA := evalList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
+                simp only [Bool.false_eq_true, ↓reduceIte] at hA
+                simp [eval, hev1, hA, hev]
+              · have hA := evalList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
+                simp only [Bool.false_eq_true, ↓reduceIte] at hA
+                have hB := escvList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
+                simp only [Bool.false_eq_true, ↓reduceIte] at hB
+                exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, hA, h])
+                  (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hB, hx])
+                  (fun R hR => by simp [bareTries, bareTriesA, hR]))
             · simp only [SRepr] at hw1
               obtain ⟨xw, rw', rfl, hxw, hrw⟩ := hw1
               rw [run_nullTest_struct host ar callee _ _ _ _ _ _ hss] at hseq
@@ -3634,12 +4042,18 @@ theorem agreement_step :
                   (fun j y hy => by simpa using hy) ⟨hx, hr, trivial⟩ ⟨hxw, hrw, trivial⟩ hbt
                   henv hl2
               rw [run_seq_eq hrun'] at hseq
-              obtain ⟨sv, hev, hT, hres⟩ :=
-                agreement b2 Γc env' tail T wl' st out htc henv' hl' hseq
-              refine ⟨sv, ?_, hT, hres' _ _ _ _ hres⟩
-              have hA := evalList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
-              simp only [Bool.false_eq_true, ↓reduceIte, hbv] at hA
-              simp [eval, hev1, hA, hev]
+              rcases agreement b2 Γc env' tail T wl' st out htc henv' hl' hseq with ⟨sv, hev, hT, hres⟩ | hE
+              · refine Or.inl ⟨sv, ?_, hT, hres' _ _ _ _ hres⟩
+                have hA := evalList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
+                simp only [Bool.false_eq_true, ↓reduceIte, hbv] at hA
+                simp [eval, hev1, hA, hev]
+              · have hA := evalList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
+                simp only [Bool.false_eq_true, ↓reduceIte, hbv] at hA
+                have hB := escvList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
+                simp only [Bool.false_eq_true, ↓reduceIte, hbv] at hB
+                exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, hA, h])
+                  (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hB, hx])
+                  (fun R hR => by simp [bareTries, bareTriesA, hR]))
         | true =>
             simp only [↓reduceIte] at hte htc
             simp only [lowerListArms, hpk, hbt, Option.getD_some, eraseL, eraseI] at hseq
@@ -3651,11 +4065,18 @@ theorem agreement_step :
               simp only [b32, ↓reduceIte] at hseq
               rw [wRunF_ifElse_single] at hseq
               simp only [Int.reduceEq, ↓reduceIte] at hseq
-              obtain ⟨sv, hev, hT, hres⟩ := agreement b2 Γ env tail T _ st out hte henv hl2 hseq
-              refine ⟨sv, ?_, hT, hres⟩
-              have hA := evalList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
-              simp only [↓reduceIte] at hA
-              simp [eval, hev1, hA, hev]
+              rcases agreement b2 Γ env tail T _ st out hte henv hl2 hseq with ⟨sv, hev, hT, hres⟩ | hE
+              · refine Or.inl ⟨sv, ?_, hT, hres⟩
+                have hA := evalList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
+                simp only [↓reduceIte] at hA
+                simp [eval, hev1, hA, hev]
+              · have hA := evalList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
+                simp only [↓reduceIte] at hA
+                have hB := escvList_nil (b1 := b1) (b2 := b2) (t := t) F env hpk
+                simp only [↓reduceIte] at hB
+                exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, hA, h])
+                  (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hB, hx])
+                  (fun R hR => by simp [bareTries, bareTriesA, hR]))
             · simp only [SRepr] at hw1
               obtain ⟨xw, rw', rfl, hxw, hrw⟩ := hw1
               rw [run_nullTest_struct host ar callee _ _ _ _ _ _ hss] at hseq
@@ -3668,36 +4089,48 @@ theorem agreement_step :
                   (fun j y hy => by simpa using hy) ⟨hx, hr, trivial⟩ ⟨hxw, hrw, trivial⟩ hbt
                   henv hl2
               rw [run_seq_eq hrun'] at hseq
-              obtain ⟨sv, hev, hT, hres⟩ :=
-                agreement b1 Γc env' tail T wl' st out htc henv' hl' hseq
-              refine ⟨sv, ?_, hT, hres' _ _ _ _ hres⟩
-              have hA := evalList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
-              simp only [↓reduceIte, hbv] at hA
-              simp [eval, hev1, hA, hev]
+              rcases agreement b1 Γc env' tail T wl' st out htc henv' hl' hseq with ⟨sv, hev, hT, hres⟩ | hE
+              · refine Or.inl ⟨sv, ?_, hT, hres' _ _ _ _ hres⟩
+                have hA := evalList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
+                simp only [↓reduceIte, hbv] at hA
+                simp [eval, hev1, hA, hev]
+              · have hA := evalList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
+                simp only [↓reduceIte, hbv] at hA
+                have hB := escvList_cons (b1 := b1) (b2 := b2) (x := x) (r := r) (t := t) F env hpk
+                simp only [↓reduceIte, hbv] at hB
+                exact Or.inr (esc_lift hE (fun h => by simp [eval, hev1, hA, h])
+                  (fun x hx => by simp [escv, escv_none_of_eval hev1, hev1, hB, hx])
+                  (fun R hR => by simp [bareTries, bareTriesA, hR]))
   | .interp parts, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨ts, hts, hall, rfl⟩ := tyOf_interp_inv hty
       simp only [lowerW, lowerB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-        agreementArgs parts Γ env ts wl st o1 hts henv hl h1
+      rcases agreementArgs parts Γ env ts wl st o1 hts henv hl h1 with
+        ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R hR => by simp [bareTries, hR]))
       obtain ⟨bs, hbs⟩ := strCat_of_allStr hTs hall
       have hlen : parts.length = ws.length := by
         rw [← tysOf_length hts, ← hasTyL_length hTs, sreprL_length hrep]
       simp only [seqOut, hlen] at hseq
       have hout := concat_run R hrep hbs wl1 st out hseq
       subst hout
-      exact ⟨.s bs, by simp [eval, hevs, hbs], by simp [HasTy], res_ok (by simp [SRepr]) hl1⟩
+      exact Or.inl ⟨.s bs, by simp [eval, hevs, hbs], by simp [HasTy], res_ok (by simp [SRepr]) hl1⟩
   | .list t items, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨rfl, hcase⟩ := tyOf_list_inv hty
       rcases hcase with rfl | ⟨f, ts, hne, hf, hsig, hts, hall⟩
       · simp [lowerW, lowerB, eraseL, eraseI, wRunF] at hrun
         subst hrun
-        exact ⟨.nil t, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr]) hl⟩
+        exact Or.inl ⟨.nil t, by simp [eval], by simp [HasTy], res_ok (by simp [SRepr]) hl⟩
       · simp only [lowerW, lowerB, hne, hf, Bool.false_eq_true, ↓reduceIte, eraseL_append,
           List.append_assoc] at hrun
         obtain ⟨o1, h1, hseq⟩ := run_split hrun
-        obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ :=
-          agreementArgs items Γ env ts wl st o1 hts henv hl h1
+        rcases agreementArgs items Γ env ts wl st o1 hts henv hl h1 with
+          ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, hl1⟩ | hE
+        rotate_left
+        · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, hne, h])
+            (fun x hx => by simp [escv, hx]) (fun R hR => by simp [bareTries, hR]))
         have hlen : items.length = svs.reverse.length := by
           rw [List.length_reverse, hasTyL_length hTs, tysOf_length hts]
         simp only [seqOut, eraseL, eraseI, eraseL_replicate, List.cons_append,
@@ -3706,10 +4139,64 @@ theorem agreement_step :
           (hConsF t f hf) svs.reverse ws.reverse (.nil t) .null wl1 st out
           (sreprL_reverse hrep) (fun v hv => hasTyL_mem hTs hall v (List.mem_reverse.mp hv))
           (by simp [SRepr]) (by simp [HasTy]) hseq
-        refine ⟨consAll t svs, ?_, ?_, res_ok ?_ hl1⟩
+        refine Or.inl ⟨consAll t svs, ?_, ?_, res_ok ?_ hl1⟩
         · simp [eval, hne, hevs]
         · rw [consAll_foldl]; exact hT
         · rw [consAll_foldl]; exact hw
+  | .try_ e R, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+      obtain ⟨er, t', hte, rfl, hdt', hde⟩ := tyOf_try_inv hty
+      simp only [lowerW, lowerB, hte, eraseL_append, List.append_assoc] at hrun
+      obtain ⟨o1, h1, hseq⟩ := run_split hrun
+      rcases agreement e Γ env false (.result T er) wl st o1 hte henv hl h1 with
+        ⟨sv1, hev1, hT1, hres1⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
+          (fun R' hR => by simp [bareTries, hR]))
+      obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
+      simp only [seqOut, eraseL, eraseI, List.cons_append, List.nil_append] at hseq
+      rw [run_localSet] at hseq
+      have hl2 := lrel_set_free w1 hl1 hl1.1.2.1
+      have hss : (wl1.set X.subj w1)[X.subj]? = some w1 := stash_read rfl hseq
+      simp only [tryB, eraseL_append, eraseL, eraseI, List.cons_append, List.nil_append] at hseq
+      rcases hasTy_result hT1 with ⟨x, rfl, hx⟩ | ⟨x, rfl, hx⟩
+      · simp only [SRepr] at hw1
+        obtain ⟨xw, dd, rfl, hxw⟩ := hw1
+        rw [run_seq_eq (tagTest_run host ar callee _ _ 1 [xw, dd] _ st hss)] at hseq
+        simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true,
+          ↓reduceIte] at hseq
+        rw [wRunF_ifElse_single] at hseq
+        simp [wRunF, hss] at hseq
+        subst hseq
+        exact Or.inl ⟨x, by simp [eval, hev1], hx, res_ok hxw hl2⟩
+      · simp only [SRepr] at hw1
+        obtain ⟨dd, xw, rfl, hxw⟩ := hw1
+        rw [run_seq_eq (tagTest_run host ar callee _ _ 0 [dd, xw] _ st hss)] at hseq
+        simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true,
+          ↓reduceIte] at hseq
+        rw [wRunF_ifElse_single] at hseq
+        simp only [Int.reduceEq, ↓reduceIte, wRunF] at hseq
+        obtain ⟨d', hd'⟩ := dflt_run host ar callee (M := M) t' hdt'
+          (wl1.set X.subj (.structv (M.resStruct T er) [.i32v 0, dd, xw])) (.i32v 0 :: st)
+        rw [run_seq_eq hd'] at hseq
+        simp [wRunF, hss, popArgs_three] at hseq
+        subst hseq
+        refine Or.inr ⟨by simp [eval, hev1], .err t' er x, ?_, ?_, .result t' er, ?_, ?_⟩
+        · simp [escv, escv_none_of_eval hev1, hev1]
+        · simp only [SRepr]
+          exact ⟨d', xw, rfl, hxw⟩
+        · simp [bareTries]
+        · simp only [HasTy, true_and]
+          exact hx
+  | .scope e, hsz, Γ, env, tail, T, wl, st, out, hty, henv, hl, hrun => by
+      obtain ⟨rfl, hte, hall⟩ := tyOf_scope_inv hty
+      simp only [lowerW, lowerB] at hrun
+      rcases agreement e Γ env true T wl st out hte henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+      · exact Or.inl ⟨sv, by simp [eval, hev], hT, hres⟩
+      · obtain ⟨w, rfl⟩ := esc_ret hE
+        obtain ⟨hnone, x, hx, hw, R, hR, hxR⟩ := hE
+        have hRT : R = T := hall R hR
+        subst hRT
+        exact Or.inl ⟨x, by simp [eval, hnone, hx], hxR, ⟨rfl, hw⟩⟩
 
 theorem agreementArgs_step :
     ∀ (es : List Expr) (hsz : sizeOf es < n + 1) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
@@ -3718,25 +4205,33 @@ theorem agreementArgs_step :
       EnvTy M env Γ →
       LRel S M X env wl →
       wRunF host ar callee (lowerArgsW M X Γ es) wl st = some out →
-      ∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
+      (∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
         evalArgs F env es = some svs ∧ HasTyL M svs Ts ∧
-        SReprL S M svs ws ∧ LRel S M X env wl'
+        SReprL S M svs ws ∧ LRel S M X env wl') ∨
+        Esc S M (evalArgs F env es) (escvArgs F env es) (bareTriesL es) out
   | [], hsz, Γ, env, Ts, wl, st, out, hty, henv, hl, hrun => by
       simp only [tysOf, Option.some.injEq] at hty
       subst hty
       simp only [lowerArgsW, lowerArgsB, eraseL, wRunF, Option.some.injEq] at hrun
       subst hrun
-      exact ⟨[], [], wl, by simp, by simp [evalArgs], by simp [HasTyL], by simp [SReprL], hl⟩
+      exact Or.inl ⟨[], [], wl, by simp, by simp [evalArgs], by simp [HasTyL], by simp [SReprL], hl⟩
   | e :: es, hsz, Γ, env, Ts, wl, st, out, hty, henv, hl, hrun => by
       obtain ⟨t, ts, hte, htes, rfl⟩ := tysOf_cons_inv hty
       simp only [lowerArgsW, lowerArgsB, eraseL_append] at hrun
       obtain ⟨o1, h1, hseq⟩ := run_split hrun
-      obtain ⟨sv, hev, hT, hres⟩ := agreement e Γ env false t wl st o1 hte henv hl h1
+      rcases agreement e Γ env false t wl st o1 hte henv hl h1 with ⟨sv, hev, hT, hres⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_up hE hseq (fun h => by simp [evalArgs, h])
+          (fun x hx => by simp [escvArgs, hx]) (fun R hR => by simp [bareTriesL, hR]))
       obtain ⟨wl1, w, rfl, hw, hl1⟩ := res_false hres
       simp only [seqOut] at hseq
-      obtain ⟨svs, ws, wl2, rfl, hevs, hTs, hrep, hl2⟩ :=
-        agreementArgs es Γ env ts wl1 (w :: st) out htes henv hl1 hseq
-      exact ⟨sv :: svs, w :: ws, wl2, by simp, by simp [evalArgs, hev, hevs], ⟨hT, hTs⟩,
+      rcases agreementArgs es Γ env ts wl1 (w :: st) out htes henv hl1 hseq with
+        ⟨svs, ws, wl2, rfl, hevs, hTs, hrep, hl2⟩ | hE
+      rotate_left
+      · exact Or.inr (esc_lift hE (fun h => by simp [evalArgs, hev, h])
+          (fun x hx => by simp [escvArgs, escv_none_of_eval hev, hev, hx])
+          (fun R hR => by simp [bareTriesL, hR]))
+      exact Or.inl ⟨sv :: svs, w :: ws, wl2, by simp, by simp [evalArgs, hev, hevs], ⟨hT, hTs⟩,
         ⟨hw, hrep⟩, hl2⟩
 
 theorem agreementIntArms_step :
@@ -3749,8 +4244,9 @@ theorem agreementIntArms_step :
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
-      ∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.i x) arms) (escvArms F env (.i x) arms) (bareTriesA arms) out
   | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyIntArms] at hty
   | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, sc, bt, x, hsc, hty, henv, hl, hrun => by
       cases p with
@@ -3795,14 +4291,16 @@ theorem agreementIntArms_step :
                           by_cases hxk : x = k
                           · subst hxk
                             simp only [eqW, ↓reduceIte, Int.reduceEq] at hseq'
-                            obtain ⟨sv, hev, hT, hres⟩ :=
-                              agreement b Γ env tail T1 wl1 st out hb henv hl1 hseq'
-                            exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                            rcases agreement b Γ env tail T1 wl1 st out hb henv hl1 hseq' with ⟨sv, hev, hT, hres⟩ | hE
+                            · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                            · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                                (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
                           · simp only [eqW, hxk, ↓reduceIte] at hseq'
-                            obtain ⟨sv, hev, hT, hres⟩ :=
-                              agreementIntArms rest Γ env tail T1 wl1 st out sc bt x hsc hr henv
-                                hl1 hseq'
-                            exact ⟨sv, by simp [evalArms, patMatch, hxk, hev], hT, hres⟩
+                            rcases agreementIntArms rest Γ env tail T1 wl1 st out sc bt x hsc hr henv
+                                hl1 hseq' with ⟨sv, hev, hT, hres⟩ | hE
+                            · exact Or.inl ⟨sv, by simp [evalArms, patMatch, hxk, hev], hT, hres⟩
+                            · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, hxk, h])
+                                (fun y hy => by simp [escvArms, patMatch, hxk, hy]) (fun R hR => by simp [bareTriesA, hR]))
                 · simp [hTT] at hty
           · simp [hband] at hty
       | wild =>
@@ -3811,8 +4309,10 @@ theorem agreementIntArms_step :
           | nil =>
               simp only [tyIntArms] at hty
               simp only [lowerIntArms] at hrun
-              obtain ⟨sv, hev, hT, hres⟩ := agreement b Γ env tail T wl st out hty henv hl hrun
-              exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+              rcases agreement b Γ env tail T wl st out hty henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+              · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+              · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                  (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
       | bind sl =>
           cases rest with
           | cons _ _ _ => simp [tyIntArms] at hty
@@ -3829,11 +4329,11 @@ theorem agreementIntArms_step :
                 have henv' : EnvTy M (upd env sl (.i x)) (upd Γ sl .int) :=
                   envTy_upd henv (by simp [HasTy])
                 have hl' := lrel_bind hl1 hsn (v := .i x) (by simpa [SRepr] using hw)
-                obtain ⟨sv, hev, hT, hres⟩ :=
-                  agreement b (upd Γ sl .int) (upd env sl (.i x)) tail T _ st out hty henv' hl'
-                    hseq
-                exact ⟨sv, by simp [evalArms, patMatch, bindVals, hns, hev], hT,
-                  res_of_upd (envTy_free henv hΓs) hres⟩
+                rcases agreement b (upd Γ sl .int) (upd env sl (.i x)) tail T _ st out hty henv' hl'
+                    hseq with ⟨sv, hev, hT, hres⟩ | hE
+                · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hns, hev], hT, res_of_upd (envTy_free henv hΓs) hres⟩
+                · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, hns, h])
+                    (fun y hy => by simp [escvArms, patMatch, bindVals, hns, hy]) (fun R hR => by simp [bareTriesA, hR]))
               · cases hty
       | litBool _ => simp [tyIntArms] at hty
       | ctor _ _ => simp [tyIntArms] at hty
@@ -3849,8 +4349,9 @@ theorem agreementBoolArms_step :
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerBoolArms M X Γ tail bt arms)) wl (b32 x :: st) =
         some out →
-      ∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.b x) arms) (escvArms F env (.b x) arms) (bareTriesA arms) out
   | .nil, hsz, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyBoolArms] at hty
   | .cons p _ .nil, hsz, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       cases p <;> simp [tyBoolArms] at hty
@@ -3879,22 +4380,38 @@ theorem agreementBoolArms_step :
                       at hrun <;>
                     rw [wRunF_ifElse_single] at hrun <;>
                     simp only [Int.reduceEq, ↓reduceIte] at hrun
-                  · obtain ⟨sv, hev, hT, hres⟩ := agreement t Γ env tail a wl st out hta henv hl hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
-                  · obtain ⟨sv, hev, hT, hres⟩ := agreement e Γ env tail a wl st out hte henv hl hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
-                  · obtain ⟨sv, hev, hT, hres⟩ := agreement e Γ env tail a wl st out hte henv hl hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
-                  · obtain ⟨sv, hev, hT, hres⟩ := agreement t Γ env tail a wl st out hta henv hl hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
-                  · obtain ⟨sv, hev, hT, hres⟩ := agreement t Γ env tail a wl st out hta henv hl hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
-                  · obtain ⟨sv, hev, hT, hres⟩ := agreement e Γ env tail a wl st out hte henv hl hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
-                  · obtain ⟨sv, hev, hT, hres⟩ := agreement e Γ env tail a wl st out hte henv hl hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
-                  · obtain ⟨sv, hev, hT, hres⟩ := agreement t Γ env tail a wl st out hta henv hl hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                  · rcases agreement t Γ env tail a wl st out hta henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                        (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
+                  · rcases agreement e Γ env tail a wl st out hte henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                        (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
+                  · rcases agreement e Γ env tail a wl st out hte henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                        (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
+                  · rcases agreement t Γ env tail a wl st out hta henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                        (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
+                  · rcases agreement t Γ env tail a wl st out hta henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                        (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
+                  · rcases agreement e Γ env tail a wl st out hte henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                        (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
+                  · rcases agreement e Γ env tail a wl st out hte henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                        (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
+                  · rcases agreement t Γ env tail a wl st out hta henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                        (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
                 · simp [hac] at hty
           · simp [hp2] at hty
       | wild => simp [tyBoolArms] at hty
@@ -3913,8 +4430,9 @@ theorem agreementOptArms_step :
       tyOptArms M X.n Γ tail t arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerOptArms M X Γ tail bt t arms)) wl st = some out →
-      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
-        Res S M X tail env st sv' out
+      (∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∨
+        Esc S M (evalArms F env sv arms) (escvArms F env sv arms) (bareTriesA arms) out
   | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyOptArms] at hty
   | .cons _ _ .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyOptArms] at hty
@@ -3936,19 +4454,28 @@ theorem agreementOptArms_step :
               have key : ∀ (bs bn : Expr) (a : Ty),
                   (∀ env' wl', EnvTy M env' Γs → LRel S M X env' wl' →
                     wRunF host ar callee (eraseL (lowerB M X Γs tail bs)) wl' st = some out →
-                    ∃ sv', eval F env' bs = some sv' ∧ HasTy M sv' a ∧
-                      Res S M X tail env' st sv' out) →
+                    (∃ sv', eval F env' bs = some sv' ∧ HasTy M sv' a ∧
+                      Res S M X tail env' st sv' out) ∨
+                      Esc S M (eval F env' bs) (escv F env' bs) (bareTries bs) out) →
                   (wRunF host ar callee (eraseL (lowerB M X Γ tail bn)) wl st = some out →
-                    ∃ sv', eval F env bn = some sv' ∧ HasTy M sv' a ∧
-                      Res S M X tail env st sv' out) →
+                    (∃ sv', eval F env bn = some sv' ∧ HasTy M sv' a ∧
+                      Res S M X tail env st sv' out) ∨
+                      Esc S M (eval F env bn) (escv F env bn) (bareTries bn) out) →
                   (∀ env', eval F env' (if swap then b2 else b1) = eval F env' bs) →
                   (eval F env (if swap then b1 else b2) = eval F env bn) →
+                  (∀ env', escv F env' (if swap then b2 else b1) = escv F env' bs) →
+                  (escv F env (if swap then b1 else b2) = escv F env bn) →
+                  (∀ R, R ∈ bareTries bs ∨ R ∈ bareTries bn →
+                    R ∈ bareTriesA (.cons p1 b1 (.cons p2 b2 .nil))) →
                   wRunF host ar callee (eraseL (tagTestB X.subj (M.optStruct t) ++
                     [.ifElse bt (bindFieldB X.subj (M.optStruct t) 1 sb ++
                       lowerB M X Γs tail bs) (lowerB M X Γ tail bn)])) wl st = some out →
-                  ∃ sv', evalArms F env sv (.cons p1 b1 (.cons p2 b2 .nil)) = some sv' ∧
-                    HasTy M sv' a ∧ Res S M X tail env st sv' out := by
-                intro bs bn a hAs hAn hbs hbn hr
+                  (∃ sv', evalArms F env sv (.cons p1 b1 (.cons p2 b2 .nil)) = some sv' ∧
+                    HasTy M sv' a ∧ Res S M X tail env st sv' out) ∨
+                    Esc S M (evalArms F env sv (.cons p1 b1 (.cons p2 b2 .nil)))
+                      (escvArms F env sv (.cons p1 b1 (.cons p2 b2 .nil)))
+                      (bareTriesA (.cons p1 b1 (.cons p2 b2 .nil))) out := by
+                intro bs bn a hAs hAn hbs hbn hbs' hbn' htys hr
                 rw [eraseL_append] at hr
                 rcases hasTy_option hsT with rfl | ⟨x, rfl, hx⟩
                 · simp only [SRepr] at hsw
@@ -3957,8 +4484,12 @@ theorem agreementOptArms_step :
                   simp only [b32, Int.reduceEq, decide_false, decide_true, Bool.false_eq_true, ↓reduceIte, eraseL, eraseI] at hr
                   rw [wRunF_ifElse_single] at hr
                   simp only [Int.reduceEq, ↓reduceIte] at hr
-                  obtain ⟨sv', hev, hT, hres⟩ := hAn hr
-                  exact ⟨sv', by rw [evalOpt_none F env hpk, hbn]; exact hev, hT, hres⟩
+                  rcases hAn hr with ⟨sv', hev, hT, hres⟩ | hE
+                  · exact Or.inl ⟨sv', by rw [evalOpt_none F env hpk, hbn]; exact hev, hT, hres⟩
+                  · exact Or.inr (esc_lift hE
+                      (fun h => by rw [evalOpt_none F env hpk, hbn]; exact h)
+                      (fun y hy => by rw [escvOpt_none F env hpk, hbn']; exact hy)
+                      (fun R hR => htys R (Or.inr hR)))
                 · simp only [SRepr] at hsw
                   obtain ⟨xw, rfl, hxw⟩ := hsw
                   obtain ⟨env', wl', hbv, henv', hl', hbrun, hres'⟩ :=
@@ -3969,10 +4500,14 @@ theorem agreementOptArms_step :
                   rw [wRunF_ifElse_single] at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
-                  obtain ⟨sv', hev, hT, hres⟩ := hAs env' wl' henv' hl' hr
-                  refine ⟨sv', ?_, hT, hres' _ _ _ _ hres⟩
-                  simp only [evalOpt_some F env hpk, hbv, hbs]
-                  exact hev
+                  rcases hAs env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
+                  · refine Or.inl ⟨sv', ?_, hT, hres' _ _ _ _ hres⟩
+                    simp only [evalOpt_some F env hpk, hbv, hbs]
+                    exact hev
+                  · exact Or.inr (esc_lift hE
+                      (fun h => by simp only [evalOpt_some F env hpk, hbv, hbs]; exact h)
+                      (fun y hy => by simp only [escvOpt_some F env hpk, hbv, hbs']; exact hy)
+                      (fun R hR => htys R (Or.inl hR)))
               cases swap with
               | false =>
                   simp only at hty
@@ -3991,7 +4526,8 @@ theorem agreementOptArms_step :
                         exact key b1 b2 a
                           (fun env' wl' he hl' hr => agreement b1 Γs env' tail a wl' st out hta he hl' hr)
                           (fun hr => agreement b2 Γ env tail a wl st out hte henv hl hr)
-                          (fun _ => by simp) (by simp) hrun
+                          (fun _ => by simp) (by simp) (fun _ => by simp) (by simp)
+                          (fun R hR => by rcases hR with hR | hR <;> simp [bareTriesA, hR]) hrun
                       · simp [hac] at hty
               | true =>
                   simp only at hty
@@ -4010,7 +4546,8 @@ theorem agreementOptArms_step :
                         exact key b2 b1 a
                           (fun env' wl' he hl' hr => agreement b2 Γs env' tail a wl' st out hta he hl' hr)
                           (fun hr => agreement b1 Γ env tail a wl st out hte henv hl hr)
-                          (fun _ => by simp) (by simp) hrun
+                          (fun _ => by simp) (by simp) (fun _ => by simp) (by simp)
+                          (fun R hR => by rcases hR with hR | hR <;> simp [bareTriesA, hR]) hrun
                       · simp [hac] at hty
 
 theorem agreementResArms_step :
@@ -4020,8 +4557,9 @@ theorem agreementResArms_step :
       tyResArms M X.n Γ tail t e arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerResArms M X Γ tail bt t e arms)) wl st = some out →
-      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
-        Res S M X tail env st sv' out
+      (∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∨
+        Esc S M (evalArms F env sv arms) (escvArms F env sv arms) (bareTriesA arms) out
   | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyResArms] at hty
   | .cons _ _ .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
@@ -4046,21 +4584,30 @@ theorem agreementResArms_step :
               have key : ∀ (bo be : Expr) (a : Ty),
                   (∀ env' wl', EnvTy M env' Γo → LRel S M X env' wl' →
                     wRunF host ar callee (eraseL (lowerB M X Γo tail bo)) wl' st = some out →
-                    ∃ sv', eval F env' bo = some sv' ∧ HasTy M sv' a ∧
-                      Res S M X tail env' st sv' out) →
+                    (∃ sv', eval F env' bo = some sv' ∧ HasTy M sv' a ∧
+                      Res S M X tail env' st sv' out) ∨
+                      Esc S M (eval F env' bo) (escv F env' bo) (bareTries bo) out) →
                   (∀ env' wl', EnvTy M env' Γe → LRel S M X env' wl' →
                     wRunF host ar callee (eraseL (lowerB M X Γe tail be)) wl' st = some out →
-                    ∃ sv', eval F env' be = some sv' ∧ HasTy M sv' a ∧
-                      Res S M X tail env' st sv' out) →
+                    (∃ sv', eval F env' be = some sv' ∧ HasTy M sv' a ∧
+                      Res S M X tail env' st sv' out) ∨
+                      Esc S M (eval F env' be) (escv F env' be) (bareTries be) out) →
                   (∀ env', eval F env' (if swap then b2 else b1) = eval F env' bo) →
                   (∀ env', eval F env' (if swap then b1 else b2) = eval F env' be) →
+                  (∀ env', escv F env' (if swap then b2 else b1) = escv F env' bo) →
+                  (∀ env', escv F env' (if swap then b1 else b2) = escv F env' be) →
+                  (∀ R, R ∈ bareTries bo ∨ R ∈ bareTries be →
+                    R ∈ bareTriesA (.cons p1 b1 (.cons p2 b2 .nil))) →
                   wRunF host ar callee (eraseL (tagTestB X.subj (M.resStruct t e) ++
                     [.ifElse bt (bindFieldB X.subj (M.resStruct t e) 1 ob ++
                       lowerB M X Γo tail bo) (bindFieldB X.subj (M.resStruct t e) 2 eb ++
                       lowerB M X Γe tail be)])) wl st = some out →
-                  ∃ sv', evalArms F env sv (.cons p1 b1 (.cons p2 b2 .nil)) = some sv' ∧
-                    HasTy M sv' a ∧ Res S M X tail env st sv' out := by
-                intro bo be a hAo hAe hbo' hbe' hr
+                  (∃ sv', evalArms F env sv (.cons p1 b1 (.cons p2 b2 .nil)) = some sv' ∧
+                    HasTy M sv' a ∧ Res S M X tail env st sv' out) ∨
+                    Esc S M (evalArms F env sv (.cons p1 b1 (.cons p2 b2 .nil)))
+                      (escvArms F env sv (.cons p1 b1 (.cons p2 b2 .nil)))
+                      (bareTriesA (.cons p1 b1 (.cons p2 b2 .nil))) out := by
+                intro bo be a hAo hAe hbo' hbe' hbo'' hbe'' htys hr
                 rw [eraseL_append] at hr
                 rcases hasTy_result hsT with ⟨x, rfl, hx⟩ | ⟨x, rfl, hx⟩
                 · simp only [SRepr] at hsw
@@ -4073,10 +4620,14 @@ theorem agreementResArms_step :
                   rw [wRunF_ifElse_single] at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
-                  obtain ⟨sv', hev, hT, hres⟩ := hAo env' wl' henv' hl' hr
-                  refine ⟨sv', ?_, hT, hres' _ _ _ _ hres⟩
-                  simp only [evalRes_ok F env hpk, hbv, hbo']
-                  exact hev
+                  rcases hAo env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
+                  · refine Or.inl ⟨sv', ?_, hT, hres' _ _ _ _ hres⟩
+                    simp only [evalRes_ok F env hpk, hbv, hbo']
+                    exact hev
+                  · exact Or.inr (esc_lift hE
+                      (fun h => by simp only [evalRes_ok F env hpk, hbv, hbo']; exact h)
+                      (fun y hy => by simp only [escvRes_ok F env hpk, hbv, hbo'']; exact hy)
+                      (fun R hR => htys R (Or.inl hR)))
                 · simp only [SRepr] at hsw
                   obtain ⟨dd, xw, rfl, hxw⟩ := hsw
                   obtain ⟨env', wl', hbv, henv', hl', hbrun, hres'⟩ :=
@@ -4087,10 +4638,14 @@ theorem agreementResArms_step :
                   rw [wRunF_ifElse_single] at hr
                   simp only [Int.reduceEq, ↓reduceIte, eraseL_append] at hr
                   rw [run_seq_eq hbrun] at hr
-                  obtain ⟨sv', hev, hT, hres⟩ := hAe env' wl' henv' hl' hr
-                  refine ⟨sv', ?_, hT, hres' _ _ _ _ hres⟩
-                  simp only [evalRes_err F env hpk, hbv, hbe']
-                  exact hev
+                  rcases hAe env' wl' henv' hl' hr with ⟨sv', hev, hT, hres⟩ | hE
+                  · refine Or.inl ⟨sv', ?_, hT, hres' _ _ _ _ hres⟩
+                    simp only [evalRes_err F env hpk, hbv, hbe']
+                    exact hev
+                  · exact Or.inr (esc_lift hE
+                      (fun h => by simp only [evalRes_err F env hpk, hbv, hbe']; exact h)
+                      (fun y hy => by simp only [escvRes_err F env hpk, hbv, hbe'']; exact hy)
+                      (fun R hR => htys R (Or.inr hR)))
               cases swap with
               | false =>
                   simp only at hty
@@ -4109,7 +4664,8 @@ theorem agreementResArms_step :
                         exact key b1 b2 a
                           (fun env' wl' he hl' hr => agreement b1 Γo env' tail a wl' st out hta he hl' hr)
                           (fun env' wl' he hl' hr => agreement b2 Γe env' tail a wl' st out hte he hl' hr)
-                          (fun _ => by simp) (fun _ => by simp) hrun
+                          (fun _ => by simp) (fun _ => by simp) (fun _ => by simp) (fun _ => by simp)
+                          (fun R hR => by rcases hR with hR | hR <;> simp [bareTriesA, hR]) hrun
                       · simp [hac] at hty
               | true =>
                   simp only at hty
@@ -4128,7 +4684,8 @@ theorem agreementResArms_step :
                         exact key b2 b1 a
                           (fun env' wl' he hl' hr => agreement b2 Γo env' tail a wl' st out hta he hl' hr)
                           (fun env' wl' he hl' hr => agreement b1 Γe env' tail a wl' st out hte he hl' hr)
-                          (fun _ => by simp) (fun _ => by simp) hrun
+                          (fun _ => by simp) (fun _ => by simp) (fun _ => by simp) (fun _ => by simp)
+                          (fun R hR => by rcases hR with hR | hR <;> simp [bareTriesA, hR]) hrun
                       · simp [hac] at hty
 
 theorem agreementVarArms_step :
@@ -4143,8 +4700,9 @@ theorem agreementVarArms_step :
       tyVarArms M X.n Γ tail tid arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerVarArms M X Γ tail bt tid arms)) wl st = some out →
-      ∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.variant tid cv fs) arms) (escvArms F env (.variant tid cv fs) arms) (bareTriesA arms) out
   | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyVarArms] at hty
   | .cons p b .nil, hsz, Γ, env, tail, T, wl, st, out, bt, tid, cv, fs, ws, fts, hss, hws, hcf, hfs,
@@ -4160,8 +4718,10 @@ theorem agreementVarArms_step :
               simp only [varArmΓ, Option.some.injEq] at hva
               subst hva
               simp only [lowerVarArms] at hrun
-              obtain ⟨sv, hev, hT, hres⟩ := agreement b Γ env tail T wl st out hty henv hl hrun
-              exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+              rcases agreement b Γ env tail T wl st out hty henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+              · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+              · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                  (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
           | ctor cc bs =>
               cases cc with
               | user tid' c =>
@@ -4183,10 +4743,10 @@ theorem agreementVarArms_step :
                             env Γ Γ' wl st hl.1.2.1 hss (by intro j y h; simpa using h) hfs hws
                             hva henv hl
                         rw [run_seq_eq hxrun] at hrun
-                        obtain ⟨sv, hev, hT, hres⟩ :=
-                          agreement b Γ' env' tail T wl' st out hty henv' hl' hrun
-                        exact ⟨sv, by simp [evalArms, patMatch, hbv, hev], hT,
-                          hres' _ _ _ _ hres⟩
+                        rcases agreement b Γ' env' tail T wl' st out hty henv' hl' hrun with ⟨sv, hev, hT, hres⟩ | hE
+                        · exact Or.inl ⟨sv, by simp [evalArms, patMatch, hbv, hev], hT, hres' _ _ _ _ hres⟩
+                        · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, hbv, h])
+                            (fun y hy => by simp [escvArms, patMatch, hbv, hy]) (fun R hR => by simp [bareTriesA, hR]))
                   · cases hva
               | some => simp [varArmΓ] at hva
               | none => simp [varArmΓ] at hva
@@ -4249,10 +4809,10 @@ theorem agreementVarArms_step :
                                         fs fts ws env Γ Γ' wl st hl.1.2.1 hss
                                         (by intro j y h; simpa using h) hfs hws hva henv hl
                                     rw [run_seq_eq hxrun] at hrun
-                                    obtain ⟨sv, hev, hT, hres⟩ :=
-                                      agreement b Γ' env' tail a wl' st out hta henv' hl' hrun
-                                    exact ⟨sv, by simp [evalArms, patMatch, hbv, hev], hT,
-                                      hres' _ _ _ _ hres⟩
+                                    rcases agreement b Γ' env' tail a wl' st out hta henv' hl' hrun with ⟨sv, hev, hT, hres⟩ | hE
+                                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, hbv, hev], hT, hres' _ _ _ _ hres⟩
+                                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, hbv, h])
+                                        (fun y hy => by simp [escvArms, patMatch, hbv, hy]) (fun R hR => by simp [bareTriesA, hR]))
                                   · have hne : M.ctorStruct tid cv ≠ M.ctorStruct tid c := by
                                       intro h
                                       exact hc (hinj c fts' hcfc h.symm)
@@ -4260,13 +4820,22 @@ theorem agreementVarArms_step :
                                       ↓reduceIte] at hrun
                                     have hcov' : coversB cv (.cons p' b' r) = true := by
                                       simpa [coversB, hc] using hcov
-                                    obtain ⟨sv, hev, hT, hres⟩ :=
-                                      agreementVarArms (.cons p' b' r) Γ env tail a wl st out bt tid
-                                        cv fs ws fts hss hws hcf hfs hcov' hinj hr henv hl hrun
-                                    refine ⟨sv, ?_, hT, hres⟩
-                                    rw [← hev]
-                                    conv => lhs; rw [evalArms]
-                                    simp [patMatch, hc]
+                                    rcases agreementVarArms (.cons p' b' r) Γ env tail a wl st out bt tid
+                                        cv fs ws fts hss hws hcf hfs hcov' hinj hr henv hl hrun with
+                                      ⟨sv, hev, hT, hres⟩ | hE
+                                    · refine Or.inl ⟨sv, ?_, hT, hres⟩
+                                      rw [← hev]
+                                      conv => lhs; rw [evalArms]
+                                      simp [patMatch, hc]
+                                    · refine Or.inr (esc_lift hE ?_ ?_ (fun R hR => by
+                                        show R ∈ bareTries b ++ bareTriesA (.cons p' b' r)
+                                        exact List.mem_append_right _ hR))
+                                      · intro h
+                                        conv => lhs; rw [evalArms]
+                                        simp [patMatch, hc, h]
+                                      · intro y hy
+                                        conv => lhs; rw [escvArms]
+                                        simp [patMatch, hc, hy]
                             · cases hva
                           · cases hty
           | some => simp [varArmΓ] at hty
@@ -4288,8 +4857,9 @@ theorem agreementStrArms_step :
       tyStrArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerStrArms M X Γ tail bt arms)) wl st = some out →
-      ∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.s x) arms) (escvArms F env (.s x) arms) (bareTriesA arms) out
   | .nil, hsz, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by simp [tyStrArms] at hty
   | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, bt, x, hss, hty, henv, hl, hrun => by
       cases p
@@ -4341,13 +4911,16 @@ theorem agreementStrArms_step :
                     by_cases hxk : x = k
                     · subst hxk
                       simp [b32] at hseq
-                      obtain ⟨sv, hev, hT, hres⟩ := agreement b Γ env tail T1 wl st out hb henv hl hseq
-                      exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                      rcases agreement b Γ env tail T1 wl st out hb henv hl hseq with ⟨sv, hev, hT, hres⟩ | hE
+                      · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+                      · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                          (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
                     · simp [b32, hxk] at hseq
-                      obtain ⟨sv, hev, hT, hres⟩ :=
-                        agreementStrArms rest Γ env tail T1 wl st out bt x (fun _ => hss') hr henv
-                          hl hseq
-                      exact ⟨sv, by simp [evalArms, patMatch, hxk, hev], hT, hres⟩
+                      rcases agreementStrArms rest Γ env tail T1 wl st out bt x (fun _ => hss') hr henv
+                          hl hseq with ⟨sv, hev, hT, hres⟩ | hE
+                      · exact Or.inl ⟨sv, by simp [evalArms, patMatch, hxk, hev], hT, hres⟩
+                      · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, hxk, h])
+                          (fun y hy => by simp [escvArms, patMatch, hxk, hy]) (fun R hR => by simp [bareTriesA, hR]))
               · simp [hTT] at hty
       case wild =>
           cases rest with
@@ -4355,8 +4928,10 @@ theorem agreementStrArms_step :
           | nil =>
               simp only [tyStrArms] at hty
               simp only [lowerStrArms] at hrun
-              obtain ⟨sv, hev, hT, hres⟩ := agreement b Γ env tail T wl st out hty henv hl hrun
-              exact ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+              rcases agreement b Γ env tail T wl st out hty henv hl hrun with ⟨sv, hev, hT, hres⟩ | hE
+              · exact Or.inl ⟨sv, by simp [evalArms, patMatch, bindVals, hev], hT, hres⟩
+              · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, bindVals, h])
+                  (fun y hy => by simp [escvArms, patMatch, bindVals, hy]) (fun R hR => by simp [bareTriesA, hR]))
       all_goals simp [tyStrArms] at hty
 
 theorem agreementTupArms_step :
@@ -4368,8 +4943,9 @@ theorem agreementTupArms_step :
       tyTupArms M X.n Γ tail tid arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerTupArms M X Γ tail tid arms)) wl st = some out →
-      ∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.record tid fs) arms) (escvArms F env (.record tid fs) arms) (bareTriesA arms) out
   | .nil, hsz, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hty, _, _, _ => by
       simp [tyTupArms] at hty
   | .cons p b rest, hsz, Γ, env, tail, T, wl, st, out, tid, fs, ws, fts, hss, hws, hR, hfs, hty,
@@ -4391,9 +4967,10 @@ theorem agreementTupArms_step :
                       extract_run host ar callee X.subj (M.structOf tid) ws bs 0 fs fts ws env Γ
                         Γ' wl st hl.1.2.1 hss (by intro j y h; simpa using h) hfs hws hbt henv hl
                     rw [run_seq_eq hxrun] at hrun
-                    obtain ⟨sv, hev, hT, hres⟩ :=
-                      agreement b Γ' env' tail T wl' st out hty henv' hl' hrun
-                    exact ⟨sv, by simp [evalArms, patMatch, hbv, hev], hT, hres' _ _ _ _ hres⟩
+                    rcases agreement b Γ' env' tail T wl' st out hty henv' hl' hrun with ⟨sv, hev, hT, hres⟩ | hE
+                    · exact Or.inl ⟨sv, by simp [evalArms, patMatch, hbv, hev], hT, hres' _ _ _ _ hres⟩
+                    · exact Or.inr (esc_lift hE (fun h => by simp [evalArms, patMatch, hbv, h])
+                        (fun y hy => by simp [escvArms, patMatch, hbv, hy]) (fun R hR => by simp [bareTriesA, hR]))
               · cases hty
       all_goals simp [tyTupArms] at hty
 
@@ -4407,8 +4984,9 @@ theorem agreement_upto : ∀ n : Nat,
       LRel S M X env wl →
       wRunF host ar callee (lowerW M X Γ tail e) wl st = some out →
       (_ : sizeOf e < n) →
-      ∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out) ∧
+      (∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (eval F env e) (escv F env e) (bareTries e) out) ∧
     (    ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
       (wl st : List WVal) (out : Out),
       tysOf M X.n Γ es = some Ts →
@@ -4416,9 +4994,10 @@ theorem agreement_upto : ∀ n : Nat,
       LRel S M X env wl →
       wRunF host ar callee (lowerArgsW M X Γ es) wl st = some out →
       (_ : sizeOf es < n) →
-      ∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
+      (∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
         evalArgs F env es = some svs ∧ HasTyL M svs Ts ∧
-        SReprL S M svs ws ∧ LRel S M X env wl') ∧
+        SReprL S M svs ws ∧ LRel S M X env wl') ∨
+        Esc S M (evalArgs F env es) (escvArgs F env es) (bareTriesL es) out) ∧
     (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (sc : List BI) (bt : Option Ty) (x : Int),
       (∀ wl0 st0 out0, LRel S M X env wl0 →
@@ -4429,8 +5008,9 @@ theorem agreement_upto : ∀ n : Nat,
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
       (_ : sizeOf arms < n) →
-      ∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out) ∧
+      (∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.i x) arms) (escvArms F env (.i x) arms) (bareTriesA arms) out) ∧
     (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (x : Bool),
       tyBoolArms M X.n Γ tail arms = some T →
@@ -4438,8 +5018,9 @@ theorem agreement_upto : ∀ n : Nat,
       wRunF host ar callee (eraseL (lowerBoolArms M X Γ tail bt arms)) wl (b32 x :: st) =
         some out →
       (_ : sizeOf arms < n) →
-      ∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out) ∧
+      (∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.b x) arms) (escvArms F env (.b x) arms) (bareTriesA arms) out) ∧
     (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (t : Ty) (sv : SVal) (w : WVal),
       wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.option t) →
@@ -4447,8 +5028,9 @@ theorem agreement_upto : ∀ n : Nat,
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerOptArms M X Γ tail bt t arms)) wl st = some out →
       (_ : sizeOf arms < n) →
-      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
-        Res S M X tail env st sv' out) ∧
+      (∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∨
+        Esc S M (evalArms F env sv arms) (escvArms F env sv arms) (bareTriesA arms) out) ∧
     (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (t e : Ty) (sv : SVal) (w : WVal),
       wl[X.subj]? = some w → SRepr S M sv w → HasTy M sv (.result t e) →
@@ -4456,8 +5038,9 @@ theorem agreement_upto : ∀ n : Nat,
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerResArms M X Γ tail bt t e arms)) wl st = some out →
       (_ : sizeOf arms < n) →
-      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
-        Res S M X tail env st sv' out) ∧
+      (∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∨
+        Esc S M (evalArms F env sv arms) (escvArms F env sv arms) (bareTriesA arms) out) ∧
     (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (tid cv : Nat) (fs : List SVal)
       (ws : List WVal) (fts : List Ty),
@@ -4470,8 +5053,9 @@ theorem agreement_upto : ∀ n : Nat,
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerVarArms M X Γ tail bt tid arms)) wl st = some out →
       (_ : sizeOf arms < n) →
-      ∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out) ∧
+      (∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.variant tid cv fs) arms) (escvArms F env (.variant tid cv fs) arms) (bareTriesA arms) out) ∧
     (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (bt : Option Ty) (x : List Nat),
       ((∃ k b r, arms = .cons (.litStr k) b r) → wl[X.subj]? = some (strW M x)) →
@@ -4479,8 +5063,9 @@ theorem agreement_upto : ∀ n : Nat,
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerStrArms M X Γ tail bt arms)) wl st = some out →
       (_ : sizeOf arms < n) →
-      ∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out) ∧
+      (∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.s x) arms) (escvArms F env (.s x) arms) (bareTriesA arms) out) ∧
     (    ∀ (arms : Arms) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (tail : Bool) (T : Ty)
       (wl st : List WVal) (out : Out) (tid : Nat) (fs : List SVal) (ws : List WVal)
       (fts : List Ty),
@@ -4490,8 +5075,9 @@ theorem agreement_upto : ∀ n : Nat,
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerTupArms M X Γ tail tid arms)) wl st = some out →
       (_ : sizeOf arms < n) →
-      ∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out) := by
+      (∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.record tid fs) arms) (escvArms F env (.record tid fs) arms) (bareTriesA arms) out) := by
   intro n
   induction n with
   | zero =>
@@ -4525,8 +5111,9 @@ theorem agreement :
       EnvTy M env Γ →
       LRel S M X env wl →
       wRunF host ar callee (lowerW M X Γ tail e) wl st = some out →
-      ∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, eval F env e = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (eval F env e) (escv F env e) (bareTries e) out
   := by
   intro e
   intros
@@ -4539,9 +5126,10 @@ theorem agreementArgs :
       EnvTy M env Γ →
       LRel S M X env wl →
       wRunF host ar callee (lowerArgsW M X Γ es) wl st = some out →
-      ∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
+      (∃ svs ws wl', out = .ok wl' (ws.reverse ++ st) ∧
         evalArgs F env es = some svs ∧ HasTyL M svs Ts ∧
-        SReprL S M svs ws ∧ LRel S M X env wl'
+        SReprL S M svs ws ∧ LRel S M X env wl') ∨
+        Esc S M (evalArgs F env es) (escvArgs F env es) (bareTriesL es) out
   := by
   intro es
   intros
@@ -4559,8 +5147,9 @@ theorem agreementIntArms :
       tyIntArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerIntArms M X Γ tail sc bt arms)) wl st = some out →
-      ∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.i x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.i x) arms) (escvArms F env (.i x) arms) (bareTriesA arms) out
   := by
   intro arms
   intros
@@ -4574,8 +5163,9 @@ theorem agreementBoolArms :
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerBoolArms M X Γ tail bt arms)) wl (b32 x :: st) =
         some out →
-      ∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.b x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.b x) arms) (escvArms F env (.b x) arms) (bareTriesA arms) out
   := by
   intro arms
   intros
@@ -4589,8 +5179,9 @@ theorem agreementOptArms :
       tyOptArms M X.n Γ tail t arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerOptArms M X Γ tail bt t arms)) wl st = some out →
-      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
-        Res S M X tail env st sv' out
+      (∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∨
+        Esc S M (evalArms F env sv arms) (escvArms F env sv arms) (bareTriesA arms) out
   := by
   intro arms
   intros
@@ -4605,8 +5196,9 @@ theorem agreementResArms :
       tyResArms M X.n Γ tail t e arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerResArms M X Γ tail bt t e arms)) wl st = some out →
-      ∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
-        Res S M X tail env st sv' out
+      (∃ sv', evalArms F env sv arms = some sv' ∧ HasTy M sv' T ∧
+        Res S M X tail env st sv' out) ∨
+        Esc S M (evalArms F env sv arms) (escvArms F env sv arms) (bareTriesA arms) out
   := by
   intro arms
   intros
@@ -4627,8 +5219,9 @@ theorem agreementVarArms :
       tyVarArms M X.n Γ tail tid arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerVarArms M X Γ tail bt tid arms)) wl st = some out →
-      ∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.variant tid cv fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.variant tid cv fs) arms) (escvArms F env (.variant tid cv fs) arms) (bareTriesA arms) out
   := by
   intro arms
   intros
@@ -4643,8 +5236,9 @@ theorem agreementStrArms :
       tyStrArms M X.n Γ tail arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerStrArms M X Γ tail bt arms)) wl st = some out →
-      ∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.s x) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.s x) arms) (escvArms F env (.s x) arms) (bareTriesA arms) out
   := by
   intro arms
   intros
@@ -4660,8 +5254,9 @@ theorem agreementTupArms :
       tyTupArms M X.n Γ tail tid arms = some T →
       EnvTy M env Γ → LRel S M X env wl →
       wRunF host ar callee (eraseL (lowerTupArms M X Γ tail tid arms)) wl st = some out →
-      ∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
-        Res S M X tail env st sv out
+      (∃ sv, evalArms F env (.record tid fs) arms = some sv ∧ HasTy M sv T ∧
+        Res S M X tail env st sv out) ∨
+        Esc S M (evalArms F env (.record tid fs) arms) (escvArms F env (.record tid fs) arms) (bareTriesA arms) out
   := by
   intro arms
   intros
@@ -4778,7 +5373,8 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
         intro f p hG svs ws r hTs hrep hrun
         obtain ⟨_, htyped, _, hcode⟩ := hMem f p hG
         simp only [planTyped, Bool.and_eq_true, decide_eq_true_eq] at htyped
-        obtain ⟨⟨hpn, hnl⟩, hty⟩ := htyped
+        obtain ⟨⟨⟨hpn, hnl⟩, hty⟩, hbare⟩ := htyped
+        have hbare' : bareTries p.body = [] := by simpa using hbare
         obtain ⟨hXn, hXc, hXs, hXsc⟩ := FnPlan.lctx_spec p
         rw [← hXn] at hty
         have hCallees : ∀ g sig, M.sigs g = some sig →
@@ -4821,12 +5417,16 @@ theorem fn_certified_group {C : Nat} (S : CarrierSpec C)
         | none => rw [hw] at hrun; simp at hrun
         | some o =>
             rw [hw] at hrun
-            obtain ⟨sv, hev, hT, hres⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host
+            rcases agreement S box add sub mul cmp eq neg Ctr hNegC host
               (fun g => (code g).map (·.arity)) (fun g as => wFuncN code host k g as) M
               hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R (groupModel outer G k) hCallees
               (fun t g hg h tl sv htl hm => hCons t g hg k h tl sv htl hm)
               p.lctx p.body (paramsΓ p.sig.params) (argsEnv svs) true p.sig.ret
-              (initLocals (fnCode M p) ws) [] o hty (envTy_args hTs) hLR hw
+              (initLocals (fnCode M p) ws) [] o hty (envTy_args hTs) hLR hw with
+              ⟨sv, hev, hT, hres⟩ | hE
+            rotate_left
+            · rw [hbare'] at hE
+              exact (esc_nil hE).elim
             have hm : groupModel outer G (k + 1) f svs = some sv := by
               rw [groupModel_member outer G hG]; exact hev
             cases o with

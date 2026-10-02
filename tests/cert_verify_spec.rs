@@ -2705,9 +2705,9 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // more: 23 of 162. The List helpers certify one more (`Bytes_hexParts`
     // calls `List.reverse`): 24 of 162. The packed `Bytes` helpers certify
     // six more (`Bytes.empty`, `len`, `octets`, `concat`, `take`, `drop`):
-    // 30 of 162.
+    // 30 of 162. Int interpolation certifies `Bytes.fromList`: 31 of 162.
     assert!(
-        compile_report.contains("(30 certified, 132 source-level-only)"),
+        compile_report.contains("(31 certified, 131 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
@@ -2726,7 +2726,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("30 checked exports"),
+        report.contains("31 checked exports"),
         "json should certify the widened data-segment functions:\n{report}"
     );
     assert!(

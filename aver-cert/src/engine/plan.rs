@@ -79,6 +79,9 @@ pub enum PlanBuiltin {
     BytesConcat,
     BytesTake,
     BytesDrop,
+    /// `Grammar.Builtin.strFromInt`: an `Int` interpolation part, a call of
+    /// the `String.fromInt` helper (`Schema.TypeTable.strFromInt`).
+    StrFromInt,
 }
 
 /// `Grammar.BytesRole`: the per-type helpers of the packed `Bytes` array.
@@ -237,6 +240,10 @@ pub enum PlanExpr {
     Construct(PlanCtor, PlanTy, Vec<PlanExpr>),
     Interp(Vec<PlanExpr>),
     List(PlanTy, Vec<PlanExpr>),
+    /// `Grammar.Expr.try_`: `e?` with the enclosing function's return type.
+    Try(Box<PlanExpr>, PlanTy),
+    /// `Grammar.Expr.scope`: a body whose `?` returns land here.
+    Scope(Box<PlanExpr>),
 }
 
 /// `Grammar.FnPlan`.
@@ -304,6 +311,9 @@ pub struct PlanTypeTable {
     /// `__aint_to_i64_checked`, which `pack` calls
     /// (`Schema.TypeTable.intChk`), pinned to its template.
     pub int_chk: Option<u32>,
+    /// `String.fromInt`, which an `Int` interpolation part calls
+    /// (`Schema.TypeTable.strFromInt`), pinned to its template.
+    pub str_from_int: Option<u32>,
 }
 
 /// One user function as the compiler printed it: its wasm function index, its
@@ -430,6 +440,7 @@ impl PlanCallee {
                     PlanBuiltin::BytesConcat => ".bytesConcat",
                     PlanBuiltin::BytesTake => ".bytesTake",
                     PlanBuiltin::BytesDrop => ".bytesDrop",
+                    PlanBuiltin::StrFromInt => ".strFromInt",
                 }
             ),
             PlanCallee::Intrinsic(i) => format!(
@@ -580,6 +591,16 @@ impl PlanExpr {
             PlanExpr::List(t, items) => {
                 out.push_str(&format!("(.list {} ", t.lean()));
                 Self::write_list(items, out);
+                out.push(')');
+            }
+            PlanExpr::Try(e, ret) => {
+                out.push_str("(.try_ ");
+                e.write_lean(out);
+                out.push_str(&format!(" {})", ret.lean()));
+            }
+            PlanExpr::Scope(e) => {
+                out.push_str("(.scope ");
+                e.write_lean(out);
                 out.push(')');
             }
         }
@@ -817,6 +838,9 @@ impl PlanTypeTable {
             }
             if let Some(i) = self.int_chk {
                 out.push_str(&format!(",\n    intChk := some {i}"));
+            }
+            if let Some(i) = self.str_from_int {
+                out.push_str(&format!(",\n    strFromInt := some {i}"));
             }
             out
         };

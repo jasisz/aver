@@ -82,6 +82,43 @@ mutual
 end
 
 mutual
+/-- The total fragment has no `try_`: nothing in it returns early. -/
+theorem totE_bare {mem : Nat → Bool} {mulOk calls : Bool} :
+    ∀ e : Expr, totE mem mulOk calls e = true → bareTries e = []
+  | .literal _, _ => by simp [bareTries]
+  | .local _, _ => by simp [bareTries]
+  | .binOp _ l r, h => by
+      simp only [totE, Bool.and_eq_true] at h
+      simp [bareTries, totE_bare l h.1.2, totE_bare r h.2]
+  | .call (.fn _) args, h => by
+      simp only [totE, Bool.and_eq_true] at h
+      simp [bareTries, totArgs_bare args h.2]
+  | .tailCall _ args, h => by
+      simp only [totE, Bool.and_eq_true] at h
+      simp [bareTries, totArgs_bare args h.2]
+  | .let_ _ _ _, h => by simp [totE] at h
+  | .call (.builtin _) _, h => by simp [totE] at h
+  | .call (.lazy _) _, h => by simp [totE] at h
+  | .call (.intrinsic _) _, h => by simp [totE] at h
+  | .neg _, h => by simp [totE] at h
+  | .ifThenElse _ _ _, h => by simp [totE] at h
+  | .recordCreate _ _, h => by simp [totE] at h
+  | .project _ _ _, h => by simp [totE] at h
+  | .match_ _ _, h => by simp [totE] at h
+  | .construct _ _ _, h => by simp [totE] at h
+  | .interp _, h => by simp [totE] at h
+  | .list _ _, h => by simp [totE] at h
+  | .try_ _ _, h => by simp [totE] at h
+  | .scope _, h => by simp [totE] at h
+theorem totArgs_bare {mem : Nat → Bool} {mulOk calls : Bool} :
+    ∀ es : List Expr, totArgs mem mulOk calls es = true → bareTriesL es = []
+  | [], _ => by simp [bareTriesL]
+  | e :: es, h => by
+      simp only [totArgs, Bool.and_eq_true] at h
+      simp [bareTriesL, totE_bare e h.1, totArgs_bare es h.2]
+end
+
+mutual
   /-- Some member call occurs. -/
   def hasCall : Expr → Bool
     | .binOp _ l r => hasCall l || hasCall r
@@ -297,6 +334,8 @@ theorem totE_notStr {M : MCtx} {n : Nat} {mem : Nat → Bool} {mulOk calls : Boo
   | .construct _ _ _, _, _, _, ht, _ => by simp [totE] at ht
   | .interp _, _, _, _, ht, _ => by simp [totE] at ht
   | .list _ _, _, _, _, ht, _ => by simp [totE] at ht
+  | .try_ _ _, _, _, _, ht, _ => by simp [totE] at ht
+  | .scope _, _, _, _, ht, _ => by simp [totE] at ht
 
 /-- The `n <= 0` guard over a represented Int in a local runs to its
     verdict (the inline sign test: no helper is called). -/
@@ -382,15 +421,21 @@ theorem progress :
         ⟨htl, _, _⟩
       · simp only [lowerW, lowerB, htl, hA, ↓reduceIte, eraseL_append, eraseL, eraseI]
         obtain ⟨o1, h1⟩ := progress l Γ env false .int wl st htl0 hΓ htl henv hl h0
-        obtain ⟨sv1, _, hT1, hres1⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host ar
+        rcases agreement S box add sub mul cmp eq neg Ctr hNegC host ar
           callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X l Γ env false .int
-          wl st o1 htl henv hl h1
+          wl st o1 htl henv hl h1 with ⟨sv1, _, hT1, hres1⟩ | hE
+        rotate_left
+        · rw [totE_bare l htl0] at hE
+          exact (esc_nil hE).elim
         obtain ⟨wl1, w1, rfl, hw1, hl1⟩ := res_false hres1
         obtain ⟨a, rfl⟩ := hasTy_int hT1
         obtain ⟨o2, h2⟩ := progress r Γ env false .int wl1 (w1 :: st) htr0 hΓ htr henv hl1 h0
-        obtain ⟨sv2, _, hT2, hres2⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host ar
+        rcases agreement S box add sub mul cmp eq neg Ctr hNegC host ar
           callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X r Γ env false .int
-          wl1 (w1 :: st) o2 htr henv hl1 h2
+          wl1 (w1 :: st) o2 htr henv hl1 h2 with ⟨sv2, _, hT2, hres2⟩ | hE
+        rotate_left
+        · rw [totE_bare r htr0] at hE
+          exact (esc_nil hE).elim
         obtain ⟨wl2, w2, rfl, hw2, _⟩ := res_false hres2
         obtain ⟨b, rfl⟩ := hasTy_int hT2
         simp only [SRepr, CanonRepr] at hw1 hw2
@@ -417,9 +462,12 @@ theorem progress :
       obtain ⟨hhost, har, _⟩ := hCallees g sig hsig
       simp only [lowerW, lowerB, eraseL_append]
       obtain ⟨o1, h1⟩ := progressArgs args Γ env sig.params wl st hargs hΓ hts henv hl h0
-      obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, _⟩ :=
-        agreementArgs S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd
+      rcases agreementArgs S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd
           hSub hMul hNeg hCmp hEq R F hCallees hConsF X args Γ env sig.params wl st o1 hts henv hl h1
+        with ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, _⟩ | hE
+      rotate_left
+      · rw [totArgs_bare args hargs] at hE
+        exact (esc_nil hE).elim
       obtain ⟨rest, rfl⟩ := descentHead_eq hdh
       have hd : eval F env (.binOp .sub (.local 0) (.literal (.int 1))) = some (.i (n - 1)) := by
         simp [eval, h0, intBin]
@@ -444,9 +492,12 @@ theorem progress :
       obtain ⟨_, har, _⟩ := hCallees g sig hsig
       simp only [lowerW, lowerB, eraseL_append]
       obtain ⟨o1, h1⟩ := progressArgs args Γ env sig.params wl st hargs hΓ hts henv hl h0
-      obtain ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, _⟩ :=
-        agreementArgs S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd
+      rcases agreementArgs S box add sub mul cmp eq neg Ctr hNegC host ar callee M hCarrier hBox hAdd
           hSub hMul hNeg hCmp hEq R F hCallees hConsF X args Γ env sig.params wl st o1 hts henv hl h1
+        with ⟨svs, ws, wl1, rfl, hevs, hTs, hrep, _⟩ | hE
+      rotate_left
+      · rw [totArgs_bare args hargs] at hE
+        exact (esc_nil hE).elim
       obtain ⟨rest, rfl⟩ := descentHead_eq hdh
       have hd : eval F env (.binOp .sub (.local 0) (.literal (.int 1))) = some (.i (n - 1)) := by
         simp [eval, h0, intBin]
@@ -477,6 +528,8 @@ theorem progress :
   | .construct _ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
   | .interp _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
   | .list _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
+  | .try_ _ _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
+  | .scope _, _, _, _, _, _, _, ht, _, _, _, _, _ => by simp [totE] at ht
 
 theorem progressArgs :
     ∀ (es : List Expr) (Γ : Nat → Option Ty) (env : Nat → Option SVal) (Ts : List Ty)
@@ -495,9 +548,12 @@ theorem progressArgs :
       obtain ⟨t, ts, hte, htes, rfl⟩ := tysOf_cons_inv hty
       simp only [lowerArgsW, lowerArgsB, eraseL_append]
       obtain ⟨o1, h1⟩ := progress e Γ env false t wl st htot.1 hΓ hte henv hl h0
-      obtain ⟨sv, _, _, hres⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host ar
+      rcases agreement S box add sub mul cmp eq neg Ctr hNegC host ar
         callee M hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R F hCallees hConsF X e Γ env false t
-        wl st o1 hte henv hl h1
+        wl st o1 hte henv hl h1 with ⟨sv, _, _, hres⟩ | hE
+      rotate_left
+      · rw [totE_bare e htot.1] at hE
+        exact (esc_nil hE).elim
       obtain ⟨wl1, w, rfl, _, hl1⟩ := res_false hres
       obtain ⟨o2, h2⟩ := progressArgs es Γ env ts wl1 (w :: st) htot.2 hΓ htes henv hl1 h0
       rw [wRunF_append]
@@ -610,7 +666,8 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
     obtain ⟨⟨ps, hps⟩, hall, _, hbody⟩ := totPlan_spec (hTot f p hG)
     obtain ⟨base, step, hb, hbase, hstep⟩ := totBody_eq hbody
     simp only [planTyped, Bool.and_eq_true, decide_eq_true_eq] at htyped
-    obtain ⟨⟨hpn, hnl⟩, hty⟩ := htyped
+    obtain ⟨⟨⟨hpn, hnl⟩, hty⟩, hbare⟩ := htyped
+    have hbare' : bareTries p.body = [] := by simpa using hbare
     obtain ⟨hXn, hXc, hXs, hXsc⟩ := FnPlan.lctx_spec p
     rw [← hXn] at hty
     have hCallees := groupCallees S M code host G outer hOuter hSigOf hCert m
@@ -682,12 +739,15 @@ theorem fn_certified_total {C : Nat} (S : CarrierSpec C)
           (calls := true) (n := n) (hSig := hSig) (hCallP := hCallP)
           step _ _ true p.sig.ret _ [] hstep hΓ hsty henv hLR h0
     obtain ⟨out, hout⟩ := hrun
-    obtain ⟨sv, _, _, hres⟩ := agreement S box add sub mul cmp eq neg Ctr hNegC host
+    rcases agreement S box add sub mul cmp eq neg Ctr hNegC host
       (fun g => (code g).map (·.arity)) (fun g as => wFuncN code host m g as) M
       hCarrier hBox hAdd hSub hMul hNeg hCmp hEq R (groupModel outer G m) hCallees
       (fun t g hg h tl sv htl hm => hCons t g hg m h tl sv htl hm)
       p.lctx p.body (paramsΓ p.sig.params) (argsEnv (.i n :: tl)) true p.sig.ret
-      (initLocals (fnCode M p) (w0 :: ws')) [] out hty henv hLR hout
+      (initLocals (fnCode M p) (w0 :: ws')) [] out hty henv hLR hout with ⟨sv, _, _, hres⟩ | hE
+    rotate_left
+    · rw [hbare'] at hE
+      exact (esc_nil hE).elim
     unfold wFuncN
     rw [hcode]
     simp only

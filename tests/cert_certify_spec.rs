@@ -2465,14 +2465,12 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
     for (export, reason) in [
         // The printer names the MIR node it has no grammar for.
         ("goldenApprox", "BinOp Div"),
-        ("showGolden", "InterpolatedStr (a part is not a String)"),
+        (
+            "showGolden",
+            "InterpolatedStr (a part is not a String or an Int)",
+        ),
         // A printed plan the one grammar does not type.
         ("absF", "plan does not type in the one grammar"),
-        // A call to a function without a certified plan.
-        (
-            "showListInt",
-            "calls function 12, which has no certified plan",
-        ),
         // An effectful function has no pure plan at all.
         ("main", "fn declares effects"),
         ("printStats", "fn declares effects"),
@@ -2487,7 +2485,10 @@ fn certify_declines_name_the_blocker_that_actually_applies() {
     // arity limits are certified plans now, and so is the recursion over a
     // List match. `List.reverse` has a certified helper, so the function
     // that calls it and the builder that calls that one are certified too.
+    // An Int part of an interpolation has a certified formatter, so
+    // `showListInt`, which used to decline on its callee, is certified.
     for name in [
+        "showListInt",
         "fibTR",
         "fib",
         "fibSpec",
@@ -3003,8 +3004,8 @@ fn cert_projects_payment_ops_package_checks() {
         "payment_ops check verdict does not say CHECKED:\n{report}"
     );
     assert!(
-        report.contains("146 checked exports"),
-        "payment_ops must keep the 146 exports it certifies:\n{report}"
+        report.contains("147 checked exports"),
+        "payment_ops must keep the 147 exports it certifies:\n{report}"
     );
     // The project's single `verify … law` is universal by design but its
     // emitted proof ladder has no `String.replace` theory and lands on its

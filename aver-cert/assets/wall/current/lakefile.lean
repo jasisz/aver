@@ -9,6 +9,6 @@ lean_lib «CertPrelude» where
   srcDir := "."
   roots := #[`CertPrelude, `CertPreludeSanity, `CertDecode, `SchemaBase, `SchemaCore,
     `SchemaSanity, `WasmSlice, `Wasip2Envelope, `ArithTemplateDerisk,
-    `InterpreterSequencing, `Grammar, `GrammarLower, `ListHelpers, `BytesHelpers, `GrammarSound, `GrammarTotal,
+    `InterpreterSequencing, `Grammar, `GrammarLower, `ListHelpers, `BytesHelpers, `StringHelpers, `GrammarSound, `GrammarTotal,
     `TypeTable, `AcceptedArtifactCore, `ClaimAxes, `AcceptanceSoundnessCore,
     `AcceptanceSoundness, `GrammarBridge, `ModelPrelude]

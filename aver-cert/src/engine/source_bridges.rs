@@ -1087,7 +1087,9 @@ fn plan_nodes(e: &PlanExpr) -> usize {
         | PlanExpr::Interp(args)
         | PlanExpr::List(_, args) => args.iter().map(plan_nodes).sum(),
         PlanExpr::BinOp(_, l, r) => plan_nodes(l) + plan_nodes(r),
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => plan_nodes(x),
+        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) | PlanExpr::Try(x, _) | PlanExpr::Scope(x) => {
+            plan_nodes(x)
+        }
         PlanExpr::If(c, t, el) => plan_nodes(c) + plan_nodes(t) + plan_nodes(el),
         PlanExpr::Match(s, arms) => plan_nodes(s) + arms.iter().map(|(_, b)| plan_nodes(b)).sum::<usize>(),
     }
@@ -1115,7 +1117,10 @@ fn string_literals(e: &PlanExpr, out: &mut BTreeSet<Vec<u8>>) {
             string_literals(l, out);
             string_literals(r, out);
         }
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => string_literals(x, out),
+        PlanExpr::Neg(x)
+        | PlanExpr::Project(_, _, x)
+        | PlanExpr::Try(x, _)
+        | PlanExpr::Scope(x) => string_literals(x, out),
         PlanExpr::If(c, t, el) => {
             string_literals(c, out);
             string_literals(t, out);
@@ -1251,6 +1256,19 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
             // `Bytes` builtin, so such a bridge could only fall to `sorry`.
             if e.plan.body.lean().contains("(.builtin .bytes") {
                 return Err("the plan calls a Bytes builtin, which the bridge proofs do not model yet"
+                    .to_string());
+            }
+            // An `Int` interpolation part is the helper's decimal bytes, which
+            // the source model and the step lemmas do not spell yet.
+            if e.plan.body.lean().contains("(.builtin .strFromInt)") {
+                return Err("the plan interpolates an Int, which the bridge proofs do not model yet"
+                    .to_string());
+            }
+            // An early return (`?`) is the source model's `Result` propagation,
+            // which the one-step proofs do not unfold yet.
+            if e.plan.body.lean().contains("(.try_ ") {
+                return Err("the plan returns early through `?`, which the bridge proofs do not \
+                            model yet"
                     .to_string());
             }
             if plan_nodes(&e.plan.body) > MAX_BRIDGE_PLAN_NODES {
