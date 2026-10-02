@@ -319,13 +319,15 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
     }
 
     // Keyed on the wording built by `crate::yield_lowering`.
-    if msg.contains("yields; call '") {
+    if msg.contains(crate::yield_lowering::YIELD_CALL_RECIPE)
+        || msg.contains("yields; test it in a cases-form `verify")
+    {
         return (
             "yield-direct-call",
             None,
             Vec::new(),
             Some(
-                "A yield function is not called: call its generated __<fn>Start(...) and answer the requests its Outcome carries"
+                "A yield function is not called as written: call it from another function that declares `yield`, or seat it as a process the generated loop runs (`Run.all()`)"
                     .to_string(),
             ),
         );
