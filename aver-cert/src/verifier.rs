@@ -182,6 +182,9 @@ struct TrustedReport {
     profile: String,
     abi: String,
     artifact_hash: String,
+    /// The manifest this check read and verified. `explain` renders from it
+    /// and never reads the package again after the verdict.
+    manifest: Value,
 }
 
 struct CertifiedCandidate {
@@ -777,6 +780,7 @@ fn trusted_check(
         profile: candidates.profile,
         abi: candidates.abi,
         artifact_hash: actual_hash,
+        manifest,
     })
 }
 
@@ -3281,7 +3285,7 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
         }
     }
 
-    let manifest = read_manifest(cert_dir)?;
+    let manifest = report.manifest;
     if let Some(laws) = manifest.get("laws").and_then(Value::as_array)
         && !laws.is_empty()
     {
@@ -3876,6 +3880,7 @@ mod tests {
                 profile: String::new(),
                 abi: String::new(),
                 artifact_hash: String::new(),
+                manifest: Value::Null,
             },
             "checked",
         );
@@ -3903,6 +3908,7 @@ mod tests {
                 profile: String::new(),
                 abi: String::new(),
                 artifact_hash: String::new(),
+                manifest: Value::Null,
             },
             "checked",
         );
@@ -3933,6 +3939,7 @@ mod tests {
                 profile: String::new(),
                 abi: String::new(),
                 artifact_hash: String::new(),
+                manifest: Value::Null,
             },
             "checked",
         );
@@ -3981,6 +3988,7 @@ mod tests {
                 profile: String::new(),
                 abi: String::new(),
                 artifact_hash: String::new(),
+                manifest: Value::Null,
             },
             "checked",
         );
