@@ -19,7 +19,7 @@ use super::*;
 /// because an earlier proved law is available as a lemma.
 #[test]
 fn earlier_user_law_feeds_later_law_proof_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping część A test: `lake` not available");
         return;
     }
@@ -105,7 +105,7 @@ fn earlier_user_law_feeds_later_law_proof_when_lake_is_available() {
 /// baseline (run.sh excludes decomposed/); they are the loop-reach record.
 #[test]
 fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping decomposed-corpus test: `lake` not available");
         return;
     }
@@ -227,7 +227,7 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
 /// is pinned here. Lake-gated (CLI probe). Genuinely kernel-clean (no `sorryAx`).
 #[test]
 fn prop_86_comparison_premise_membership_stays_universal_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping prop_86 comparison-premise test: `lake` not available");
         return;
     }
@@ -285,7 +285,7 @@ fn prop_86_comparison_premise_membership_stays_universal_when_lake_is_available(
 /// that the manual experiment (#449) could NOT close before część C.
 #[test]
 fn part_c_arm_injection_closes_in_arm_helpers_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping część C test: `lake` not available");
         return;
     }
@@ -443,7 +443,7 @@ fn lean_proves_count_insert_split_rung_when_lake_is_available() {
 /// equivalence `fastRev = rev` then closes by decomposition over it.)
 #[test]
 fn lean_proves_accumulator_generalizing_qrev_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping accumulator-gen test: `lake` not available");
         return;
     }
@@ -497,7 +497,7 @@ fn lean_proves_accumulator_generalizing_qrev_when_lake_is_available() {
 /// over its samples (`universal:false`).
 #[test]
 fn lean_proves_accumulator_generalizing_nat_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping nat accumulator-gen test: `lake` not available");
         return;
     }
@@ -579,7 +579,7 @@ pub(crate) fn proof_check_summary(source: &str, prefix: &str) -> serde_json::Val
 /// closes). A purely cosmetic given-reorder must not flip a passing proof.
 #[test]
 fn lean_accumulator_generalizing_is_given_order_independent_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping given-order test: `lake` not available");
         return;
     }
@@ -607,7 +607,7 @@ fn lean_accumulator_generalizing_is_given_order_independent_when_lake_is_availab
 /// would be a silent coverage loss.
 #[test]
 fn lean_does_not_force_bound_int_countdown_accumulator_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping int-countdown gate test: `lake` not available");
         return;
     }
@@ -630,7 +630,7 @@ fn lean_does_not_force_bound_int_countdown_accumulator_when_lake_is_available() 
 /// `Int.mul_*` AC lemmas.
 #[test]
 fn lean_proves_multiplicative_list_accumulator_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping list-mul accumulator test: `lake` not available");
         return;
     }
@@ -653,7 +653,7 @@ fn lean_proves_multiplicative_list_accumulator_when_lake_is_available() {
 /// AC normal form — the multiplicative twin of the additive Nat win.
 #[test]
 fn lean_proves_multiplicative_nat_accumulator_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping nat-mul accumulator test: `lake` not available");
         return;
     }
@@ -683,7 +683,7 @@ fn lean_proves_multiplicative_nat_accumulator_when_lake_is_available() {
 /// corpus never exercises.)
 #[test]
 fn lean_proves_error_prop_pipeline_law_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping ?-pipeline test: `lake` not available");
         return;
     }
@@ -751,7 +751,7 @@ verify sumSafe law commutative
 /// (single-module) — both `countWords` laws must be genuine universals.
 #[test]
 fn lean_proves_map_fold_homomorphism_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping map-fold test: `lake` not available");
         return;
     }
@@ -797,7 +797,7 @@ fn lean_proves_map_fold_homomorphism_when_lake_is_available() {
 /// pieceValue laws.)
 #[test]
 fn lean_proves_enum_constant_fold_law_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping enum-constant-fold test: `lake` not available");
         return;
     }
@@ -863,7 +863,7 @@ verify bonus law emptyZero
 /// laws, which close genuinely with `cases … <;> rfl`.)
 #[test]
 fn lean_proves_finite_domain_cases_law_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping finite-domain-cases test: `lake` not available");
         return;
     }
@@ -934,7 +934,7 @@ verify shade law neverEmpty
 /// `afterIntChar` canonical-Int roundtrips.)
 #[test]
 fn lean_proves_simp_over_prelude_law_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping simp-over-prelude test: `lake` not available");
         return;
     }
@@ -997,7 +997,7 @@ verify keepPrefix law appendRoundtrip
 /// `examples/data/json.av`: `parseNumber.fromIntRoundtrip`.)
 #[test]
 fn lean_proves_int_decimal_roundtrip_law_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping int-decimal-roundtrip test: `lake` not available");
         return;
     }
@@ -1122,7 +1122,7 @@ verify parseNum law fromIntRoundtrip
 /// the deep case evaluates to `default` → lake build error → `passed: false`.
 #[test]
 fn lean_deep_tuple_entries_get_adt_measure_fuel_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping deep-tuple-entries test: `lake` not available");
         return;
     }
@@ -1209,7 +1209,7 @@ verify renderEntries
 /// the real `games/rogue/types.av` calcDamage = `Int.max(1, atk-def)`.)
 #[test]
 fn lean_proves_int_max_linear_arith_law_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Int.max test: `lake` not available");
         return;
     }
@@ -1270,7 +1270,7 @@ verify dmg law alwaysPositive
 /// rules — so no `maxHeartbeats` simp loop.
 #[test]
 fn lean_proves_generalizing_induction_with_siblings_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping gen+siblings test: `lake` not available");
         return;
     }
@@ -1544,7 +1544,7 @@ fn readHexQuad(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
 /// flip.)
 #[test]
 fn lean_proves_string_escape_roundtrip_law_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping string-escape-roundtrip test: `lake` not available");
         return;
     }
@@ -1659,7 +1659,7 @@ fn string_escape_roundtrip_declines_misaligned_escape_table() {
 /// happy path closes.)
 #[test]
 fn lean_escape_roundtrip_template_regression_degrades_to_caught_sorry_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping escape-sabotage test: `lake` not available");
         return;
     }
@@ -1876,7 +1876,7 @@ fn readWideQuad(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
 /// gate is back at the octet range `1..=256`.
 #[test]
 fn lean_proves_full_octet_escape_threshold_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping full-octet-threshold test: `lake` not available");
         return;
     }
@@ -1937,7 +1937,7 @@ fn lean_proves_full_octet_escape_threshold_when_lake_is_available() {
 /// rejected and the law stayed bounded (`universal:false`).
 #[test]
 fn lean_proves_negated_premise_comparison_bridge_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping negated-premise bridge test: `lake` not available");
         return;
     }
@@ -1957,7 +1957,7 @@ fn lean_proves_negated_premise_comparison_bridge_when_lake_is_available() {
 /// the induction target is invalid Lean; an open law must still build honestly.
 #[test]
 fn lean_list_induction_does_not_generalize_its_own_target_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let summary = proof_check_summary(

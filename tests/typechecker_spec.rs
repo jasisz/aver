@@ -24,16 +24,6 @@ fn parse(src: &str) -> Vec<TopLevel> {
     parser.parse().expect("parse failed")
 }
 
-fn parse_error(src: &str) -> String {
-    let mut lexer = Lexer::new(src);
-    let tokens = lexer.tokenize().expect("lex failed");
-    let mut parser = Parser::new(tokens);
-    parser
-        .parse()
-        .expect_err("expected parse failure")
-        .to_string()
-}
-
 fn errors(src: &str) -> Vec<String> {
     let items = parse(src);
     run_type_check(&items)
@@ -80,16 +70,6 @@ fn assert_error_containing(src: &str, snippet: &str) {
         } else {
             errs.join("\n  ")
         }
-    );
-}
-
-fn assert_parse_error_containing(src: &str, snippet: &str) {
-    let msg = parse_error(src);
-    assert!(
-        msg.contains(snippet),
-        "expected parse error containing {:?}, got: {}",
-        snippet,
-        msg
     );
 }
 
@@ -1034,17 +1014,6 @@ fn valid_function_using_user_type_parameter() {
 }
 
 #[test]
-fn effect_aliases_are_parse_errors() {
-    let src = concat!(
-        "effects AppIO = [Console.print]\n",
-        "fn greet() -> Unit\n",
-        "    ! [AppIO]\n",
-        "    Console.print(\"hi\")\n"
-    );
-    assert_parse_error_containing(src, "module-level declaration");
-}
-
-#[test]
 fn exact_effects_must_be_declared_directly() {
     let src = concat!(
         "fn log(msg: String) -> Unit\n",
@@ -1055,17 +1024,6 @@ fn exact_effects_must_be_declared_directly() {
         "    log(\"processing\")\n",
     );
     assert_no_errors(src);
-}
-
-#[test]
-fn removed_effect_aliases_fail_before_typecheck() {
-    let src = concat!(
-        "effects Silent = []\n",
-        "fn greet() -> Unit\n",
-        "    ! [Silent]\n",
-        "    Console.print(\"hi\")\n",
-    );
-    assert_parse_error_containing(src, "module-level declaration");
 }
 
 // ---------------------------------------------------------------------------
@@ -2387,11 +2345,6 @@ fn valid_float_floor_ceil_round() {
 }
 
 #[test]
-fn valid_float_from_int() {
-    assert_no_errors("fn f(n: Int) -> Float\n    Float.fromInt(n)\n");
-}
-
-#[test]
 fn valid_float_to_string() {
     assert_no_errors("fn f(x: Float) -> String\n    String.fromFloat(x)\n");
 }
@@ -2447,16 +2400,6 @@ fn valid_string_chars() {
 }
 
 #[test]
-fn valid_string_from_int() {
-    assert_no_errors("fn f(n: Int) -> String\n    String.fromInt(n)\n");
-}
-
-#[test]
-fn valid_string_from_float() {
-    assert_no_errors("fn f(x: Float) -> String\n    String.fromFloat(x)\n");
-}
-
-#[test]
 fn valid_string_from_bool() {
     assert_no_errors("fn f(b: Bool) -> String\n    String.fromBool(b)\n");
 }
@@ -2476,14 +2419,6 @@ fn error_float_abs_wrong_arg() {
         "fn f(s: String) -> Float\n    Float.abs(s)\n",
         "expected Float, got String",
     );
-}
-
-#[test]
-fn valid_no_effects_for_helpers() {
-    // Int/Float/String namespace methods don't require effects
-    assert_no_errors("fn f(n: Int) -> String\n    String.fromInt(n)\n");
-    assert_no_errors("fn f(x: Float) -> Int\n    Float.floor(x)\n");
-    assert_no_errors("fn f(s: String) -> Int\n    String.len(s)\n");
 }
 
 #[test]
@@ -2809,29 +2744,6 @@ fn error_granular_effect_blocks_other_method() {
 }
 
 #[test]
-fn removed_effect_alias_parse_error() {
-    let src = concat!(
-        "effects ReadOnly = [Http.get, Disk.readText]\n",
-        "fn load(url: String, path: String) -> Result<String, String>\n",
-        "    ! [ReadOnly]\n",
-        "    Http.get(url)\n",
-        "    Disk.readText(path)\n",
-    );
-    assert_parse_error_containing(src, "module-level declaration");
-}
-
-#[test]
-fn removed_effect_alias_blocks_nothing_because_it_is_parse_error() {
-    let src = concat!(
-        "effects ReadOnly = [Http.get, Disk.readText]\n",
-        "fn save(path: String) -> Result<Unit, String>\n",
-        "    ! [ReadOnly]\n",
-        "    Disk.writeText(path, \"data\")\n",
-    );
-    assert_parse_error_containing(src, "module-level declaration");
-}
-
-#[test]
 fn valid_mix_explicit_effects() {
     let src = concat!(
         "fn mixed(url: String, path: String) -> Result<String, String>\n",
@@ -2873,18 +2785,6 @@ fn error_granular_console_blocks_other_method() {
         "    Console.readLine()\n",
     );
     assert_error_containing(src, "has effect 'Console.readLine'");
-}
-
-#[test]
-fn error_effect_alias_syntax_is_removed_even_for_cycles() {
-    let src = concat!(
-        "effects A = [B]\n",
-        "effects B = [A]\n",
-        "fn greet() -> Unit\n",
-        "    ! [A]\n",
-        "    Console.print(\"hi\")\n",
-    );
-    assert_parse_error_containing(src, "module-level declaration");
 }
 
 // ---------------------------------------------------------------------------

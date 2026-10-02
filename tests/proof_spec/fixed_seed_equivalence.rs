@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn recursive_workers_agree_at_a_fixed_seed() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping fixed-seed proof test: `lake` not available");
         return;
     }
@@ -28,7 +28,7 @@ fn recursive_workers_agree_at_a_fixed_seed() {
 
 #[test]
 fn fixed_seed_equivalence_reaches_a_private_imported_worker() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping imported fixed-seed proof test: `lake` not available");
         return;
     }
@@ -92,7 +92,7 @@ verify decoded law agreesWithNumberIn
 
 #[test]
 fn different_worker_updates_or_seeds_do_not_earn_proof_credit() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping fixed-seed negative controls: `lake` not available");
         return;
     }

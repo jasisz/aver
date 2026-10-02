@@ -59,7 +59,7 @@ fn capability_tuple_verify_exports_from_entry_and_dependency() {
 
 #[test]
 fn capability_tuple_verify_builds_from_entry_and_dependency() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping capability tuple proof test: `lake` not available");
         return;
     }

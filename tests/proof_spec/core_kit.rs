@@ -4,7 +4,7 @@ use super::*;
 /// kernel-genuine, with no sorry and no hard error. Returns the Lean source of
 /// the fixture's module for structural checks.
 fn assert_all_universal(fixture: &str, prefix: &str, module: &str, laws: u64) -> Option<String> {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping {fixture}: `lake` not available");
         return None;
     }

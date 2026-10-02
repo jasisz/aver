@@ -4,6 +4,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 
 use aver_cmd::{aver_bin, format_output, repo_root};
 use std::path::Path;
@@ -197,7 +199,7 @@ fn coordinator_cases_pin_service_order_seating_and_the_settled_gate() {
 
 #[test]
 fn coordinator_laws_are_universal_beside_the_vm_schedule_scenarios() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping coordinator Lean check: lake is unavailable");
         return;
     }

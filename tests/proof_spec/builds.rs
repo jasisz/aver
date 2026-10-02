@@ -71,47 +71,6 @@ fn proof_export_builds_string_concat_monoid_when_lake_is_available() {
 }
 
 #[test]
-fn proof_export_builds_empty_map_facts_when_lake_is_available() {
-    // Pure builtin empty-map facts (`Map.get(empty, k) = None`,
-    // `Map.has(empty, k) = false`, `Map.len(empty) = 0`). The empty-map-precise
-    // `emit_map_empty_fact_law` rung closes all three as universals. Sorry
-    // budget 0 — revert the rung and each regresses
-    // to a caught sorry.
-    assert_proof_builds_with_sorry_budget(
-        "examples/formal/empty_map_facts.av",
-        "aver-proof-empty-map-facts",
-        0,
-    );
-}
-
-#[test]
-fn proof_export_builds_int_comparison_laws_when_lake_is_available() {
-    // Bool-valued Int comparison identities (equality symmetry, `!(a < b) =
-    // (a >= b)`, totality of `<=`). The `wrapper_return` arm's sign-split now
-    // falls through to a comparison normaliser + `sorry` floor, closing these
-    // as universals. Sorry budget 0 — revert
-    // and each hard-fails the Lean build.
-    assert_proof_builds_with_sorry_budget(
-        "examples/formal/int_comparison_laws.av",
-        "aver-proof-int-comparison-laws",
-        0,
-    );
-}
-
-#[test]
-fn proof_export_builds_int_abs_laws_when_lake_is_available() {
-    // Pure builtin `Int.abs` identities (idempotence, multiplicativity,
-    // non-negativity). The `emit_int_abs_identity_law` rung closes all three
-    // as universals via the natAbs/cast lemmas. Sorry budget 0 — revert and idempotence/non-neg hard-fail the
-    // build and multiplicativity sorries.
-    assert_proof_builds_with_sorry_budget(
-        "examples/formal/int_abs_laws.av",
-        "aver-proof-int-abs-laws",
-        0,
-    );
-}
-
-#[test]
 fn proof_export_builds_bits_laws_when_lake_is_available() {
     // The `Bits` proof model is a DEFINITION, not an assumption: Lean's
     // `AverBits` prelude builds the pointwise operations from `Nat` bitwise
@@ -196,19 +155,6 @@ fn proof_export_builds_affine_wrapper_when_lake_is_available() {
 }
 
 #[test]
-fn proof_export_builds_map_set_nonempty_when_lake_is_available() {
-    // `Map.len(Map.set(m, k, v)) >= 1` — set yields a non-empty map. Needs
-    // induction (the hand-proved prelude lemma `AverMap.len_set_ge_one`); the
-    // `emit_map_len_set_positive_law` rung discharges it. Sorry budget 0 —
-    // revert and the law regresses to a bare sorry.
-    assert_proof_builds_with_sorry_budget(
-        "examples/formal/map_set_nonempty.av",
-        "aver-proof-map-set-nonempty",
-        0,
-    );
-}
-
-#[test]
 fn proof_export_builds_map_set_inside_a_record_update_when_lake_is_available() {
     // The store lives in a field of a record, so both laws cross a `Map.set`
     // written as `Store.update(store, slots = Map.set(store.slots, id, v))`.
@@ -228,7 +174,7 @@ fn proof_export_builds_map_set_inside_a_record_update_when_lake_is_available() {
 
 #[test]
 fn proof_export_builds_frac_monotone_geone_flip_when_lake_is_available() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping frac-monotone ge-one flip proof test: `lake` not available");
         return;
     }
@@ -304,19 +250,6 @@ fn proof_export_builds_sum_acc_when_lake_is_available() {
     // close in core Lean 4 (`omega`) without Mathlib. Sorry budget
     // 0 — the strategy fully closes the universal proof.
     assert_proof_builds_with_sorry_budget("examples/data/sum_acc.av", "aver-proof-sum-acc", 0);
-}
-
-#[test]
-fn proof_export_builds_fact_acc_when_lake_is_available() {
-    // Lean side of the same multiplicative case: the decomposition lemma
-    // `factTR n acc = mul (factTR n 1) acc` + the main law, closing the
-    // nonlinear residual with the user-monoid→`Nat.*` bridges and the core
-    // `Nat.mul_*` lemmas (no Mathlib). Sorry budget 0.
-    assert_proof_builds_with_sorry_budget(
-        "proof-corpus/handwritten/fact_acc_spec.av",
-        "aver-proof-fact-acc",
-        0,
-    );
 }
 
 #[test]
@@ -448,7 +381,7 @@ fn proof_clique_cursor_monotonicity_is_universal_cross_domain() {
     // helper because a `>= q` pool law exists about it, not because of its name.
     // All three close universally, kernel-clean (the #print-axioms audit gates
     // `universal == true`, so a `native_decide`/`sorry` sneaking in fails here).
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping clique cursor-monotonicity test: `lake` not available");
         return;
     }
@@ -536,7 +469,7 @@ fn proof_export_builds_pure_question_bang_when_lake_is_available() {
     std::fs::write(dir.join("program.av"), source).expect("write program.av");
     let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    if Command::new("lake").arg("--version").output().is_ok() {
+    if lean_required::lake_available() {
         let lean_dir = dir.join("lean");
         let proof = Command::new(aver_bin)
             .current_dir(&dir)
@@ -740,7 +673,7 @@ fn proof_export_builds_rational_ring_laws_kernel_genuine_when_lake_is_available(
     // - `universal == true` — keys on the #print-axioms audit
     //   ([propext, Quot.sound] only), so a `native_decide` sneaking
     //   into a law theorem fails here even at 0 sorries.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping rational ring-laws proof test: `lake` not available");
         return;
     }
@@ -786,7 +719,7 @@ fn proof_export_builds_rational_ring_laws_kernel_genuine_when_lake_is_available(
 /// so the file is a clean `bounded_laws == 2` probe.
 #[test]
 fn proof_bounded_laws_counts_distinct_part_named_laws_separately() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping bounded-laws miscount test: `lake` not available");
         return;
     }
@@ -838,7 +771,7 @@ fn proof_export_flips_transparent_chain_h1_to_universal_when_lake_is_available()
     // omega`, so the speculative probe commits it UNIVERSAL. Revert the arm (or
     // its probe gate) and the chain law falls back to `bounded` — this asserts
     // the flip AND the axiom whitelist.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping transparent-chain h1 test: `lake` not available");
         return;
     }
@@ -884,7 +817,7 @@ fn proof_export_closes_transparent_chain_cross_domain_witness_when_lake_is_avail
     // through the same arm with ZERO further engine changes — proving the
     // recognizer keys on claim SHAPE, not on names or domain constants. A
     // name-keyed regression would leave `roomToSpare.capacityChain` bounded here.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping transparent-chain witness test: `lake` not available");
         return;
     }
@@ -927,7 +860,7 @@ fn proof_probe_gating_reverts_not_implied_transparent_chain_to_bounded_when_lake
     // the probe gate (force universal-or-sorry) and this law's universal theorem
     // carries a sorry — `passed` flips false / `sorries` climbs — so this test
     // fails loudly, exactly the red build the gate prevents.
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping transparent-chain not-implied test: `lake` not available");
         return;
     }

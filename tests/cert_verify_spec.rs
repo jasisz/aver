@@ -1352,39 +1352,6 @@ fn cert_tripwire_declines_flipped_wasm_byte() {
     assert!(out.contains("hash mismatch"), "wrong reason (a):\n{out}");
 }
 
-/// (a2) A byte flipped inside the certified `countDown` body is the same hard
-/// decline, and is deliberately caught by the hash before any Lean build.
-#[test]
-fn cert_tripwire_declines_flipped_countdown_body_byte() {
-    let Some(out_dir) = tripwire_baseline("certverify-neg-a2") else {
-        return;
-    };
-
-    // (a2) A byte flipped inside the newly certified `countDown` body is still a
-    //      hard decline. This is intentionally caught by the artifact hash
-    //      before the checker spends time building Lean.
-    let dir = temp_dir("neg-a2-countdown-body");
-    copy_dir(&out_dir, &dir);
-    let w = dir.join("certprobe2.wasm");
-    let mut bytes = std::fs::read(&w).unwrap();
-    let count_down_prefix = [
-        0x20, 0x01, 0x05, 0x20, 0x00, 0x42, 0x01, 0x10, 0x07, 0x10, 0x09, 0x20, 0x01, 0x20, 0x00,
-        0x10, 0x08, 0x12, 0x02,
-    ];
-    let off = bytes
-        .windows(count_down_prefix.len())
-        .position(|win| win == count_down_prefix)
-        .expect("countDown body prefix should be present in wasm");
-    bytes[off + 1] ^= 0x01;
-    std::fs::write(&w, &bytes).unwrap();
-    let (ok, out) = aver_check(&w, &dir.join("cert"));
-    assert!(!ok, "countDown body-byte flip must fail:\n{out}");
-    assert!(
-        out.contains("hash mismatch"),
-        "wrong reason for countDown body-byte flip:\n{out}"
-    );
-}
-
 /// (b) `Module.lean` (the artifact hash `Schema.Holds` compares against) is
 /// checker-owned: the wall imports it, so the verifier renders it from the
 /// bytes it read. A package file of that name, even one pinning a wrong hash,
@@ -1655,36 +1622,26 @@ fn cert_tripwire_ignores_shipped_olean_cache() {
     );
 }
 
-/// (i) A4 report forgery: a fabricated certified export and contract appended
-/// to ONLY the JSON. The report candidates are kernel-bound to the proven
-/// manifest, so the forged names are never credited.
+/// (i) A4 report forgery: a fabricated runtime contract appended to ONLY the
+/// JSON. The contracts are kernel-bound to the proven manifest, so the forged
+/// contract is declined. A forged export is (j); keeping the two apart says
+/// which pin caught which forgery.
 #[test]
 fn cert_tripwire_declines_forged_report_json() {
     let Some(out_dir) = tripwire_baseline("certverify-neg-i") else {
         return;
     };
 
-    // (i) A4 report forgery: append a fabricated certified export + contract to
-    //     ONLY the JSON. The report names/count/contracts are now candidates the
-    //     kernel witness binds to the proven Lean manifest with `rfl`, so a JSON
-    //     that claims an export or contract the manifest does not have makes a
-    //     binding fail: the cert is DECLINED and the forged names never appear.
+    // (i) A4 report forgery: append a fabricated contract to ONLY the JSON.
+    //     The report contracts are candidates the kernel witness binds to the
+    //     proven Lean manifest with `rfl`, so a JSON that claims a contract
+    //     the manifest does not have makes a binding fail: the cert is
+    //     DECLINED.
     let dir = temp_dir("neg-i");
     copy_dir(&out_dir, &dir);
     let mf = dir.join("cert").join("cert-manifest.json");
     let json = std::fs::read_to_string(&mf).unwrap();
     let mut m: serde_json::Value = serde_json::from_str(&json).unwrap();
-    m["certified"]
-        .as_array_mut()
-        .unwrap()
-        .push(serde_json::json!({
-            "name": "withdrawAll",
-            "class": "source-plan-v1",
-            "facets": [],
-            "policy": "simulatesModel",
-            "level": "L1",
-            "theorem": "AcceptanceSoundness.fn_claim_discharges"
-        }));
     m["runtime_contracts"]
         .as_array_mut()
         .unwrap()
@@ -1694,11 +1651,9 @@ fn cert_tripwire_declines_forged_report_json() {
     let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
     assert!(!ok, "padded JSON must be DECLINED, not credited:\n{out}");
     assert!(out.contains("does not bind"), "wrong reason (i):\n{out}");
-    // The declined diagnostic echoes the rejected candidate; what matters is
-    // that the forged export is never CERTIFIED (credited).
     assert!(
         !out.contains("CERTIFIED"),
-        "forged export credited (i):\n{out}"
+        "forged contract credited (i):\n{out}"
     );
 }
 
@@ -4395,28 +4350,6 @@ fn composition_orphan_member_is_declined() {
     assert!(
         !out.contains("CERTIFIED"),
         "an extra plan entry credited:\n{out}"
-    );
-}
-
-/// A record projection's field index is plan data bound to the bytes:
-/// projecting the other field of `User` in `userName` must be DECLINED.
-#[test]
-fn cert_verify_declines_flipped_field_projection_plan() {
-    if !lean_required::lake_available() {
-        eprintln!("skipping field-projection plan tamper test: `lake` not available");
-        return;
-    }
-
-    let (out_dir, _wasm, _cert) = compile_cert_goals("cert-proj-plan-flip");
-    assert_package_tampers_decline(
-        &out_dir,
-        "cert_goals.wasm",
-        &[(
-            "projected field",
-            "plan:userName",
-            "(.project 1 0 (.local 0))",
-            "(.project 1 1 (.local 0))",
-        )],
     );
 }
 

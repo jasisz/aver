@@ -7,7 +7,7 @@ use super::*;
 /// and the laws next to it keep their universal credit.
 #[test]
 fn proof_isolation_one_failed_proof_keeps_the_rest_universal() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping proof isolation test: `lake` not available");
         return;
     }
@@ -97,7 +97,7 @@ fn proof_isolation_one_failed_proof_keeps_the_rest_universal() {
 /// now be a theorem.
 #[test]
 fn proof_isolation_a_function_named_like_a_law_theorem_fails_the_check() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping law name collision test: `lake` not available");
         return;
     }

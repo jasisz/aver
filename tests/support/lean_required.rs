@@ -1,7 +1,8 @@
-//! Whether a tool a Lean-backed certificate test needs is on `PATH`.
+//! Whether a tool a Lean-backed test needs is on `PATH`.
 //!
 //! A test whose toolchain is missing skips, so a developer without Lean can
-//! still run the suite. The certification lanes set `AVER_CERT_REQUIRE_LEAN=1`:
+//! still run the suite. The lanes that install Lean (certificate lanes in
+//! `cert.yml`, proof lanes in `proof.yml`) set `AVER_CERT_REQUIRE_LEAN=1`:
 //! there a missing tool fails the test, so a lane can never pass with nothing
 //! checked.
 
@@ -19,7 +20,7 @@ pub fn tool_available(program: &str) -> bool {
     if std::env::var(REQUIRE_LEAN_ENV).is_ok_and(|value| value == "1") {
         panic!(
             "`{program}` is not available, and {REQUIRE_LEAN_ENV}=1 requires every \
-             Lean-backed certificate test to run"
+             Lean-backed test to run"
         );
     }
     false

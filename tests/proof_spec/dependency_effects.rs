@@ -29,7 +29,7 @@ use super::*;
 use std::collections::HashMap;
 
 fn lake_available() -> bool {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping dependency-effects proof test: `lake` not available");
         return false;
     }

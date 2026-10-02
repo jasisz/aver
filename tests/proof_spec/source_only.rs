@@ -32,7 +32,7 @@ fn proof_export_ignores_legacy_sidecars_in_parent_directories() {
     .unwrap();
     assert_eq!(original, export("after"), "loaded a sidecar");
 
-    if Command::new("lake").arg("--version").output().is_ok() {
+    if lean_required::lake_available() {
         let (summary, output) = run_lean_check_json_with_args(
             source.to_str().unwrap(),
             &root.join("checked"),

@@ -76,7 +76,7 @@ fn emit_multi(
 }
 
 fn lake_available() -> bool {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping entry-opens proof test: `lake` not available");
         return false;
     }

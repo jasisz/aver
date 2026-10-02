@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn knowledge_provider_laws_are_universal_and_audited() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-knowledge-provider-laws");

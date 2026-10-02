@@ -45,7 +45,7 @@ fn proof_export_bool_eq_omega_has_bridge_and_sorry_floor() {
 /// floor and earns kernel-genuine universal credit.
 #[test]
 fn proof_bool_eq_omega_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping Bool equality omega proof test: `lake` not available");
         return;
     }

@@ -67,7 +67,7 @@ fn proof_export_dep_law_builtin_call_never_resolves_to_module_fn() {
 /// The same fixture through `lake`: the dependency law closes kernel-genuine.
 #[test]
 fn proof_dep_law_builtin_names_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping dep-law names lake test: `lake` not available");
         return;
     }
@@ -139,7 +139,7 @@ fn proof_dep_law_unfolds_its_own_module_function() {
     );
     let _ = std::fs::remove_dir_all(&output_dir);
 
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping the lake half of the owner-name test: `lake` not available");
         return;
     }

@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn symbolic_oracle_cases_over_hex_and_utf8_build_without_sorries() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping symbolic oracle case test: `lake` not available");
         return;
     }
@@ -62,7 +62,7 @@ run_cmd do
 
 #[test]
 fn native_ground_steps_do_not_hide_wrong_results_or_propagated_errors() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping symbolic oracle negative controls: `lake` not available");
         return;
     }

@@ -16,7 +16,7 @@ fn assert_open_fixture(fixture: &str, module: &str, function: &str, partials: &[
         "{}",
         format_output(&verify)
     );
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping unmeasured recursion proof check: `lake` not available");
         return;
     }

@@ -24,7 +24,7 @@ fn audit(dir: &Path, expected: usize) {
 
 #[test]
 fn source_request_traces_are_universal_including_in_place_effects() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source = source_fixture();
@@ -50,7 +50,7 @@ fn source_request_traces_are_universal_including_in_place_effects() {
 
 #[test]
 fn unchanged_results_do_not_hide_six_different_trace_corruptions() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source = tempfile::tempdir().unwrap();
@@ -152,7 +152,7 @@ verify detects
 
 #[test]
 fn imported_private_helpers_preserve_universal_request_traces() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -175,7 +175,7 @@ fn imported_private_helpers_preserve_universal_request_traces() {
 
 #[test]
 fn tail_entry_alignment_is_universal_across_local_and_imported_helpers() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yield_tail_traces");
@@ -197,7 +197,7 @@ fn tail_entry_alignment_is_universal_across_local_and_imported_helpers() {
 
 #[test]
 fn tail_pause_cannot_be_counted_as_an_answer_or_hidden_from_consumption() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let fixture =
@@ -262,7 +262,7 @@ verify detectsPause
 
 #[test]
 fn recursive_helper_splices_are_universal_and_explicit_dependencies() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source =
@@ -301,7 +301,7 @@ fn recursive_helper_splices_are_universal_and_explicit_dependencies() {
 
 #[test]
 fn equal_helper_results_do_not_justify_corrupted_splice_cursors() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let fixture =
@@ -370,7 +370,7 @@ verify detectsCorruption
 
 #[test]
 fn recursive_splices_preserve_nominal_arguments_early_errors_and_in_place_effects() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source =
@@ -397,7 +397,7 @@ fn recursive_splices_preserve_nominal_arguments_early_errors_and_in_place_effect
 
 #[test]
 fn implicit_trace_citations_keep_earlier_laws_when_adding_splice_dependencies() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let fixture =
@@ -445,7 +445,7 @@ fn loop"#,
 
 #[test]
 fn recursive_imports_compose_universal_contracts_without_exposing_private_helpers() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let source =

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn k5_sticky_composition_has_universal_source_proofs() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-k5-sticky-composition");
@@ -40,7 +40,7 @@ fn k5_sticky_composition_has_universal_source_proofs() {
 
 #[test]
 fn k5_fraction_exponent_and_rounding_agree_with_the_normalized_model() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let dir = temp_output_dir("aver-k5-fraction-exponent");

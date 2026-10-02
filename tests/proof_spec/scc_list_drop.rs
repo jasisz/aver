@@ -48,7 +48,7 @@ fn proof_export_scc_list_drop_and_take_are_native_mutual_groups() {
 
 #[test]
 fn proof_scc_list_drop_and_take_build_without_declines() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping SCC List.drop/List.take proof test: `lake` not available");
         return;
     }

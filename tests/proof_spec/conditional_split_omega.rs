@@ -13,7 +13,7 @@ use super::*;
 /// and closes by `omega`. Live Lean gate: the law earns `universal` credit.
 #[test]
 fn proof_conditional_split_closer_lean_closes_universally() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping conditional-split proof test: `lake` not available");
         return;
     }
@@ -70,7 +70,7 @@ fn proof_conditional_split_closer_lean_closes_universally() {
 /// The old combined rewrite set looped on the reader's Boolean condition.
 #[test]
 fn proof_conditional_layout_with_arbitrary_threshold_closes() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let output_dir = temp_output_dir("aver-proof-conditional-layout");

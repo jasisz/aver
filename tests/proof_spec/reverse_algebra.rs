@@ -41,7 +41,7 @@ fn acyclic_reverse_frame_still_requires_the_original_domain_guard() {
         .output()
         .unwrap();
     assert!(vm.status.success(), "{}", format_output(&vm));
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let output = Command::new(env!("CARGO_BIN_EXE_aver"))

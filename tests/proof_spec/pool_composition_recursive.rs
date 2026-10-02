@@ -82,7 +82,7 @@ fn proof_export_keystone_floor_arm_structure() {
 /// keystone floor arm composing them through `grind`.
 #[test]
 fn proof_keystone_floor_arm_lean_closes_kernel_genuine() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping keystone-floor proof test: `lake` not available");
         return;
     }
@@ -123,7 +123,7 @@ fn proof_keystone_floor_arm_lean_closes_kernel_genuine() {
 /// the same pool must not certify a false unguarded statement from its samples.
 #[test]
 fn proof_prelude_wrapper_composes_without_admitting_a_false_neighbor() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping wrapper composition test: `lake` not available");
         return;
     }
@@ -168,7 +168,7 @@ fn proof_prelude_wrapper_composes_without_admitting_a_false_neighbor() {
 /// leading digit also needs that composition inside its fuel induction.
 #[test]
 fn proof_equation_composition_closes_observations_and_keeps_false_law_open() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return;
     }
     let output_dir = temp_output_dir("aver-proof-equation-composition");

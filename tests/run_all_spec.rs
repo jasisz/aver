@@ -18,6 +18,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/lean_required.rs"]
+mod lean_required;
 #[path = "support/loopback_peer.rs"]
 mod loopback_peer;
 
@@ -898,7 +900,7 @@ fn a_process_the_loop_cannot_seat_is_refused_at_every_door() {
 /// The manifest must retain every law without a bounded or admitted fallback.
 #[test]
 fn the_programs_laws_reach_the_lean_wall() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping the Lean wall: `lake` is not available");
         return;
     }

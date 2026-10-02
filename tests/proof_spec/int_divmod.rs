@@ -9,7 +9,7 @@ use super::*;
 /// the cone divides. Both laws become universal.
 #[test]
 fn proof_quotient_remainder_laws_close_universally() {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         eprintln!("skipping div/mod proof test: `lake` not available");
         return;
     }

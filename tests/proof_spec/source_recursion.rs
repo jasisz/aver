@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn check(source: &str) -> Option<serde_json::Value> {
-    if Command::new("lake").arg("--version").output().is_err() {
+    if !lean_required::lake_available() {
         return None;
     }
     let dir = temp_output_dir("aver-source-recursion");

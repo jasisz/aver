@@ -789,9 +789,9 @@ fn main() -> Int
     );
 }
 
-// Cross-module same-bare-name `TypeDef` regression for wasm-gc
-// — known-failing pin, `#[ignore]`'d until the canonical-key
-// migration lands.
+// Cross-module same-bare-name `TypeDef` regression for wasm-gc.
+// It was a known-failing pin until the canonical-key migration
+// landed; it runs on every build now.
 //
 // Epic #180 Phase 6 PR A (#189) migrated the Rust registries
 // to canonical keys (`Left.Box` vs `Right.Box`). wasm-gc's
