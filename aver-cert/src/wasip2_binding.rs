@@ -91,13 +91,11 @@ enum CoreItem {
     Plain,
 }
 
-/// What a nested component is. Only re-export shims are understood.
-enum NestedComponent {
-    /// Pairs of (export name, import name) for each re-exported function.
-    Shim(Vec<(String, String)>),
-    /// An imported or aliased component, whose behavior is unknown.
-    Opaque,
-}
+/// A nested component. The only one admitted is a re-export shim defined in
+/// the component itself: pairs of (export name, import name) for each
+/// re-exported function. An imported or aliased component, whose code is
+/// unknown, is refused.
+type ReexportShim = Vec<(String, String)>;
 
 /// A component function: the declared instance's core export it lifts, if
 /// it is such a lift.
@@ -135,7 +133,7 @@ struct TopLevel {
     core_items: [Vec<CoreItem>; CORE_SPACES],
     funcs: Vec<Lifted>,
     instances: Vec<ComponentInstanceOrigin>,
-    components: Vec<NestedComponent>,
+    components: Vec<ReexportShim>,
     declared_instantiations: usize,
     /// The first component export not lifted from the declared module under
     /// its own name. It is reported after the checks on the declaration.
@@ -201,7 +199,7 @@ pub(crate) fn confirm_declared_core_binding(
             }
             Payload::ComponentSection { .. } => {
                 let shim = read_reexport_shim(&mut payloads)?;
-                top.components.push(NestedComponent::Shim(shim));
+                top.components.push(shim);
             }
             Payload::InstanceSection(reader) => {
                 for instance in reader {
@@ -404,11 +402,10 @@ impl TopLevel {
                         };
                         self.funcs.push(lifted);
                     }
-                    ComponentExternalKind::Instance => {
-                        self.instances.push(ComponentInstanceOrigin::Opaque)
-                    }
-                    ComponentExternalKind::Component => {
-                        self.components.push(NestedComponent::Opaque)
+                    ComponentExternalKind::Instance | ComponentExternalKind::Component => {
+                        return Err(format!(
+                            "wasip2 component aliases {kind:?} `{name}` of a component instance, which this checker does not admit"
+                        ));
                     }
                     ComponentExternalKind::Module => {
                         return Err(
@@ -514,7 +511,12 @@ impl TopLevel {
             }
             ComponentTypeRef::Func(_) => self.funcs.push(None),
             ComponentTypeRef::Instance(_) => self.instances.push(ComponentInstanceOrigin::Opaque),
-            ComponentTypeRef::Component(_) => self.components.push(NestedComponent::Opaque),
+            ComponentTypeRef::Component(_) => {
+                return Err(
+                    "wasip2 component imports a component, whose code this checker cannot see"
+                        .to_string(),
+                );
+            }
             ComponentTypeRef::Type(_) => {}
             ComponentTypeRef::Value(_) => {
                 return Err(
@@ -531,30 +533,26 @@ impl TopLevel {
             ComponentInstance::Instantiate {
                 component_index,
                 args,
-            } => match at(&self.components, component_index, "component")? {
-                NestedComponent::Opaque => ComponentInstanceOrigin::Opaque,
-                NestedComponent::Shim(reexports) => {
-                    let mut funcs = Vec::with_capacity(reexports.len());
-                    for (export, import) in reexports {
-                        let arg = args
-                            .iter()
-                            .find(|arg| {
-                                arg.name == import && arg.kind == ComponentExternalKind::Func
-                            })
-                            .ok_or_else(|| {
-                                format!("re-export shim import `{import}` is not given a function")
-                            })?;
-                        funcs.push((
-                            export.clone(),
-                            at(&self.funcs, arg.index, "component func")?.clone(),
-                        ));
-                    }
-                    ComponentInstanceOrigin::Built {
-                        funcs,
-                        other_fields: false,
-                    }
+            } => {
+                let reexports = at(&self.components, component_index, "component")?;
+                let mut funcs = Vec::with_capacity(reexports.len());
+                for (export, import) in reexports {
+                    let arg = args
+                        .iter()
+                        .find(|arg| arg.name == import && arg.kind == ComponentExternalKind::Func)
+                        .ok_or_else(|| {
+                            format!("re-export shim import `{import}` is not given a function")
+                        })?;
+                    funcs.push((
+                        export.clone(),
+                        at(&self.funcs, arg.index, "component func")?.clone(),
+                    ));
                 }
-            },
+                ComponentInstanceOrigin::Built {
+                    funcs,
+                    other_fields: false,
+                }
+            }
             ComponentInstance::FromExports(exports) => {
                 let mut funcs = Vec::new();
                 let mut other_fields = false;
@@ -1155,6 +1153,29 @@ mod tests {
         };
         let error = refusal(&bytes, inner);
         assert!(error.contains("is not a re-export shim"), "{error}");
+    }
+
+    #[test]
+    fn refuses_imported_and_aliased_components() {
+        // Codex round 3: an imported (empty) component instantiated beside the
+        // declared core runs code the checker cannot see.
+        let imported = component(&DIRECT.replace(
+            "(export \"f\" (func $lf)))",
+            "(import \"c\" (component $c))
+             (instance $ci (instantiate $c))
+             (export \"f\" (func $lf)))",
+        ));
+        let error = refusal(&imported, module_ranges(&imported)[0].clone());
+        assert!(error.contains("imports a component"), "{error}");
+        let aliased = component(&DIRECT.replace(
+            "(export \"f\" (func $lf)))",
+            "(import \"i\" (instance $i (export \"c\" (component))))
+             (alias export $i \"c\" (component $c))
+             (instance $ci (instantiate $c))
+             (export \"f\" (func $lf)))",
+        ));
+        let error = refusal(&aliased, module_ranges(&aliased)[0].clone());
+        assert!(error.contains("aliases Component `c`"), "{error}");
     }
 
     #[test]

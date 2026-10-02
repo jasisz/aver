@@ -841,7 +841,9 @@ fn plant_wasip2_component(
 ///   - a host function lowered into the declared core's memory and handed to
 ///     a helper module whose start function calls it;
 ///   - a helper module whose active data segment traps at instantiation, so
-///     the certified core never runs.
+///     the certified core never runs;
+///   - an imported component, whose code the checker cannot see, instantiated
+///     beside the declared core.
 #[cfg(feature = "wasip2")]
 #[test]
 fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_does_not_run() {
@@ -990,6 +992,21 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
         &honest_core,
     );
 
+    let imported_component = component_around_core(
+        r#"(component
+            (import "c" (component $c))
+            (core module $honest)
+            (core instance $i (instantiate $honest))
+            (instance $ci (instantiate $c))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+
     let adapter = component_around_core(
         r#"(component
             (core module $honest)
@@ -1041,6 +1058,11 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
             "lowered-into-core-memory",
             lowered,
             "nor a wit-component shim or fixup module: it has a start function",
+        ),
+        (
+            "imported-component",
+            imported_component,
+            "wasip2 component imports a component",
         ),
         (
             "trapping-data-segment",
