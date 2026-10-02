@@ -115,7 +115,7 @@ The wall decodes every byte fact an admitted claim uses, but its decoder does no
 
 No other producer analysis runs on the positive path. The verifier does not print plans, disassemble the module, or rebuild `AverCert.Artifact.data`.
 
-For wasip2 the same rule covers the component wrapper. The manifest declares the component as `prefix ++ core ++ suffix` by length (`wasip2ComponentEnvelope`). The verifier splits only at those lengths, stages the whole component as checker-owned `ArtifactComponentBytes.lean`, and the wall's `artifactEnvelopeAccepted` checks that the split core equals the `ArtifactBytes.lean` module the decoders read. The verifier never walks the component to find the core.
+For wasip2 the same rule covers the component wrapper. The manifest declares the component as `prefix ++ core ++ suffix` by length (`wasip2ComponentEnvelope`). The verifier splits only at those lengths, stages the whole component as checker-owned `ArtifactComponentBytes.lean`, and the wall's `artifactEnvelopeAccepted` checks that the split core equals the `ArtifactBytes.lean` module the decoders read. The verifier never walks the component to find the core. Lengths alone do not say that the component runs the declared core, though: a component can carry a second module, in a custom section or as a module nothing exports from, and point the declaration at it. So after validation the verifier confirms the declaration (`aver-cert/src/wasip2_binding.rs`): the declared slice must be exactly the payload of one top-level core module section, that module must be instantiated, every function the component exports (directly, or as a field of an exported instance) must be a `canon lift` of an export of an instance of that module, with the lift's memory, realloc, post-return and callback options from the same place, and no instance of the declared module or item exported by one may be handed to another core instantiation. A nested component is admitted only as a re-export shim, which imports functions and types and exports those same imports, as `wit-component` emits for an exported interface. Any other shape is refused. The helper modules `wit-component` adds (the shim and fixup modules behind the imports) may exist and be instantiated, but nothing the component exports comes from them.
 
 ## The Lean wall
 
@@ -155,6 +155,7 @@ A verdict depends on:
 
 - the small Rust verifier path for file reading, hashing, version checks, staging, process execution and report pinning;
 - `wasmparser::Validator` for full WebAssembly validity;
+- for wasip2, the verifier's binding gate over the validated component (`wasip2_binding.rs`), which confirms that the declared core is an instantiated top-level `ModuleSection` from which every component export is lifted;
 - the embedded Lean wall and the Lean 4.34 elaborator, kernel and tools;
 - the canonical local Elan home that resolves the pinned toolchain;
 - SHA-256 collision resistance;

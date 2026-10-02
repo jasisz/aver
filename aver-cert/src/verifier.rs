@@ -1621,7 +1621,8 @@ fn prepare_wasip2_artifact_with_declared_envelope<'a>(
     }
     // This is only a well-formedness gate for the delivered target artifact.
     // It must not be used to locate the embedded core; the core slice below is
-    // derived solely from the manifest-declared envelope lengths.
+    // derived solely from the manifest-declared envelope lengths, and the
+    // binding gate after it only confirms that declaration.
     wasmparser::Validator::new()
         .validate_all(component_bytes)
         .map_err(|error| format!("artifact is not a valid WebAssembly component: {error}"))?;
@@ -1651,6 +1652,15 @@ fn prepare_wasip2_artifact_with_declared_envelope<'a>(
         .map_err(|error| {
             format!("declared embedded core module is not valid WebAssembly: {error}")
         })?;
+    // The lengths say where the declared core is; they do not say that the
+    // component runs it. Confirm the declared slice is the top-level core
+    // module every component export is lifted from.
+    let core_start = usize::try_from(declaration.prefix_len)
+        .map_err(|_| "wasip2 component envelope prefix does not fit in usize".to_string())?;
+    crate::wasip2_binding::confirm_declared_core_binding(
+        component_bytes,
+        core_start..core_start + core_module_bytes.len(),
+    )?;
 
     Ok(PreparedArtifact {
         artifact_hash: sha256_hex(component_bytes),
@@ -4252,12 +4262,16 @@ mod tests {
     #[test]
     fn wasip2_declared_envelope_preparation_splits_component_without_discovery() {
         let core = b"\0asm\x01\0\0\0";
-        let component = component_with_embedded_core(core);
+        let mut component = component_with_embedded_core(core);
+        let prefix_len = component.len() - core.len();
+        // One core instance section: `instantiate` module 0 with no imports.
+        let instance_section = [2, 4, 1, 0, 0, 0];
+        component.extend_from_slice(&instance_section);
         let declaration = Wasip2EnvelopeDeclaration {
             inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(
-                u64::try_from(component.len() - core.len()).unwrap(),
+                u64::try_from(prefix_len).unwrap(),
                 u64::try_from(core.len()).unwrap(),
-                0,
+                u64::try_from(instance_section.len()).unwrap(),
             ),
         };
 
@@ -4265,6 +4279,24 @@ mod tests {
             .expect("declared component envelope is valid");
         assert_eq!(prepared.artifact_hash, sha256_hex(&component));
         assert_eq!(prepared.core_module_bytes, core);
+    }
+
+    #[test]
+    fn wasip2_declared_envelope_preparation_refuses_a_core_the_component_never_instantiates() {
+        let core = b"\0asm\x01\0\0\0";
+        let component = component_with_embedded_core(core);
+        let error = prepare_wasip2_artifact_with_declared_envelope(
+            &component,
+            Wasip2EnvelopeDeclaration {
+                inner: format::Wasip2ComponentEnvelopeDeclaration::from_lengths(
+                    u64::try_from(component.len() - core.len()).unwrap(),
+                    u64::try_from(core.len()).unwrap(),
+                    0,
+                ),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("never instantiated"), "{error}");
     }
 
     #[test]

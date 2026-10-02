@@ -26,6 +26,8 @@ mod prelude_cache;
 #[cfg(feature = "verify")]
 mod verifier;
 #[cfg(feature = "verify")]
+mod wasip2_binding;
+#[cfg(feature = "verify")]
 pub use verifier::{
     ARTIFACT_DECODE_LINE, CheckVerdict, Explanation, Verdict, check, explain, verify,
 };

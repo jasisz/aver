@@ -682,6 +682,186 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
     );
 }
 
+fn push_leb(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+/// Appends a section `id` holding `payload` and returns where the payload
+/// starts in the result.
+fn push_section(component: &mut Vec<u8>, id: u8, payload: &[u8]) -> usize {
+    component.push(id);
+    push_leb(payload.len(), component);
+    let start = component.len();
+    component.extend_from_slice(payload);
+    start
+}
+
+/// Envelope substitution: a component that runs one module while its
+/// manifest declares another. The honest certified core of a produced wasip2
+/// package is planted in a component whose only export, `answer`, is lifted
+/// from a different module that returns `true`, and the manifest's envelope
+/// (and every hash pinning it) is rebound to point at the planted copy. Each
+/// placement is a valid component, so only the binding of the declared core to
+/// the component's exports can tell them apart, and each is DECLINED with its
+/// own reason before Lean runs:
+///   - inside a custom section (not a module of the component at all);
+///   - as an extra top-level module nothing instantiates;
+///   - as an instantiated module the export does not come from;
+///   - as a module inside a nested component.
+#[cfg(feature = "wasip2")]
+#[test]
+fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_does_not_run() {
+    if !tripwire_lake_available() {
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-wasip2-envelope-substitution");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tests/fixtures/wasip2_carrierless.av")
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("--examples")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --target wasip2 --certify runs");
+    assert!(
+        compile.status.success(),
+        "wasip2 producer failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let honest_component =
+        std::fs::read(out_dir.join("wasip2_carrierless.component.wasm")).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let envelope = &manifest["wasip2ComponentEnvelope"];
+    let field = |name: &str| usize::try_from(envelope[name].as_u64().unwrap()).unwrap();
+    let (prefix, core_len, suffix) = (
+        field("prefix_len"),
+        field("embedded_core_module_len"),
+        field("suffix_len"),
+    );
+    let honest_core = honest_component[prefix..prefix + core_len].to_vec();
+    let honest_lean_envelope = format!(
+        "wasip2ComponentEnvelope := some {{ prefixLen := {prefix}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix} }}"
+    );
+
+    // The component the attacker actually ships: its one module answers true.
+    let actual = wat::parse_str(
+        r#"(component
+            (core module $actual (func (export "answer") (result i32) i32.const 1))
+            (core instance $i (instantiate $actual))
+            (alias core export $i "answer" (core func $answer))
+            (type $t (func (result bool)))
+            (func $lifted (type $t) (canon lift (core func $answer)))
+            (export "answer" (func $lifted)))"#,
+    )
+    .expect("attack component parses");
+
+    let custom = {
+        let mut component = actual.clone();
+        let mut payload = Vec::new();
+        let name = b"certified-decoy-core";
+        push_leb(name.len(), &mut payload);
+        payload.extend_from_slice(name);
+        let offset = payload.len();
+        payload.extend_from_slice(&honest_core);
+        let start = push_section(&mut component, 0, &payload) + offset;
+        (component, start)
+    };
+    let unused = {
+        let mut component = actual.clone();
+        let start = push_section(&mut component, 1, &honest_core);
+        (component, start)
+    };
+    let instantiated = {
+        let mut component = actual.clone();
+        let start = push_section(&mut component, 1, &honest_core);
+        // `instantiate` core module 1 (the planted copy) with no imports.
+        push_section(&mut component, 2, &[1, 0x00, 1, 0]);
+        (component, start)
+    };
+    let nested = {
+        let mut inner = b"\0asm\x0d\0\x01\0".to_vec();
+        let inner_start = push_section(&mut inner, 1, &honest_core);
+        let mut component = actual.clone();
+        let start = push_section(&mut component, 4, &inner) + inner_start;
+        (component, start)
+    };
+
+    for (label, (component, start), reason) in [
+        (
+            "custom-section",
+            custom,
+            "is not a top-level core module section",
+        ),
+        ("unused-module", unused, "never instantiated"),
+        (
+            "instantiated-unexported",
+            instantiated,
+            "component export `answer` is not lifted from the declared embedded core module",
+        ),
+        (
+            "nested-component",
+            nested,
+            "nested component is not a re-export shim",
+        ),
+    ] {
+        assert_eq!(&component[start..start + core_len], &honest_core[..]);
+        let dir = temp_dir(&format!("certverify-wasip2-substitution-{label}"));
+        copy_dir(&out_dir.join("cert"), &dir.join("cert"));
+        let artifact = dir.join("wasip2_carrierless.component.wasm");
+        std::fs::write(&artifact, &component).unwrap();
+        rebind_cert_wasm_hash(&dir, &component);
+        let manifest_path = dir.join("cert").join("cert-manifest.json");
+        let mut forged: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        let suffix_len = component.len() - start - core_len;
+        forged["wasip2ComponentEnvelope"]["prefix_len"] = start.into();
+        forged["wasip2ComponentEnvelope"]["suffix_len"] = suffix_len.into();
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&forged).unwrap(),
+        )
+        .unwrap();
+        replace_once(
+            &dir.join("cert").join("Artifact.lean"),
+            &honest_lean_envelope,
+            &format!(
+                "wasip2ComponentEnvelope := some {{ prefixLen := {start}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix_len} }}"
+            ),
+        );
+
+        let (ok, report) = aver_verify(&artifact, &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: substituted envelope must not verify:\n{report}"
+        );
+        assert!(
+            !report.contains("CERTIFIED"),
+            "{label}: substituted envelope printed a green verdict:\n{report}"
+        );
+        assert!(
+            report.contains(reason),
+            "{label}: expected the binding refusal `{reason}`:\n{report}"
+        );
+    }
+}
+
 /// Emits the nested-module fixture baseline: a project whose dotted module
 /// dependency (`Nested.Deep.Util`) makes the certificate carry a nested model
 /// file (`AverModel/Nested/Deep/Util.lean`) that the bridge modules import by
