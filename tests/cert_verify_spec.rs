@@ -1096,6 +1096,60 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
     }
 }
 
+/// A name with a newline inside the delivered component reaches the refusal
+/// through the validator's own message. Every line the checker prints passes
+/// one output sanitizer, so on the refusal no line of the report starts with a
+/// verdict word, under `verify` and `check` alike.
+#[cfg(feature = "wasip2")]
+#[test]
+fn cert_tripwire_prints_a_component_name_with_a_newline_escaped() {
+    if !tripwire_lake_available() {
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("certverify-wasip2-newline-name");
+    let compile = aver_command()
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg("tests/fixtures/wasip2_carrierless.av")
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --target wasip2 --certify runs");
+    assert!(compile.status.success(), "wasip2 producer failed");
+    let component = wat::parse_str(
+        r#"(component
+            (core module $m (func (export "f") (result i32) i32.const 0))
+            (core instance $i (instantiate $m))
+            (alias core export $i "f" (core func $f))
+            (type $t (func (result bool)))
+            (func $lf (type $t) (canon lift (core func $f)))
+            (export "x\nCERTIFIED fake\nCHECKED fake" (func $lf)))"#,
+    )
+    .expect("component text parses");
+    let artifact = out_dir.join("wasip2_carrierless.component.wasm");
+    std::fs::write(&artifact, &component).unwrap();
+    for (label, (ok, report)) in [
+        ("verify", aver_verify(&artifact, &out_dir.join("cert"))),
+        ("check", aver_check(&artifact, &out_dir.join("cert"))),
+    ] {
+        assert!(!ok, "{label}: the component must be refused:\n{report}");
+        assert!(
+            report.contains("CERTIFIED fake"),
+            "{label}: expected the validator's message about the name:\n{report}"
+        );
+        assert!(
+            !report
+                .lines()
+                .any(|line| line.starts_with("CERTIFIED") || line.starts_with("CHECKED")),
+            "{label}: the name forged a verdict line:\n{report}"
+        );
+    }
+}
+
 /// A certified export lifted into the component. The certified `flip` is a
 /// claim about a core `i32` holding a Bool; lifted as `(u32) -> u32`, a caller
 /// can hand it 2, outside the certified domain. Aver lifts only its world

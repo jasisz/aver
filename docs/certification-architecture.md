@@ -153,7 +153,7 @@ Changing any wall file or the pinned toolchain changes `wall_id`. The manifest c
 
 A verdict depends on:
 
-- the small Rust verifier path for file reading, hashing, version checks, staging, process execution and report pinning;
+- the small Rust verifier path for file reading, hashing, version checks, staging, process execution and report pinning, and its one output sanitizer (`output.rs`), through which every printed line passes, so text from the package, the artifact or a tool cannot begin a line of the report;
 - `wasmparser::Validator` for full WebAssembly validity;
 - for wasip2, the verifier's binding gate over the validated component (`wasip2_binding.rs`), which confirms that the declared core is a top-level `ModuleSection` instantiated exactly once, that every component export lifts that instance's core export of the same name with no canonical options, that no certified export is lifted, and that every other instantiated module is the `wit-component` shim or fixup in exactly its emitted shape;
 - the embedded Lean wall and the Lean 4.34 elaborator, kernel and tools;

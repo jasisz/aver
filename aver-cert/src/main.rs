@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use aver_cert::output::{self, Stream, Style};
 use aver_cert::{CheckVerdict, Explanation, Verdict};
 use clap::{Parser, Subcommand};
-use colored::Colorize;
 
 #[derive(Parser)]
 #[command(
@@ -74,6 +74,28 @@ impl Command {
     }
 }
 
+/// Prints a verdict and the lines under it. Every value goes through the
+/// output sanitizer; only the verdict word is the checker's own.
+fn print_verdict(
+    head: &'static str,
+    style: Style,
+    summary: &str,
+    note: Option<&str>,
+    laws: &[String],
+    faces: &[String],
+) {
+    output::line(Stream::Out, head, style, summary, Style::Plain);
+    if let Some(note) = note {
+        output::plain(Stream::Out, &format!("  {note}"));
+    }
+    for law in laws {
+        output::line(Stream::Out, " ", Style::Plain, law, Style::YellowPlain);
+    }
+    for face in faces {
+        output::line(Stream::Out, " ", Style::Plain, face, Style::Plain);
+    }
+}
+
 fn main() -> ExitCode {
     match Cli::parse().command.into_route() {
         Route::StrictVerify { artifact, cert_dir } => match aver_cert::verify(&artifact, &cert_dir)
@@ -85,34 +107,33 @@ fn main() -> ExitCode {
                 bridged_laws,
                 source_bridges,
             }) => {
-                println!("{} {}", "CERTIFIED".green().bold(), summary);
-                println!("  {}", aver_cert::ARTIFACT_DECODE_LINE);
-                for law in laws {
-                    println!("  {}", law.yellow());
-                }
-                for law in bridged_laws {
-                    println!("  {}", law.yellow());
-                }
-                for bridge in source_bridges {
-                    println!("  {}", bridge.yellow());
-                }
-                for face in faces {
-                    println!("  {face}");
-                }
+                let claims: Vec<String> = laws
+                    .into_iter()
+                    .chain(bridged_laws)
+                    .chain(source_bridges)
+                    .collect();
+                print_verdict(
+                    "CERTIFIED",
+                    Style::Green,
+                    &summary,
+                    Some(aver_cert::ARTIFACT_DECODE_LINE),
+                    &claims,
+                    &faces,
+                );
                 ExitCode::SUCCESS
             }
             Ok(Verdict::NoExports(summary)) => {
-                eprintln!(
-                    "{} {}",
-                    "NO CERTIFIED EXPORTS (admission only, no behavioral claims)"
-                        .yellow()
-                        .bold(),
-                    summary
+                output::line(
+                    Stream::Err,
+                    "NO CERTIFIED EXPORTS (admission only, no behavioral claims)",
+                    Style::Yellow,
+                    &summary,
+                    Style::Plain,
                 );
                 ExitCode::FAILURE
             }
             Err(reason) => {
-                eprintln!("{} {}", "DECLINED".red().bold(), reason);
+                output::line(Stream::Err, "DECLINED", Style::Red, &reason, Style::Plain);
                 ExitCode::FAILURE
             }
         },
@@ -125,37 +146,42 @@ fn main() -> ExitCode {
                     bridged_laws,
                     source_bridges,
                 }) => {
-                    println!("{} {}", "CHECKED".cyan().bold(), summary);
-                    println!(
-                        "  trusted freshly built or explicitly cached .olean closure; \
-                         whole-closure leanchecker --fresh replay was skipped"
+                    let claims: Vec<String> = laws
+                        .into_iter()
+                        .chain(bridged_laws)
+                        .chain(source_bridges)
+                        .collect();
+                    print_verdict(
+                        "CHECKED",
+                        Style::Cyan,
+                        &summary,
+                        Some(
+                            "trusted freshly built or explicitly cached .olean closure; \
+                             whole-closure leanchecker --fresh replay was skipped",
+                        ),
+                        &claims,
+                        &faces,
                     );
-                    for law in laws {
-                        println!("  {}", law.yellow());
-                    }
-                    for law in bridged_laws {
-                        println!("  {}", law.yellow());
-                    }
-                    for bridge in source_bridges {
-                        println!("  {}", bridge.yellow());
-                    }
-                    for face in faces {
-                        println!("  {face}");
-                    }
                     ExitCode::SUCCESS
                 }
                 Ok(CheckVerdict::NoExports(summary)) => {
-                    eprintln!(
-                        "{} {}",
-                        "NO CHECKED EXPORTS (developer preflight only, no behavioral claims)"
-                            .yellow()
-                            .bold(),
-                        summary
+                    output::line(
+                        Stream::Err,
+                        "NO CHECKED EXPORTS (developer preflight only, no behavioral claims)",
+                        Style::Yellow,
+                        &summary,
+                        Style::Plain,
                     );
                     ExitCode::FAILURE
                 }
                 Err(reason) => {
-                    eprintln!("{} {}", "CHECK FAILED".red().bold(), reason);
+                    output::line(
+                        Stream::Err,
+                        "CHECK FAILED",
+                        Style::Red,
+                        &reason,
+                        Style::Plain,
+                    );
                     ExitCode::FAILURE
                 }
             }
@@ -165,7 +191,13 @@ fn main() -> ExitCode {
                 Ok(Explanation::Certified) => ExitCode::SUCCESS,
                 Ok(Explanation::NoExports) => ExitCode::FAILURE,
                 Err(reason) => {
-                    eprintln!("{} {}", "error:".red(), reason);
+                    output::line(
+                        Stream::Err,
+                        "error:",
+                        Style::RedPlain,
+                        &reason,
+                        Style::Plain,
+                    );
                     ExitCode::FAILURE
                 }
             }

@@ -14,9 +14,9 @@ use crate::cache::{
     ArtifactBuildCache, KeyMaterial as ArtifactCacheKeyMaterial, ModuleOutputCache,
 };
 use crate::lean_process::LeanRunner;
+use crate::output::{self, Stream, Style};
 use crate::prelude_cache::PristineWallCache;
 use crate::{format, lean_gate, wall};
-use colored::Colorize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -613,9 +613,10 @@ fn trusted_check(
     // is trusted local state, and the strict verdict does not rest on it.
     let caches_allowed = replay_mode == ReplayMode::TrustBuiltOleans;
     if !caches_allowed && crate::cache::any_cache_configured() {
-        eprintln!(
+        output::plain(
+            Stream::Err,
             "note: aver-cert verify ignores AVER_CERT_DATA_CACHE and AVER_CERT_PRELUDE_CACHE; \
-             only `check` uses a build cache"
+             only `check` uses a build cache",
         );
     }
     let cache_pins = [("wasm_sha256", pinned_hash), ("wall_id", wall_id)];
@@ -3123,10 +3124,19 @@ fn report_step_timing(phase: &str, elapsed: std::time::Duration, stdout: &[u8]) 
     }
     for line in String::from_utf8_lossy(stdout).lines() {
         if line.contains("Built ") || line.contains("Replayed ") {
-            eprintln!("aver-cert timing:   {}", line.trim());
+            output::line(
+                Stream::Err,
+                "aver-cert timing:  ",
+                Style::Plain,
+                line.trim(),
+                Style::Plain,
+            );
         }
     }
-    eprintln!("aver-cert timing: {phase}: {:.1}s", elapsed.as_secs_f64());
+    output::plain(
+        Stream::Err,
+        &format!("aver-cert timing: {phase}: {:.1}s", elapsed.as_secs_f64()),
+    );
 }
 
 fn tail(text: &str, lines: usize) -> String {
@@ -3216,37 +3226,58 @@ const INT_INPUT_DOMAIN_LINE: &str = "domain: every Int input (an argument, or a 
      runtime's normal form; a non-canonical word is outside the certified domain. Every \
      Int result is proved canonical.";
 
+/// A blank line, then an `explain` section title.
+fn section(title: &'static str, style: Style) {
+    output::plain(Stream::Out, "");
+    output::line(Stream::Out, title, style, "", Style::Plain);
+}
+
 pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> {
     let report = trusted_check(artifact, cert_dir, ReplayMode::Fresh)?;
-    println!("{}", "Artifact certificate".bold());
-    println!("  artifact: {}", shown_path(artifact));
-    println!("  pinned sha256: {}", report.artifact_hash);
-    println!(
-        "  target: {}    profile: {}    abi: {}",
-        report.target, report.profile, report.abi
+    output::line(
+        Stream::Out,
+        "Artifact certificate",
+        Style::Bold,
+        "",
+        Style::Plain,
+    );
+    output::plain(
+        Stream::Out,
+        &format!("  artifact: {}", shown_path(artifact)),
+    );
+    output::plain(
+        Stream::Out,
+        &format!("  pinned sha256: {}", report.artifact_hash),
+    );
+    output::plain(
+        Stream::Out,
+        &format!(
+            "  target: {}    profile: {}    abi: {}",
+            report.target, report.profile, report.abi
+        ),
     );
     if report.exports.is_empty() {
-        println!("\n{}", "NO CERTIFIED EXPORTS".yellow().bold());
+        section("NO CERTIFIED EXPORTS", Style::Yellow);
         return Ok(Explanation::NoExports);
     }
-    println!("\n{}", "CERTIFIED".green().bold());
+    section("CERTIFIED", Style::Green);
     for export in report.exports {
-        println!("  {}", export.name.bold());
-        println!("    policy: {}", export.policy);
-        println!("    {}", export.face);
-        println!("    {}", export.certified_model);
+        output::line(Stream::Out, " ", Style::Plain, &export.name, Style::Bold);
+        output::plain(Stream::Out, &format!("    policy: {}", export.policy));
+        output::plain(Stream::Out, &format!("    {}", export.face));
+        output::plain(Stream::Out, &format!("    {}", export.certified_model));
     }
     // The one assumption every certified theorem makes about its INPUTS rather
     // than about a helper: the wall's value relation reads an Int through
     // `CanonRepr`, so an Int carrier word the host passes in is taken to be in
     // the runtime's normal form. It is the same for every export, so it is
     // stated once.
-    println!("\n{}", "Certified domain".yellow().bold());
-    println!("  {INT_INPUT_DOMAIN_LINE}");
+    section("Certified domain", Style::Yellow);
+    output::plain(Stream::Out, &format!("  {INT_INPUT_DOMAIN_LINE}"));
     if !report.contracts.is_empty() {
-        println!("\n{}", "Runtime contracts".yellow().bold());
+        section("Runtime contracts", Style::Yellow);
         for contract in report.contracts {
-            println!("  - {contract}");
+            output::plain(Stream::Out, &format!("  - {contract}"));
         }
     }
 
@@ -3254,7 +3285,7 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
     if let Some(laws) = manifest.get("laws").and_then(Value::as_array)
         && !laws.is_empty()
     {
-        println!("\n{}", "LAW-CLAIMS".green().bold());
+        section("LAW-CLAIMS", Style::Green);
         for entry in laws {
             let label = entry
                 .get("label")
@@ -3266,19 +3297,20 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                 .and_then(Value::as_str)
                 .map(display_safe)
                 .unwrap_or_else(|| "<unknown>".to_string());
-            println!("  {}", label.bold());
-            println!("    {statement}");
+            output::line(Stream::Out, " ", Style::Plain, &label, Style::Bold);
+            output::plain(Stream::Out, &format!("    {statement}"));
         }
-        println!(
+        output::plain(
+            Stream::Out,
             "  these are the DECLARED claims; per-claim credit is decided by \
-             `aver cert check` / `aver cert verify`"
+             `aver cert check` / `aver cert verify`",
         );
     }
     // The bridge statements come from the report, not from a manifest read:
     // the manifest carries structure, and the text below is exactly what the
     // checker rendered from it and pinned the package's corollary at.
     if !report.source_bridges.is_empty() {
-        println!("\n{}", "SOURCE-BRIDGES".green().bold());
+        section("SOURCE-BRIDGES", Style::Green);
         for bridge in &report.source_bridges {
             let credit = if bridge.offending.is_empty() {
                 "credited".to_string()
@@ -3288,19 +3320,26 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                     display_safe(&bridge.offending.join(", "))
                 )
             };
-            println!(
-                "  {}  ≡ {}  ({})  [{credit}]",
-                display_safe(&bridge.export).bold(),
-                display_safe(&bridge.model),
-                bridge.kind.tag()
+            output::plain(
+                Stream::Out,
+                &format!(
+                    "  {}  ≡ {}  ({})  [{credit}]",
+                    display_safe(&bridge.export),
+                    display_safe(&bridge.model),
+                    bridge.kind.tag()
+                ),
             );
-            println!("    {}", display_safe(&bridge.statement));
+            output::plain(
+                Stream::Out,
+                &format!("    {}", display_safe(&bridge.statement)),
+            );
         }
-        println!(
+        output::plain(
+            Stream::Out,
             "  the statement under each bridge is RENDERED BY THE CHECKER from the \
              manifest's declared structure, never read from the package; a credited \
              bridge is one whose proof of exactly that statement uses no axiom \
-             outside the kernel whitelist"
+             outside the kernel whitelist",
         );
     }
     // Declared-only, like `source_level_only`: why a compute-face export got no
@@ -3311,10 +3350,7 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
         .and_then(Value::as_array)
         && !declined.is_empty()
     {
-        println!(
-            "\n{}",
-            "SOURCE-BRIDGES DECLINED (informational)".yellow().bold()
-        );
+        section("SOURCE-BRIDGES DECLINED (informational)", Style::Yellow);
         for entry in declined {
             let export = entry
                 .get("export")
@@ -3326,14 +3362,17 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                 .and_then(Value::as_str)
                 .map(display_safe)
                 .unwrap_or_else(|| "unspecified".to_string());
-            println!("  {export}: {reason}");
+            output::plain(Stream::Out, &format!("  {export}: {reason}"));
         }
-        println!("  these exports keep `model: plan`; the reasons are declared, not checked");
+        output::plain(
+            Stream::Out,
+            "  these exports keep `model: plan`; the reasons are declared, not checked",
+        );
     }
     if let Some(declined) = manifest.get("source_level_only").and_then(Value::as_array)
         && !declined.is_empty()
     {
-        println!("\n{}", "DECLINED (informational)".yellow().bold());
+        section("DECLINED (informational)", Style::Yellow);
         for entry in declined {
             let name = entry
                 .get("name")
@@ -3345,7 +3384,7 @@ pub fn explain(artifact: &Path, cert_dir: &Path) -> Result<Explanation, String> 
                 .and_then(Value::as_str)
                 .map(display_safe)
                 .unwrap_or_else(|| "unspecified".to_string());
-            println!("  {name}: {reason}");
+            output::plain(Stream::Out, &format!("  {name}: {reason}"));
         }
     }
     Ok(Explanation::Certified)
