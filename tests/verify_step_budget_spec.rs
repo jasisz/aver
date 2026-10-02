@@ -629,6 +629,7 @@ fn the_proof_lane_declines_a_case_verify_did_not_answer() {
         &dir,
         &[
             "proof",
+            "--examples",
             "main.av",
             "--module-root",
             ".",
@@ -668,6 +669,7 @@ fn the_proof_lane_declines_a_case_verify_did_not_answer() {
         &dir,
         &[
             "proof",
+            "--examples",
             "main.av",
             "--module-root",
             ".",
@@ -693,6 +695,7 @@ fn the_proof_lane_pins_the_same_case_once_the_budget_lets_it_run() {
         &dir,
         &[
             "proof",
+            "--examples",
             "main.av",
             "--module-root",
             ".",
@@ -1273,7 +1276,15 @@ fn doors(dir: &Path) -> Vec<(&'static str, std::process::Output)> {
             "proof",
             run_aver_in(
                 dir,
-                &["proof", "main.av", "-o", "out-proof", "--module-root", "."],
+                &[
+                    "proof",
+                    "--examples",
+                    "main.av",
+                    "-o",
+                    "out-proof",
+                    "--module-root",
+                    ".",
+                ],
             ),
         ),
     ]

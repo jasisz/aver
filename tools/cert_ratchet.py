@@ -19,6 +19,12 @@ The result is compared with the committed baseline `tools/cert-baseline.json`:
 
 - a deliberate loss needs `--update --allow-drop`, which a reviewer sees as a
   baseline diff that removes lines.
+
+The baseline holds the `--examples` run, which bridges every certified export.
+Each program is also compiled without `--examples`, where only the functions
+the law-claims reach are bridged. That run must certify the same exports,
+declare the same law-claims and cite the same bridges from every law-claim;
+its bridges must be a subset of the `--examples` ones. A difference fails.
 """
 
 from __future__ import annotations
@@ -63,17 +69,42 @@ def summarize(manifest: dict) -> dict:
     }
 
 
-def measure(aver: Path, entry: str, module_root: str | None) -> dict:
+def compile_manifest(aver: Path, entry: str, module_root: str | None, examples: bool) -> dict:
     with tempfile.TemporaryDirectory(prefix="aver-ratchet-") as out:
         cmd = [str(aver), "compile", entry]
         if module_root:
             cmd += ["--module-root", module_root]
-        cmd += ["--target", "wasm-gc", "--certify", "-o", out]
+        cmd += ["--target", "wasm-gc", "--certify"]
+        if examples:
+            cmd.append("--examples")
+        cmd += ["-o", out]
         run = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if run.returncode != 0:
-            raise RuntimeError(f"{entry}: compile --certify failed\n{run.stdout}{run.stderr}")
-        manifest = json.loads((Path(out) / "cert" / "cert-manifest.json").read_text())
-    return summarize(manifest)
+            raise RuntimeError(f"{entry}: {' '.join(cmd[1:])} failed\n{run.stdout}{run.stderr}")
+        return json.loads((Path(out) / "cert" / "cert-manifest.json").read_text())
+
+
+def scope_differences(entry: str, every: dict, cone: dict) -> list[str]:
+    """What the law-cone run (no `--examples`) changed beyond its bridges."""
+    problems = []
+    if summarize(every)["certified"] != summarize(cone)["certified"]:
+        problems.append(f"{entry}: the certified exports differ without --examples")
+    law_bridges = lambda m: {law["label"]: law["bridges"] for law in m.get("laws", [])}
+    if law_bridges(every) != law_bridges(cone):
+        problems.append(f"{entry}: the law-claims or the bridges they cite differ without --examples")
+    extra = set(summarize(cone)["bridges"]) - set(summarize(every)["bridges"])
+    if extra:
+        problems.append(f"{entry}: bridges only without --examples: {', '.join(sorted(extra))}")
+    return problems
+
+
+def measure(aver: Path, entry: str, module_root: str | None) -> dict:
+    every = compile_manifest(aver, entry, module_root, examples=True)
+    cone = compile_manifest(aver, entry, module_root, examples=False)
+    problems = scope_differences(entry, every, cone)
+    if problems:
+        raise RuntimeError("\n".join(problems))
+    return summarize(every)
 
 
 def compare(baseline: dict, current: dict) -> tuple[list[str], list[str]]:

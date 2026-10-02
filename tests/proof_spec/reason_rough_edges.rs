@@ -10,6 +10,7 @@ fn conditional_probe_handles_an_empty_unfold_set_with_sibling_lemmas() {
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .args([
             "proof",
+            "--examples",
             "tests/fixtures/conditional_empty_simp.av",
             "--check-json",
             "-o",

@@ -15,7 +15,7 @@ fn proof_export_ignores_legacy_sidecars_in_parent_directories() {
     let export = |name: &str| {
         let destination = root.join(format!("lean-{name}"));
         let output = Command::new(env!("CARGO_BIN_EXE_aver"))
-            .args(["proof", source.to_str().unwrap(), "-o"])
+            .args(["proof", "--examples", source.to_str().unwrap(), "-o"])
             .arg(&destination)
             .output()
             .unwrap();

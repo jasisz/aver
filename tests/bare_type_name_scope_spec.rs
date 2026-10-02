@@ -209,7 +209,7 @@ fn a_type_a_dependency_only_re_exposes_still_resolves_bare() {
     // and never bare. A facade does not mint a type of its own.
     let proof = Command::new(aver_bin())
         .current_dir(&dir)
-        .args(["proof", "app/entry.av", "--backend", "lean"])
+        .args(["proof", "--examples", "app/entry.av", "--backend", "lean"])
         .args(["--module-root", ".", "-o", "lean"])
         .output()
         .expect("run aver proof --backend lean");

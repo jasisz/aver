@@ -17,6 +17,7 @@ fn proof_export_orders_law_theorems_by_citation() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/citation_order.av")
         .arg("-o")
         .arg(&output_dir)

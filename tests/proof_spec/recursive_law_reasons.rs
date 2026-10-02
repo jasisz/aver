@@ -300,6 +300,7 @@ fn guarded_slice_explanations_pass_and_reject_a_missing_guard() {
     let run = |source: &std::path::Path, output: &str| {
         Command::new(env!("CARGO_BIN_EXE_aver"))
             .arg("proof")
+            .arg("--examples")
             .arg(source)
             .args(["--check-json", "-o"])
             .arg(dir.join(output))
@@ -362,6 +363,7 @@ fn list_descent_outlives_a_sibling_counter() {
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .args([
             "proof",
+            "--examples",
             "tests/fixtures/list_counter_descent.av",
             "--check-json",
             "-o",

@@ -129,7 +129,7 @@ fn a_record_in_the_entry_does_not_break_a_dependency_that_never_names_it() {
 
     let proof = Command::new(aver_bin())
         .current_dir(&dir)
-        .args(["proof", "app/sweep.av", "--backend", "lean"])
+        .args(["proof", "--examples", "app/sweep.av", "--backend", "lean"])
         .args(["--module-root", ".", "-o", "lean"])
         .output()
         .expect("run aver proof --backend lean");

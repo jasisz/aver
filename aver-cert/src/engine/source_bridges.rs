@@ -46,7 +46,26 @@ pub struct SourceModel {
     /// Why there is no usable model at all (the emission panicked); every
     /// bridge and law-claim is then declined with this reason.
     pub failure: Option<String>,
+    /// Which certified exports are offered a bridge.
+    pub bridge_scope: BridgeScope,
 }
+
+/// Which certified exports the producer tries to bridge to their source.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BridgeScope {
+    /// Only the law cone: the functions some law-claim of the package
+    /// mentions, and the functions their plans call, transitively. These are
+    /// exactly the bridges a law-claim can cite.
+    #[default]
+    LawCone,
+    /// Every certified export (`aver compile --certify --examples`), including
+    /// the functions only `verify` examples reach.
+    Every,
+}
+
+/// Why a certified export outside the law cone has no bridge.
+pub const OUTSIDE_LAW_CONE_REASON: &str =
+    "no law-claim reaches it (only verify examples or nothing do); pass --examples to bridge it";
 
 impl SourceModel {
     pub fn failed(reason: String) -> Self {
@@ -1199,7 +1218,57 @@ fn decoder_shapes(
     Ok((shapes, std::mem::take(&mut elems.touched)))
 }
 
-fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
+/// The planned functions a bridge is attempted for under
+/// [`BridgeScope::LawCone`]: every function a law statement mentions by its
+/// `_root_.` name (the only spelling a law cites a bridge by), closed over
+/// the calls of the plans, since a bridge needs the bridges of its callees.
+/// `None` under [`BridgeScope::Every`].
+fn law_cone(
+    analysis: &Analysis,
+    model: &SourceModel,
+    info: &ModelInfo,
+    law_claims: &[LawClaim],
+) -> Option<BTreeSet<u32>> {
+    if model.bridge_scope == BridgeScope::Every {
+        return None;
+    }
+    let mut mentioned: BTreeSet<&str> = BTreeSet::new();
+    for claim in law_claims {
+        for token in crate::bridge_statement::statement_tokens(&claim.statement) {
+            if let Some(named) = token.strip_prefix(ROOT_PREFIX)
+                && let Some((key, _)) = info.defs.get_key_value(named)
+            {
+                mentioned.insert(key.as_str());
+            }
+        }
+    }
+    let mut work: Vec<u32> = analysis
+        .entries
+        .iter()
+        .filter(|e| {
+            let flat = analysis.fn_names.get(&e.func_idx).unwrap_or(&e.name);
+            info.def_for(flat)
+                .is_ok_and(|def| mentioned.contains(def.qualified.as_str()))
+        })
+        .map(|e| e.func_idx)
+        .collect();
+    let bodies: BTreeMap<u32, &PlanExpr> = analysis
+        .entries
+        .iter()
+        .map(|e| (e.func_idx, &e.plan.body))
+        .collect();
+    let mut cone = BTreeSet::new();
+    while let Some(f) = work.pop() {
+        if cone.insert(f)
+            && let Some(body) = bodies.get(&f)
+        {
+            work.extend(direct_callees(body));
+        }
+    }
+    Some(cone)
+}
+
+fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim]) -> BridgePlan {
     let mut declined: Vec<(String, String)> = Vec::new();
     let mut plan = BridgePlan {
         fns: BTreeMap::new(),
@@ -1242,10 +1311,15 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
         return plan;
     }
     let info = ModelInfo::from_model(model);
-    // Candidate functions: every planned function whose source definition
-    // and encoders resolve.
+    let cone = law_cone(analysis, model, &info, law_claims);
+    // Candidate functions: every planned function in scope whose source
+    // definition and encoders resolve.
     let mut reasons: BTreeMap<u32, String> = BTreeMap::new();
     for e in &analysis.entries {
+        if cone.as_ref().is_some_and(|cone| !cone.contains(&e.func_idx)) {
+            reasons.insert(e.func_idx, OUTSIDE_LAW_CONE_REASON.to_string());
+            continue;
+        }
         let flat = analysis
             .fn_names
             .get(&e.func_idx)
@@ -2833,7 +2907,17 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
         Err(reason) => return decline_all(reason),
     };
     let roots = packaged.roots.clone();
-    let plan = plan_bridges(analysis, model);
+    // The checker reads every law statement at the root, so each is rewritten
+    // from the emitter's namespace-relative text to `_root_.`-qualified names
+    // before the gates see it.
+    let names = ModelNames::from_files(
+        model
+            .files
+            .iter()
+            .map(|(path, content)| (path.as_str(), content.as_str())),
+    );
+    let qualified_laws = root_qualify_law_claims(&model.law_claims, &names);
+    let plan = plan_bridges(analysis, model, &qualified_laws);
     let bridges: Vec<SourceBridge> = plan.bridges.iter().map(|(b, _)| b.clone()).collect();
     let bridge_lean = (!plan.fns.is_empty() && !bridges.is_empty())
         .then(|| {
@@ -2846,17 +2930,7 @@ fn plan_surfaces(analysis: &Analysis, model: &SourceModel) -> Surfaces {
             (isolate_theorems(&corollaries), parts)
         });
     let info = ModelInfo::from_model(model);
-    // The checker reads every law statement at the root, so each is rewritten
-    // from the emitter's namespace-relative text to `_root_.`-qualified names
-    // before the gates see it.
-    let names = ModelNames::from_files(
-        model
-            .files
-            .iter()
-            .map(|(path, content)| (path.as_str(), content.as_str())),
-    );
-    let (law_claims, declined_laws) =
-        admit_law_claims(root_qualify_law_claims(&model.law_claims, &names));
+    let (law_claims, declined_laws) = admit_law_claims(qualified_laws);
     let law_bridges: Vec<Vec<usize>> = law_claims
         .iter()
         .map(|claim| law_bridge_coverage(&claim.statement, &info, &bridges).unwrap_or_default())
@@ -2932,6 +3006,7 @@ mod source_bridge_tests {
                 .collect(),
             law_claims: Vec::new(),
             failure: None,
+            bridge_scope: BridgeScope::Every,
         }
     }
 

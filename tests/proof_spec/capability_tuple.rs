@@ -29,6 +29,7 @@ fn capability_tuple_verify_exports_from_entry_and_dependency() {
         let out = temp_output_dir("aver-capability-tuple-export");
         let run = Command::new(env!("CARGO_BIN_EXE_aver"))
             .arg("proof")
+            .arg("--examples")
             .arg(root.join(entry))
             .arg("--module-root")
             .arg(&root)

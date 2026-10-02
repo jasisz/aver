@@ -205,6 +205,7 @@ fn certify_fixture(fixture: &str, extra: &[&str], prefix: &str) -> (ScratchDir, 
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -398,6 +399,137 @@ fn trimming_the_lean_build_tree_keeps_the_certificate_package() {
     );
 }
 
+/// Without `--examples` the producer bridges only the law cone: the functions
+/// a law-claim mentions and what their plans call. Every other certified
+/// export is declined with a reason that names the flag. The byte certificate
+/// and the bridges each law-claim cites are the same in both modes.
+#[test]
+fn certify_bridges_only_the_law_cone_without_examples() {
+    let fixture = "projects/k5_fdiv/main.av";
+    let compile = |extra: &[&str], prefix: &str| {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let out_dir = temp_dir(prefix);
+        let output = aver_command()
+            .current_dir(&repo_root)
+            .arg("compile")
+            .arg(fixture)
+            .args(["--module-root", "projects/k5_fdiv"])
+            .args(["--target", "wasm-gc", "--certify"])
+            .args(extra)
+            .arg("-o")
+            .arg(&out_dir)
+            .output()
+            .expect("expected `aver compile --certify` to run");
+        assert!(
+            output.status.success(),
+            "compile --certify {fixture} {extra:?} failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out_dir.join("cert").join("cert-manifest.json"))
+                .expect("cert-manifest.json exists"),
+        )
+        .expect("manifest is valid JSON");
+        (out_dir, manifest)
+    };
+    let (_cone_dir, cone) = compile(&[], "certify-law-cone");
+    let (_every_dir, every) = compile(&["--examples"], "certify-every-bridge");
+    let bridges = |m: &serde_json::Value| -> std::collections::BTreeSet<String> {
+        m["sourceBridges"]
+            .as_array()
+            .expect("sourceBridges is an array")
+            .iter()
+            .map(|b| b["export"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let law_bridges = |m: &serde_json::Value| -> Vec<(String, serde_json::Value)> {
+        m["laws"]
+            .as_array()
+            .expect("laws is an array")
+            .iter()
+            .map(|law| {
+                (
+                    law["label"].as_str().unwrap().to_string(),
+                    law["bridges"].clone(),
+                )
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        cone["certified"], every["certified"],
+        "the byte certificate does not change"
+    );
+    assert_eq!(cone["wasm_sha256"], every["wasm_sha256"]);
+    assert_eq!(
+        law_bridges(&cone),
+        law_bridges(&every),
+        "bridged laws are the same in both modes"
+    );
+    assert!(
+        law_bridges(&cone)
+            .iter()
+            .any(|(_, cited)| cited.as_array().is_some_and(|c| !c.is_empty())),
+        "the fixture must have a law-claim that cites a bridge: {cone:#}"
+    );
+    let (cone_bridges, every_bridges) = (bridges(&cone), bridges(&every));
+    assert!(
+        cone_bridges.is_subset(&every_bridges) && cone_bridges.len() < every_bridges.len(),
+        "the law cone is a strict subset: {cone_bridges:?} vs {every_bridges:?}"
+    );
+    assert!(
+        every_bridges.contains("Domain_Rational_absInt"),
+        "{every_bridges:?}"
+    );
+    let declined = cone["sourceBridgesDeclined"]
+        .as_array()
+        .expect("sourceBridgesDeclined is an array")
+        .iter()
+        .find(|d| d["export"] == "Domain_Rational_absInt")
+        .unwrap_or_else(|| panic!("absInt outside the law cone is declined: {cone:#}"));
+    assert!(
+        declined["reason"]
+            .as_str()
+            .unwrap()
+            .contains("pass --examples to bridge it"),
+        "{declined}"
+    );
+    assert!(
+        !every["sourceBridgesDeclined"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["reason"].as_str().unwrap().contains("--examples")),
+        "with --examples nothing is declined for the scope: {every:#}"
+    );
+}
+
+#[test]
+fn examples_flag_on_compile_requires_certify() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = temp_dir("examples-without-certify");
+    let output = aver_command()
+        .current_dir(&repo_root)
+        .args([
+            "compile",
+            "examples/certification/add_one.av",
+            "--target",
+            "wasm-gc",
+        ])
+        .arg("--examples")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("expected `aver compile` to run");
+    assert!(!output.status.success(), "--examples alone must be refused");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--certify"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn certify_exits_nonzero_when_the_certificate_package_cannot_be_replaced() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -412,6 +544,7 @@ fn certify_exits_nonzero_when_the_certificate_package_cannot_be_replaced() {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -459,6 +592,7 @@ fn certify_goal_matrix_manifest_tracks_current_surface() {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -1127,6 +1261,7 @@ fn certify_goal_matrix_lands_acceptance_wall_kernel_clean() {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -1332,6 +1467,7 @@ fn hostile_models_baseline(prefix: &str) -> Option<ScratchDir> {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -2298,6 +2434,7 @@ fn certify_certifies_carrier_free_classes_in_a_module_without_int_helper() {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -2615,6 +2752,7 @@ fn comparison_helper_exports_follow_the_emitted_calls() {
             .arg("--target")
             .arg("wasm-gc")
             .arg("--certify")
+            .arg("--examples")
             .arg("-o")
             .arg(&build)
             .output()
@@ -2683,6 +2821,7 @@ fn certify_add_one_output_is_unchanged_when_the_int_helper_is_present() {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -2805,6 +2944,7 @@ fn certify_wasip2_component_package_snapshot() {
         .arg("--target")
         .arg("wasip2")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -2854,6 +2994,7 @@ fn certify_nested_module_models_close_end_to_end() {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()
@@ -2983,6 +3124,7 @@ fn cert_projects_payment_ops_package_checks() {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()

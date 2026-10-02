@@ -7,7 +7,7 @@ pub(super) fn check(source: &str) -> Option<serde_json::Value> {
     let dir = temp_output_dir("aver-source-recursion");
     let output = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .args(["proof", source, "--check-json", "-o"])
+        .args(["proof", "--examples", source, "--check-json", "-o"])
         .arg(&dir)
         .arg("--module-root")
         .arg(std::path::Path::new(source).parent().unwrap())

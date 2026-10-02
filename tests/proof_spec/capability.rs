@@ -97,6 +97,7 @@ fn main() -> Unit
     let output_dir = temp_output_dir("aver-capability-proof-out");
     let proof = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(source_dir.join("main.av"))
         .arg("--module-root")
         .arg(&source_dir)
@@ -205,6 +206,7 @@ verify looked
     let output_dir = temp_output_dir("aver-qualified-capability-proof-out");
     let proof = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(source_dir.join("store.av"))
         .arg("--module-root")
         .arg(&source_dir)

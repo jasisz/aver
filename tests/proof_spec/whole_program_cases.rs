@@ -105,6 +105,7 @@ fn whole_program_case_shapes_build_without_unfinished_cases() {
     let output_dir = temp_output_dir("aver-case-shapes-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&file)
         .arg("--module-root")
         .arg(&source_dir)
@@ -210,6 +211,7 @@ fn a_false_oracle_case_fails_the_check_at_any_sorry_budget() {
     let output_dir = temp_output_dir("aver-false-case-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&file)
         .arg("--module-root")
         .arg(&source_dir)
@@ -283,6 +285,7 @@ fn a_mutual_countdown_keeps_the_zero_floor_fuel() {
     let output_dir = temp_output_dir("aver-mutual-floor-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&file)
         .arg("--module-root")
         .arg(&source_dir)
@@ -375,6 +378,7 @@ fn check_interleaved_case_identity(dependency: bool) {
         let output_dir = tempfile::tempdir().expect("output directory");
         let run = Command::new(env!("CARGO_BIN_EXE_aver"))
             .arg("proof")
+            .arg("--examples")
             .arg(&file)
             .arg("--module-root")
             .arg(source_dir.path())

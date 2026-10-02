@@ -13,6 +13,7 @@ fn proof_export_keeps_int_literals_int() {
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg(FIXTURE)
         .arg("-o")
         .arg(&output_dir)

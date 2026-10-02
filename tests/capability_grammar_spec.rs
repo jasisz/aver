@@ -1000,6 +1000,7 @@ fn tick() -> Int
         .current_dir(&dir)
         .args([
             "proof",
+            "--examples",
             "--module-root",
             dir.to_str().expect("utf-8 dir"),
             "--output",
@@ -1097,6 +1098,7 @@ verify twice law doubling
     let mut proof_command = Command::new(aver_bin());
     proof_command.current_dir(&dir).args([
         "proof",
+        "--examples",
         "--module-root",
         dir.to_str().expect("utf-8 dir"),
         "--output",
@@ -1169,6 +1171,7 @@ verify same law deterministicProvider
     let mut proof_command = Command::new(aver_bin());
     proof_command.current_dir(&dir).args([
         "proof",
+        "--examples",
         "--module-root",
         dir.to_str().expect("utf-8 dir"),
         "--output",
@@ -1428,6 +1431,7 @@ verify succeeds law providerMayMint
     let mut proof_command = Command::new(aver_bin());
     proof_command.current_dir(&dir).args([
         "proof",
+        "--examples",
         "--module-root",
         dir.to_str().expect("utf-8 dir"),
         "--output",

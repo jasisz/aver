@@ -24,6 +24,7 @@ fn run_split(lib_src: &str, consumer_src: &str) -> (serde_json::Value, std::proc
     let out = temp_output_dir("aver-crossfile-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("Consumer.av"))
         .arg("--backend")
         .arg("lean")
@@ -137,6 +138,7 @@ fn cross_file_dep_law_emitted_and_self_consistent() {
     let out = temp_output_dir("aver-crossfile-emit-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("Consumer.av"))
         .arg("--backend")
         .arg("lean")
@@ -295,6 +297,7 @@ fn cross_file_out_of_cone_dep_law_not_admitted() {
     let out = temp_output_dir("aver-crossfile-cone-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("Consumer.av"))
         .arg("--backend")
         .arg("lean")
@@ -361,6 +364,7 @@ pub(super) fn run_multi(
     let out = temp_output_dir("aver-crossfile-multi-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join(entry))
         .arg("--backend")
         .arg("lean")
@@ -675,6 +679,7 @@ fn run_forward_ref_variant(variant: &str) -> (serde_json::Value, std::process::O
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg(format!("{root}/main.av"))
         .arg("--module-root")
         .arg(&root)
@@ -815,6 +820,7 @@ fn cross_file_reserved_module_name_escapes_and_builds() {
     let out = temp_output_dir("aver-reserved-module-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("Consumer.av"))
         .arg("--backend")
         .arg("lean")
@@ -903,6 +909,7 @@ fn entry_reserved_module_name_escapes_and_builds() {
     let out = temp_output_dir("aver-reserved-entry-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("Type.av"))
         .arg("--backend")
         .arg("lean")

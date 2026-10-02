@@ -532,6 +532,10 @@ pub(super) enum Commands {
         /// while the explicitly separate `.optimized.wasm` stays outside the proof.
         #[arg(long, default_value_t = false)]
         certify: bool,
+        /// Include the `verify` examples and what only they reach. Without it,
+        /// only the laws and what the laws reach are included.
+        #[arg(long, requires = "certify")]
+        examples: bool,
         /// Internal representation-differential hook used by wasm-gc backend tests.
         #[arg(long = "test-boxed-sequences", hide = true)]
         test_boxed_sequences: bool,
@@ -675,6 +679,10 @@ pub(super) enum Commands {
         /// Proof backend. `lean` is the only one (and the default).
         #[arg(long, default_value = "lean", value_parser = parse_proof_backend)]
         backend: String,
+        /// Include the `verify` examples and what only they reach. Without it,
+        /// only the laws and what the laws reach are included.
+        #[arg(long)]
+        examples: bool,
         /// How to emit `verify` cases and law theorems in generated Lean
         #[arg(long, default_value = "auto")]
         verify_mode: ProofVerifyMode,
@@ -900,6 +908,44 @@ mod tests {
             "lean",
         ]);
         assert!(matches!(cli.command, Commands::Proof { .. }));
+    }
+
+    #[test]
+    fn examples_flag_parses_on_proof_and_needs_certify_on_compile() {
+        let cli = Cli::parse_from(["aver", "proof", "x.av"]);
+        assert!(matches!(
+            cli.command,
+            Commands::Proof {
+                examples: false,
+                ..
+            }
+        ));
+        let cli = Cli::parse_from(["aver", "proof", "x.av", "--examples"]);
+        assert!(matches!(
+            cli.command,
+            Commands::Proof { examples: true, .. }
+        ));
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "x.av",
+            "--target",
+            "wasm-gc",
+            "--certify",
+            "--examples",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Commands::Compile {
+                certify: true,
+                examples: true,
+                ..
+            }
+        ));
+        assert!(
+            Cli::try_parse_from(["aver", "compile", "x.av", "--examples"]).is_err(),
+            "--examples on compile needs --certify"
+        );
     }
 
     #[test]

@@ -134,6 +134,7 @@ fn proof_check_refuses_a_fuel_lowered_sample_before_native_decide() {
     let out = temp_output_dir("aver-fuel-gate-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")
@@ -261,6 +262,7 @@ fn proof_check_charges_non_fuel_prelude_panic_as_hard_failure() {
     let out = temp_output_dir("aver-panic-gate-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")
@@ -335,6 +337,7 @@ fn proof_check_accepts_total_first_code_point_in_lake_build() {
     let out = temp_output_dir("aver-panic-toolchain-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")
@@ -414,6 +417,7 @@ fn lake_build_false_greens_on_forced_fuel_exhaustion_and_scan_catches_it() {
     let out = temp_output_dir("aver-fuel-toolchain-out");
     let emit = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")

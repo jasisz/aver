@@ -30,6 +30,7 @@ fn proof_lean_verify_case_expected_side_is_literalized_from_vm_ground_truth() {
     let out = temp_output_dir("aver-fixb-literal-out");
     let emit = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")
@@ -64,6 +65,7 @@ fn proof_lean_verify_case_expected_side_is_literalized_from_vm_ground_truth() {
     }
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")

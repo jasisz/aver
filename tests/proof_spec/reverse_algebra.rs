@@ -45,7 +45,13 @@ fn acyclic_reverse_frame_still_requires_the_original_domain_guard() {
         return;
     }
     let output = Command::new(env!("CARGO_BIN_EXE_aver"))
-        .args(["proof", path.to_str().unwrap(), "--check-json", "-o"])
+        .args([
+            "proof",
+            "--examples",
+            path.to_str().unwrap(),
+            "--check-json",
+            "-o",
+        ])
         .arg(temp_output_dir("aver-reverse-guard-check"))
         .output()
         .unwrap();

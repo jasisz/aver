@@ -6716,6 +6716,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         world,
         optimize,
         certify,
+        certify_examples,
         packed_sequences_enabled,
         provider_bindings,
     } = opts;
@@ -6755,6 +6756,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             optimize,
             handler,
             certify,
+            certify_examples,
         );
         return;
     }
@@ -6774,6 +6776,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
                 optimize,
                 pack,
                 certify,
+                certify_examples,
                 packed_sequences_enabled,
                 provider_bindings,
             );
@@ -6786,6 +6789,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
                 optimize,
                 pack,
                 certify,
+                certify_examples,
                 packed_sequences_enabled,
                 provider_bindings,
             );
@@ -6917,6 +6921,7 @@ fn cmd_compile_wasm_gc(
     optimize: Option<super::cli::WasmOptMode>,
     pack: Option<super::cli::DeployPack>,
     certify: bool,
+    certify_examples: bool,
     packed_sequences_enabled: bool,
     provider_bindings: &[aver::provider::ProviderBinding],
 ) {
@@ -7129,6 +7134,7 @@ fn cmd_compile_wasm_gc(
                 module_bytes: &bytes,
             },
             &wasm_gc_output.cert_plans,
+            certify_examples,
         ) {
             eprintln!("{}", format!("certificate: {error}").red());
             process::exit(1);
@@ -7391,11 +7397,20 @@ fn emit_artifact_certificate(
     out_path: &Path,
     artifact: aver::codegen::cert::CertificateArtifact<'_>,
     cert_plans: &aver::codegen::cert::ModulePlans,
+    examples: bool,
 ) -> Result<(), String> {
     use aver::codegen::cert;
 
     let analysis = cert::analyze(artifact.core_module_bytes(), cert_plans, artifact.target())?;
-    let source_model = certificate_source_model(file, project_name, module_root_override);
+    // Without `--examples` only the law cone is bridged: the functions the
+    // law-claims reach. The byte certificate covers every export either way.
+    let bridge_scope = if examples {
+        cert::BridgeScope::Every
+    } else {
+        cert::BridgeScope::LawCone
+    };
+    let source_model =
+        certificate_source_model(file, project_name, module_root_override, bridge_scope);
     let artifact_file_name = artifact.file_name().to_string();
     let declines = cert::write_project(out_path, artifact, &analysis, &source_model)?;
 
@@ -7435,6 +7450,7 @@ fn certificate_source_model(
     file: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
+    bridge_scope: aver::codegen::cert::BridgeScope,
 ) -> aver::codegen::cert::SourceModel {
     use aver::codegen::cert;
     let (mut mctx, _mroot) = build_codegen_context(
@@ -7491,6 +7507,7 @@ fn certificate_source_model(
                     statement: claim.statement.clone(),
                 })
                 .collect(),
+            bridge_scope,
             failure: None,
         },
         Err(payload) => {
@@ -7534,6 +7551,7 @@ fn cmd_compile_wasip2(
     optimize: Option<super::cli::WasmOptMode>,
     handler: Option<&str>,
     certify: bool,
+    certify_examples: bool,
 ) {
     #[cfg(not(feature = "wasip2"))]
     {
@@ -7546,6 +7564,7 @@ fn cmd_compile_wasip2(
             optimize,
             handler,
             certify,
+            certify_examples,
         );
         eprintln!(
             "{}",
@@ -7846,6 +7865,7 @@ fn cmd_compile_wasip2(
                     envelope,
                 },
                 &wasm_gc_output.cert_plans,
+                certify_examples,
             ) {
                 eprintln!("{}", format!("certificate: {error}").red());
                 process::exit(1);
@@ -7854,7 +7874,7 @@ fn cmd_compile_wasip2(
         // A wasip2-only build has no certificate engine; the flag was
         // already refused at dispatch (`certify_flag_rejection`).
         #[cfg(not(feature = "certify"))]
-        let _ = certify;
+        let _ = (certify, certify_examples);
     }
 }
 
@@ -8028,6 +8048,9 @@ pub(super) struct CompileOptions<'a> {
     pub(super) world: super::cli::Wasip2World,
     pub(super) optimize: Option<super::cli::WasmOptMode>,
     pub(super) certify: bool,
+    /// `--examples` beside `--certify`: bridge every certified export, not
+    /// only the law cone.
+    pub(super) certify_examples: bool,
     pub(super) packed_sequences_enabled: bool,
     pub(super) provider_bindings: &'a [aver::provider::ProviderBinding],
 }
@@ -8039,6 +8062,8 @@ pub(super) fn cmd_proof(
     project_name: Option<&str>,
     module_root_override: Option<&str>,
     verify_mode: &super::cli::ProofVerifyMode,
+    // `--examples`: also state the `verify` examples, not only the laws.
+    examples: bool,
     check: bool,
     sorry_budget: Option<usize>,
     declined_budget: Option<usize>,
@@ -8079,8 +8104,11 @@ pub(super) fn cmd_proof(
         true,  // run_law_lower — same
     );
 
+    ctx.export_verify_examples = examples;
+
     // Process cases use the VM's dynamic Oracle counter across requests and
-    // in-place effects. The proof lifter has no equivalent driver yet.
+    // in-place effects. The proof lifter has no equivalent driver yet. They
+    // are examples, so only an export that states examples refuses them.
     let process_case = ctx
         .items
         .iter()
@@ -8089,7 +8117,7 @@ pub(super) fn cmd_proof(
             _ => None,
         })
         .chain(ctx.modules.iter().flat_map(|module| &module.verify_blocks))
-        .find(|block| block.process_verification.is_some());
+        .find(|block| examples && block.process_verification.is_some());
     if let Some(block) = process_case {
         eprintln!(
             "error: process cases for '{}' currently run with `aver verify` (VM). Proof export needs a model of the request driver's dynamic Oracle counter; state proof laws over the generated process protocol instead.",
@@ -13497,6 +13525,7 @@ error: build failed";
             declined_cases: std::collections::HashMap::new(),
             vm_passed_cases: std::collections::HashSet::new(),
             allow_mathlib: false,
+            export_verify_examples: true,
         }
     }
 

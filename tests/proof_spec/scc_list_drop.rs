@@ -8,6 +8,7 @@ fn proof_export_scc_list_drop_and_take_are_native_mutual_groups() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/scc_list_drop.av")
         .arg("-o")
         .arg(&output_dir)

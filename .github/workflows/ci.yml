@@ -274,7 +274,9 @@ jobs:
         # fail the PR that makes it, not the next Lean run. `--certify` writes
         # the package without building it, so this needs no Lean: it compiles
         # the certificate corpus and compares the certified exports, bridges
-        # and law-claims per program with tools/cert-baseline.json. A gain is
+        # and law-claims per program with tools/cert-baseline.json. The baseline
+        # holds the `--examples` run (every export bridged); the default
+        # law-cone run must cite the same bridges from every law-claim. A gain is
         # recorded in the same commit with `python3 tools/cert_ratchet.py
         # --update`. The binary is the one the canaries above just linked.
         timeout-minutes: 10

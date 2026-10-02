@@ -397,6 +397,7 @@ fn an_unused_parameter_no_longer_opens_the_export_gate() {
     let out_dir = dir.join("out");
     let proof = aver(&[
         "proof",
+        "--examples",
         dir.join("main.av").to_str().expect("utf-8 path"),
         "--module-root",
         dir.to_str().expect("utf-8 path"),

@@ -53,6 +53,7 @@ fn emit_multi(files: &[(&str, &str)], entry: &str, read_back: &[&str]) -> HashMa
     let out = temp_output_dir("aver-dep-effects-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join(entry))
         .arg("--backend")
         .arg("lean")
@@ -1041,6 +1042,7 @@ fn a_cross_module_program_without_effects_emits_the_golden_bytes() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/map_order_cross_module/main.av")
         .arg("--backend")
         .arg("lean")

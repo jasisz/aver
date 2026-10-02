@@ -310,6 +310,8 @@ aver cert explain out/app.wasm out/cert
 
 `--certify` emits a version-1 artifact certificate for admitted exports of an exact wasm-gc module or wasip2 component. A wasip2 package hashes the delivered `.component.wasm`. Its declared prefix/core/suffix envelope binds the exact embedded core bytes that the existing Wasm wall consumes. Install `aver-cert` separately; it is an independently versioned verifier using Lean 4.33. A crates.io compiler install needs `--features wasm` for wasm-gc, plus `wasip2` for component output. Verification also requires a standard Elan installation for the pinned toolchain.
 
+`--certify` bridges only the law cone by default: the functions a law-claim of the package mentions, and the functions their plans call. Every other certified export keeps `model: plan` and is listed in `sourceBridgesDeclined` with the reason `no law-claim reaches it (only verify examples or nothing do); pass --examples to bridge it`. `--examples` bridges every certified export. The byte certificate and the bridges each law-claim cites are the same in both modes. `--examples` is refused without `--certify`.
+
 `check` is the faster development preflight. It trusts the freshly built or explicitly cached `.olean` closure, skips the final `leanchecker --fresh` replay, and prints `CHECKED`, never `CERTIFIED`. Use strict `verify` for release or admission gates.
 
 `aver cert ...` is only a subprocess shortcut. It forwards the original arguments, standard streams and exit status to a sibling `aver-cert` binary or one on `PATH`; `aver` contains no linked verification fallback. `explain` performs the same full check as `verify` before printing the report, and `inspect` is an alias of `explain`.
@@ -351,6 +353,8 @@ Lean export modes:
 - `auto`
 - `sorry`
 - `theorem-skeleton`
+
+`aver proof` exports the laws (`verify ... law`) with their samples, `because` and `using`, and what the laws reach. `--examples` also exports the `verify` examples and what only they reach, such as an effectful function no law calls. The flag means the same on `aver compile --certify`, where it bridges every certified export instead of only the law cone. Without `--examples`, an example is not exported, so it is neither a sorry nor a declined claim.
 
 `--check` builds the export with `lake` and gates on the result (`--check-json` gives a machine-readable summary). `--gate <baseline>` / `--write-baseline` are the proof ratchet. `--gate` fails when a law of the baseline is gone, drops to a lower tier, changes backend, newly depends on an axiom other than Lean's standard three (`propext`, `Classical.choice`, `Quot.sound`), or newly depends on one of the standard three while staying at the same tier. A law that moves to a higher tier, such as bounded to universal, is reported as `promoted` and passes, even when its universal proof uses the standard axioms. `--compare-manifest <earlier proof_manifest.json>` (Lean, check mode) says, for each law that did not close, whether its own script changed and which definitions it opens changed since that manifest. `--minimize` (Lean, implies `--check`) collapses each auto-proof to the single tactic that actually closed it. See [docs/lean.md](lean.md) for the proof workflow, the `--check` summary fields, `--compare-manifest` and `--minimize`.
 

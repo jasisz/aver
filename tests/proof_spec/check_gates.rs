@@ -36,6 +36,7 @@ fn proof_check_lean_universal_field_distinguishes_bounded_from_genuine() {
     let out = temp_output_dir("aver-universal-bounded-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("facq.av"))
         .arg("--backend")
         .arg("lean")
@@ -92,6 +93,7 @@ fn proof_dependency_law_verify_is_carried_not_warned() {
     let out = temp_output_dir("aver-dep-law-carried-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("app.av"))
         .arg("--module-root")
         .arg(&src)
@@ -149,6 +151,7 @@ fn proof_carries_dependency_cases_into_their_lean_modules() {
     let entry = src.join("app.av");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&entry)
         .arg("--backend")
         .arg("lean")
@@ -227,6 +230,7 @@ fn proof_dependency_case_ground_truth_is_module_scoped() {
     let out = temp_output_dir("aver-dep-ground-truth-scope-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("entry.av"))
         .arg("--backend")
         .arg("lean")
@@ -279,6 +283,7 @@ fn proof_check_covers_dependency_cases_and_law_as_one_program() {
     let out = temp_output_dir("aver-dep-whole-proof-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("entry.av"))
         .arg("--backend")
         .arg("lean")
@@ -356,6 +361,7 @@ fn proof_lean_vacuous_when_premise_law_builds_and_passes() {
     let out = temp_output_dir("aver-lean-vacuous-when-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")
@@ -420,6 +426,7 @@ fn proof_lean_bounded_when_law_proof_is_not_credited_universal() {
     let out = temp_output_dir("aver-lean-bounded-when-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")
@@ -482,6 +489,7 @@ fn proof_check_lean_chunked_checked_domain_builds_and_keeps_universal_credit() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/large_domain_law.av")
         .arg("--backend")
         .arg("lean")
@@ -885,6 +893,7 @@ fn run_check_json_for(out_tag: &str, corpus_av: &str, explain: bool) -> Option<s
     let mut cmd = Command::new(aver_bin);
     cmd.current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg(corpus_av)
         .arg("--backend")
         .arg("lean")
@@ -1126,6 +1135,7 @@ fn manifest_records_declared_provenance_for_marked_proving_law() {
     let out = temp_output_dir("aver-prov-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&av)
         .arg("--backend")
         .arg("lean")

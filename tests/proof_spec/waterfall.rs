@@ -61,7 +61,13 @@ fn waterfall_discovers_replays_and_rejects_false_reasons() {
     std::fs::write(path, serde_json::to_vec(&cache).unwrap()).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .args(["proof", "tools/waterfall/tree.av", "--check-json", "-o"])
+        .args([
+            "proof",
+            "--examples",
+            "tools/waterfall/tree.av",
+            "--check-json",
+            "-o",
+        ])
         .arg(&dir)
         .arg("--waterfall")
         .arg(&missing)

@@ -53,6 +53,7 @@ fn emit_multi(
     let out = temp_output_dir("aver-entry-opens-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join(entry))
         .arg("--backend")
         .arg("lean")
@@ -345,6 +346,7 @@ fn entry_without_transitive_dependencies_emits_byte_identically() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/map_order_cross_module/main.av")
         .arg("--backend")
         .arg("lean")
@@ -1242,6 +1244,7 @@ fn every_emitted_lean_file_turns_auto_implicit_off() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/stdlib_bytes_app.av")
         .arg("--backend")
         .arg("lean")
