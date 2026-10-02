@@ -1,5 +1,7 @@
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 #[path = "support/lean_required.rs"]
 mod lean_required;
 

@@ -2,6 +2,7 @@ use super::*;
 
 #[test]
 fn imported_in_place_effects_have_universal_mapping_and_splice_laws() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -49,6 +50,7 @@ fn imported_in_place_effects_have_universal_mapping_and_splice_laws() {
 
 #[test]
 fn equal_imported_results_do_not_hide_lost_or_reordered_effects() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }

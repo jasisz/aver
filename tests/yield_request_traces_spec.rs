@@ -1,10 +1,13 @@
 //! Executable source/protocol observations are independent of effect providers.
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 use aver_cmd::{aver_bin, format_output, repo_root};
 use std::process::Command;
 
 fn fixture() -> tempfile::TempDir {
+    compiler_fixtures::allow();
     let dir = tempfile::tempdir().unwrap();
     for name in ["main.av", "pool.av", "pooled.av"] {
         std::fs::copy(
@@ -59,6 +62,7 @@ verify timeOrder
 }
 
 fn check(args: &[&str]) {
+    compiler_fixtures::allow();
     let dir = fixture();
     let out = Command::new(aver_bin())
         .arg("verify")

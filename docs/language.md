@@ -38,7 +38,7 @@ record User          // product type
 
 All bindings are immutable. There are no `val`/`var` keywords; writing one is a parse error.
 
-The leading `__` namespace is reserved for the compiler. User-written names for modules, types, variants, fields, functions, operations, resources, parameters, bindings, match-pattern binders and decisions cannot begin with two underscores. Double underscores elsewhere in a name are still legal (`walk__cursor` is a valid name). The compiler defines some names in that namespace, for example the `__loopStart` / `__LoopOutcome` protocol of a [yielding function](#yielding-functions) and the generated loop that drives it. They are ordinary functions and types of the module, but they are the compiler's: a program does not call them, annotate with them or match on their constructors.
+The leading `__` namespace is reserved for the compiler. User-written names for modules, types, variants, fields, functions, operations, resources, parameters, bindings, match-pattern binders and decisions cannot begin with two underscores. Double underscores elsewhere in a name are still legal (`walk__cursor` is a valid name). The compiler defines some names in that namespace, for example the `__loopStart` / `__LoopOutcome` protocol of a [yielding function](#yielding-functions) and the generated loop that drives it. They are ordinary functions and types of the module, but they are the compiler's: a program that calls one, annotates with one or matches on its constructors is refused, and the message says how to run a yielding function instead.
 
 ```aver
 name = "Alice"

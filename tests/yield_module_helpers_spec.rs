@@ -2,6 +2,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 #[path = "support/lean_required.rs"]
 mod lean_required;
 
@@ -10,6 +12,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 fn invoke(dir: &Path, command: &str, args: &[&str]) -> Output {
+    compiler_fixtures::allow();
     Command::new(aver_bin())
         .current_dir(repo_root())
         .arg(command)
@@ -22,6 +25,7 @@ fn invoke(dir: &Path, command: &str, args: &[&str]) -> Output {
 }
 
 fn fixture() -> tempfile::TempDir {
+    compiler_fixtures::allow();
     let dir = tempfile::tempdir().unwrap();
     let source = repo_root().join("tests/fixtures/yield_module_helpers");
     for file in std::fs::read_dir(source).unwrap() {

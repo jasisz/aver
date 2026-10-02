@@ -496,7 +496,7 @@ fn stop(view: Run.View) -> Bool
     view.stopping
 ```
 
-Everything else is generated into the entry module under `__`: the slot table, the one `Wait.poll` per turn, the clock reading, the dispatch, the seating of keyed processes, the shutdown that cancels every job a parked request waits on, and `main`. These names are the compiler's: a program never calls, matches or annotates with them. `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the generated Aver.
+Everything else is generated into the entry module under `__`: the slot table, the one `Wait.poll` per turn, the clock reading, the dispatch, the seating of keyed processes, the shutdown that cancels every job a parked request waits on, and `main`. These names are the compiler's: a program that calls, matches or annotates with one is refused. `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the generated Aver.
 
 Rules:
 - a loop that must not starve the others declares `yield`. The declaration fixes where control is handed back; it does not bound how long one step takes

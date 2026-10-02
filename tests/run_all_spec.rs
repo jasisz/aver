@@ -18,6 +18,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 #[path = "support/lean_required.rs"]
 mod lean_required;
 #[path = "support/loopback_peer.rs"]
@@ -66,10 +68,12 @@ fn slice_with_peer(extra: &[&str]) -> Output {
 }
 
 fn fixture(name: &str) -> PathBuf {
+    compiler_fixtures::allow();
     repo_root().join("tests/fixtures").join(name)
 }
 
 fn aver(fixture_name: &str, args: &[&str]) -> Output {
+    compiler_fixtures::allow();
     let dir = fixture(fixture_name);
     let mut command = Command::new(aver_bin());
     command.current_dir(&dir);

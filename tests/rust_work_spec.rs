@@ -17,6 +17,8 @@
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 #[path = "support/loopback_peer.rs"]
 mod loopback_peer;
 
@@ -51,6 +53,7 @@ fn shared_target_dir() -> PathBuf {
 }
 
 fn fixture(name: &str) -> PathBuf {
+    compiler_fixtures::allow();
     repo_root().join("tests/fixtures").join(name)
 }
 

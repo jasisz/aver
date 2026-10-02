@@ -1,3 +1,5 @@
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 /// Spec tests for the Aver static type checker.
 ///
 /// Tests are grouped into:
@@ -5607,6 +5609,7 @@ fn two_yield_functions_that_only_tail_call_each_other_are_refused_as_a_tail_call
 
 #[test]
 fn generated_names_are_referenceable_from_a_coordinator() {
+    compiler_fixtures::allow();
     let errs = front_errors(&format!("{YIELD_MODULE}{YIELD_LOOP}{YIELD_COORDINATOR}"));
     assert!(
         errs.is_empty(),
@@ -5617,6 +5620,7 @@ fn generated_names_are_referenceable_from_a_coordinator() {
 
 #[test]
 fn wrong_state_and_answer_pairing_is_a_type_error() {
+    compiler_fixtures::allow();
     let src = format!(
         "{YIELD_MODULE}{YIELD_LOOP}\nfn bad(state: __LoopYieldState) -> __LoopOutcome\n    ? \"Answers a ReadLine with a Yield state.\"\n    __loopAnswerReadLine(state, Result.Ok(\"x\"))\n"
     );
@@ -5706,6 +5710,7 @@ fn front_errors_against(src: &str, base_dir: &str) -> Vec<String> {
 
 #[test]
 fn an_importer_resolves_the_generated_protocol_of_a_dependency() {
+    compiler_fixtures::allow();
     let src = include_str!("fixtures/yield_cross_module/main.av");
     let errs = front_errors_against(src, &yield_cross_module_root());
     assert!(
