@@ -3900,3 +3900,110 @@ fn cert_hardening_declines_a_tampered_bytes_helper_body() {
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert_declined(ok, &report, "did not build");
 }
+
+/// A program whose functions return early through `?`: in an argument
+/// (`bumped`) and in a binding and an argument (`twice`).
+const TRY: &str = "module TryProbe
+    intent = \"Early returns.\"
+    exposes [half, bumped, twice]
+
+fn half(n: Int) -> Result<Int, String>
+    ? \"The number itself, if it is not negative.\"
+    match n >= 0
+        true -> Result.Ok(n)
+        false -> Result.Err(\"negative\")
+
+fn bumped(n: Int) -> Result<Int, String>
+    ? \"One more than half, through an early return in an argument.\"
+    Result.Ok(half(n)? + 1)
+
+fn twice(n: Int) -> Result<Int, String>
+    ? \"Two early returns: a binding and an argument.\"
+    a = half(n)?
+    Result.Ok(a + half(a - 1)?)
+";
+
+/// The honest certificate checks: both early-returning bodies are planned
+/// under a `scope`, and the three functions check.
+#[test]
+fn cert_hardening_accepts_early_returns() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-try-clean", TRY) else {
+        return;
+    };
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    for row in ["(.scope ", "(.try_ (.call (.fn "] {
+        assert!(plans.contains(row), "`{row}` is planned:\n{plans}");
+    }
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "the early-return certificate must check:\n{report}");
+    assert!(report.contains("3 checked exports"), "{report}");
+}
+
+/// The bytes of `bumped`'s `?` and where its `Err` branch starts: the first
+/// `else; i32.const 0` of its body, the tag of the `Err` it returns.
+fn try_err_branch(bytes: &[u8], cert: &Path) -> (std::ops::Range<usize>, usize) {
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let bumped: u32 = number_after(&plans, "⟨\"bumped\", true, ").parse().unwrap();
+    let (body, _) = code_body_and_imports(bytes, bumped);
+    assert!(!body.is_empty(), "bumped is a defined function");
+    let at = bytes[body.clone()]
+        .windows(3)
+        .position(|w| w == [0x05, 0x41, 0x00])
+        .expect("the `?` rebuilds an `Err` in its `else`")
+        + body.start;
+    (body, at)
+}
+
+/// The `?` returns an `Ok` instead: the tag of the value it returns early
+/// becomes `1`. The module stays valid and is restamped; the plan's lowering
+/// no longer matches the code entry.
+#[test]
+fn cert_hardening_declines_an_early_return_of_the_other_variant() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-try-variant", TRY) else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let (_, at) = try_err_branch(&bytes, &cert);
+    bytes[at + 2] = 0x01;
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The `?` does not return: its `return` becomes `unreachable`, so an `Err`
+/// traps instead of leaving the function. The plan still says `try_`.
+#[test]
+fn cert_hardening_declines_an_early_return_that_does_not_return() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-try-noreturn", TRY) else {
+        return;
+    };
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let (body, at) = try_err_branch(&bytes, &cert);
+    let ret = bytes[at..body.end]
+        .windows(2)
+        .position(|w| w == [0x0f, 0x0b])
+        .expect("the `Err` branch ends with `return`")
+        + at;
+    bytes[ret] = 0x00;
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A plan whose `?` names another return type: the `Err` it says it returns
+/// is a `Result<Bool, String>`, which no code entry builds.
+#[test]
+fn cert_hardening_declines_an_early_return_at_another_type() {
+    let Some((_dir, wasm, cert)) = baseline_source("certharden-try-type", TRY) else {
+        return;
+    };
+    replace_once(
+        &cert.join("Plans.lean"),
+        "[(.local 0)]) (.result .int .string))",
+        "[(.local 0)]) (.result .bool .string))",
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}

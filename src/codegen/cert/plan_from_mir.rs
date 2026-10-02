@@ -588,6 +588,12 @@ impl TypeTableBuilder {
 struct Printer<'a> {
     layout: &'a dyn PlanLayout,
     types: &'a mut TypeTableBuilder,
+    /// The function's return type, which a `?` rebuilds its `Err` at
+    /// (`emit_mir_try` reads `ctx.return_type`).
+    ret: PlanTy,
+    /// A `?` was printed: the body becomes the `scope` its early returns
+    /// land in.
+    tries: bool,
 }
 
 fn stamped(expr: &Spanned<MirExpr>) -> Result<String, String> {
@@ -1052,6 +1058,22 @@ impl Printer<'_> {
                     })
                     .collect::<Result<_, _>>()?,
             ),
+            MirExpr::Try(inner) => {
+                if !matches!(self.ret, PlanTy::Result(..)) {
+                    return Err("Try in a function that does not return a Result".into());
+                }
+                let subject = stamped(inner)?;
+                let tree =
+                    parse_ty(&subject).ok_or_else(|| format!("type `{subject}` does not parse"))?;
+                if tree.head != "Result" || tree.args.len() != 2 {
+                    return Err("Try over a subject that is not a Result".into());
+                }
+                if tree.args[0].head == "Unit" {
+                    return Err("Try over a Result<Unit, _>".into());
+                }
+                self.tries = true;
+                PlanExpr::Try(Box::new(self.expr(inner)?), self.ret.clone())
+            }
             MirExpr::List(items) => {
                 let text = stamped(expr)?;
                 let ty = self.ty(&text)?;
@@ -1112,13 +1134,19 @@ fn print_fn_inner(
     if nparams != mir_fn.params.len() || slot_types.len() < nparams {
         return Err("parameter count mismatch".into());
     }
-    let mut printer = Printer { layout, types };
+    let mut printer = Printer {
+        layout,
+        types,
+        ret: PlanTy::Bool,
+        tries: false,
+    };
     let params = rfd
         .params
         .iter()
         .map(|(_, t)| printer.ty(&t.display()))
         .collect::<Result<Vec<_>, _>>()?;
     let ret = printer.ty(&rfd.return_type.display())?;
+    printer.ret = ret.clone();
     let nslots = slot_types.len();
     let mut locals = Vec::with_capacity(extra_locals.len());
     for (j, vt) in extra_locals.iter().enumerate() {
@@ -1136,7 +1164,10 @@ fn print_fn_inner(
         };
         locals.push(ty);
     }
-    let body = printer.expr(&mir_fn.body)?;
+    let mut body = printer.expr(&mir_fn.body)?;
+    if printer.tries {
+        body = PlanExpr::Scope(Box::new(body));
+    }
     Ok(FnPlan {
         params,
         ret,
@@ -1550,6 +1581,50 @@ fn three(x: Int) -> List<Int>
         };
         assert_eq!(items.len(), 3);
         assert!(types.list_cons.iter().any(|(t, _)| *t == PlanTy::Int));
+    }
+
+    #[test]
+    fn a_try_prints_with_the_return_type_under_a_scope() {
+        let (map, _) = plans(
+            r#"
+module T
+    intent = "try probes"
+    exposes [half, bumped, plain, unit, check]
+
+fn half(n: Int) -> Result<Int, String>
+    match n >= 0
+        true -> Result.Ok(n)
+        false -> Result.Err("negative")
+
+fn bumped(n: Int) -> Result<Int, String>
+    Result.Ok(half(n)? + 1)
+
+fn plain(n: Int) -> Result<Int, String>
+    half(n)
+
+fn check(n: Int) -> Result<Unit, String>
+    match n >= 0
+        true -> Result.Ok(Unit)
+        false -> Result.Err("negative")
+
+fn unit(n: Int) -> Result<Int, String>
+    _ok = check(n)?
+    Result.Ok(n)
+"#,
+        );
+        let ret = PlanTy::Result(Box::new(PlanTy::Int), Box::new(PlanTy::Str));
+        let bumped = plan(&map, "bumped");
+        let PlanExpr::Scope(inner) = &bumped.body else {
+            panic!("bumped body: {:?}", bumped.body)
+        };
+        assert!(
+            format!("{inner:?}").contains(&format!("Try(Call(Fn(")),
+            "the `?` prints as a Try over the call: {inner:?}"
+        );
+        assert!(format!("{inner:?}").contains(&format!("{ret:?})")));
+        // A body without `?` gets no scope.
+        assert!(matches!(plan(&map, "plain").body, PlanExpr::Call(..)));
+        assert_eq!(reason(&map, "unit"), "Try over a Result<Unit, _>");
     }
 
     #[test]

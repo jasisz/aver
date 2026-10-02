@@ -327,6 +327,25 @@ theorem eval_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
         split at h
         · rename_i vs hvs; rw [evalArgs_mono hle env items vs hvs]; exact h
         · cases h
+  | env, .try_ e R, v, h => by
+      simp only [eval] at h ⊢
+      cases he : eval F env e with
+      | none => simp [he] at h
+      | some w =>
+          rw [eval_mono hle env e w he]
+          simp only [he] at h
+          exact h
+  | env, .scope e, v, h => by
+      simp only [eval] at h ⊢
+      cases he : eval F env e with
+      | some w =>
+          simp only [he, Option.some.injEq] at h
+          subst h
+          simp [eval_mono hle env e w he]
+      | none =>
+          simp only [he] at h
+          have hG := escv_mono hle env e v h
+          simp [eval_none_of_escv env e v hG, hG]
 theorem evalArgs_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
     ∀ (env : Nat → Option SVal) (es : List Expr) (vs : List SVal),
       evalArgs F env es = some vs → evalArgs G env es = some vs
@@ -348,6 +367,169 @@ theorem evalArms_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
         · exact eval_mono hle _ b v h
         · cases h
       · exact evalArms_mono hle env sv rest v h
+/-- A larger callee table returns early where a smaller one does: every part
+    the smaller one evaluated before the escape evaluates to the same value,
+    so it does not return early either. -/
+theorem escv_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
+    ∀ (env : Nat → Option SVal) (e : Expr) (x : SVal), escv F env e = some x →
+      escv G env e = some x
+  | env, .literal _, x, h => by simp [escv] at h
+  | env, .local _, x, h => by simp [escv] at h
+  | env, .let_ b v body, x, h => by
+      simp only [escv] at h ⊢
+      cases hv : escv F env v with
+      | some y =>
+          simp only [hv, Option.some.injEq] at h
+          subst h
+          simp [escv_mono hle env v y hv]
+      | none =>
+          simp only [hv] at h
+          cases he : eval F env v with
+          | none => simp [he] at h
+          | some y =>
+              simp only [he] at h
+              have hG := eval_mono hle env v y he
+              simp only [escv_none_of_eval hG, hG]
+              exact escv_mono hle _ body x h
+  | env, .call (.fn _) args, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env args x h
+  | env, .call (.builtin _) args, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env args x h
+  | env, .call (.intrinsic _) args, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env args x h
+  | env, .call (.lazy lb) [], x, h => by simp [escv] at h
+  | env, .call (.lazy lb) [_], x, h => by simp [escv] at h
+  | env, .call (.lazy lb) (_ :: _ :: _ :: _), x, h => by simp [escv] at h
+  | env, .call (.lazy lb) [o, d], x, h => by
+      simp only [escv] at h ⊢
+      cases ho : escv F env o with
+      | some y =>
+          simp only [ho, Option.some.injEq] at h
+          subst h
+          simp [escv_mono hle env o y ho]
+      | none =>
+          simp only [ho] at h
+          cases he : eval F env o with
+          | none => cases lb <;> simp [he] at h
+          | some w =>
+              have hG := eval_mono hle env o w he
+              simp only [escv_none_of_eval hG, hG]
+              simp only [he] at h
+              cases lb <;> cases w <;> simp at h ⊢ <;> exact escv_mono hle env d x h
+  | env, .tailCall _ args, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env args x h
+  | env, .binOp _ l r, x, h => by
+      simp only [escv] at h ⊢
+      cases hl : escv F env l with
+      | some y =>
+          simp only [hl, Option.some.injEq] at h
+          subst h
+          simp [escv_mono hle env l y hl]
+      | none =>
+          simp only [hl] at h
+          cases he : eval F env l with
+          | none => simp [he] at h
+          | some y =>
+              simp only [he] at h
+              have hG := eval_mono hle env l y he
+              simp only [escv_none_of_eval hG, hG]
+              exact escv_mono hle env r x h
+  | env, .neg e, x, h => by
+      simp only [escv] at h ⊢; exact escv_mono hle env e x h
+  | env, .ifThenElse c t e, x, h => by
+      simp only [escv] at h ⊢
+      cases hc : escv F env c with
+      | some y =>
+          simp only [hc, Option.some.injEq] at h
+          subst h
+          simp [escv_mono hle env c y hc]
+      | none =>
+          simp only [hc] at h
+          cases he : eval F env c with
+          | none => simp [he] at h
+          | some w =>
+              have hG := eval_mono hle env c w he
+              simp only [escv_none_of_eval hG, hG]
+              simp only [he] at h
+              cases w <;> try (simp at h; done)
+              rename_i bv
+              cases bv <;> simp at h ⊢
+              · exact escv_mono hle env e x h
+              · exact escv_mono hle env t x h
+  | env, .recordCreate _ fs, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env fs x h
+  | env, .project _ _ base, x, h => by
+      simp only [escv] at h ⊢; exact escv_mono hle env base x h
+  | env, .construct _ _ args, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env args x h
+  | env, .match_ s arms, x, h => by
+      simp only [escv] at h ⊢
+      cases hs : escv F env s with
+      | some y =>
+          simp only [hs, Option.some.injEq] at h
+          subst h
+          simp [escv_mono hle env s y hs]
+      | none =>
+          simp only [hs] at h
+          cases he : eval F env s with
+          | none => simp [he] at h
+          | some w =>
+              simp only [he] at h
+              have hG := eval_mono hle env s w he
+              simp only [escv_none_of_eval hG, hG]
+              exact escvArms_mono hle env w arms x h
+  | env, .interp parts, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env parts x h
+  | env, .list _ items, x, h => by
+      simp only [escv] at h ⊢; exact escvArgs_mono hle env items x h
+  | env, .try_ e R, x, h => by
+      simp only [escv] at h ⊢
+      cases he : escv F env e with
+      | some y =>
+          simp only [he, Option.some.injEq] at h
+          subst h
+          simp [escv_mono hle env e y he]
+      | none =>
+          simp only [he] at h
+          cases hv : eval F env e with
+          | none => simp [hv] at h
+          | some w =>
+              have hG := eval_mono hle env e w hv
+              simp only [escv_none_of_eval hG, hG]
+              simp only [hv] at h
+              exact h
+  | env, .scope _, x, h => by simp [escv] at h
+theorem escvArgs_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
+    ∀ (env : Nat → Option SVal) (es : List Expr) (x : SVal),
+      escvArgs F env es = some x → escvArgs G env es = some x
+  | env, [], x, h => by simp [escvArgs] at h
+  | env, e :: es, x, h => by
+      simp only [escvArgs] at h ⊢
+      cases he : escv F env e with
+      | some y =>
+          simp only [he, Option.some.injEq] at h
+          subst h
+          simp [escv_mono hle env e y he]
+      | none =>
+          simp only [he] at h
+          cases hv : eval F env e with
+          | none => simp [hv] at h
+          | some w =>
+              simp only [hv] at h
+              have hG := eval_mono hle env e w hv
+              simp only [escv_none_of_eval hG, hG]
+              exact escvArgs_mono hle env es x h
+theorem escvArms_mono {F G : Nat → List SVal → Option SVal} (hle : Le F G) :
+    ∀ (env : Nat → Option SVal) (sv : SVal) (arms : Arms) (x : SVal),
+      escvArms F env sv arms = some x → escvArms G env sv arms = some x
+  | env, sv, .nil, x, h => by simp [escvArms] at h
+  | env, sv, .cons p b rest, x, h => by
+      simp only [escvArms] at h ⊢
+      split at h
+      · split at h
+        · exact escv_mono hle _ b x h
+        · cases h
+      · exact escvArms_mono hle env sv rest x h
 end
 
 

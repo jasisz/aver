@@ -342,6 +342,20 @@ def divOrB (M : MCtx) (X : LCtx) (isMod : Bool) : List BI :=
       [.op (.localGet (X.cmp + 1)), .op (.localGet (X.cmp + 2)),
         .op (.i32Const (if isMod then 1 else 0)), .op (.call M.divmod)] ]
 
+/-- `emit_mir_try` after its subject, which sits in the subject scratch: the
+    tag test, then the `Ok` payload (field 1), or a fresh `Err` of the
+    enclosing return type `Result<t', er'>` (tag `0`, the filler of `t'`, the
+    subject's field 2) and `return`. -/
+def tryB (M : MCtx) (X : LCtx) (t er t' er' : Ty) : List BI :=
+  tagTestB X.subj (M.resStruct t er) ++
+    [.ifElse (some t)
+      [.op (.localGet X.subj), .op (.refCast (M.resStruct t er)),
+        .op (.structGet (M.resStruct t er) 1)]
+      ([.op (.i32Const 0)] ++ dfltB M t' ++
+        [.op (.localGet X.subj), .op (.refCast (M.resStruct t er)),
+          .op (.structGet (M.resStruct t er) 2), .op (.structNew (M.resStruct t' er') 3),
+          .op .ret])]
+
 /-- The `want_mod` flag of a Euclidean intrinsic. -/
 def Intrinsic.flag : Intrinsic → Int
   | .intDivEuclid => 0
@@ -485,6 +499,12 @@ mutual
               lowerArgsB M X Γ items ++ [.nullOf (M.listStruct t)] ++
                 List.replicate items.length (.op (.call f))
           | none => []
+    | .try_ e R =>
+        match tyOf M X.n Γ false e, R with
+        | some (.result t er), .result t' er' =>
+            lowerB M X Γ false e ++ [.op (.localSet X.subj)] ++ tryB M X t er t' er'
+        | _, _ => []
+    | .scope e => lowerB M X Γ tail e
   def lowerArgsB (M : MCtx) (X : LCtx) (Γ : Nat → Option Ty) : List Expr → List BI
     | [] => []
     | e :: es => lowerB M X Γ false e ++ lowerArgsB M X Γ es
@@ -678,6 +698,7 @@ def encW : WInstr → Option (List Nat)
       | _, _ => none
   | .refTest t => (s33HeapIdx t).map ([0xfb, 0x14] ++ ·)
   | .refCast t => (s33HeapIdx t).map ([0xfb, 0x16] ++ ·)
+  | .ret => some [0x0f]
   | _ => none
 
 /-- Value-type bytes of a source type: the Int carrier, records, sums (their
@@ -795,6 +816,8 @@ mutual
     | .construct _ _ args => argsLits args
     | .interp parts => argsLits parts
     | .list _ items => argsLits items
+    | .try_ e _ => exprLits e
+    | .scope e => exprLits e
   def argsLits : List Expr → List (List Nat)
     | [] => []
     | e :: es => exprLits e ++ argsLits es

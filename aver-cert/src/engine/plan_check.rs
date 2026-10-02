@@ -551,6 +551,23 @@ impl MCtx<'_> {
                 PlanTy::List(t) => self.ty_list_arms(n, g, tail, &t, arms),
                 _ => None,
             },
+            PlanExpr::Try(x, ret) => match (self.ty_of(n, g, false, x)?, ret) {
+                (PlanTy::Result(t, er), PlanTy::Result(t2, er2))
+                    if er == *er2 && has_default(t2) && has_default(&er) =>
+                {
+                    Some(*t)
+                }
+                _ => None,
+            },
+            PlanExpr::Scope(x) => {
+                if !tail {
+                    return None;
+                }
+                let t = self.ty_of(n, g, true, x)?;
+                let mut rets = Vec::new();
+                bare_tries(x, &mut rets);
+                rets.iter().all(|r| **r == t).then_some(t)
+            }
         }
     }
 
@@ -755,12 +772,47 @@ fn params_gamma(ps: &[PlanTy]) -> Gamma {
         .collect()
 }
 
+/// `Grammar.bareTries`: the return types of the `try_` nodes outside any
+/// `scope`.
+fn bare_tries<'e>(e: &'e PlanExpr, out: &mut Vec<&'e PlanTy>) {
+    match e {
+        PlanExpr::Literal(_) | PlanExpr::Local(_) | PlanExpr::Scope(_) => {}
+        PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
+            bare_tries(v, out);
+            bare_tries(b, out);
+        }
+        PlanExpr::Call(_, args)
+        | PlanExpr::TailCall(_, args)
+        | PlanExpr::RecordCreate(_, args)
+        | PlanExpr::Construct(_, _, args)
+        | PlanExpr::Interp(args)
+        | PlanExpr::List(_, args) => args.iter().for_each(|a| bare_tries(a, out)),
+        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => bare_tries(x, out),
+        PlanExpr::If(c, t, el) => {
+            bare_tries(c, out);
+            bare_tries(t, out);
+            bare_tries(el, out);
+        }
+        PlanExpr::Match(s, arms) => {
+            bare_tries(s, out);
+            arms.iter().for_each(|(_, b)| bare_tries(b, out));
+        }
+        PlanExpr::Try(x, ret) => {
+            out.push(ret);
+            bare_tries(x, out);
+        }
+    }
+}
+
 /// `Grammar.planTyped`.
 fn plan_typed(m: &MCtx<'_>, p: &FnPlan) -> bool {
     let np = p.params.len();
+    let mut bare = Vec::new();
+    bare_tries(&p.body, &mut bare);
     np <= p.nslots as usize
         && (p.nslots as usize) <= np + p.locals.len()
         && m.ty_of(p.nslots, &params_gamma(&p.params), true, &p.body) == Some(p.ret.clone())
+        && bare.is_empty()
 }
 
 // ---- `TypeTable.declsWellFormed`: no vacuous obligation ----
@@ -921,6 +973,7 @@ enum WI {
     ArrayNewFixed(u64, u32),
     RefTest(u64),
     RefCast(u64),
+    Ret,
 }
 
 /// `GrammarLower.BI`.
@@ -1479,7 +1532,41 @@ impl MCtx<'_> {
                 out.extend(items.iter().map(|_| BI::Op(WI::Call(u64::from(f)))));
                 out
             }
+            PlanExpr::Try(inner, ret) => match (self.ty_of(n, g, false, inner), ret) {
+                (Some(PlanTy::Result(t, er)), PlanTy::Result(t2, er2)) => {
+                    let mut out = self.lower(x, g, false, inner);
+                    out.push(BI::Op(WI::LocalSet(x.subj)));
+                    out.extend(self.try_tail(x, &t, &er, t2, er2));
+                    out
+                }
+                _ => vec![],
+            },
+            PlanExpr::Scope(inner) => self.lower(x, g, tail, inner),
         }
+    }
+
+    /// `GrammarLower.tryB`: the tag test of the subject in the scratch, then
+    /// the `Ok` payload or a fresh `Err` of the enclosing return type and
+    /// `return`.
+    fn try_tail(&self, x: &LCtx, t: &PlanTy, er: &PlanTy, t2: &PlanTy, er2: &PlanTy) -> Vec<BI> {
+        let rs = self.res_struct(t, er);
+        let mut out = tag_test(x.subj, rs);
+        let then_b = ops(vec![
+            WI::LocalGet(x.subj),
+            WI::RefCast(rs),
+            WI::StructGet(rs, 1),
+        ]);
+        let mut else_b = ops(vec![WI::I32Const(0)]);
+        else_b.extend(self.dflt(t2));
+        else_b.extend(ops(vec![
+            WI::LocalGet(x.subj),
+            WI::RefCast(rs),
+            WI::StructGet(rs, 2),
+            WI::StructNew(self.res_struct(t2, er2)),
+            WI::Ret,
+        ]));
+        out.push(BI::If(Some(t.clone()), then_b, else_b));
+        out
     }
 
     fn lower_int_arms(
@@ -1781,6 +1868,7 @@ impl MCtx<'_> {
                 out.extend([0xfb, 0x16]);
                 s33(*t, out)?
             }
+            WI::Ret => out.push(0x0f),
         }
         Some(())
     }
@@ -1891,7 +1979,10 @@ fn call_targets(e: &PlanExpr, out: &mut Vec<u32>) {
             call_targets(l, out);
             call_targets(r, out);
         }
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => call_targets(x, out),
+        PlanExpr::Neg(x)
+        | PlanExpr::Project(_, _, x)
+        | PlanExpr::Try(x, _)
+        | PlanExpr::Scope(x) => call_targets(x, out),
         PlanExpr::If(c, t, el) => {
             call_targets(c, out);
             call_targets(t, out);
@@ -1925,7 +2016,10 @@ fn literal_list_types(e: &PlanExpr, out: &mut Vec<PlanTy>) {
         | PlanExpr::RecordCreate(_, args)
         | PlanExpr::Construct(_, _, args)
         | PlanExpr::Interp(args) => args.iter().for_each(|a| literal_list_types(a, out)),
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => literal_list_types(x, out),
+        PlanExpr::Neg(x)
+        | PlanExpr::Project(_, _, x)
+        | PlanExpr::Try(x, _)
+        | PlanExpr::Scope(x) => literal_list_types(x, out),
         PlanExpr::If(c, t, el) => {
             literal_list_types(c, out);
             literal_list_types(t, out);
@@ -1973,7 +2067,10 @@ fn string_lits<'e>(e: &'e PlanExpr, out: &mut Vec<&'e [u8]>) {
             string_lits(l, out);
             string_lits(r, out);
         }
-        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) => string_lits(x, out),
+        PlanExpr::Neg(x)
+        | PlanExpr::Project(_, _, x)
+        | PlanExpr::Try(x, _)
+        | PlanExpr::Scope(x) => string_lits(x, out),
         PlanExpr::If(c, t, el) => {
             string_lits(c, out);
             string_lits(t, out);
@@ -2086,7 +2183,7 @@ fn facets_e(e: &PlanExpr, out: &mut BTreeSet<&'static str>) {
             facets_e(l, out);
             facets_e(r, out);
         }
-        PlanExpr::Neg(x) => facets_e(x, out),
+        PlanExpr::Neg(x) | PlanExpr::Try(x, _) | PlanExpr::Scope(x) => facets_e(x, out),
         PlanExpr::If(c, t, el) => {
             facets_e(c, out);
             facets_e(t, out);

@@ -154,6 +154,8 @@ mutual
     | .construct _ _ args => "variants" :: facetsL args
     | .interp parts => "strings" :: facetsL parts
     | .list _ items => facetsL items
+    | .try_ e _ => facetsE e
+    | .scope e => facetsE e
   def facetsL : List Expr → List String
     | [] => []
     | e :: es => facetsE e ++ facetsL es

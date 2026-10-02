@@ -63,6 +63,15 @@
      `ref.null`, and calls the `List<t>` cons helper once per item. The
      helper's index comes from the type table (`MCtx.listCons`), and the
      acceptance pins its plan to exactly `consPlan t`.
+   * `try_ e ret` — `Try` (`e?` on a `Result`) with the enclosing function's
+     return type `ret`, a `Result` with the same error type (the emitter reads
+     it for the `Err` it builds and returns). Its meaning on `Ok` is the
+     payload; on `Err` evaluation fails (`eval`) and the early return
+     (`escv`) is that `Err` rebuilt at `ret`.
+   * `scope e` — not a MIR node: the printer wraps a body that has a `try_`,
+     so every early return lands in a scope (`planTyped` requires no
+     `bareTries` left). Typed only in tail position; its meaning is the
+     body's value or, failing that, its early return.
    * `construct c ty args` — `Construct`; `c` is the constructor
      (`MirCtor::User(CtorId)` as type id + constructor index, or a built-in
      `Some`/`None`/`Ok`/`Err`) and `ty` is the node's stamped type
@@ -283,6 +292,13 @@ mutual
     | interp (parts : List Expr)
     /-- `List(items)` with its element type (the stamped instantiation). -/
     | list (elem : Ty) (items : List Expr)
+    /-- `Try` (`e?` on a `Result`) with the enclosing function's return type
+        `ret`, which the emitter reads for the `Err` it returns early. -/
+    | try_ (e : Expr) (ret : Ty)
+    /-- The target of the early returns of the `try_` nodes below it: the
+        printer wraps a function body that has one. The wasm `return` leaves
+        the function, so a scope is typed only in tail position. -/
+    | scope (e : Expr)
   /-- The arms of a `Match`, in source order. -/
   inductive Arms where
     | nil
@@ -544,6 +560,38 @@ def varArmΓ (M : MCtx) (n : Nat) (Γ : Nat → Option Ty) (tid : Nat) : Pat →
   | .wild => some Γ
   | _ => none
 
+/-! ## Early returns
+
+The return types the `try_` nodes of an expression carry, outside any
+`scope`: where an early return out of the expression lands. A plan's body has
+none left (`planTyped`), so every early return lands in a scope. -/
+
+mutual
+  def bareTries : Expr → List Ty
+    | .literal _ => []
+    | .local _ => []
+    | .let_ _ v body => bareTries v ++ bareTries body
+    | .call _ args => bareTriesL args
+    | .tailCall _ args => bareTriesL args
+    | .binOp _ l r => bareTries l ++ bareTries r
+    | .neg e => bareTries e
+    | .ifThenElse c t e => bareTries c ++ bareTries t ++ bareTries e
+    | .recordCreate _ fs => bareTriesL fs
+    | .project _ _ b => bareTries b
+    | .match_ s arms => bareTries s ++ bareTriesA arms
+    | .construct _ _ args => bareTriesL args
+    | .interp parts => bareTriesL parts
+    | .list _ items => bareTriesL items
+    | .try_ e R => R :: bareTries e
+    | .scope _ => []
+  def bareTriesL : List Expr → List Ty
+    | [] => []
+    | e :: es => bareTries e ++ bareTriesL es
+  def bareTriesA : Arms → List Ty
+    | .nil => []
+    | .cons _ b rest => bareTries b ++ bareTriesA rest
+end
+
 /-! ## The cons helper
 
 A non-empty list literal calls the per-instantiation cons helper, whose body
@@ -710,6 +758,17 @@ mutual
                 some (.list t)
               else none
           | _, _ => none
+    | .try_ e R =>
+        match tyOf M n Γ false e, R with
+        | some (.result t E), .result T' E' =>
+            if E = E' ∧ T'.hasDefault ∧ E.hasDefault then some t else none
+        | _, _ => none
+    | .scope e =>
+        if tail then
+          match tyOf M n Γ true e with
+          | some T => if (bareTries e).all (fun R => decide (R = T)) then some T else none
+          | none => none
+        else none
     | .match_ s arms =>
         match tyOf M n Γ false s with
         | some .int => if arms.firstLit then tyIntArms M n Γ tail arms else none
@@ -1170,6 +1229,14 @@ mutual
           match evalArgs F env items with
           | some vs => some (consAll t vs)
           | none => none
+    | .try_ e _ =>
+        match eval F env e with
+        | some (.ok _ _ v) => some v
+        | _ => none
+    | .scope e =>
+        match eval F env e with
+        | some v => some v
+        | none => escv F env e
   def evalArgs (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
       List Expr → Option (List SVal)
     | [] => some []
@@ -1189,6 +1256,93 @@ mutual
             | some env' => eval F env' b
             | none => none
         | none => evalArms F env v rest
+  /-- The early return of an expression: the `Err` the first `try_` that
+      meets one returns, rebuilt at that node's return type, when evaluation
+      reaches it (every earlier part evaluates, in the emitter's order). It is
+      `none` when evaluation reaches no such `try_`, and a `scope` returns
+      nothing out of itself. Where `escv` is `some`, `eval` is `none`. -/
+  def escv (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
+      Expr → Option SVal
+    | .literal _ => none
+    | .local _ => none
+    | .let_ b v body =>
+        match escv F env v with
+        | some x => some x
+        | none =>
+            match eval F env v with
+            | some y => escv F (upd env b y) body
+            | none => none
+    | .call (.fn _) args => escvArgs F env args
+    | .call (.builtin _) args => escvArgs F env args
+    | .call (.intrinsic _) args => escvArgs F env args
+    | .call (.lazy lb) args =>
+        match args with
+        | [o, d] =>
+            match escv F env o with
+            | some x => some x
+            | none =>
+                match lb, eval F env o with
+                | .optWithDefault, some (.none _) => escv F env d
+                | .resWithDefault, some (.err _ _ _) => escv F env d
+                | _, _ => none
+        | _ => none
+    | .tailCall _ args => escvArgs F env args
+    | .binOp _ l r =>
+        match escv F env l with
+        | some x => some x
+        | none =>
+            match eval F env l with
+            | some _ => escv F env r
+            | none => none
+    | .neg e => escv F env e
+    | .ifThenElse c t e =>
+        match escv F env c with
+        | some x => some x
+        | none =>
+            match eval F env c with
+            | some (.b true) => escv F env t
+            | some (.b false) => escv F env e
+            | _ => none
+    | .recordCreate _ fs => escvArgs F env fs
+    | .project _ _ base => escv F env base
+    | .construct _ _ args => escvArgs F env args
+    | .match_ s arms =>
+        match escv F env s with
+        | some x => some x
+        | none =>
+            match eval F env s with
+            | some v => escvArms F env v arms
+            | none => none
+    | .interp parts => escvArgs F env parts
+    | .list _ items => escvArgs F env items
+    | .try_ e R =>
+        match escv F env e with
+        | some x => some x
+        | none =>
+            match eval F env e, R with
+            | some (.err _ _ y), .result t' e' => some (.err t' e' y)
+            | _, _ => none
+    | .scope _ => none
+  def escvArgs (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) :
+      List Expr → Option SVal
+    | [] => none
+    | e :: es =>
+        match escv F env e with
+        | some x => some x
+        | none =>
+            match eval F env e with
+            | some _ => escvArgs F env es
+            | none => none
+  def escvArms (F : Nat → List SVal → Option SVal) (env : Nat → Option SVal) (v : SVal) :
+      Arms → Option SVal
+    | .nil => none
+    | .cons p b rest =>
+        match patMatch p v with
+        | some (bs, vs) =>
+            match bindVals env bs vs with
+            | some env' => escv F env' b
+            | none => none
+        | none => escvArms F env v rest
 end
 
 def argsEnv (vs : List SVal) : Nat → Option SVal := fun i => vs[i]?
@@ -1219,7 +1373,8 @@ def FnPlan.lctx (p : FnPlan) : LCtx :=
 def planTyped (M : MCtx) (p : FnPlan) : Bool :=
   decide (p.sig.params.length ≤ p.nslots) &&
     decide (p.nslots ≤ p.sig.params.length + p.locals.length) &&
-    decide (tyOf M p.nslots (paramsΓ p.sig.params) true p.body = some p.sig.ret)
+    decide (tyOf M p.nslots (paramsΓ p.sig.params) true p.body = some p.sig.ret) &&
+    (bareTries p.body).isEmpty
 
 /-- The meaning of a group of functions (one SCC), fuel-indexed exactly as
     `wFuncN` peels fuel: at fuel `k + 1` a member's body runs with every
@@ -1282,5 +1437,174 @@ mutual
     | v :: vs, w :: ws => SRepr S M v w ∧ SReprL S M vs ws
     | _, _ => False
 end
+
+/-! ## Early returns and evaluation
+
+Where an expression returns early, its evaluation fails: `eval` and `escv`
+never both answer. -/
+
+mutual
+theorem eval_none_of_escv {F : Nat → List SVal → Option SVal} :
+    ∀ (env : Nat → Option SVal) (e : Expr) (x : SVal), escv F env e = some x →
+      eval F env e = none
+  | env, .literal l, x, h => by cases l <;> simp [escv] at h
+  | env, .local i, x, h => by simp [escv] at h
+  | env, .let_ b v body, x, h => by
+      simp only [escv] at h
+      simp only [eval]
+      cases hv : escv F env v with
+      | some y => simp [eval_none_of_escv env v y hv]
+      | none =>
+          simp only [hv] at h
+          cases he : eval F env v with
+          | none => rfl
+          | some y =>
+              simp only [he] at h
+              simp [eval_none_of_escv _ body x h]
+  | env, .call (.fn f) args, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env args x h]
+  | env, .call (.builtin b) args, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env args x h]
+  | env, .call (.intrinsic i) args, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env args x h]
+  | env, .call (.lazy lb) [], x, h => by simp [escv] at h
+  | env, .call (.lazy lb) [_], x, h => by simp [escv] at h
+  | env, .call (.lazy lb) (_ :: _ :: _ :: _), x, h => by simp [escv] at h
+  | env, .call (.lazy lb) [o, d], x, h => by
+      simp only [escv] at h
+      cases ho : escv F env o with
+      | some y => cases lb <;> simp [eval, eval_none_of_escv env o y ho]
+      | none =>
+          simp only [ho] at h
+          cases lb <;> cases hv : eval F env o <;> simp only [hv] at h <;>
+            first
+            | cases h
+            | (rename_i w; cases w <;> simp at h <;>
+                simp [eval, hv, eval_none_of_escv env d x h])
+  | env, .tailCall f args, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env args x h]
+  | env, .binOp op l r, x, h => by
+      simp only [escv] at h
+      cases hl : escv F env l with
+      | some y => simp [eval, eval_none_of_escv env l y hl]
+      | none =>
+          simp only [hl] at h
+          cases he : eval F env l with
+          | none => simp [eval, he]
+          | some y =>
+              simp only [he] at h
+              simp [eval, eval_none_of_escv env r x h]
+  | env, .neg e, x, h => by
+      simp only [escv] at h
+      simp [eval, eval_none_of_escv env e x h]
+  | env, .ifThenElse c t e, x, h => by
+      simp only [escv] at h
+      cases hc : escv F env c with
+      | some y => simp [eval, eval_none_of_escv env c y hc]
+      | none =>
+          simp only [hc] at h
+          cases he : eval F env c with
+          | none => simp [eval, he]
+          | some v =>
+              simp only [he] at h
+              cases v <;> (try simp at h)
+              rename_i bv
+              cases bv <;> (try simp at h)
+              · simp [eval, he, eval_none_of_escv env e x h]
+              · simp [eval, he, eval_none_of_escv env t x h]
+  | env, .recordCreate tid fs, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env fs x h]
+  | env, .project tid i base, x, h => by
+      simp only [escv] at h
+      simp [eval, eval_none_of_escv env base x h]
+  | env, .match_ s arms, x, h => by
+      simp only [escv] at h
+      cases hs : escv F env s with
+      | some y => simp [eval, eval_none_of_escv env s y hs]
+      | none =>
+          simp only [hs] at h
+          cases he : eval F env s with
+          | none => simp [eval, he]
+          | some v =>
+              simp only [he] at h
+              simp [eval, he, evalArms_none_of_escv env v arms x h]
+  | env, .construct c ty args, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env args x h]
+  | env, .interp parts, x, h => by
+      simp only [escv] at h
+      simp [eval, evalArgs_none_of_escv env parts x h]
+  | env, .list t items, x, h => by
+      simp only [escv] at h
+      cases items with
+      | nil => simp [escvArgs] at h
+      | cons i is => simp [eval, evalArgs_none_of_escv env (i :: is) x h]
+  | env, .try_ e R, x, h => by
+      simp only [escv] at h
+      cases he : escv F env e with
+      | some y => simp [eval, eval_none_of_escv env e y he]
+      | none =>
+          simp only [he] at h
+          cases hv : eval F env e with
+          | none => simp [eval, hv]
+          | some v =>
+              simp only [hv] at h
+              cases v <;> (try simp at h)
+              simp [eval, hv]
+  | env, .scope e, x, h => by simp [escv] at h
+theorem evalArgs_none_of_escv {F : Nat → List SVal → Option SVal} :
+    ∀ (env : Nat → Option SVal) (es : List Expr) (x : SVal), escvArgs F env es = some x →
+      evalArgs F env es = none
+  | env, [], x, h => by simp [escvArgs] at h
+  | env, e :: es, x, h => by
+      simp only [escvArgs] at h
+      cases he : escv F env e with
+      | some y => simp [evalArgs, eval_none_of_escv env e y he]
+      | none =>
+          simp only [he] at h
+          cases hv : eval F env e with
+          | none => simp [evalArgs, hv]
+          | some v =>
+              simp only [hv] at h
+              simp [evalArgs, hv, evalArgs_none_of_escv env es x h]
+theorem evalArms_none_of_escv {F : Nat → List SVal → Option SVal} :
+    ∀ (env : Nat → Option SVal) (sv : SVal) (arms : Arms) (x : SVal),
+      escvArms F env sv arms = some x → evalArms F env sv arms = none
+  | env, sv, .nil, x, h => by simp [escvArms] at h
+  | env, sv, .cons p b rest, x, h => by
+      simp only [escvArms] at h
+      simp only [evalArms]
+      split at h
+      · split at h
+        · rename_i env' hb
+          simp [eval_none_of_escv env' b x h]
+        · cases h
+      · exact evalArms_none_of_escv env sv rest x h
+end
+
+theorem escv_none_of_eval {F : Nat → List SVal → Option SVal} {env : Nat → Option SVal}
+    {e : Expr} {v : SVal} (h : eval F env e = some v) : escv F env e = none := by
+  cases hx : escv F env e with
+  | none => rfl
+  | some x => rw [eval_none_of_escv env e x hx] at h; cases h
+
+theorem escvArgs_none_of_evalArgs {F : Nat → List SVal → Option SVal}
+    {env : Nat → Option SVal} {es : List Expr} {vs : List SVal}
+    (h : evalArgs F env es = some vs) : escvArgs F env es = none := by
+  cases hx : escvArgs F env es with
+  | none => rfl
+  | some x => rw [evalArgs_none_of_escv env es x hx] at h; cases h
+
+theorem escvArms_none_of_evalArms {F : Nat → List SVal → Option SVal}
+    {env : Nat → Option SVal} {sv : SVal} {arms : Arms} {v : SVal}
+    (h : evalArms F env sv arms = some v) : escvArms F env sv arms = none := by
+  cases hx : escvArms F env sv arms with
+  | none => rfl
+  | some x => rw [evalArms_none_of_escv env sv arms x hx] at h; cases h
 
 end AverCert.Grammar

@@ -363,6 +363,13 @@ impl Cited {
                 self.ty(&PlanTy::List(Box::new(t.clone())));
                 items.iter().for_each(|a| self.expr(a));
             }
+            // The early return builds the enclosing return type; the
+            // subject's own `Result` is the type of the expression under it.
+            PlanExpr::Try(x, ret) => {
+                self.ty(ret);
+                self.expr(x);
+            }
+            PlanExpr::Scope(x) => self.expr(x),
         }
     }
 

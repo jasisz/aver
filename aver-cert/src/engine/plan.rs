@@ -237,6 +237,10 @@ pub enum PlanExpr {
     Construct(PlanCtor, PlanTy, Vec<PlanExpr>),
     Interp(Vec<PlanExpr>),
     List(PlanTy, Vec<PlanExpr>),
+    /// `Grammar.Expr.try_`: `e?` with the enclosing function's return type.
+    Try(Box<PlanExpr>, PlanTy),
+    /// `Grammar.Expr.scope`: a body whose `?` returns land here.
+    Scope(Box<PlanExpr>),
 }
 
 /// `Grammar.FnPlan`.
@@ -580,6 +584,16 @@ impl PlanExpr {
             PlanExpr::List(t, items) => {
                 out.push_str(&format!("(.list {} ", t.lean()));
                 Self::write_list(items, out);
+                out.push(')');
+            }
+            PlanExpr::Try(e, ret) => {
+                out.push_str("(.try_ ");
+                e.write_lean(out);
+                out.push_str(&format!(" {})", ret.lean()));
+            }
+            PlanExpr::Scope(e) => {
+                out.push_str("(.scope ");
+                e.write_lean(out);
                 out.push(')');
             }
         }
