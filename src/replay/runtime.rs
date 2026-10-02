@@ -1,5 +1,6 @@
 use super::JsonValue;
 use super::json_to_string;
+use super::replay_args_equivalent;
 use super::session::{EffectRecord, RecordedOutcome};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -255,7 +256,7 @@ impl EffectReplayState {
         }
 
         if let Some(got_args) = got_args
-            && got_args != record.args
+            && !replay_args_equivalent(&record.args, &got_args)
         {
             if self.validate_replay_args {
                 return Err(ReplayFailure::ArgsMismatch {
@@ -308,8 +309,8 @@ impl EffectReplayState {
 
             // Check args
             let args_ok = match (&got_args, self.validate_replay_args) {
-                (Some(got), true) if *got != record.args => false,
-                (Some(got), false) if *got != record.args => {
+                (Some(got), true) if !replay_args_equivalent(&record.args, got) => false,
+                (Some(got), false) if !replay_args_equivalent(&record.args, got) => {
                     self.args_diff_count += 1;
                     true
                 }

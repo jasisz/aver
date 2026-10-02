@@ -884,3 +884,69 @@ fn wasm_gc_batch_replay_keeps_going_past_a_bad_recording() {
     let _ = fs::remove_dir_all(&work);
     let _ = fs::remove_dir_all(&rec_dir);
 }
+
+/// Record the guide's coordinator on one backend and replay it on the
+/// other with `--check-args`. Its first `Wait.poll` waits on an empty set
+/// of Int keys and a later one on a `Wait.Item`, so both backends must
+/// write an empty map and a variant's type the same way.
+fn guide_example_replays_across_backends(record_on_wasm_gc: bool) {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/run_guide_example");
+    let rec_dir = temp_dir("aver-guide-cross-backend");
+
+    let mut record = Command::new(aver_bin);
+    record.current_dir(&fixture).arg("run").arg("main.av");
+    record.arg("--module-root").arg(".");
+    if record_on_wasm_gc {
+        record.arg("--wasm-gc");
+    }
+    let record = record
+        .arg("--record")
+        .arg(&rec_dir)
+        .output()
+        .expect("spawn aver run --record");
+    assert!(
+        record.status.success(),
+        "record run failed:\n{}",
+        format_output(&record)
+    );
+    let recording = fs::read_dir(&rec_dir)
+        .expect("read rec dir")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+        .expect("one recording");
+    let text = fs::read_to_string(&recording).expect("read recording");
+    assert!(
+        !text.contains(r#""$map": []"#) && !text.contains(r#""$map":[]"#),
+        "an empty map records as {{}} on every backend:\n{text}"
+    );
+
+    let mut replay = Command::new(aver_bin);
+    replay.current_dir(&fixture).arg("replay").arg(&recording);
+    if !record_on_wasm_gc {
+        replay.arg("--wasm-gc");
+    }
+    let replay = replay
+        .arg("--check-args")
+        .output()
+        .expect("spawn aver replay --check-args");
+    let stdout = String::from_utf8_lossy(&replay.stdout);
+    assert!(
+        replay.status.success() && stdout.contains("Output:  MATCH"),
+        "cross-backend replay with --check-args should match, got:\n{}",
+        format_output(&replay)
+    );
+
+    let _ = fs::remove_dir_all(&rec_dir);
+}
+
+#[test]
+fn a_vm_recording_of_the_guide_coordinator_replays_on_wasm_gc_with_checked_args() {
+    guide_example_replays_across_backends(false);
+}
+
+#[test]
+fn a_wasm_gc_recording_of_the_guide_coordinator_replays_on_the_vm_with_checked_args() {
+    guide_example_replays_across_backends(true);
+}

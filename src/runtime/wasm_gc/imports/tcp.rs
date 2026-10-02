@@ -1292,12 +1292,13 @@ fn read_int_key(
     }
 }
 
-/// The `$variant` shape one `Wait.Item` records as, matching the VM's.
+/// The `$variant` shape one `Wait.Item` records as, matching the VM's and
+/// the Rust backend's: the type under its qualified name.
 fn json_wait_item(variant: &str, payload: aver::replay::JsonValue) -> aver::replay::JsonValue {
     let mut fields = serde_json::Map::new();
     fields.insert(
         "type".to_string(),
-        aver::replay::JsonValue::String("Item".to_string()),
+        aver::replay::JsonValue::String("Wait.Item".to_string()),
     );
     fields.insert(
         "name".to_string(),
@@ -1382,10 +1383,17 @@ pub(in crate::runtime::wasm_gc) fn job_handle_id(
     }
 }
 
+/// A wait set as a recorded map. Its keys are whole numbers, so it records
+/// as `$map` pairs; the empty set records as `{}`, the one spelling every
+/// backend gives an empty map, since the bytecode VM cannot tell what an
+/// empty map's keys would have been.
 pub(super) fn poll_map_json(
     entries: &[PollEntry],
     operation: &str,
 ) -> Result<aver::replay::JsonValue, wasmtime::Error> {
+    if entries.is_empty() {
+        return Ok(aver::replay::JsonValue::Object(serde_json::Map::new()));
+    }
     let mut pairs = Vec::with_capacity(entries.len());
     for entry in entries {
         pairs.push(aver::replay::JsonValue::Array(vec![
