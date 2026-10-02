@@ -146,6 +146,7 @@ fn baseline_source(prefix: &str, source: &str) -> Option<(ScratchDir, PathBuf, P
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out)
         .output()
@@ -1027,6 +1028,7 @@ fn cert_hardening_declines_a_wasip2_constant_extending_the_artifact_data() {
         .arg("--target")
         .arg("wasip2")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&*dir)
         .output()
@@ -1090,6 +1092,7 @@ fn fixture_baseline(prefix: &str, fixture: &str) -> Option<(ScratchDir, PathBuf,
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out)
         .output()
@@ -2130,6 +2133,7 @@ fn work_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&*dir)
         .output()
@@ -2435,6 +2439,7 @@ fn cert_hardening_accepts_a_model_named_inside_another_laws_namespace() {
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out)
         .output()
@@ -2618,6 +2623,7 @@ fn list_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
             "--target",
             "wasm-gc",
             "--certify",
+            "--examples",
             "-o",
         ])
         .arg(&out)
@@ -2769,6 +2775,7 @@ fn literal_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
             "--target",
             "wasm-gc",
             "--certify",
+            "--examples",
             "-o",
         ])
         .arg(&out)
@@ -3349,6 +3356,7 @@ fn helpers_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
             "--target",
             "wasm-gc",
             "--certify",
+            "--examples",
             "-o",
         ])
         .arg(&out)
@@ -3502,6 +3510,7 @@ fn recs_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
             "--target",
             "wasm-gc",
             "--certify",
+            "--examples",
             "-o",
         ])
         .arg(&out)
@@ -3745,6 +3754,7 @@ fn bytes_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
             "--target",
             "wasm-gc",
             "--certify",
+            "--examples",
             "-o",
         ])
         .arg(&out)

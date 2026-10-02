@@ -275,6 +275,7 @@ fn compile_wasip2_certify_emits_component_bound_package() {
         .arg("--target")
         .arg("wasip2")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&output_dir)
         .output()

@@ -52,6 +52,7 @@ verify f
     let out = temp_output_dir("aver-failing-case-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -148,6 +149,7 @@ verify f law zero
     let out = temp_output_dir("aver-failing-law-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -292,6 +294,7 @@ verify scalarArm
     let out = temp_output_dir("aver-nested-question-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -361,6 +364,7 @@ fn proof_lean_peano_lift_nat_arith_kernel_clean() {
     let out = temp_output_dir("aver-peano-lift-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -433,6 +437,7 @@ fn proof_lean_mutual_recursive_adt_predicate_uses_native_termination_kernel_clea
     let out = temp_output_dir("aver-native-adt-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -502,6 +507,7 @@ fn proof_lean_proves_peano_arith_identity_via_nat_lift_kernel_clean() {
     let out = temp_output_dir("aver-peano-arith-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -565,6 +571,7 @@ fn proof_lean_proves_comparison_lift_le_and_lt_kernel_clean() {
         let run = Command::new(aver_bin)
             .current_dir(&repo_root)
             .arg("proof")
+            .arg("--examples")
             .arg(file)
             .arg("--backend")
             .arg("lean")
@@ -618,6 +625,7 @@ fn proof_lean_proves_mul_distributivity_via_nat_lift_kernel_clean() {
     let out = temp_output_dir("aver-mul-lift-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -684,6 +692,7 @@ fn proof_lean_rejects_noncanonical_peano_ops_no_bridge() {
     let out = temp_output_dir("aver-noncanon-out");
     let _ = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -743,6 +752,7 @@ fn proof_lean_proves_count_plus_concat_homomorphism_kernel_clean() {
     let out = temp_output_dir("aver-count-hom-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -812,6 +822,7 @@ fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
     let out = temp_output_dir("aver-rev-lean-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -878,6 +889,7 @@ fn proof_lean_proves_string_length_additivity_kernel_clean() {
     let out = temp_output_dir("aver-strlen-add-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -946,6 +958,7 @@ fn proof_lean_proves_string_concat_monoid_kernel_clean() {
     let out = temp_output_dir("aver-strmonoid-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1014,6 +1027,7 @@ fn proof_lean_min_associativity_closes_without_build_error() {
     let out = temp_output_dir("aver-minassoc-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1074,6 +1088,7 @@ fn proof_lean_int_abs_lowers_int_honest_so_nesting_builds() {
     let out = temp_output_dir("aver-intabs-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1138,6 +1153,7 @@ fn proof_lean_proves_empty_map_facts_kernel_clean() {
     let out = temp_output_dir("aver-emptymap-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1208,6 +1224,7 @@ fn proof_lean_proves_int_comparison_identities_kernel_clean() {
     let out = temp_output_dir("aver-intcmp-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1273,6 +1290,7 @@ fn proof_lean_proves_int_abs_identities_kernel_clean() {
     let out = temp_output_dir("aver-absid-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1336,6 +1354,7 @@ fn proof_lean_proves_map_set_nonempty_kernel_clean() {
     let out = temp_output_dir("aver-mapsetne-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1393,6 +1412,7 @@ fn proof_lean_proves_fact_acc_kernel_clean_universal() {
     let out = temp_output_dir("aver-fact-acc-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg("proof-corpus/handwritten/fact_acc_spec.av")
         .arg("--backend")
         .arg("lean")
@@ -1456,6 +1476,7 @@ fn proof_lean_proves_list_prod_kernel_clean_universal() {
     let out = temp_output_dir("aver-list-prod-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg("proof-corpus/handwritten/list_prod_spec.av")
         .arg("--backend")
         .arg("lean")
@@ -1515,6 +1536,7 @@ fn proof_lean_speculative_proves_single_list_conditional_universal() {
     let run = Command::new(aver_bin)
         .env("AVER_SPECULATIVE_KEEP", &probe)
         .arg("proof")
+        .arg("--examples")
         .arg("proof-corpus/decomposed/handwritten/all_zero_sum.av")
         .arg("--backend")
         .arg("lean")
@@ -1579,6 +1601,7 @@ fn proof_lean_proves_nat_tri_kernel_clean_universal() {
     let out = temp_output_dir("aver-nat-tri-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg("proof-corpus/handwritten/nat_tri_spec.av")
         .arg("--backend")
         .arg("lean")
@@ -1636,6 +1659,7 @@ fn proof_lean_lifts_aliased_peano_type_to_nat_and_proves_universal() {
     let out = temp_output_dir("aver-peano-aliased-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg("proof-corpus/handwritten/peano_aliased_spec.av")
         .arg("--backend")
         .arg("lean")
@@ -1782,6 +1806,7 @@ verify ledgerWithinCeiling law nonstrictChainWitness
     let out = temp_output_dir("aver-frac-order-trans-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("ledger.av"))
         .arg("--backend")
         .arg("lean")
@@ -1883,6 +1908,7 @@ fn proof_lean_multi_literal_string_pos_skipper_graduates_native_kernel_clean() {
     let out = temp_output_dir("aver-skipws-native-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1970,6 +1996,7 @@ fn proof_lean_mixed_advance_skipper_stays_fueled_stability_lemma_kernel_clean() 
     let out = temp_output_dir("aver-mixed-advance-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -2044,6 +2071,7 @@ fn proof_lean_crypto_sha256_model_axiom_closure_is_core_only() {
     let export = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg(&fixture)
         .arg("--module-root")
         .arg(&missing_module_root)
@@ -2175,6 +2203,7 @@ fn proof_lean_crypto_verify_cases_are_kernel_decided_and_axiom_clean() {
     let export = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/stdlib_bytes_app.av")
         .arg("--module-root")
         .arg(&missing_module_root)
@@ -2342,6 +2371,7 @@ fn proof_lean_float_verify_cases_stay_native_decide() {
     let export = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/kernel_decide_split.av")
         .arg("--backend")
         .arg("lean")
@@ -2405,6 +2435,7 @@ fn export_kernel_decide_declines(out: &std::path::Path) -> String {
     let export = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/kernel_decide_declines.av")
         .arg("--backend")
         .arg("lean")
@@ -2487,6 +2518,7 @@ fn proof_lean_index_guarded_builtins_reduce_in_kernel() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/kernel_decide_declines.av")
         .arg("--backend")
         .arg("lean")
@@ -2625,6 +2657,7 @@ fn proof_lean_kernel_decide_keys_named_types_by_stamped_identity() {
     let out = temp_output_dir("aver-kernel-decide-identity-out");
     let export = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("Consumer.av"))
         .arg("--module-root")
         .arg(&src)

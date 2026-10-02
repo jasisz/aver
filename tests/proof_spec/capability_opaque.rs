@@ -27,6 +27,7 @@ fn run_checked_proof(
         .current_dir(source_dir)
         .args([
             "proof",
+            "--examples",
             "main.av",
             "--backend",
             "lean",

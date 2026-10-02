@@ -906,7 +906,7 @@ fn the_programs_laws_reach_the_lean_wall() {
     let out_dir = scratch("lean");
     let mut command = Command::new(aver_bin());
     command.current_dir(&dir);
-    command.arg("proof").arg("main.av");
+    command.arg("proof").arg("--examples").arg("main.av");
     command.arg("--module-root").arg(&dir);
     command.arg("--backend").arg("lean");
     command.arg("-o").arg(&out_dir);

@@ -61,6 +61,7 @@ fn proof_uses_project_toolchain_without_an_elan_default() {
     // Relative output also checks that availability follows the export path.
     let run = isolated(env!("CARGO_BIN_EXE_aver"))
         .arg("proof")
+        .arg("--examples")
         .arg(fixture)
         .args(["--check-json", "--minimize", "-o", "proof"])
         .output()

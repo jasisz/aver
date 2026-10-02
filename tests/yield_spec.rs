@@ -1004,6 +1004,7 @@ fn assert_lean_check_clean(fixture_name: &str, lean_file: &str, names: &[&str]) 
         fixture_name,
         &[
             "proof",
+            "--examples",
             "--backend",
             "lean",
             "-o",

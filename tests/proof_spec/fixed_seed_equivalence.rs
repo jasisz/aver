@@ -69,6 +69,7 @@ verify decoded law agreesWithNumberIn
     let output_dir = tempfile::tempdir().unwrap();
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .arg("proof")
+        .arg("--examples")
         .arg(&file)
         .arg("--module-root")
         .arg(source_dir.path())

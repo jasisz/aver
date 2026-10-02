@@ -627,6 +627,12 @@ pub struct CodegenContext {
     /// per-law `mathlib` credit. Axiom whitelist is UNCHANGED — Mathlib lemmas
     /// are kernel-clean `{propext, Classical.choice, Quot.sound}`.
     pub allow_mathlib: bool,
+    /// Whether the Lean proof export states the `verify` examples (the
+    /// cases-form blocks) and lifts what only they reach. `aver proof` sets it
+    /// from `--examples` and leaves it off by default; laws, their samples and
+    /// their `because`/`using` are exported either way. Every other caller
+    /// keeps the examples (`true`).
+    pub export_verify_examples: bool,
 }
 
 /// One universal law-claim of a certificate-model Lean emission, recorded by
@@ -1033,6 +1039,7 @@ pub fn build_context(
         declined_cases: std::collections::HashMap::new(),
         vm_passed_cases: std::collections::HashSet::new(),
         allow_mathlib: false,
+        export_verify_examples: true,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
@@ -1517,6 +1524,7 @@ pub(crate) fn empty_test_ctx() -> CodegenContext {
         declined_cases: std::collections::HashMap::new(),
         vm_passed_cases: std::collections::HashSet::new(),
         allow_mathlib: false,
+        export_verify_examples: true,
     }
 }
 

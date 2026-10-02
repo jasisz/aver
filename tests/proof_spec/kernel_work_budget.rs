@@ -80,6 +80,7 @@ verify dynamic
     let out = temp_output_dir("aver-split-kernel-output");
     let export = Command::new(env!("CARGO_BIN_EXE_aver"))
         .arg("proof")
+        .arg("--examples")
         .arg(&file)
         .arg("--module-root")
         .arg(&source)
@@ -125,6 +126,7 @@ fn recursive_dependency_samples_stay_native_and_keep_sibling_law_credit() {
         let mut command = Command::new(env!("CARGO_BIN_EXE_aver"));
         command
             .arg("proof")
+            .arg("--examples")
             .arg(source.join("budget.av"))
             .arg("--module-root")
             .arg(&source)
@@ -207,7 +209,7 @@ fn proof_reports_a_failed_build_without_source_diagnostics() {
     let out = source.join("out");
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .env("PATH", std::env::join_paths(paths).unwrap())
-        .args(["proof", "--check-json", "--module-root"])
+        .args(["proof", "--examples", "--check-json", "--module-root"])
         .arg(&source)
         .arg(source.join("budget.av"))
         .arg("-o")

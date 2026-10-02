@@ -40,6 +40,7 @@ fn proof_export_fuel_cites_earlier_when_law_with_its_premise_discharged() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/fuel_when_cites.av")
         .arg("-o")
         .arg(&output_dir)

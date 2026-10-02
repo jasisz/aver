@@ -3675,13 +3675,19 @@ where
 pub(crate) fn proof_reachable_fn_ids(ctx: &CodegenContext) -> HashSet<crate::ir::FnId> {
     let mut pending = Vec::new();
     let entry_scope = ctx.entry_module_name();
+    // An example the export leaves out (`aver proof` without `--examples`)
+    // roots nothing: what only it reaches is not lifted.
+    let exported =
+        |vb: &VerifyBlock| ctx.export_verify_examples || matches!(vb.kind, VerifyKind::Law(_));
     for item in &ctx.items {
-        if let TopLevel::Verify(vb) = item {
+        if let TopLevel::Verify(vb) = item
+            && exported(vb)
+        {
             collect_verify_root_fn_ids(vb, entry_scope.as_deref(), ctx, &mut pending);
         }
     }
     for module in &ctx.modules {
-        for vb in &module.verify_blocks {
+        for vb in module.verify_blocks.iter().filter(|vb| exported(vb)) {
             collect_verify_root_fn_ids(vb, Some(&module.prefix), ctx, &mut pending);
         }
     }
@@ -4224,6 +4230,7 @@ mod tests {
             declined_cases: std::collections::HashMap::new(),
             vm_passed_cases: std::collections::HashSet::new(),
             allow_mathlib: false,
+            export_verify_examples: true,
         };
         ctx.proof_ir
             .refined_types
@@ -4351,6 +4358,7 @@ mod tests {
             declined_cases: std::collections::HashMap::new(),
             vm_passed_cases: std::collections::HashSet::new(),
             allow_mathlib: false,
+            export_verify_examples: true,
         };
 
         // ---- Owned declarations: ownership decides, the scope never does.

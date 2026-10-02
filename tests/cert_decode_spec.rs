@@ -281,6 +281,7 @@ fn compile_certified(repo: &Path, av_path: &Path, name: &str, out: &Path) -> Pro
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&dir)
         .output()

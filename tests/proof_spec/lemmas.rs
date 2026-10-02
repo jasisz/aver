@@ -38,6 +38,7 @@ fn earlier_user_law_feeds_later_law_proof_when_lake_is_available() {
         let out = temp_output_dir(&format!("{prefix}-out"));
         let run = Command::new(aver_bin)
             .arg("proof")
+            .arg("--examples")
             .arg(src.join("m.av"))
             .arg("--backend")
             .arg("lean")
@@ -185,6 +186,7 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         let run = Command::new(aver_bin)
             .current_dir(&repo_root)
             .arg("proof")
+            .arg("--examples")
             .arg(task)
             .arg("--backend")
             .arg("lean")
@@ -236,6 +238,7 @@ fn prop_86_comparison_premise_membership_stays_universal_when_lake_is_available(
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg(task)
         .arg("--backend")
         .arg("lean")
@@ -316,6 +319,7 @@ fn part_c_arm_injection_closes_in_arm_helpers_when_lake_is_available() {
         let out = temp_output_dir(&format!("aver-partc-{label}-out"));
         let run = Command::new(aver_bin)
             .arg("proof")
+            .arg("--examples")
             .arg(src.join("m.av"))
             .arg("--backend")
             .arg("lean")
@@ -454,6 +458,7 @@ fn lean_proves_accumulator_generalizing_qrev_when_lake_is_available() {
     let out = temp_output_dir("aver-accgen-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -509,6 +514,7 @@ fn lean_proves_accumulator_generalizing_nat_when_lake_is_available() {
     let out = temp_output_dir("aver-nataccgen-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -545,6 +551,7 @@ pub(crate) fn proof_check_summary(source: &str, prefix: &str) -> serde_json::Val
     let out = temp_output_dir(&format!("{prefix}-out"));
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("-o")
         .arg(&out)
@@ -708,6 +715,7 @@ verify sumSafe law commutative
     let out = temp_output_dir("aver-qpipe-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -753,6 +761,7 @@ fn lean_proves_map_fold_homomorphism_when_lake_is_available() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("examples/data/map.av")
         .arg("--backend")
         .arg("lean")
@@ -816,6 +825,7 @@ verify bonus law emptyZero
     let out = temp_output_dir("aver-enumfold-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -883,6 +893,7 @@ verify shade law neverEmpty
     let out = temp_output_dir("aver-finitedomain-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -945,6 +956,7 @@ verify keepPrefix law appendRoundtrip
     let out = temp_output_dir("aver-preludesimp-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1066,6 +1078,7 @@ verify parseNum law fromIntRoundtrip
     let out = temp_output_dir("aver-decimalrt-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1159,6 +1172,7 @@ verify renderEntries
     let out = temp_output_dir("aver-deepentries-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1218,6 +1232,7 @@ verify dmg law alwaysPositive
     let out = temp_output_dir("aver-maxpos-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1318,6 +1333,7 @@ verify drop law dropRevLen
     let out = temp_output_dir("aver-gensib-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1539,6 +1555,7 @@ fn lean_proves_string_escape_roundtrip_law_when_lake_is_available() {
     let out = temp_output_dir("aver-fieldesc-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1608,6 +1625,7 @@ fn string_escape_roundtrip_declines_misaligned_escape_table() {
     let out = temp_output_dir("aver-fieldesc-neg-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1652,6 +1670,7 @@ fn lean_escape_roundtrip_template_regression_degrades_to_caught_sorry_when_lake_
     let out = temp_output_dir("aver-fieldesc-sab-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")
@@ -1868,6 +1887,7 @@ fn lean_proves_full_octet_escape_threshold_when_lake_is_available() {
     let out = temp_output_dir("aver-wideesc-out");
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(src.join("m.av"))
         .arg("--backend")
         .arg("lean")

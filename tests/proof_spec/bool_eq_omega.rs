@@ -13,6 +13,7 @@ fn proof_export_bool_eq_omega_has_bridge_and_sorry_floor() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/bool_eq_omega.av")
         .arg("-o")
         .arg(&output_dir)

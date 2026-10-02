@@ -42,6 +42,7 @@ fn prove(name: &str, source: &str, extra: &[&str]) -> Option<(serde_json::Value,
     let output_dir = temp_output_dir("aver-generic-oracle-out");
     let proof = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&file)
         .arg("--module-root")
         .arg(&source_dir)

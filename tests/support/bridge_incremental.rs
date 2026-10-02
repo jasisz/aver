@@ -33,6 +33,7 @@ fn compile(root: &Path, name: &str) -> PathBuf {
             "--target",
             "wasm-gc",
             "--certify",
+            "--examples",
             "-o",
         ])
         .arg(&out)

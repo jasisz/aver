@@ -24,6 +24,7 @@ fn proof_export_keystone_floor_arm_structure() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/pool_composition_recursive.av")
         .arg("-o")
         .arg(&output_dir)

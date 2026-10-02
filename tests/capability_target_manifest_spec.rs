@@ -628,7 +628,7 @@ fn wasm_gc_certificate_keeps_custom_operations_opaque() {
         .arg(root.join("cert_client.av"))
         .arg("--module-root")
         .arg(&root)
-        .args(["--target", "wasm-gc", "--certify", "-o"])
+        .args(["--target", "wasm-gc", "--certify", "--examples", "-o"])
         .arg(&output_dir)
         .output()
         .expect("certify custom capability artifact");
@@ -681,7 +681,7 @@ fn wasip2_certificate_keeps_custom_operations_opaque() {
         .arg(root.join("cert_client.av"))
         .arg("--module-root")
         .arg(&root)
-        .args(["--target", "wasip2", "--certify", "-o"])
+        .args(["--target", "wasip2", "--certify", "--examples", "-o"])
         .arg(&output_dir)
         .output()
         .expect("certify custom capability component");

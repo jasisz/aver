@@ -123,6 +123,7 @@ fn export(program: &str, slug: &str, file: &str) -> Export {
 
     let output = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(&source)
         .arg("-o")
         .arg(&root)

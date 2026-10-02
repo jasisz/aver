@@ -54,7 +54,9 @@ pub fn emit_verify_block(
     // bytes anti-vacuity guards instead. Skip them before the refusal
     // bookkeeping so cert emission never records declines for a surface
     // it does not export.
-    if cert_model && !matches!(vb.kind, VerifyKind::Law(_)) {
+    // `aver proof` without `--examples` states the laws alone: an example
+    // is skipped the same way, before any refusal is recorded for it.
+    if (cert_model || !ctx.export_verify_examples) && !matches!(vb.kind, VerifyKind::Law(_)) {
         return (String::new(), case_index_start + vb.cases.len());
     }
     // Fail closed inside the exported artifact, not only in `aver proof

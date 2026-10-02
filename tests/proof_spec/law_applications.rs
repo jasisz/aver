@@ -143,7 +143,13 @@ fn concrete_applications_reject_a_missing_domain_guard_and_a_false_supplier() {
         );
         if Command::new("lake").arg("--version").output().is_ok() {
             let output = Command::new(env!("CARGO_BIN_EXE_aver"))
-                .args(["proof", path.to_str().unwrap(), "--check-json", "-o"])
+                .args([
+                    "proof",
+                    "--examples",
+                    path.to_str().unwrap(),
+                    "--check-json",
+                    "-o",
+                ])
                 .arg(dir.join("lean"))
                 .output()
                 .unwrap();

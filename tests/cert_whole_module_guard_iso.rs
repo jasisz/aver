@@ -50,6 +50,7 @@ fn built_package(fixture: &str, extra: &[&str], prefix: &str) -> (ScratchDir, Pa
         .arg("--target")
         .arg("wasm-gc")
         .arg("--certify")
+        .arg("--examples")
         .arg("-o")
         .arg(&out_dir)
         .output()

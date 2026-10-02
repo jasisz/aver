@@ -87,6 +87,7 @@ fn the_guide_example_reaches_the_lean_wall_without_an_open_law() {
     let out_dir = std::env::temp_dir().join(format!("aver-guide-wall-{}", std::process::id()));
     let out = aver(&[
         "proof",
+        "--examples",
         "main.av",
         "--module-root",
         ".",

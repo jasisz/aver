@@ -43,6 +43,8 @@ mod dep_law_names;
 mod dependency_effects;
 #[path = "proof_spec/entry_opens.rs"]
 mod entry_opens;
+#[path = "proof_spec/examples_flag.rs"]
+mod examples_flag;
 #[path = "proof_spec/export_structure.rs"]
 mod export_structure;
 #[path = "proof_spec/fixed_seed_equivalence.rs"]
@@ -176,6 +178,7 @@ fn assert_proof_builds_with_sorry_budget(
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg(example_path)
         .arg("--backend")
         .arg("lean")
@@ -277,6 +280,7 @@ fn run_lean_check_json_with_args(
     let mut cmd = Command::new(aver_bin);
     cmd.current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg(example_path)
         .arg("--backend")
         .arg("lean")
@@ -330,7 +334,7 @@ fn proof_minimize_collapses_grind_portfolios_and_stays_passing() {
     // `first | (grind …) | (…)` portfolio.
     let baseline = Command::new(aver_bin)
         .current_dir(&repo_root)
-        .args(["proof", example, "--backend", "lean", "-o"])
+        .args(["proof", "--examples", example, "--backend", "lean", "-o"])
         .arg(&output_dir)
         .output()
         .expect("baseline `aver proof` to run");
@@ -350,7 +354,7 @@ fn proof_minimize_collapses_grind_portfolios_and_stays_passing() {
     // must still pass with zero sorries.
     let min = Command::new(aver_bin)
         .current_dir(&repo_root)
-        .args(["proof", example, "--backend", "lean", "-o"])
+        .args(["proof", "--examples", example, "--backend", "lean", "-o"])
         .arg(&output_dir)
         .args([
             "--check",

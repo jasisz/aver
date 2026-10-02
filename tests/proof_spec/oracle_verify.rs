@@ -12,6 +12,7 @@ fn run_aver_proof_in_dir(dir: &PathBuf, source: &str, toml: &str) -> std::proces
     Command::new(aver_bin)
         .current_dir(dir)
         .arg("proof")
+        .arg("--examples")
         .arg("program.av")
         .arg("--verify-mode")
         .arg("auto")

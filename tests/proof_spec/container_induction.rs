@@ -254,6 +254,7 @@ fn check_container(
     let out = temp_output_dir(&format!("{prefix}-out"));
     let run = Command::new(aver_bin)
         .arg("proof")
+        .arg("--examples")
         .arg(dir.join("m.av"))
         .arg("--backend")
         .arg("lean")

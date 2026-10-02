@@ -211,6 +211,7 @@ fn lean_proves_the_imported_helpers_first_request_universally() {
         dir.path(),
         "proof",
         &[
+            "--examples",
             "--backend",
             "lean",
             "-o",

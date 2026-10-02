@@ -626,7 +626,7 @@ fn the_proof_model_declares_a_named_dependency_type_once_in_its_own_module() {
     let fixture_dir = fixture("work_jobs_dependency_types");
     let mut command = Command::new(aver_bin());
     command.current_dir(&fixture_dir);
-    command.arg("proof").arg("main.av");
+    command.arg("proof").arg("--examples").arg("main.av");
     command.arg("--module-root").arg(&fixture_dir);
     command.arg("-o").arg(&out);
     let exported = command.output().expect("aver exports the proof project");

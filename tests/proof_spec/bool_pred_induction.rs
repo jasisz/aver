@@ -21,6 +21,7 @@ fn proof_export_bool_pred_induction_closers_carry_the_bool_bridge() {
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
+        .arg("--examples")
         .arg("tests/fixtures/bool_pred_induction.av")
         .arg("-o")
         .arg(&output_dir)

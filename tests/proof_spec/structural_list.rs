@@ -57,6 +57,7 @@ fn literal_tail_walks_are_structural_but_computed_slices_stay_well_founded() {
     let output = tempfile::tempdir().unwrap();
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .arg("proof")
+        .arg("--examples")
         .arg(&file)
         .arg("-o")
         .arg(output.path())

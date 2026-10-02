@@ -62,6 +62,7 @@ fn emit_lean(fixture: &str, prefix: &str, module: &str) -> String {
     let out_dir = temp_output_dir(prefix);
     let run = run_aver(&[
         "proof",
+        "--examples",
         fixture,
         "-o",
         out_dir.to_str().expect("utf-8 temp path"),
@@ -159,6 +160,7 @@ fn three_key_map_iterates_key_sorted_in_the_exported_proof() {
     let out_dir = temp_output_dir("aver-map-order-check");
     let run = run_aver(&[
         "proof",
+        "--examples",
         ORDER_FIXTURE,
         "-o",
         out_dir.to_str().expect("utf-8 temp path"),
@@ -420,6 +422,7 @@ fn the_exported_map_model_is_pinned() {
     let out_dir = temp_output_dir("aver-map-model-shape");
     let run = run_aver(&[
         "proof",
+        "--examples",
         MODEL_SHAPE_FIXTURE,
         "-o",
         out_dir.to_str().expect("utf-8 temp path"),
@@ -487,6 +490,7 @@ fn an_observer_in_another_module_is_still_refused() {
     let out_dir = temp_output_dir("aver-map-order-cross-module");
     let run = run_aver(&[
         "proof",
+        "--examples",
         &format!("{CROSS_MODULE_DIR}/main.av"),
         "--module-root",
         CROSS_MODULE_DIR,
@@ -543,6 +547,7 @@ fn a_declined_claim_is_counted_and_charged() {
     let out_dir = temp_output_dir("aver-map-order-declined");
     let run = run_aver(&[
         "proof",
+        "--examples",
         UNMODELLED_FIXTURE,
         "-o",
         out_dir.to_str().expect("utf-8 temp path"),
@@ -607,6 +612,7 @@ fn a_declined_claim_is_named_on_stdout_without_check() {
     let out_dir = temp_output_dir("aver-map-order-declined-plain");
     let run = run_aver(&[
         "proof",
+        "--examples",
         UNMODELLED_FIXTURE,
         "-o",
         out_dir.to_str().expect("utf-8 temp path"),
@@ -650,6 +656,7 @@ fn declined_budget_is_a_separate_pot_from_sorry_budget() {
     // A generous sorry budget does NOT pay for a refusal.
     let sorry_only = run_aver(&[
         "proof",
+        "--examples",
         UNMODELLED_FIXTURE,
         "-o",
         &dir,
@@ -672,6 +679,7 @@ fn declined_budget_is_a_separate_pot_from_sorry_budget() {
     // The matching declined budget does.
     let acked = run_aver(&[
         "proof",
+        "--examples",
         UNMODELLED_FIXTURE,
         "-o",
         &dir,
@@ -942,6 +950,7 @@ fn two_modules_sharing_a_type_name_are_told_apart() {
     let out_dir = temp_output_dir("aver-map-equality-collide");
     let run = run_aver(&[
         "proof",
+        "--examples",
         &format!("{COLLIDING_TYPE_DIR}/main.av"),
         "--module-root",
         COLLIDING_TYPE_DIR,
@@ -996,6 +1005,7 @@ fn emit_lean_in_dir(dir: &str, file: &str, prefix: &str, module: &str) -> String
     let out_dir = temp_output_dir(prefix);
     let run = run_aver(&[
         "proof",
+        "--examples",
         &format!("{dir}/{file}"),
         "--module-root",
         dir,
@@ -1224,6 +1234,7 @@ fn the_shadowed_given_fixture_is_rejected_by_the_shadowing_ban() {
     let out_dir = temp_output_dir("aver-map-order-shadowed-reject");
     let run = run_aver(&[
         "proof",
+        "--examples",
         SHADOWED_GIVEN_FIXTURE,
         "-o",
         out_dir.to_str().expect("utf-8 temp path"),

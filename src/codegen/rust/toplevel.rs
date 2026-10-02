@@ -1697,6 +1697,7 @@ mod tests {
             declined_cases: std::collections::HashMap::new(),
             vm_passed_cases: std::collections::HashSet::new(),
             allow_mathlib: false,
+            export_verify_examples: true,
         }
     }
 

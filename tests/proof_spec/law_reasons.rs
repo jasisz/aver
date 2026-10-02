@@ -502,7 +502,7 @@ fn explain_reports_source_requirements_without_changing_proof_credit() {
 
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .args(["proof", fixture, "--check", "--explain", "-o"])
+        .args(["proof", "--examples", fixture, "--check", "--explain", "-o"])
         .arg(&dir)
         .output()
         .unwrap();
