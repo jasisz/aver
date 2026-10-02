@@ -471,7 +471,11 @@ impl Parser {
                                 col: self.current().col,
                             })?;
                             let mut sub_parser = Parser::new(tokens);
-                            let expr = sub_parser.parse_expr().map_err(|e| ParseError::Error {
+                            sub_parser.allow_compiler_identifiers = self.allow_compiler_identifiers;
+                            let expr = sub_parser
+                                .parse_expr()
+                                .and_then(|expr| sub_parser.refuse_compiler_references().map(|()| expr))
+                                .map_err(|e| ParseError::Error {
                                 msg: format!("Error in interpolation: {}", e),
                                 line: self.current().line,
                                 col: self.current().col,

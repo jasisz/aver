@@ -1,10 +1,13 @@
 //! Imported protocol segments consume a typed tape, never live host effects.
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 use aver_cmd::{aver_bin, format_output, repo_root};
 use std::process::Command;
 
 fn verify(args: &[&str]) {
+    compiler_fixtures::allow();
     let root = repo_root().join("tests/fixtures/yield_imported_effects");
     let out = Command::new(aver_bin())
         .arg("verify")

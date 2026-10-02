@@ -35,6 +35,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 | tail call to a peer not charged its effects | every function of a recursion group declares what the group performs |
 | any bare name in `! [...]` / `effects [...]` | only `yield` or a capability namespace |
 | dial, listen or `peerAddress` on `--target wasip2` | refused at compile time |
+| calling `__fnStart`, `__fnAnswer…` or matching `__FnOutcome` by hand | refused; run a yielding function as a process (`Run.all()`) or call it from a function that declares `yield`, and test it with a cases-form `verify` that stubs every request |
 
 A manifest that still has `answer =`, the job keys or `[run]` is refused with the repair. The certificate wall identity rotates: packages produced by earlier versions must be produced again. wasm-gc recordings of `Wait.poll` from earlier releases have to be made again, and a vendored copy of `tools/wasm-work/host.mjs` has to be refreshed.
 
@@ -43,6 +44,7 @@ A manifest that still has `answer =`, the job keys or `[run]` is refused with th
 - **`aver proof` no longer proves laws that are false at run time.** An integer literal Lean read as a natural number (`0 - 1` was `0`), `Vector.get`/`set` at a negative index, a false `verify` case taking a neighbour's value, a function named like a law's theorem, and call indices that did not follow the run. Each such law is now exported faithfully or declined with a reason.
 - **Record fields run in the order written** (#1240), `BranchPath.Root` is readable in every verify case (#1400), and a spliced call no longer reads a slot of the function it came from.
 - **wasm-gc and Rust agree with the VM** on `String.toLower`/`toUpper` beyond ASCII (#1185), one-arm and tuple-subject matches, named `false` arms, integer bindings and `[_, .._]`.
+- **A recording made on one backend replays on the others with `--check-args`**: an empty map and a `Wait.Item` are written the same way on the VM, Rust and wasm-gc.
 - **SIGINT and SIGTERM reach a program run through a provider host**, and a `main` that answers `Err` exits non-zero on wasm-gc and wasip2.
 - **`aver-memory` builds without `std`** (#1460), and `Disk.sync` on a directory works on Windows (#1238).
 

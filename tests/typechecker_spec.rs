@@ -1,3 +1,5 @@
+#[path = "support/compiler_fixtures.rs"]
+mod compiler_fixtures;
 /// Spec tests for the Aver static type checker.
 ///
 /// Tests are grouped into:
@@ -5489,7 +5491,7 @@ fn plain_call_to_a_yield_function_is_an_error_with_a_recipe() {
     let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nfn main() -> Int\n    loop(0)\n");
     assert_front_error_containing(
         &src,
-        "Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests",
+        "Function 'main' calls 'loop' directly, but 'loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`",
     );
 }
 
@@ -5513,7 +5515,7 @@ fn calling_the_yield_function_before_its_definition_gets_only_the_recipe() {
         errs.join("\n  ")
     );
     assert!(
-        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests"),
+        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`"),
         "unexpected error text: {}",
         errs[0]
     );
@@ -5535,7 +5537,7 @@ fn calling_the_yield_function_after_its_definition_gets_only_the_recipe() {
         errs.join("\n  ")
     );
     assert!(
-        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call '__loopStart(...)' and answer its requests"),
+        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`"),
         "unexpected error text: {}",
         errs[0]
     );
@@ -5607,6 +5609,7 @@ fn two_yield_functions_that_only_tail_call_each_other_are_refused_as_a_tail_call
 
 #[test]
 fn generated_names_are_referenceable_from_a_coordinator() {
+    compiler_fixtures::allow();
     let errs = front_errors(&format!("{YIELD_MODULE}{YIELD_LOOP}{YIELD_COORDINATOR}"));
     assert!(
         errs.is_empty(),
@@ -5617,6 +5620,7 @@ fn generated_names_are_referenceable_from_a_coordinator() {
 
 #[test]
 fn wrong_state_and_answer_pairing_is_a_type_error() {
+    compiler_fixtures::allow();
     let src = format!(
         "{YIELD_MODULE}{YIELD_LOOP}\nfn bad(state: __LoopYieldState) -> __LoopOutcome\n    ? \"Answers a ReadLine with a Yield state.\"\n    __loopAnswerReadLine(state, Result.Ok(\"x\"))\n"
     );
@@ -5706,6 +5710,7 @@ fn front_errors_against(src: &str, base_dir: &str) -> Vec<String> {
 
 #[test]
 fn an_importer_resolves_the_generated_protocol_of_a_dependency() {
+    compiler_fixtures::allow();
     let src = include_str!("fixtures/yield_cross_module/main.av");
     let errs = front_errors_against(src, &yield_cross_module_root());
     assert!(
@@ -5721,7 +5726,7 @@ fn a_plain_call_into_a_dependency_yield_function_gets_the_qualified_recipe() {
     let errs = front_errors_against(src, &yield_cross_module_root());
     assert!(
         errs.iter().any(|e| e.contains(
-            "'Looper.loop' yields; call 'Looper.__loopStart(...)' and answer its requests"
+            "'Looper.loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`"
         )),
         "expected the qualified recipe, got:\n  {}",
         errs.join("\n  ")

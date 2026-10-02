@@ -24,6 +24,7 @@ fn audit(dir: &Path, expected: usize) {
 
 #[test]
 fn source_request_traces_are_universal_including_in_place_effects() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -50,6 +51,7 @@ fn source_request_traces_are_universal_including_in_place_effects() {
 
 #[test]
 fn unchanged_results_do_not_hide_six_different_trace_corruptions() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -152,6 +154,7 @@ verify detects
 
 #[test]
 fn imported_private_helpers_preserve_universal_request_traces() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -175,6 +178,7 @@ fn imported_private_helpers_preserve_universal_request_traces() {
 
 #[test]
 fn tail_entry_alignment_is_universal_across_local_and_imported_helpers() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -197,6 +201,7 @@ fn tail_entry_alignment_is_universal_across_local_and_imported_helpers() {
 
 #[test]
 fn tail_pause_cannot_be_counted_as_an_answer_or_hidden_from_consumption() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -262,6 +267,7 @@ verify detectsPause
 
 #[test]
 fn recursive_helper_splices_are_universal_and_explicit_dependencies() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -301,6 +307,7 @@ fn recursive_helper_splices_are_universal_and_explicit_dependencies() {
 
 #[test]
 fn equal_helper_results_do_not_justify_corrupted_splice_cursors() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -370,6 +377,7 @@ verify detectsCorruption
 
 #[test]
 fn recursive_splices_preserve_nominal_arguments_early_errors_and_in_place_effects() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -397,6 +405,7 @@ fn recursive_splices_preserve_nominal_arguments_early_errors_and_in_place_effect
 
 #[test]
 fn implicit_trace_citations_keep_earlier_laws_when_adding_splice_dependencies() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }
@@ -445,6 +454,7 @@ fn loop"#,
 
 #[test]
 fn recursive_imports_compose_universal_contracts_without_exposing_private_helpers() {
+    crate::compiler_fixtures::allow();
     if !lean_required::lake_available() {
         return;
     }

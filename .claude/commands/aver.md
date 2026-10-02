@@ -438,7 +438,7 @@ fn stop(view: Run.View) -> Bool
     view.stopping
 ```
 
-Everything else is generated into the entry module under `__`: the slot table, the one `Wait.poll` per turn, the clock reading, the dispatch, the seating of keyed processes, the shutdown that cancels every job a parked request waits on, and `main`. The generated names stay callable, so a test can drive them; `tests/fixtures/run_schedule_cases/` states the loop's invariants as laws over them. `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the generated Aver.
+Everything else is generated into the entry module under `__`: the slot table, the one `Wait.poll` per turn, the clock reading, the dispatch, the seating of keyed processes, the shutdown that cancels every job a parked request waits on, and `main`. These names are the compiler's: a program that calls, matches or annotates with one is refused. `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the generated Aver.
 
 Rules:
 - a loop that must not starve the others declares `yield`. The declaration fixes where control is handed back; it does not bound how long one step takes
@@ -451,7 +451,7 @@ Rules:
 - a job is pure, its result is data, and a recording replays it. `begin`, `take` and the wait are served back in the recorded turns. The VM and wasm-gc run the job's function again beside them, a `--target rust` binary serves the recorded results without running it, and a wasip2 component records nothing
 - `yield` is an effect: declare it in `! [...]` and cover it in the module's `effects [...]`. The entry module's `effects [...]` is widened by what the loop generates into it
 - a process without a `process ... seated by ...` line takes no parameters. A yielding helper of the same module may take parameters; a tail call enters its protocol, while a non-tail call nests its state under `In<G>At<N>`
-- never call a yielding function from a function that does not yield (the error is `'loop' yields; call '__loopStart(...)' and answer its requests`), and never call an answered operation from a function that does not yield (`error[intercept-outside-yield]`)
+- never call a yielding function from a function that does not yield (the error is ``'loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()```), and never call an answered operation from a function that does not yield (`error[intercept-outside-yield]`)
 - a yielding function calling itself outside tail position is an error. Pass what comes next as data, or make it a tail call
 - stops may sit in bindings, as match subjects, inside arguments and inside match arms, and `?` after a request works. Mutual nesting, a request or a helper call inside `(a, b)!`, and a function value live across a request are rejected by name
 
@@ -463,29 +463,16 @@ Where it runs:
 
 **`max-jobs` is a deployment knob.** At the limit `begin` queues the job and answers its handle; the job starts, in the order it was begun, when a running body stops. So the same program gives the same answers under any limit, and a recording replays under any limit. `Work.cancel` takes a queued job out of the queue so it never starts. A running job that is cancelled keeps its place until its body stops: the VM stops it at its next cancellation check, wasm-gc at the next epoch check, the JavaScript adapter at once, and generated Rust checks no flag, so there the body runs to completion and the jobs queued behind it wait. `wasip2` has nothing to size.
 
-**Driving the protocol by hand.** The generated names are compiler-defined and callable, so a program whose own `main` does not call `Run.all()` can drive a process itself. For `loop` the compiler generates, in the same module: `__LoopClaimState` (one state sum per request kind, one variant per stop, holding the live variables), `__LoopYieldState`, `__LoopRequest` (one constructor per kind: the operation's arguments plus the state), `__LoopOutcome = Done(<result>) | Waiting(__LoopRequest)`, `__loopStart(<params>)`, `__loopAnswerClaim(__state, __answer)` per kind (state only when the operation returns `Unit`) and `__loopAnswerYield(__state)`. The original function is removed:
+**Testing a process.** A program does not drive a process by hand. It runs one as a process the generated loop seats, or calls it from another function that declares `yield`. A local cases-form `verify` calls the process by its source name with an exact `given` stub for every request operation:
 
 ```aver
-fn loop(id: Int, done: Int) -> Int
-    ? "Claims handles for id until the pool answers None, summing the handles into done."
-    ! [Pool.claim, yield]
-    r = Pool.claim(id)
-    match r
-        Option.None -> done
-        Option.Some(h) -> loop(id, done + h)
-
-fn drive(outcome: __LoopOutcome, answers: List<Option<Int>>) -> Int
-    ? "Coordinator: answers every Claim request from the answers list (None once the list is empty), resumes every Yield request, and returns the final result."
-    match outcome
-        __LoopOutcome.Done(v) -> v
-        __LoopOutcome.Waiting(request) -> match request
-            __LoopRequest.Yield(state) -> drive(__loopAnswerYield(state), answers)
-            __LoopRequest.Claim(peer, state) -> match answers
-                [] -> drive(__loopAnswerClaim(state, Option.None), [])
-                [answer, ..rest] -> drive(__loopAnswerClaim(state, answer), rest)
+verify pair
+    given answer: Pool.claim = [numbered]
+    pair(2) => 15
+    pair(7) => 25
 ```
 
-You can `verify` the generated names, match on them, and export them to Lean like any other item. A local cases-form `verify process` can also call its source name with exact `given` stubs for every request operation. That test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet, so keep proof laws on the generated protocol. A module that exposes a yielding function exposes its protocol in its place, so an importer writes `Looper.__loopStart(...)`.
+Here `pair` is a process that makes two `Pool.claim` requests, and `numbered` is an ordinary function `(BranchPath, Int, Int) -> Option<Int>`: the branch, how many `Pool.claim` requests this branch has already made, and the requested argument. The test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet. An importer that yields calls an exposed yielding function by its source name, `Looper.loop(...)`, and the compiler nests its protocol.
 
 ### Builtins and namespaces
 

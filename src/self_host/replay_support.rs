@@ -1360,6 +1360,21 @@ pub mod aver_replay {
         if recorded == got {
             return true;
         }
+        // An older recording may spell a String-keyed map (the empty map
+        // above all) as `$map` pairs; it is the object it stands for.
+        let recorded_map = replay_string_keyed_map(recorded);
+        let got_map = replay_string_keyed_map(got);
+        if recorded_map.is_some() || got_map.is_some() {
+            let recorded = recorded_map
+                .map(ReplayJson::Object)
+                .unwrap_or_else(|| recorded.clone());
+            let got = got_map
+                .map(ReplayJson::Object)
+                .unwrap_or_else(|| got.clone());
+            return marker_payload(&recorded, "$map").is_none()
+                && marker_payload(&got, "$map").is_none()
+                && replay_json_match(&recorded, &got);
+        }
         match (recorded, got) {
             (ReplayJson::Object(a), ReplayJson::Object(b)) if a.len() == b.len() => {
                 a.iter().all(|(key, recorded_value)| {
@@ -1379,6 +1394,19 @@ pub mod aver_replay {
                 .all(|(recorded_item, got_item)| replay_json_match(recorded_item, got_item)),
             _ => false,
         }
+    }
+
+    /// A `$map` whose keys are all Strings, as the object it stands for.
+    fn replay_string_keyed_map(value: &ReplayJson) -> Option<serde_json::Map<String, ReplayJson>> {
+        let pairs = marker_payload(value, "$map")?.as_array()?;
+        let mut out = serde_json::Map::new();
+        for pair in pairs {
+            let [ReplayJson::String(key), value] = pair.as_array()?.as_slice() else {
+                return None;
+            };
+            out.insert(key.clone(), value.clone());
+        }
+        Some(out)
     }
 
     fn replay_args_match(recorded: &[ReplayJson], got: &[ReplayJson]) -> bool {
