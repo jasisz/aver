@@ -239,6 +239,8 @@ struct PreparedArtifact<'a> {
     target_artifact_bytes: &'a [u8],
     /// Core wasm module bytes consumed by the existing wasm decoder wall.
     core_module_bytes: &'a [u8],
+    /// Core exports the delivered component lifts (wasip2 only).
+    lifted_core_exports: Vec<String>,
 }
 
 /// One manifest law-claim: the checker-owned witness re-elaborates the
@@ -539,6 +541,7 @@ fn trusted_check(
         artifact_hash: actual_hash,
         target_artifact_bytes,
         core_module_bytes,
+        lifted_core_exports,
     } = prepare_artifact_for_target(artifact_target, &bytes, target_envelope)?;
     let pinned_hash = manifest_str(&manifest, "wasm_sha256")?;
     if pinned_hash != actual_hash {
@@ -578,6 +581,20 @@ fn trusted_check(
     }
 
     let candidates = read_candidates(&manifest, identity, target_envelope.map(|env| env.inner))?;
+    // A certified export is a claim about core wasm values. Aver never lifts
+    // one into the component, so the checker has no component signature to
+    // hold a lift of it to, and a lift could hand it arguments outside the
+    // certified domain (a `u32` where the core expects a Bool).
+    if let Some(certified) = candidates
+        .certified
+        .iter()
+        .find(|candidate| lifted_core_exports.contains(&candidate.name))
+    {
+        return Err(format!(
+            "wasip2 component lifts certified core export `{}`; Aver lifts only its world entry points, so this checker admits no component signature for a certified export",
+            display_safe(&certified.name)
+        ));
+    }
     let lean = LeanRunner::new(selected_wall.toolchain)?;
     let stage_started = std::time::Instant::now();
     let build = assemble_build(
@@ -1570,6 +1587,7 @@ fn prepare_wasm_gc_artifact(bytes: &[u8]) -> Result<PreparedArtifact<'_>, String
         artifact_hash: sha256_hex(bytes),
         target_artifact_bytes: bytes,
         core_module_bytes: bytes,
+        lifted_core_exports: Vec::new(),
     })
 }
 
@@ -1657,7 +1675,7 @@ fn prepare_wasip2_artifact_with_declared_envelope<'a>(
     // module every component export is lifted from.
     let core_start = usize::try_from(declaration.prefix_len)
         .map_err(|_| "wasip2 component envelope prefix does not fit in usize".to_string())?;
-    crate::wasip2_binding::confirm_declared_core_binding(
+    let lifted_core_exports = crate::wasip2_binding::confirm_declared_core_binding(
         component_bytes,
         core_start..core_start + core_module_bytes.len(),
     )?;
@@ -1666,6 +1684,7 @@ fn prepare_wasip2_artifact_with_declared_envelope<'a>(
         artifact_hash: sha256_hex(component_bytes),
         target_artifact_bytes: component_bytes,
         core_module_bytes,
+        lifted_core_exports,
     })
 }
 

@@ -15,9 +15,12 @@
 //! 3. every function the component exports is a `canon lift` of the core
 //!    export of the same name of that one instance, under the `wit-component`
 //!    naming: a top-level function export `f` lifts core export `f`, and field
-//!    `f` of an exported instance `i` lifts core export `i#f`. The lift's
-//!    memory, realloc, post-return and callback options come from the same
-//!    instance;
+//!    `f` of an exported instance `i` lifts core export `i#f`. A lift carries
+//!    no canonical options, as Aver's lifts of its world entry points do, and
+//!    a lower carries at most a memory, a realloc and the UTF-8 encoding. The
+//!    gate returns the lifted core export names; the verifier refuses a
+//!    certified export among them, since Aver never lifts one and the checker
+//!    therefore knows no component signature to hold it to;
 //! 4. no instance of the declared module, and no item exported by one, is
 //!    handed to another core instantiation;
 //! 5. a canonical function whose options capture the declared instance's
@@ -121,6 +124,8 @@ struct TopLevel {
     /// The first component export not lifted from the declared module under
     /// its own name. It is reported after the checks on the declaration.
     unbound_export: Option<String>,
+    /// The declared instance's core exports that a `canon lift` exposes.
+    lifted: Vec<String>,
 }
 
 fn at<'a, T>(items: &'a [T], index: u32, space: &str) -> Result<&'a T, String> {
@@ -131,11 +136,13 @@ fn at<'a, T>(items: &'a [T], index: u32, space: &str) -> Result<&'a T, String> {
 }
 
 /// Confirms that `core_range` (the manifest-declared embedded core module) is
-/// the top-level core module every component export is lifted from.
+/// the top-level core module every component export is lifted from, and
+/// returns the names of the declared module's core exports that the component
+/// lifts. The caller refuses a certified export among them.
 pub(crate) fn confirm_declared_core_binding(
     component_bytes: &[u8],
     core_range: std::ops::Range<usize>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let mut top = TopLevel::default();
     let mut declared_seen = false;
     let mut payloads = Parser::new(0).parse_all(component_bytes);
@@ -248,7 +255,7 @@ pub(crate) fn confirm_declared_core_binding(
     }
     match top.unbound_export {
         Some(error) => Err(error),
-        None => Ok(()),
+        None => Ok(top.lifted),
     }
 }
 
@@ -375,26 +382,28 @@ impl TopLevel {
         Ok(())
     }
 
-    /// Whether every stateful option of a canonical function names an item
-    /// of the declared instance (`all`), and whether any does (`any`).
-    fn options_from_declared(&self, options: &[CanonicalOption]) -> Result<(bool, bool), String> {
-        let (mut all, mut any) = (true, false);
+    /// Whether a `canon lower`'s memory or realloc option names an item of the
+    /// declared instance. Aver lowers with at most a memory, a realloc and the
+    /// UTF-8 string encoding; any other option is refused.
+    fn lower_captures_declared(&self, options: &[CanonicalOption]) -> Result<bool, String> {
+        let mut any = false;
         for option in options {
             let (space, index) = match *option {
                 CanonicalOption::Memory(index) => (MEMORY_SPACE, index),
-                CanonicalOption::Realloc(index)
-                | CanonicalOption::PostReturn(index)
-                | CanonicalOption::Callback(index) => (FUNC_SPACE, index),
-                _ => continue,
+                CanonicalOption::Realloc(index) => (FUNC_SPACE, index),
+                CanonicalOption::UTF8 => continue,
+                ref other => {
+                    return Err(format!(
+                        "wasip2 component lowers a function with canonical option {other:?}, which Aver does not emit"
+                    ));
+                }
             };
-            let declared = matches!(
+            any |= matches!(
                 at(&self.core_items[space], index, "core item")?,
                 CoreItem::Declared(_)
             );
-            all &= declared;
-            any |= declared;
         }
-        Ok((all, any))
+        Ok(any)
     }
 
     fn add_canonical(&mut self, function: CanonicalFunction) -> Result<(), String> {
@@ -404,16 +413,29 @@ impl TopLevel {
                 options,
                 ..
             } => {
-                let (all, _) = self.options_from_declared(&options)?;
+                // Aver lifts only its world entry points (`wasi:cli/run`'s
+                // `run`, `wasi:http/incoming-handler`'s `handle`), whose
+                // parameters and results are flat scalars and handles, with
+                // no canonical options. A memory, realloc, post-return, string
+                // encoding, async, callback, core-type or GC option changes how
+                // values cross the boundary, so none is admitted.
+                if let Some(option) = options.first() {
+                    return Err(format!(
+                        "wasip2 component lifts a function with canonical option {option:?}; Aver lifts with none"
+                    ));
+                }
                 let lifted = match at(&self.core_items[FUNC_SPACE], core_func_index, "core func")? {
-                    CoreItem::Declared(name) if all => Some(name.clone()),
+                    CoreItem::Declared(name) => Some(name.clone()),
                     _ => None,
                 };
+                if let Some(name) = &lifted {
+                    self.lifted.push(name.clone());
+                }
                 self.funcs.push(lifted);
             }
             CanonicalFunction::Lower { options, .. } => {
-                let (_, any) = self.options_from_declared(&options)?;
-                self.core_items[FUNC_SPACE].push(if any {
+                let captures = self.lower_captures_declared(&options)?;
+                self.core_items[FUNC_SPACE].push(if captures {
                     CoreItem::Tainted
                 } else {
                     CoreItem::Plain
@@ -725,7 +747,7 @@ mod tests {
         (alias core export $main "wasi:cli/run@0.2.4#run" (core func $run))
         (type $rt (result))
         (type $ft (func (result $rt)))
-        (func $run (type $ft) (canon lift (core func $run) (memory $mem) (post-return $post)))
+        (func $run (type $ft) (canon lift (core func $run)))
         (type $res (resource (rep i32)))
         (component $shim
             (import "import-type-res" (type (sub resource)))
@@ -878,23 +900,70 @@ mod tests {
     }
 
     #[test]
-    fn refuses_lift_options_from_another_module() {
-        let bytes = component(
-            r#"(component
-            (core module $m
-                (memory (export "memory") 1)
-                (func (export "f") (result i32) i32.const 0))
-            (core module $o (memory (export "memory") 1))
-            (core instance $oi (instantiate $o))
-            (core instance $i (instantiate $m))
-            (alias core export $oi "memory" (core memory $omem))
-            (alias core export $i "f" (core func $f))
-            (type $t (func (result string)))
-            (func $lf (type $t) (canon lift (core func $f) (memory $omem)))
-            (export "f" (func $lf)))"#,
-        );
-        let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
-        assert!(error.contains("is not lifted"), "{error}");
+    fn refuses_canonical_options_on_a_lift() {
+        // Codex: a certified Bool core export exposed as `(u32) -> u32` is a
+        // signature matter the verifier settles; the options are refused here,
+        // from whichever module they come.
+        let lift = |options: &str| {
+            format!(
+                r#"(component
+                (core module $m
+                    (memory (export "memory") 1)
+                    (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 0)
+                    (func (export "cabi_post_f") (param i32))
+                    (func (export "f") (result i32) i32.const 0))
+                (core module $o (memory (export "memory") 1))
+                (core instance $oi (instantiate $o))
+                (core instance $i (instantiate $m))
+                (alias core export $oi "memory" (core memory $omem))
+                (alias core export $i "memory" (core memory $mem))
+                (alias core export $i "cabi_realloc" (core func $realloc))
+                (alias core export $i "cabi_post_f" (core func $post))
+                (alias core export $i "f" (core func $f))
+                (type $t (func (result string)))
+                (func $lf (type $t) (canon lift (core func $f) {options}))
+                (export "f" (func $lf)))"#
+            )
+        };
+        for options in [
+            "(memory $omem)",
+            "(memory $mem)",
+            "(memory $mem) (realloc $realloc) (post-return $post)",
+            "(memory $mem) string-encoding=utf16",
+            "(memory $mem) string-encoding=latin1+utf16",
+        ] {
+            let bytes = component(&lift(options));
+            let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+            assert!(
+                error.contains("lifts a function with canonical option")
+                    && error.contains("Aver lifts with none"),
+                "{options}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_a_lower_with_an_encoding_aver_does_not_emit() {
+        for encoding in ["string-encoding=utf16", "string-encoding=latin1+utf16"] {
+            let bytes = component(&patched("").replace(
+                "(canon lower (func $host) (memory $mem) (realloc $realloc))",
+                &format!("(canon lower (func $host) (memory $mem) (realloc $realloc) {encoding})"),
+            ));
+            let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+            assert!(
+                error.contains("lowers a function with canonical option")
+                    && error.contains("Aver does not emit"),
+                "{encoding}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn reports_the_lifted_core_exports() {
+        let bytes = component(SHIMMED);
+        let lifted =
+            confirm_declared_core_binding(&bytes, module_ranges(&bytes)[0].clone()).unwrap();
+        assert_eq!(lifted, ["wasi:cli/run@0.2.4#run"]);
     }
 
     #[test]

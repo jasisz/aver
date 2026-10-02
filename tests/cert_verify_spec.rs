@@ -781,6 +781,46 @@ fn component_around_core(text: &str, core: &[u8]) -> (Vec<u8>, usize) {
     (component, start)
 }
 
+#[cfg(feature = "wasip2")]
+/// Copies the produced wasip2 package at `out_dir` next to `component`, whose
+/// declared core is the `core_len` bytes at `start`, and rebinds every hash
+/// and envelope length that pins the delivered component. Returns the
+/// artifact path and the directory holding `cert/`.
+fn plant_wasip2_component(
+    out_dir: &Path,
+    stem: &str,
+    label: &str,
+    component: &[u8],
+    start: usize,
+    core_len: usize,
+    honest_lean_envelope: &str,
+) -> (PathBuf, ScratchDir) {
+    let dir = temp_dir(&format!("certverify-wasip2-substitution-{label}"));
+    copy_dir(&out_dir.join("cert"), &dir.join("cert"));
+    let artifact = dir.join(format!("{stem}.component.wasm"));
+    std::fs::write(&artifact, component).unwrap();
+    rebind_cert_wasm_hash(&dir, component);
+    let manifest_path = dir.join("cert").join("cert-manifest.json");
+    let mut forged: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    let suffix_len = component.len() - start - core_len;
+    forged["wasip2ComponentEnvelope"]["prefix_len"] = start.into();
+    forged["wasip2ComponentEnvelope"]["suffix_len"] = suffix_len.into();
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&forged).unwrap(),
+    )
+    .unwrap();
+    replace_once(
+        &dir.join("cert").join("Artifact.lean"),
+        honest_lean_envelope,
+        &format!(
+            "wasip2ComponentEnvelope := some {{ prefixLen := {start}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix_len} }}"
+        ),
+    );
+    (artifact, dir)
+}
+
 /// Envelope substitution: a component that runs one module while its
 /// manifest declares another. The honest certified core of a produced wasip2
 /// package is planted in a component whose only export, `answer`, is lifted
@@ -987,30 +1027,15 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
         ),
     ] {
         assert_eq!(&component[start..start + core_len], &honest_core[..]);
-        let dir = temp_dir(&format!("certverify-wasip2-substitution-{label}"));
-        copy_dir(&out_dir.join("cert"), &dir.join("cert"));
-        let artifact = dir.join("wasip2_carrierless.component.wasm");
-        std::fs::write(&artifact, &component).unwrap();
-        rebind_cert_wasm_hash(&dir, &component);
-        let manifest_path = dir.join("cert").join("cert-manifest.json");
-        let mut forged: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-        let suffix_len = component.len() - start - core_len;
-        forged["wasip2ComponentEnvelope"]["prefix_len"] = start.into();
-        forged["wasip2ComponentEnvelope"]["suffix_len"] = suffix_len.into();
-        std::fs::write(
-            &manifest_path,
-            serde_json::to_string_pretty(&forged).unwrap(),
-        )
-        .unwrap();
-        replace_once(
-            &dir.join("cert").join("Artifact.lean"),
+        let (artifact, dir) = plant_wasip2_component(
+            &out_dir,
+            "wasip2_carrierless",
+            label,
+            &component,
+            start,
+            core_len,
             &honest_lean_envelope,
-            &format!(
-                "wasip2ComponentEnvelope := some {{ prefixLen := {start}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix_len} }}"
-            ),
         );
-
         let (ok, report) = aver_verify(&artifact, &dir.join("cert"));
         assert!(
             !ok,
@@ -1023,6 +1048,111 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
         assert!(
             report.contains(reason),
             "{label}: expected the binding refusal `{reason}`:\n{report}"
+        );
+    }
+}
+
+/// A certified export lifted into the component. The certified `flip` is a
+/// claim about a core `i32` holding a Bool; lifted as `(u32) -> u32`, a caller
+/// can hand it 2, outside the certified domain. Aver lifts only its world
+/// entry points, so the checker knows no component signature for a certified
+/// export and DECLINES the lift before Lean runs, whatever type it carries.
+#[cfg(feature = "wasip2")]
+#[test]
+fn cert_tripwire_declines_a_wasip2_lift_of_a_certified_export() {
+    if !tripwire_lake_available() {
+        return;
+    }
+    let out_dir = temp_dir("certverify-wasip2-certified-lift");
+    let source = out_dir.join("wasip2_flip.av");
+    std::fs::write(
+        &source,
+        "module Wasip2Flip\n    intent = \"A certified Bool export.\"\n    exposes [flip, main]\n\n\
+         fn flip(b: Bool) -> Bool\n    ? \"Negate.\"\n    match b\n        true -> false\n        false -> true\n\n\
+         verify flip\n    flip(true) => false\n\n\
+         fn main() -> Bool\n    flip(true)\n",
+    )
+    .unwrap();
+    let compile = aver_command()
+        .arg("compile")
+        .arg(&source)
+        .arg("--target")
+        .arg("wasip2")
+        .arg("--certify")
+        .arg("--examples")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver compile --target wasip2 --certify runs");
+    assert!(
+        compile.status.success(),
+        "wasip2 producer failed:\n{}{}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let honest_component = std::fs::read(out_dir.join("wasip2_flip.component.wasm")).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(out_dir.join("cert").join("cert-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        manifest["certified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "flip"),
+        "the fixture must certify `flip`"
+    );
+    let envelope = &manifest["wasip2ComponentEnvelope"];
+    let field = |name: &str| usize::try_from(envelope[name].as_u64().unwrap()).unwrap();
+    let (prefix, core_len, suffix) = (
+        field("prefix_len"),
+        field("embedded_core_module_len"),
+        field("suffix_len"),
+    );
+    let honest_core = honest_component[prefix..prefix + core_len].to_vec();
+    let honest_lean_envelope = format!(
+        "wasip2ComponentEnvelope := some {{ prefixLen := {prefix}, embeddedCoreModuleLen := {core_len}, suffixLen := {suffix} }}"
+    );
+    let lifted = |ty: &str| {
+        component_around_core(
+            &format!(
+                r#"(component
+                (core module $honest)
+                (core instance $i (instantiate $honest))
+                (alias core export $i "flip" (core func $flip))
+                (type $ft {ty})
+                (func $lifted (type $ft) (canon lift (core func $flip)))
+                (export "flip" (func $lifted)))"#
+            ),
+            &honest_core,
+        )
+    };
+    for (label, (component, start)) in [
+        ("u32", lifted(r#"(func (param "b" u32) (result u32))"#)),
+        ("bool", lifted(r#"(func (param "b" bool) (result bool))"#)),
+    ] {
+        let (artifact, dir) = plant_wasip2_component(
+            &out_dir,
+            "wasip2_flip",
+            &format!("certified-lift-{label}"),
+            &component,
+            start,
+            core_len,
+            &honest_lean_envelope,
+        );
+        let (ok, report) = aver_verify(&artifact, &dir.join("cert"));
+        assert!(
+            !ok,
+            "{label}: a lifted certified export must not verify:\n{report}"
+        );
+        assert!(
+            !report.contains("CERTIFIED"),
+            "{label}: a lifted certified export printed a green verdict:\n{report}"
+        );
+        assert!(
+            report.contains("wasip2 component lifts certified core export `flip`"),
+            "{label}: expected the certified-lift refusal:\n{report}"
         );
     }
 }
