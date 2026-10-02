@@ -29,6 +29,13 @@
    The String and Vector nodes call three more runtime helpers, taken with
    exactly the contracts `Schema.Obligation.holds` already assumes of them
    (`XHost`): `__wasmgc_concat_n`, `__wasmgc_string_eq`, `__aint_to_index`.
+   An Int interpolation part calls `String.fromInt`, whose meaning is the
+   wall's run of its pinned template (`StringHelpers.fromIntSem_spec`).
+
+   A `try_` may return early from any position: `agreement` then concludes
+   the escape disjunct `Esc` (the run returned, the source evaluation failed,
+   and its early return `escv` is represented by the returned value), which
+   every node propagates and a `scope` turns into its value.
 
    The interpreter's `ref.test` is exact while wasm GC tests subtyping; the
    S-3 section below shows the two agree on constructor structs under the
@@ -153,6 +160,11 @@ structure XHost {C : Nat} (S : CarrierSpec C) (M : MCtx) (host : HostTbl) : Prop
   /-- Every declared `Bytes` helper, the wall's run of its pinned template. -/
   bytesHelper : ∀ r f, M.bytesHelper r = some f →
     ∃ g, host f = some (r.arity, g) ∧ BytesSpec S M r g
+  /-- `String.fromInt`, the wall's run of its pinned template
+      (`StringHelpers.fromIntSem_spec`): the decimal bytes of a represented
+      Int. -/
+  fromInt : ∃ g, host M.fromInt = some (1, g) ∧
+    ∀ n w v, S.Repr n w → g [w] = some v → v = strW M (decBytes n)
 
 /-- Assume–guarantee contract of a code function `f` at signature `sig` for
     one opaque `callee`: the ONLY thing a caller knows about `f`. -/
@@ -705,7 +717,8 @@ theorem hasTy_list {M : MCtx} {v : SVal} {t : Ty} (h : HasTy M v (.list t)) :
     type. -/
 theorem builtin_step (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee)
     {C : Nat} {S : CarrierSpec C} {M : MCtx}
-    (bi : Builtin) (hnl : bi.listRole = none) (hnb : bi.isBytes = false) (ts : List Ty) (T : Ty)
+    (bi : Builtin) (hnl : bi.listRole = none) (hnb : bi.isBytes = false)
+    (hfi : bi ≠ .strFromInt) (ts : List Ty) (T : Ty)
     (hty : builtinTy M bi ts = some T)
     (svs : List SVal) (ws : List WVal) (hT : HasTyL M svs ts) (hr : SReprL S M svs ws)
     (wl st : List WVal) (out : Out)
@@ -777,8 +790,44 @@ theorem builtin_step (host : HostTbl) (ar : Nat → Option Nat) (callee : Callee
         ⟨wh, wt, rfl, hwh, hwt⟩, rfl⟩
       rcases hasTy_list htl with rfl | ⟨x, r, rfl, _, _⟩ <;> rfl
     · cases hty
-  all_goals first | (simp [Builtin.isBytes] at hnb; done) | cases hty |
+  all_goals first | (simp [Builtin.isBytes] at hnb; done) | exact absurd rfl hfi | cases hty |
     (simp [Builtin.listRole] at hnl; done)
+
+/-- An `Int` interpolation part: the `String.fromInt` helper returns the
+    decimal bytes of the Int (`XHost.fromInt`). -/
+theorem fromInt_step {C : Nat} {S : CarrierSpec C} {M : MCtx} {host : HostTbl}
+    (R : XHost S M host) (ar : Nat → Option Nat) (callee : Callee) (ts : List Ty) (T : Ty)
+    (hty : builtinTy M .strFromInt ts = some T)
+    (svs : List SVal) (ws : List WVal) (hT : HasTyL M svs ts) (hr : SReprL S M svs ws)
+    (wl st : List WVal) (out : Out)
+    (hrun : wRunF host ar callee (eraseL (builtinTail M .strFromInt (some ts))) wl
+      (ws.reverse ++ st) = some out) :
+    ∃ sv w, builtinEval .strFromInt svs = some sv ∧ HasTy M sv T ∧ SRepr S M sv w ∧
+      out = .ok wl (w :: st) := by
+  obtain ⟨rfl, rfl⟩ : ts = [.int] ∧ T = .string := by
+    rcases ts with _ | ⟨t, _ | ⟨t', ts'⟩⟩
+    · simp [builtinTy] at hty
+    · cases t <;> simp [builtinTy] at hty
+      subst hty
+      exact ⟨rfl, rfl⟩
+    · simp [builtinTy] at hty
+  obtain ⟨a, svs1, rfl, ha, hT1⟩ := hasTyL_cons_inv hT
+  have := hasTyL_nil_inv hT1; subst this
+  obtain ⟨wa, ws1, rfl, hwa, hr1⟩ := sreprL_cons_inv hr
+  have := sreprL_nil_inv hr1; subst this
+  obtain ⟨x, rfl⟩ := hasTy_int ha
+  obtain ⟨g, hg, hgs⟩ := R.fromInt
+  simp only [builtinTail, eraseL, eraseI, List.reverse_cons, List.reverse_nil,
+    List.nil_append, List.cons_append] at hrun
+  cases hq : g [wa] with
+  | none => simp [wRunF, hg, popArgs_one, hq] at hrun
+  | some r =>
+      simp [wRunF, hg, popArgs_one, hq] at hrun
+      subst hrun
+      have hrr := hgs x wa r hwa.1 hq
+      subst hrr
+      exact ⟨.s (decBytes x), strW M (decBytes x), by simp [builtinEval], by simp [HasTy],
+        by simp [SRepr], rfl⟩
 
 /-! ## Strings and Floats -/
 
@@ -2993,12 +3042,17 @@ theorem agreement_step :
       · exact Or.inr (esc_up hE hseq (fun h => by simp [eval, h]) (fun x hx => by simp [escv, hx])
           (fun R hR => by simp [bareTries, hR]))
       simp only [seqOut] at hseq
+      by_cases hfi : bi = .strFromInt
+      · subst hfi
+        obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
+          fromInt_step R ar callee ts T hbt svs ws hTs hrep wl1 st out hseq
+        exact Or.inl ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
       cases hlr : bi.listRole with
       | none =>
           cases hib : bi.isBytes with
           | false =>
               obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=
-                builtin_step host ar callee bi hlr hib ts T hbt svs ws hTs hrep wl1 st out hseq
+                builtin_step host ar callee bi hlr hib hfi ts T hbt svs ws hTs hrep wl1 st out hseq
               exact Or.inl ⟨sv, by simp [eval, hevs, hbe], hT, res_ok hsw hl1⟩
           | true =>
               obtain ⟨sv, w, hbe, hT, hsw, rfl⟩ :=

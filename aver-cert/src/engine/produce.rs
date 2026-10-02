@@ -478,6 +478,7 @@ impl Cited {
             bytes_arr: tt.bytes_arr.filter(|_| has(PlanTy::Bytes)),
             bytes_helpers: tt.bytes_helpers.clone(),
             int_chk: tt.int_chk,
+            str_from_int: tt.str_from_int,
         }
     }
 }
@@ -694,8 +695,25 @@ fn confirm_bytes_helpers(
                     .map(|c| (vec![ValT::RefNull(c)], vec![ValT::I64])),
             )
     });
+    // `String.fromInt` (`AcceptedArtifact.listHelpersPinnedWith`): its code
+    // entry is the template's and its type `carrier -> $string`.
+    let from_int_ok = types.str_from_int.is_some_and(|f| {
+        !user(f)
+            && m.int_formatter_entry_bytes()
+                .is_some_and(|b| facts.code_of(f).is_some_and(|c| c.entry == b))
+            && sig_is(
+                f,
+                u32::try_from(m.carrier)
+                    .ok()
+                    .zip(u32::try_from(m.str_).ok())
+                    .map(|(c, s)| (vec![ValT::RefNull(c)], vec![ValT::RefNull(s)])),
+            )
+    });
     if !chk_ok {
         types.int_chk = None;
+    }
+    if !from_int_ok {
+        types.str_from_int = None;
     }
     let snapshot = types.clone();
     let m = MCtx::new(roles, &facts.string_roles, &snapshot, &[]);
@@ -864,6 +882,7 @@ pub fn analyze(
         .cloned()
         .collect();
     let used_sat = types.int_sat.filter(|f| called(f));
+    let used_from_int = types.str_from_int.filter(|f| called(f));
     // The `Bytes` helpers the lowerings call; `pack` calls the checked
     // conversion, `unpack` the box contract.
     let used_bytes: Vec<(PlanBytesRole, u32)> = types
@@ -969,6 +988,7 @@ pub fn analyze(
     // Only the List helpers the certified plans reach are declared.
     types.list_helpers = used_helpers;
     types.int_sat = used_sat;
+    types.str_from_int = used_from_int;
     // Only the `Bytes` helpers the certified plans reach are declared.
     types.bytes_helpers = used_bytes;
     types.int_chk = used_chk;

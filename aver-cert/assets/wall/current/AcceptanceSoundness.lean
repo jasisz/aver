@@ -152,14 +152,15 @@ theorem helperSem_spec {C : Nat} (S : CarrierSpec C) (M : MCtx) (h : HostFns)
 theorem xhost_of (hf : PlanFacts s tt fns) (S : CarrierSpec (mctxOf s tt fns).carrier)
     (h : HostFns) (hc : HostContracts S h) :
     XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := by
-  obtain ⟨_, _, _, _, _, _, _, hConcat, hStreq, hToIndex, hDivmod, hSat, hHelp, hBytes, _⟩ :=
-    host_facts (M := mctxOf s tt fns) h hf.distinct
+  obtain ⟨_, _, _, _, _, _, _, hConcat, hStreq, hToIndex, hDivmod, hSat, hFromInt, hHelp, hBytes,
+    _⟩ := host_facts (M := mctxOf s tt fns) h hf.distinct
   refine ⟨⟨_, hConcat, fun parts c hr => hc.stringConcat _ parts c hr⟩,
      ⟨_, hStreq, fun a b r hr => hc.stringEq a b r hr⟩,
      ⟨_, hToIndex, hc.toIndex⟩,
      ⟨_, hDivmod, fun a b wa wb m r ha hb hne hm hr =>
         hc.divmod a b wa wb m r ha.1 hb.1 ha.2 hb.2 hne hm hr⟩,
-     ⟨_, hSat, fun n w v hw hv => AverCert.ListHelpers.satSem_spec S n w v hw hv⟩, ?_, ?_⟩
+     ⟨_, hSat, fun n w v hw hv => AverCert.ListHelpers.satSem_spec S n w v hw hv⟩, ?_, ?_,
+     ⟨_, hFromInt, fun n w v hw hv => AverCert.StringHelpers.fromIntSem_spec S _ _ n w v hw hv⟩⟩
   · intro r t f hrt
     simp only [MCtx.listHelper, Option.map_eq_some_iff] at hrt
     obtain ⟨x, hx, rfl⟩ := hrt
@@ -184,7 +185,7 @@ theorem fns_certified (hf : PlanFacts s tt fns)
       FnCertified S (mctxOf s tt fns) (codeOf (mctxOf s tt fns) fns)
         (hostOf (mctxOf s tt fns) h) f p.sig (fun fuel => modelOf fns fuel f) := by
   obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hDivmod,
-    hSat, hHelp, _, hClaims⟩ :=
+    hSat, _, hHelp, _, hClaims⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
   have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := xhost_of hf S h hc
   refine fn_certified_group S (boxRef _) h.add h.sub h.mul h.cmp h.eq (fun _ => none)
@@ -251,7 +252,7 @@ theorem obligation_total (hf : PlanFacts s tt fns) {e : FnEntry} (he : e ∈ fns
     obtain ⟨e', he', rfl, rfl⟩ := groupMembers_mem (groupOf_mem hg)
     exact planOf_mem hnd he'
   obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hDivmod,
-    hSat, hHelp, _, hClaims⟩ :=
+    hSat, _, hHelp, _, hClaims⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
   have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := xhost_of hf S h hc
   have hAll := fns_certified hf S h hc

@@ -130,6 +130,15 @@ impl PlanLayout for CertLayout<'_> {
         self.registry.aint_to_i64_checked_fn_idx
     }
 
+    fn str_from_int(&self) -> Option<u32> {
+        // The `$AverInt` formatter: `String.fromInt` takes the carrier only
+        // under bignum (`builtins::StringFromInt`).
+        if !self.registry.bignum {
+            return None;
+        }
+        self.fn_map.builtins.get("String.fromInt").copied()
+    }
+
     fn record(&self, name: &str) -> Option<RecordLayout> {
         let registry = self.registry;
         let canonical = registry.canonical_type_name(name);

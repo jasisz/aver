@@ -1258,6 +1258,12 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel) -> BridgePlan {
                 return Err("the plan calls a Bytes builtin, which the bridge proofs do not model yet"
                     .to_string());
             }
+            // An `Int` interpolation part is the helper's decimal bytes, which
+            // the source model and the step lemmas do not spell yet.
+            if e.plan.body.lean().contains("(.builtin .strFromInt)") {
+                return Err("the plan interpolates an Int, which the bridge proofs do not model yet"
+                    .to_string());
+            }
             // An early return (`?`) is the source model's `Result` propagation,
             // which the one-step proofs do not unfold yet.
             if e.plan.body.lean().contains("(.try_ ") {

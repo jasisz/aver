@@ -260,6 +260,7 @@ def builtinTail (M : MCtx) : Builtin → Option (List Ty) → List BI
   | .bytesConcat, _ => bytesCall M .concat
   | .bytesTake, _ => .op (.call M.toI64Sat) :: bytesCall M .take
   | .bytesDrop, _ => .op (.call M.toI64Sat) :: bytesCall M .drop
+  | .strFromInt, _ => [.op (.call M.fromInt)]
   | _, _ => []
 
 /-- The `f64` comparison of a Float `BinOp`. -/

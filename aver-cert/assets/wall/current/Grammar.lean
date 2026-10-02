@@ -57,7 +57,8 @@
      `Int.div` / `Int.mod` by a syntactic nonzero literal divisor: a bare
      Euclidean `__aint_divmod` call.
    * `interp parts` — `InterpolatedStr` whose parts are all `String` (a
-     literal part printed as a string literal).
+     literal part printed as a string literal, an `Int` part as
+     `call (.builtin .strFromInt) [e]`, the emitter's `String.fromInt` call).
    * `list t items` — a `List(..)` literal with its element type: `[]` is
      `ref.null` of the cons struct, and a non-empty literal pushes its items,
      `ref.null`, and calls the `List<t>` cons helper once per item. The
@@ -176,6 +177,10 @@ inductive Builtin where
       a construction over `List.concat` / `take` / `drop` of projections calls
       the preserving helper (`bytesConcat` / `bytesTake` / `bytesDrop`). -/
   | bytesOfList | bytesValues | bytesLen | bytesConcat | bytesTake | bytesDrop
+  /-- An `Int` part of an `InterpolatedStr`: a call of the `String.fromInt`
+      runtime helper the type table declares (`MCtx.fromInt`, pinned and
+      proved in `StringHelpers`), the decimal bytes of the Int. -/
+  | strFromInt
 deriving DecidableEq, Repr
 
 /-- The per-type helpers of the packed `Bytes` array
@@ -384,6 +389,9 @@ structure MCtx where
   /-- `__aint_to_i64_checked`, which `pack` calls per element, pinned to its
       template. -/
   toI64Chk : Nat := 0
+  /-- `String.fromInt`, which an `Int` interpolation part calls, pinned to its
+      template (`StringHelpers`). -/
+  fromInt : Nat := 0
 
 /-- The declared helper of `role` for `List<t>`. -/
 def MCtx.listHelper (M : MCtx) (r : ListRole) (t : Ty) : Option Nat :=
@@ -642,6 +650,7 @@ def builtinTy (M : MCtx) : Builtin → List Ty → Option Ty
       if (M.bytesHelper .concat).isSome then some .bytes else none
   | .bytesTake, [.bytes, .int] => if (M.bytesHelper .take).isSome then some .bytes else none
   | .bytesDrop, [.bytes, .int] => if (M.bytesHelper .drop).isSome then some .bytes else none
+  | .strFromInt, [.int] => some .string
   | _, _ => none
 
 /-- `withDefault` over a subject and default of these types. -/
@@ -1070,6 +1079,17 @@ def intsOf : List SVal → Option (List Int)
   | .i n :: vs => (intsOf vs).map (n :: ·)
   | _ => none
 
+/-- The decimal digits of `m` as ASCII bytes, least significant first. -/
+def digitsRev (m : Nat) : List Nat :=
+  if h : m = 0 then [] else (48 + m % 10) :: digitsRev (m / 10)
+termination_by m
+decreasing_by omega
+
+/-- The UTF-8 bytes of an Int in decimal: `0`, or a `-` before a negative
+    number's digits, most significant first. -/
+def decBytes (n : Int) : List Nat :=
+  if n = 0 then [48] else (if n < 0 then [45] else []) ++ (digitsRev n.natAbs).reverse
+
 /-- The byte an Int is stored as in the packed array: its low 8 bits
     (`i32.wrap_i64`, then the `i8` storage of `array.set`). -/
 def byteOf (n : Int) : Nat := (n % 256).toNat
@@ -1104,6 +1124,7 @@ def builtinEval : Builtin → List SVal → Option SVal
   | .bytesConcat, [.bytes a, .bytes b] => some (.bytes (a ++ b))
   | .bytesTake, [.bytes a, .i n] => some (.bytes (a.take n.toNat))
   | .bytesDrop, [.bytes a, .i n] => some (.bytes (a.drop n.toNat))
+  | .strFromInt, [.i n] => some (.s (decBytes n))
   | _, _ => none
 
 /-- A Euclidean intrinsic (Lean's `Int` `/` and `%` are `Int.ediv` and

@@ -89,6 +89,26 @@ inductive HI where
       are copied into the array local `k` holds (a fresh array, as for
       `setAt`). Out of bounds, or a negative operand, traps. -/
   | copyTo (k ty : Nat) (args : List HI)
+  -- The `String.fromInt` template's instructions (`StringHelpers`).
+  /-- `if (result (ref null ht)) … else … end`. -/
+  | ifElseRef (ht : Nat) (thenB elseB : List HI)
+  /-- `array.new ty` over the packed byte array type `ty`: `n` copies of the
+      value's low 8 bits (the `i8` storage). -/
+  | newFill (ty : Nat)
+  /-- `i64.sub`: two's-complement subtraction modulo `2 ^ 64`, read back
+      signed; stuck on a word outside the `i64` range. -/
+  | i64Sub
+  /-- `i64.div_u` / `i64.rem_u`: both operands read as unsigned 64-bit
+      numbers, the result read back signed; stuck on a zero divisor (a trap)
+      and on a word outside the `i64` range. -/
+  | i64DivU
+  | i64RemU
+  /-- Code the wall pins by its bytes but does not run: running it is stuck
+      (`none`), so a helper reaching it makes no claim on that input. -/
+  | dead (body : List HI)
+  /-- An instruction the wall only encodes, by its bytes; it occurs only under
+      `dead`, and running it is stuck. -/
+  | rawOp (bytes : List Nat)
 
 /-- The outcome of a helper instruction sequence: it falls through, it
     branches to the label `depth` levels out (with the locals and the stack
@@ -126,6 +146,13 @@ def ltU64 : Int → Int → Bool
   | .ofNat _, .negSucc _ => true
   | .negSucc _, .ofNat _ => false
   | .negSucc a, .negSucc b => b.blt a
+
+/-- The unsigned reading of an `i64` word: a negative word `x` is
+    `2^64 + x`. -/
+def toU64 (x : Int) : Int := if x < 0 then x + 18446744073709551616 else x
+
+/-- An unsigned 64-bit number read back as a signed `i64` word. -/
+def ofU64 (u : Int) : Int := if u < 9223372036854775808 then u else u - 18446744073709551616
 
 /-- `array.copy`'s result over the destination `dst`: `n` elements of `src`
     from `so` land at `d`. -/
@@ -272,6 +299,42 @@ def hRun (host : HostTbl) : Nat → List HI → List WVal → List WVal → Opti
             | _ => none
           else none
       | _ => none
+  | k + 1, .ifElseRef _ tB eB :: rest, l, st =>
+      match st with
+      | .i32v c :: st' =>
+          match hRun host k (if c = 0 then eB else tB) l st' with
+          | some (.ok l' st'') => hRun host k rest l' st''
+          | some (.ret v) => some (.ret v)
+          | _ => none
+      | _ => none
+  | k + 1, .newFill ty :: rest, l, st =>
+      match st with
+      | .i32v n :: .i32v v :: st' =>
+          if 0 ≤ n then hRun host k rest l (.arr ty (List.replicate n.toNat (.i32v (v % 256))) :: st')
+          else none
+      | _ => none
+  | k + 1, .i64Sub :: rest, l, st =>
+      match st with
+      | .i64v y :: .i64v x :: st' =>
+          if inI64 x && inI64 y then hRun host k rest l (.i64v (wrapI64 (x - y)) :: st')
+          else none
+      | _ => none
+  | k + 1, .i64DivU :: rest, l, st =>
+      match st with
+      | .i64v y :: .i64v x :: st' =>
+          if inI64 x && inI64 y && y != 0 then
+            hRun host k rest l (.i64v (ofU64 (toU64 x / toU64 y)) :: st')
+          else none
+      | _ => none
+  | k + 1, .i64RemU :: rest, l, st =>
+      match st with
+      | .i64v y :: .i64v x :: st' =>
+          if inI64 x && inI64 y && y != 0 then
+            hRun host k rest l (.i64v (ofU64 (toU64 x % toU64 y)) :: st')
+          else none
+      | _ => none
+  | _ + 1, .dead _ :: _, _, _ => none
+  | _ + 1, .rawOp _ :: _, _, _ => none
 
 /-- A declared local of a helper: `i64`, `i32`, a nullable reference, or the
     value type of a source type (the element local of `reverse`). -/
@@ -348,6 +411,16 @@ mutual
         match uleb32 j, encHL M args, uleb32 ty with
         | some a, some b, some c => some ([0x20] ++ a ++ b ++ [0xfb, 0x11] ++ c ++ c)
         | _, _, _ => none
+    | .ifElseRef ht tB eB =>
+        match s33HeapIdx ht, encHL M tB, encHL M eB with
+        | some h, some a, some b => some ([0x04, 0x63] ++ h ++ a ++ [0x05] ++ b ++ [0x0b])
+        | _, _, _ => none
+    | .newFill ty => (uleb32 ty).map ([0xfb, 0x06] ++ ·)
+    | .i64Sub => some [0x7d]
+    | .i64DivU => some [0x80]
+    | .i64RemU => some [0x82]
+    | .dead body => encHL M body
+    | .rawOp bytes => some bytes
   def encHL (M : MCtx) : List HI → Option (List Nat)
     | [] => some []
     | x :: xs =>

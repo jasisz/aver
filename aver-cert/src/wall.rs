@@ -26,6 +26,7 @@ pub const CERT_GRAMMAR: &str = include_str!("../assets/wall/current/Grammar.lean
 pub const CERT_GRAMMAR_LOWER: &str = include_str!("../assets/wall/current/GrammarLower.lean");
 pub const CERT_LIST_HELPERS: &str = include_str!("../assets/wall/current/ListHelpers.lean");
 pub const CERT_BYTES_HELPERS: &str = include_str!("../assets/wall/current/BytesHelpers.lean");
+pub const CERT_STRING_HELPERS: &str = include_str!("../assets/wall/current/StringHelpers.lean");
 pub const CERT_GRAMMAR_SOUND: &str = include_str!("../assets/wall/current/GrammarSound.lean");
 pub const CERT_GRAMMAR_TOTAL: &str = include_str!("../assets/wall/current/GrammarTotal.lean");
 pub const CERT_TYPE_TABLE: &str = include_str!("../assets/wall/current/TypeTable.lean");
@@ -62,7 +63,7 @@ pub struct Source {
 
 /// Exact checker-owned source set. Ordering is not part of the identity:
 /// [`compute_id`] sorts by filename before hashing.
-pub const SOURCES: [Source; 32] = [
+pub const SOURCES: [Source; 33] = [
     Source {
         name: "AcceptanceSoundness.lean",
         contents: CERT_ACCEPTANCE_SOUNDNESS,
@@ -180,6 +181,10 @@ pub const SOURCES: [Source; 32] = [
         contents: CERT_SORTED_KEYS,
     },
     Source {
+        name: "StringHelpers.lean",
+        contents: CERT_STRING_HELPERS,
+    },
+    Source {
         name: "TypeTable.lean",
         contents: CERT_TYPE_TABLE,
     },
@@ -195,7 +200,7 @@ pub const SOURCES: [Source; 32] = [
 
 /// Roots whose complete import graph is artifact-independent and can therefore
 /// be cached before a certificate is seen.
-pub const PRISTINE_ROOTS: [&str; 30] = [
+pub const PRISTINE_ROOTS: [&str; 31] = [
     "CertPrelude",
     "CertDecode",
     "ByteWindow",
@@ -210,6 +215,7 @@ pub const PRISTINE_ROOTS: [&str; 30] = [
     "GrammarLower",
     "ListHelpers",
     "BytesHelpers",
+    "StringHelpers",
     "GrammarSound",
     "GrammarTotal",
     "TypeTable",

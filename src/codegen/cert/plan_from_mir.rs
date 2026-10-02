@@ -86,6 +86,9 @@ pub trait PlanLayout {
     fn bytes_helper(&self, name: &str, role: PlanBytesRole) -> Option<u32>;
     /// `__aint_to_i64_checked`, which the `pack` helper calls per element.
     fn int_chk(&self) -> Option<u32>;
+    /// `String.fromInt`, the `$AverInt` formatter an `Int` interpolation
+    /// part calls (`emit_mir_int_stringify`'s boxed path).
+    fn str_from_int(&self) -> Option<u32>;
     fn record(&self, name: &str) -> Option<RecordLayout>;
     fn sum(&self, name: &str) -> Option<SumLayout>;
     /// A user constructor: its owning sum's name and its index in
@@ -538,6 +541,18 @@ impl TypeTableBuilder {
         if matches!(role, PlanBytesRole::Take | PlanBytesRole::Drop) && self.table.int_sat.is_none()
         {
             self.table.int_sat = Some(layout.int_sat().ok_or("__aint_to_i64_sat is not emitted")?);
+        }
+        Ok(())
+    }
+
+    /// Declare `String.fromInt`, which an `Int` interpolation part calls.
+    fn str_from_int(&mut self, layout: &dyn PlanLayout) -> Result<(), String> {
+        if self.table.str_from_int.is_none() {
+            self.table.str_from_int = Some(
+                layout
+                    .str_from_int()
+                    .ok_or("InterpolatedStr (an Int part without String.fromInt)")?,
+            );
         }
         Ok(())
     }
@@ -1049,12 +1064,20 @@ impl Printer<'_> {
                             self.types.str_seg(self.layout, s.as_bytes())?;
                             Ok(PlanExpr::Literal(PlanLit::Str(s.as_bytes().to_vec())))
                         }
-                        MirStrPart::Expr(e) => {
-                            if stamped(e)? != "String" {
-                                return Err("InterpolatedStr (a part is not a String)".into());
+                        MirStrPart::Expr(e) => match stamped(e)?.as_str() {
+                            "String" => self.expr(e),
+                            // `emit_mir_int_stringify`: the boxed carrier, then
+                            // `String.fromInt`. Its raw shapes (a `Box`, an
+                            // `Unbox`, a bare slot or carrier) do not print.
+                            "Int" => {
+                                self.types.str_from_int(self.layout)?;
+                                Ok(PlanExpr::Call(
+                                    PlanCallee::Builtin(PlanBuiltin::StrFromInt),
+                                    vec![self.expr(e)?],
+                                ))
                             }
-                            self.expr(e)
-                        }
+                            _ => Err("InterpolatedStr (a part is not a String or an Int)".into()),
+                        },
                     })
                     .collect::<Result<_, _>>()?,
             ),
@@ -1625,6 +1648,39 @@ fn unit(n: Int) -> Result<Int, String>
         // A body without `?` gets no scope.
         assert!(matches!(plan(&map, "plain").body, PlanExpr::Call(..)));
         assert_eq!(reason(&map, "unit"), "Try over a Result<Unit, _>");
+    }
+
+    #[test]
+    fn an_int_interpolation_part_prints_as_the_formatter_call() {
+        let (map, types) = plans(
+            r#"
+module I
+    intent = "interpolation probes"
+    exposes [show, flag]
+
+fn show(n: Int) -> String
+    "n = {n}"
+
+fn flag(b: Bool) -> String
+    "b = {b}"
+"#,
+        );
+        let show = plan(&map, "show");
+        let PlanExpr::Interp(parts) = &show.body else {
+            panic!("show body: {:?}", show.body)
+        };
+        assert_eq!(
+            parts[1],
+            PlanExpr::Call(
+                PlanCallee::Builtin(PlanBuiltin::StrFromInt),
+                vec![PlanExpr::Local(0)]
+            )
+        );
+        assert!(types.str_from_int.is_some(), "String.fromInt is declared");
+        assert_eq!(
+            reason(&map, "flag"),
+            "InterpolatedStr (a part is not a String or an Int)"
+        );
     }
 
     #[test]
