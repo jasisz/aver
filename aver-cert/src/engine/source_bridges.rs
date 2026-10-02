@@ -973,52 +973,6 @@ fn rcases_pattern(enc: &SourceEncoder) -> Option<String> {
     }
 }
 
-/// Most List fields of one List element a step splits into their empty and
-/// cons shapes (each split doubles the step's goals).
-const MAX_ELEM_LIST_SPLITS: usize = 2;
-
-/// The `rcases` pattern a step takes the head of a decoded List apart with:
-/// [`rcases_pattern`]'s constructor splits, and the List fields of records
-/// and tuples split into their empty and cons shapes too (a plan matching on
-/// a field of the head meets a cons cell or an empty List, as it does for a
-/// List argument), at most `budget` of them.
-fn elem_split_pattern(enc: &SourceEncoder, budget: &mut usize) -> Option<String> {
-    let sub = |e: &SourceEncoder, budget: &mut usize| {
-        elem_split_pattern(e, budget).unwrap_or_else(|| "_".to_string())
-    };
-    match enc {
-        SourceEncoder::List(_) if *budget > 0 => {
-            *budget -= 1;
-            Some("(_ | ⟨_, _⟩)".to_string())
-        }
-        SourceEncoder::Record { fields, .. } => {
-            let parts: Vec<String> = fields.iter().map(|(_, f)| sub(f, budget)).collect();
-            parts.iter().any(|p| p != "_").then(|| format!("⟨{}⟩", parts.join(", ")))
-        }
-        SourceEncoder::Tuple { elems, .. } => {
-            let parts: Vec<String> = elems.iter().map(|f| sub(f, budget)).collect();
-            parts.iter().any(|p| p != "_").then(|| format!("⟨{}⟩", parts.join(", ")))
-        }
-        SourceEncoder::Sum { ctors, .. } => Some(format!(
-            "({})",
-            ctors
-                .iter()
-                .map(|(_, fields)| format!(
-                    "⟨{}⟩",
-                    fields.iter().map(|f| sub(f, budget)).collect::<Vec<_>>().join(", ")
-                ))
-                .collect::<Vec<_>>()
-                .join(" | ")
-        )),
-        SourceEncoder::Option(e) => Some(format!("(⟨⟩ | {})", sub(e, budget))),
-        SourceEncoder::Result { ok, err } => {
-            let e = sub(err, budget);
-            Some(format!("({e} | {})", sub(ok, budget)))
-        }
-        _ => None,
-    }
-}
-
 // ---- planning ---------------------------------------------------------------
 
 /// Everything the renderer needs for one bridged function (exported or an
@@ -1055,6 +1009,10 @@ struct BridgedFn {
     /// `take`, `drop`, `contains`), whose results the step evaluates over
     /// encoded Lists.
     list_helpers: bool,
+    /// The List parameters its plan matches on directly (`match_ (.local i)`):
+    /// the step splits exactly these into their empty and cons shapes, the
+    /// head by its constructors. Every other decoded List is read back whole.
+    matched_lists: BTreeSet<usize>,
 }
 
 /// One decoder argument shape: the atomic values it decodes, its argument
@@ -1197,6 +1155,38 @@ fn closure_of(start: u32, fns: &BTreeMap<u32, BridgedFn>) -> Vec<u32> {
         }
     }
     seen.into_iter().collect()
+}
+
+/// The locals a plan matches on directly (`match_ (.local i)`, at any depth).
+fn matched_locals(e: &PlanExpr, out: &mut BTreeSet<u32>) {
+    match e {
+        PlanExpr::Literal(_) | PlanExpr::Local(_) => {}
+        PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
+            matched_locals(v, out);
+            matched_locals(b, out);
+        }
+        PlanExpr::Call(_, args)
+        | PlanExpr::TailCall(_, args)
+        | PlanExpr::RecordCreate(_, args)
+        | PlanExpr::Construct(_, _, args)
+        | PlanExpr::Interp(args)
+        | PlanExpr::List(_, args) => args.iter().for_each(|a| matched_locals(a, out)),
+        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) | PlanExpr::Try(x, _) | PlanExpr::Scope(x) => {
+            matched_locals(x, out)
+        }
+        PlanExpr::If(c, t, el) => {
+            matched_locals(c, out);
+            matched_locals(t, out);
+            matched_locals(el, out);
+        }
+        PlanExpr::Match(subject, arms) => {
+            if let PlanExpr::Local(i) = subject.as_ref() {
+                out.insert(*i);
+            }
+            matched_locals(subject, out);
+            arms.iter().for_each(|(_, b)| matched_locals(b, out));
+        }
+    }
 }
 
 /// The plan builtins that call a List helper.
@@ -1378,6 +1368,13 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim
             let mut literals = BTreeSet::new();
             string_literals(&e.plan.body, &mut literals);
             let callees = direct_callees(&e.plan.body);
+            let mut matched = BTreeSet::new();
+            matched_locals(&e.plan.body, &mut matched);
+            let matched_lists = matched
+                .into_iter()
+                .map(|i| i as usize)
+                .filter(|i| matches!(params.get(*i), Some(SourceEncoder::List(_))))
+                .collect();
             Ok(BridgedFn {
                 func_idx: e.func_idx,
                 model: def.qualified.clone(),
@@ -1393,6 +1390,7 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim
                 constants: info.inlined_constants(def),
                 elem_decoders,
                 list_helpers,
+                matched_lists,
             })
         })();
         match derived {
@@ -2050,6 +2048,13 @@ theorem append_enc {α : Type} (t : Ty) (e : α → SVal) (l m : List α) :
       List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) (l ++ m) := by
   rw [enc_consAll, List.map_append]
 
+/-- `List.prepend` onto a List encoding, which a step reads back whole
+    instead of splitting it into its empty and cons shapes. -/
+theorem prepend_enc {α : Type} (t : Ty) (e : α → SVal) (h : SVal) (l : List α) :
+    builtinEval .listPrepend [h, List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l] =
+      some (SVal.cons t h (List.foldr (fun y acc => SVal.cons t (e y) acc) (SVal.nil t) l)) := by
+  cases l <;> rfl
+
 theorem listOf_nil_int : listOf? (SVal.nil .int) = some (.int, ([] : List Int).map (fun z => SVal.i z)) := rfl
 
 theorem listOf_nil_bool : listOf? (SVal.nil .bool) = some (.bool, ([] : List Bool).map (fun z => SVal.b z)) := rfl
@@ -2200,7 +2205,7 @@ fn render_step_body(
     fns: &BTreeMap<u32, BridgedFn>,
     lit_index: &BTreeMap<Vec<u8>, usize>,
     with_default: bool,
-    elems: &ElemDecoders,
+    _elems: &ElemDecoders,
     s: &mut String,
 ) {
     let f = b.func_idx;
@@ -2229,26 +2234,39 @@ fn render_step_body(
             elem_simps.push_str(&format!(", ↓listOf_nil_{k}, cons_map_{k}"));
         }
     }
-    let mut splits_lists = false;
-    let elem_splits: String = b
+    // Every decoded List is read back whole (`…_sound`): a split of every
+    // List argument and of the List fields of its head multiplies the goals
+    // (hundreds for a step over three Lists of records), each with the whole
+    // leaf portfolio. Only the parameters the plan matches on are split, up
+    // front on the decoded value, and their head only into its constructors.
+    let elem_sounds: String = b
         .elem_decoders
         .iter()
-        .map(|k| {
-            // A head that is itself a List stays whole: its own decoder
-            // already reads it back, and a helper meets it as an encoding.
-            let mut budget = MAX_ELEM_LIST_SPLITS;
-            let enc = &elems.elems[*k].enc;
-            let head = (!matches!(enc, SourceEncoder::List(_)))
-                .then(|| elem_split_pattern(enc, &mut budget))
-                .flatten()
-                .unwrap_or_else(|| "_".to_string());
-            splits_lists |= budget < MAX_ELEM_LIST_SPLITS;
-            format!(
-                "\n            \
-                 | (rcases decList_{k}_split hl with (⟨rfl, rfl⟩ | ⟨{head}, _, rfl, rfl⟩))"
-            )
-        })
+        .map(|k| format!("\n            | (have e := decList_{k}_sound _ hl; subst e)"))
         .collect();
+    let param_split = |i: usize, p: &SourceEncoder| match p {
+        SourceEncoder::List(elem) if b.matched_lists.contains(&i) => {
+            let head = rcases_pattern(elem).unwrap_or_else(|| "_".to_string());
+            format!("(_ | ⟨{head}, _⟩)")
+        }
+        _ => "_".to_string(),
+    };
+    let split_params = if b.matched_lists.is_empty() {
+        String::new()
+    } else {
+        let parts: Vec<String> = b.params.iter().enumerate().map(|(i, p)| param_split(i, p)).collect();
+        let pattern = if parts.len() == 1 { parts[0].clone() } else { format!("⟨{}⟩", parts.join(", ")) };
+        format!("\n       rcases y with {pattern}")
+    };
+    // The split fixes the decoded value: its parts meet the decoder's
+    // components one by one.
+    let split_eqs = if b.matched_lists.is_empty() {
+        ""
+    } else {
+        "all_goals (try simp only [_root_.Prod.mk.injEq] at hy)\n       \
+         all_goals (repeat' (obtain ⟨rfl, hy⟩ := hy))\n       "
+    };
+    let splits_lists = !b.matched_lists.is_empty();
     s.push_str(&format!(
         "-- Proof-local body; the step binding checks it against Plans.fn{f}.\n\
          def body_{f} : AverCert.Grammar.Expr :=\n  {}\n\n",
@@ -2322,9 +2340,21 @@ fn render_step_body(
         })
         .map(|c| format!(", img_{c}"))
         .collect();
-    if splits_lists {
+    if splits_lists || !met.is_empty() {
         elem_simps.push_str(", _root_.List.foldr_cons, _root_.List.foldr_nil");
     }
+    // A callee's image encodes its List result through matchers of its own
+    // module, which `decList_k_enc` (stated in `BridgeElems`) meets only up
+    // to unfolding them: read those back by `erw`, then evaluate again.
+    let erw_reads = if met.is_empty() {
+        String::new()
+    } else {
+        let alts: String = met.iter().map(|k| format!(" | (erw [decList_{k}_enc])")).collect();
+        format!(
+            "\n       all_goals (repeat' (first{alts}))\n       \
+             all_goals try simp only [img_{f}, {STEP_EVAL}, ↓prepend_enc, I_{f}{callee_simps}{elem_simps}{backward}]"
+        )
+    };
     let norm = format!("{STEP_NORM}{empty}{constants}{with_default}{list_images}{elem_simps}");
     // A self-recursive source function is unfolded once, on the right: `simp`
     // with its equation would unfold the recursive call on the left as well.
@@ -2382,20 +2412,20 @@ fn render_step_body(
          | (set_option maxHeartbeats {cap} in\n      \
              (intro F a w h\n       \
               simp only [I_{f}, _root_.Option.map_eq_some_iff] at h\n       \
-              obtain ⟨y, hy, rfl⟩ := h\n       \
-              unfold dec_{f} at hy\n       \
-              split at hy <;> simp only [_root_.Option.bind_eq_some_iff, _root_.Option.some.injEq, \
-                reduceCtorEq, AverCert.GrammarBridge.decodeStr_eq_some] at hy\n       \
+              obtain ⟨y, hy, rfl⟩ := h{split_params}\n       \
+              all_goals unfold dec_{f} at hy\n       \
+              all_goals (split at hy <;> simp only [_root_.Option.bind_eq_some_iff, _root_.Option.some.injEq, \
+                reduceCtorEq, AverCert.GrammarBridge.decodeStr_eq_some] at hy)\n       \
               all_goals (repeat' (first\n         \
                 | (obtain ⟨_, rfl, hy⟩ := hy)\n         \
                 | (obtain ⟨_, hl, hy⟩ := hy\n            \
                    first\n            \
-                   | (rcases decListInt_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩))\n            \
-                   | (rcases decListBool_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩))\n            \
-                   | (rcases decListString_split hl with (⟨rfl, rfl⟩ | ⟨_, _, rfl, rfl⟩)){elem_splits})))\n       \
-              all_goals (try subst hy)\n       \
+                   | (have e := decListInt_sound _ hl; subst e)\n            \
+                   | (have e := decListBool_sound _ hl; subst e)\n            \
+                   | (have e := decListString_sound _ hl; subst e){elem_sounds})))\n       \
+              {split_eqs}all_goals (try subst hy)\n       \
               all_goals simp only [body_{f}, eval_ite, eval_optDefault, eval_resDefault]\n       \
-              all_goals simp only [img_{f}, {STEP_EVAL}, I_{f}{callee_simps}{elem_simps}{backward}]\n       \
+              all_goals simp only [img_{f}, {STEP_EVAL}, ↓prepend_enc, I_{f}{callee_simps}{elem_simps}{backward}]{erw_reads}\n       \
               all_goals (repeat' (refine ite_eq_of (fun h => ?_) (fun h => ?_)))\n       \
               all_goals (try subst_vars)\n       \
               all_goals\n         \
@@ -3306,6 +3336,7 @@ mod source_bridge_tests {
             constants: Vec::new(),
             elem_decoders: BTreeSet::new(),
             list_helpers: false,
+            matched_lists: BTreeSet::new(),
         };
         let mut s = String::new();
         render_fn_defs(&b, &mut s);
@@ -3366,6 +3397,7 @@ mod source_bridge_tests {
             constants: vec!["M.width".to_string()],
             elem_decoders: BTreeSet::new(),
             list_helpers: false,
+            matched_lists: BTreeSet::new(),
         };
         let lit_index: BTreeMap<Vec<u8>, usize> =
             [(Vec::new(), 0), (b" ".to_vec(), 1)].into_iter().collect();
