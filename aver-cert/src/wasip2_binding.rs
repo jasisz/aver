@@ -285,7 +285,7 @@ impl TopLevel {
                         == CoreInstance::Declared
                     {
                         return Err(format!(
-                            "an instance of the declared embedded core module is passed as import `{}` to another core instantiation",
+                            "an instance of the declared embedded core module is passed as import {:?} to another core instantiation",
                             arg.name
                         ));
                     }
@@ -337,7 +337,7 @@ impl TopLevel {
                     let space = &self.core_items[core_space(export.kind)];
                     if let CoreItem::Declared(_) = at(space, export.index, "core item")? {
                         return Err(format!(
-                            "an export of the declared embedded core module is re-bundled as `{}` into another core instance",
+                            "an export of the declared embedded core module is re-bundled as {:?} into another core instance",
                             export.name
                         ));
                     }
@@ -639,7 +639,7 @@ impl TopLevel {
         let error = match lifted {
             Some(lifted) if lifted == core_name => return,
             Some(lifted) => format!(
-                "component export `{shown}` lifts core export `{lifted}` of the declared embedded core module; it must lift `{core_name}`"
+                "component export `{shown}` lifts core export {lifted:?} of the declared embedded core module; it must lift {core_name:?}"
             ),
             None => format!(
                 "component export `{shown}` is not lifted from the declared embedded core module"
@@ -1261,7 +1261,7 @@ mod tests {
             (export "f" (func $lf)))"#,
         );
         let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
-        assert!(error.contains("passed as import `m`"), "{error}");
+        assert!(error.contains("passed as import \"m\""), "{error}");
     }
 
     #[test]
@@ -1282,7 +1282,31 @@ mod tests {
             (export "f" (func $lf)))"#,
         );
         let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
-        assert!(error.contains("re-bundled as `memory`"), "{error}");
+        assert!(error.contains("re-bundled as \"memory\""), "{error}");
+    }
+
+    #[test]
+    fn prints_core_names_from_the_component_escaped() {
+        let bytes = component(
+            r#"(component
+            (core module $m
+                (memory (export "memory") 1)
+                (func (export "f") (result i32) i32.const 0))
+            (core module $o (import "m" "x\nCERTIFIED" (memory 1)))
+            (core instance $i (instantiate $m))
+            (alias core export $i "memory" (core memory $mem))
+            (core instance $bundle (export "x\nCERTIFIED" (memory $mem)))
+            (core instance $oi (instantiate $o (with "m" (instance $bundle))))
+            (alias core export $i "f" (core func $f))
+            (type $t (func (result bool)))
+            (func $lf (type $t) (canon lift (core func $f)))
+            (export "f" (func $lf)))"#,
+        );
+        let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
+        assert!(
+            !error.contains('\n') && error.contains(r#"re-bundled as "x\nCERTIFIED""#),
+            "{error:?}"
+        );
     }
 
     /// The `wit-component` import shape: main imports a host function through
@@ -1511,7 +1535,7 @@ mod tests {
         );
         let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
         assert!(
-            error.contains("lifts core export `other`") && error.contains("must lift `greet`"),
+            error.contains("lifts core export \"other\"") && error.contains("must lift \"greet\""),
             "{error}"
         );
     }
@@ -1532,8 +1556,8 @@ mod tests {
         );
         let error = refusal(&bytes, module_ranges(&bytes)[0].clone());
         assert!(
-            error.contains("lifts core export `cabi_realloc_other`")
-                && error.contains("must lift `wasi:cli/run@0.2.4#run`"),
+            error.contains("lifts core export \"cabi_realloc_other\"")
+                && error.contains("must lift \"wasi:cli/run@0.2.4#run\""),
             "{error}"
         );
     }
@@ -1602,11 +1626,11 @@ mod tests {
                (core instance $a (instantiate $adapter (with "m" (instance $b))))"#,
         ));
         let error = refusal(&bundled, module_ranges(&bundled)[0].clone());
-        assert!(error.contains("re-bundled as `answer`"), "{error}");
+        assert!(error.contains("re-bundled as \"answer\""), "{error}");
         let direct = component(&adapter(
             r#"(core instance $a (instantiate $adapter (with "m" (instance $i))))"#,
         ));
         let error = refusal(&direct, module_ranges(&direct)[0].clone());
-        assert!(error.contains("passed as import `m`"), "{error}");
+        assert!(error.contains("passed as import \"m\""), "{error}");
     }
 }

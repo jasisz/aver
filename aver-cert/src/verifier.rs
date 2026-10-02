@@ -570,12 +570,16 @@ fn trusted_check(
         .and_then(Value::as_str)
         .ok_or_else(|| "cert-manifest.json `format.wall_id` must be a string".to_string())?;
     let selected_wall = wall::resolve(wall_id).ok_or_else(|| {
-        format!("unsupported certificate wall `{wall_id}`; no embedded wall matches")
+        format!(
+            "unsupported certificate wall `{}`; no embedded wall matches",
+            display_safe(wall_id)
+        )
     })?;
     let artifact_root = manifest_str(&manifest, "artifact_certificate_root")?;
     if artifact_root != format::ARTIFACT_CERTIFICATE_ROOT {
         return Err(format!(
-            "artifact certificate root mismatch: certificate pins {artifact_root}, checker expects {}",
+            "artifact certificate root mismatch: certificate pins {}, checker expects {}",
+            display_safe(artifact_root),
             format::ARTIFACT_CERTIFICATE_ROOT
         ));
     }
@@ -1503,7 +1507,7 @@ fn require_supported_identity(identity: &ManifestIdentity) -> Result<ArtifactTar
     if identity.profile != format::PROFILE_ID {
         return Err(format!(
             "unsupported certificate profile `{}`; this checker accepts {}",
-            identity.profile,
+            display_safe(&identity.profile),
             format::PROFILE_ID
         ));
     }
@@ -1517,11 +1521,12 @@ fn require_supported_identity(identity: &ManifestIdentity) -> Result<ArtifactTar
         }
         format::TARGET_WASM_GC | format::TARGET_WASIP2 => Err(format!(
             "unsupported certificate ABI `{}` for target `{}`",
-            identity.abi, identity.target
+            display_safe(&identity.abi),
+            display_safe(&identity.target)
         )),
         _ => Err(format!(
             "unsupported certificate target `{}`; this checker accepts {}, {}",
-            identity.target,
+            display_safe(&identity.target),
             format::TARGET_WASM_GC,
             format::TARGET_WASIP2
         )),
@@ -1617,7 +1622,8 @@ fn read_wasip2_component_envelope(manifest: &Value) -> Result<Wasip2EnvelopeDecl
         })?;
     if kind != format::WASIP2_COMPONENT_ENVELOPE_KIND {
         return Err(format!(
-            "unsupported wasip2 component envelope kind `{kind}`; this checker expects {}",
+            "unsupported wasip2 component envelope kind `{}`; this checker expects {}",
+            display_safe(kind),
             format::WASIP2_COMPONENT_ENVELOPE_KIND
         ));
     }
@@ -1928,7 +1934,7 @@ fn read_candidates(
         if !seen_corollaries.insert(law.corollary.as_str()) {
             return Err(format!(
                 "law-claims declare duplicate corollary `{}`",
-                law.corollary
+                display_safe(&law.corollary)
             ));
         }
     }

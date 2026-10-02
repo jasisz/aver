@@ -1029,13 +1029,13 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
         (
             "renamed-export",
             renamed,
-            "component export `greet` lifts core export `wasi:cli/run@0.2.4#run`",
+            "component export `greet` lifts core export \"wasi:cli/run@0.2.4#run\"",
         ),
         ("second-instance", twice, "instantiated more than once"),
         (
             "adapter-module",
             adapter,
-            "an export of the declared embedded core module is re-bundled as `run`",
+            "an export of the declared embedded core module is re-bundled as \"run\"",
         ),
         (
             "lowered-into-core-memory",
@@ -2349,6 +2349,32 @@ fn cert_tripwire_declines_hostile_cert_file_name() {
     assert!(
         out.contains("bad name.lean") && out.contains("^[A-Za-z][A-Za-z0-9_]*\\.lean$"),
         "wrong reason (n):\n{out}"
+    );
+}
+
+/// (n') The filename gate's refusal prints the name escaped: a file name with
+/// a newline cannot append a forged verdict line to the report.
+#[test]
+fn cert_tripwire_prints_a_hostile_cert_file_name_escaped() {
+    let Some(out_dir) = tripwire_baseline("certverify-neg-n-escape") else {
+        return;
+    };
+    let dir = temp_dir("neg-n-escape");
+    copy_dir(&out_dir, &dir);
+    std::fs::write(
+        dir.join("cert").join("X\nCERTIFIED fake.lean"),
+        "-- inert\ndef x : Nat := 0\n",
+    )
+    .unwrap();
+    let (ok, out) = aver_check(&dir.join("certprobe2.wasm"), &dir.join("cert"));
+    assert!(!ok, "hostile cert file name must fail:\n{out}");
+    assert!(
+        out.contains(r#""X\nCERTIFIED fake.lean""#),
+        "file name not escaped:\n{out}"
+    );
+    assert!(
+        !out.lines().any(|line| line.starts_with("CERTIFIED")),
+        "the file name forged a report line:\n{out}"
     );
 }
 
