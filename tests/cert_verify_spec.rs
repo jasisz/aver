@@ -839,7 +839,9 @@ fn plant_wasip2_component(
 ///   - an adapter module that imports the declared export, changes its result,
 ///     and is the module the export is lifted from;
 ///   - a host function lowered into the declared core's memory and handed to
-///     a helper module whose start function calls it.
+///     a helper module whose start function calls it;
+///   - a helper module whose active data segment traps at instantiation, so
+///     the certified core never runs.
 #[cfg(feature = "wasip2")]
 #[test]
 fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_does_not_run() {
@@ -973,6 +975,21 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
         &honest_core,
     );
 
+    let trapping = component_around_core(
+        r#"(component
+            (core module $honest)
+            (core module $data (memory 0) (data (i32.const 0) "x"))
+            (core instance $i (instantiate $honest))
+            (core instance $d (instantiate $data))
+            (alias core export $i "wasi:cli/run@0.2.4#run" (core func $run))
+            (type $rt (result))
+            (type $ft (func (result $rt)))
+            (func $lifted (type $ft) (canon lift (core func $run)))
+            (instance $world (export "run" (func $lifted)))
+            (export "wasi:cli/run@0.2.4" (instance $world)))"#,
+        &honest_core,
+    );
+
     let adapter = component_around_core(
         r#"(component
             (core module $honest)
@@ -1023,7 +1040,12 @@ fn cert_tripwire_declines_a_wasip2_envelope_pointing_at_a_core_the_component_doe
         (
             "lowered-into-core-memory",
             lowered,
-            "is passed to a core module that runs code",
+            "nor a wit-component shim or fixup module: it has a start function",
+        ),
+        (
+            "trapping-data-segment",
+            trapping,
+            "nor a wit-component shim or fixup module: it has data segments",
         ),
     ] {
         assert_eq!(&component[start..start + core_len], &honest_core[..]);
