@@ -464,7 +464,7 @@ verify pair
     pair(7) => 25
 ```
 
-The full example is `tests/fixtures/yield_verify_stubs/`. Its `numbered` stub has the signature `(BranchPath, Int, Int) -> Option<Int>`. The second argument is the number of `Pool.claim` requests this branch has already made, and the third is the requested peer. The verifier starts the generated protocol and answers each request with the selected stub. This exercises the lowered continuation, including local and imported nested helpers, self yields and `?` propagation. Stubs return operation results, not `Now`/`Later` replies, and the live answer module is not consulted.
+The full example is `tests/fixtures/yield_verify_stubs/`. Its `numbered` stub has the signature `(BranchPath, Int, Int) -> Option<Int>`. The second argument is the number of `Pool.claim` requests this branch has already made, and the third is the requested peer. The verifier starts the generated protocol and answers each request with the selected stub. This exercises the lowered continuation, including local and imported nested helpers, self yields and `?` propagation. Stubs return operation results, and the live answer module is not consulted.
 
 Each case starts with fresh Oracle coordinates. Every operation counts its own calls, so a request is numbered among the calls of the same kind. `Pool.claim` and `Pool.finish` each start at 0, and an in-place `Time.unixMs()` between two `Pool.claim` requests leaves the second request at index 1. A self yield consumes no answer and no index. An in-place effect still needs its own stub if it is reached. Existing step limits and `[[verify.costly]]` settings use the source process name.
 
