@@ -21,23 +21,32 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 | Before | Now |
 |---|---|
+| `aver proof --backend dafny`, `--error-budget` | Lean only; `--sorry-budget`, `--declined-budget` |
+| `--check-json` keys `errors`, `timeouts`, `axioms`, `axiom_budget`, `omitted` | gone (Dafny only); read `build_errors` and `sorries` |
+| hand-written Lean/Dafny proof sidecars | `because` / `using` in the law |
+| `aver proof` exporting every `verify` example, `--certify` bridging every certified export | laws and what they reach by default; pass `--examples` for the examples and what only they reach |
+| `match` on `Tcp.Socket` | add a `Tcp.Socket.Sending(connection)` arm |
+| tail call to a peer not charged its effects | every function of a recursion group declares what the group performs |
+| any bare name in `! [...]` / `effects [...]` | only `yield`, the forwarding marker `_` or a capability namespace |
+| dial, listen or `peerAddress` on `--target wasip2` | refused at compile time |
+
+The certificate wall identity rotates: packages produced by earlier versions must be produced again.
+
+#### From a build of main after 0.29
+
+These forms never shipped in a release; they only matter to a project pinned to main between 0.29 and 0.30.
+
+| Before | Now |
+|---|---|
 | `answer = "Module"` in `aver.toml` | `answers [Cap]` in the answer module's header |
 | `Cap.OpReply.Now(x)` / `.Later(w)` reply sums, `Then` | answer function returns `Tuple<S, Result<R, Run.Wake>>`: `Result.Ok(x)` / `Result.Err(w)` |
 | `Wait.Wake.Item(i)`, `After(ms)`, `Either(i, ms)`, `NextTurn` | `Run.Wake.Until([i], Option.None)`, `Until([], Option.Some(ms))`, `Until([i], Option.Some(ms))`, `Until([], Option.Some(0))`; new `Settled(deadline)` |
 | `[run]` table, `task` / `started` / `landed` keys | generated loop from source; `stop` / `admit` functions in the entry; the answer module begins its own jobs |
 | `begin` answering `Err("work: job limit N reached")` | a job begun at `[work] max-jobs` is queued |
-| `aver proof --backend dafny`, `--error-budget` | Lean only; `--sorry-budget`, `--declined-budget` |
-| `--check-json` keys `errors`, `timeouts`, `axioms`, `axiom_budget`, `omitted`, `claims` | gone (Dafny only); read `build_errors` and `sorries` |
-| hand-written Lean/Dafny proof sidecars | `because` / `using` in the law |
-| `aver proof` exporting every `verify` example, `--certify` bridging every certified export | laws and what they reach by default; pass `--examples` for the examples and what only they reach |
 | stub call index counting every effect | each operation numbers its own calls from 0 |
-| `match` on `Tcp.Socket` | add a `Tcp.Socket.Sending(connection)` arm |
-| tail call to a peer not charged its effects | every function of a recursion group declares what the group performs |
-| any bare name in `! [...]` / `effects [...]` | only `yield` or a capability namespace |
-| dial, listen or `peerAddress` on `--target wasip2` | refused at compile time |
 | calling `__fnStart`, `__fnAnswer…` or matching `__FnOutcome` by hand | refused; run a yielding function as a process (`Run.all()`) or call it from a function that declares `yield`, and test it with a cases-form `verify` that stubs every request |
 
-A manifest that still has `answer =`, the job keys or `[run]` is refused with the repair. The certificate wall identity rotates: packages produced by earlier versions must be produced again. wasm-gc recordings of `Wait.poll` from earlier releases have to be made again, and a vendored copy of `tools/wasm-work/host.mjs` has to be refreshed.
+A manifest that still has `answer =`, the job keys or `[run]` is refused with the repair. wasm-gc recordings of `Wait.poll` made before 0.30 have to be made again, and a vendored copy of `tools/wasm-work/host.mjs` has to be refreshed.
 
 ### Fixed
 
