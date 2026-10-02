@@ -1013,6 +1013,8 @@ struct BridgedFn {
     /// the step splits exactly these into their empty and cons shapes, the
     /// head by its constructors. Every other decoded List is read back whole.
     matched_lists: BTreeSet<usize>,
+    /// Record field indices the plan matches on through a projection.
+    matched_fields: BTreeSet<u32>,
 }
 
 /// One decoder argument shape: the atomic values it decodes, its argument
@@ -1187,6 +1189,61 @@ fn matched_locals(e: &PlanExpr, out: &mut BTreeSet<u32>) {
             arms.iter().for_each(|(_, b)| matched_locals(b, out));
         }
     }
+}
+
+/// The record field indices a plan matches on through a projection of a
+/// local (`match e.tags` over the head `e` of a List): the List fields of a
+/// split head that its step has to split too.
+fn matched_fields(e: &PlanExpr, out: &mut BTreeSet<u32>) {
+    match e {
+        PlanExpr::Literal(_) | PlanExpr::Local(_) => {}
+        PlanExpr::Let(_, v, b) | PlanExpr::BinOp(_, v, b) => {
+            matched_fields(v, out);
+            matched_fields(b, out);
+        }
+        PlanExpr::Call(_, args)
+        | PlanExpr::TailCall(_, args)
+        | PlanExpr::RecordCreate(_, args)
+        | PlanExpr::Construct(_, _, args)
+        | PlanExpr::Interp(args)
+        | PlanExpr::List(_, args) => args.iter().for_each(|a| matched_fields(a, out)),
+        PlanExpr::Neg(x) | PlanExpr::Project(_, _, x) | PlanExpr::Try(x, _) | PlanExpr::Scope(x) => matched_fields(x, out),
+        PlanExpr::If(c, t, el) => {
+            matched_fields(c, out);
+            matched_fields(t, out);
+            matched_fields(el, out);
+        }
+        PlanExpr::Match(subject, arms) => {
+            if let PlanExpr::Project(_, k, inner) = subject.as_ref()
+                && matches!(inner.as_ref(), PlanExpr::Local(_))
+            {
+                out.insert(*k);
+            }
+            matched_fields(subject, out);
+            arms.iter().for_each(|(_, b)| matched_fields(b, out));
+        }
+    }
+}
+
+/// The pattern a matched List parameter's head is split with: its sum
+/// constructors, and the List fields of a record head that the plan matches
+/// on through a projection, into their empty and cons shapes.
+fn head_split_pattern(elem: &SourceEncoder, fields: &BTreeSet<u32>) -> String {
+    if let SourceEncoder::Record { fields: fs, .. } = elem {
+        let parts: Vec<String> = fs
+            .iter()
+            .enumerate()
+            .map(|(k, (_, f))| match f {
+                SourceEncoder::List(_) if fields.contains(&(k as u32)) => "(_ | ⟨_, _⟩)".to_string(),
+                _ => rcases_pattern(f).unwrap_or_else(|| "_".to_string()),
+            })
+            .collect();
+        if parts.iter().any(|p| p != "_") {
+            return format!("⟨{}⟩", parts.join(", "));
+        }
+        return "_".to_string();
+    }
+    rcases_pattern(elem).unwrap_or_else(|| "_".to_string())
 }
 
 /// The plan builtins that call a List helper.
@@ -1370,6 +1427,8 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim
             let callees = direct_callees(&e.plan.body);
             let mut matched = BTreeSet::new();
             matched_locals(&e.plan.body, &mut matched);
+            let mut matched_fields_set = BTreeSet::new();
+            matched_fields(&e.plan.body, &mut matched_fields_set);
             let matched_lists = matched
                 .into_iter()
                 .map(|i| i as usize)
@@ -1391,6 +1450,7 @@ fn plan_bridges(analysis: &Analysis, model: &SourceModel, law_claims: &[LawClaim
                 elem_decoders,
                 list_helpers,
                 matched_lists,
+                matched_fields: matched_fields_set,
             })
         })();
         match derived {
@@ -2246,7 +2306,7 @@ fn render_step_body(
         .collect();
     let param_split = |i: usize, p: &SourceEncoder| match p {
         SourceEncoder::List(elem) if b.matched_lists.contains(&i) => {
-            let head = rcases_pattern(elem).unwrap_or_else(|| "_".to_string());
+            let head = head_split_pattern(elem, &b.matched_fields);
             format!("(_ | ⟨{head}, _⟩)")
         }
         _ => "_".to_string(),
@@ -3337,6 +3397,7 @@ mod source_bridge_tests {
             elem_decoders: BTreeSet::new(),
             list_helpers: false,
             matched_lists: BTreeSet::new(),
+            matched_fields: BTreeSet::new(),
         };
         let mut s = String::new();
         render_fn_defs(&b, &mut s);
@@ -3398,6 +3459,7 @@ mod source_bridge_tests {
             elem_decoders: BTreeSet::new(),
             list_helpers: false,
             matched_lists: BTreeSet::new(),
+            matched_fields: BTreeSet::new(),
         };
         let lit_index: BTreeMap<Vec<u8>, usize> =
             [(Vec::new(), 0), (b" ".to_vec(), 1)].into_iter().collect();
