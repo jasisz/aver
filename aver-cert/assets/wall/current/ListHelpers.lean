@@ -54,6 +54,41 @@ inductive HI where
   | ifThen (body : List HI)
   | ifElseI64 (thenB elseB : List HI)
   | ret
+  -- The `Bytes` helpers' instructions (`BytesHelpers`).
+  /-- `i32.add` / `i32.sub`: exact inside the signed `i32` range and `none`
+      outside it (wasm wraps there; the model makes no claim). -/
+  | i32Add
+  | i32Sub
+  /-- `i32.wrap_i64`: the low 32 bits, read signed. -/
+  | wrapI64
+  /-- `i64.extend_i32_u`: an `i32` word (read signed or unsigned) as its
+      unsigned value. -/
+  | extU
+  /-- `i64.lt_u`: both operands read as unsigned 64-bit numbers (stuck on a
+      word outside the `i64` range). -/
+  | i64LtU
+  /-- `unreachable`: a trap. -/
+  | unreachable
+  /-- `if (result i32) … else … end`. -/
+  | ifElseI32 (thenB elseB : List HI)
+  /-- `array.new_default ty` over the packed byte array type `ty`: `n` zero
+      bytes (the acceptance pins `ty` to `(array (mut i8))`). -/
+  | newBytes (ty : Nat)
+  /-- `array.get_u ty` over the packed byte array type `ty`: the stored byte,
+      zero-extended. -/
+  | getU (ty : Nat)
+  /-- `local.get k; args; array.set ty`: the byte array held in local `k`
+      takes, at the index `args` leaves under the value, the value's low 8
+      bits (the `i8` storage). The array is the one local `k` holds, so the
+      update is written back to local `k`; a template's `args` never write
+      local `k`, and the array local `k` holds is one the helper allocated,
+      referenced from nowhere else. -/
+  | setAt (k ty : Nat) (args : List HI)
+  /-- `local.get k; args; array.copy ty ty`: `args` leave the destination
+      offset, the source array, the source offset and the count; the bytes
+      are copied into the array local `k` holds (a fresh array, as for
+      `setAt`). Out of bounds, or a negative operand, traps. -/
+  | copyTo (k ty : Nat) (args : List HI)
 
 /-- The outcome of a helper instruction sequence: it falls through, it
     branches to the label `depth` levels out (with the locals and the stack
@@ -66,6 +101,36 @@ inductive HOut where
 /-- `i64.add`: two's-complement addition modulo `2 ^ 64`, read back signed. -/
 def wrapI64 (x : Int) : Int :=
   (x + 9223372036854775808) % 18446744073709551616 - 9223372036854775808
+
+/-- `i32.wrap_i64`: the low 32 bits, read signed. -/
+def wrapI32 (x : Int) : Int :=
+  (x + 2147483648) % 4294967296 - 2147483648
+
+/-- The signed `i32` range, where `i32.add` / `i32.sub` are exact. Decided on
+    the constructors of `Int` (`Nat.blt`), never by subtracting from a large
+    literal, which the kernel would do one unit at a time. -/
+def inI32 : Int → Bool
+  | .ofNat n => n.blt 2147483648
+  | .negSucc n => n.blt 2147483648
+
+/-- The signed `i64` range: `i64.lt_u` is exact on two `i64` words, and
+    stuck on any other. -/
+def inI64 : Int → Bool
+  | .ofNat n => n.blt 9223372036854775808
+  | .negSucc n => n.blt 9223372036854775808
+
+/-- `i64.lt_u` on two `i64` words: a negative word reads as `2^64` plus
+    itself, above every non-negative one. -/
+def ltU64 : Int → Int → Bool
+  | .ofNat a, .ofNat b => a.blt b
+  | .ofNat _, .negSucc _ => true
+  | .negSucc _, .ofNat _ => false
+  | .negSucc a, .negSucc b => b.blt a
+
+/-- `array.copy`'s result over the destination `dst`: `n` elements of `src`
+    from `so` land at `d`. -/
+def copyInto (dst src : List WVal) (d so n : Nat) : List WVal :=
+  dst.take d ++ (src.drop so).take n ++ dst.drop (d + n)
 
 /-- One straight-line instruction, run by the audited interpreter. A helper
     calls only the functions `host` names. -/
@@ -132,6 +197,81 @@ def hRun (host : HostTbl) : Nat → List HI → List WVal → List WVal → Opti
       match st with
       | v :: _ => some (.ret v)
       | [] => none
+  | k + 1, .i32Add :: rest, l, st =>
+      match st with
+      | .i32v y :: .i32v x :: st' =>
+          if inI32 (x + y) then hRun host k rest l (.i32v (x + y) :: st') else none
+      | _ => none
+  | k + 1, .i32Sub :: rest, l, st =>
+      match st with
+      | .i32v y :: .i32v x :: st' =>
+          if inI32 (x - y) then hRun host k rest l (.i32v (x - y) :: st') else none
+      | _ => none
+  | k + 1, .wrapI64 :: rest, l, st =>
+      match st with
+      | .i64v x :: st' => hRun host k rest l (.i32v (wrapI32 x) :: st')
+      | _ => none
+  | k + 1, .extU :: rest, l, st =>
+      match st with
+      | .i32v x :: st' =>
+          if i32Word x then hRun host k rest l (.i64v (toU32 x) :: st') else none
+      | _ => none
+  | k + 1, .i64LtU :: rest, l, st =>
+      match st with
+      | .i64v y :: .i64v x :: st' =>
+          if inI64 x && inI64 y then hRun host k rest l (b32 (ltU64 x y) :: st')
+          else none
+      | _ => none
+  | _ + 1, .unreachable :: _, _, _ => none
+  | k + 1, .ifElseI32 tB eB :: rest, l, st =>
+      match st with
+      | .i32v c :: st' =>
+          match hRun host k (if c = 0 then eB else tB) l st' with
+          | some (.ok l' st'') => hRun host k rest l' st''
+          | some (.ret v) => some (.ret v)
+          | _ => none
+      | _ => none
+  | k + 1, .newBytes ty :: rest, l, st =>
+      match st with
+      | .i32v n :: st' =>
+          if 0 ≤ n then hRun host k rest l (.arr ty (List.replicate n.toNat (.i32v 0)) :: st')
+          else none
+      | _ => none
+  | k + 1, .getU ty :: rest, l, st =>
+      match st with
+      | .i32v i :: .arr t es :: st' =>
+          if t = ty ∧ 0 ≤ i then
+            match es[i.toNat]? with
+            | some (.i32v v) => hRun host k rest l (.i32v (v % 256) :: st')
+            | _ => none
+          else none
+      | _ => none
+  | k + 1, .setAt j ty args :: rest, l, st =>
+      match l[j]? with
+      | some (.arr t es) =>
+          if t = ty then
+            match hRun host k args l st with
+            | some (.ok l' (.i32v v :: .i32v i :: st')) =>
+                if 0 ≤ i ∧ i < es.length then
+                  hRun host k rest (l'.set j (.arr ty (es.set i.toNat (.i32v (v % 256))))) st'
+                else none
+            | _ => none
+          else none
+      | _ => none
+  | k + 1, .copyTo j ty args :: rest, l, st =>
+      match l[j]? with
+      | some (.arr t dst) =>
+          if t = ty then
+            match hRun host k args l st with
+            | some (.ok l' (.i32v n :: .i32v so :: .arr t2 src :: .i32v d :: st')) =>
+                if t2 = ty ∧ 0 ≤ n ∧ 0 ≤ so ∧ 0 ≤ d ∧ so + n ≤ src.length ∧
+                    d + n ≤ dst.length then
+                  hRun host k rest
+                    (l'.set j (.arr ty (copyInto dst src d.toNat so.toNat n.toNat))) st'
+                else none
+            | _ => none
+          else none
+      | _ => none
 
 /-- A declared local of a helper: `i64`, `i32`, a nullable reference, or the
     value type of a source type (the element local of `reverse`). -/
@@ -188,6 +328,26 @@ mutual
         | some a, some b => some ([0x04, 0x7e] ++ a ++ [0x05] ++ b ++ [0x0b])
         | _, _ => none
     | .ret => some [0x0f]
+    | .i32Add => some [0x6a]
+    | .i32Sub => some [0x6b]
+    | .wrapI64 => some [0xa7]
+    | .extU => some [0xad]
+    | .i64LtU => some [0x54]
+    | .unreachable => some [0x00]
+    | .ifElseI32 tB eB =>
+        match encHL M tB, encHL M eB with
+        | some a, some b => some ([0x04, 0x7f] ++ a ++ [0x05] ++ b ++ [0x0b])
+        | _, _ => none
+    | .newBytes ty => (uleb32 ty).map ([0xfb, 0x07] ++ ·)
+    | .getU ty => (uleb32 ty).map ([0xfb, 0x0d] ++ ·)
+    | .setAt j ty args =>
+        match uleb32 j, encHL M args, uleb32 ty with
+        | some a, some b, some c => some ([0x20] ++ a ++ b ++ [0xfb, 0x0e] ++ c)
+        | _, _, _ => none
+    | .copyTo j ty args =>
+        match uleb32 j, encHL M args, uleb32 ty with
+        | some a, some b, some c => some ([0x20] ++ a ++ b ++ [0xfb, 0x11] ++ c ++ c)
+        | _, _, _ => none
   def encHL (M : MCtx) : List HI → Option (List Nat)
     | [] => some []
     | x :: xs =>

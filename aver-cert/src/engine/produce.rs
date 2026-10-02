@@ -150,6 +150,13 @@ fn confirm_type_table(facts: &ModuleFacts, tt: &mut PlanTypeTable) {
         (Some(v), Some(s)) if facts.array_is(u64::from(v), StorT::Val(ValT::RefNull(s))) => {}
         _ => tt.str_vec = None,
     }
+    // `TypeTable.typeTableConfirmed`: the packed `Bytes` array is an `i8`
+    // array of the opening rec group, apart from `$string`.
+    if let Some(b) = tt.bytes_arr
+        && (!facts.array_is(u64::from(b), StorT::I8) || tt.str_ == Some(b))
+    {
+        tt.bytes_arr = None;
+    }
     loop {
         let snapshot = tt.clone();
         let m = MCtx::new(None, &Vec::new(), &snapshot, &[]);
@@ -219,7 +226,10 @@ fn confirm_type_table(facts: &ModuleFacts, tt: &mut PlanTypeTable) {
         if let Some(c) = tt.carrier {
             owned.insert(c);
         }
-        for x in [tt.mag, tt.str_, tt.str_vec].into_iter().flatten() {
+        for x in [tt.mag, tt.str_, tt.str_vec, tt.bytes_arr]
+            .into_iter()
+            .flatten()
+        {
             owned.insert(x);
         }
         tt.records
@@ -294,7 +304,21 @@ impl Cited {
                 self.expr(v);
                 self.expr(b);
             }
-            PlanExpr::Call(_, args) | PlanExpr::TailCall(_, args) | PlanExpr::Interp(args) => {
+            PlanExpr::Call(callee, args) => {
+                // A `Bytes` builtin's helper types name the packed array and,
+                // for `pack` / `unpack`, the `List<Int>` cons struct.
+                if let PlanCallee::Builtin(b) = callee
+                    && b.is_bytes()
+                {
+                    self.ty(&PlanTy::Bytes);
+                    self.ty(&PlanTy::Int);
+                    if matches!(b, PlanBuiltin::BytesOfList | PlanBuiltin::BytesValues) {
+                        self.ty(&PlanTy::List(Box::new(PlanTy::Int)));
+                    }
+                }
+                args.iter().for_each(|a| self.expr(a))
+            }
+            PlanExpr::TailCall(_, args) | PlanExpr::Interp(args) => {
                 args.iter().for_each(|a| self.expr(a))
             }
             PlanExpr::BinOp(_, l, r) => {
@@ -444,6 +468,9 @@ impl Cited {
             // Narrowed to the helpers the certified plans call by `analyze`.
             list_helpers: tt.list_helpers.clone(),
             int_sat: tt.int_sat,
+            bytes_arr: tt.bytes_arr.filter(|_| has(PlanTy::Bytes)),
+            bytes_helpers: tt.bytes_helpers.clone(),
+            int_chk: tt.int_chk,
         }
     }
 }
@@ -633,6 +660,46 @@ fn confirm_list_helpers(
     }
 }
 
+/// Keep only the `Bytes` helpers (and `__aint_to_i64_checked`) whose code
+/// entry and function type are exactly their templates (`AcceptedArtifact.
+/// bytesHelpersPinnedWith`), and none that is also a user function. `pack`'s
+/// template names the checked conversion, so a dropped conversion drops it.
+fn confirm_bytes_helpers(
+    facts: &ModuleFacts,
+    roles: Option<&HostRoles>,
+    plans: &ModulePlans,
+    types: &mut PlanTypeTable,
+) {
+    let user = |f: u32| plans.fns.iter().any(|p| p.func_idx == f);
+    let sig_is = |f: u32, sig: Option<(Vec<ValT>, Vec<ValT>)>| match (facts.fn_sig(f), sig) {
+        (Some(CompT::Func(p, r)), Some((ps, rs))) => *p == ps && *r == rs,
+        _ => false,
+    };
+    let m = MCtx::new(roles, &facts.string_roles, types, &[]);
+    let chk_ok = types.int_chk.is_some_and(|f| {
+        !user(f)
+            && m.chk_entry_bytes()
+                .is_some_and(|b| facts.code_of(f).is_some_and(|c| c.entry == b))
+            && sig_is(
+                f,
+                u32::try_from(m.carrier)
+                    .ok()
+                    .map(|c| (vec![ValT::RefNull(c)], vec![ValT::I64])),
+            )
+    });
+    if !chk_ok {
+        types.int_chk = None;
+    }
+    let snapshot = types.clone();
+    let m = MCtx::new(roles, &facts.string_roles, &snapshot, &[]);
+    types.bytes_helpers.retain(|(r, f)| {
+        !user(*f)
+            && m.bytes_entry_bytes(*r)
+                .is_some_and(|b| facts.code_of(*f).is_some_and(|c| c.entry == b))
+            && sig_is(*f, m.bytes_sig(*r))
+    });
+}
+
 /// Analyze one core module against the compiler's plans.
 pub fn analyze(
     core_bytes: &[u8],
@@ -676,6 +743,7 @@ pub fn analyze(
         .map(|(t, f)| (*f, FnPlan::cons(t)))
         .collect();
     confirm_list_helpers(&facts, role_table.as_ref(), plans, &mut types);
+    confirm_bytes_helpers(&facts, role_table.as_ref(), plans, &mut types);
 
     let mut reasons: BTreeMap<u32, String> = BTreeMap::new();
     let mut plan_of: BTreeMap<u32, &FnPlan> = BTreeMap::new();
@@ -789,8 +857,22 @@ pub fn analyze(
         .cloned()
         .collect();
     let used_sat = types.int_sat.filter(|f| called(f));
+    // The `Bytes` helpers the lowerings call; `pack` calls the checked
+    // conversion, `unpack` the box contract.
+    let used_bytes: Vec<(PlanBytesRole, u32)> = types
+        .bytes_helpers
+        .iter()
+        .filter(|(_, f)| called(f))
+        .cloned()
+        .collect();
+    let used_chk = types
+        .int_chk
+        .filter(|_| used_bytes.iter().any(|(r, _)| *r == PlanBytesRole::Pack));
     for (t, r, _) in &used_helpers {
         calls.extend(m.helper_inner_calls(*r, t));
+    }
+    for (r, _) in &used_bytes {
+        calls.extend(m.bytes_inner_calls(*r));
     }
     if eq_from_hint
         && !calls.contains(&m.eq)
@@ -880,6 +962,9 @@ pub fn analyze(
     // Only the List helpers the certified plans reach are declared.
     types.list_helpers = used_helpers;
     types.int_sat = used_sat;
+    // Only the `Bytes` helpers the certified plans reach are declared.
+    types.bytes_helpers = used_bytes;
+    types.int_chk = used_chk;
 
     let declined: Vec<(String, String)> = export_name
         .iter()

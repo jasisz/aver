@@ -859,10 +859,11 @@ theorem entries_of_packed {cs : List Nat} {n len : Nat} {hs : List Nat} {L : Lay
 calls. Each plan's declaration already lowers it, so it also pins the plan's
 role bits (`planOne`), and the contracts are read from the bits. -/
 
-/-- The contract helpers the declared List helpers call, the second half of
-    `ClaimAxes.usedCalls`. -/
+/-- The contract helpers the declared List and `Bytes` helpers call, the rest
+    of `ClaimAxes.usedCalls`. -/
 def helperCalls (M : MCtx) : List Nat :=
-  (M.listHelpers.map fun x => _root_.AverCert.ListHelpers.innerCalls M x.2.1 x.1).flatten
+  (M.listHelpers.map fun x => _root_.AverCert.ListHelpers.innerCalls M x.2.1 x.1).flatten ++
+    (M.bytesHelpers.map fun x => _root_.AverCert.BytesHelpers.bytesInnerCalls M x.1).flatten
 
 /-- `ClaimAxes.contractUse` from the plans' role bits and the List helpers'
     own calls. -/
@@ -921,7 +922,7 @@ theorem checked_of_bits {artifact : ArtifactData} {rs : List Nat}
   congr 1
   subst hbits
   simp only [AverCert.ClaimAxes.contractUse, AverCert.ClaimAxes.usedCalls, useOfBits,
-    helperCalls, List.contains_append]
+    helperCalls, List.contains_append, Bool.or_assoc]
   congr 1 <;>
     (rw [any_bit]; intro e; simp only [roleCalls, List.getD_cons_zero, List.getD_cons_succ])
 

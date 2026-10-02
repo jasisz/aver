@@ -652,8 +652,10 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
         "missing CERTIFIED for the wasip2 component:\n{report}"
     );
     // Disk brings in Bytes, and the embedded core exports its pure helper too.
-    // List-pattern admission makes allInRange certifiable. Pin the names in
-    // the manifest the verifier just checked, including any unexpected extras.
+    // List-pattern admission makes allInRange certifiable, and the packed
+    // Bytes helpers make concat, drop, empty and take certifiable. Pin the
+    // names in the manifest the verifier just checked, including any
+    // unexpected extras.
     let mut certified_exports: Vec<_> = manifest["certified"]
         .as_array()
         .expect("certified export list")
@@ -663,7 +665,14 @@ fn cert_tripwire_accepts_produced_wasip2_wasi_imports_end_to_end() {
     certified_exports.sort_unstable();
     assert_eq!(
         certified_exports,
-        ["Bytes_allInRange", "greet"],
+        [
+            "Bytes_allInRange",
+            "Bytes_concat",
+            "Bytes_drop",
+            "Bytes_empty",
+            "Bytes_take",
+            "greet"
+        ],
         "wasip2 certified export set changed:\n{report}"
     );
 }
@@ -2694,9 +2703,11 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     // codepoint variants the plain build synthesizes are in it too, eight more
     // functions that carry no claim: 18 of 162. A List match certifies five
     // more: 23 of 162. The List helpers certify one more (`Bytes_hexParts`
-    // calls `List.reverse`): 24 of 162.
+    // calls `List.reverse`): 24 of 162. The packed `Bytes` helpers certify
+    // six more (`Bytes.empty`, `len`, `octets`, `concat`, `take`, `drop`):
+    // 30 of 162.
     assert!(
-        compile_report.contains("(24 certified, 138 source-level-only)"),
+        compile_report.contains("(30 certified, 132 source-level-only)"),
         "json certificate KPI denominator changed:
 {compile_report}"
     );
@@ -2715,7 +2726,7 @@ fn cert_verify_declines_tampered_array_new_data_operands() {
     let (ok, report) = aver_check(&wasm, &cert);
     assert!(ok, "expected clean json certificate to verify:\n{report}");
     assert!(
-        report.contains("24 checked exports"),
+        report.contains("30 checked exports"),
         "json should certify the widened data-segment functions:\n{report}"
     );
     assert!(

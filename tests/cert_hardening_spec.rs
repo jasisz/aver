@@ -3694,3 +3694,209 @@ fn cert_hardening_declines_a_contains_without_its_equality_contract() {
         "checkedPols data callBits axesPols = true\nis false",
     );
 }
+
+/// A program calling every packed `Bytes` operation the plan grammar admits,
+/// through the standard library's `Bytes` module: its functions pack
+/// (`empty`), unpack (`octets`), read the length inline (`len`), and keep
+/// `concat` / `take` / `drop` packed.
+const BYTES: &str = "module BytesProbe
+    intent = \"Bytes helpers.\"
+    depends [Bytes]
+    exposes [none, size, values, both, front, rest]
+
+fn none() -> Bytes
+    ? \"No bytes.\"
+    Bytes.empty()
+
+fn size(b: Bytes) -> Int
+    ? \"The byte count.\"
+    Bytes.len(b)
+
+fn values(b: Bytes) -> List<Int>
+    ? \"The octets.\"
+    Bytes.octets(b)
+
+fn both(a: Bytes, b: Bytes) -> Bytes
+    ? \"Concatenation.\"
+    Bytes.concat(a, b)
+
+fn front(b: Bytes, n: Int) -> Bytes
+    ? \"A prefix.\"
+    Bytes.take(b, n)
+
+fn rest(b: Bytes, n: Int) -> Bytes
+    ? \"A suffix.\"
+    Bytes.drop(b, n)
+";
+
+/// Emit the `Bytes` certificate into a fresh scratch directory.
+fn bytes_baseline(prefix: &str) -> Option<(ScratchDir, PathBuf, PathBuf)> {
+    if !lake_available() {
+        return None;
+    }
+    let dir = temp_dir(prefix);
+    std::fs::write(dir.join("bytesprobe.av"), BYTES).unwrap();
+    let out = dir.join("out");
+    let compile = aver_command()
+        .current_dir(&*dir)
+        .args([
+            "compile",
+            "bytesprobe.av",
+            "--target",
+            "wasm-gc",
+            "--certify",
+            "-o",
+        ])
+        .arg(&out)
+        .output()
+        .expect("aver compile --certify runs");
+    assert!(
+        compile.status.success(),
+        "compile --certify failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    Some((dir, out.join("bytesprobe.wasm"), out.join("cert")))
+}
+
+/// The honest certificate checks: every `Bytes` helper is declared, pinned
+/// to its template and run by the wall, and the probe's six functions, the
+/// six `Bytes` functions they call and the `Bytes` module's other certified
+/// functions (20 in all) check.
+#[test]
+fn cert_hardening_accepts_bytes_helpers() {
+    let Some((_dir, wasm, cert)) = bytes_baseline("certharden-bytes-clean") else {
+        return;
+    };
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    for row in [
+        "bytesArr := some ",
+        "(.pack, ",
+        "(.unpack, ",
+        "(.concat, ",
+        "(.take, ",
+        "(.drop, ",
+        "intChk := some ",
+        "intSat := some ",
+        "(.builtin .bytesLen)",
+    ] {
+        assert!(plans.contains(row), "`{row}` is declared:\n{plans}");
+    }
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert!(ok, "the Bytes-helper certificate must check:\n{report}");
+    assert!(report.contains("20 checked exports"), "{report}");
+}
+
+/// A role row naming another helper of the same type: `take` declared at the
+/// `drop` helper's index. Both are `(Bytes, i64) -> Bytes`, so only the
+/// template pins the role; the bytes at that index are `drop`'s.
+#[test]
+fn cert_hardening_declines_a_bytes_take_role_on_the_drop_body() {
+    let Some((_dir, wasm, cert)) = bytes_baseline("certharden-bytes-role") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let take = number_after(&text, "(.take, ");
+    let drop = number_after(&text, "(.drop, ");
+    replace_once(
+        &plans,
+        &format!("(.take, {take})"),
+        &format!("(.take, {drop})"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A helper of another type: `unpack` (`Bytes -> List<Int>`) declared at the
+/// `pack` helper (`List<Int> -> Bytes`). A plan reading `bytes.values` then
+/// calls a function of the wrong type; the type pin and the template refuse
+/// it.
+#[test]
+fn cert_hardening_declines_a_bytes_helper_of_another_type() {
+    let Some((_dir, wasm, cert)) = bytes_baseline("certharden-bytes-type") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let unpack = number_after(&text, "(.unpack, ");
+    let pack = number_after(&text, "(.pack, ");
+    replace_once(
+        &plans,
+        &format!("(.unpack, {unpack})"),
+        &format!("(.unpack, {pack})"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The checked conversion `pack` calls is pinned too: pointing it at the
+/// `unpack` helper is refused.
+#[test]
+fn cert_hardening_declines_a_checked_conversion_at_another_function() {
+    let Some((_dir, wasm, cert)) = bytes_baseline("certharden-bytes-chk") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let chk = number_after(&text, "intChk := some ");
+    let other = number_after(&text, "(.unpack, ");
+    replace_once(
+        &plans,
+        &format!("intChk := some {chk}"),
+        &format!("intChk := some {other}"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// The packed array declared at the `$string` array: both are
+/// `(array (mut i8))`, but one index cannot serve two declarations.
+#[test]
+fn cert_hardening_declines_bytes_declared_at_the_string_array() {
+    let Some((_dir, wasm, cert)) = bytes_baseline("certharden-bytes-str") else {
+        return;
+    };
+    let plans = cert.join("Plans.lean");
+    let text = std::fs::read_to_string(&plans).unwrap();
+    let arr = number_after(&text, "bytesArr := some ");
+    let Some(at) = text.find("str := some ") else {
+        // A module without strings has no `$string` array to collide with.
+        return;
+    };
+    let str_ = number_after(&text[at..], "str := some ");
+    replace_once(
+        &plans,
+        &format!("bytesArr := some {arr}"),
+        &format!("bytesArr := some {str_}"),
+    );
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}
+
+/// A tampered helper body: the `take` helper's count test `i64.const 0`
+/// becomes `i64.const 1`, so a count of one would take nothing. The module
+/// stays valid and is restamped; only the template pin of the declared
+/// `take` helper sees the change.
+#[test]
+fn cert_hardening_declines_a_tampered_bytes_helper_body() {
+    let Some((_dir, wasm, cert)) = bytes_baseline("certharden-bytes-body") else {
+        return;
+    };
+    let plans = std::fs::read_to_string(cert.join("Plans.lean")).unwrap();
+    let take: u32 = number_after(&plans, "(.take, ").parse().unwrap();
+    let mut bytes = std::fs::read(&wasm).unwrap();
+    let (body, _) = code_body_and_imports(&bytes, take);
+    assert!(!body.is_empty(), "the take helper is a defined function");
+    // `local.get 1; i64.const 0; i64.gt_s`: the clamp's positive-count test.
+    let test = [0x20, 0x01, 0x42, 0x00, 0x55];
+    let at = bytes[body.clone()]
+        .windows(test.len())
+        .position(|w| w == test)
+        .expect("the take helper tests its count")
+        + body.start;
+    bytes[at + 3] = 0x01;
+    validate(&bytes);
+    restamp(&wasm, &cert, &bytes);
+    let (ok, report) = aver_cert("check", &wasm, &cert);
+    assert_declined(ok, &report, "did not build");
+}

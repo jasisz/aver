@@ -38,6 +38,12 @@
      with fewer than two fields are declined, because the emitter lowers a
      one-field record as a newtype.
    * `project tid field base` — `Project`, the field by declared index.
+   * `call (.builtin .bytesOfList | .bytesValues | .bytesLen | .bytesConcat |
+     .bytesTake | .bytesDrop) args` — the `RecordCreate` / `Project` of the
+     packed `Bytes` refinement, as the emitter lowers them: a call of the
+     per-type helper the type table declares (`MCtx.bytesHelper`, pinned
+     and proved in `BytesHelpers`), or for `List.len(bytes.values)` the
+     inline `array.len`.
    * `call (.lazy b) [opt, dflt]` — `Call { callee: Builtin(..) }` for
      `Option.withDefault` / `Result.withDefault` (the boxed path: the default
      is evaluated only on the `None` / `Err` side, as the emitter does), the
@@ -77,9 +83,9 @@
    Values: `SVal` has nested records (`record tid fields`; a one-field record
    is a newtype, represented as its field's value), user variants (`variant
    tid ctor fields`), Option / Result values that carry their instantiation,
-   Floats (bits), Strings (bytes), Vectors, Lists (`nil` / `cons`) and opaque
-   pass-through values (a `Map` field). A tuple instantiation is a record
-   type id of the type table. -/
+   Floats (bits), Strings (bytes), Vectors, Lists (`nil` / `cons`), `Bytes`
+   (octets, apart from a `List<Int>`) and opaque pass-through values (a `Map`
+   field). A tuple instantiation is a record type id of the type table. -/
 import SchemaBase
 
 namespace AverCert.Grammar
@@ -111,6 +117,9 @@ inductive Ty where
   /-- A type the plan only passes through (a `Map` field of a constructor):
       no operation reads it, and its values are the wasm values themselves. -/
   | opaque (tid : Nat)
+  /-- `Bytes`: the standard library's octet refinement, represented as the
+      packed `(array (mut i8))` of its octets (`MCtx.bytesArr`). -/
+  | bytes
 deriving DecidableEq, Repr
 
 structure Sig where
@@ -150,7 +159,40 @@ inductive Builtin where
       type table declares (`MCtx.listHelper`), whose body the acceptance
       pins to the wall's template and `ListHelpers` proves. -/
   | listLen | listReverse | listConcat | listTake | listDrop | listContains
+  /-- The packed `Bytes` operations, which MIR spells as the record's
+      construction and projection (`src/codegen/wasm_gc/body/from_mir/
+      records.rs`): `Bytes(values = xs)` packs (`bytesOfList`, the `pack`
+      helper), `bytes.values` unpacks (`bytesValues`, the `unpack` helper),
+      `List.len(bytes.values)` reads the array length inline (`bytesLen`), and
+      a construction over `List.concat` / `take` / `drop` of projections calls
+      the preserving helper (`bytesConcat` / `bytesTake` / `bytesDrop`). -/
+  | bytesOfList | bytesValues | bytesLen | bytesConcat | bytesTake | bytesDrop
 deriving DecidableEq, Repr
+
+/-- The per-type helpers of the packed `Bytes` array
+    (`src/codegen/wasm_gc/packed_sequences.rs`). -/
+inductive BytesRole where
+  | pack | unpack | concat | take | drop
+deriving DecidableEq, Repr
+
+/-- A `Bytes` helper's parameter count. -/
+def BytesRole.arity : BytesRole → Nat
+  | .pack | .unpack => 1
+  | _ => 2
+
+/-- The `Bytes` helper a `Bytes` builtin calls (`bytesLen` calls none). -/
+def Builtin.bytesRole : Builtin → Option BytesRole
+  | .bytesOfList => some .pack
+  | .bytesValues => some .unpack
+  | .bytesConcat => some .concat
+  | .bytesTake => some .take
+  | .bytesDrop => some .drop
+  | _ => none
+
+/-- A `Bytes` builtin (`bytesLen` included). -/
+def Builtin.isBytes : Builtin → Bool
+  | .bytesOfList | .bytesValues | .bytesLen | .bytesConcat | .bytesTake | .bytesDrop => true
+  | _ => false
 
 /-- The per-instantiation `List<T>` runtime helpers a builtin call reaches
     (`src/codegen/wasm_gc/lists.rs`). -/
@@ -318,10 +360,22 @@ structure MCtx where
   /-- `__aint_to_i64_sat`, the saturating Int-to-`i64` conversion of a
       `List.take` / `List.drop` count, pinned to its template. -/
   toI64Sat : Nat := 0
+  /-- The packed `Bytes` array type (`(array (mut i8))`). -/
+  bytesArr : Nat := 0
+  /-- The `Bytes` helpers the type table declares, by role: each one's body
+      is pinned to the wall's template (`BytesHelpers`). -/
+  bytesHelpers : List (BytesRole × Nat) := []
+  /-- `__aint_to_i64_checked`, which `pack` calls per element, pinned to its
+      template. -/
+  toI64Chk : Nat := 0
 
 /-- The declared helper of `role` for `List<t>`. -/
 def MCtx.listHelper (M : MCtx) (r : ListRole) (t : Ty) : Option Nat :=
   (M.listHelpers.find? fun x => decide (x.1 = t ∧ x.2.1 = r)).map (·.2.2)
+
+/-- The declared `Bytes` helper of `role`. -/
+def MCtx.bytesHelper (M : MCtx) (r : BytesRole) : Option Nat :=
+  (M.bytesHelpers.find? fun x => decide (x.1 = r)).map (·.2)
 
 /-- The element types `List.contains` compares: its helper calls
     `__aint_eq` (Int), `__wasmgc_string_eq` (String), or uses `i32.eq`
@@ -382,7 +436,7 @@ def MCtx.newtype (M : MCtx) (tid : Nat) : Bool :=
     heap type (a record, sum, Option, Result, String, List or Vector). -/
 def Ty.hasDefault : Ty → Bool
   | .int | .bool | .record _ | .sum _ | .option _ | .result _ _ => true
-  | .string | .float | .list _ | .vec _ => true
+  | .string | .float | .list _ | .vec _ | .bytes => true
   | _ => false
 
 def Pat.isWild : Pat → Bool
@@ -533,6 +587,13 @@ def builtinTy (M : MCtx) : Builtin → List Ty → Option Ty
   | .listDrop, [.list t, .int] => if (M.listHelper .drop t).isSome then some (.list t) else none
   | .listContains, [.list t, t'] =>
       if t = t' ∧ t.containsEq ∧ (M.listHelper .contains t).isSome then some .bool else none
+  | .bytesOfList, [.list .int] => if (M.bytesHelper .pack).isSome then some .bytes else none
+  | .bytesValues, [.bytes] => if (M.bytesHelper .unpack).isSome then some (.list .int) else none
+  | .bytesLen, [.bytes] => some .int
+  | .bytesConcat, [.bytes, .bytes] =>
+      if (M.bytesHelper .concat).isSome then some .bytes else none
+  | .bytesTake, [.bytes, .int] => if (M.bytesHelper .take).isSome then some .bytes else none
+  | .bytesDrop, [.bytes, .int] => if (M.bytesHelper .drop).isSome then some .bytes else none
   | _, _ => none
 
 /-- `withDefault` over a subject and default of these types. -/
@@ -837,6 +898,8 @@ inductive SVal where
   | cons (t : Ty) (h tl : SVal)
   /-- A value of an opaque type: the wasm value itself. -/
   | w (v : CertPrelude.WVal)
+  /-- A `Bytes` value by its octets (nominal: not a `List<Int>`). -/
+  | bytes (bs : List Nat)
 deriving Repr
 
 mutual
@@ -859,6 +922,7 @@ mutual
     | .nil t, .list t' => t = t'
     | .cons t h tl, .list t' => t = t' ∧ HasTy M h t ∧ HasTy M tl (.list t)
     | .w _, .opaque _ => True
+    | .bytes bs, .bytes => ∀ b ∈ bs, b < 256
     | _, _ => False
   def HasTyL (M : MCtx) : List SVal → List Ty → Prop
     | [], [] => True
@@ -941,6 +1005,16 @@ def svEq : SVal → SVal → Bool
   | .b a, .b b => a == b
   | _, _ => false
 
+/-- The Ints of a list of values. -/
+def intsOf : List SVal → Option (List Int)
+  | [] => some []
+  | .i n :: vs => (intsOf vs).map (n :: ·)
+  | _ => none
+
+/-- The byte an Int is stored as in the packed array: its low 8 bits
+    (`i32.wrap_i64`, then the `i8` storage of `array.set`). -/
+def byteOf (n : Int) : Nat := (n % 256).toNat
+
 def builtinEval : Builtin → List SVal → Option SVal
   | .boolAnd, [.b x, .b y] => some (.b (x && y))
   | .boolOr, [.b x, .b y] => some (.b (x || y))
@@ -962,6 +1036,15 @@ def builtinEval : Builtin → List SVal → Option SVal
   | .listTake, [xs, .i n] => (listOf? xs).map fun p => consAll p.1 (p.2.take n.toNat)
   | .listDrop, [xs, .i n] => (listOf? xs).map fun p => consAll p.1 (p.2.drop n.toNat)
   | .listContains, [xs, x] => (listOf? xs).map fun p => .b (p.2.any fun v => svEq v x)
+  | .bytesOfList, [xs] =>
+      match listOf? xs with
+      | some p => (intsOf p.2).map fun ns => .bytes (ns.map byteOf)
+      | none => none
+  | .bytesValues, [.bytes bs] => some (consAll .int (bs.map fun (b : Nat) => .i (b : Int)))
+  | .bytesLen, [.bytes bs] => some (.i bs.length)
+  | .bytesConcat, [.bytes a, .bytes b] => some (.bytes (a ++ b))
+  | .bytesTake, [.bytes a, .i n] => some (.bytes (a.take n.toNat))
+  | .bytesDrop, [.bytes a, .i n] => some (.bytes (a.drop n.toNat))
   | _, _ => none
 
 /-- A Euclidean intrinsic (Lean's `Int` `/` and `%` are `Int.ediv` and
@@ -1191,6 +1274,8 @@ mutual
     | .cons t h tl, w =>
         ∃ x y, w = .structv (M.listStruct t) [x, y] ∧ SRepr S M h x ∧ SRepr S M tl y
     | .w v, x => x = v
+    | .bytes bs, w =>
+        bs.length < 2147483648 ∧ w = .arr M.bytesArr (bs.map fun (b : Nat) => .i32v (b : Int))
   def SReprL {C : Nat} (S : CarrierSpec C) (M : MCtx) :
       List SVal → List WVal → Prop
     | [], [] => True

@@ -152,22 +152,30 @@ theorem helperSem_spec {C : Nat} (S : CarrierSpec C) (M : MCtx) (h : HostFns)
 theorem xhost_of (hf : PlanFacts s tt fns) (S : CarrierSpec (mctxOf s tt fns).carrier)
     (h : HostFns) (hc : HostContracts S h) :
     XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := by
-  obtain ⟨_, _, _, _, _, _, _, hConcat, hStreq, hToIndex, hDivmod, hSat, hHelp, _⟩ :=
+  obtain ⟨_, _, _, _, _, _, _, hConcat, hStreq, hToIndex, hDivmod, hSat, hHelp, hBytes, _⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
   refine ⟨⟨_, hConcat, fun parts c hr => hc.stringConcat _ parts c hr⟩,
      ⟨_, hStreq, fun a b r hr => hc.stringEq a b r hr⟩,
      ⟨_, hToIndex, hc.toIndex⟩,
      ⟨_, hDivmod, fun a b wa wb m r ha hb hne hm hr =>
         hc.divmod a b wa wb m r ha.1 hb.1 ha.2 hb.2 hne hm hr⟩,
-     ⟨_, hSat, fun n w v hw hv => AverCert.ListHelpers.satSem_spec S n w v hw hv⟩, ?_⟩
-  intro r t f hrt
-  simp only [MCtx.listHelper, Option.map_eq_some_iff] at hrt
+     ⟨_, hSat, fun n w v hw hv => AverCert.ListHelpers.satSem_spec S n w v hw hv⟩, ?_, ?_⟩
+  · intro r t f hrt
+    simp only [MCtx.listHelper, Option.map_eq_some_iff] at hrt
+    obtain ⟨x, hx, rfl⟩ := hrt
+    have hmem := List.mem_of_find?_eq_some hx
+    have hp := List.find?_some hx
+    simp only [decide_eq_true_eq] at hp
+    obtain ⟨rfl, rfl⟩ := hp
+    exact ⟨_, hHelp x hmem, helperSem_spec S _ h hc _ _⟩
+  intro r f hrt
+  simp only [MCtx.bytesHelper, Option.map_eq_some_iff] at hrt
   obtain ⟨x, hx, rfl⟩ := hrt
   have hmem := List.mem_of_find?_eq_some hx
   have hp := List.find?_some hx
   simp only [decide_eq_true_eq] at hp
-  obtain ⟨rfl, rfl⟩ := hp
-  exact ⟨_, hHelp x hmem, helperSem_spec S _ h hc _ _⟩
+  subst hp
+  exact ⟨_, hBytes x hmem, bytesSem_spec S _ rfl _⟩
 
 /-- Every planned function is certified at the one model of all plans. -/
 theorem fns_certified (hf : PlanFacts s tt fns)
@@ -176,7 +184,7 @@ theorem fns_certified (hf : PlanFacts s tt fns)
       FnCertified S (mctxOf s tt fns) (codeOf (mctxOf s tt fns) fns)
         (hostOf (mctxOf s tt fns) h) f p.sig (fun fuel => modelOf fns fuel f) := by
   obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hDivmod,
-    hSat, hHelp, hClaims⟩ :=
+    hSat, hHelp, _, hClaims⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
   have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := xhost_of hf S h hc
   refine fn_certified_group S (boxRef _) h.add h.sub h.mul h.cmp h.eq (fun _ => none)
@@ -243,7 +251,7 @@ theorem obligation_total (hf : PlanFacts s tt fns) {e : FnEntry} (he : e ∈ fns
     obtain ⟨e', he', rfl, rfl⟩ := groupMembers_mem (groupOf_mem hg)
     exact planOf_mem hnd he'
   obtain ⟨hBox, hAdd, hSub, hMul, hNeg, hCmp, hEq, hConcat, hStreq, hToIndex, hDivmod,
-    hSat, hHelp, hClaims⟩ :=
+    hSat, hHelp, _, hClaims⟩ :=
     host_facts (M := mctxOf s tt fns) h hf.distinct
   have R : XHost S (mctxOf s tt fns) (hostOf (mctxOf s tt fns) h) := xhost_of hf S h hc
   have hAll := fns_certified hf S h hc
@@ -385,7 +393,7 @@ theorem refTest_exact_of_accepted (artifact : ArtifactData)
     have htt := hPlans.1.1.1.1.1.2
     unfold typeTableConfirmed at htt
     simp only [hg, Bool.and_eq_true, List.all_eq_true] at htt
-    have hs := htt.2.1.1.1.1.1.1.1.2 d hd
+    have hs := htt.2.1.1.1.1.1.1.1.1.2 d hd
     simp only [sumConfirmed, Bool.and_eq_true] at hs
     exact hs.2
   exact ctor_refTest_exact hspec hpin ha hb

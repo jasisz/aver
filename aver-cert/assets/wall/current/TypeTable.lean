@@ -106,7 +106,10 @@ def mctxOf (s : Subject) (tt : TypeTable) (fns : List FnEntry) : MCtx :=
     opaqueStruct := lookupNat 22 tt.opaques
     listCons := fun t => (tt.listCons.find? fun x => decide (x.1 = t)).map (·.2)
     listHelpers := tt.listHelpers
-    toI64Sat := idxOr 24 tt.intSat }
+    toI64Sat := idxOr 24 tt.intSat
+    bytesArr := idxOr 25 tt.bytesArr
+    bytesHelpers := tt.bytesHelpers
+    toI64Chk := idxOr 26 tt.intChk }
 
 /-! ## The opening rec group, raw and decoded
 
@@ -167,6 +170,7 @@ def valTyD (M : MCtx) (t : Ty) : Option CertDecode.ValType :=
   | .vec t => ref (M.vecStruct t)
   | .list t => ref (M.listStruct t)
   | .opaque tid => ref (M.opaqueStruct tid)
+  | .bytes => ref M.bytesArr
 
 def storagesOf (M : MCtx) (ts : List Ty) : Option (List CertDecode.StorageType) :=
   ts.mapM fun t => (valTyD M t).map .val
@@ -239,7 +243,7 @@ def ownedStructs (tt : TypeTable) : List Nat :=
   (tt.sums.map fun d => d.root :: d.ctors.map (·.1)).flatten ++
   tt.options.map (·.2) ++ tt.results.map (·.2.2) ++ tt.lists.map (·.2) ++
   tt.vecs.map (·.2) ++ tt.carrier.toList ++ tt.mag.toList ++ tt.str.toList ++
-  tt.strVec.toList ++ tt.opaques.map (·.2)
+  tt.strVec.toList ++ tt.opaques.map (·.2) ++ tt.bytesArr.toList
 
 def natNodup : List Nat → Bool
   | [] => true
@@ -271,6 +275,9 @@ def typeTableConfirmed (n len : Nat) (s : Subject) (tt : TypeTable) (fns : List 
         | _ => false) &&
       tt.opaques.all (fun o => decide (o.2 < grp.length)) &&
       (match tt.str with
+       | some i => arrayIs grp i (.packed 0x78)
+       | none => true) &&
+      (match tt.bytesArr with
        | some i => arrayIs grp i (.packed 0x78)
        | none => true) &&
       (match tt.strVec, tt.str with
@@ -363,6 +370,7 @@ def inhabTy (R S : List Nat) : Ty → Bool
   | .float => true
   | .string => true
   | .opaque _ => true
+  | .bytes => true
   | .option _ => true
   | .list _ => true
   | .vec _ => true
@@ -421,6 +429,7 @@ theorem inhabTy_sound {R S : List Nat}
   | .float, _ => ⟨.f 0, by simp [HasTy]⟩
   | .string, _ => ⟨.s [], by simp [HasTy]⟩
   | .opaque _, _ => ⟨.w .null, by simp [HasTy]⟩
+  | .bytes, _ => ⟨.bytes [], by simp [HasTy]⟩
   | .option t, _ => ⟨.none t, by simp [HasTy]⟩
   | .list t, _ => ⟨.nil t, by simp [HasTy]⟩
   | .vec t, _ => ⟨.vec t [], by simp [HasTy, HasTyAll]⟩

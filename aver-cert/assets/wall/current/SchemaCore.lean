@@ -79,6 +79,15 @@ structure TypeTable where
   /-- `__aint_to_i64_sat`, which a `List.take` / `List.drop` count goes
       through, pinned to its template. -/
   intSat : Option Nat := none
+  /-- The packed `Bytes` array type, confirmed as `(array (mut i8))`. -/
+  bytesArr : Option Nat := none
+  /-- The `Bytes` helpers the plans' `Bytes` builtins call, by role. The
+      acceptance pins each body to the wall's template
+      (`AcceptedArtifact.bytesHelpersPinned`). -/
+  bytesHelpers : List (AverCert.Grammar.BytesRole × Nat) := []
+  /-- `__aint_to_i64_checked`, which the `pack` helper calls, pinned to its
+      template. -/
+  intChk : Option Nat := none
 deriving Repr
 
 /-- One planned function: the plan is the function's MIR body printed 1:1
