@@ -28,6 +28,8 @@ fn plan_with_functions(count: u32) -> BridgePlan {
                     constants: Vec::new(),
                     elem_decoders: BTreeSet::new(),
                     list_helpers: false,
+                    matched_lists: BTreeSet::new(),
+                    matched_fields: BTreeSet::new(),
                 },
             )
         })
