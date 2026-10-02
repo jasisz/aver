@@ -3783,7 +3783,8 @@ fn cert_hardening_accepts_bytes_helpers() {
     }
     let (ok, report) = aver_cert("check", &wasm, &cert);
     assert!(ok, "the Bytes-helper certificate must check:\n{report}");
-    assert!(report.contains("20 checked exports"), "{report}");
+    // `Bytes_fromList` interpolates an Int into its error, which now certifies.
+    assert!(report.contains("21 checked exports"), "{report}");
 }
 
 /// A role row naming another helper of the same type: `take` declared at the
