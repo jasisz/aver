@@ -8,7 +8,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Highlights
 
-- **Concurrency is data plus effects.** A `yield` function is a process. The compiler cuts it into plain state, request and answer functions, and generates the loop that runs it (`Run.all()`). A module answers your own capability with `answers [Cap]`, now or later. See "The coordinator" in `docs/language.md`.
+- **Concurrency is data plus effects.** A function that requests something your program answers (`answers [Cap]`, now or later) is a process; nothing marks it, and `aver check` lists each one with the reason. The compiler cuts it into plain state, request and answer functions and generates the loop that runs it (`Run.all()`). `Run.turn()` hands the turn back without a request. See "The coordinator" in `docs/language.md`.
 - **Jobs and one wait.** A job is a request answered by a pure function bound in `aver.toml`. `Wait.poll` waits on sockets and jobs together. Jobs run in parallel on the VM, Rust and wasm-gc, and a recording replays on any of them.
 - **Non-blocking TCP.** `Tcp.readNow`, `Tcp.writeNow` and `Tcp.Socket.Sending`.
 - **Certificates cover much more of a real program.** `Int` arithmetic, lists, `Bytes`, `?` and string interpolation are certified on the bytes, and laws about certified functions hold on the bytes. On btc-listener: 1,450 functions, 74 laws, `aver cert check` in under ten minutes on a laptop.
@@ -17,7 +17,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **No copies when a Map or Vector inside a record is updated** and nothing else holds it.
 - **Tooling**: `aver effects --write`, `aver agent-connect`, `--pack wasmtime`, `Disk.sync`, `Int.toBigEndian`.
 
-The cut of a `yield` function is checked on the compiler's own programs; a proof for every program is still open (#1376).
+The cut of a process is checked on the compiler's own programs; a proof for every program is still open (#1376).
 
 ### Migration
 
@@ -29,10 +29,10 @@ The cut of a `yield` function is checked on the compiler's own programs; a proof
 | `aver proof` and `--certify` covering every `verify` example | laws by default; `--examples` for the examples |
 | `match` on `Tcp.Socket` | add a `Tcp.Socket.Sending(connection)` arm |
 | a function of a recursion group not declaring the group's effects | every function declares them |
-| any bare name in `! [...]` | only `yield`, `_` or a capability namespace |
+| any bare name in `! [...]` | only `_` or a capability namespace |
 | dial, listen or `peerAddress` on `--target wasip2` | refused at compile time |
 
-Certificates from earlier versions must be produced again. If you pinned main between 0.29 and 0.30: `answer =`, the job keys and `[run]` in `aver.toml` are refused with the repair, reply sums and `Wait.Wake` became `Result` and `Run.Wake`, a program can no longer call generated `__` names, and wasm-gc recordings of `Wait.poll` have to be made again.
+Certificates from earlier versions must be produced again. If you pinned main between 0.29 and 0.30: `answer =`, the job keys and `[run]` in `aver.toml` are refused with the repair, reply sums and `Wait.Wake` became `Result` and `Run.Wake`, `yield` is gone (a function is a process when it requests something its module's dependencies answer; a loop that only hands the turn back calls `Run.turn()`), a program can no longer call generated `__` names, and wasm-gc recordings of `Wait.poll` have to be made again.
 
 ### Fixed
 
