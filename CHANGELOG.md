@@ -4,59 +4,42 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.30.0 "Turn" (unreleased)
 
-> _A program now waits, works and answers in turns written in plain Aver, and more of what it compiles to is certified on the exact bytes._
+> _Programs wait, work and answer in turns written in plain Aver, and more of what they compile to is certified on the exact bytes._
 
 ### Highlights
 
-- **Concurrency is data plus effects.** A `yield` function is a process: the compiler cuts it at every request into ordinary state, request and answer functions. A module declares `answers [Cap]` and answers a capability of your own from one state with `Result.Ok(v)` now or `Result.Err(Run.Wake.Until(items, deadline))` later. The entry's loop is generated when it writes a process and no `main`, or calls `Run.all()`. Optional `stop` and `admit` policies, `process peer seated by Mod.peers` for one process per key, `Run.fail(message)` to end a run with a reason and `Run.lastTurn()` for wait and work times. The cut is checked by laws on the compiler's own fixtures: the process asks the same requests, in the same order and with the same answers, as the function you wrote; a proof of that for every program is still open (#1376). See "The coordinator" in `docs/language.md`.
-- **Jobs and one wait over sockets and jobs.** A job kind is a capability with `begin` and `take`, bound in `aver.toml` to a pure function of the program. `Wait.poll` waits on sockets and jobs together and is keyed by any map key type, so a program can key its waits by a sum of its own. Jobs run in parallel on the VM, in generated Rust and on wasm-gc (native runner, Wasmtime packs and the supplied JavaScript Worker adapter). wasip2 runs them inline. A recording of jobs replays across the VM and wasm-gc in both directions. See "Jobs" in `docs/services.md` and `docs/wasm-work.md`.
-- **Non-blocking TCP.** `Tcp.readNow` and `Tcp.writeNow` never block, and `Tcp.Socket.Sending(connection)` polls for write readiness. `docs/services.md` shows the bounded per-connection outbox a server needs around them.
-- **Certificates cover much more of a real program.** Plain `Int` arithmetic and comparisons, list literals, a `match` on a List, `List.len`, `reverse`, `concat`, `take`, `drop` and `contains`, the packed `Bytes` array, early returns through `?` and `Int` parts of a string interpolation are now certified on the bytes, each through a helper whose template the wall pins and whose meaning it proves, with no new runtime contract. A certified function also gets a source bridge, a kernel proof that the certified plan is the function you wrote, including over Lists of Ints, Strings, Bools, records, sums and Lists, and laws about bridged functions hold on the bytes. On btc-listener's whole program 1,450 functions are certified and 74 laws hold on its bytes; `aver cert check` of that package takes about seven minutes on a laptop. wasip2 components are certified end to end. A law-claim the kernel cannot close is reported on its own line and no longer fails the package. `aver-cert check` of an 800 KB module fits in a few gigabytes and builds with several Lean workers by default.
-- **Proofs are Lean only, and more of them close.** The Dafny backend is gone: the core Lean export (no Mathlib) now covers what it used to prove. Laws can explain themselves in Aver with `because` and `using`. More shapes close universally: maps updated inside records, divisions by a variable, fixed windows of a list, countdown writers and two-phase `Int` walks. A proof that fails in Lean is charged as a sorry instead of failing the whole build, and `--compare-manifest` tells a broken proof from a changed model. `aver proof` of a whole program such as btc-listener's `main.av` builds. Lean is 4.34.0.
-- **Patterns at any depth.** `Option.Some(0)`, `Result.Err(404)`, `Shape.Rect(0, h)`, `[a, b, ..rest]` and `[Option.Some(x), ..rest]` are patterns, the checker reports what they miss and what is unreachable, and every backend runs the same match.
-- **No whole-collection copies on updates inside records.** The VM, generated Rust and wasm-gc update a Map or Vector held in a record in place when nothing else holds it, and wasm-gc Maps and Vectors are versions, so an update never copies. Answering 2,000 requests against a 100,000-entry state map went from seconds to hundredths of a second. `warning[perf-shared-update]` points at the updates that still copy. `List.take`, `String.charAt` loops and growing lists are no longer quadratic on the VM.
-- **Tooling.** `aver effects` reports declared effect lists against the minimum and `--write` rewrites them. `aver agent-connect` installs the agent guides that now ship inside the binary. `aver compile --target wasm-gc --pack wasmtime` builds a self-contained native host with precompiled code. `Disk.sync(path)` makes written bytes durable. `Int.toBigEndian` / `toLittleEndian` encode fixed-width bytes.
+- **Concurrency is data plus effects.** A function that requests something your program answers (`answers [Cap]`, now or later) is a process; nothing marks it, and `aver check` lists each one with the reason. The compiler cuts it into plain state, request and answer functions and generates the loop that runs it (`Run.all()`). `Run.turn()` hands the turn back without a request. See "The coordinator" in `docs/language.md`.
+- **Jobs and one wait.** A job is a request answered by a pure function bound in `aver.toml`. `Wait.poll` waits on sockets and jobs together. Jobs run in parallel on the VM, Rust and wasm-gc, and a recording replays on any of them.
+- **Non-blocking TCP.** `Tcp.readNow`, `Tcp.writeNow` and `Tcp.Socket.Sending`.
+- **Certificates cover much more of a real program.** `Int` arithmetic, lists, `Bytes`, `?` and string interpolation are certified on the bytes, and laws about certified functions hold on the bytes. On btc-listener: 1,450 functions, 74 laws, `aver cert check` in under ten minutes on a laptop.
+- **Proofs are Lean only.** Dafny is gone. A law can explain itself with `because` and `using`, and more shapes close for every input. Lean 4.34.0.
+- **Patterns at any depth**: `Option.Some(0)`, `Shape.Rect(0, h)`, `[a, b, ..rest]`, checked for what they miss on every backend.
+- **No copies when a Map or Vector inside a record is updated** and nothing else holds it.
+- **Tooling**: `aver effects --write`, `aver agent-connect`, `--pack wasmtime`, `Disk.sync`, `Int.toBigEndian`.
+
+The cut of a process is checked on the compiler's own programs; a proof for every program is still open (#1376).
 
 ### Migration
 
 | Before | Now |
 |---|---|
 | `aver proof --backend dafny`, `--error-budget` | Lean only; `--sorry-budget`, `--declined-budget` |
-| `--check-json` keys `errors`, `timeouts`, `axioms`, `axiom_budget`, `omitted` | gone (Dafny only); read `build_errors` and `sorries` |
-| hand-written Lean/Dafny proof sidecars | `because` / `using` in the law |
-| `aver proof` exporting every `verify` example, `--certify` bridging every certified export | laws and what they reach by default; pass `--examples` for the examples and what only they reach |
+| `--check-json` keys `errors`, `timeouts`, `axioms`, `axiom_budget`, `omitted` | `build_errors`, `sorries` |
+| proof sidecars | `because` / `using` in the law |
+| `aver proof` and `--certify` covering every `verify` example | laws by default; `--examples` for the examples |
 | `match` on `Tcp.Socket` | add a `Tcp.Socket.Sending(connection)` arm |
-| tail call to a peer not charged its effects | every function of a recursion group declares what the group performs |
-| any bare name in `! [...]` / `effects [...]` | only `yield`, the forwarding marker `_` or a capability namespace |
+| a function of a recursion group not declaring the group's effects | every function declares them |
+| any bare name in `! [...]` | only `_` or a capability namespace |
 | dial, listen or `peerAddress` on `--target wasip2` | refused at compile time |
 
-The certificate wall identity rotates: packages produced by earlier versions must be produced again.
-
-#### From a build of main after 0.29
-
-These forms never shipped in a release; they only matter to a project pinned to main between 0.29 and 0.30.
-
-| Before | Now |
-|---|---|
-| `answer = "Module"` in `aver.toml` | `answers [Cap]` in the answer module's header |
-| `Cap.OpReply.Now(x)` / `.Later(w)` reply sums, `Then` | answer function returns `Tuple<S, Result<R, Run.Wake>>`: `Result.Ok(x)` / `Result.Err(w)` |
-| `Wait.Wake.Item(i)`, `After(ms)`, `Either(i, ms)`, `NextTurn` | `Run.Wake.Until([i], Option.None)`, `Until([], Option.Some(ms))`, `Until([i], Option.Some(ms))`, `Until([], Option.Some(0))`; new `Settled(deadline)` |
-| `[run]` table, `task` / `started` / `landed` keys | generated loop from source; `stop` / `admit` functions in the entry; the answer module begins its own jobs |
-| `begin` answering `Err("work: job limit N reached")` | a job begun at `[work] max-jobs` is queued |
-| stub call index counting every effect | each operation numbers its own calls from 0 |
-| calling `__fnStart`, `__fnAnswer…` or matching `__FnOutcome` by hand | refused; run a yielding function as a process (`Run.all()`) or call it from a function that declares `yield`, and test it with a cases-form `verify` that stubs every request |
-
-A manifest that still has `answer =`, the job keys or `[run]` is refused with the repair. wasm-gc recordings of `Wait.poll` made before 0.30 have to be made again, and a vendored copy of `tools/wasm-work/host.mjs` has to be refreshed.
+Certificates from earlier versions must be produced again. If you pinned main between 0.29 and 0.30: `answer =`, the job keys and `[run]` in `aver.toml` are refused with the repair, reply sums and `Wait.Wake` became `Result` and `Run.Wake`, `yield` is gone (a function is a process when it requests something its module's dependencies answer; a loop that only hands the turn back calls `Run.turn()`), a program can no longer call generated `__` names, and wasm-gc recordings of `Wait.poll` have to be made again.
 
 ### Fixed
 
-- **`aver proof` no longer proves laws that are false at run time.** An integer literal Lean read as a natural number (`0 - 1` was `0`), `Vector.get`/`set` at a negative index, a false `verify` case taking a neighbour's value, a function named like a law's theorem, and call indices that did not follow the run. Each such law is now exported faithfully or declined with a reason.
-- **Record fields run in the order written** (#1240), `BranchPath.Root` is readable in every verify case (#1400), and a spliced call no longer reads a slot of the function it came from.
-- **wasm-gc and Rust agree with the VM** on `String.toLower`/`toUpper` beyond ASCII (#1185), one-arm and tuple-subject matches, named `false` arms, integer bindings and `[_, .._]`.
-- **`aver-cert` binds a wasip2 component to the core it certifies.** It confirms that the declared core is the module the component instantiates once and lifts its entry points from, that every other module is the exact shim or fixup the toolchain emits wired to the imports it serves, and that no imported component runs. A certified core hidden in a custom section, a decoy module or a rewired helper is refused. Every line the checker prints is escaped, so a file or export name cannot forge a verdict line.
-- **A recording made on one backend replays on the others with `--check-args`**: an empty map and a `Wait.Item` are written the same way on the VM, Rust and wasm-gc.
-- **SIGINT and SIGTERM reach a program run through a provider host**, and a `main` that answers `Err` exits non-zero on wasm-gc and wasip2.
-- **`aver-memory` builds without `std`** (#1460), and `Disk.sync` on a directory works on Windows (#1238).
+- **`aver proof` no longer proves laws that are false at run time**, such as `0 - 1` read as `0` or a negative `Vector` index.
+- **`aver-cert` checks that a wasip2 component runs the core it certifies**, and a package can no longer forge a verdict line.
+- **wasm-gc and Rust agree with the VM** on non-ASCII case mapping (#1185) and on several match shapes.
+- **Record fields run in the order written** (#1240), `Disk.sync` on a directory works on Windows (#1238), and `aver-memory` builds without `std` (#1460).
 
 ## 0.29.0 "Peer" — 2026-08-27
 
