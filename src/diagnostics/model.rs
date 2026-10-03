@@ -148,6 +148,10 @@ pub struct AnalysisReport {
     /// case details; `verify_summary` gives the scorecard.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify_summary: Option<VerifySummary>,
+    /// The processes of the module, each with why it is one: a function is a
+    /// process when it requests something its program answers.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub processes: Vec<ProcessSummary>,
 }
 
 /// Per-block verify results. Mirrors what `aver verify` used to emit as
@@ -251,6 +255,26 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
+/// One process of a checked module.
+#[derive(Clone, Debug, Serialize)]
+pub struct ProcessSummary {
+    pub name: String,
+    pub line: usize,
+    /// `requests Pool.claim, answered by Pooled`, `requests Run.turn` or
+    /// `calls process walk`.
+    pub reason: String,
+}
+
+impl ProcessSummary {
+    pub fn from_info(info: &crate::yield_lowering::ProcessInfo) -> Self {
+        Self {
+            name: info.name.clone(),
+            line: info.line,
+            reason: info.reason.to_string(),
+        }
+    }
+}
+
 impl AnalysisReport {
     pub fn new(file_label: impl Into<String>) -> Self {
         Self {
@@ -261,6 +285,7 @@ impl AnalysisReport {
             why_summary: None,
             context_summary: None,
             verify_summary: None,
+            processes: Vec::new(),
         }
     }
 
@@ -273,6 +298,7 @@ impl AnalysisReport {
             why_summary: None,
             context_summary: None,
             verify_summary: None,
+            processes: Vec::new(),
         }
     }
 

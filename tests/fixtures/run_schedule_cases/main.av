@@ -1,23 +1,23 @@
 module Node
     intent = "Perturb service grouping and seating without timing races or live effects, and state the generated loop's invariants over its own functions."
     depends [Inbox, Ledger]
-    effects [Inbox.arrive, yield]
+    effects [Inbox.arrive]
 
 process member seated by Ledger.members
 
 fn left() -> Unit
     ? "The first independent process records its own id."
-    ! [Inbox.arrive, yield]
+    ! [Inbox.arrive]
     Inbox.arrive(1)
 
 fn right() -> Unit
     ? "The second independent process records its own id."
-    ! [Inbox.arrive, yield]
+    ! [Inbox.arrive]
     Inbox.arrive(2)
 
 fn member(key: Int) -> Unit
     ? "One member per listed key records its key."
-    ! [Inbox.arrive, yield]
+    ! [Inbox.arrive]
     Inbox.arrive(key)
 
 fn seeded() -> __Run

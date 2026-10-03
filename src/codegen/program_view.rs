@@ -315,6 +315,7 @@ mod tests {
             semantics_line: None,
             yield_protocols: Vec::new(),
             yield_sources: Vec::new(),
+            processes: Vec::new(),
             answers: Vec::new(),
             answers_line: None,
             seatings: Vec::new(),

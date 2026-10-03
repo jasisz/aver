@@ -129,7 +129,7 @@ fn an_answer_function_cannot_itself_be_a_process() {
     assert_reports(
         "answer_shape_yielding_answer",
         &["check"],
-        "error[answer-shape]: module 'Ledger' answers capability 'Pool', and 'Ledger.claim' declares `yield`",
+        "error[answer-shape]: module 'Ledger' answers capability 'Pool', and 'Ledger.claim' is a process (requests Run.turn); an answer is computed inside the turn",
     );
 }
 
@@ -287,32 +287,84 @@ fn answering_a_shipped_capability_reachable_from_wait_reports_the_header_only() 
     }
 }
 
-// ── intercept-outside-yield: a request is only a request in a process ────
+// ── request-outside-process: a request is only a request in a process ───
 
-/// An operation of an answered capability is a request, and only a `yield`
-/// function makes one: the lowering cuts a process at the call and hands it
-/// to the loop. A plain function calling the same operation has nobody to
-/// answer it, so both program doors refuse it and the message names the
-/// answer function to call instead.
+/// An operation of an answered capability is a request, and a function that
+/// makes one is a process: the lowering cuts it at the call and hands it to the
+/// loop. Whether it is one is counted over its own module's dependencies, so a
+/// library whose `depends` does not reach the answer module stays a plain
+/// function, the request has nobody to answer it, and both program doors
+/// refuse the program where the request is made. The message names the answer
+/// function to call instead.
 #[test]
 fn an_answered_operation_outside_a_process_is_refused_at_the_check_door() {
     assert_reports(
-        "answer_request_outside_yield",
+        "answer_request_outside_process",
         &["check"],
-        "error[intercept-outside-yield]: 'Pool.claim' is answered by this program",
+        "error[request-outside-process]: 'Pool.claim' is answered by this program",
     );
     assert_reports(
-        "answer_request_outside_yield",
+        "answer_request_outside_process",
         &["check"],
-        "Add `yield` to 'Main.seat', or call 'Ledger.claim(state, key)' directly",
+        "'Seat.seat' is not a process: a function is one when its own module's dependencies answer what it requests, and the module that writes it does not depend on 'Ledger'",
+    );
+    assert_reports(
+        "answer_request_outside_process",
+        &["check"],
+        "or call 'Ledger.claim(state, key)' directly",
     );
 }
 
 #[test]
 fn an_answered_operation_outside_a_process_is_refused_at_the_run_door() {
     assert_reports(
-        "answer_request_outside_yield",
+        "answer_request_outside_process",
         &["run"],
-        "error[intercept-outside-yield]: 'Pool.claim' is answered by this program",
+        "error[request-outside-process]: 'Pool.claim' is answered by this program",
+    );
+}
+
+/// Listing the answer module in the library's own `depends` is what makes its
+/// function a process: the same text, one more dependency, and the check
+/// lists the process with the module that answers its request.
+#[test]
+fn depending_on_the_answer_module_makes_the_library_function_a_process() {
+    let source = fixture("answer_request_outside_process");
+    let dir = std::env::temp_dir().join(format!(
+        "aver-request-outside-process-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    for entry in std::fs::read_dir(&source).unwrap() {
+        let path = entry.unwrap().path();
+        std::fs::copy(&path, dir.join(path.file_name().unwrap())).unwrap();
+    }
+    let seat = dir.join("seat.av");
+    let text = std::fs::read_to_string(&seat)
+        .unwrap()
+        .replace("depends [Pool]", "depends [Ledger, Pool]");
+    std::fs::write(&seat, text).unwrap();
+    let out = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("check")
+        .arg(dir.join("main.av"))
+        .arg("--module-root")
+        .arg(&dir)
+        .output()
+        .expect("aver runs");
+    let text = combined(&out);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !text.contains("request-outside-process"),
+        "{}",
+        format_output(&out)
+    );
+    assert!(
+        text.contains("process seat: requests Pool.claim, answered by Ledger"),
+        "{}",
+        format_output(&out)
     );
 }

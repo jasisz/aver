@@ -820,6 +820,67 @@ fn a_last_turn_recording_interchanges_between_the_vm_and_wasm_gc() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+// ── Run.turn ────────────────────────────────────────────────────────────
+
+/// `Run.turn()` is answered by the generated loop itself, in the next turn:
+/// both wasm targets interleave the two processes' lines exactly as the VM
+/// does.
+#[test]
+fn run_turn_hands_the_turn_back_as_the_vm_does_on_both_wasm_targets() {
+    let vm = run("run_turn", &[], &[]).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        vm, "left 3\nright 3\nleft 2\nright 2\nleft 1\nright 1",
+        "VM"
+    );
+    for target in wasm_targets() {
+        let wasm = run("run_turn", target, &[]).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(wasm, vm, "{}", target_name(target));
+    }
+}
+
+/// A turn handed back is no host call, so a recording of such a run carries no
+/// entry for it, and a recording made on the VM or on wasm-gc replays on the
+/// other.
+#[test]
+fn a_run_turn_recording_interchanges_between_the_vm_and_wasm_gc() {
+    let ws = temp_dir("run-turn-interchange");
+    let result = (|| -> Result<(), String> {
+        for (recorded_on, replayed_on) in
+            [(&[][..], &["--wasm-gc"][..]), (&["--wasm-gc"][..], &[][..])]
+        {
+            let dir = ws.join(target_name(recorded_on).replace(' ', "-"));
+            fs::create_dir_all(&dir).expect("create recordings dir");
+            let mut target = recorded_on.to_vec();
+            target.extend(["--record", dir.to_str().expect("utf-8 scratch path")]);
+            let out = run_any("run_turn", &target, &[]);
+            if !out.status.success() {
+                return Err(format_output(&out));
+            }
+            let text = fs::read_to_string(one_recording(&dir)?)
+                .map_err(|error| format!("cannot read the recording: {error}"))?;
+            if text.contains("\"Run.turn\"") {
+                return Err(format!(
+                    "the recording made on {} carries a host call for Run.turn",
+                    target_name(recorded_on)
+                ));
+            }
+            for replay_target in [recorded_on, replayed_on] {
+                let report = replay(&dir, replay_target)?;
+                if !report.contains("Output:  MATCH") {
+                    return Err(format!(
+                        "a recording made on {} did not replay on {}:\n{report}",
+                        target_name(recorded_on),
+                        target_name(replay_target)
+                    ));
+                }
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 /// The wasm-gc imports of one fixture compiled into `out`.
 fn wasm_gc_imports(name: &str, out: &Path) -> Vec<(String, String)> {
     use wasmparser::{Parser, Payload};

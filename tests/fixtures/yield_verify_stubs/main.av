@@ -1,11 +1,11 @@
 module YieldVerifyStubs
     intent = "Test a process in direct style using exact per-operation stubs."
     depends [Pool, Pooled]
-    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs, yield]
+    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs]
 
 fn pair(id: Int) -> Int
     ? "Ask twice and retain the first answer across the second request."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     first = one(id)
     second = Pool.claim(id + 1)
     match (first, second)
@@ -28,12 +28,12 @@ verify pair
 
 fn one(id: Int) -> Option<Int>
     ? "A nested helper makes one request through the parent's protocol."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Pool.claim(id)
 
 fn accumulate(left: Int, total: Int) -> Int
     ? "Each self yield advances the loop without consuming an oracle answer."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match left == 0
         true -> total
         false -> match Pool.claim(left)
@@ -47,7 +47,7 @@ verify accumulate
 
 fn checkpoint(id: Int) -> Result<Int, String>
     ? "An error answer exits the process before its second request."
-    ! [Pool.finish, yield]
+    ! [Pool.finish]
     first = Pool.finish(id)?
     Pool.finish(first + 1)
 
@@ -61,7 +61,7 @@ verify checkpoint
 
 fn clocked(id: Int) -> Int
     ? "An in-place effect and a request each number their own calls, so the clock does not move the request ordinal."
-    ! [Pool.claim, Time.unixMs, yield]
+    ! [Pool.claim, Time.unixMs]
     now = Time.unixMs()
     match Pool.claim(id)
         Option.None -> now
@@ -93,7 +93,7 @@ verify clocked
 
 fn notified(id: Int) -> Option<Int>
     ? "A Unit request of one kind leaves the next kind's request ordinal at zero."
-    ! [Pool.claim, Pool.notice, yield]
+    ! [Pool.claim, Pool.notice]
     Pool.notice(id)
     Pool.claim(id)
 

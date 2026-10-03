@@ -35,7 +35,7 @@ impl TypeChecker {
 
         self.configure_capabilities(items, &loaded_modules, base_dir);
         if !loaded_modules.is_empty() {
-            self.prepare_loaded_modules(&loaded_modules);
+            self.prepare_loaded_modules(items, &loaded_modules);
             let visible_roots = Self::visible_module_roots(items);
             self.integrate_loaded_modules(&loaded_modules, &visible_roots);
         }
@@ -94,7 +94,7 @@ impl TypeChecker {
         crate::stdlib::append_required_standard_capability_modules(items, &mut loaded);
         self.configure_capabilities(items, &loaded, None);
         self.check_law_dependencies(items, &loaded);
-        self.prepare_loaded_modules(&loaded);
+        self.prepare_loaded_modules(items, &loaded);
         let visible_roots = Self::visible_module_roots(items);
         self.integrate_loaded_modules(&loaded, &visible_roots);
         self.build_signatures(items);
@@ -196,7 +196,11 @@ impl TypeChecker {
     /// type surface before any single importer is checked. This is resolver
     /// context, not visibility: a facade may re-export a type declared several
     /// files below it without making every module in between globally visible.
-    fn prepare_loaded_modules(&mut self, modules: &[crate::source::LoadedModule]) {
+    fn prepare_loaded_modules(
+        &mut self,
+        items: &[TopLevel],
+        modules: &[crate::source::LoadedModule],
+    ) {
         let pairs: Vec<_> = modules
             .iter()
             .map(|m| (m.dep_name.clone(), m.items.clone()))
@@ -211,6 +215,25 @@ impl TypeChecker {
                 if !self.program_answers.contains(&pair) {
                     self.program_answers.push(pair);
                 }
+            }
+            for (name, reason) in &decl.processes {
+                self.dependency_processes.insert(
+                    crate::visibility::qualified_name(&module.dep_name, name),
+                    reason.clone(),
+                );
+            }
+        }
+        let by_name: HashMap<&str, &crate::source::LoadedModule> = modules
+            .iter()
+            .map(|module| (module.dep_name.as_str(), module))
+            .collect();
+        let mut pending = Self::visible_module_roots(items);
+        while let Some(name) = pending.pop() {
+            if !self.dependency_closure.insert(name.clone()) {
+                continue;
+            }
+            if let Some(module) = by_name.get(name.as_str()) {
+                pending.extend(Self::visible_module_roots(&module.items));
             }
         }
     }

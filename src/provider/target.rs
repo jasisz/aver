@@ -440,9 +440,12 @@ pub fn standard_operations_bound_on(target: CapabilityTarget) -> &'static BTreeS
     BOUND
         .get_or_init(|| {
             let contracts = crate::stdlib::standard_capability_registry_ref();
+            // `Run.turn` is answered by the generated loop itself, never by a
+            // host: a call to it is a request the lowering always cuts at.
             let every_operation = contracts
                 .operations()
                 .map(|operation| operation.canonical_name.clone())
+                .filter(|operation| operation != crate::yield_lowering::RUN_TURN)
                 .collect::<BTreeSet<_>>();
             let manifest = CapabilityTargetManifest::build(contracts, &every_operation)
                 .expect("the standard capability registry names its own operations");

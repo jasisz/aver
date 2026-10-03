@@ -1,17 +1,17 @@
 module YieldTailStop
     intent = "Fixture: a request in tail position is a stop — as the last expression of a body, and as the leaf of a match arm, both when the arm is the function's own tail and when a binding reads the branch."
     depends [Pool, Pooled]
-    effects [Pool.claim, yield, Console.print]
+    effects [Pool.claim, Console.print]
     exposes [driveOne, drivePick, main]
 
 fn one(id: Int) -> Int
     ? "Claims the handle of id; the request is the last expression of the body."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Pool.claim(id)
 
 fn pick(id: Int, left: Int) -> Int
     ? "Adds a claimed handle to id once per round, then claims the handle of the total; both claims sit at the leaf of a match arm."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     extra = match left
         0 -> 0
         _ -> Pool.claim(id)

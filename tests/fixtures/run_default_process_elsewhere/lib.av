@@ -1,12 +1,12 @@
 module Lib
-    intent = "A library of yielding helpers."
-    depends [Clock]
+    intent = "A library of helper processes."
+    depends [Clock, Clocked]
     exposes [peering]
-    effects [Clock.tick, Console.print, yield]
+    effects [Clock.tick, Console.print]
 
 fn peering(key: Int) -> Unit
     ? "One peer's loop, keyed."
-    ! [Clock.tick, Console.print, yield]
+    ! [Clock.tick, Console.print]
     _said = Console.print("peer {key} asks")
     match Clock.tick()
         Clock.Tick.Closed(_) -> Console.print("peer {key} closed")

@@ -1,11 +1,11 @@
 module Node
     intent = "The entry seats one process, which enters a yielding helper from a library."
     depends [Process, Wait, Pool, Pooled, Walker]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn pooling() -> Unit
     ? "Claims handles until the pool answers None."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Walker.walking()
 
 fn admit(view: Run.View, id: Int) -> Bool

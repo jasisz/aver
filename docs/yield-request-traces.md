@@ -1,6 +1,6 @@
 # Source request-trace correspondence
 
-For a yielding function, the compiler can build two pure, concrete Aver
+For a process, the compiler can build two pure, concrete Aver
 observers. One comes from the function's retained direct-style source, the
 other from the lowered `Start` and `Answer` functions that are actually
 generated. When their observations are equal, the ordered requests, arguments,
@@ -43,17 +43,17 @@ not add a trace DSL for users or a generic type facility.
 | --- | --- |
 | `AnswerClaim(answer)` | Answer the pending `Pool.claim` with its exact result type. |
 | `AnswerHostTimeUnixMs(answer)` | Supply an in-place clock observation. |
-| `Advance` | Allow a yielding tail call to resume: self-entry or entry into another yielding helper. |
+| `Advance` | Allow a tail call inside a process to resume: self-entry or entry into another helper process. |
 | `Foreign` | Internal adapter marker for an input kind that a child does not have. |
 
 Inputs are semantic answers and permissions to resume. They are not a shared
 instruction budget for an interpreter. Pure evaluation consumes nothing. An
-internal yield consumes `Advance`, emits no operation event and consumes no
+internal `Yield` stop consumes `Advance`, emits no operation event and consumes no
 answer. A request emits an ordered
 `ObservedKind(position, arguments..., answer)` event when it is answered.
 
 Tail positions come from the retained source: the last expression of a
-yielding function, followed through its `match` arms. Arguments are evaluated
+process, followed through its `match` arms. Arguments are evaluated
 before the boundary. A call whose value feeds into another expression has no
 entry pause, though the helper keeps its own internal tail boundaries.
 Inlining a finite helper keeps that scope.
@@ -73,7 +73,7 @@ A result records:
 - `consumed`: answers plus resumption permissions consumed;
 - `events`: observations in execution order;
 - `value`: `Some(result)` on completion, otherwise `None`;
-- `pending`: the unanswered operation and its arguments, or an internal yield;
+- `pending`: the unanswered operation and its arguments, or an internal `Yield` stop;
 - `valid`: false when the next input has the wrong kind.
 
 An empty tape stops at the next pending query. A token of the wrong kind stays
@@ -102,7 +102,7 @@ as `universal` in the manifest and pass the existing axiom whitelist. No
 handwritten Lean companion, extra axiom or larger proof budget is involved.
 
 The regression fixture covers repeated requests, branches, mixed result types,
-Unit answers, private helpers, early `Result.Err`, self yields and in-place
+Unit answers, private helpers, early `Result.Err`, self tail calls and in-place
 clock reads. A second fixture covers repeated calls through imported private
 helpers. Tail-entry fixtures also check local and imported pauses, a helper
 used in a non-tail expression, branches, and private helpers with the same

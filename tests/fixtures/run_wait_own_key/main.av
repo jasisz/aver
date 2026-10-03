@@ -1,7 +1,7 @@
 module Main
     intent = "A program whose generated loop keys its wait by Int, and whose own waits, run with `manual`, are keyed by a sum: once here in the entry and again in a dependency."
     depends [Clock, Ticks, Validation, Scoring, Collecting]
-    effects [Args.get, Clock.tick, Console.print, Validation.begin, Validation.take, Wait.poll, yield]
+    effects [Args.get, Clock.tick, Console.print, Validation.begin, Validation.take, Wait.poll]
 
 fn main() -> Result<Unit, String>
     ? "`manual` waits on two jobs keyed by Collecting.Watch; anything else runs the loop."
@@ -22,12 +22,12 @@ fn manual() -> Result<Unit, String>
 
 fn ticker() -> Unit
     ? "Three ticks."
-    ! [Clock.tick, Console.print, yield]
+    ! [Clock.tick, Console.print]
     ticking(0)
 
 fn ticking(seen: Int) -> Unit
     ? "One tick at a time."
-    ! [Clock.tick, Console.print, yield]
+    ! [Clock.tick, Console.print]
     match Clock.tick() >= 3
         true -> Console.print("ticked {seen + 1} times")
         false -> ticking(seen + 1)

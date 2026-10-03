@@ -2,10 +2,10 @@ module Looper
     intent = "Observe clocks around requests while keeping recursive code private."
     depends [Pool, Pooled]
     exposes [run, fallible]
-    effects [Pool.claim, Pool.finish, Time.unixMs, yield]
+    effects [Pool.claim, Pool.finish, Time.unixMs]
 
 fn loop(n: Int) -> Int
-    ! [Pool.claim, Time.unixMs, yield]
+    ! [Pool.claim, Time.unixMs]
     before = Time.unixMs()
     value = Pool.claim(n)
     after = Time.unixMs()
@@ -14,13 +14,13 @@ fn loop(n: Int) -> Int
         Option.Some(next) -> loop(next)
 
 fn run(n: Int) -> Int
-    ! [Pool.claim, Time.unixMs, yield]
+    ! [Pool.claim, Time.unixMs]
     value = loop(n)
     value + 1
 
 fn fallible(n: Int) -> Result<Int, String>
     ? "A failed request returns before the trailing clock read."
-    ! [Pool.finish, Time.unixMs, yield]
+    ! [Pool.finish, Time.unixMs]
     before = Time.unixMs()
     value = Pool.finish(n)?
     after = Time.unixMs()

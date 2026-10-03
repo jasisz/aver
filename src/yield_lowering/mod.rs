@@ -1,8 +1,10 @@
-//! `yield` lowering (jasisz/aver#1329, phase one).
+//! Process lowering (jasisz/aver#1329, phase one).
 //!
-//! A function whose effect list names `yield` never runs as written. Every
-//! call to an operation of a capability in its effect list is a stop, and
-//! every self tail call is a stop of kind `Yield`: the function hands back
+//! A process never runs as written. A function is one when it requests
+//! something its program answers (see [`processes`]). Every call to an
+//! operation of a capability the module's dependencies answer is a stop, so is
+//! every `Run.turn()`, and every self tail call is a stop of kind `Yield`: the
+//! function hands back
 //! what it needs next as a value and a coordinator answers it. The
 //! lowering cuts the body at every stop and generates, in the reserved
 //! `__` namespace of the same module:
@@ -25,7 +27,7 @@
 //! The pass runs inside the front door of the pipeline
 //! ([`crate::ir::pipeline::front`]) between TCO and the type checker,
 //! in two phases: the program is checked once as written so every
-//! expression of the `yield` function carries its type stamp, the
+//! expression of every process carries its type stamp, the
 //! function is lowered from that stamped copy, and the whole module —
 //! generated items and the hand-written coordinator that refers to them —
 //! is checked again.
@@ -59,6 +61,7 @@ mod build;
 mod carried_waits;
 mod coordinator;
 mod lower;
+mod processes;
 mod trace;
 mod verify;
 
@@ -207,8 +210,10 @@ impl YieldLoweringReport {
     }
 }
 
-/// The language's own effect: bare and lowercase, never a capability.
-pub const YIELD_EFFECT: &str = "yield";
+pub use processes::{
+    ProcessInfo, ProcessReason, Processes, RUN_TURN, answers_that_are_processes,
+    derive as derive_processes, imported_reason, main_requests_turn, may_have_processes,
+};
 
 /// The loop's marks around its wait named in an effect list the program
 /// wrote. `Run` does not expose them, so no program can call them (the type
@@ -318,16 +323,6 @@ pub fn calls_run_all(fd: &FnDef) -> bool {
     coordinator::calls_run_all(fd)
 }
 
-pub fn is_yield_fn(fd: &FnDef) -> bool {
-    fd.effects.iter().any(|e| e.node == YIELD_EFFECT)
-}
-
-pub fn has_yield_fns(items: &[TopLevel]) -> bool {
-    items
-        .iter()
-        .any(|item| matches!(item, TopLevel::FnDef(fd) if is_yield_fn(fd)))
-}
-
 /// The start function a coordinator calls instead of `fn_name`.
 pub fn start_name(fn_name: &str) -> String {
     lower::Names::new(fn_name).start()
@@ -343,26 +338,24 @@ pub fn qualified_start_name(callee: &str) -> String {
     }
 }
 
-/// How a program runs a yielding function: from another yielding function,
-/// which nests its protocol, or as a process the generated loop seats. The
-/// generated `__` entry points are the compiler's, so the recipe never
-/// names them.
-pub const YIELD_CALL_RECIPE: &str = "call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`";
+/// How a program runs a process: from another process, which nests its
+/// protocol, or seated by the generated loop. The generated `__` entry points
+/// are the compiler's, so the recipe never names them.
+pub const PROCESS_CALL_RECIPE: &str = "call it from another process, or seat it as a process in the entry module and run it with `Run.all()`";
 
-/// Decision 4: a plain call to a yielding function — in this module or in
-/// a dependency — is an error carrying the recipe, never a missing-effect
-/// complaint about `yield`.
-pub fn direct_call_recipe(caller: &str, callee: &str) -> String {
+/// Decision 4: a plain call to a process — in this module or in a dependency
+/// — is an error carrying the recipe and the reason the callee is a process.
+pub fn direct_call_recipe(caller: &str, callee: &str, reason: &str) -> String {
     format!(
-        "Function '{caller}' calls '{callee}' directly, but '{callee}' yields; {YIELD_CALL_RECIPE}"
+        "Function '{caller}' calls '{callee}' directly, but '{callee}' is a process ({reason}); {PROCESS_CALL_RECIPE}"
     )
 }
 
 /// The same recipe at a call site that survives the lowering: the name is
 /// gone from the module's surface, and the protocol standing in its place
 /// is the evidence of why.
-pub fn removed_call_recipe(callee: &str) -> String {
-    format!("'{callee}' yields; {YIELD_CALL_RECIPE}")
+pub fn removed_call_recipe(callee: &str, reason: &str) -> String {
+    format!("'{callee}' is a process ({reason}); {PROCESS_CALL_RECIPE}")
 }
 
 fn error_at(line: usize, message: String) -> TypeError {
@@ -387,41 +380,41 @@ fn item_line(item: &TopLevel) -> Option<usize> {
     }
 }
 
-/// Lower every `yield` function of `items`.
+/// Lower every process of `items`.
 ///
 /// `stamped` is the same program after a type check: same items in the
-/// same order, with every expression of the `yield` functions carrying its
+/// same order, with every expression of the processes carrying its
 /// inferred type. `stamped_errors` are that check's diagnostics; the ones
-/// inside a `yield` function stop the lowering, the others are left to the
+/// inside a process stop the lowering, the others are left to the
 /// second check of the lowered module (they may only concern names the
-/// lowering is about to generate).
+/// lowering is about to generate). `processes` is the set derived from the
+/// written module; `marked` answers which calls are requests, counted over
+/// the module's own dependencies, and `carries` whether the program answers
+/// any capability at all, which decides whether its waits are carried.
 #[allow(clippy::too_many_arguments)]
 pub fn lower(
     items: &mut Vec<TopLevel>,
     stamped: &[TopLevel],
     stamped_errors: &[TypeError],
+    processes: &Processes,
     marked: &crate::config::MarkedCapabilities,
+    carries: bool,
     fn_sigs: &FnSigs,
     imported: &std::collections::HashMap<String, ProcessProtocol>,
     type_spellings: &TypeSpellings,
     coordinator_stop: CoordinatorStop,
 ) -> Result<YieldLoweringReport, Vec<TypeError>> {
     debug_assert_eq!(items.len(), stamped.len());
-    let yield_fns: HashSet<String> = stamped
-        .iter()
-        .filter_map(|item| match item {
-            TopLevel::FnDef(fd) if is_yield_fn(fd) => Some(fd.name.clone()),
-            _ => None,
-        })
-        .collect();
-    if yield_fns.is_empty() {
+    let process_names: HashSet<String> = processes.names();
+    if process_names.is_empty() {
         return Ok(YieldLoweringReport::default());
     }
+    let is_process = |fd: &FnDef| process_names.contains(&fd.name);
 
     let mut errors: Vec<TypeError> = Vec::new();
     for (index, item) in stamped.iter().enumerate() {
         let TopLevel::FnDef(fd) = item else { continue };
-        if !is_yield_fn(fd) {
+        if !is_process(fd) {
             continue;
         }
         let end = stamped[index + 1..]
@@ -441,12 +434,15 @@ pub fn lower(
         return Err(errors);
     }
 
-    let callable_processes: HashSet<String> =
-        yield_fns.iter().chain(imported.keys()).cloned().collect();
+    let reasons = CallReasons {
+        local: processes,
+        imported,
+        answers: &marked.answer_pairs(),
+    };
     for item in stamped {
         match item {
-            TopLevel::FnDef(fd) => scan_fn(fd, &callable_processes, &mut errors),
-            TopLevel::Verify(vb) => scan_verify(vb, &yield_fns, &mut errors),
+            TopLevel::FnDef(fd) => scan_fn(fd, &reasons, &mut errors),
+            TopLevel::Verify(vb) => scan_verify(vb, &reasons, &mut errors),
             _ => {}
         }
     }
@@ -457,7 +453,7 @@ pub fn lower(
     // A helper is lowered before the process that enters it, because a
     // nested state is built from the helper's own protocol. A cycle in that
     // graph would be an infinite state, so it is refused instead.
-    let calls = nested_calls(stamped, &yield_fns);
+    let calls = nested_calls(stamped, &process_names);
     let order = match lowering_order(&calls) {
         Ok(order) => order,
         Err(cycle) => {
@@ -465,13 +461,13 @@ pub fn lower(
             return Err(errors);
         }
     };
-    let mut nesting = lower::Nesting::new(yield_fns.clone(), imported);
+    let mut nesting = lower::Nesting::new(process_names.clone(), imported);
     let mut lowered: std::collections::HashMap<String, lower::Generated> =
         std::collections::HashMap::new();
     let mut failed: HashSet<String> = HashSet::new();
     for name in &order {
         let Some(fd) = stamped.iter().find_map(|item| match item {
-            TopLevel::FnDef(fd) if &fd.name == name && is_yield_fn(fd) => Some(fd),
+            TopLevel::FnDef(fd) if &fd.name == name && is_process(fd) => Some(fd),
             _ => None,
         }) else {
             continue;
@@ -486,7 +482,10 @@ pub fn lower(
             failed.insert(name.clone());
             continue;
         }
-        match lower::lower_fn(fd, marked, fn_sigs, type_spellings, &nesting) {
+        let reason = processes
+            .reason(name)
+            .expect("every lowered function is a derived process");
+        match lower::lower_fn(fd, reason, marked, fn_sigs, type_spellings, &nesting) {
             Ok(generated) => {
                 nesting.record(&generated);
                 lowered.insert(name.clone(), generated);
@@ -515,7 +514,7 @@ pub fn lower(
             out.push(item);
             continue;
         };
-        if !is_yield_fn(fd) {
+        if !is_process(fd) {
             out.push(item);
             continue;
         }
@@ -590,12 +589,12 @@ pub fn lower(
         for seating in &seatings {
             if !report.lowered.contains(&seating.process) {
                 errors.push(error_at(seating.line, format!(
-                    "`process {} seated by {}` names no yielding function of this module; a process is a function whose effect list names `yield`",
+                    "`process {} seated by {}` names no process of this module; a function is a process when it requests something its program answers, or calls Run.turn()",
                     seating.process, seating.by
                 )));
             } else if entered.contains(seating.process.as_str()) {
                 errors.push(error_at(seating.line, format!(
-                    "`process {} seated by {}` names a yielding helper another process of this module enters; the loop seats processes, and a helper runs inside the process that calls it",
+                    "`process {} seated by {}` names a process another process of this module enters; the loop seats processes, and a helper runs inside the process that calls it",
                     seating.process, seating.by
                 )));
             }
@@ -603,7 +602,7 @@ pub fn lower(
         if !errors.is_empty() {
             return Err(errors);
         }
-        // What the loop seats: a yielding function that answers Unit, or one
+        // What the loop seats: a process that answers Unit, or one
         // the module declares a seating for. One that answers something else
         // and has no seating is a protocol the program drives or verifies
         // itself. A Unit process with parameters and no seating is handed to
@@ -623,7 +622,7 @@ pub fn lower(
         let generate = !seated.is_empty() && (main.is_none() || runs_all);
         if runs_all && seated.is_empty() {
             let line = main.map(|fd| fd.line).unwrap_or(1);
-            return Err(vec![error_at(line, "'main' calls Run.all(), which runs the generated loop, but this module writes no process the loop can seat: a yielding function that answers Unit, or one a `process ... seated by ...` line names".to_string())]);
+            return Err(vec![error_at(line, "'main' calls Run.all(), which runs the generated loop, but this module writes no process the loop can seat: a process that answers Unit, or one a `process ... seated by ...` line names".to_string())]);
         }
         if !generate && !seatings.is_empty() {
             let line = seatings[0].line;
@@ -719,9 +718,9 @@ pub fn lower(
     // capability of its own carries every other wait it writes through an
     // `Int`-keyed one, so the loop's wait and the program's own can meet in
     // one program.
-    if !marked.is_empty() {
+    if carries {
         let carried = carried_waits::carry(items, stamped, type_spellings, &|name| {
-            yield_fns.contains(name)
+            process_names.contains(name)
         })
         .map_err(|parse| {
             vec![error_at(
@@ -758,7 +757,7 @@ pub fn lower(
                 }),
         )
         .collect();
-    // An exposed `yield` function exposes its protocol instead.
+    // An exposed process exposes its protocol instead.
     for item in items.iter_mut() {
         let TopLevel::Module(module) = item else {
             continue;
@@ -834,7 +833,7 @@ pub fn lower(
     Ok(report)
 }
 
-/// One `yield` function of this module calling another: which one, the line
+/// One process of this module calling another: which one, the line
 /// of the first such call, and whether every call site is a tail call.
 struct NestedCall {
     callee: String,
@@ -842,15 +841,15 @@ struct NestedCall {
     only_tail: bool,
 }
 
-/// Which `yield` functions of this module each one calls. A self call is not
+/// Which processes of this module each one calls. A self call is not
 /// an edge: it is the process's own loop, which stays inside its own machine.
 type NestedCalls = std::collections::BTreeMap<String, Vec<NestedCall>>;
 
-fn nested_calls(stamped: &[TopLevel], yield_fns: &HashSet<String>) -> NestedCalls {
+fn nested_calls(stamped: &[TopLevel], process_names: &HashSet<String>) -> NestedCalls {
     let mut calls = NestedCalls::new();
     for item in stamped {
         let TopLevel::FnDef(fd) = item else { continue };
-        if !is_yield_fn(fd) {
+        if !process_names.contains(&fd.name) {
             continue;
         }
         let mut called: Vec<NestedCall> = Vec::new();
@@ -868,7 +867,7 @@ fn nested_calls(stamped: &[TopLevel], yield_fns: &HashSet<String>) -> NestedCall
                     _ => (None, false),
                 };
                 let Some(name) = name else { return };
-                if name == fd.name || !yield_fns.contains(&name) {
+                if name == fd.name || !process_names.contains(&name) {
                     return;
                 }
                 match called.iter_mut().find(|other| other.callee == name) {
@@ -925,7 +924,7 @@ fn visit(
     Ok(())
 }
 
-/// A cycle among the `yield` functions of one module. Nesting would put each
+/// A cycle among the processes of one module. Nesting would put each
 /// one's state inside the other's, which has no bottom; a cycle written with
 /// tail calls only keeps none of those states, but each function's request
 /// sum still carries the one it hands over to, so it has no bottom either —
@@ -952,28 +951,50 @@ fn mutual_nesting_error(cycle: &[String], calls: &NestedCalls, stamped: &[TopLev
         .all(|pair| edge(&pair[0], &pair[1]).is_some_and(|edge| edge.only_tail));
     let message = if only_tail {
         format!(
-            "A cycle of tail calls between yield functions is not supported by yield lowering: {} — a tail call hands over to the callee's protocol, so the caller's requests gain the callee's, and a cycle of them has no request sum to start from. Break the cycle: give one function a parameter saying which phase comes next and have it tail call itself",
+            "A cycle of tail calls between processes is not supported: {} — a tail call hands over to the callee's protocol, so the caller's requests gain the callee's, and a cycle of them has no request sum to start from. Break the cycle: give one function a parameter saying which phase comes next and have it tail call itself",
             cycle.join(" calls ")
         )
     } else {
         format!(
-            "Mutual nesting is not supported by yield lowering: {} — a nested state holds the callee's state inside the caller's, and a cycle has no innermost state to start from. Break the cycle: pass what comes next as data in one of them, or fold them into one function",
+            "Mutual nesting of processes is not supported: {} — a nested state holds the callee's state inside the caller's, and a cycle has no innermost state to start from. Break the cycle: pass what comes next as data in one of them, or fold them into one function",
             cycle.join(" calls ")
         )
     };
     error_at(line, message)
 }
 
+/// The processes a call may name, with why each one is a process.
+struct CallReasons<'a> {
+    local: &'a Processes,
+    imported: &'a std::collections::HashMap<String, ProcessProtocol>,
+    answers: &'a [(String, String)],
+}
+
+impl CallReasons<'_> {
+    fn reason(&self, name: &str) -> Option<String> {
+        if let Some(reason) = self.local.reason(name) {
+            return Some(reason.to_string());
+        }
+        self.imported
+            .get(name)
+            .map(|protocol| imported_reason(protocol, self.answers))
+    }
+
+    fn is_process(&self, name: &str) -> bool {
+        self.local.contains(name) || self.imported.contains_key(name)
+    }
+}
+
 /// The tail positions of a body: the last statement's expression and,
 /// through `match`, every arm's leaf.
-fn scan_fn(fd: &FnDef, yield_fns: &HashSet<String>, errors: &mut Vec<TypeError>) {
+fn scan_fn(fd: &FnDef, reasons: &CallReasons<'_>, errors: &mut Vec<TypeError>) {
     let stmts = fd.body.stmts();
     for (index, stmt) in stmts.iter().enumerate() {
         let (expr, tail) = match stmt {
             Stmt::Expr(expr) => (expr, index + 1 == stmts.len()),
             Stmt::Binding(_, _, expr) => (expr, false),
         };
-        scan_expr(fd, expr, tail, yield_fns, errors);
+        scan_expr(fd, expr, tail, reasons, errors);
     }
 }
 
@@ -981,60 +1002,72 @@ fn scan_expr(
     fd: &FnDef,
     expr: &Spanned<Expr>,
     tail: bool,
-    yield_fns: &HashSet<String>,
+    reasons: &CallReasons<'_>,
     errors: &mut Vec<TypeError>,
 ) {
     match &expr.node {
         Expr::Match { subject, arms } => {
-            scan_expr(fd, subject, false, yield_fns, errors);
+            scan_expr(fd, subject, false, reasons, errors);
             for arm in arms {
-                scan_expr(fd, &arm.body, tail, yield_fns, errors);
+                scan_expr(fd, &arm.body, tail, reasons, errors);
             }
         }
         Expr::FnCall(callee, args) => {
             if let Some(name) = build::dotted_name(callee)
-                && yield_fns.contains(&name)
+                && reasons.is_process(&name)
             {
-                report_call(fd, &name, tail, expr.line, errors);
+                report_call(fd, &name, tail, expr.line, reasons, errors);
             }
             for arg in args {
-                scan_expr(fd, arg, false, yield_fns, errors);
+                scan_expr(fd, arg, false, reasons, errors);
             }
         }
         Expr::TailCall(tc) => {
-            if yield_fns.contains(&tc.target) {
-                report_call(fd, &tc.target, true, expr.line, errors);
+            if reasons.is_process(&tc.target) {
+                report_call(fd, &tc.target, true, expr.line, reasons, errors);
             }
             for arg in &tc.args {
-                scan_expr(fd, arg, false, yield_fns, errors);
+                scan_expr(fd, arg, false, reasons, errors);
             }
         }
         Expr::Ident(_) | Expr::Attr(_, _)
-            if build::dotted_name(expr).is_some_and(|name| yield_fns.contains(&name)) =>
+            if build::dotted_name(expr).is_some_and(|name| reasons.is_process(&name)) =>
         {
             let name = build::dotted_name(expr).expect("matched a process name");
+            let reason = reasons.reason(&name).unwrap_or_default();
             errors.push(error_at(expr.line, format!(
-                "Yield function '{name}' cannot be passed as a function value; call it directly inside another yield function, or seat it as a process in the entry module and run it with `Run.all()`"
+                "Process '{name}' ({reason}) cannot be passed as a function value; call it directly inside another process, or seat it as a process in the entry module and run it with `Run.all()`"
             )));
         }
         _ => expr_walk::for_each_child(expr, &mut |child| {
-            scan_expr(fd, child, false, yield_fns, errors)
+            scan_expr(fd, child, false, reasons, errors)
         }),
     }
 }
 
-fn report_call(fd: &FnDef, callee: &str, tail: bool, line: usize, errors: &mut Vec<TypeError>) {
-    let message = if !is_yield_fn(fd) {
-        direct_call_recipe(&fd.name, callee)
+fn report_call(
+    fd: &FnDef,
+    callee: &str,
+    tail: bool,
+    line: usize,
+    reasons: &CallReasons<'_>,
+    errors: &mut Vec<TypeError>,
+) {
+    let message = if !reasons.local.contains(&fd.name) {
+        direct_call_recipe(
+            &fd.name,
+            callee,
+            &reasons.reason(callee).unwrap_or_default(),
+        )
     } else if callee != fd.name {
-        // A process may split its work into `yield` helpers: a tail call
+        // A process may split its work into helper processes: a tail call
         // enters the helper's protocol, a non-tail call nests the helper's
         // state inside this one's. Only a cycle among them is refused, and
         // the lowering says so once, over the whole cycle.
         return;
     } else if !tail {
         format!(
-            "Function '{}' calls itself outside tail position; pass what comes next as data, or make it a tail call. A process nests another yield function, not itself: its own state would have to hold a copy of itself",
+            "Function '{}' calls itself outside tail position; pass what comes next as data, or make it a tail call. A process nests another process, not itself: its own state would have to hold a copy of itself",
             fd.name
         )
     } else {
@@ -1043,20 +1076,20 @@ fn report_call(fd: &FnDef, callee: &str, tail: bool, line: usize, errors: &mut V
     errors.push(error_at(line, message));
 }
 
-fn scan_verify(vb: &VerifyBlock, yield_fns: &HashSet<String>, errors: &mut Vec<TypeError>) {
+fn scan_verify(vb: &VerifyBlock, reasons: &CallReasons<'_>, errors: &mut Vec<TypeError>) {
     let mut seen: HashSet<String> = HashSet::new();
     let mut visit = |expr: &Spanned<Expr>| {
         expr_walk::walk(expr, &mut |e| {
             if let Expr::FnCall(callee, _) = &e.node
                 && let Expr::Ident(name) = &callee.node
-                && yield_fns.contains(name)
+                && let Some(reason) = reasons.local.reason(name)
                 && !verify::supports(vb, name)
                 && seen.insert(name.clone())
             {
                 errors.push(error_at(
                     e.line,
                     format!(
-                        "verify block for '{}' calls '{name}' directly, but '{name}' yields; test it in a cases-form `verify {name}` that stubs every request with `given`, or run it as a process",
+                        "verify block for '{}' calls '{name}' directly, but '{name}' is a process ({reason}); test it in a cases-form `verify {name}` that stubs every request with `given`, or run it as a process",
                         vb.fn_name
                     ),
                 ));

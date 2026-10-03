@@ -87,6 +87,18 @@ pub struct TypeCheckResult {
     /// it loaded, as (capability, answering module): the program's answer
     /// modules as far as this check can see.
     pub answers: Vec<(String, String)>,
+    /// The same pairs for the checked module and the modules it `depends` on,
+    /// transitively: the answers that can make one of its functions a
+    /// process. A library's processes are a fact of its own text, so the
+    /// answer modules of a program it happens to be linked into do not count.
+    pub closure_answers: Vec<(String, String)>,
+    /// The processes the front door derived for the checked module, with the
+    /// reason each one is a process. Empty when the module has none, and on a
+    /// check that did not go through the front door.
+    pub processes: crate::yield_lowering::Processes,
+    /// The processes of the loaded modules, by qualified name, with why each
+    /// one is a process.
+    pub dependency_processes: HashMap<String, String>,
     /// How source the compiler generates into this module spells the types
     /// whose source spelling would not name them here; see
     /// [`SymbolTable::generated_type_spellings`].
@@ -377,11 +389,19 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
 
     let type_spellings = checker.symbol_table.generated_type_spellings();
     let mut answers = checker.program_answers;
+    let mut closure_answers: Vec<(String, String)> = answers
+        .iter()
+        .filter(|(_, module)| checker.dependency_closure.contains(module))
+        .cloned()
+        .collect();
     if let Some(module) = TypeChecker::module_decl(items) {
         for capability in &module.answers {
             let pair = (capability.clone(), module.name.clone());
             if !answers.contains(&pair) {
-                answers.push(pair);
+                answers.push(pair.clone());
+            }
+            if !closure_answers.contains(&pair) {
+                closure_answers.push(pair);
             }
         }
     }
@@ -393,15 +413,38 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         laws: checker.available_laws,
         imported_processes: checker.imported_processes,
         answers,
+        closure_answers,
+        processes: Default::default(),
+        dependency_processes: checker.dependency_processes,
         type_spellings,
         pattern_ctor_families: checker.pattern_ctor_families,
     }
 }
 
-/// A bare name in an effect list is `yield` — the language's own effect,
-/// lowercase because it is not a capability — or a capability namespace
-/// such as `Console`. Anything else used to pass in silence, so `! [yeild]`
-/// bought neither the effect nor a word about it.
+impl TypeCheckResult {
+    /// The processes this check saw, by every name the signature map may
+    /// carry them under: the checked module's own, bare and qualified with
+    /// `module`, and those its dependencies expose.
+    pub fn process_names(&self, module: Option<&str>) -> std::collections::BTreeSet<String> {
+        let mut names: std::collections::BTreeSet<String> = self
+            .imported_processes
+            .keys()
+            .chain(self.dependency_processes.keys())
+            .cloned()
+            .collect();
+        for info in self.processes.iter() {
+            names.insert(info.name.clone());
+            if let Some(module) = module {
+                names.insert(format!("{module}.{}", info.name));
+            }
+        }
+        names
+    }
+}
+
+/// A bare name in an effect list is a capability namespace such as
+/// `Console`. Anything else used to pass in silence, so `! [yeild]` bought
+/// neither the effect nor a word about it.
 fn check_bare_effect_names(
     items: &[TopLevel],
     capabilities: &crate::capability::CapabilityRegistry,
@@ -413,7 +456,6 @@ fn check_bare_effect_names(
         .collect();
     let known = |effect: &str| {
         effect.contains('.')
-            || effect == crate::yield_lowering::YIELD_EFFECT
             // The callback-forwarding marker has its own rule and its own
             // diagnostic; saying "unknown effect" over it would mislead.
             || effect == crate::effects::FORWARDED_CALLBACK_EFFECT
@@ -444,7 +486,7 @@ fn check_bare_effect_names(
     for (effect, line) in unknown {
         errors.push(TypeError {
             message: format!(
-                "Unknown effect '{effect}'; an effect is a capability operation written 'Namespace.operation', a whole capability namespace written 'Namespace', or the language's own 'yield'"
+                "Unknown effect '{effect}'; an effect is a capability operation written 'Namespace.operation', or a whole capability namespace written 'Namespace'"
             ),
             line,
             col: 1,
@@ -759,6 +801,13 @@ struct TypeChecker {
     imported_processes: HashMap<String, crate::yield_lowering::ProcessProtocol>,
     /// `answers [...]` headers of every loaded module, as (capability, module).
     program_answers: Vec<(String, String)>,
+    /// The loaded modules the checked one reaches through `depends`,
+    /// transitively, by the name the program loads them under.
+    dependency_closure: HashSet<String>,
+    /// Every process a loaded module's front door derived, by the qualified
+    /// name an importer calls it with, with why it is one. A process whose
+    /// lowering failed is still in its module as written, and still one.
+    dependency_processes: HashMap<String, String>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, Type>,
     /// Local bindings in the current function/scope.
@@ -856,6 +905,8 @@ impl TypeChecker {
             available_laws: std::collections::BTreeSet::new(),
             imported_processes: HashMap::new(),
             program_answers: Vec::new(),
+            dependency_closure: HashSet::new(),
+            dependency_processes: HashMap::new(),
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),

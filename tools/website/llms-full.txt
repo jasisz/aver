@@ -48,7 +48,7 @@ aver run file.av --module-root . --wasip2
 
 - Aver program args are available through `Args.get()`
 - `--record <dir>` records effect traces for replay
-- `AVER_YIELD_DUMP=1` (env var, read by any door that type-checks a program) prints the generated Aver for every lowered `yield` function to stderr. Use it to debug the state types, request/outcome sums and answer functions it built.
+- `AVER_YIELD_DUMP=1` (env var, read by any door that type-checks a program) prints the generated Aver for every lowered process to stderr. Use it to debug the state types, request/outcome sums and answer functions it built.
 - A file names a program: the entry module, everything it reaches through `depends [...]`, and the `[providers]` bindings of the project's `aver.toml`. When the program reaches a capability that `aver.toml` binds to a Rust package, `run` builds that provider host once and reuses it from the cache afterwards. The first build says which packages it links and where they come from. With `--wasip2` it adapts the WIT-lowerable bindings to Component Model imports, while `--wasm-gc` adapts the complete provider value vocabulary through the contract-derived raw ABI. `--self-host` has no provider host and refuses such a program with `error[capability-provider-unhosted]`. A project without `[providers]` never invokes Cargo
 
 ### Check
@@ -66,6 +66,8 @@ aver check file-or-dir --module-root .
 - exposed names that nothing in the checked program imports (`unused-expose`). A directory input judges exposes over every program in it, and a single file only over its own program, so a name used only by a sibling program outside the input is reported. What only the generated loop reaches (an answer module's functions, a job kind's `begin` and `take`, the seam) is not an import, so leave those out of `exposes`
 
 Warnings do not make `check` fail. `missing-verify` is an error and does.
+
+Below each module's summary line, `check` lists the module's processes, one line each with what made it a process: `process loop: requests Pool.claim, answered by Pooled`, `process walk: calls process fetch`, `process ticking: requests Run.turn`. Nothing in the source marks a process, so this is where to read which functions the compiler lowers. With `--json` the same list is the `processes` field of each module's report.
 
 ### Capabilities
 
@@ -91,7 +93,7 @@ aver effects file-or-dir --module-root . --since <rev>
 
 `--write` rewrites exactly the lists the report names, on functions and on module boundaries, to that minimum. It renders them through the formatter's own layout, so `aver format --check` stays clean afterwards. It is idempotent, and a tree whose lists the report calls minimal is left byte-identical. You read the report to decide whether to run the rewrite at all, so the rewrite never touches a list the report said nothing about. Four rules keep it mechanical:
 
-- `yield` and the callback-forwarding marker `_` are copied through verbatim. `yield` declares how a function is lowered and is not a computed effect, so the rewrite never invents it and never removes it. A function that newly needs it gets the ordinary `check` diagnostic, and you add it yourself.
+- The callback-forwarding marker `_` is copied through verbatim: it is not a computed effect, so the rewrite never invents it and never removes it. `Run.turn` is an effect like any other: a function whose body calls `Run.turn()` gets it written, which makes it a process. A process's list only grows: what it reaches through another process is lowered out of the signatures the rewrite reads, so dropping it would drop what makes it a process.
 - A namespace entry you wrote, such as `Disk`, stays as written while it covers the computed set, including when you wrote a method beside it. Narrowing it to `Disk.readText` is a decision about the contract, so `effect-granularity` raises that as a warning instead.
 - A module that declares no boundary does not get one. `check` already nudges for that, and declaring the boundary is the author's call.
 - A `//` comment written on a list's own lines is put back on the rewritten list. The formatter leaves a line carrying a comment alone, and the rewrite does the same.
@@ -497,11 +499,11 @@ The diagnostics an agent meets on the way, each with its recipe (`docs/diagnosti
 
 | Slug | What it says | Recipe |
 |---|---|---|
-| `yield-direct-call` | A function that does not yield, an unsupported verify form, or another module calls a `yield` function as written. | Call it from a function that declares `yield`, seat it as a process the generated loop runs (`Run.all()`), or test it with a cases-form `verify` that stubs every request. |
-| `yield-non-tail-call` | A yielding function calls itself outside tail position. | Pass what comes next as data, or make it a tail call. |
-| `yield-unsupported` | Mutual nesting between yielding functions, a request or a helper call inside `(a, b)!`, a function value live across a request, or a `yield` function with no stop. | Break the cycle, perform them one after another, pass data instead of a callback, or drop `yield`. |
-| `intercept-outside-yield` | A function without `yield` performs an operation of an answered capability. | Add `yield` to the function, or call the answer module's own function directly. |
-| `answer-shape` | Error: an answer function declares `yield`. Warning: an answer function declares effects that can block, which stalls every process while it runs. | Drop `yield` from the answer and make the process the caller; for the warning, accept the stall or move the work into a job. |
+| `process-direct-call` | `main`, an unsupported verify form, or a function value calls a process as written. The message names what made it a process. | Call it from another process, seat it as a process the generated loop runs (`Run.all()`), or test it with a cases-form `verify` that stubs every request. |
+| `process-non-tail-call` | A process calls itself outside tail position. | Pass what comes next as data, or make it a tail call. |
+| `process-unsupported` | Mutual nesting between processes, a request or a helper call inside `(a, b)!`, a function value live across a request, or a process with no stop. | Break the cycle, perform them one after another, pass data instead of a callback, or drop the request it never makes from its effect list. |
+| `request-outside-process` | A function that is not a process requests an operation of an answered capability: its module does not depend on the answer module, or it is `main`. | List the answer module in that module's `depends`, or call the answer module's own function directly. |
+| `answer-shape` | Error: an answer function is a process. Warning: an answer function declares effects that can block, which stalls every process while it runs. | Drop the request from the answer and make the process the caller; for the warning, accept the stall or move the work into a job. |
 | `answer-binding` | An `answers [...]` header names a capability that module cannot answer: a standard capability, a capability module, a missing operation, a wrong signature, two states in one module. | Declare a capability of your own; write `op(state: S, args) -> Tuple<S, Result<R, Run.Wake>>` for every operation with one state. |
 | `run-binding` | Something the generated loop is built from is off: a process with parameters and no `process ... seated by ...` line, a process answering something other than `Unit`, a seating function that is not `(S) -> List<K>` of an answer module, an answer module without `fresh`, a `stop` or `admit` of the wrong shape, `Run.all()` with no process to seat, or a `[run]` table. | Declare a keyed process with `process <name> seated by <Module.function>`, give every answer module a pure `fresh`, write `stop(view: Run.View) -> Bool` and `admit(view: Run.View, id: Int) -> Bool`, and remove `[run]`. |
 | `work-shape` | A capability names `Work.Job` but is not exactly `begin`/`take` with the Work result shapes. | Declare exactly those two operations; keep capability resources out of `T` and `R`. |

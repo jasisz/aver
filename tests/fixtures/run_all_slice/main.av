@@ -1,12 +1,12 @@
 module Node
     intent = "The follow slice as processes: a peer, a walk, an accepting process, a dialling process and a ticker, with two policies over the generated view. The loop between them is generated."
     depends [Bytes, Wire, Pool, Blocks, Chain, Clock, Sockets, Ledger, Clocked]
-    effects [Wire.accept, Wire.dialled, Wire.read, Wire.write, Wire.writes, Pool.claim, Pool.gone, Pool.joined, Pool.swept, Blocks.deliver, Blocks.body, Chain.nextTarget, Chain.commit, Clock.tick, Console.print, yield]
+    effects [Wire.accept, Wire.dialled, Wire.read, Wire.write, Wire.writes, Pool.claim, Pool.gone, Pool.joined, Pool.swept, Blocks.deliver, Blocks.body, Chain.nextTarget, Chain.commit, Clock.tick, Console.print]
     exposes [admit, stop]
 
 fn accepting() -> Unit
     ? "Every peer the listener hands over, seated in the pool, until the listener closes."
-    ! [Wire.accept, Pool.joined, yield]
+    ! [Wire.accept, Pool.joined]
     match Wire.accept()
         Wire.Arrival.Closed -> Unit
         Wire.Arrival.Peer(key) -> match Pool.joined(key)
@@ -15,7 +15,7 @@ fn accepting() -> Unit
 
 fn dialling() -> Unit
     ? "Every dial that settles, seated in the pool, until no dial is outstanding."
-    ! [Wire.dialled, Pool.joined, yield]
+    ! [Wire.dialled, Pool.joined]
     match Wire.dialled()
         Wire.Arrival.Closed -> Unit
         Wire.Arrival.Peer(key) -> match Pool.joined(key)
@@ -24,7 +24,7 @@ fn dialling() -> Unit
 
 fn ticker() -> Unit
     ? "One sweep of the pool per tick, until the clock closes, which is when it says how often the deadline let it be asked."
-    ! [Clock.tick, Pool.swept, Console.print, yield]
+    ! [Clock.tick, Pool.swept, Console.print]
     match Clock.tick()
         Clock.Tick.Closed(asks) -> reported(asks)
         Clock.Tick.Tock -> match Pool.swept()
@@ -37,7 +37,7 @@ fn reported(asks: Int) -> Unit
 
 fn peer() -> Unit
     ? "Ask the pool what to fetch, let the helper fetch it, go round; a peer the helper could not finish with is handed back. It is the process that used the wire, so it is the one that says what the wire did once there is nothing left to fetch."
-    ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Wire.writes, Blocks.deliver, Console.print, yield]
+    ! [Pool.claim, Pool.gone, Wire.write, Wire.read, Wire.writes, Blocks.deliver, Console.print]
     Console.print("peer: asking the pool for work")
     match Pool.claim()
         Pool.Assignment.Stop -> reportWire(Wire.writes())
@@ -47,7 +47,7 @@ fn peer() -> Unit
 
 fn fetchBody(key: Int, height: Int) -> Bool
     ? "One body from one peer: the write, the read and the hand-over. True when the body landed, false when anything on the way said this peer is finished."
-    ! [Wire.write, Wire.read, Blocks.deliver, Console.print, yield]
+    ! [Wire.write, Wire.read, Blocks.deliver, Console.print]
     match Wire.write(key, Ledger.blockOf(height))
         Result.Err(_) -> false
         Result.Ok(_) -> match Wire.read(key, 4000000, 2000)
@@ -77,7 +77,7 @@ fn counted(payloads: Int, writeAsks: Int, readAsks: Int) -> Unit
 
 fn walk() -> Unit
     ? "One connected block per turn: the next target, its validated body, the commit."
-    ! [Chain.nextTarget, Blocks.body, Chain.commit, Console.print, yield]
+    ! [Chain.nextTarget, Blocks.body, Chain.commit, Console.print]
     Console.print("walk: looking for the next block to connect")
     match Chain.nextTarget()
         Option.None -> Unit

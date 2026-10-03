@@ -2,10 +2,10 @@ module Wrapper
     intent = "Compose a checked imported observer through another module."
     depends [Pool, Pooled, Looper]
     exposes [run]
-    effects [Pool.claim, Time.unixMs, yield]
+    effects [Pool.claim, Time.unixMs]
 
 fn run(n: Int) -> Int
-    ! [Pool.claim, Time.unixMs, yield]
+    ! [Pool.claim, Time.unixMs]
     value = Looper.run(n)
     after = Time.unixMs()
     value + after

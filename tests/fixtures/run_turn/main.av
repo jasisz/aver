@@ -1,0 +1,39 @@
+module Node
+    intent = "Two processes that request nothing but the turn: each one hands the turn back after every line, so the loop interleaves their lines."
+    effects [Console.print, Run.turn]
+
+fn left() -> Unit
+    ? "Counts down from three on the left."
+    ! [Console.print, Run.turn]
+    counting("left", 3)
+
+fn right() -> Unit
+    ? "Counts down from three on the right."
+    ! [Console.print, Run.turn]
+    counting("right", 3)
+
+fn counting(name: String, n: Int) -> Unit
+    ? "One line, then the turn goes back to the loop before the next one."
+    ! [Console.print, Run.turn]
+    Console.print("{name} {n}")
+    Run.turn()
+    match n == 1
+        true -> Unit
+        false -> counting(name, n - 1)
+
+fn steps(n: Int, handed: Int) -> Int
+    ? "How many turns a countdown from n hands back after handed ones: one per line."
+    ! [Run.turn]
+    Run.turn()
+    match n == 1
+        true -> handed + 1
+        false -> steps(n - 1, handed + 1)
+
+fn handBack(path: BranchPath, index: Int) -> Unit
+    ? "The loop gives the turn straight back."
+    Unit
+
+verify steps
+    given turn: Run.turn = [handBack]
+    steps(1, 0) => 1
+    steps(3, 0) => 3

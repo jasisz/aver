@@ -175,10 +175,9 @@ impl<'a> Model<'a> {
         let mut kinds = protocol.kinds.clone();
         if let Some(root) = sources.iter().find(|fd| fd.name == protocol.fn_name) {
             for effect in &root.effects {
-                if effect.node == "yield"
-                    || kinds
-                        .iter()
-                        .any(|k| k.operation.as_ref() == Some(&effect.node))
+                if kinds
+                    .iter()
+                    .any(|k| k.operation.as_ref() == Some(&effect.node))
                 {
                     continue;
                 }
@@ -253,6 +252,11 @@ impl<'a> Model<'a> {
     fn source_name(&self, fd: &FnDef) -> String {
         format!("{}Source{}", self.prefix, build::capitalize(&fd.name))
     }
+    /// Whether `name` is a process of this module, the one modeled among them.
+    fn is_process(&self, name: &str) -> bool {
+        self.local_protocols.iter().any(|p| p.fn_name == name)
+    }
+
     fn source(&self, name: &str) -> Option<&'a FnDef> {
         self.sources
             .iter()
@@ -385,7 +389,7 @@ impl<'a> Model<'a> {
         }
         reached.push(fd);
         for effect in &fd.effects {
-            if effect.node != "yield" && !self.operations.contains_key(&effect.node) {
+            if !self.operations.contains_key(&effect.node) {
                 return Err(format!(
                     "in-place effect '{}' needs an explicit effect model",
                     effect.node
@@ -408,12 +412,8 @@ impl<'a> Model<'a> {
                 if !helper.effects.is_empty() {
                     self.reachable(helper, reached, imports)?;
                 }
-            } else if self
-                .fn_sigs
-                .get(&name)
-                .is_some_and(|sig| sig.2.iter().any(|e| e == "yield"))
-            {
-                let imported = self.imported.get(&name).filter(|p| p.trace.is_some()).ok_or_else(|| format!("imported yielding helper '{name}' does not expose a supported source observer"))?;
+            } else if self.imported.contains_key(&name) {
+                let imported = self.imported.get(&name).filter(|p| p.trace.is_some()).ok_or_else(|| format!("imported helper process '{name}' does not expose a supported source observer"))?;
                 if !imports.iter().any(|p| p.fn_name == name) {
                     imports.push(imported);
                 }

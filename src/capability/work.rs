@@ -198,7 +198,7 @@ pub const WAIT_KEY: &str = "wait-key";
 pub const WORK_BINDING: &str = "work-binding";
 pub const ANSWER_SHAPE: &str = "answer-shape";
 pub const ANSWER_BINDING: &str = "answer-binding";
-pub const INTERCEPT_OUTSIDE_YIELD: &str = "intercept-outside-yield";
+pub const REQUEST_OUTSIDE_PROCESS: &str = "request-outside-process";
 
 /// Every capability of `registry` that names `Work.Job` at its boundary,
 /// paired with its checked shape or the `work-shape` diagnostic it fails.
@@ -391,11 +391,17 @@ pub type FnSignature = (Vec<Type>, Type, Vec<String>);
 /// checked as its own unit sees only its own cone, so a module the manifest
 /// names that lies outside that cone is not missing from the program; only
 /// the entry, whose cone is the program, can say it is.
+///
+/// `processes` names the processes the check saw, bare and qualified: those
+/// of the checked module (lowered, or refused by their lowering with its own
+/// reason) and those its dependencies expose (whose source signatures the
+/// check keeps for composing them). Their requests are where they belong.
 pub fn gate(
     registry: &CapabilityRegistry,
     manifest: Option<&crate::config::ProviderPackageManifest>,
     answered: &[(String, String)],
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
+    processes: &BTreeSet<String>,
     entry_module: Option<&str>,
     whole_program: bool,
 ) -> Vec<WorkDiagnostic> {
@@ -429,7 +435,9 @@ pub fn gate(
         whole_program,
     );
     errors.extend(answer_errors);
-    errors.extend(requests_outside_a_process(registry, &answers, fn_sigs));
+    errors.extend(requests_outside_a_process(
+        registry, &answers, fn_sigs, processes,
+    ));
     errors.extend(check_bindings(
         registry,
         &shapes,
@@ -448,18 +456,21 @@ pub fn gate(
 
 /// An operation of an answered capability performed outside a process.
 ///
-/// A marked operation is a request, and a request is only a request inside a
-/// function whose effect list names `yield`: the lowering cuts such a
-/// function at it and the operation disappears from every effect list it
-/// leaves behind. So a marked operation still standing in a declared effect
-/// list after the lowering is a call from a plain function, and it has no
-/// answer — no provider is bound to the capability, and no request kind was
-/// generated for it. Saying so here is what makes proposal §2.4's "an
-/// unanswered request kind is impossible by construction" true.
+/// A function that requests something its program answers is a process, and
+/// the lowering cuts it at the request, so the operation disappears from
+/// every effect list it leaves behind. Whether it is one is counted over its
+/// own module's dependencies, never the whole program. So an answered
+/// operation still standing in a declared effect list after the lowering is
+/// a request from a function whose module does not reach the answer module
+/// (or from `main`), and it has no answer: no provider is bound to the
+/// capability, and no request kind was generated for it. Saying so here is
+/// what makes proposal §2.4's "an unanswered request kind is impossible by
+/// construction" true.
 fn requests_outside_a_process(
     registry: &CapabilityRegistry,
     answers: &[AnswerShape],
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
+    processes: &BTreeSet<String>,
 ) -> Vec<WorkDiagnostic> {
     let mut answered: BTreeMap<&str, &str> = BTreeMap::new();
     for shape in answers {
@@ -479,15 +490,10 @@ fn requests_outside_a_process(
         {
             continue;
         }
-        let (_, _, effects) = &fn_sigs[name];
-        // A process is where a request belongs. One that did not lower has
-        // its own error from the lowering, and this is not a second one.
-        if effects
-            .iter()
-            .any(|effect| effect == crate::yield_lowering::YIELD_EFFECT)
-        {
+        if processes.contains(name.as_str()) {
             continue;
         }
+        let (_, _, effects) = &fn_sigs[name];
         for effect in effects {
             let Some((capability, operation)) = effect.rsplit_once('.') else {
                 continue;
@@ -495,10 +501,18 @@ fn requests_outside_a_process(
             let Some(module) = answered.get(capability) else {
                 continue;
             };
-            findings.push(WorkDiagnostic::new(
-                INTERCEPT_OUTSIDE_YIELD,
+            let bare = name.rsplit('.').next().unwrap_or(name);
+            let why = if bare == "main" {
+                "'main' is never a process".to_string()
+            } else {
                 format!(
-                    "'{effect}' is answered by this program — module '{module}' says `answers [{capability}]` — so it is a request, and a request is only legal in a function whose effect list names `yield`. Add `yield` to '{name}', or call '{module}.{operation}({})' directly if what you wanted was the answer itself",
+                    "'{name}' is not a process: a function is one when its own module's dependencies answer what it requests, and the module that writes it does not depend on '{module}'"
+                )
+            };
+            findings.push(WorkDiagnostic::new(
+                REQUEST_OUTSIDE_PROCESS,
+                format!(
+                    "'{effect}' is answered by this program — module '{module}' says `answers [{capability}]` — so it is a request, and {why}. Request it from a process whose module lists '{module}' in `depends`, or call '{module}.{operation}({})' directly if what you wanted was the answer itself",
                     answer_call_arguments(registry, capability, operation)
                 ),
             ));
@@ -912,27 +926,22 @@ fn check_answer_module(
         }
         let key = answer_key(module, operation);
         let Some((params, result, effects)) = fn_sigs.get(&key) else {
-            // A `yield` function is cut into generated pieces before any
-            // signature is read, so its own name is gone by the time the gate
-            // looks; the pieces it left behind are how the gate knows.
-            if lowered_yield_function(fn_sigs, module, &operation.name) {
-                findings.push(answer_shape_error(format!(
-                    "module '{module}' answers capability '{capability}', and '{key}' declares `yield`; an answer is computed inside the turn, so it cannot itself be a process the turn has to drive"
-                )));
-                continue;
-            }
             findings.push(answer_binding_error(format!(
                 "capability '{capability}' is answered by module '{module}', so every one of its operations needs an answer function; this program has no function '{key}'"
             )));
             continue;
         };
-        if effects
-            .iter()
-            .any(|effect| effect == crate::yield_lowering::YIELD_EFFECT)
-        {
-            findings.push(answer_shape_error(format!(
-                "module '{module}' answers capability '{capability}', and '{key}' declares `yield`; an answer is computed inside the turn, so it cannot itself be a process the turn has to drive"
-            )));
+        // An answer function that requests something is a process, and the
+        // lowering of its own module refuses it, naming what it requests;
+        // its shape is not worth a second report.
+        if effects.iter().any(|effect| {
+            effect == crate::yield_lowering::RUN_TURN
+                || group.iter().any(|binding| {
+                    effect
+                        .rsplit_once('.')
+                        .is_some_and(|(namespace, _)| namespace == binding.capability)
+                })
+        }) {
             continue;
         }
         let blocking: Vec<&String> = effects
@@ -1107,16 +1116,6 @@ fn compiler_shipped_reason(capability: &str) -> Option<String> {
     None
 }
 
-/// Whether `module.name` was a `yield` function: the lowering replaced it
-/// with `__<name>Start` and one answer function per request kind.
-fn lowered_yield_function(
-    fn_sigs: &std::collections::HashMap<String, FnSignature>,
-    module: &str,
-    name: &str,
-) -> bool {
-    fn_sigs.contains_key(&format!("{module}.__{name}Start"))
-}
-
 fn module_has_functions(
     fn_sigs: &std::collections::HashMap<String, FnSignature>,
     module: &str,
@@ -1127,10 +1126,6 @@ fn module_has_functions(
 
 fn answer_binding_error(message: String) -> WorkDiagnostic {
     WorkDiagnostic::new(ANSWER_BINDING, message)
-}
-
-fn answer_shape_error(message: String) -> WorkDiagnostic {
-    WorkDiagnostic::new(ANSWER_SHAPE, message)
 }
 
 fn answer_shape_warning(message: String) -> WorkDiagnostic {

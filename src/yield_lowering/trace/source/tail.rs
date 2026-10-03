@@ -36,7 +36,7 @@ impl<'a> Compiler<'a> {
                 || self
                     .model
                     .source(&name)
-                    .is_some_and(super::super::super::is_yield_fn))
+                    .is_some_and(|fd| self.model.is_process(&fd.name)))
         {
             return self.many(args, vec![], cursor, &|this, values, current| {
                 this.pause(current, &|this, resumed| {

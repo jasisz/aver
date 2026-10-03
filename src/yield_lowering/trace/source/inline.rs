@@ -52,7 +52,7 @@ impl<'a> Compiler<'a> {
         let result = self.sequence(
             &stmts,
             cursor,
-            super::super::super::is_yield_fn(fd),
+            self.model.is_process(&fd.name),
             &|this, value, cursor| {
                 let active = this.inlining.pop().expect("active inline helper");
                 let result = next(this, value, cursor);

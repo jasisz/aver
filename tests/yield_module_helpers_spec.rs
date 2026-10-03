@@ -68,7 +68,7 @@ fn a_parent_process_can_stub_requests_from_its_imported_helpers() {
 fn an_imported_helper_still_requires_its_effects_at_the_source_call() {
     let dir = fixture();
     edit(dir.path(), "main.av", |s| {
-        s.replacen("! [Pool.claim, yield]", "! [yield]", 1)
+        s.replacen("! [Pool.claim]", "! []", 1)
     });
     let out = invoke(dir.path(), "check", &[]);
     assert!(!out.status.success());
@@ -110,7 +110,7 @@ fn imported_source_helpers_cannot_escape_as_function_arguments() {
     let dir = fixture();
     edit(dir.path(), "main.av", |s| {
         format!(
-            "{s}\nfn apply(f: Fn(Int, Int) -> Int ! [Pool.claim, yield]) -> Int\n    ! [Pool.claim, yield]\n    f(2, 10)\n\nfn escaping() -> Int\n    ! [Pool.claim, yield]\n    apply(Looper.loop)\n"
+            "{s}\nfn apply(f: Fn(Int, Int) -> Int ! [Pool.claim]) -> Int\n    ! [Pool.claim]\n    f(2, 10)\n\nfn escaping() -> Int\n    ! [Pool.claim]\n    apply(Looper.loop)\n"
         )
     });
     let out = invoke(dir.path(), "check", &[]);
@@ -142,13 +142,13 @@ fn nominal_parameters_and_results_keep_their_library_identity() {
     let dir = fixture();
     edit(dir.path(), "looper.av", |s| {
         format!(
-            "{}\nrecord Ticket\n    value: Int\n\nfn request(ticket: Ticket) -> Ticket\n    ! [Pool.claim, yield]\n    answer = Pool.claim(ticket.value)\n    Ticket(value = answer)\n",
+            "{}\nrecord Ticket\n    value: Int\n\nfn request(ticket: Ticket) -> Ticket\n    ! [Pool.claim]\n    answer = Pool.claim(ticket.value)\n    Ticket(value = answer)\n",
             s.replace("exposes [loop]", "exposes [loop, Ticket, request]")
         )
     });
     edit(dir.path(), "main.av", |s| {
         format!(
-            "{s}\nfn relay(ticket: Looper.Ticket) -> Looper.Ticket\n    ! [Pool.claim, yield]\n    Looper.request(ticket)\n\nfn ticketStub(path: BranchPath, index: Int, id: Int) -> Int\n    id * 3\n\nverify relay\n    given answer: Pool.claim = [ticketStub]\n    relay(Looper.Ticket(value = 7)) => Looper.Ticket(value = 21)\n"
+            "{s}\nfn relay(ticket: Looper.Ticket) -> Looper.Ticket\n    ! [Pool.claim]\n    Looper.request(ticket)\n\nfn ticketStub(path: BranchPath, index: Int, id: Int) -> Int\n    id * 3\n\nverify relay\n    given answer: Pool.claim = [ticketStub]\n    relay(Looper.Ticket(value = 7)) => Looper.Ticket(value = 21)\n"
         )
     });
     let out = invoke(dir.path(), "verify", &[]);
@@ -180,8 +180,8 @@ fn imported_helpers_run_and_verify_on_wasm_gc() {
 #[test]
 fn imported_segments_propagate_in_place_effects_and_number_each_operation() {
     let dir = fixture();
-    std::fs::write(dir.path().join("looper.av"), "module Looper\n    intent = \"A request followed by an inline clock read.\"\n    depends [Pool, Pooled]\n    exposes [once]\n\nfn once(id: Int) -> Int\n    ! [Pool.claim, Time.unixMs, yield]\n    answer = Pool.claim(id)\n    answer + Time.unixMs()\n").unwrap();
-    std::fs::write(dir.path().join("main.av"), "module Client\n    intent = \"Exercise effects of an imported generated continuation.\"\n    depends [Looper, Pool, Pooled]\n\nfn parent() -> Int\n    ! [Pool.claim, Time.unixMs, yield]\n    value = Looper.once(2)\n    value + 1\n\nfn requestStub(path: BranchPath, index: Int, id: Int) -> Int\n    id + index\n\nfn clockStub(path: BranchPath, index: Int) -> Int\n    100 + index\n\nverify parent\n    given request: Pool.claim = [requestStub]\n    given clock: Time.unixMs = [clockStub]\n    parent() => 103\n").unwrap();
+    std::fs::write(dir.path().join("looper.av"), "module Looper\n    intent = \"A request followed by an inline clock read.\"\n    depends [Pool, Pooled]\n    exposes [once]\n\nfn once(id: Int) -> Int\n    ! [Pool.claim, Time.unixMs]\n    answer = Pool.claim(id)\n    answer + Time.unixMs()\n").unwrap();
+    std::fs::write(dir.path().join("main.av"), "module Client\n    intent = \"Exercise effects of an imported generated continuation.\"\n    depends [Looper, Pool, Pooled]\n\nfn parent() -> Int\n    ! [Pool.claim, Time.unixMs]\n    value = Looper.once(2)\n    value + 1\n\nfn requestStub(path: BranchPath, index: Int, id: Int) -> Int\n    id + index\n\nfn clockStub(path: BranchPath, index: Int) -> Int\n    100 + index\n\nverify parent\n    given request: Pool.claim = [requestStub]\n    given clock: Time.unixMs = [clockStub]\n    parent() => 103\n").unwrap();
     let out = invoke(dir.path(), "verify", &[]);
     assert!(out.status.success(), "{}", format_output(&out));
     assert!(format_output(&out).contains("1/1 cases passed"));

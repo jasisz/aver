@@ -505,12 +505,12 @@ fn dump(fixture_name: &str) -> String {
     combined(&out)
 }
 
-/// A process split into a `yield` helper: the loop seats the process, not the
+/// A process split into a helper process: the loop seats the process, not the
 /// helper. `peer` calls `fetchBody` non-tail, so `fetchBody`'s requests reach
 /// the turn as requests of `peer` carrying the helper's state, and the slot
 /// table has one marker per seated process and none for the helper.
 #[test]
-fn a_yield_helper_is_nested_in_its_caller_and_never_seated() {
+fn a_helper_process_is_nested_in_its_caller_and_never_seated() {
     let text = dump(SLICE);
     for line in [
         // The helper has a protocol of its own, and the caller's states hold it.
@@ -612,7 +612,7 @@ fn declared_effects(dump: &str, function: &str) -> Option<String> {
     None
 }
 
-/// Dependency yielding functions are library protocols. Only the entry
+/// Dependency processes are library protocols. Only the entry
 /// process is seated, and it enters Walker's protocol through a tail call.
 /// Walker depends on the capability it asks, not on the module that answers
 /// it: the program's answer modules are the ones its whole cone reaches.
@@ -624,7 +624,7 @@ fn a_process_enters_an_imported_helper_under_the_generated_loop() {
     }
 }
 
-/// The loop belongs to the entry, so a dependency whose yielding function
+/// The loop belongs to the entry, so a dependency whose process
 /// takes a key is a library helper and is never seated, at any door.
 #[test]
 fn a_dependency_helper_is_never_seated() {
@@ -1099,7 +1099,7 @@ fn a_wrong_seating_or_policy_is_refused_with_the_shape_it_needs() {
         (
             "process member seated by Hub.members",
             "process echo seated by Hub.members",
-            "`process echo seated by Hub.members` names no yielding function of this module",
+            "`process echo seated by Hub.members` names no process of this module",
         ),
     ] {
         std::fs::write(&main, source.replace(from, to)).expect("edit main");

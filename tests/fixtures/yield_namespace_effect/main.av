@@ -1,12 +1,12 @@
 module YieldNamespaceEffect
     intent = "Fixture: a process names a whole namespace in its effect list and performs one of its operations in place, beside a request."
     depends [Pool, Pooled]
-    effects [Pool.claim, Console, yield]
+    effects [Pool.claim, Console]
     exposes [drive, main]
 
 fn walk(id: Int) -> Int
     ? "Says which peer it is about to ask for, then adds the handle the pool answers with."
-    ! [Pool.claim, Console, yield]
+    ! [Pool.claim, Console]
     Console.print("asking {id}")
     Pool.claim(id) + id
 

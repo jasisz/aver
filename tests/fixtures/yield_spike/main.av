@@ -1,12 +1,12 @@
 module YieldSpike
     intent = "Fixture: a yield function lowered to state types, a Request sum, an Outcome sum and pure answer functions, driven by a hand-written coordinator."
     depends [Pool, Pooled]
-    effects [Pool.claim, yield, Console.print]
+    effects [Pool.claim, Console.print]
     exposes [drive, main]
 
 fn loop(id: Int, done: Int) -> Int
     ? "Claims handles for id until the pool answers None, summing the handles into done."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     r = Pool.claim(id)
     match r
         Option.None -> done

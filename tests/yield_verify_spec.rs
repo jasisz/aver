@@ -41,6 +41,12 @@ fn edited_fixture(edit: impl FnOnce(String) -> String) -> tempfile::TempDir {
     dir
 }
 
+/// The fixture's module boundary, widened to admit `Run.turn`, for a case
+/// that adds a process handing the turn back without a request of its own.
+fn with_turn(source: &str) -> String {
+    source.replace("    effects [", "    effects [Run.turn, ")
+}
+
 #[test]
 fn process_cases_use_stubs_and_reset_their_counters_for_each_case() {
     let dir = repo_root().join("tests/fixtures/yield_verify_stubs");
@@ -147,7 +153,8 @@ fn an_unstubbed_in_place_effect_is_refused_before_host_dispatch() {
 fn a_process_loop_obeys_the_budget_named_after_the_source_function() {
     let dir = edited_fixture(|source| {
         format!(
-            "{source}\nfn forever() -> Int\n    ! [yield]\n    forever()\n\nverify forever\n    forever() => 0\n"
+            "{}\nfn forever() -> Int\n    ! [Run.turn]\n    Run.turn()\n    forever()\n\nfn turnStub(path: BranchPath, index: Int) -> Unit\n    Unit\n\nverify forever\n    given turn: Run.turn = [turnStub]\n    forever() => 0\n",
+            with_turn(&source)
         )
     });
     let config = dir.path().join("aver.toml");
@@ -161,10 +168,11 @@ fn a_process_loop_obeys_the_budget_named_after_the_source_function() {
 }
 
 #[test]
-fn a_process_without_requests_can_finish_and_unit_results_can_be_verified() {
+fn a_process_that_only_hands_the_turn_back_can_finish_and_unit_results_can_be_verified() {
     let dir = edited_fixture(|source| {
         format!(
-            "{source}\nfn countdown(n: Int) -> Int\n    ! [yield]\n    match n == 0\n        true -> 5\n        false -> countdown(n - 1)\n\nverify countdown\n    countdown(2) => 5\n\nfn notifyOnly() -> Unit\n    ! [Pool.notice, yield]\n    Pool.notice(1)\n\nverify notifyOnly\n    given answer: Pool.notice = [noticeStub]\n    notifyOnly() => Unit\n"
+            "{}\nfn countdown(n: Int) -> Int\n    ! [Run.turn]\n    Run.turn()\n    match n == 0\n        true -> 5\n        false -> countdown(n - 1)\n\nfn turnStub(path: BranchPath, index: Int) -> Unit\n    Unit\n\nverify countdown\n    given turn: Run.turn = [turnStub]\n    countdown(2) => 5\n\nfn notifyOnly() -> Unit\n    ! [Pool.notice]\n    Pool.notice(1)\n\nverify notifyOnly\n    given answer: Pool.notice = [noticeStub]\n    notifyOnly() => Unit\n",
+            with_turn(&source)
         )
     });
     let out = invoke(dir.path(), "verify", &[]);

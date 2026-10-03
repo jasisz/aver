@@ -1,4 +1,4 @@
-//! AST construction and inspection helpers for the `yield` lowering.
+//! AST construction and inspection helpers for the process lowering.
 //!
 //! Every generated node is built here, directly as AST, so the spans the
 //! lowering hands out point at the originating stop rather than at a

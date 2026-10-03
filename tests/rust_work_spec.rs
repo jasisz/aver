@@ -1379,6 +1379,34 @@ fn run_fail_ends_the_run_as_the_vm_does() {
     result.unwrap_or_else(|error| panic!("{error}"));
 }
 
+// ── Run.turn ────────────────────────────────────────────────────────────
+
+/// `Run.turn()` is a request the generated loop answers itself, in the next
+/// turn: the Rust binary interleaves the two processes' lines exactly as the
+/// VM does, and the crate binds no host for it.
+#[test]
+fn run_turn_hands_the_turn_back_as_the_vm_does() {
+    let vm = run_vm("run_turn").unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        vm, "left 3\nright 3\nleft 2\nright 2\nleft 1\nright 1",
+        "VM"
+    );
+    let ws = temp_dir("run_turn");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| -> Result<(), String> {
+        compile_rust("run_turn", &project, "run_turn", &[])?;
+        let bin = cargo_build(&project, "run_turn")?;
+        let rust = run_binary(&bin)?;
+        if rust != vm {
+            return Err(format!("Rust printed\n{rust}\nand the VM\n{vm}"));
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|error| panic!("{error}"));
+}
+
 // ── Run.lastTurn ────────────────────────────────────────────────────────
 
 #[path = "support/last_turn.rs"]

@@ -2,12 +2,12 @@ module Leaf
     intent = "A finite private helper reached through a tail call."
     depends [Pool, Pooled]
     exposes [forward]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn read(id: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Pool.claim(id)
 
 fn forward(id: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     read(id)

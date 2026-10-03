@@ -1,18 +1,18 @@
 module ModuleHelpers
     intent = "A process enters an imported helper twice and resumes with its own live values."
     depends [Looper, Middle, Pool, Pooled]
-    effects [Console.print, Pool.claim, yield]
+    effects [Console.print, Pool.claim]
 
 fn combined(id: Int) -> Int
     ? "Retain the first result while entering the same imported helper again."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     first = Looper.loop(id, 10)
     second = Looper.loop(id + 1, first)
     first + second
 
 fn delegated(id: Int) -> Int
     ? "Tail-enter an imported helper that tail-enters a second library."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Middle.loop(id)
 
 fn drive(outcome: __CombinedOutcome) -> Int

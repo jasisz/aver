@@ -1,18 +1,18 @@
 module YieldTailInto
     intent = "Fixture: a tail call from one yield function to another enters that function's protocol — the caller stops with a Yield request and the answer is the helper's own Start."
     depends [Pool, Pooled]
-    effects [Pool.claim, yield, Console.print]
+    effects [Pool.claim, Console.print]
     exposes [drive, main]
 
 fn total(id: Int) -> Int
     ? "Claims the handle of id and hands the rest of the work to 'rest' in tail position."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     first = Pool.claim(id)
     rest(first, 0)
 
 fn rest(left: Int, seen: Int) -> Int
     ? "Claims one handle per round until left runs down, summing the handles into seen."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     handle = Pool.claim(left)
     match left
         0 -> seen + handle

@@ -1,0 +1,12 @@
+module Seat
+    depends [Pool]
+    intent = "A library that requests Pool but does not depend on the module that answers it."
+    effects [Pool.claim]
+    exposes [seat]
+
+fn seat(key: Int) -> Int
+    ? "Asks the pool from a module whose dependencies answer nothing, so it is not a process and the request has no answer."
+    ! [Pool.claim]
+    match Pool.claim(key)
+        Pool.Assignment.Idle -> 0
+        Pool.Assignment.Height(h) -> h

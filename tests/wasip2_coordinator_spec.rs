@@ -125,12 +125,12 @@ fn an_explicit_signal_read_in_a_process_is_still_rejected() {
     let source = fs::read_to_string(&main)
         .unwrap()
         .replace(
-            "effects [Args.get, Clock.tick, Console.print, yield]",
-            "effects [Args.get, Clock.tick, Console.print, Process.stopRequested, yield]",
+            "effects [Args.get, Clock.tick, Console.print]",
+            "effects [Args.get, Clock.tick, Console.print, Process.stopRequested]",
         )
         .replace(
-            "    ! [Clock.tick, Console.print, yield]\n    ticking(0)",
-            "    ! [Clock.tick, Console.print, Process.stopRequested, yield]\n    Console.print(\"{Process.stopRequested()}\")\n    ticking(0)",
+            "    ! [Clock.tick, Console.print]\n    ticking(0)",
+            "    ! [Clock.tick, Console.print, Process.stopRequested]\n    Console.print(\"{Process.stopRequested()}\")\n    ticking(0)",
         );
     fs::write(main, source).unwrap();
     let out_dir = tempfile::tempdir().unwrap();

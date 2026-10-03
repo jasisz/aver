@@ -326,6 +326,7 @@ fn analyze_prechecked_items_impl(
         project_provider_manifest(options).as_ref(),
         &tc_result.answers,
         &tc_result.fn_sigs,
+        &tc_result.process_names(module_decl.map(|module| module.name.as_str())),
         module_decl.map(|module| module.name.as_str()),
         runs,
     ) {
@@ -651,6 +652,11 @@ fn analyze_prechecked_items_impl(
 
     let mut report = AnalysisReport::with_diagnostics(options.file_label.clone(), diagnostics);
     report.verify_summary = verify_summary_opt;
+    report.processes = tc_result
+        .processes
+        .iter()
+        .map(super::model::ProcessSummary::from_info)
+        .collect();
 
     if options.include_why_summary {
         report.why_summary = Some(super::why::summarize(

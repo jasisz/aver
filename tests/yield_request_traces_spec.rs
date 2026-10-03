@@ -169,7 +169,7 @@ fn recursive_imports_without_owning_module_contracts_are_explicitly_rejected() {
     for name in ["looper.av", "pool.av", "pooled.av"] {
         std::fs::copy(source.join(name), dir.path().join(name)).unwrap();
     }
-    std::fs::write(dir.path().join("main.av"), "module Client\n    depends [Looper, Pool, Pooled]\n\nfn parent(id: Int) -> Int\n    ! [Pool.claim, yield]\n    Looper.loop(id, 0)\n\nverify __parentSourceTrace law correspondence\n    given id: Int = [1]\n    given inputs: List<__ParentTraceInput> = [[]]\n    using []\n    __parentSourceTrace(id, inputs) == __parentProtocolTrace(id, inputs) holds\n").unwrap();
+    std::fs::write(dir.path().join("main.av"), "module Client\n    depends [Looper, Pool, Pooled]\n\nfn parent(id: Int) -> Int\n    ! [Pool.claim]\n    Looper.loop(id, 0)\n\nverify __parentSourceTrace law correspondence\n    given id: Int = [1]\n    given inputs: List<__ParentTraceInput> = [[]]\n    using []\n    __parentSourceTrace(id, inputs) == __parentProtocolTrace(id, inputs) holds\n").unwrap();
     let out = Command::new(aver_bin())
         .arg("check")
         .arg(dir.path().join("main.av"))
@@ -249,7 +249,7 @@ module Client
     depends [Leaf, Pool, Pooled]
 
 fn client(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Leaf.parent(n)
 
 verify __clientSourceTrace law correspondence
@@ -283,9 +283,9 @@ fn local_recursion_with_a_finite_import_requires_the_owning_splice_law() {
         r#"module Leaf
     depends [Pool, Pooled]
     exposes [read]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 fn read(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match Pool.claim(n)
         Option.None -> n
         Option.Some(value) -> value

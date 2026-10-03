@@ -2,13 +2,13 @@ module RecursiveMixed
     intent = "Recursive helper composition retains nominal arguments, Unit answers, early errors and in-place effects."
     depends [Pool, Pooled]
     exposes [checked]
-    effects [Pool.finish, Pool.notice, Time.unixMs, yield]
+    effects [Pool.finish, Pool.notice, Time.unixMs]
 
 record Seed
     id: Int
 
 fn scan(seed: Seed) -> Result<Unit, String>
-    ! [Pool.finish, Pool.notice, Time.unixMs, yield]
+    ! [Pool.finish, Pool.notice, Time.unixMs]
     Time.unixMs()
     Pool.notice(seed.id)
     next = Pool.finish(seed.id)?
@@ -17,7 +17,7 @@ fn scan(seed: Seed) -> Result<Unit, String>
         false -> scan(Seed(id = next))
 
 fn checked(seed: Seed) -> Result<Int, String>
-    ! [Pool.finish, Pool.notice, Time.unixMs, yield]
+    ! [Pool.finish, Pool.notice, Time.unixMs]
     scan(seed)?
     Result.Ok(seed.id)
 

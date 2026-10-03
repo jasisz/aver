@@ -1,11 +1,12 @@
 module Node
     intent = "The stop policy ends the run while its process is still seated."
-    effects [Console.print, yield]
+    effects [Console.print, Run.turn]
 
 fn ticking() -> Unit
     ? "Print once when seated; the policy stops before the next iteration."
-    ! [Console.print, yield]
+    ! [Console.print, Run.turn]
     Console.print("seated")
+    Run.turn()
     ticking()
 
 fn stop(view: Run.View) -> Bool

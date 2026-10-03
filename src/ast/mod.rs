@@ -754,6 +754,10 @@ pub struct Module {
     /// including private helpers. These are proof metadata, never callable
     /// declarations or additions to the module's export surface.
     pub yield_sources: Vec<FnDef>,
+    /// Compiler-owned: the processes the front door derived for this module,
+    /// each with why it is one, whether their lowering succeeded or not. An
+    /// importer reads it to tell a call into a process from a plain call.
+    pub processes: Vec<(String, String)>,
     /// `answers [Wire, Pool]` in the header: the capabilities this module
     /// answers inside the turn, one function per operation over one state.
     /// Empty for every other module.

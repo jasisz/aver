@@ -718,6 +718,7 @@ fn work_input_rejections(
         manifest.as_ref(),
         &tc.answers,
         &tc.fn_sigs,
+        &tc.process_names(entry_module),
         entry_module,
         runs,
     )

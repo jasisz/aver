@@ -1614,14 +1614,26 @@ impl TypeChecker {
                         return Type::Invalid;
                     }
                     if self.has_namespace_prefix(&obj_key) {
-                        // A yielding function is gone from its module's
+                        // A process is gone from its module's
                         // surface: the lowering put the protocol there in
                         // its place. Finding that protocol says the name
                         // the user wrote was real, so decision 4's recipe
                         // is the answer rather than "unknown member".
                         let start = crate::yield_lowering::qualified_start_name(&key);
                         if self.find_fn_sig(&start).is_some() {
-                            self.error(crate::yield_lowering::removed_call_recipe(&key));
+                            let reason = self
+                                .imported_processes
+                                .get(&key)
+                                .map(|protocol| {
+                                    crate::yield_lowering::imported_reason(
+                                        protocol,
+                                        &self.program_answers,
+                                    )
+                                })
+                                .unwrap_or_else(|| {
+                                    "it requests something its program answers".to_string()
+                                });
+                            self.error(crate::yield_lowering::removed_call_recipe(&key, &reason));
                         } else {
                             self.error(format!(
                                 "Unknown member '{}.{}' (not exposed or missing)",

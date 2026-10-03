@@ -1,9 +1,9 @@
 module Middle
     intent = "An exported helper composes a protocol from a transitive dependency."
     depends [Looper, Pool, Pooled]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn loop(id: Int) -> Int
     ? "Expose a tail entry through default exports, preserving Looper's requests."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Looper.loop(id, 10)

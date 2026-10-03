@@ -100,13 +100,13 @@ fn check_reports_an_arm_only_the_compiled_match_can_see_is_dead() {
 }
 
 #[test]
-fn nested_patterns_inside_a_yield_function_are_refused() {
+fn nested_patterns_inside_a_process_are_refused() {
     let report = check(
-        "nested-yield",
-        "module M\n    intent = \"t\"\n\nfn f(o: Option<Int>) -> Int\n    ? \"t\"\n    ! [yield]\n    match o\n        Option.Some(0) -> 1\n        _ -> 0\n",
+        "nested-process",
+        "module M\n    intent = \"t\"\n    effects [Run.turn]\n\nfn f(o: Option<Int>) -> Int\n    ? \"t\"\n    ! [Run.turn]\n    Run.turn()\n    match o\n        Option.Some(0) -> 1\n        _ -> 0\n",
     );
     assert!(
-        report.contains("not supported inside the `yield` function 'f'"),
+        report.contains("not supported inside the process 'f' (requests Run.turn)"),
         "{report}"
     );
 }

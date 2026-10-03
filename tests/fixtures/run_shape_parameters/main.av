@@ -1,11 +1,11 @@
 module Node
     intent = "Fixture: a process that takes a parameter, which the generated loop has nothing to seat it with."
     depends [Process, Wait, Pool, Pooled]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn looping(seed: Int) -> Unit
     ? "Claims handles until the pool answers None."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match Pool.claim()
         Option.None -> Unit
         Option.Some(_) -> looping(seed)

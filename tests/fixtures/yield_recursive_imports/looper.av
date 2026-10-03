@@ -2,10 +2,10 @@ module Looper
     intent = "Export a recursive request observer with a checked cursor and correspondence."
     depends [Pool, Pooled]
     exposes [loop]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn loop(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match Pool.claim(n)
         Option.None -> n
         Option.Some(next) -> loop(next)

@@ -285,19 +285,19 @@ fn sum(xs: List<Int>) -> Int
 
 ### Processes, answer modules and the coordinator
 
-A function whose effect list names `yield` is a process. You write it in direct style (ask, then the next step), but it never runs as written. Every call to an operation of a capability the program answers itself is a request, and the self tail call is a `Yield` request. The compiler cuts the function at each one into state types and pure answer functions under the reserved `__` namespace. The loop that seats the processes, waits once per turn and answers the requests is generated into the entry module. The smallest program of that shape is one ticker, one clock and one job kind, at `tests/fixtures/run_guide_example/` in the repository; `tests/fixtures/run_families/` adds a process seated once per key. Every block below is cut from those two as they stand in the files. Both programs check, verify and run, and a test pins the blocks to them.
+A function is a process when it requests something its program answers: its effect list names an operation of a capability that a module of its own module's dependencies answers (`answers [Cap]` in that module's header), or names `Run.turn`, or it calls a process. Nothing marks it; `aver check` lists every process with the reason. You write it in direct style (ask, then the next step), but it never runs as written. Every call to an operation of a capability the module's dependencies answer is a request, so is `Run.turn()`, and the self tail call is a `Yield` request. The compiler cuts the function at each one into state types and pure answer functions under the reserved `__` namespace. The loop that seats the processes, waits once per turn and answers the requests is generated into the entry module. The smallest program of that shape is one ticker, one clock and one job kind, at `tests/fixtures/run_guide_example/` in the repository; `tests/fixtures/run_families/` adds a process seated once per key. Every block below is cut from those two as they stand in the files. Both programs check, verify and run, and a test pins the blocks to them.
 
-**A process** is a yielding function of the entry module that answers `Unit`. Its effect list names the operations it asks for and `yield`. An operation of a capability the program answers becomes a request. Everything else (`Console.print` here) runs in place, inside the turn. A yielding helper it calls takes parameters like any function:
+**A process** the loop seats is a process of the entry module that answers `Unit`. Its effect list names the operations it asks for. An operation of a capability the program answers becomes a request. Everything else (`Console.print` here) runs in place, inside the turn. A helper process it calls takes parameters like any function:
 
 ```aver
 fn ticker() -> Unit
     ? "Scores three tasks off the turn, one tick apart, then says what they scored together."
-    ! [Clock.score, Clock.tick, Console.print, yield]
+    ! [Clock.score, Clock.tick, Console.print]
     tallying([1, 2, 3], 0)
 
 fn tallying(tasks: List<Int>, total: Int) -> Unit
     ? "Waits for a tick, then for the score of the next task, until no task is left."
-    ! [Clock.score, Clock.tick, Console.print, yield]
+    ! [Clock.score, Clock.tick, Console.print]
     match tasks
         [] -> Console.print("scored {total}")
         [task, ..rest] -> match Clock.tick()
@@ -441,18 +441,18 @@ fn stop(view: Run.View) -> Bool
 Everything else is generated into the entry module under `__`: the slot table, the one `Wait.poll` per turn, the clock reading, the dispatch, the seating of keyed processes, the shutdown that cancels every job a parked request waits on, and `main`. These names are the compiler's: a program that calls, matches or annotates with one is refused. `AVER_YIELD_DUMP=1 aver check main.av --module-root .` prints the generated Aver.
 
 Rules:
-- a loop that must not starve the others declares `yield`. The declaration fixes where control is handed back; it does not bound how long one step takes
+- a loop that requests nothing and must not starve the others calls `Run.turn()`, which hands the turn back; the process resumes in the next turn. It fixes where control is handed back; it does not bound how long one step takes
 - long pure work goes to a job kind, begun by the answer module that answers the request waiting for it
-- "atomic between two yields" means no other step of the program runs in between. It does not mean atomicity of external effects, and it is not a time bound
+- "atomic between two requests" means no other step of the program runs in between. It does not mean atomicity of external effects, and it is not a time bound
 - an answer module runs inside the turn, so a slow answer stalls every process. An answer with effects that can block is allowed, and `warning[answer-shape]` says so
 - `Disk` operations stay synchronous inside the turn, and the turn budget does not see that time
 - `Wait.poll` is one wait over sockets and jobs; `Tcp.poll` is the same wait over sockets only. A program that writes its own loop still uses it
 - a wait set is keyed by any type a map accepts. A program waiting on several kinds of thing at once names each kind with a constructor instead of agreeing on an arithmetic convention: with `type Watch` declaring `Peer(Int)`, `Listener` and `Job`, `Wait.poll` takes `Map<Watch, Wait.Item>` and answers `List<Watch>` in that map's own key order, which is by constructor name and then payload. `Int` is one such key and needs no change. One program uses one wait key type. A wait set written empty at the call names no key of its own, so under a key of the program's own, write its type down: `idle: Map<Watch, Wait.Item> = {}`
 - a job is pure, its result is data, and a recording replays it. `begin`, `take` and the wait are served back in the recorded turns. The VM and wasm-gc run the job's function again beside them, a `--target rust` binary serves the recorded results without running it, and a wasip2 component records nothing
-- `yield` is an effect: declare it in `! [...]` and cover it in the module's `effects [...]`. The entry module's `effects [...]` is widened by what the loop generates into it
-- a process without a `process ... seated by ...` line takes no parameters. A yielding helper of the same module may take parameters; a tail call enters its protocol, while a non-tail call nests its state under `In<G>At<N>`
-- never call a yielding function from a function that does not yield (the error is ``'loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()```), and never call an answered operation from a function that does not yield (`error[intercept-outside-yield]`)
-- a yielding function calling itself outside tail position is an error. Pass what comes next as data, or make it a tail call
+- a library function is a process only when its own module's dependencies answer what it requests: list the answer module in the library's `depends`, or the program is refused where the library requests it (`error[request-outside-process]`). The entry module's `effects [...]` is widened by what the loop generates into it
+- a process without a `process ... seated by ...` line takes no parameters. A helper process of the same module may take parameters; a tail call enters its protocol, while a non-tail call nests its state under `In<G>At<N>`
+- never call a process from `main` (the error is ``Function 'main' calls 'loop' directly, but 'loop' is a process (requests Pool.claim, answered by Pooled); call it from another process, or seat it as a process in the entry module and run it with `Run.all()```). A function that calls a process is a process itself, and declares what it requests
+- a process calling itself outside tail position is an error. Pass what comes next as data, or make it a tail call
 - stops may sit in bindings, as match subjects, inside arguments and inside match arms, and `?` after a request works. Mutual nesting, a request or a helper call inside `(a, b)!`, and a function value live across a request are rejected by name
 
 Where it runs:
@@ -463,7 +463,7 @@ Where it runs:
 
 **`max-jobs` is a deployment knob.** At the limit `begin` queues the job and answers its handle; the job starts, in the order it was begun, when a running body stops. So the same program gives the same answers under any limit, and a recording replays under any limit. `Work.cancel` takes a queued job out of the queue so it never starts. A running job that is cancelled keeps its place until its body stops: the VM stops it at its next cancellation check, wasm-gc at the next epoch check, the JavaScript adapter at once, and generated Rust checks no flag, so there the body runs to completion and the jobs queued behind it wait. `wasip2` has nothing to size.
 
-**Testing a process.** A program does not drive a process by hand. It runs one as a process the generated loop seats, or calls it from another function that declares `yield`. A local cases-form `verify` calls the process by its source name with an exact `given` stub for every request operation:
+**Testing a process.** A program does not drive a process by hand. It runs one as a process the generated loop seats, or calls it from another process. A local cases-form `verify` calls the process by its source name with an exact `given` stub for every request operation:
 
 ```aver
 verify pair
@@ -472,7 +472,7 @@ verify pair
     pair(7) => 25
 ```
 
-Here `pair` is a process that makes two `Pool.claim` requests, and `numbered` is an ordinary function `(BranchPath, Int, Int) -> Option<Int>`: the branch, how many `Pool.claim` requests this branch has already made, and the requested argument. The test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet. An importer that yields calls an exposed yielding function by its source name, `Looper.loop(...)`, and the compiler nests its protocol.
+Here `pair` is a process that makes two `Pool.claim` requests, and `numbered` is an ordinary function `(BranchPath, Int, Int) -> Option<Int>`: the branch, how many `Pool.claim` requests this branch has already made, and the requested argument. The test drives the lowered protocol with operation results, runs on the VM, and uses the source name for case budgets. Direct process laws, trace blocks, WASM request stubs and proof export of these cases are not supported yet. A process of an importer calls an exposed process by its source name, `Looper.loop(...)`, and the compiler nests its protocol. A request with no answer of its own, `Run.turn()`, is stubbed with `given` like any other.
 
 ### Builtins and namespaces
 

@@ -136,7 +136,7 @@ impl<'a> Compiler<'a> {
         self.sequence(
             stmts,
             cursor,
-            super::super::is_yield_fn(self.function),
+            self.model.is_process(&self.function.name),
             &|this, value, current| Ok(this.done(value, current)),
         )
     }

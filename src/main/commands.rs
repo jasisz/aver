@@ -914,25 +914,14 @@ fn collect_used_exposes_for_importer(
 /// (an entry, or a leaf pointed at directly) is not judged, since its
 /// importers are not in view. The finding names that scope: a sibling
 /// program outside the checked inputs is not consulted.
-/// The exposed names this check judges: the surface of the module as the
-/// rest of the compiler reads it, with the `yield` lowering applied.
-///
-/// An importer never sees a `yield` function — the lowering removes it and
-/// exposes its protocol under generated names in the reserved `__`
-/// namespace instead — so neither the removed name nor the generated ones
-/// are judged: neither is a name the user could stop exposing. Every
-/// hand-written name beside them is judged exactly as before.
-fn judged_exposed_names(exposes: &[String], items: &[TopLevel]) -> Vec<String> {
-    let lowered_away = |name: &String| {
-        name.starts_with("__")
-            || items.iter().any(|item| {
-                matches!(item, TopLevel::FnDef(fd)
-                    if &fd.name == name && aver::yield_lowering::is_yield_fn(fd))
-            })
-    };
+/// The exposed names this check judges: every hand-written one. A name in
+/// the reserved `__` namespace is the compiler's, not one the user could stop
+/// exposing. A process is judged like any function: an importer enters it by
+/// its written name.
+fn judged_exposed_names(exposes: &[String]) -> Vec<String> {
     exposes
         .iter()
-        .filter(|name| !lowered_away(name))
+        .filter(|name| !name.starts_with("__"))
         .cloned()
         .collect()
 }
@@ -978,7 +967,7 @@ fn collect_unused_exposes_findings(units: &[&ReportUnit], module_root: &str) -> 
                 file: path.clone(),
                 module_name: module.name.clone(),
                 exposes_line: module.exposes_line.unwrap_or(module.line),
-                exposed_names: judged_exposed_names(&module.exposes, items),
+                exposed_names: judged_exposed_names(&module.exposes),
                 exposed_name_set,
                 exposed_type_names,
             },
@@ -1903,6 +1892,7 @@ fn check_units(
             ..Default::default()
         };
         let report = diagnostic::analyze_source(source, &opts);
+        let processes = report.processes;
         let mut diagnostics = report.diagnostics;
         diagnostics.retain(|d| {
             let key = span_file_key(&d.span.file, module_root);
@@ -1931,10 +1921,11 @@ fn check_units(
 
         // --- Emit ---
         if json {
-            let bundle = diagnostic::AnalysisReport::with_diagnostics(
+            let mut bundle = diagnostic::AnalysisReport::with_diagnostics(
                 shown_path.clone(),
                 diagnostics.clone(),
             );
+            bundle.processes = processes.clone();
             println!("{}", bundle.to_json());
         } else {
             for (i, diag) in diagnostics.iter().enumerate() {
@@ -1974,6 +1965,11 @@ fn check_units(
             // default `aver check` summary so the line stays focused on
             // diagnostics.
             println!("  {}", summary_parts.join(" | "));
+            // A process is derived, never marked: say which functions are
+            // processes and what made each one.
+            for process in &processes {
+                println!("  process {}: {}", process.name, process.reason);
+            }
             let registry = aver::stdlib::standard_capability_registry();
             let standard_dependencies = aver::stdlib::implicit_stdlib_deps(items)
                 .into_iter()

@@ -1,11 +1,11 @@
 module Node
     intent = "Fixture: a process reads frames; another dependency also declares Heard."
     depends [Wire, Other, Sockets]
-    effects [Console.print, Wire.frame, yield]
+    effects [Console.print, Wire.frame]
 
 fn reader() -> Unit
     ? "Reads until the wire is gone."
-    ! [Console.print, Wire.frame, yield]
+    ! [Console.print, Wire.frame]
     _quiet = Other.quiet()
     match Wire.frame()
         Wire.Heard.Message(text) -> reader()

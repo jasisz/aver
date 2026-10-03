@@ -1,12 +1,12 @@
 module YieldThreeKinds
     intent = "Fixture: three request kinds (Claim, Release, Yield) in one yield function, driven by a coordinator that answers each kind from its own list."
     depends [Pool, Pooled]
-    effects [Pool.claim, Pool.release, yield, Console.print]
+    effects [Pool.claim, Pool.release, Console.print]
     exposes [drive, main]
 
 fn loop(id: Int, held: Int, total: Int) -> Int
     ? "Claims a handle for id, releases the one held so far, and loops while the pool keeps answering; returns the sum of the handles."
-    ! [Pool.claim, Pool.release, yield]
+    ! [Pool.claim, Pool.release]
     match Pool.claim(id)
         Option.None -> total
         Option.Some(h) -> match Pool.release(held)
