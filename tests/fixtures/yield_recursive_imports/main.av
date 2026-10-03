@@ -2,19 +2,19 @@ module RecursiveImports
     intent = "Compose a recursive helper across a module boundary over any finite tape."
     depends [Pool, Pooled, Looper]
     exposes [parent]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn parent(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     value = Looper.loop(n)
     value + 10
 
 fn tail(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Looper.loop(n)
 
 fn repeated(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     first = Looper.loop(n)
     second = Looper.loop(first)
     match Pool.claim(first + second)

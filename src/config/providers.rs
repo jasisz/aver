@@ -233,6 +233,27 @@ impl MarkedCapabilities {
         facts
     }
 
+    /// The same facts with only the answers of one module's own dependencies
+    /// (`closure`, from its type check): what makes a call of that module a
+    /// request. Pairs already known keep their place, so the loop an entry
+    /// generates reads its answer modules in the order the program found them.
+    pub fn within(&self, closure: &[(String, String)]) -> Self {
+        let mut facts = self.clone();
+        facts.run.answers.retain(|pair| closure.contains(pair));
+        facts.names = facts
+            .run
+            .answers
+            .iter()
+            .map(|(capability, _)| capability.clone())
+            .collect();
+        facts.with_answer_pairs(closure)
+    }
+
+    /// (capability, answering module) for every answered capability.
+    pub fn answer_pairs(&self) -> Vec<(String, String)> {
+        self.run.answers.clone()
+    }
+
     /// What the loop is built from.
     pub fn run(&self) -> Option<&RunPlan> {
         Some(&self.run)
@@ -281,16 +302,34 @@ impl MarkedCapabilities {
 
     /// Add generated imports only to the compiler's AST; the written module
     /// continues to describe the dependencies of its own source. Only a
-    /// module that writes a process can have a loop generated into it.
+    /// module that may write a process can have a loop generated into it;
+    /// whether it does is known once its dependencies are read.
     pub fn add_run_dependencies(&self, items: &mut [crate::ast::TopLevel]) {
-        if !crate::yield_lowering::has_yield_fns(items) {
+        if !crate::yield_lowering::may_have_processes(items) {
             return;
         }
         self.add_loop_dependencies(items);
     }
 
-    /// The same, for a module a loop was just generated into, whose yielding
-    /// functions the lowering has already replaced.
+    /// Whether some function of `items` other than `main` names `Run.turn`, or
+    /// an operation (or the namespace) of a capability these facts answer: a
+    /// module that can write a process once the answers are known.
+    pub fn may_request(&self, items: &[crate::ast::TopLevel]) -> bool {
+        items.iter().any(|item| match item {
+            crate::ast::TopLevel::FnDef(fd) if fd.name != "main" && !fd.name.starts_with("__") => {
+                fd.effects.iter().any(|effect| {
+                    effect.node == crate::yield_lowering::RUN_TURN
+                        || self.answers(&effect.node)
+                        || (!effect.node.contains('.')
+                            && self.answers(&format!("{}.op", effect.node)))
+                })
+            }
+            _ => false,
+        })
+    }
+
+    /// The same, for a module a loop is generated into, whose processes the
+    /// lowering has already replaced.
     pub fn add_loop_dependencies(&self, items: &mut [crate::ast::TopLevel]) {
         for item in items {
             if let crate::ast::TopLevel::Module(module) = item {

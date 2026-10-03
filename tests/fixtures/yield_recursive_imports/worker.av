@@ -2,16 +2,16 @@ module Worker
     intent = "Keep a recursive helper private while exposing its checked process observation."
     depends [Pool, Pooled]
     exposes [run]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn loop(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match Pool.claim(n)
         Option.None -> n
         Option.Some(next) -> loop(next)
 
 fn run(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     value = loop(n)
     value + 1
 

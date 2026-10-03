@@ -1,11 +1,11 @@
 module Node
     intent = "Fixture: a job cancelled before anything takes it. The request parked on it is asked only in a turn whose wait reported the job, the take answers why the job will never finish, and the run reaches its end."
     depends [Pool, Pooled, Validation, Wait, Work]
-    effects [Console.print, Pool.scored, Validation.begin, Work.cancel, yield]
+    effects [Console.print, Pool.scored, Validation.begin, Work.cancel]
 
 fn probing() -> Unit
     ? "Reads the wake gate against a live job handle, then asks for the score of a job that was cancelled and says what came of it."
-    ! [Console.print, Pool.scored, Validation.begin, Work.cancel, yield]
+    ! [Console.print, Pool.scored, Validation.begin, Work.cancel]
     Console.print(probe())
     Console.print(landed(Pool.scored(1)))
 

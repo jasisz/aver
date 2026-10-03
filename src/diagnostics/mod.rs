@@ -34,6 +34,6 @@ pub use factories::{
     verify_runtime_error_diagnostic, verify_unexpected_err_diagnostic,
 };
 pub use model::{
-    AnalysisReport, AnnotatedRegion, Diagnostic, RelatedSpan, Repair, SCHEMA_VERSION, Severity,
-    SourceLine, Span, Underline, json_escape,
+    AnalysisReport, AnnotatedRegion, Diagnostic, ProcessSummary, RelatedSpan, Repair,
+    SCHEMA_VERSION, Severity, SourceLine, Span, Underline, json_escape,
 };

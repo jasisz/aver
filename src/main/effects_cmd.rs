@@ -126,6 +126,7 @@ fn load_surface(
                 path,
                 import_names: vec![module.dep_name.clone()],
                 items: module.items.clone(),
+                processes: typecheck.processes.names(),
                 fn_sigs: aver::effect_surface::compact(typecheck.fn_sigs),
             });
         }

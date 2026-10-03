@@ -1,9 +1,9 @@
 module Node
     intent = "Fixture: the entry's process enters a library helper that takes a key, under the generated loop."
     depends [Clock, Clocked, Lib]
-    effects [Clock.tick, Console.print, yield]
+    effects [Clock.tick, Console.print]
 
 fn peer1() -> Unit
     ? "Peer slot 1."
-    ! [Clock.tick, Console.print, yield]
+    ! [Clock.tick, Console.print]
     Lib.peering(1)

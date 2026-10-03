@@ -2,22 +2,22 @@ module ImportedEffects
     intent = "Preserve imported in-place observations across repetition, recursion and early errors."
     depends [Pool, Pooled, Looper, Wrapper]
     exposes [repeated, tail, early]
-    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs, yield]
+    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs]
 
 fn repeated(n: Int) -> Int
-    ! [Pool.claim, Pool.notice, Time.unixMs, yield]
+    ! [Pool.claim, Pool.notice, Time.unixMs]
     first = Wrapper.run(n)
     second = Wrapper.run(first)
     Pool.notice(first + second)
     first + second
 
 fn tail(n: Int) -> Int
-    ! [Pool.claim, Time.unixMs, yield]
+    ! [Pool.claim, Time.unixMs]
     Looper.run(n)
 
 fn early(n: Int) -> Result<Int, String>
     ? "Propagate an imported early error with the original unconsumed suffix."
-    ! [Pool.finish, Time.unixMs, yield]
+    ! [Pool.finish, Time.unixMs]
     value = Looper.fallible(n)?
     Result.Ok(value + 2)
 

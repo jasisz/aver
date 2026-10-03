@@ -550,12 +550,12 @@ impl Program {
             .filter(|candidate| reachable.contains(&canonicalize_path(&candidate.path)))
             .map(ProgramModule::as_loaded)
             .collect();
-        // A `yield` dependency was already lowered once for the whole
-        // program at load time: substitute that in so `has_yield_fns`
-        // below sees none left to cut, and the pipeline call skips it
-        // instead of repeating the check-lower-check it already paid for.
-        // A module that never had a `yield` function is never in the memo,
-        // so it keeps the plain clone `as_loaded` produced above.
+        // A process dependency was already lowered once for the whole
+        // program at load time: substitute that in, so the pipeline call
+        // below finds nothing left to cut instead of repeating the
+        // check-lower-check it already paid for. A module that never could
+        // hold a process is never in the memo, so it keeps the plain clone
+        // `as_loaded` produced above.
         for entry in modules.iter_mut() {
             if let Some(lowered) = self.lowering_memo.get(&entry.path) {
                 *entry = lowered.clone();
@@ -570,43 +570,40 @@ impl Program {
     }
 }
 
-/// Lowered form of every dependency that contains a `yield` function,
-/// computed once for the whole program. `dependencies` must be leaves-first
-/// (the invariant [`Program::modules`] already keeps), so a module later in
-/// the slice can see an earlier one's lowered form as its own dependency.
+/// Lowered form of every dependency that may contain a process, computed
+/// once for the whole program. `dependencies` must be leaves-first (the
+/// invariant [`Program::modules`] already keeps), so a module later in the
+/// slice can see an earlier one's lowered form as its own dependency.
 ///
-/// A module without a `yield` function is checked with a plain reference
-/// scan (`has_yield_fns` takes `&[TopLevel]`) and is never cloned or
+/// A module that cannot hold a process is checked with a plain reference
+/// scan (`may_have_processes` takes `&[TopLevel]`) and is never cloned or
 /// entered here: the whole-program clone below runs only when at least one
-/// dependency actually needs lowering, and even then a module that stays
-/// yield-free after lowering is dropped from the result, not memoized.
+/// dependency may need lowering.
 fn compute_lowering_memo(
     dependencies: &[ProgramModule],
     marked: &crate::config::MarkedCapabilities,
 ) -> HashMap<PathBuf, LoadedModule> {
-    let yielding: Vec<usize> = dependencies
+    let candidates: Vec<usize> = dependencies
         .iter()
         .enumerate()
         .filter(|(_, module)| {
-            crate::yield_lowering::has_yield_fns(&module.items)
+            crate::yield_lowering::may_have_processes(&module.items)
                 || crate::ir::nested_patterns::has_nested_patterns(&module.items)
         })
         .map(|(index, _)| index)
         .collect();
-    if yielding.is_empty() {
+    if candidates.is_empty() {
         return HashMap::new();
     }
     let mut loaded: Vec<LoadedModule> = dependencies.iter().map(ProgramModule::as_loaded).collect();
-    let _ = crate::ir::pipeline::lower_loaded_yield_modules(&mut loaded, None, marked);
+    let (_, failed) = crate::ir::pipeline::lower_loaded_process_modules(&mut loaded, None, marked);
     let mut memo = HashMap::new();
-    for index in yielding {
-        let entry = &loaded[index];
-        // A module that still has `yield` functions failed to lower;
-        // leave it out so the next caller retries it (and hits the same
-        // errors) instead of memoizing a broken half-state.
-        if !crate::yield_lowering::has_yield_fns(&entry.items)
-            && !crate::ir::nested_patterns::has_nested_patterns(&entry.items)
-        {
+    for index in candidates {
+        // A module that failed to lower is left out so the next caller
+        // retries it (and hits the same errors) instead of memoizing a
+        // broken half-state.
+        if !failed.contains(&index) {
+            let entry = &loaded[index];
             memo.insert(entry.path.clone(), entry.clone());
         }
     }
@@ -764,11 +761,28 @@ pub fn load_program_with_cache(
 ) -> Result<Program, LoadError> {
     let mut walk = Walk::new(module_root, mode, cache);
     let mut entry_items = entry_items.to_vec();
-    walk.marked.add_run_dependencies(&mut entry_items);
     if let Some(module) = visibility::module_decl(&entry_items) {
         walk.marked = walk.marked.with_run_entry(&module.name);
     }
     walk.follow_edges(entry_path, &entry_items)?;
+    // A process is known once the answer modules are: an entry that requests
+    // something they answer, or calls `Run.turn`, gets the generated loop's
+    // imports, and the walk reads the ones it has not read yet.
+    let answered = walk.marked.with_items(
+        walk.modules
+            .iter()
+            .map(|module| (module.dep_name.as_str(), module.items.as_slice()))
+            .chain(std::iter::once((
+                visibility::module_decl(&entry_items)
+                    .map(|module| module.name.as_str())
+                    .unwrap_or_default(),
+                entry_items.as_slice(),
+            ))),
+    );
+    if answered.may_request(&entry_items) {
+        answered.add_loop_dependencies(&mut entry_items);
+        walk.follow_edges(entry_path, &entry_items)?;
+    }
     // The answer modules say what they answer in their own headers, so the
     // program's answered capabilities are known once its modules are.
     let entry_decl_name = visibility::module_decl(&entry_items)
@@ -1509,7 +1523,7 @@ mod tests {
         );
         files.insert(
             "looper.av".to_string(),
-            "module Looper\n    intent = \"test\"\n    depends [Pool]\n    effects [Pool.claim, yield]\n    exposes [loop]\n\nfn loop(n: Int) -> Int\n    ? \"Asks the pool once.\"\n    ! [Pool.claim, yield]\n    Pool.claim(n)\n".to_string(),
+            "module Looper\n    intent = \"test\"\n    depends [Pool, Pooled]\n    effects [Pool.claim]\n    exposes [loop]\n\nfn loop(n: Int) -> Int\n    ? \"Asks the pool once.\"\n    ! [Pool.claim]\n    Pool.claim(n)\n".to_string(),
         );
         let loaded =
             load_module_tree_from_map(&["Looper".to_string(), "Pooled".to_string()], &files)
@@ -1528,7 +1542,7 @@ mod tests {
             .collect();
         assert!(
             names.contains(&"__loopStart") && !names.contains(&"loop"),
-            "the answers header in the file map is what says Pool.claim is a request: {names:?}"
+            "the answers header of a module Looper depends on is what says Pool.claim is a request: {names:?}"
         );
         let pool = loaded
             .iter()

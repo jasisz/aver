@@ -1,0 +1,10 @@
+module Main
+    depends [Ledger, Pool, Seat]
+    intent = "A program that links a library whose request its own dependencies do not answer."
+    effects [Console.print]
+    exposes [main]
+
+fn main() -> Unit
+    ? "Reports what the pool handed back."
+    ! [Console.print]
+    Console.print("seated 0")

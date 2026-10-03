@@ -1,11 +1,11 @@
 module Node
     intent = "Fixture: a take that finds its job still running, which is what a wait may report ready before the job has finished. The answer module must keep the handle and answer once the job really lands."
     depends [Pool, Pooled]
-    effects [Console.print, Pool.early, Pool.scored, yield]
+    effects [Console.print, Pool.early, Pool.scored]
 
 fn probing() -> Unit
     ? "Asks for one score and says what came of it."
-    ! [Console.print, Pool.early, Pool.scored, yield]
+    ! [Console.print, Pool.early, Pool.scored]
     Console.print(landed(Pool.scored(1)))
     Console.print(earlyTakes(Pool.early()))
 

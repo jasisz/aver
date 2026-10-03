@@ -4,9 +4,9 @@ module Mid
         "yielding helper, so nothing in this module's own body names the"
         "capability. Its boundary still has to carry what its functions declare."
     depends [Pool, Pooled, Leaf]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn hop(id: Int) -> Int
     ? "Forward one claim through the imported helper."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Leaf.forward(id)

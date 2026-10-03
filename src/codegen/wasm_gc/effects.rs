@@ -1080,6 +1080,12 @@ mod certificate_format_tests {
                 assert!(EffectName::from_dotted("Args._get").is_some());
                 continue;
             }
+            // A request the generated loop answers itself: the process
+            // lowering cuts at every call, so none reaches a backend.
+            if operation.canonical_name == crate::yield_lowering::RUN_TURN {
+                assert!(EffectName::from_dotted(&operation.canonical_name).is_none());
+                continue;
+            }
             assert!(
                 EffectName::from_dotted(&operation.canonical_name).is_some(),
                 "standard capability operation {} has no wasm-gc lowering route",

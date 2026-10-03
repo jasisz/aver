@@ -5410,7 +5410,7 @@ fn law_template_typing_keeps_sample_literal_discharge_independent() {
 }
 
 // ---------------------------------------------------------------------------
-// `yield` functions (jasisz/aver#1329, phase one)
+// Processes (jasisz/aver#1329, phase one)
 //
 // The lowering runs in the pipeline front door between TCO and the checker,
 // so these go through `pipeline::front_gate` rather than `run_type_check`.
@@ -5447,11 +5447,11 @@ fn assert_front_error_containing(src: &str, snippet: &str) {
 }
 
 const YIELD_MODULE: &str =
-    "module Demo\n    depends [Say, Said]\n    effects [Say.print, Say.readLine, yield]\n\n";
+    "module Demo\n    depends [Say, Said]\n    effects [Say.print, Say.readLine]\n\n";
 
 const YIELD_LOOP: &str = r#"fn loop(seen: Int) -> Int
     ? "Reads lines until the reader fails, counting them."
-    ! [Say.readLine, yield]
+    ! [Say.readLine]
     line = Say.readLine()
     match line
         Result.Err(_) -> seen
@@ -5471,7 +5471,7 @@ fn drive(outcome: __LoopOutcome, lines: List<Result<String, String>>) -> Int
 "#;
 
 #[test]
-fn yield_effect_parses_and_the_function_lowers_without_errors() {
+fn a_function_requesting_an_answered_operation_lowers_without_errors() {
     let errs = front_errors(&format!("{YIELD_MODULE}{YIELD_LOOP}"));
     assert!(
         errs.is_empty(),
@@ -5481,22 +5481,16 @@ fn yield_effect_parses_and_the_function_lowers_without_errors() {
 }
 
 #[test]
-fn yield_propagates_as_an_effect_through_the_module_boundary() {
-    let src = format!("module Demo\n    depends [Say]\n    effects [Say.readLine]\n\n{YIELD_LOOP}");
-    assert_front_error_containing(&src, "'yield' which is not in the declared boundary");
-}
-
-#[test]
-fn plain_call_to_a_yield_function_is_an_error_with_a_recipe() {
+fn a_call_to_a_process_from_main_is_an_error_with_a_recipe() {
     let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nfn main() -> Int\n    loop(0)\n");
     assert_front_error_containing(
         &src,
-        "Function 'main' calls 'loop' directly, but 'loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`",
+        "Function 'main' calls 'loop' directly, but 'loop' is a process (requests Say.readLine, answered by Said); call it from another process, or seat it as a process in the entry module and run it with `Run.all()`",
     );
 }
 
 #[test]
-fn verify_case_calling_a_yield_function_requires_request_stubs() {
+fn verify_case_calling_a_process_requires_request_stubs() {
     let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nverify loop\n    loop(0) => 0\n");
     assert_front_error_containing(
         &src,
@@ -5505,7 +5499,7 @@ fn verify_case_calling_a_yield_function_requires_request_stubs() {
 }
 
 #[test]
-fn calling_the_yield_function_before_its_definition_gets_only_the_recipe() {
+fn calling_the_process_before_its_definition_gets_only_the_recipe() {
     let src = format!("{YIELD_MODULE}fn main() -> Int\n    loop(0)\n\n{YIELD_LOOP}");
     let errs = front_errors(&src);
     assert_eq!(
@@ -5515,7 +5509,7 @@ fn calling_the_yield_function_before_its_definition_gets_only_the_recipe() {
         errs.join("\n  ")
     );
     assert!(
-        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`"),
+        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' is a process (requests Say.readLine, answered by Said); call it from another process, or seat it as a process in the entry module and run it with `Run.all()`"),
         "unexpected error text: {}",
         errs[0]
     );
@@ -5527,7 +5521,7 @@ fn calling_the_yield_function_before_its_definition_gets_only_the_recipe() {
 }
 
 #[test]
-fn calling_the_yield_function_after_its_definition_gets_only_the_recipe() {
+fn calling_the_process_after_its_definition_gets_only_the_recipe() {
     let src = format!("{YIELD_MODULE}{YIELD_LOOP}\nfn main() -> Int\n    loop(0)\n");
     let errs = front_errors(&src);
     assert_eq!(
@@ -5537,7 +5531,7 @@ fn calling_the_yield_function_after_its_definition_gets_only_the_recipe() {
         errs.join("\n  ")
     );
     assert!(
-        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`"),
+        errs[0].contains("Function 'main' calls 'loop' directly, but 'loop' is a process (requests Say.readLine, answered by Said); call it from another process, or seat it as a process in the entry module and run it with `Run.all()`"),
         "unexpected error text: {}",
         errs[0]
     );
@@ -5549,9 +5543,9 @@ fn calling_the_yield_function_after_its_definition_gets_only_the_recipe() {
 }
 
 #[test]
-fn non_tail_call_to_a_yield_function_nests_the_callee() {
+fn non_tail_call_to_a_process_nests_the_callee() {
     let src = format!(
-        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop.\"\n    ! [Say.readLine, yield]\n    loop(n) + 1\n"
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop.\"\n    ! [Say.readLine]\n    loop(n) + 1\n"
     );
     let errs = front_errors(&src);
     assert!(
@@ -5562,9 +5556,9 @@ fn non_tail_call_to_a_yield_function_nests_the_callee() {
 }
 
 #[test]
-fn tail_call_to_another_yield_function_enters_its_protocol() {
+fn tail_call_to_another_process_enters_its_protocol() {
     let src = format!(
-        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Hands over to loop.\"\n    ! [Say.readLine, yield]\n    loop(n)\n"
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Hands over to loop.\"\n    ! [Say.readLine]\n    loop(n)\n"
     );
     let errs = front_errors(&src);
     assert!(
@@ -5575,9 +5569,9 @@ fn tail_call_to_another_yield_function_enters_its_protocol() {
 }
 
 #[test]
-fn a_yield_function_calling_itself_outside_tail_position_is_an_error_with_a_recipe() {
+fn a_process_calling_itself_outside_tail_position_is_an_error_with_a_recipe() {
     let src = format!(
-        "{YIELD_MODULE}fn loop(seen: Int) -> Int\n    ? \"Reads lines until the reader fails, counting them.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> seen\n        Result.Ok(_) -> loop(seen) + 1\n"
+        "{YIELD_MODULE}fn loop(seen: Int) -> Int\n    ? \"Reads lines until the reader fails, counting them.\"\n    ! [Say.readLine]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> seen\n        Result.Ok(_) -> loop(seen) + 1\n"
     );
     assert_front_error_containing(
         &src,
@@ -5586,24 +5580,24 @@ fn a_yield_function_calling_itself_outside_tail_position_is_an_error_with_a_reci
 }
 
 #[test]
-fn two_yield_functions_that_call_each_other_are_refused_with_the_cycle() {
+fn two_processes_that_call_each_other_are_refused_with_the_cycle() {
     let src = format!(
-        "{YIELD_MODULE}fn ping(n: Int) -> Int\n    ? \"Hands one line to pong.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> pong(n) + 1\n\nfn pong(n: Int) -> Int\n    ? \"Hands one line back to ping.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> ping(n)\n"
+        "{YIELD_MODULE}fn ping(n: Int) -> Int\n    ? \"Hands one line to pong.\"\n    ! [Say.readLine]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> pong(n) + 1\n\nfn pong(n: Int) -> Int\n    ? \"Hands one line back to ping.\"\n    ! [Say.readLine]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> ping(n)\n"
     );
     assert_front_error_containing(
         &src,
-        "Mutual nesting is not supported by yield lowering: ping calls pong calls ping",
+        "Mutual nesting of processes is not supported: ping calls pong calls ping",
     );
 }
 
 #[test]
-fn two_yield_functions_that_only_tail_call_each_other_are_refused_as_a_tail_call_cycle() {
+fn two_processes_that_only_tail_call_each_other_are_refused_as_a_tail_call_cycle() {
     let src = format!(
-        "{YIELD_MODULE}fn phaseOne(n: Int) -> Int\n    ? \"Hands the count to the second phase.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> phaseTwo(n)\n\nfn phaseTwo(n: Int) -> Int\n    ? \"Hands the count back to the first phase.\"\n    ! [Say.readLine, yield]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> phaseOne(n)\n"
+        "{YIELD_MODULE}fn phaseOne(n: Int) -> Int\n    ? \"Hands the count to the second phase.\"\n    ! [Say.readLine]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> phaseTwo(n)\n\nfn phaseTwo(n: Int) -> Int\n    ? \"Hands the count back to the first phase.\"\n    ! [Say.readLine]\n    line = Say.readLine()\n    match line\n        Result.Err(_) -> n\n        Result.Ok(_) -> phaseOne(n)\n"
     );
     assert_front_error_containing(
         &src,
-        "A cycle of tail calls between yield functions is not supported by yield lowering: phaseOne calls phaseTwo calls phaseOne",
+        "A cycle of tail calls between processes is not supported: phaseOne calls phaseTwo calls phaseOne",
     );
 }
 
@@ -5634,20 +5628,20 @@ fn wrong_state_and_answer_pairing_is_a_type_error() {
 }
 
 #[test]
-fn unsupported_construct_in_a_yield_function_is_named() {
+fn unsupported_construct_in_a_process_is_named() {
     let src = format!(
-        "{YIELD_MODULE}fn both() -> Unit\n    ? \"Prints twice at once.\"\n    ! [Say.print, yield]\n    _ = (Say.print(\"a\"), Say.print(\"b\"))!\n    Say.print(\"c\")\n"
+        "{YIELD_MODULE}fn both() -> Unit\n    ? \"Prints twice at once.\"\n    ! [Say.print]\n    _ = (Say.print(\"a\"), Say.print(\"b\"))!\n    Say.print(\"c\")\n"
     );
     assert_front_error_containing(
         &src,
-        "Function 'both': a request, or a call to a yield helper, inside an independent product `(a, b)!` is not supported by yield lowering",
+        "Function 'both': a request, or a call to a helper process, inside an independent product `(a, b)!` is not supported inside a process",
     );
 }
 
 #[test]
 fn callback_live_across_a_request_is_rejected() {
     let src = format!(
-        "{YIELD_MODULE}fn apply(f: Fn(Int) -> Int, n: Int) -> Int\n    ? \"Prints, then applies f.\"\n    ! [Say.print, yield]\n    Say.print(\"x\")\n    f(n)\n"
+        "{YIELD_MODULE}fn apply(f: Fn(Int) -> Int, n: Int) -> Int\n    ? \"Prints, then applies f.\"\n    ! [Say.print]\n    Say.print(\"x\")\n    f(n)\n"
     );
     assert_front_error_containing(
         &src,
@@ -5656,17 +5650,42 @@ fn callback_live_across_a_request_is_rejected() {
 }
 
 #[test]
-fn yield_function_without_a_stop_is_an_error() {
+fn a_process_without_a_stop_is_an_error_naming_what_made_it_one() {
     let src = format!(
-        "{YIELD_MODULE}fn still(n: Int) -> Int\n    ? \"Never stops.\"\n    ! [yield]\n    n + 1\n"
+        "{YIELD_MODULE}fn still(n: Int) -> Int\n    ? \"Never stops.\"\n    ! [Say.readLine]\n    n + 1\n"
     );
-    assert_front_error_containing(&src, "declares `yield` but never stops");
+    assert_front_error_containing(
+        &src,
+        "Function 'still': is a process (requests Say.readLine, answered by Said) but never stops",
+    );
 }
 
 #[test]
-fn error_propagation_inside_a_yield_function_lowers() {
+fn a_function_calling_a_process_is_a_process_and_declares_what_it_requests() {
     let src = format!(
-        "{YIELD_MODULE}fn first(seen: Int) -> Result<Int, String>\n    ? \"Reads one line, echoes it, and counts it.\"\n    ! [Say.print, Say.readLine, yield]\n    line = Say.readLine()?\n    Say.print(line)\n    Result.Ok(seen + 1)\n"
+        "{YIELD_MODULE}{YIELD_LOOP}\nfn outer(n: Int) -> Int\n    ? \"Counts one more than loop, without saying what it requests.\"\n    loop(n) + 1\n"
+    );
+    assert_front_error_containing(
+        &src,
+        "Function 'outer' calls 'loop' which has effect 'Say.readLine', but 'outer' does not declare it",
+    );
+}
+
+#[test]
+fn an_operation_no_dependency_answers_runs_in_place_and_makes_no_process() {
+    let src = "module Demo\n    depends [Say]\n    effects [Say.readLine]\n\nfn once() -> Result<String, String>\n    ? \"Reads one line in place: nothing in this module's dependencies answers Say.\"\n    ! [Say.readLine]\n    Say.readLine()\n\nfn main() -> Unit\n    ! [Say.readLine]\n    _ = once()\n    Unit\n";
+    let errs = front_errors(src);
+    assert!(
+        errs.is_empty(),
+        "unexpected errors:\n  {}",
+        errs.join("\n  ")
+    );
+}
+
+#[test]
+fn error_propagation_inside_a_process_lowers() {
+    let src = format!(
+        "{YIELD_MODULE}fn first(seen: Int) -> Result<Int, String>\n    ? \"Reads one line, echoes it, and counts it.\"\n    ! [Say.print, Say.readLine]\n    line = Say.readLine()?\n    Say.print(line)\n    Result.Ok(seen + 1)\n"
     );
     let errs = front_errors(&src);
     assert!(
@@ -5677,7 +5696,7 @@ fn error_propagation_inside_a_yield_function_lowers() {
 }
 
 // ---------------------------------------------------------------------------
-// `yield` across the module boundary (jasisz/aver#1329, phase one)
+// Processes across the module boundary (jasisz/aver#1329, phase one)
 //
 // A dependency is lowered by the loader before any importer reads it
 // (`pipeline::lower_loaded_yield_modules`), so an importer sees the protocol
@@ -5721,12 +5740,12 @@ fn an_importer_resolves_the_generated_protocol_of_a_dependency() {
 }
 
 #[test]
-fn a_plain_call_into_a_dependency_yield_function_gets_the_qualified_recipe() {
-    let src = "module Client\n    intent = \"Calls the library's yielding function as if it were an ordinary one.\"\n    depends [Looper]\n    exposes [total]\n\nfn total() -> Int\n    ? \"Sums the handles Looper hands out.\"\n    Looper.loop(2, 0)\n";
+fn main_calling_a_dependency_process_gets_the_qualified_recipe() {
+    let src = "module Client\n    intent = \"Calls the library's process as if it were an ordinary function.\"\n    depends [Looper]\n    exposes [main]\n\nfn main() -> Int\n    ? \"Sums the handles Looper hands out.\"\n    Looper.loop(2, 0)\n";
     let errs = front_errors_against(src, &yield_cross_module_root());
     assert!(
         errs.iter().any(|e| e.contains(
-            "'Looper.loop' yields; call it from a function that declares `yield`, or seat it as a process in the entry module and run it with `Run.all()`"
+            "'Looper.loop' is a process (requests Pool.claim, answered by Pooled); call it from another process, or seat it as a process in the entry module and run it with `Run.all()`"
         )),
         "expected the qualified recipe, got:\n  {}",
         errs.join("\n  ")
@@ -5746,7 +5765,7 @@ fn a_plain_call_into_a_dependency_yield_function_gets_the_qualified_recipe() {
 // What a bare name in an effect list may be (jasisz/aver#1329, addendum 1)
 // ---------------------------------------------------------------------------
 
-const UNKNOWN_EFFECT_RECIPE: &str = "an effect is a capability operation written 'Namespace.operation', a whole capability namespace written 'Namespace', or the language's own 'yield'";
+const UNKNOWN_EFFECT_RECIPE: &str = "an effect is a capability operation written 'Namespace.operation', or a whole capability namespace written 'Namespace'";
 
 #[test]
 fn an_unknown_bare_effect_in_a_function_list_names_itself_with_the_recipe() {
@@ -5774,7 +5793,7 @@ fn a_misspelled_yield_is_an_unknown_effect() {
 
 #[test]
 fn a_capability_namespace_and_yield_stay_legal_bare_effects() {
-    let src = "module Demo\n    effects [Console, yield]\n\nfn talk(n: Int) -> Int\n    ? \"Greets n times.\"\n    ! [Console, yield]\n    Console.print(\"hi\")\n    match n\n        0 -> 0\n        _ -> talk(n - 1)\n";
+    let src = "module Demo\n    effects [Console]\n\nfn talk(n: Int) -> Int\n    ? \"Greets n times.\"\n    ! [Console]\n    Console.print(\"hi\")\n    match n\n        0 -> 0\n        _ -> talk(n - 1)\n";
     let errs = front_errors(src);
     assert!(
         errs.is_empty(),
@@ -5797,7 +5816,7 @@ fn a_capability_namespace_and_yield_stay_legal_bare_effects() {
 
 #[test]
 fn a_shadowing_arm_does_not_type_a_live_variables_state_field() {
-    let src = "module Demo\n    depends [Say, Said]\n    effects [Say.print, yield]\n\nfn probe(s: Int, v: Result<String, String>) -> Int\n    ? \"Stops, then reads s only in the arm that does not rebind it.\"\n    ! [Say.print, yield]\n    Say.print(\"go\")\n    match v\n        Result.Ok(s) -> String.len(s)\n        Result.Err(_) -> s\n";
+    let src = "module Demo\n    depends [Say, Said]\n    effects [Say.print]\n\nfn probe(s: Int, v: Result<String, String>) -> Int\n    ? \"Stops, then reads s only in the arm that does not rebind it.\"\n    ! [Say.print]\n    Say.print(\"go\")\n    match v\n        Result.Ok(s) -> String.len(s)\n        Result.Err(_) -> s\n";
     let errs = front_errors(src);
     assert_eq!(
         errs.len(),

@@ -1,7 +1,8 @@
 //! The generated loop (jasisz/aver#1329, process layer v2).
 //!
 //! An entry module that writes processes gets its loop written for it. What
-//! the program writes is then only: the processes (its `yield` functions),
+//! the program writes is then only: the processes (the functions that request
+//! something the program answers),
 //! one `process ... seated by ...` line for each process that runs once per
 //! key, the modules that answer the capabilities those processes wait on
 //! (each says so with `answers [...]` in its header), and optionally a
@@ -976,7 +977,13 @@ fn write_serve(proc: &Proc<'_>, answers: &[Answer], performs: &ProcessEffects) -
     );
     let mut bodies = String::new();
     for (kind, resumes) in protocol.kinds.iter().zip(&performs.kinds) {
-        let Some(operation) = &kind.operation else {
+        // A self tail call, and `Run.turn()`, hand the turn back: the loop
+        // answers them itself, in the next turn, with no answer module.
+        let Some(operation) = kind
+            .operation
+            .as_ref()
+            .filter(|operation| *operation != super::RUN_TURN)
+        else {
             out.push_str(&format!(
                 "        {}.{}(state) -> __settle{upper}(run, id, seq{key_arg}, {}(state))\n",
                 protocol.request, kind.name, kind.answer_fn

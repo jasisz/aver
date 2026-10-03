@@ -468,10 +468,10 @@ fn write_inserts_a_first_list_at_the_body_indent_under_a_column_zero_comment() {
 }
 
 #[test]
-fn write_keeps_a_boundary_the_yielding_functions_need() {
-    // `Mid.hop` reaches the capability only through an imported yielding
-    // helper, and a yielding callee is lowered out of the signature map before
-    // the surface is computed. The boundary is what its functions declare, not
+fn write_keeps_a_boundary_the_processes_need() {
+    // `Mid.hop` reaches the capability only through an imported helper
+    // process, and a process is lowered out of the signature map before the
+    // surface is computed. The boundary is what its functions declare, not
     // what the lowered call chain still resolves to.
     let root = scratch_copy("effects_yield_boundary", "write-yield-boundary");
 
@@ -498,7 +498,7 @@ fn write_keeps_a_boundary_the_yielding_functions_need() {
     let written = run_effects(&root, &["--write"]);
     assert!(written.status.success(), "{}", format_output(&written));
     assert!(
-        read(&root, "main.av").contains("effects [Pool.claim, yield]"),
+        read(&root, "main.av").contains("effects [Pool.claim]"),
         "{}",
         read(&root, "main.av")
     );
@@ -514,7 +514,7 @@ fn write_adds_what_a_process_performs_in_place() {
     // `ticker` is a process: its list belongs to the lowering for what it
     // reaches through its stops, but `Console.print` runs in place, and
     // `check` requires it declared. The report must name it as missing and
-    // `--write` must add it, keeping `yield` and the answered operation.
+    // `--write` must add it, keeping the answered operation.
     let root = scratch_copy("run_process_subdir_capability", "write-process-in-place");
     let stripped = read(&root, "main.av").replace("Console.print, ", "");
     write(&root, "main.av", &stripped);
@@ -538,12 +538,9 @@ fn write_adds_what_a_process_performs_in_place() {
     let written = run_effects_on(&root.join("main.av"), &root, &["--write"]);
     assert!(written.status.success(), "{}", format_output(&written));
     let main = read(&root, "main.av");
+    assert!(main.contains("! [Console.print, Lib.Clock.tick]"), "{main}");
     assert!(
-        main.contains("! [Console.print, Lib.Clock.tick, yield]"),
-        "{main}"
-    );
-    assert!(
-        main.contains("effects [Console.print, Lib.Clock.tick, yield]"),
+        main.contains("effects [Console.print, Lib.Clock.tick]"),
         "{main}"
     );
 
@@ -696,6 +693,48 @@ fn refuses_while_a_name_does_not_resolve() {
     assert!(
         read(&root, "main.av").contains("! [Console.print, Disk.appendText]"),
         "the entry list must not have moved"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn write_derives_run_turn_like_any_effect_and_makes_the_function_a_process() {
+    // `Run.turn` is an ordinary effect: a body that calls `Run.turn()` needs
+    // it declared, the report names it as missing, `--write` adds it, and the
+    // function it was added to is a process from then on.
+    let root = temp_dir("write-run-turn");
+    write(
+        &root,
+        "main.av",
+        "module Turns\n    intent = \"Hands the turn back after every line.\"\n    effects [Console.print, Run.turn]\n\nfn ticking() -> Unit\n    ? \"One line, then the turn goes back.\"\n    ! [Console.print]\n    Console.print(\"tick\")\n    Run.turn()\n",
+    );
+
+    let before = run_check(&root);
+    assert!(!before.status.success(), "{}", format_output(&before));
+
+    let reported = run_effects(&root, &[]);
+    assert!(reported.status.success(), "{}", format_output(&reported));
+    assert!(
+        stdout_of(&reported).contains("missing: Run.turn"),
+        "{}",
+        stdout_of(&reported)
+    );
+
+    let written = run_effects(&root, &["--write"]);
+    assert!(written.status.success(), "{}", format_output(&written));
+    assert!(
+        read(&root, "main.av").contains("! [Console.print, Run.turn]"),
+        "{}",
+        read(&root, "main.av")
+    );
+
+    let after = run_check(&root);
+    assert!(after.status.success(), "{}", format_output(&after));
+    assert!(
+        stdout_of(&after).contains("process ticking: requests Run.turn"),
+        "{}",
+        format_output(&after)
     );
 
     std::fs::remove_dir_all(&root).ok();

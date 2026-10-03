@@ -2,11 +2,11 @@ module RequestTraces
     intent = "Compare retained direct-style source with the generated protocol for every finite answer and resumption tape."
     depends [Pool, Pooled]
     exposes [branch, count, mixed, ignored]
-    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs, yield]
+    effects [Pool.claim, Pool.finish, Pool.notice, Time.unixMs]
 
 fn branch(id: Int) -> Int
     ? "Both initial requests happen even when the first answer ends the computation."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     first = Pool.claim(id)
     second = Pool.claim(id + 1)
     match first
@@ -19,7 +19,7 @@ fn branch(id: Int) -> Int
 
 fn count(n: Int) -> Int
     ? "Answers may increase n; only the finite input tape bounds the observation."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match n <= 0
         true -> 0
         false -> match Pool.claim(n)
@@ -28,14 +28,14 @@ fn count(n: Int) -> Int
 
 fn read(id: Int) -> Int
     ? "Private yielding helper whose consumed prefix is returned to its caller."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match Pool.claim(id)
         Option.None -> 0
         Option.Some(value) -> value
 
 fn mixed(id: Int) -> Result<Int, String>
     ? "Two private helper calls, a Unit answer and a distinct request kind share one executed-call position."
-    ! [Pool.claim, Pool.finish, Pool.notice, yield]
+    ! [Pool.claim, Pool.finish, Pool.notice]
     first = read(id)
     second = read(id + 1)
     Pool.notice(first + second)
@@ -44,7 +44,7 @@ fn mixed(id: Int) -> Result<Int, String>
 
 fn ignored(id: Int) -> Int
     ? "Same final value for every answer: preserving only the result would miss all requests."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Pool.claim(id)
     Pool.claim(id + 1)
     0
@@ -80,7 +80,7 @@ fn readTime() -> Int
 
 fn timed(id: Int) -> Int
     ? "The trace includes in-place effects on both sides of a suspension."
-    ! [Pool.claim, Time.unixMs, yield]
+    ! [Pool.claim, Time.unixMs]
     before = readTime()
     answer = Pool.claim(id)
     after = Time.unixMs()

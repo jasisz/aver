@@ -1,12 +1,12 @@
 module Walker
-    intent = "Fixture: a yielding helper written outside the entry module, which the entry's process enters."
-    depends [Pool]
-    effects [Pool.claim, yield]
+    intent = "Fixture: a helper process written outside the entry module, which the entry's process enters."
+    depends [Pool, Pooled]
+    effects [Pool.claim]
     exposes [walking]
 
 fn walking() -> Unit
     ? "Claims handles until the pool answers None, one module away from the loop."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match Pool.claim()
         Option.None -> Unit
         Option.Some(_) -> walking()

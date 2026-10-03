@@ -1,10 +1,10 @@
 module Run
     intent =
-        "The vocabulary of the generated loop. Wake says when a request that an answer module did not answer yet is asked again, fail ends the run with a reason Run.all() answers, and lastTurn says how long the loop waited and worked around the current turn."
+        "The vocabulary of the generated loop. Wake says when a request that an answer module did not answer yet is asked again, turn hands the turn back to the loop, fail ends the run with a reason Run.all() answers, and lastTurn says how long the loop waited and worked around the current turn."
     kind = capability
     semantics = effectful
     depends [Wait]
-    exposes [Wake, Turn, fail, failure, lastTurn]
+    exposes [Wake, Turn, turn, fail, failure, lastTurn]
 
 type Wake
     Until(List<Wait.Item>, Option<Int>)
@@ -14,6 +14,11 @@ record Turn
     turn: Int
     waitedMs: Int
     workedMs: Int
+
+operation turn() -> Unit
+    ? "Hands the turn back to the generated loop: the process that calls it resumes in the next turn, and every other process is served in between. It is a request the loop answers itself, so a function that calls it is a process. A verify case of such a process stubs it with `given` like any other request."
+    oracle = generative
+    replay = recorded
 
 operation fail(message: String) -> Unit
     ? "Ends the run with this reason. The turn it is called in is finished first; then the loop stops every process the way a stop does, cancelling the jobs parked requests wait on, and Run.all() answers Err(message). Only the first call of a run counts: a later one, in the same turn or after it, changes nothing."

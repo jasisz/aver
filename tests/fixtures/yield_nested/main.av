@@ -1,18 +1,18 @@
 module YieldNested
     intent = "Fixture: a non-tail call to a yield helper. The helper stops on its own request, the caller keeps its live variables beside the helper's state, and the work after the call runs when the helper is Done."
     depends [Pool, Pooled]
-    effects [Pool.claim, yield, Console.print]
+    effects [Pool.claim, Console.print]
     exposes [drive, main]
 
 fn fetch(peer: Int) -> Int
     ? "Claims the handle of peer and counts the peer itself into it."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     handle = Pool.claim(peer)
     handle + peer
 
 fn walk(id: Int, seen: Int) -> Int
     ? "Fetches one handle per round, adds it to seen and goes round until id runs down."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     got = fetch(id)
     match id
         0 -> seen + got

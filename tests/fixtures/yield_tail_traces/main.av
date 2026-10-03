@@ -1,27 +1,27 @@
 module TailTraces
     intent = "Tail-entry pauses align without adding an answer or an operation event."
     depends [Pool, Pooled, Leaf]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn read(id: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Pool.claim(id)
 
 fn local(id: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     read(id)
 
 fn nested(id: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     value = local(id)
     value + 1
 
 fn imported(id: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     Leaf.forward(id)
 
 fn branch(id: Int, tail: Bool) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     value = Pool.claim(id)
     match tail
         true -> read(value)

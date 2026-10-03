@@ -47,22 +47,29 @@ pub fn has_nested_patterns(items: &[TopLevel]) -> bool {
     found
 }
 
-/// The `yield` functions of `items` that use a nested pattern: the
-/// `yield` lowering reads the program as written, so these are refused
-/// until it learns the nested forms.
-pub fn nested_patterns_in_yield_fns(items: &[TopLevel]) -> Vec<TypeError> {
+/// The processes of `items` that use a nested pattern: the process
+/// lowering reads the program as written, so these are refused until it
+/// learns the nested forms.
+pub fn nested_patterns_in_processes(
+    items: &[TopLevel],
+    processes: &crate::yield_lowering::Processes,
+) -> Vec<TypeError> {
     items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::FnDef(fd) if crate::yield_lowering::is_yield_fn(fd) => {
+            TopLevel::FnDef(fd) if processes.contains(&fd.name) => {
                 let has = fd.body.stmts().iter().any(|stmt| match stmt {
                     Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr_has_nested(expr),
                 });
                 has.then(|| TypeError {
                     message: format!(
                         "nested constructor and list patterns are not supported inside the \
-                         `yield` function '{}' yet; move the match into a helper function",
-                        fd.name
+                         process '{}' ({}) yet; move the match into a helper function",
+                        fd.name,
+                        processes
+                            .reason(&fd.name)
+                            .map(ToString::to_string)
+                            .unwrap_or_default()
                     ),
                     line: fd.line,
                     col: 0,

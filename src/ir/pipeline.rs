@@ -867,10 +867,10 @@ pub struct FrontResult {
 /// at all.
 ///
 /// The loader stores modules leaves-first, so lowering in order lets a
-/// yield module that depends on another see the lowered one. A module
-/// without a `yield` function is left untouched, which is every module in
-/// almost every program: the extra type check is paid only where a
-/// dependency really yields.
+/// process module that depends on another see the lowered one. A module
+/// without a process is left untouched, which is every module in almost
+/// every program: the extra type check is paid only where a dependency
+/// requests something some program could answer.
 ///
 /// Returns the errors of every dependency whose lowering FAILED, each
 /// carrying that dependency's file as its origin. The caller hands them to
@@ -888,17 +888,35 @@ pub fn lower_loaded_yield_modules(
     module_root: Option<&str>,
     marked: &crate::config::MarkedCapabilities,
 ) -> Vec<crate::types::checker::TypeError> {
+    lower_loaded_process_modules(loaded, module_root, marked).0
+}
+
+/// [`lower_loaded_yield_modules`], also answering which modules failed to
+/// lower, by index.
+pub fn lower_loaded_process_modules(
+    loaded: &mut [LoadedModule],
+    module_root: Option<&str>,
+    marked: &crate::config::MarkedCapabilities,
+) -> (
+    Vec<crate::types::checker::TypeError>,
+    std::collections::HashSet<usize>,
+) {
+    let mut failed = std::collections::HashSet::new();
     // Legacy dependency-only doors have no entry name. Reserve the loop for
     // the entry instead of letting the first yielding dependency claim it.
     let marked = marked.with_run_entry("<entry>");
     let mut errors = Vec::new();
     for index in 0..loaded.len() {
-        if !crate::yield_lowering::has_yield_fns(&loaded[index].items)
+        if !crate::yield_lowering::may_have_processes(&loaded[index].items)
             && !crate::ir::nested_patterns::has_nested_patterns(&loaded[index].items)
         {
             continue;
         }
         let deps: Vec<LoadedModule> = loaded[..index].to_vec();
+        // A module whose effect lists only might make it a process keeps its
+        // items as written when it turns out to have none.
+        let as_written = (!crate::ir::nested_patterns::has_nested_patterns(&loaded[index].items))
+            .then(|| loaded[index].items.clone());
         let mut items = std::mem::take(&mut loaded[index].items);
         let user_program_len = items.len();
         let front = front(
@@ -917,6 +935,15 @@ pub fn lower_loaded_yield_modules(
             continue;
         }
         let Some(tc) = front.typecheck else { continue };
+        if tc.processes.is_empty()
+            && let Some(as_written) = as_written
+        {
+            loaded[index].items = as_written;
+            continue;
+        }
+        if !tc.errors.is_empty() {
+            failed.insert(index);
+        }
         let origin = dependency_origin(&loaded[index].path, module_root);
         errors.extend(tc.errors.into_iter().map(|mut error| {
             if error.origin.is_none() {
@@ -925,7 +952,7 @@ pub fn lower_loaded_yield_modules(
             error
         }));
     }
-    errors
+    (errors, failed)
 }
 
 /// The file a dependency's diagnostics point at, shortened against the
@@ -960,6 +987,11 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
         .map(|module| module.name.as_str())
         .unwrap_or("<entry>");
     let marked = marked.with_run_entry(entry);
+    // The loop's imports go in before the first check, which has to see the
+    // vocabulary a process module writes (`Run.View`); a module that turns
+    // out to write no process gets its own `depends` back.
+    let written_depends =
+        crate::visibility::module_decl(items).map(|module| module.depends.clone());
     marked.add_run_dependencies(items);
     let mut result = FrontResult {
         pass_diagnostics: Vec::new(),
@@ -989,8 +1021,14 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
     // Read off the module as written, before a loop generated into it widens
     // its effect lists with the marks.
     let named_marks = crate::yield_lowering::loop_marks_named(&items[..user_program_len]);
+    let main_turn = crate::yield_lowering::main_requests_turn(&items[..user_program_len]);
 
-    let tc = if crate::yield_lowering::has_yield_fns(items) {
+    // Which functions are processes is known once the module's dependencies
+    // have been read: the first check reads them, on a copy, and the set is
+    // derived from what it found.
+    let mut processes = crate::yield_lowering::Processes::default();
+    let mut lowered: Option<TypeCheckResult> = None;
+    if crate::yield_lowering::may_have_processes(items) {
         // A deep copy: `FnDef.body` is shared behind an `Arc`, and the
         // first check must stamp the copy's bodies, not the program's —
         // the coordinator's references to not-yet-generated names would
@@ -1006,84 +1044,126 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
             })
             .collect();
         let phase_one = typecheck(&written, mode);
-        let nested_in_yield = if phase_one.errors.is_empty() {
-            crate::ir::nested_patterns::nested_patterns_in_yield_fns(items)
-        } else {
-            Vec::new()
-        };
-        if !nested_in_yield.is_empty() {
-            let tc = TypeCheckResult {
-                errors: nested_in_yield,
-                ..phase_one
-            };
-            result
-                .pass_diagnostics
-                .push(diag_for_typecheck(&tc, items.len()));
-            fire(PipelineStage::Typecheck, items);
-            result.typecheck = Some(tc);
-            return result;
-        }
-        // The answer modules say what they answer in their own headers, and
-        // the check has just read every module this one can see.
-        let marked = marked.with_answer_pairs(&phase_one.answers);
-        match crate::yield_lowering::lower(
-            items,
+        processes = crate::yield_lowering::derive_processes(
             &written,
-            &phase_one.errors,
-            &marked,
-            &phase_one.fn_sigs,
+            &phase_one.closure_answers,
             &phase_one.imported_processes,
-            &phase_one.type_spellings,
-            coordinator_stop,
-        ) {
-            Ok(report) => {
-                if report.loop_source.is_some() {
-                    marked.add_loop_dependencies(items);
-                }
-                if std::env::var_os("AVER_YIELD_DUMP").is_some() {
-                    eprintln!("{}", report.generated_source());
-                }
-                // The lowering and the loop generator both write recursive
-                // functions, and both write them after the tail-call pass has
-                // run. Run it once more over what they left: a generated turn
-                // that grows the stack once per turn is not a loop.
-                if run_tco {
-                    tco(items);
-                }
-                result.yield_lowering = Some(report);
-                fire(PipelineStage::YieldLower, items);
-                if crate::ir::nested_patterns::has_nested_patterns(items) {
-                    let errors = crate::ir::nested_patterns::lower_nested_patterns(
-                        items,
-                        &phase_one.pattern_ctor_families,
-                    );
-                    fire(PipelineStage::PatternLower, items);
-                    if !errors.is_empty() {
-                        let tc = TypeCheckResult {
-                            errors,
-                            ..phase_one
-                        };
-                        result
-                            .pass_diagnostics
-                            .push(diag_for_typecheck(&tc, items.len()));
-                        fire(PipelineStage::Typecheck, items);
-                        result.typecheck = Some(tc);
-                        return result;
-                    }
-                }
-                let mut tc = typecheck(items, mode);
-                if tc.errors.is_empty() {
-                    tc.errors.extend(crate::resolver::check_shadowing(
-                        &written[..user_program_len],
-                    ));
-                }
-                tc
-            }
-            Err(errors) => TypeCheckResult {
-                errors,
-                ..phase_one
-            },
+        );
+        if let Some(module) = items.iter_mut().find_map(|item| match item {
+            TopLevel::Module(module) => Some(module),
+            _ => None,
+        }) {
+            module.processes = processes
+                .iter()
+                .map(|info| (info.name.clone(), info.reason.to_string()))
+                .collect();
         }
+        if processes.is_empty() {
+            if let (Some(depends), Some(module)) = (
+                written_depends,
+                items.iter_mut().find_map(|item| match item {
+                    TopLevel::Module(module) => Some(module),
+                    _ => None,
+                }),
+            ) {
+                module.depends = depends;
+            }
+        } else {
+            let mut refused = if phase_one.errors.is_empty() {
+                crate::ir::nested_patterns::nested_patterns_in_processes(items, &processes)
+            } else {
+                Vec::new()
+            };
+            refused.extend(crate::yield_lowering::answers_that_are_processes(
+                &written,
+                &processes,
+                &phase_one.capabilities,
+            ));
+            if !refused.is_empty() {
+                let tc = TypeCheckResult {
+                    errors: refused,
+                    processes,
+                    ..phase_one
+                };
+                result
+                    .pass_diagnostics
+                    .push(diag_for_typecheck(&tc, items.len()));
+                fire(PipelineStage::Typecheck, items);
+                result.typecheck = Some(tc);
+                return result;
+            }
+            // What makes a call a request is what the module's own
+            // dependencies answer; whether its waits are carried through the
+            // loop's `Int`-keyed one is a question about the whole program.
+            let closure = marked.within(&phase_one.closure_answers);
+            let carries = !marked.with_answer_pairs(&phase_one.answers).is_empty();
+            lowered = Some(
+                match crate::yield_lowering::lower(
+                    items,
+                    &written,
+                    &phase_one.errors,
+                    &processes,
+                    &closure,
+                    carries,
+                    &phase_one.fn_sigs,
+                    &phase_one.imported_processes,
+                    &phase_one.type_spellings,
+                    coordinator_stop,
+                ) {
+                    Ok(report) => {
+                        if report.loop_source.is_some() {
+                            closure.add_loop_dependencies(items);
+                        }
+                        if std::env::var_os("AVER_YIELD_DUMP").is_some() {
+                            eprintln!("{}", report.generated_source());
+                        }
+                        // The lowering and the loop generator both write recursive
+                        // functions, and both write them after the tail-call pass has
+                        // run. Run it once more over what they left: a generated turn
+                        // that grows the stack once per turn is not a loop.
+                        if run_tco {
+                            tco(items);
+                        }
+                        result.yield_lowering = Some(report);
+                        fire(PipelineStage::YieldLower, items);
+                        if crate::ir::nested_patterns::has_nested_patterns(items) {
+                            let errors = crate::ir::nested_patterns::lower_nested_patterns(
+                                items,
+                                &phase_one.pattern_ctor_families,
+                            );
+                            fire(PipelineStage::PatternLower, items);
+                            if !errors.is_empty() {
+                                let tc = TypeCheckResult {
+                                    errors,
+                                    processes,
+                                    ..phase_one
+                                };
+                                result
+                                    .pass_diagnostics
+                                    .push(diag_for_typecheck(&tc, items.len()));
+                                fire(PipelineStage::Typecheck, items);
+                                result.typecheck = Some(tc);
+                                return result;
+                            }
+                        }
+                        let mut tc = typecheck(items, mode);
+                        if tc.errors.is_empty() {
+                            tc.errors.extend(crate::resolver::check_shadowing(
+                                &written[..user_program_len],
+                            ));
+                        }
+                        tc
+                    }
+                    Err(errors) => TypeCheckResult {
+                        errors,
+                        ..phase_one
+                    },
+                },
+            );
+        }
+    }
+    let tc = if let Some(tc) = lowered {
+        tc
     } else if crate::ir::nested_patterns::has_nested_patterns(items)
         || (!marked.is_empty() && crate::yield_lowering::calls_wait_poll(items))
     {
@@ -1131,6 +1211,8 @@ pub fn front(items: &mut Vec<TopLevel>, cfg: FrontConfig<'_, '_>) -> FrontResult
     };
     let mut tc = tc;
     tc.errors.extend(named_marks);
+    tc.errors.extend(main_turn);
+    tc.processes = processes;
     if tc.errors.is_empty() {
         let has_loop = result
             .yield_lowering

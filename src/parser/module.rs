@@ -148,6 +148,7 @@ impl Parser {
             semantics_line,
             yield_protocols: Vec::new(),
             yield_sources: Vec::new(),
+            processes: Vec::new(),
             answers,
             answers_line,
             seatings: Vec::new(),
@@ -259,7 +260,7 @@ impl Parser {
             }
             _ => {
                 return Err(self.error(format!(
-                    "Expected the name of a yielding function after 'process', found {}",
+                    "Expected the name of a process after 'process', found {}",
                     self.current().kind
                 )));
             }

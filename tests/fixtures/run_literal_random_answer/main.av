@@ -1,11 +1,11 @@
 module Node
     intent = "Fixture: a process draws a random nonce with literal bounds."
     depends [Wire, Sockets]
-    effects [Console.print, Random.int, Wire.frame, yield]
+    effects [Console.print, Random.int, Wire.frame]
 
 fn reader() -> Unit
     ? "Draws a nonce, then reads until the wire is gone."
-    ! [Console.print, Random.int, Wire.frame, yield]
+    ! [Console.print, Random.int, Wire.frame]
     nonce = Random.int(1, 2147483647)
     match Wire.frame()
         Wire.Heard.Message(text) -> reader()

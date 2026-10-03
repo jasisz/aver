@@ -2,10 +2,10 @@ module PrivateImports
     intent = "Compose an imported finite parent whose recursion stays inside its owning module."
     depends [Pool, Pooled, Worker]
     exposes [parent]
-    effects [Pool.claim, Pool.finish, Pool.notice, yield]
+    effects [Pool.claim, Pool.finish, Pool.notice]
 
 fn parent(n: Int) -> Result<Int, String>
-    ! [Pool.claim, Pool.finish, Pool.notice, yield]
+    ! [Pool.claim, Pool.finish, Pool.notice]
     value = Worker.run(n)
     Pool.notice(value)
     Pool.finish(value + 10)

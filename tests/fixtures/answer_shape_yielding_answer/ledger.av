@@ -2,7 +2,7 @@ module Ledger
     intent = "An answer module that is itself a process."
     depends [Pool]
     exposes [State, claim, gone]
-    effects [yield]
+    effects [Run.turn]
     answers [Pool]
 
 record State
@@ -11,7 +11,8 @@ record State
 
 fn claim(state: State, key: Int) -> Pool.Assignment
     ? "The next height for this peer, asked again next turn."
-    ! [yield]
+    ! [Run.turn]
+    Run.turn()
     claim(state, key)
 
 fn gone(state: State, key: Int) -> Tuple<State, Result<Unit, Run.Wake>>

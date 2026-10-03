@@ -1,12 +1,12 @@
 module YieldTwoReads
     intent = "Fixture: two requests of one kind in one body and a request inside a match arm; the Claim state is a sum with one variant per stop."
     depends [Pool, Pooled]
-    effects [Pool.claim, yield, Console.print]
+    effects [Pool.claim, Console.print]
     exposes [drive, main]
 
 fn pair(id: Int) -> Int
     ? "Claims two handles for id and, when both exist, a third for their sum; returns what it could add up."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     first = Pool.claim(id)
     second = Pool.claim(id + 1)
     match first

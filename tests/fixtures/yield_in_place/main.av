@@ -1,12 +1,12 @@
 module YieldInPlace
     intent = "Fixture: a process performs an unmarked effect in place, in the same expression as a request; the request must not be hoisted ahead of it."
     depends [Pool, Pooled]
-    effects [Pool.claim, Console.print, yield]
+    effects [Pool.claim, Console.print]
     exposes [drive, main]
 
 fn walk(id: Int) -> Int
     ? "Announces the peer it is about to ask for, then adds the handle the pool answers with."
-    ! [Pool.claim, Console.print, yield]
+    ! [Pool.claim, Console.print]
     announce(id) + Pool.claim(id)
 
 fn announce(id: Int) -> Int

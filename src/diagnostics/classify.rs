@@ -319,37 +319,51 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
     }
 
     // Keyed on the wording built by `crate::yield_lowering`.
-    if msg.contains(crate::yield_lowering::YIELD_CALL_RECIPE)
-        || msg.contains("yields; test it in a cases-form `verify")
-    {
+    if msg.contains("cannot itself be a process the turn has to drive") {
         return (
-            "yield-direct-call",
+            "answer-shape",
             None,
             Vec::new(),
             Some(
-                "A yield function is not called as written: call it from another function that declares `yield`, or seat it as a process the generated loop runs (`Run.all()`)"
+                "An answer is computed inside the turn: drop the request from the answer function, or move it into a process"
+                    .to_string(),
+            ),
+        );
+    }
+    if msg.contains(crate::yield_lowering::PROCESS_CALL_RECIPE)
+        || msg.contains("test it in a cases-form `verify")
+    {
+        return (
+            "process-direct-call",
+            None,
+            Vec::new(),
+            Some(
+                "A process is not called as written: call it from another process, or seat it as a process the generated loop runs (`Run.all()`)"
                     .to_string(),
             ),
         );
     }
     if msg.contains("outside tail position; pass what comes next as data") {
         return (
-            "yield-non-tail-call",
+            "process-non-tail-call",
             None,
             Vec::new(),
             Some("Pass what comes next as data, or make it a tail call".to_string()),
         );
     }
-    if msg.contains("is not supported by yield lowering")
+    if msg.contains("is not supported inside a process")
+        || msg.contains("between processes is not supported")
+        || msg.contains("Mutual nesting of processes is not supported")
+        || msg.contains("but never stops")
         || msg.contains("would be live across a request")
         || msg.contains("is not lowered as a Yield request in this phase")
         || msg.contains("has its own request and outcome types")
     {
         return (
-            "yield-unsupported",
+            "process-unsupported",
             None,
             Vec::new(),
-            Some("Restructure the yield function as the message says, or move the construct into a plain function it calls".to_string()),
+            Some("Restructure the process as the message says, or move the construct into a plain function it calls".to_string()),
         );
     }
 

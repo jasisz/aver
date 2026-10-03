@@ -83,7 +83,7 @@ A plain cases block may call a function whose signature declares effects, as lon
 
 Proof export keeps the same distinction. A passing case with no `given` is stated against the Oracle-lifted function and quantified over the missing oracle, which proves that the selected branch gives the expected result for every provider implementation. A case with a `given` is stated against its selected stub instead. Capability paths keep their full module qualification throughout lifting, so an operation such as `Infra.Kv.get` becomes the matching oracle argument in the Lean artifact, never a host call.
 
-A local yielding process also supports plain cases, given an exact stub for every request operation. These cases drive its generated protocol on the VM and do not call its live answer module. A request kind is numbered like any other operation: each request operation counts its own calls, in-place effects do not move the count, and a self yield uses no index at all. Direct process cases have no proof-export or WASM-stub model yet. See [testing a process](language.md#testing-a-process-with-request-stubs).
+A local process also supports plain cases, given an exact stub for every request operation. These cases drive its generated protocol on the VM and do not call its live answer module. A request kind is numbered like any other operation: each request operation counts its own calls, in-place effects do not move the count, and a self tail call uses no index at all. Direct process cases have no proof-export or WASM-stub model yet. See [testing a process](language.md#testing-a-process-with-request-stubs).
 
 ## Trace-aware cases
 

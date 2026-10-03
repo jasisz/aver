@@ -138,7 +138,7 @@ Rust and as wasm. The VM recording is replayed with local work recomputed.
 
 The independent products run inside the answer functions. The generated loop
 still orders requests and result visibility. This example does not add
-parallel yielding calls, and it does not make control decisions commute.
+parallel calls into processes, and it does not make control decisions commute.
 
 ## The generated loop's laws
 

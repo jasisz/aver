@@ -1,12 +1,12 @@
 module Looper
     intent = "A library helper exposes its source call shape for yielding importers and its generated protocol for explicit drivers."
     depends [Pool, Pooled]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
     exposes [loop]
 
 fn loop(id: Int, seen: Int) -> Int
     ? "Claims the handle of id, adds it to seen, and loops until id runs down to zero."
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     handle = Pool.claim(id)
     match id
         0 -> seen + handle

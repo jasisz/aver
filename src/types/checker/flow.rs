@@ -1201,26 +1201,29 @@ impl TypeChecker {
         } else {
             self.current_fn_line.unwrap_or(1)
         };
-        // Imported source signatures are available for protocol
-        // composition only inside another yielding function.
-        let calls_a_yield_fn = !caller_effects
-            .iter()
-            .any(|e| e == crate::yield_lowering::YIELD_EFFECT)
-            && callee_name.contains('.')
-            && effects
-                .iter()
-                .any(|e| e == crate::yield_lowering::YIELD_EFFECT);
-        if calls_a_yield_fn {
+        // An imported process is entered only from another process, which
+        // declares what it requests and so is one itself. `main` never is: it
+        // gets the recipe, not a list of effects that would not help it.
+        let entered = (caller_name == "main")
+            .then(|| {
+                self.imported_processes
+                    .get(callee_name)
+                    .map(|protocol| {
+                        crate::yield_lowering::imported_reason(protocol, &self.program_answers)
+                    })
+                    .or_else(|| self.dependency_processes.get(callee_name).cloned())
+            })
+            .flatten();
+        let calls_a_process = if let Some(reason) = entered {
             self.error_at_line(
                 err_line,
-                if self.imported_processes.contains_key(callee_name) {
-                    crate::yield_lowering::removed_call_recipe(callee_name)
-                } else {
-                    crate::yield_lowering::direct_call_recipe(caller_name, callee_name)
-                },
+                crate::yield_lowering::direct_call_recipe(caller_name, callee_name, &reason),
             );
-        }
-        for effect in effects.iter().filter(|_| !calls_a_yield_fn) {
+            true
+        } else {
+            false
+        };
+        for effect in effects.iter().filter(|_| !calls_a_process) {
             // A direct callback parameter typed `Fn(...) ! [_]`
             // forwards the concrete callback's effects to the
             // outer call site. `_` is not an effect the helper

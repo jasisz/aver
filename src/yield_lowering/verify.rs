@@ -53,13 +53,7 @@ pub(super) fn generate(
         if emitted.insert(protocol.fn_name.clone()) {
             let effects = fn_sigs
                 .get(&protocol.fn_name)
-                .map(|sig| {
-                    sig.2
-                        .iter()
-                        .filter(|effect| effect.as_str() != super::YIELD_EFFECT)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                })
+                .map(|sig| sig.2.clone())
                 .unwrap_or_default();
             generated.extend(driver(protocol, &entry, &effects, block.line));
         }

@@ -2,25 +2,25 @@ module RecursiveTraces
     intent = "Compose a recursive helper with its caller over arbitrary finite request tapes."
     depends [Pool, Pooled]
     exposes [parent]
-    effects [Pool.claim, yield]
+    effects [Pool.claim]
 
 fn loop(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     match Pool.claim(n)
         Option.None -> n
         Option.Some(next) -> loop(next)
 
 fn parent(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     value = loop(n)
     value + 10
 
 fn tail(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     loop(n)
 
 fn repeated(n: Int) -> Int
-    ! [Pool.claim, yield]
+    ! [Pool.claim]
     first = loop(n)
     second = loop(first)
     match Pool.claim(first + second)

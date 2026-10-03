@@ -21,9 +21,10 @@
 //!   it to `Disk.readText` is a judgement about the contract, not a mechanical
 //!   step, and `effect-granularity` already says so as a warning.
 //!
-//! Markers that are not computed effects — `yield`, which changes lowering,
-//! and the forwarded-callback marker `_` — are copied through verbatim. They
-//! are never invented and never removed.
+//! The forwarded-callback marker `_` is not a computed effect, so it is
+//! copied through verbatim: never invented and never removed. A process's
+//! list only grows: what it reaches through another process is lowered out of
+//! the signature map, so dropping it would be dropping what made it a process.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -35,14 +36,10 @@ use crate::effects::effect_satisfies;
 pub type SigMap = HashMap<String, (Vec<crate::types::Type>, crate::types::Type, Vec<String>)>;
 
 /// True for an entry that is written in an effect list but is not an effect
-/// the checker computes.
-///
-/// `yield` is a declaration that changes how the function is lowered, and `_`
-/// is a callback parameter-position marker. Neither is derived from a body, so
-/// neither is invented or dropped by a rewrite.
+/// the checker computes: `_`, a callback parameter-position marker. It is not
+/// derived from a body, so it is never invented or dropped by a rewrite.
 pub fn is_preserved_marker(entry: &str) -> bool {
-    entry == crate::yield_lowering::YIELD_EFFECT
-        || entry == crate::effects::FORWARDED_CALLBACK_EFFECT
+    entry == crate::effects::FORWARDED_CALLBACK_EFFECT
 }
 
 /// A signature map with everything the computation does not read thrown away.
@@ -82,6 +79,8 @@ pub struct SurfaceInput {
     pub items: Vec<TopLevel>,
     /// The signatures that module's own typecheck produced.
     pub fn_sigs: SigMap,
+    /// The processes that typecheck derived for the module.
+    pub processes: std::collections::HashSet<String>,
 }
 
 /// One function's declared list against its computed minimum.
@@ -190,13 +189,6 @@ fn fn_defs(items: &[TopLevel]) -> impl Iterator<Item = &FnDef> {
 
 /// A function's computed set: everything its body reaches, without the
 /// markers that are declarations rather than effects.
-///
-/// This is the one place a function's `yield` is dropped, and it is why
-/// [`resolve`] can never write a `yield` into a function that did not have
-/// one. The module boundary is resolved against the union of the functions'
-/// resolved lists instead, markers included, because
-/// `types::checker::check_module_effect_boundary` requires the boundary to
-/// carry every entry its functions declare, `yield` among them.
 fn function_minimum(used: BTreeSet<String>) -> BTreeSet<String> {
     used.into_iter()
         .filter(|effect| !is_preserved_marker(effect))
@@ -274,11 +266,12 @@ fn unused_entries(declared: &[String], minimum: &BTreeSet<String>) -> Vec<String
 
 /// Effect lists of a module that a rewrite may shrink as well as grow.
 ///
-/// A `yield` function is removed from the module by lowering and kept as
-/// proof metadata; what it reaches through its stops belongs to that
-/// lowering, so its list only ever grows by what its body performs in place.
-fn is_rewritable(fd: &FnDef) -> bool {
-    !crate::yield_lowering::is_yield_fn(fd)
+/// A process is removed from the module by lowering and kept as proof
+/// metadata; what it reaches through another process is gone from the
+/// signature map with it, so its list only ever grows by what its body
+/// performs itself, its requests among them.
+fn is_rewritable(fd: &FnDef, processes: &std::collections::HashSet<String>) -> bool {
+    !processes.contains(&fd.name)
 }
 
 /// The effect surface of a whole program.
@@ -412,15 +405,14 @@ pub fn compute(mut units: Vec<SurfaceInput>) -> ProgramSurface {
             let index = node_cursor;
             node_cursor += 1;
             let node = &nodes[index];
-            if !is_rewritable(fd) {
-                // A yielding function's list is lowering's business, except
-                // for what its body plainly performs in place: `check`
-                // requires every such effect declared, so a rewrite adds it
-                // and removes nothing. Nothing is ever dropped because a
-                // yielding callee is lowered out of the signature map before
-                // the surface is computed, so what a function reaches only
-                // through one is invisible here, while the boundary check
-                // still reads the declared list.
+            if !is_rewritable(fd, &unit.processes) {
+                // A process's list only grows: `check` requires every effect
+                // its body performs declared, so a rewrite adds it and removes
+                // nothing. Nothing is ever dropped because a process it calls
+                // is lowered out of the signature map before the surface is
+                // computed, so what it reaches only through one is invisible
+                // here, while the boundary check still reads the declared
+                // list.
                 let mut kept = node.minimum.clone();
                 kept.extend(
                     node.declared
@@ -555,30 +547,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_keeps_a_yield_the_author_wrote() {
+    fn resolve_keeps_a_forwarded_callback_marker_the_author_wrote() {
         assert_eq!(
-            resolve(&list(&["yield", "Tcp.readNow"]), &set(&["Tcp.readNow"])),
-            list(&["Tcp.readNow", "yield"])
-        );
-    }
-
-    #[test]
-    fn a_function_minimum_carries_no_yield_so_no_rewrite_can_invent_one() {
-        let reachable = set(&["Tcp.readNow", "yield"]);
-        assert_eq!(
-            resolve(&list(&["Tcp.readNow"]), &function_minimum(reachable)),
-            list(&["Tcp.readNow"])
-        );
-    }
-
-    #[test]
-    fn a_module_boundary_carries_the_yield_its_functions_declare() {
-        // The boundary is resolved against the functions' resolved lists, not
-        // against their minima, because the boundary check demands every entry
-        // a function declares.
-        assert_eq!(
-            resolve(&list(&["Tcp.readNow"]), &set(&["Tcp.readNow", "yield"])),
-            list(&["Tcp.readNow", "yield"])
+            resolve(&list(&["_", "Tcp.readNow"]), &set(&["Tcp.readNow"])),
+            list(&["Tcp.readNow", "_"])
         );
     }
 

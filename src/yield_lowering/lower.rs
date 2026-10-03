@@ -1,4 +1,4 @@
-//! Per-function lowering: the body of one `yield` function becomes a
+//! Per-function lowering: the body of one process becomes a
 //! segment graph. A segment is straight-line code that ends at a stop
 //! (`Waiting(...)`), at the function's result (`Done(...)`), or at a
 //! branch whose arms continue into other segments. Every segment lives
@@ -152,7 +152,7 @@ pub(super) struct Generated {
     pub protocol: super::ProcessProtocol,
 }
 
-/// What a caller has to know about the `yield` helpers it enters.
+/// What a caller has to know about the helper processes it enters.
 ///
 /// A nested call is lowered against the callee's own protocol — its outcome
 /// type, its request kinds, its state types and its answer functions — so the
@@ -161,8 +161,8 @@ pub(super) struct Generated {
 /// generator is given.
 #[derive(Default)]
 pub(super) struct Nesting {
-    /// Every `yield` function of this module, by name.
-    pub yield_fns: HashSet<String>,
+    /// Every process of this module and every imported one, by name.
+    pub process_names: HashSet<String>,
     /// The protocol of each one already lowered.
     protocols: HashMap<String, super::ProcessProtocol>,
     /// The effects every generated function performs, so a caller's routing
@@ -172,12 +172,12 @@ pub(super) struct Nesting {
 
 impl Nesting {
     pub(super) fn new(
-        mut yield_fns: HashSet<String>,
+        mut process_names: HashSet<String>,
         imported: &HashMap<String, super::ProcessProtocol>,
     ) -> Self {
-        yield_fns.extend(imported.keys().cloned());
+        process_names.extend(imported.keys().cloned());
         Self {
-            yield_fns,
+            process_names,
             protocols: imported.clone(),
             effects: HashMap::new(),
         }
@@ -202,12 +202,13 @@ impl Nesting {
 
 pub(super) fn lower_fn(
     fd: &FnDef,
+    reason: &super::ProcessReason,
     marked: &crate::config::MarkedCapabilities,
     fn_sigs: &super::FnSigs,
     type_spellings: &super::TypeSpellings,
     nesting: &Nesting,
 ) -> Result<Generated, Vec<TypeError>> {
-    let mut lowering = Lowering::new(fd, marked, fn_sigs, nesting);
+    let mut lowering = Lowering::new(fd, reason, marked, fn_sigs, nesting);
     lowering.type_spellings = Some(type_spellings);
     match lowering.run() {
         Ok(generated) => Ok(generated),
@@ -217,6 +218,8 @@ pub(super) fn lower_fn(
 
 struct Lowering<'a> {
     fd: &'a FnDef,
+    /// Why this function is a process, for the diagnostics that need it.
+    reason: &'a super::ProcessReason,
     names: Names,
     /// The capabilities this program answers itself. A call to an operation
     /// of one of them is a stop; every other call runs in place. Decided by
@@ -226,11 +229,11 @@ struct Lowering<'a> {
     /// generated function can carry exactly the in-place effects its own
     /// segment performs (decision 4).
     fn_sigs: &'a super::FnSigs,
-    /// The `yield` helpers of this module this function may enter, with the
+    /// The helper processes this function may enter, with the
     /// protocols the lowering of each one produced.
     nesting: &'a Nesting,
-    /// The function's own effect list minus `yield`: what an in-place
-    /// effect call looks like.
+    /// The function's own effect list: what an in-place effect call looks
+    /// like.
     effect_entries: Vec<String>,
     /// Canonical operation → request kind name, disambiguated up front.
     kind_names: HashMap<String, String>,
@@ -250,18 +253,15 @@ struct Lowering<'a> {
 impl<'a> Lowering<'a> {
     fn new(
         fd: &'a FnDef,
+        reason: &'a super::ProcessReason,
         marked: &'a crate::config::MarkedCapabilities,
         fn_sigs: &'a super::FnSigs,
         nesting: &'a Nesting,
     ) -> Self {
-        let effect_entries: Vec<String> = fd
-            .effects
-            .iter()
-            .map(|e| e.node.clone())
-            .filter(|e| e != "yield")
-            .collect();
+        let effect_entries: Vec<String> = fd.effects.iter().map(|e| e.node.clone()).collect();
         let mut lowering = Self {
             fd,
+            reason,
             names: Names::new(&fd.name),
             marked,
             fn_sigs,
@@ -302,7 +302,7 @@ impl<'a> Lowering<'a> {
     fn internal<T>(&mut self, line: usize, what: &str) -> Result<T, ()> {
         self.fail(
             line,
-            format!("internal error in yield lowering: {what}; please report this program"),
+            format!("internal error in process lowering: {what}; please report this program"),
         )
     }
 
@@ -325,17 +325,23 @@ impl<'a> Lowering<'a> {
         })
     }
 
+    /// Whether a call to `name` is a request: an operation of a capability
+    /// a module of this module's dependencies answers, or `Run.turn`, which
+    /// the generated loop answers itself.
+    fn is_request(&self, name: &str) -> bool {
+        name == super::RUN_TURN || self.marked.answers(name)
+    }
+
     /// The operation a stop calls, when `expr` is a stop.
     ///
-    /// A stop is a call to an operation of a capability the manifest says
-    /// this program answers. Nothing else is: an unmarked operation runs
-    /// where it is written, inside the turn (decision 4).
+    /// A stop is a request. Nothing else is: an operation nothing in the
+    /// program answers runs where it is written, inside the turn (decision 4).
     fn stop_op(&self, expr: &Spanned<Expr>) -> Option<String> {
         let Expr::FnCall(callee, _) = &expr.node else {
             return None;
         };
         let name = dotted_name(callee)?;
-        self.marked.answers(&name).then_some(name)
+        self.is_request(&name).then_some(name)
     }
 
     /// Whether `expr` performs an effect where it stands: a call to an
@@ -350,7 +356,7 @@ impl<'a> Lowering<'a> {
             let Some(name) = dotted_name(callee) else {
                 return false;
             };
-            if self.marked.answers(&name) {
+            if self.is_request(&name) {
                 return false;
             }
             self.is_effect_name(&name) || self.called_effects(&name).is_some_and(|e| !e.is_empty())
@@ -364,7 +370,7 @@ impl<'a> Lowering<'a> {
             .map(|(_, _, effects)| effects.as_slice())
     }
 
-    /// A local or imported yielding helper whose protocol is available.
+    /// A local or imported helper process whose protocol is available.
     /// Dependency cycles are rejected by the module loader before lowering.
     fn nested_callee(&self, expr: &Spanned<Expr>) -> Option<String> {
         let Expr::FnCall(callee, _) = &expr.node else {
@@ -374,7 +380,7 @@ impl<'a> Lowering<'a> {
         if name == self.fd.name {
             return None;
         }
-        self.nesting.yield_fns.contains(&name).then_some(name)
+        self.nesting.process_names.contains(&name).then_some(name)
     }
 
     /// Whether `expr` holds anything the lowering has to cut at: a stop, a
@@ -676,7 +682,7 @@ impl<'a> Lowering<'a> {
     /// `cut` says something evaluated after this expression is cut out of
     /// the statement. Such an expression is then hoisted into its own
     /// binding even when it holds no stop, as long as it performs an effect:
-    /// since decision 4 a `yield` process may perform an unmarked operation
+    /// since decision 4 a process may perform an unmarked operation
     /// in place, so siblings are no longer pure and a stop moved ahead of one
     /// would reorder two observable things. Hoisting both, in evaluation
     /// order, into the same statement list keeps the order the program wrote.
@@ -737,7 +743,7 @@ impl<'a> Lowering<'a> {
                 return self.fail(
                     line,
                     format!(
-                        "a request, or a call to a yield helper, inside an independent product `{spelling}` is not supported by yield lowering; perform them one after another, or move the product into a plain function the loop calls"
+                        "a request, or a call to a helper process, inside an independent product `{spelling}` is not supported inside a process; perform them one after another, or move the product into a plain function the loop calls"
                     ),
                 );
             }
@@ -977,7 +983,7 @@ impl<'a> Lowering<'a> {
             }
             Expr::TailCall(tc) => {
                 let args = tc.args.clone();
-                if tc.target != self.fd.name && self.nesting.yield_fns.contains(&tc.target) {
+                if tc.target != self.fd.name && self.nesting.process_names.contains(&tc.target) {
                     let target = tc.target.clone();
                     return self.emit_tail_into(&target, args, expr.line, ret);
                 }
@@ -1529,11 +1535,11 @@ impl<'a> Lowering<'a> {
         let Some(protocol) = self.nesting.protocols.get(callee).cloned() else {
             return self.internal(
                 line,
-                &format!("no protocol for the yield helper '{callee}'"),
+                &format!("no protocol for the helper process '{callee}'"),
             );
         };
         if args.len() != protocol.params.len() {
-            return self.internal(line, "a call to a yield helper with the wrong arity");
+            return self.internal(line, "a call to a helper process with the wrong arity");
         }
         self.nest_counter += 1;
         let site = self.nest_counter;
@@ -1578,7 +1584,7 @@ impl<'a> Lowering<'a> {
         Ok(call(&helper, call_args, line))
     }
 
-    /// A tail call to another `yield` function enters that function's
+    /// A tail call to another process enters that function's
     /// protocol (decision 1): the caller stops with a `Yield` request whose
     /// answer is the helper's own `Start`, and the caller has nothing to
     /// keep, so nothing but the helper's arguments is kept.
@@ -1595,11 +1601,14 @@ impl<'a> Lowering<'a> {
         let Some(protocol) = self.nesting.protocols.get(callee).cloned() else {
             return self.internal(
                 line,
-                &format!("no protocol for the yield helper '{callee}'"),
+                &format!("no protocol for the helper process '{callee}'"),
             );
         };
         if args.len() != protocol.params.len() {
-            return self.internal(line, "a tail call into a yield helper with the wrong arity");
+            return self.internal(
+                line,
+                "a tail call into a helper process with the wrong arity",
+            );
         }
         // The source check already established result compatibility, including
         // nominal aliases whose annotation spellings differ between modules.
@@ -1692,10 +1701,12 @@ impl<'a> Lowering<'a> {
         let mut scope: Vec<String> = fd.params.iter().map(|(n, _)| n.clone()).collect();
         let start = self.lower_block(stmts, tail, &mut scope, &Ret::Done)?;
         if self.kinds.is_empty() {
-            return self.fail(
-                fd.line,
-                "declares `yield` but never stops: it calls no operation of a capability this program answers, and it does not tail-call itself. Answer the capability it should wait on with a module of the program whose header says `answers [<Capability>]`, and list that module in `depends`, or remove `yield` from its effect list".to_string(),
+            let message = format!(
+                "is a process ({}) but never stops: its body requests nothing its program answers, calls no process, and does not tail-call itself. Drop the request from its effect list if it makes none, or make it: call the operation, or call {}() to hand the turn back",
+                self.reason,
+                super::RUN_TURN
             );
+            return self.fail(fd.line, message);
         }
 
         let line = fd.line;
@@ -1898,7 +1909,7 @@ impl Lowering<'_> {
                         own.extend(effects.iter().cloned());
                         return;
                     }
-                    if self.marked.answers(&name) {
+                    if self.is_request(&name) {
                         return;
                     }
                     if self.is_effect_name(&name) {
@@ -1906,20 +1917,15 @@ impl Lowering<'_> {
                         return;
                     }
                     if let Some(effects) = self.called_effects(&name) {
-                        // A callee that declares a marked operation is a
-                        // plain function performing a request, which
-                        // `intercept-outside-yield` refuses by name. Its
-                        // effects are carried here as they are declared:
-                        // dropping the marked one would leave the generated
-                        // function calling an effect it does not declare, and
-                        // a second error about a generated name is not a
-                        // better report of the same mistake.
-                        own.extend(
-                            effects
-                                .iter()
-                                .filter(|effect| *effect != super::YIELD_EFFECT)
-                                .cloned(),
-                        );
+                        // A callee that declares a request is a process the
+                        // caller enters, or one the derivation could not make
+                        // a process, which `request-outside-process` refuses
+                        // by name. Its effects are carried here as they are
+                        // declared: dropping the request would leave the
+                        // generated function calling an effect it does not
+                        // declare, and a second error about a generated name
+                        // is not a better report of the same mistake.
+                        own.extend(effects.iter().cloned());
                     }
                 });
             }
