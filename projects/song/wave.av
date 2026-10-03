@@ -1,0 +1,289 @@
+module Wave
+    intent = "Pure sound: pentatonic pitches, a triangle wave with an attack and a fade, a mix of the voices sounding at one sample, 16-bit little-endian PCM and the WAV header. Integers only."
+    effects []
+    exposes [Voice, samplesFor, pitch, render, pcm16, header]
+
+record Voice
+    pitch: Int
+    start: Int
+    length: Int
+
+fn rate() -> Int
+    ? "Samples per second."
+    22050
+
+fn samplesFor(ms: Int) -> Int
+    ? "How many samples ms milliseconds take."
+    Int.div(ms * 22050, 1000)
+
+verify samplesFor
+    samplesFor(1000) => 22050
+    samplesFor(400) => 8820
+
+fn pitch(note: Int) -> Int
+    ? "The frequency in hertz of a note of the C major pentatonic scale: note 0 is C3, every five notes go up an octave."
+    octaveUp(degreeHz(Int.mod(note, 5)), Int.div(note, 5))
+
+fn degreeHz(degree: Int) -> Int
+    ? "C3, D3, E3, G3 and A3."
+    match degree
+        0 -> 131
+        1 -> 147
+        2 -> 165
+        3 -> 196
+        _ -> 220
+
+
+verify degreeHz
+    degreeHz(0) => 131
+    degreeHz(4) => 220
+
+fn octaveUp(hz: Int, octaves: Int) -> Int
+    ? "The frequency octaves octaves higher."
+    match octaves <= 0
+        true -> hz
+        false -> octaveUp(hz * 2, octaves - 1)
+
+
+verify octaveUp
+    octaveUp(131, 0) => 131
+    octaveUp(131, 2) => 524
+
+verify pitch
+    pitch(0) => 131
+    pitch(4) => 220
+    pitch(5) => 262
+    pitch(12) => 660
+
+fn triangle(hz: Int, n: Int, peak: Int) -> Int
+    ? "Sample n of a triangle wave at hz hertz between -peak and peak."
+    phase = Int.mod(n * hz, 22050)
+    match phase < 11025
+        true -> 0 - peak + Int.div(2 * peak * phase, 11025)
+        false -> 3 * peak - Int.div(2 * peak * phase, 11025)
+
+verify triangle
+    triangle(220, 0, 1000) => -1000
+    triangle(220, 1, 1000) => -961
+
+fn envelope(n: Int, length: Int, peak: Int) -> Int
+    ? "The loudness at sample n of a note length samples long: a 10 ms attack (220 samples) up to peak, then a straight fade to silence."
+    match n < 220
+        true -> Int.div(peak * n, 220)
+        false -> Result.withDefault(Int.div(peak * (length - n), length - 219), 0)
+
+verify envelope
+    envelope(0, 2205, 6000) => 0
+    envelope(2205, 2205, 6000) => 0
+
+fn toneAt(voice: Voice, at: Int) -> Int
+    ? "What one voice adds at sample at: nothing outside the note."
+    n = at - voice.start
+    match n < 0
+        true -> 0
+        false -> match n < voice.length
+            true -> triangle(voice.pitch, n, envelope(n, voice.length, 4500))
+            false -> 0
+
+verify toneAt
+    toneAt(Voice(pitch = 220, start = 10, length = 100), 5) => 0
+    toneAt(Voice(pitch = 220, start = 10, length = 100), 10) => 0
+
+fn tone(note: Int, ms: Int) -> List<Int>
+    ? "One note alone, ms milliseconds of samples."
+    voice = Voice(pitch = pitch(note), start = 0, length = samplesFor(ms))
+    render([voice], 0, voice.length)
+
+verify tone
+    List.len(tone(5, 10)) => 220
+    List.len(tone(0, 400)) => 8820
+    List.len(tone(7, -5)) => 0
+
+fn mixAt(voices: List<Voice>, at: Int) -> Int
+    ? "Every voice sounding at sample at, summed and clipped to 16 bits."
+    clamp16(summed(voices, at, 0))
+
+fn summed(voices: List<Voice>, at: Int, total: Int) -> Int
+    ? "The plain sum of the voices at one sample."
+    match voices
+        [] -> total
+        [voice, ..rest] -> summed(rest, at, total + toneAt(voice, at))
+
+
+verify summed
+    summed([], 0, 5) => 5
+    summed([Voice(pitch = 220, start = 0, length = 100)], 0, 5) => 5
+
+verify mixAt
+    mixAt([], 0) => 0
+    fits16(mixAt([Voice(pitch = 220, start = 0, length = 1000), Voice(pitch = 330, start = 0, length = 1000), Voice(pitch = 440, start = 0, length = 1000), Voice(pitch = 523, start = 0, length = 1000), Voice(pitch = 660, start = 0, length = 1000), Voice(pitch = 880, start = 0, length = 1000)], 500)) => true
+
+fn clamp16(sample: Int) -> Int
+    ? "A sample clipped to the 16-bit range."
+    match sample > 32767
+        true -> 32767
+        false -> match sample < -32768
+            true -> -32768
+            false -> sample
+
+verify clamp16
+    clamp16(40000) => 32767
+    clamp16(-40000) => -32768
+    clamp16(12) => 12
+
+fn fits16(sample: Int) -> Bool
+    ? "Whether a sample lies in the 16-bit range."
+    match sample < -32768
+        true -> false
+        false -> sample <= 32767
+
+verify fits16
+    fits16(32767) => true
+    fits16(32768) => false
+    fits16(-32769) => false
+
+verify clamp16 law fitsSixteenBits
+    given sample: Int = [-100000, -32769, -32768, -1, 0, 1, 32767, 32768, 100000]
+    fits16(clamp16(sample)) => true
+
+fn render(voices: List<Voice>, from: Int, to: Int) -> List<Int>
+    ? "The mixed samples from from up to, but not including, to."
+    List.reverse(rendering(voices, from, to, []))
+
+fn rendering(voices: List<Voice>, at: Int, to: Int, acc: List<Int>) -> List<Int>
+    ? "One sample at a time, newest first."
+    match at >= to
+        true -> acc
+        false -> rendering(voices, at + 1, to, List.prepend(mixAt(voices, at), acc))
+
+
+verify rendering
+    rendering([], 0, 2, []) => [0, 0]
+
+verify render
+    render([], 0, 3) => [0, 0, 0]
+    List.len(render([], 5, 12)) => 7
+    List.len(render([], 5, 2)) => 0
+
+fn le16(sample: Int) -> List<Int>
+    ? "A 16-bit sample as two little-endian octets, two's complement."
+    [lowOctet(sample), highOctet(sample)]
+
+verify le16
+    le16(1) => [1, 0]
+    le16(-1) => [255, 255]
+    le16(-32768) => [0, 128]
+
+fn le32(value: Int) -> List<Int>
+    ? "A 32-bit unsigned value as four little-endian octets."
+    [Int.mod(value, 256), Int.mod(Int.div(value, 256), 256), Int.mod(Int.div(value, 65536), 256), Int.mod(Int.div(value, 16777216), 256)]
+
+verify le32
+    le32(44100) => [68, 172, 0, 0]
+
+fn readLe16(octets: List<Int>) -> Int
+    ? "Reads back a little-endian 16-bit sample."
+    match octets
+        [lo, hi, .._] -> signed16(lo + 256 * hi)
+        _ -> 0
+
+fn signed16(unsigned: Int) -> Int
+    ? "Two's complement."
+    match unsigned >= 32768
+        true -> unsigned - 65536
+        false -> unsigned
+
+
+verify signed16
+    signed16(65535) => -1
+    signed16(5) => 5
+
+verify readLe16 law roundTrip
+    given sample: Int = [-70000, -32768, -1000, -1, 0, 1, 255, 256, 32767, 40000]
+    readLe16(le16(clamp16(sample))) => clamp16(sample)
+
+fn readLe32(octets: List<Int>, at: Int) -> Int
+    ? "Reads back the little-endian 32-bit value at octet at."
+    word = List.take(List.drop(octets, at), 4)
+    match word
+        [a, b, c, d] -> a + 256 * b + 65536 * c + 16777216 * d
+        _ -> 0
+
+
+verify readLe32
+    readLe32([68, 172, 0, 0], 0) => 44100
+
+fn nonNegative(n: Int) -> Int
+    ? "n, or 0 when n is negative: how many samples a span of n holds."
+    match n < 0
+        true -> 0
+        false -> n
+
+verify nonNegative
+    nonNegative(-3) => 0
+    nonNegative(4) => 4
+
+fn wrap32(n: Int) -> Int
+    ? "n as an unsigned 32-bit header field holds it."
+    Int.mod(n, 4294967296)
+
+verify wrap32
+    wrap32(-1) => 4294967295
+    wrap32(44100) => 44100
+
+fn pcm16(samples: List<Int>) -> List<Int>
+    ? "Samples as 16-bit little-endian PCM octets."
+    List.reverse(pcmming(samples, []))
+
+fn pcmming(samples: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Two octets per sample, newest first."
+    match samples
+        [] -> acc
+        [sample, ..rest] -> pcmming(rest, List.prepend(highOctet(sample), List.prepend(lowOctet(sample), acc)))
+
+
+verify pcmming
+    pcmming([], []) => []
+    pcmming([1], []) => [0, 1]
+
+fn lowOctet(sample: Int) -> Int
+    ? "The low octet of a 16-bit sample, two's complement."
+    Int.mod(Int.mod(sample + 65536, 65536), 256)
+
+fn highOctet(sample: Int) -> Int
+    ? "The high octet of a 16-bit sample, two's complement."
+    Int.div(Int.mod(sample + 65536, 65536), 256)
+
+verify lowOctet
+    lowOctet(-1) => 255
+
+verify highOctet
+    highOctet(-32768) => 128
+
+verify pcm16
+    pcm16([1, -1]) => [1, 0, 255, 255]
+    List.len(pcm16(render([], 0, 9))) => 18
+
+fn header(dataOctets: Int) -> List<Int>
+    ? "The 44-octet header of a mono 16-bit PCM WAV file holding dataOctets octets of samples."
+    List.concat(List.concat(List.concat([82, 73, 70, 70], le32(dataOctets + 36)), List.concat([87, 65, 86, 69, 102, 109, 116, 32], le32(16))),
+        List.concat(List.concat([1, 0, 1, 0], List.concat(le32(22050), le32(44100))), List.concat([2, 0, 16, 0, 100, 97, 116, 97], le32(dataOctets))))
+
+verify header
+    List.len(header(0)) => 44
+
+verify header law sizeIsFortyFour
+    given octets: Int = [0, 2, 44100, 2000000]
+    List.len(header(octets)) => 44
+
+verify header law dataLengthIsLast
+    given octets: Int = [-1, 0, 2, 44100, 2000000, 4294967296]
+    List.drop(header(octets), 40) => le32(octets)
+
+verify header law riffLengthCoversTheRest
+    given octets: Int = [-1, 0, 2, 44100, 2000000, 4294967296]
+    List.take(List.drop(header(octets), 4), 4) => le32(octets + 36)
+
+verify header
+    readLe32(header(44100), 40) => 44100
+    readLe32(header(44100), 4) => 44136

@@ -1,0 +1,16 @@
+module Voicing
+    kind = capability
+    semantics = effectful
+    depends [Work]
+    intent = "The job kind that voices one chord off the turn."
+    exposes [begin, take]
+
+operation begin(size: Int) -> Result<Work.Job, String>
+    ? "Starts voicing a chord of this size off the turn and returns its handle at once."
+    oracle = generativeOutput
+    replay = recorded
+
+operation take(job: Work.Job) -> Result<Option<Int>, String>
+    ? "None while the chord is still being voiced, Some(voicing) once it is done."
+    oracle = generativeOutput
+    replay = recorded

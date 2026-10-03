@@ -1,0 +1,122 @@
+module Synth
+    intent = "The synthesiser answers Speaker. Every request is placed on the clock: the samples from the last request up to now are mixed from the voices still sounding and appended to song.wav, then the new note joins the voices. Closing lets the last notes ring out and writes the header with the final length."
+    depends [Bytes, Speaker, Wave]
+    exposes [State, fresh, play, close]
+    effects [Disk.appendBytes, Disk.readBytes, Disk.writeBytes, Time.unixMs]
+    answers [Speaker]
+
+record State
+    origin: Int
+    written: Int
+    voices: List<Wave.Voice>
+
+verify fresh
+    fresh() => State(origin = -1, written = 0, voices = [])
+
+fn path() -> String
+    ? "Where the piece is written, next to the program."
+    "song.wav"
+
+fn fresh() -> State
+    ? "Nothing written yet: the clock starts at the first note."
+    State(origin = -1, written = 0, voices = [])
+
+fn play(state: State, note: Int, ms: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Answered now. Brings the file up to the current moment, then starts the note there."
+    ! [Disk.appendBytes, Disk.writeBytes, Time.unixMs]
+    clocked = started(state, Time.unixMs())
+    at = Wave.samplesFor(Time.unixMs() - clocked.origin)
+    caught = catchUp(clocked, at)
+    voice = Wave.Voice(pitch = Wave.pitch(note), start = caught.written, length = Wave.samplesFor(ms))
+    (State.update(caught, voices = List.prepend(voice, caught.voices)), Result.Ok(caught.written))
+
+fn started(state: State, now: Int) -> State
+    ? "The first request starts the clock and writes a header for an empty piece; the real lengths go in at the close."
+    ! [Disk.writeBytes]
+    match state.origin < 0
+        true -> begun(state, now, Disk.writeBytes(path(), bytesOf(Wave.header(0))))
+        false -> state
+
+fn begun(state: State, now: Int, written: Result<Unit, String>) -> State
+    ? "The clock starts now, whether or not the header could be written."
+    State.update(state, origin = now)
+
+verify begun
+    begun(fresh(), 100, Result.Ok(Unit)) => State.update(fresh(), origin = 100)
+
+fn catchUp(state: State, at: Int) -> State
+    ? "Mixes and appends the samples from what is written up to sample at, and forgets the voices that have ended."
+    ! [Disk.appendBytes]
+    match at > state.written
+        true -> appended(state, at, Disk.appendBytes(path(), bytesOf(Wave.pcm16(Wave.render(state.voices, state.written, at)))))
+        false -> state
+
+fn appended(state: State, at: Int, done: Result<Unit, String>) -> State
+    ? "The file now reaches sample at; voices that ended before it are dropped."
+    State.update(state, written = at, voices = sounding(state.voices, at, []))
+
+verify appended
+    appended(fresh(), 10, Result.Ok(Unit)) => State.update(fresh(), written = 10)
+
+fn sounding(voices: List<Wave.Voice>, at: Int, kept: List<Wave.Voice>) -> List<Wave.Voice>
+    ? "The voices still sounding at sample at."
+    match voices
+        [] -> kept
+        [voice, ..rest] -> match voice.start + voice.length > at
+            true -> sounding(rest, at, List.prepend(voice, kept))
+            false -> sounding(rest, at, kept)
+
+verify sounding
+    sounding([], 0, []) => []
+    sounding([Wave.Voice(pitch = 220, start = 0, length = 10)], 5, []) => [Wave.Voice(pitch = 220, start = 0, length = 10)]
+    sounding([Wave.Voice(pitch = 220, start = 0, length = 10)], 10, []) => []
+
+fn close(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "Answered now. Lets every voice ring to its end, then rewrites the file with the header for its real length."
+    ! [Disk.appendBytes, Disk.readBytes, Disk.writeBytes]
+    rung = catchUp(state, lastEnd(state.voices, state.written))
+    (rung, Result.Ok(finished(rung.written, Disk.readBytes(path()))))
+
+fn finished(samples: Int, file: Result<Bytes.Bytes, String>) -> Int
+    ? "Puts the final header in front of the samples and answers how many samples there are."
+    ! [Disk.writeBytes]
+    match file
+        Result.Err(_) -> 0
+        Result.Ok(bytes) -> rewritten(samples, Disk.writeBytes(path(), Bytes.concat(bytesOf(Wave.header(2 * samples)), Bytes.drop(bytes, 44))))
+
+fn rewritten(samples: Int, done: Result<Unit, String>) -> Int
+    ? "How many samples the finished file holds, or 0 when it could not be written."
+    match done
+        Result.Ok(_) -> samples
+        Result.Err(_) -> 0
+
+verify rewritten
+    rewritten(5, Result.Ok(Unit)) => 5
+    rewritten(5, Result.Err("disk full")) => 0
+
+fn lastEnd(voices: List<Wave.Voice>, latest: Int) -> Int
+    ? "The sample the last sounding voice ends on."
+    match voices
+        [] -> latest
+        [voice, ..rest] -> lastEnd(rest, larger(latest, voice.start + voice.length))
+
+fn larger(a: Int, b: Int) -> Int
+    ? "The larger of two."
+    match a > b
+        true -> a
+        false -> b
+
+verify larger
+    larger(1, 2) => 2
+    larger(3, 2) => 3
+
+verify lastEnd
+    lastEnd([], 7) => 7
+    lastEnd([Wave.Voice(pitch = 220, start = 5, length = 10)], 7) => 15
+
+fn bytesOf(octets: List<Int>) -> Bytes.Bytes
+    ? "Octets as bytes; every octet the synthesiser makes is in range, so an empty result never happens."
+    Result.withDefault(Bytes.fromList(octets), Bytes.empty())
+
+verify bytesOf
+    Bytes.len(bytesOf([1, 2])) => 2

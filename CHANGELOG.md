@@ -16,6 +16,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **Patterns at any depth**: `Option.Some(0)`, `Shape.Rect(0, h)`, `[a, b, ..rest]`, checked for what they miss on every backend.
 - **No copies when a Map or Vector inside a record is updated** and nothing else holds it.
 - **Tooling**: `aver effects --write`, `aver agent-connect`, `--pack wasmtime`, `Disk.sync`, `Int.toBigEndian`.
+- **`projects/song`**: a short piece played by six processes and synthesised by the program itself; its sound functions are certified on the bytes, and a recording replays to the same WAV on the VM and wasm-gc.
 
 The cut of a process is checked on the compiler's own programs; a proof for every program is still open (#1376).
 

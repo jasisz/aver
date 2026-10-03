@@ -1,0 +1,9 @@
+[providers]
+schema = 1
+
+[[providers.bindings]]
+capability = "Voicing"
+work = "Stage.voicing"
+
+[work]
+max-jobs = 3
