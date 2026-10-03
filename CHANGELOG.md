@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.30.0 "Turn" (unreleased)
+## 0.30.0 "Turn" — 2026-10-03
 
 > _Programs wait, work and answer in turns written in plain Aver, and more of what they compile to is certified on the exact bytes._
 
