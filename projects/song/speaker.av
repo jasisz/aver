@@ -1,0 +1,15 @@
+module Speaker
+    kind = capability
+    semantics = effectful
+    intent = "What the players ask the synthesiser for: a note of a given length, and closing the recording."
+    exposes [play, close]
+
+operation play(note: Int, ms: Int) -> Int
+    ? "Sounds a note of the pentatonic scale for ms milliseconds, starting now; answers the sample it starts on."
+    oracle = generative
+    replay = recorded
+
+operation close() -> Int
+    ? "Lets every sounding note ring out, finishes song.wav and answers how many samples it holds."
+    oracle = generative
+    replay = recorded

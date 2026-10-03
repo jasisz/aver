@@ -1,0 +1,35 @@
+module Band
+    kind = capability
+    semantics = effectful
+    intent = "What the players ask the stage for: a beat after a while, their cue, a note, a chord, the closing bar."
+    exposes [beat, cue, tune, chord, done, coda]
+
+operation beat(player: String, ms: Int) -> Int
+    ? "The bar the stage is in, answered ms milliseconds after the player asked."
+    oracle = generative
+    replay = recorded
+
+operation cue(bar: Int) -> Int
+    ? "Answered once the stage has reached this bar: the player's entrance."
+    oracle = generative
+    replay = recorded
+
+operation tune(note: Int) -> Int
+    ? "The note the player asked for, answered at once."
+    oracle = generative
+    replay = recorded
+
+operation chord(size: Int) -> Int
+    ? "A chord of this size, voiced by a job off the turn; answers what the job worked out."
+    oracle = generative
+    replay = recorded
+
+operation done(player: String) -> Int
+    ? "The player has finished; answers how many players have."
+    oracle = generative
+    replay = recorded
+
+operation coda() -> Int
+    ? "Answered once every player has finished: the bar the piece ends on."
+    oracle = generative
+    replay = recorded

@@ -1,0 +1,113 @@
+module Stage
+    intent = "The stage answers the band. Beats come after a wait on the clock, cues when the pulse reaches a bar, notes at once, chords from jobs. The pulse player keeps the bar count."
+    depends [Band, Voicing, Wait, Work]
+    exposes [State, fresh, voices, beat, cue, tune, chord, done, coda, voicing]
+    effects [Voicing.begin, Voicing.take]
+    answers [Band]
+
+record State
+    bar: Int
+    waiting: Map<String, Bool>
+    chords: Map<Int, Work.Job>
+    finished: Int
+
+fn fresh() -> State
+    ? "Bar zero, nobody waiting on a beat, no chord being voiced, nobody finished."
+    State(bar = 0, waiting = {}, chords = {}, finished = 0)
+
+fn voices(state: State) -> List<Int>
+    ? "The chord voices the loop seats, one per chord size: small, middle and large."
+    [3, 5, 8]
+
+verify voices
+    voices(fresh()) => [3, 5, 8]
+
+fn beat(state: State, player: String, ms: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The first ask waits ms milliseconds; the ask after the wait is the beat. A pulse beat moves the bar on."
+    match Map.get(state.waiting, player)
+        Option.None -> (State.update(state, waiting = Map.set(state.waiting, player, true)), Result.Err(Run.Wake.Until([], Option.Some(ms))))
+        Option.Some(_) -> beaten(State.update(state, waiting = Map.remove(state.waiting, player)), player)
+
+fn beaten(state: State, player: String) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The beat lands: the pulse counts a bar, every other player just hears which bar it is."
+    next = state.bar + 1
+    match player == "pulse"
+        true -> (State.update(state, bar = next), Result.Ok(next))
+        false -> (state, Result.Ok(state.bar))
+
+verify beaten
+    beaten(fresh(), "pulse") => (State.update(fresh(), bar = 1), Result.Ok(1))
+    beaten(State.update(fresh(), bar = 2), "melody") => (State.update(fresh(), bar = 2), Result.Ok(2))
+
+verify beat
+    beat(fresh(), "pulse", 400) => (State.update(fresh(), waiting = {"pulse" => true}), Result.Err(Run.Wake.Until([], Option.Some(400))))
+    beat(State.update(fresh(), waiting = {"pulse" => true}), "pulse", 400) => (State.update(fresh(), bar = 1), Result.Ok(1))
+    beat(State.update(fresh(), bar = 3, waiting = {"melody" => true}), "melody", 200) => (State.update(fresh(), bar = 3), Result.Ok(3))
+
+fn cue(state: State, bar: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "A player's entrance: answered once the pulse has reached the bar, until then it waits for the stage to move."
+    match state.bar >= bar
+        true -> (state, Result.Ok(state.bar))
+        false -> (state, Result.Err(Run.Wake.Settled(Option.None)))
+
+verify cue
+    cue(fresh(), 4) => (fresh(), Result.Err(Run.Wake.Settled(Option.None)))
+    cue(State.update(fresh(), bar = 4), 4) => (State.update(fresh(), bar = 4), Result.Ok(4))
+
+fn tune(state: State, note: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "A note is answered now."
+    (state, Result.Ok(note))
+
+verify tune
+    tune(fresh(), 2) => (fresh(), Result.Ok(2))
+
+fn chord(state: State, size: Int) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The first ask for a chord begins its job and waits on it; an ask after the wait reported it takes it. A chord that could not begin is silent: 0."
+    ! [Voicing.begin, Voicing.take]
+    match Map.get(state.chords, size)
+        Option.Some(job) -> taken(state, size, job, Voicing.take(job))
+        Option.None -> match Voicing.begin(size)
+            Result.Err(_) -> (state, Result.Ok(0))
+            Result.Ok(job) -> (State.update(state, chords = Map.set(state.chords, size, job)), Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+
+fn taken(state: State, size: Int, job: Work.Job, outcome: Result<Option<Int>, String>) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "What one take answered: still voicing waits again, a voiced chord sounds, a failed one is silent."
+    match outcome
+        Result.Err(_) -> (State.update(state, chords = Map.remove(state.chords, size)), Result.Ok(0))
+        Result.Ok(found) -> match found
+            Option.None -> (state, Result.Err(Run.Wake.Until([Wait.Item.Job(job)], Option.None)))
+            Option.Some(voiced) -> (State.update(state, chords = Map.remove(state.chords, size)), Result.Ok(voiced))
+
+fn done(state: State, player: String) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "One more player has finished, answered at once."
+    finished = state.finished + 1
+    (State.update(state, finished = finished), Result.Ok(finished))
+
+verify done
+    done(fresh(), "pulse") => (State.update(fresh(), finished = 1), Result.Ok(1))
+
+fn coda(state: State) -> Tuple<State, Result<Int, Run.Wake>>
+    ? "The closing bar, once all six players have finished; until then it waits for the stage to move."
+    match state.finished == 6
+        true -> (state, Result.Ok(state.bar))
+        false -> (state, Result.Err(Run.Wake.Settled(Option.None)))
+
+verify coda
+    coda(fresh()) => (fresh(), Result.Err(Run.Wake.Settled(Option.None)))
+    coda(State.update(fresh(), finished = 6, bar = 24)) => (State.update(fresh(), finished = 6, bar = 24), Result.Ok(24))
+
+fn voicing(size: Int) -> Int
+    ? "What one chord job works out off the turn: the sum of the first size * 3000000 numbers. A bigger chord takes longer."
+    summing(size * 3000000, 0)
+
+fn summing(left: Int, total: Int) -> Int
+    ? "Adds the numbers from left down to one."
+    match left == 0
+        true -> total
+        false -> summing(left - 1, total + left)
+
+verify voicing
+    voicing(0) => 0
+
+verify summing
+    summing(3, 0) => 6

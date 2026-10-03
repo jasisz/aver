@@ -1,0 +1,236 @@
+module Song
+    intent = "A short piece for six players, a stage and a speaker, in C major pentatonic. The bass keeps the beat alone, the melody states its motif at beat 4, the counter line comes in under its answer at beat 12, three chord voices are worked out side by side under the climax from beat 28, and when every player has finished the coda spreads the last chord. Every note is a request to the speaker; when it sounds comes from the program: beats wait on the clock, entrances on the beat count, chords on their jobs."
+    depends [Band, Speaker, Stage, Synth]
+    effects [Band.beat, Band.chord, Band.coda, Band.cue, Band.done, Console.print, Run.turn, Speaker.close, Speaker.play]
+
+process voice seated by Stage.voices
+
+record Tone
+    note: Int
+    ms: Int
+
+fn eighth() -> Int
+    ? "An eighth note: half a beat."
+    200
+
+fn quarter() -> Int
+    ? "A quarter note: one beat of the bass."
+    400
+
+fn half() -> Int
+    ? "A half note: two beats."
+    800
+
+fn whole() -> Int
+    ? "The last note of the melody: three beats."
+    1200
+
+verify eighth
+    eighth() => 200
+
+verify quarter
+    quarter() => 400
+
+verify half
+    half() => 800
+
+verify whole
+    whole() => 1200
+
+fn rest() -> Int
+    ? "A rest is a tone with no note."
+    -1
+
+verify rest
+    rest() => -1
+
+// The notes: 0-4 are C3 D3 E3 G3 A3, every five notes go up an octave (5 = C4, 10 = C5, 15 = C6).
+
+fn motif() -> List<Tone>
+    ? "The question: up to A, back down to C."
+    [Tone(note = 12, ms = 200), Tone(note = 13, ms = 200), Tone(note = 14, ms = 400), Tone(note = 13, ms = 400), Tone(note = 12, ms = 400), Tone(note = 11, ms = 400), Tone(note = 10, ms = 800), Tone(note = rest(), ms = 400)]
+
+fn answer() -> List<Tone>
+    ? "The answer: the same start, reaching the high C and settling on E."
+    [Tone(note = 12, ms = 200), Tone(note = 13, ms = 200), Tone(note = 14, ms = 400), Tone(note = 15, ms = 400), Tone(note = 14, ms = 400), Tone(note = 13, ms = 400), Tone(note = 12, ms = 800), Tone(note = rest(), ms = 400)]
+
+fn middle() -> List<Tone>
+    ? "The middle, an octave register higher: around the high C."
+    [Tone(note = 15, ms = 400), Tone(note = 16, ms = 200), Tone(note = 15, ms = 200), Tone(note = 14, ms = 400), Tone(note = 13, ms = 400), Tone(note = 14, ms = 200), Tone(note = 13, ms = 200), Tone(note = 12, ms = 800), Tone(note = rest(), ms = 400)]
+
+fn climax() -> List<Tone>
+    ? "The climax over the chords: up to the high E, held, and down to G."
+    [Tone(note = 14, ms = 200), Tone(note = 15, ms = 200), Tone(note = 16, ms = 400), Tone(note = 17, ms = 800), Tone(note = 16, ms = 200), Tone(note = 15, ms = 200), Tone(note = 14, ms = 400), Tone(note = 13, ms = 400), Tone(note = rest(), ms = 400)]
+
+fn homecoming() -> List<Tone>
+    ? "The motif once more, resolving on a long C."
+    [Tone(note = 12, ms = 200), Tone(note = 13, ms = 200), Tone(note = 14, ms = 400), Tone(note = 13, ms = 400), Tone(note = 12, ms = 400), Tone(note = 11, ms = 400), Tone(note = 10, ms = 1200)]
+
+fn tune() -> List<Tone>
+    ? "The whole melody: motif, answer, middle, climax, motif again."
+    List.concat(List.concat(List.concat(motif(), answer()), List.concat(middle(), climax())), homecoming())
+
+verify tune
+    List.len(tune()) => 41
+
+fn counterLine() -> List<Tone>
+    ? "Under the answer, the middle and the climax: slow half notes moving by step against the melody, down to the tonic."
+    [Tone(note = 9, ms = 800), Tone(note = 8, ms = 800), Tone(note = 7, ms = 800), Tone(note = 8, ms = 800),
+        Tone(note = 7, ms = 800), Tone(note = 6, ms = 800), Tone(note = 7, ms = 800), Tone(note = 8, ms = 800),
+        Tone(note = 7, ms = 800), Tone(note = 6, ms = 800), Tone(note = 5, ms = 800), Tone(note = 6, ms = 800),
+        Tone(note = 7, ms = 800), Tone(note = 6, ms = 800), Tone(note = 6, ms = 800), Tone(note = 5, ms = 1200)]
+
+verify counterLine
+    List.len(counterLine()) => 16
+
+fn bassNote(beat: Int) -> Int
+    ? "The bass on a beat: C and G in turn, A and E under the climax (beats 28 to 35), G and D on the way back (36 to 39), then C and G again."
+    match beat < 28
+        true -> alternate(beat, 0, 3)
+        false -> match beat < 36
+            true -> alternate(beat, 4, 2)
+            false -> match beat < 40
+                true -> alternate(beat, 3, 1)
+                false -> alternate(beat, 0, 3)
+
+fn alternate(beat: Int, root: Int, fifth: Int) -> Int
+    ? "The root on even beats, the fifth on odd ones."
+    match Int.mod(beat, 2) == 0
+        true -> root
+        false -> fifth
+
+verify alternate
+    alternate(4, 0, 3) => 0
+    alternate(5, 0, 3) => 3
+
+verify bassNote
+    bassNote(0) => 0
+    bassNote(1) => 3
+    bassNote(28) => 4
+    bassNote(29) => 2
+    bassNote(37) => 1
+    bassNote(40) => 0
+
+fn pulse() -> Unit
+    ? "The bass: forty-eight beats, four hundred milliseconds apart. Its beats are what moves the count on."
+    ! [Band.beat, Band.done, Console.print, Run.turn, Speaker.play]
+    pulsing(0)
+
+fn pulsing(beat: Int) -> Unit
+    ? "One bass note, the beat, a breath, and the next beat."
+    ! [Band.beat, Band.done, Console.print, Run.turn, Speaker.play]
+    Speaker.play(bassNote(beat), 360)
+    Band.beat("pulse", quarter())
+    Run.turn()
+    match beat == 47
+        true -> finish("bass")
+        false -> pulsing(beat + 1)
+
+fn melody() -> Unit
+    ? "The melody waits for beat 4, then plays its tune."
+    ! [Band.beat, Band.cue, Band.done, Console.print, Run.turn, Speaker.play]
+    entered("melody", Band.cue(4))
+    sing("melody", tune())
+
+fn counter() -> Unit
+    ? "The counter line waits for beat 12, under the answer, then plays its slow line."
+    ! [Band.beat, Band.cue, Band.done, Console.print, Run.turn, Speaker.play]
+    entered("counter", Band.cue(12))
+    sing("counter", counterLine())
+
+fn sing(player: String, tones: List<Tone>) -> Unit
+    ? "Plays a list of tones from the first, or finishes at once when there is none."
+    ! [Band.beat, Band.done, Console.print, Run.turn, Speaker.play]
+    match tones
+        [] -> finish(player)
+        [tone, ..more] -> singing(player, tone, more)
+
+fn singing(player: String, tone: Tone, more: List<Tone>) -> Unit
+    ? "One tone: it sounds (or, for a rest, the turn goes back), the player waits out its length, then the next tone."
+    ! [Band.beat, Band.done, Console.print, Run.turn, Speaker.play]
+    sounded(tone)
+    Band.beat(player, tone.ms)
+    match more
+        [] -> finish(player)
+        [next, ..after] -> singing(player, next, after)
+
+fn sounded(tone: Tone) -> Unit
+    ? "A note sounds for a little less than its length; a rest only hands the turn back."
+    ! [Run.turn, Speaker.play]
+    match tone.note < 0
+        true -> Run.turn()
+        false -> started(Speaker.play(tone.note, tone.ms - 30))
+
+fn started(sample: Int) -> Unit
+    ? "The note has started; which sample it started on does not matter to the player."
+    Unit
+
+verify started
+    started(0) => Unit
+
+fn voice(size: Int) -> Unit
+    ? "A chord voice waits for the climax at beat 28, then sounds its note of two chords, A minor and then C over G, each one when its chord's job lands."
+    ! [Band.chord, Band.cue, Band.done, Console.print, Speaker.play]
+    entered("voice {size}", Band.cue(28))
+    Band.chord(size)
+    Speaker.play(firstChord(size), 2400)
+    Band.chord(size)
+    Speaker.play(secondChord(size), 2400)
+    finish("voice {size}")
+
+fn firstChord(size: Int) -> Int
+    ? "A minor: A, C and E around middle C."
+    match size
+        3 -> 9
+        5 -> 10
+        _ -> 12
+
+fn secondChord(size: Int) -> Int
+    ? "C major over G: G, C and E."
+    match size
+        3 -> 8
+        5 -> 10
+        _ -> 12
+
+verify firstChord
+    firstChord(3) => 9
+    firstChord(5) => 10
+    firstChord(8) => 12
+
+verify secondChord
+    secondChord(3) => 8
+    secondChord(5) => 10
+    secondChord(8) => 12
+
+fn coda() -> Unit
+    ? "The coda waits for every player, spreads C, E, G and the high C a little apart, lets them ring and closes song.wav."
+    ! [Band.beat, Band.coda, Console.print, Speaker.close, Speaker.play]
+    bar = Band.coda()
+    spread([5, 7, 8, 10])
+    Console.print("coda on beat {bar}: {Speaker.close()} samples in song.wav")
+
+fn spread(notes: List<Int>) -> Unit
+    ? "Sounds each note of the last chord for three seconds, an eighth apart."
+    ! [Band.beat, Speaker.play]
+    match notes
+        [] -> Unit
+        [note, ..more] -> started(spreading(note, more))
+
+fn spreading(note: Int, more: List<Int>) -> Int
+    ? "One note of the last chord, a short wait, and the next; answers the sample the last one started on."
+    ! [Band.beat, Speaker.play]
+    sample = Speaker.play(note, 3000)
+    Band.beat("coda", 150)
+    match more
+        [] -> sample
+        [next, ..after] -> spreading(next, after)
+
+fn entered(player: String, beat: Int) -> Unit
+    ? "A player's entrance, said in the console."
+    ! [Console.print]
+    Console.print("{player} enters at beat {beat}")
+
+fn finish(player: String) -> Unit
+    ? "A player tells the stage it has finished, and says so."
+    ! [Band.done, Console.print]
+    Console.print("{player} done, {Band.done(player)} of 6")
