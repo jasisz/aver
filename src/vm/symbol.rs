@@ -83,6 +83,16 @@ pub(crate) struct VmSymbolTable {
     by_name: HashMap<String, u32>,
 }
 
+impl VmSymbolInfo {
+    fn values_mut(&mut self) -> impl Iterator<Item = &mut NanValue> {
+        let constant = match &mut self.kind {
+            Some(VmSymbolKind::Constant(value)) => Some(value),
+            _ => None,
+        };
+        constant.into_iter().chain(self.members.values_mut())
+    }
+}
+
 impl VmSymbolTable {
     #[inline]
     pub(crate) fn symbol_ref(symbol_id: u32) -> NanValue {
@@ -408,13 +418,32 @@ impl VmSymbolTable {
     /// a caller read the values, rebase them as a batch, and write
     /// them back.
     pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut NanValue> {
-        self.symbols.iter_mut().flat_map(|info| {
-            let constant = match &mut info.kind {
-                Some(VmSymbolKind::Constant(value)) => Some(value),
-                _ => None,
-            };
-            constant.into_iter().chain(info.members.values_mut())
-        })
+        self.symbols.iter_mut().flat_map(VmSymbolInfo::values_mut)
+    }
+
+    /// The symbols holding at least one arena reference, in table order.
+    ///
+    /// Walking only these with [`Self::symbol_values_mut`] visits every arena
+    /// reference [`Self::values_mut`] visits, in the same order.
+    pub(crate) fn heap_holding_symbols(&mut self) -> Vec<u32> {
+        self.symbols
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, info)| {
+                info.values_mut()
+                    .any(|value| value.heap_index().is_some())
+                    .then_some(index as u32)
+            })
+            .collect()
+    }
+
+    /// The values one symbol holds, in the order [`Self::values_mut`] walks
+    /// them.
+    pub(crate) fn symbol_values_mut(
+        &mut self,
+        symbol_id: u32,
+    ) -> impl Iterator<Item = &mut NanValue> {
+        self.symbols[symbol_id as usize].values_mut()
     }
 
     #[cfg(test)]

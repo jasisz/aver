@@ -2136,36 +2136,6 @@ fn build_case_oracle_stubs(
 // ─── Case runner ──────────────────────────────────────────────────────────────
 
 #[cfg(feature = "runtime")]
-fn single_case_plan(plan: &VmVerifyPlan, index: usize) -> VmVerifyPlan {
-    let mut block = plan.block.clone();
-    block.case_ids = vec![block.source_case_id(index)];
-    block.cases = vec![block.cases[index].clone()];
-    block.case_spans = block.case_spans.get(index).cloned().into_iter().collect();
-    block.case_givens = block.case_givens.get(index).cloned().into_iter().collect();
-    block.case_hostile_origins = block
-        .case_hostile_origins
-        .get(index)
-        .copied()
-        .into_iter()
-        .collect();
-    block.case_hostile_profiles = block
-        .case_hostile_profiles
-        .get(index)
-        .cloned()
-        .into_iter()
-        .collect();
-    block.case_reverse_order = block
-        .case_reverse_order
-        .get(index)
-        .copied()
-        .into_iter()
-        .collect();
-    VmVerifyPlan {
-        block,
-        cases: vec![plan.cases[index].clone()],
-    }
-}
-
 #[cfg(feature = "runtime")]
 fn empty_verify_result(
     plan: &VmVerifyPlan,
@@ -2250,43 +2220,38 @@ fn run_verify_vm_plans_parallel(
             (0..plan.cases.len()).map(move |case_index| (plan_index, case_index))
         })
         .collect::<Vec<_>>();
+    // One worker VM per pool thread, forked on the thread's first case and
+    // reused for every case it runs after that. Forking copies the whole
+    // compiled program, and the program carries a helper chunk per case, so
+    // forking per rayon split (what `map_init` does) grew with the domain
+    // twice over. Reuse is the same contract `map_init` already relied on and
+    // the sequential lane relies on for every case: `run_verify_vm` installs
+    // everything a case reads before it runs the case. The lock is only ever
+    // contended if a case re-enters this pool on the same thread; that case
+    // gets a fork of its own instead of waiting on itself.
+    let workers: Vec<std::sync::Mutex<Option<vm::VM>>> = (0..rayon::current_num_threads())
+        .map(|_| std::sync::Mutex::new(None))
+        .collect();
     let per_case: Vec<(usize, VerifyResult)> = tasks
         .into_par_iter()
-        .map_init(
-            || machine.fork_for_verify(),
-            |case_machine, (plan_index, case_index)| {
-                let plan = &plans[plan_index];
-                let case_total = plan.cases.len();
-                let single = single_case_plan(plan, case_index);
-                let mut result = run_verify_vm(
-                    &single,
+        .map(|(plan_index, case_index)| {
+            let run = |case_machine: &mut vm::VM| {
+                run_verify_vm_cases(
+                    &plans[plan_index],
+                    case_index..case_index + 1,
                     case_machine,
                     capabilities,
                     &budgets[plan_index],
                     raised_by[plan_index].as_deref(),
-                );
-                for case in &mut result.case_results {
-                    case.case_index = case_index;
-                    case.case_total = case_total;
-                }
-                // A single-case plan reports its turn overrun as case 0;
-                // give it the index the case has in the block.
-                for overrun in &mut result.turn_overruns {
-                    overrun.case_index = case_index;
-                }
-                if result.is_law {
-                    for (case, _, _) in &mut result.failures {
-                        let expr = result
-                            .case_results
-                            .first()
-                            .map(|result| result.case_expr.as_str())
-                            .unwrap_or_default();
-                        *case = format!("case {}/{} [{}]", case_index + 1, case_total, expr);
-                    }
-                }
-                (plan_index, result)
-            },
-        )
+                )
+            };
+            let slot = rayon::current_thread_index().unwrap_or(0) % workers.len();
+            let result = match workers[slot].try_lock() {
+                Ok(mut worker) => run(worker.get_or_insert_with(|| machine.fork_for_verify())),
+                Err(_) => run(&mut machine.fork_for_verify()),
+            };
+            (plan_index, result)
+        })
         .collect();
 
     let mut merged = plans
@@ -2303,6 +2268,30 @@ fn run_verify_vm_plans_parallel(
 
 fn run_verify_vm(
     plan: &VmVerifyPlan,
+    machine: &mut vm::VM,
+    capabilities: &crate::capability::CapabilityRegistry,
+    budget: &CaseBudget,
+    raised_by: Option<&str>,
+) -> VerifyResult {
+    run_verify_vm_cases(
+        plan,
+        0..plan.cases.len(),
+        machine,
+        capabilities,
+        budget,
+        raised_by,
+    )
+}
+
+/// Run the cases of one block whose indices fall in `case_range`, reporting
+/// each under its index in the whole block.
+///
+/// The parallel lane hands every worker a one-case range of the shared plan,
+/// so no case has to copy the block — whose case list is as long as the
+/// domain — to be run on its own.
+fn run_verify_vm_cases(
+    plan: &VmVerifyPlan,
+    case_range: std::ops::Range<usize>,
     machine: &mut vm::VM,
     capabilities: &crate::capability::CapabilityRegistry,
     budget: &CaseBudget,
@@ -2346,9 +2335,9 @@ fn run_verify_vm(
     use std::collections::HashSet;
     let mut base_failed: HashSet<String> = HashSet::new();
 
-    for (idx, ((left_expr, right_expr), case_fns)) in
-        block.cases.iter().zip(&plan.cases).enumerate()
-    {
+    for idx in case_range {
+        let (left_expr, right_expr) = &block.cases[idx];
+        let case_fns = &plan.cases[idx];
         let display_expr = |expr: &Spanned<Expr>| {
             let source = crate::ast_rewrite::rewrite_idents_scoped(expr, |name| {
                 (block.process_verification.is_some() && name == block.fn_name)
