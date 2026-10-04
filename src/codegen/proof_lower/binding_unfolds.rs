@@ -190,6 +190,8 @@ fn fn_pending(
     };
     let key = match &owner {
         Some(prefix) => crate::ir::FnKey::in_module(prefix.clone(), &fd.name),
+        // syntax-discovery-only: `fd` was found among the entry module's own
+        // items above, so the entry scope is its identity.
         None => crate::ir::FnKey::entry(&fd.name),
     };
     let recursive = inputs
