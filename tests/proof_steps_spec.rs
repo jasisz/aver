@@ -749,6 +749,51 @@ fn lean_unfolds_through_local_bindings_and_refuses_a_mutation() {
 }
 
 #[test]
+fn a_using_list_is_a_set_and_ambiguous_or_looping_rewrites_are_refused_by_name() {
+    let out = scratch("using");
+    let result = Command::new(aver_bin())
+        .args([
+            "proof",
+            "using.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--verify-mode",
+            "sorry",
+        ])
+        .env("AVER_STEPS_DEBUG", "1")
+        .current_dir(repo_root().join(FIXTURES))
+        .output()
+        .expect("aver runs");
+    assert!(result.status.success(), "{}", format_output(&result));
+    let log = String::from_utf8_lossy(&result.stderr);
+    let line = |law: &str| {
+        log.lines()
+            .find(|l| l.starts_with(&format!("steps: {law}: ")))
+            .unwrap_or_else(|| panic!("no steps line for {law}\n{log}"))
+            .to_string()
+    };
+    // The order of the list changes nothing.
+    let read =
+        |law: &str| fs::read_to_string(out.join(format!("proof_steps/{law}.steps"))).unwrap();
+    assert_eq!(
+        read("g.throughHOneWay").replace("throughHOneWay", "_"),
+        read("g.throughHOtherWay").replace("throughHOtherWay", "_")
+    );
+    assert!(
+        line("g.overlapping")
+            .contains("law f.isG and law f.isH both rewrite `f(x)`, to different terms"),
+        "{log}"
+    );
+    assert!(
+        line("add.swapsOne").contains(
+            "law add.commutes rewrites a term into one it applies to again, so rewriting with it never stops"
+        ),
+        "{log}"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
 fn the_embedded_kernel_is_generated_from_the_aver_source() {
     let out = Command::new("python3")
         .args([

@@ -68,7 +68,9 @@ fn premise_of(inputs: &ProofLowerInputs, t: &LawTheorem) -> Option<Term> {
     }
 }
 
-/// The laws a `using` list names, resolved against the citing law's module.
+/// The laws a `using` list names, resolved against the citing law's
+/// module. `using` is a set: the laws come back in the order they are
+/// defined, whatever order the list names them in.
 fn cited(
     inputs: &ProofLowerInputs,
     ir: &ProofIR,
@@ -76,17 +78,24 @@ fn cited(
     names: &[String],
 ) -> Option<Vec<LawRef>> {
     let own_scope = inputs.symbol_table.fn_entry(t.fn_id).key.scope.clone();
-    let mut out = Vec::new();
-    for name in names {
-        let found = ir.law_theorems.iter().find(|c| {
-            let key = &inputs.symbol_table.fn_entry(c.fn_id).key;
-            let local = format!("{}.{}", key.name, c.law_name);
-            let qualified = law_key(inputs, c);
-            (key.scope == own_scope && *name == local) || *name == qualified
-        })?;
-        out.push(law_ref(inputs, found));
+    let names_law = |c: &LawTheorem, name: &String| {
+        let key = &inputs.symbol_table.fn_entry(c.fn_id).key;
+        let local = format!("{}.{}", key.name, c.law_name);
+        (key.scope == own_scope && *name == local) || *name == law_key(inputs, c)
+    };
+    if names
+        .iter()
+        .any(|n| !ir.law_theorems.iter().any(|c| names_law(c, n)))
+    {
+        return None;
     }
-    Some(out)
+    Some(
+        ir.law_theorems
+            .iter()
+            .filter(|c| names.iter().any(|n| names_law(c, n)))
+            .map(|c| law_ref(inputs, c))
+            .collect(),
+    )
 }
 
 fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
@@ -142,19 +151,36 @@ fn algebra(env: &mut Env, t: &LawTheorem, ob: &Obligation) -> Result<Proof, Stri
 }
 
 fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof, String> {
-    let mut eqs: Vec<Equation> = laws
+    // A law that would rewrite its own result is left out, with its reason
+    // kept for the refusal.
+    let (looping, usable): (Vec<_>, Vec<_>) =
+        laws.into_iter().partition(|l| rewrite::loops(l).is_some());
+    let reasons: Vec<String> = looping.iter().filter_map(rewrite::loops).collect();
+    let mut eqs: Vec<Equation> = usable
         .iter()
         .cloned()
         .map(|l| Equation::Law(Box::new(l)))
         .collect();
     eqs.push(Equation::Wall(WallRule::DivModRecompose));
-    env.laws = laws;
-    let left = env.rewrite(&ob.lhs, &eqs)?;
-    let right = env.rewrite(&ob.rhs, &eqs)?;
+    env.laws = usable;
+    let with_reasons = |why: String| {
+        if reasons.is_empty() {
+            why
+        } else {
+            format!("{why} ({})", reasons.join("; "))
+        }
+    };
+    let left = env.rewrite(&ob.lhs, &eqs).map_err(with_reasons)?;
+    let right = env.rewrite(&ob.rhs, &eqs).map_err(with_reasons)?;
     if left.cur() == right.cur() {
         Ok(chain::meet(left, right))
     } else {
-        Err("the cited laws do not rewrite the sides to one term".into())
+        let names = env.inputs.symbol_table;
+        Err(with_reasons(format!(
+            "the cited laws rewrite the sides to `{}` and `{}`",
+            crate::ir::proof_steps::show::term(left.cur(), names),
+            crate::ir::proof_steps::show::term(right.cur(), names)
+        )))
     }
 }
 

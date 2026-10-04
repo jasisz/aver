@@ -22,6 +22,7 @@
 pub mod check;
 pub mod rules;
 pub mod sexpr;
+pub mod show;
 pub mod term;
 
 pub use rules::WallRule;

@@ -226,6 +226,16 @@ When the recipes run out, you escalate by writing more Aver, not Lean. Split the
 
 Termination gets the same treatment. Structural recursion over your own types and recognized well-founded shapes (for example quicksort's mutual recursion) emit genuine total definitions. The remaining recursive shapes are emitted fuel-wrapped, with the fuel budget derived from a synthesized size measure of the call-site arguments.
 
+## Proof steps
+
+Before any recognizer, the compiler tries to write a law's proof as steps: proof data in which every step names one rule from a closed list and writes out each instance, intermediate term and rewrite position. Lean checks the term rendered from the steps, and `aver proof --backend aver` checks the same data with the kernel written in Aver, without Lean. The rules are listed in `src/ir/proof_steps/` and in `tools/proof-kernel/`.
+
+The compiler writes only certain steps. A step is certain when the compiler makes no choice that the outcome depends on, or when the author made that choice in the source: in the law itself, in its `using` list or in its `because` lines. When a producer cannot go on it stops with a refusal that names the place: the two sides where it stopped and the hypotheses in scope (set `AVER_STEPS_DEBUG=1` to print them). A refusal asks for the law to be split there into helper laws. It is not a sign to search harder. The few limits that remain (evaluation steps, the depth of Boolean splits, the size of a proof) are guard rails, and reaching one is reported by name like any other refusal.
+
+What the compiler does without being asked is mechanical: it opens a definition at the arm the value of its subject selects, substituting local bindings in order; it computes closed arithmetic and comparisons; it splits on a Boolean the evaluation stopped at; and it splits a given of a finite type (`Bool`, a type whose variants carry nothing, records and tuples of those) into every one of its values.
+
+`using` is a set, in Lean and in steps alike, as it is in the language: the order of the list does not matter. Steps rewrite with the cited laws left to right, as each law is stated, trying them in the order they are defined and rewriting the outermost-leftmost position some law applies to. Where two cited laws rewrite the same position to different terms, the result would depend on which is tried first, so the producer refuses and names both; cite only one. A law whose right side holds its left side again with only its givens renamed, such as a commutativity law, would rewrite its own result forever. It is not used as a rewrite rule, and the refusal says so. A law whose right side holds its left side at smaller arguments, a recursion step, is used; if rewriting ever comes back to a term it already had, that is refused by name too.
+
 ## What "kernel-genuine" does and does not cover
 
 Kernel-genuine is a precise and narrow claim: the Lean kernel checked the proof of *the theorem as translated*. It certifies the tactics. It does not certify the translation. The Aver→Lean statement translator, the code that turns your `verify law` into a Lean proposition, is part of the trusted base. If the translator renders `Int.div` with the wrong rounding, or mistranslates a `when` guard, the kernel will still certify a true theorem about the wrong statement, and `verify` will still be green.

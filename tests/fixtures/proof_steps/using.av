@@ -1,0 +1,69 @@
+module Using
+    intent = "Cited laws as rewrite rules: a set, applied left to right, refused where the outcome would depend on the order."
+    exposes [f, g, h, add]
+    effects []
+
+fn f(x: Int) -> Int
+    ? "One more."
+    x + 1
+
+fn g(x: Int) -> Int
+    ? "One more, written the other way round."
+    1 + x
+
+fn h(x: Int) -> Int
+    ? "One more again."
+    x + 1
+
+fn add(a: Int, b: Int) -> Int
+    ? "The sum."
+    a + b
+
+verify f
+    f(1) => 2
+
+verify g
+    g(1) => 2
+
+verify h
+    h(1) => 2
+
+verify add
+    add(1, 2) => 3
+
+verify f law isG
+    given x: Int = [0, 3]
+    f(x) => g(x)
+
+verify f law isH
+    given x: Int = [0, 3]
+    f(x) => h(x)
+
+verify h law isG
+    given x: Int = [0, 3]
+    h(x) => g(x)
+
+verify g law throughHOneWay
+    given x: Int = [0, 3]
+    using [f.isH, h.isG]
+    f(x) => g(x)
+
+verify g law throughHOtherWay
+    given x: Int = [0, 3]
+    using [h.isG, f.isH]
+    f(x) => g(x)
+
+verify g law overlapping
+    given x: Int = [0, 3]
+    using [f.isG, f.isH]
+    f(x) => g(x)
+
+verify add law commutes
+    given a: Int = [0, 3]
+    given b: Int = [1, 2]
+    add(a, b) => add(b, a)
+
+verify add law swapsOne
+    given x: Int = [0, 3]
+    using [add.commutes]
+    add(x, 1) => add(1, x)
