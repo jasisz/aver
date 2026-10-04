@@ -6,6 +6,7 @@ use ::aver_rt::aver_list_match;
 pub enum Val {
     VInt(aver_rt::AverInt),
     VBool(bool),
+    VList(aver_rt::AverList<Val>),
 }
 
 impl Val {
@@ -13,6 +14,7 @@ impl Val {
         match self {
             Val::VBool(..) => 0,
             Val::VInt(..) => 1,
+            Val::VList(..) => 2,
         }
     }
 }
@@ -32,6 +34,7 @@ impl Ord for Val {
         match (self, other) {
             (Val::VBool(a0), Val::VBool(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
             (Val::VInt(a0), Val::VInt(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
+            (Val::VList(a0), Val::VList(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
             _ => std::cmp::Ordering::Equal,
         }
     }
@@ -42,6 +45,7 @@ impl aver_rt::AverDisplay for Val {
         match self {
             Val::VInt(f0) => format!("VInt({})", f0.aver_display_inner()),
             Val::VBool(f0) => format!("VBool({})", f0.aver_display_inner()),
+            Val::VList(f0) => format!("VList({})", f0.aver_display_inner()),
         }
     }
     fn aver_display_inner(&self) -> String {
@@ -74,9 +78,53 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
                 &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
             )
         }
+        crate::proof_kernel::aver_generated::kernel::term::Term::TList(xs) => {
+            crate::proof_kernel::aver_generated::kernel::eval::listOf(
+                &crate::proof_kernel::aver_generated::kernel::eval::evalAll(&xs),
+            )
+        }
         crate::proof_kernel::aver_generated::kernel::term::Term::TBi(name, args) => {
             crate::proof_kernel::aver_generated::kernel::eval::evalBuiltin(name, &args)
         }
+        _ => None,
+    }
+}
+
+/// The value of each term.
+#[inline(always)]
+pub fn evalAll(
+    xs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+) -> aver_rt::AverList<Option<Val>> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(xs.clone(), [] => aver_rt::AverList::empty(), [x, rest] => aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&x), &crate::proof_kernel::aver_generated::kernel::eval::evalAll(&rest)))
+}
+
+/// A list value when every element is closed.
+#[inline(always)]
+pub fn listOf(vs @ _: &aver_rt::AverList<Option<Val>>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(vs.clone(), [] => Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VList(aver_rt::AverList::empty())), [__pat0, rest] => match __pat0 {
+        Some(v) => {
+            crate::proof_kernel::aver_generated::kernel::eval::consOnto(&v, &crate::proof_kernel::aver_generated::kernel::eval::listOf(&rest))
+        },
+        _ => {
+            None
+        }
+    })
+}
+
+/// v in front of a list value.
+pub fn consOnto(v @ _: &Val, rest @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    match rest.clone() {
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
+                    aver_rt::AverList::prepend(v.clone(), &vs),
+                ),
+            ),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -117,6 +165,15 @@ pub fn evalOp(o @ _: AverStr, a @ _: &Option<Val>, b @ _: &Option<Val>) -> Optio
                     Some(__pat4) => match __pat4 {
                         crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(y) => {
                             crate::proof_kernel::aver_generated::kernel::eval::boolOp(o, x, y)
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(x) => match __pat1 {
+                    Some(__pat5) => match __pat5 {
+                        crate::proof_kernel::aver_generated::kernel::eval::Val::VList(y) => {
+                            crate::proof_kernel::aver_generated::kernel::eval::listOp(o, &x, &y)
                         }
                         _ => None,
                     },
@@ -200,6 +257,28 @@ pub fn boolOp(o @ _: AverStr, x @ _: bool, y @ _: bool) -> Option<Val> {
     }
 }
 
+/// Equality of lists.
+#[inline(always)]
+pub fn listOp(
+    o @ _: AverStr,
+    x @ _: &aver_rt::AverList<Val>,
+    y @ _: &aver_rt::AverList<Val>,
+) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __dispatch_subject = o;
+        if &*__dispatch_subject == "==" {
+            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x == y)))
+        } else {
+            if &*__dispatch_subject == "!=" {
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x != y)))
+            } else {
+                None
+            }
+        }
+    }
+}
+
 /// The builtins the evaluator knows.
 pub fn evalBuiltin(
     name @ _: AverStr,
@@ -207,7 +286,7 @@ pub fn evalBuiltin(
 ) -> Option<Val> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let (__pat0, __pat1) = (name, args.clone());
+        let (__pat0, __pat1) = (name.clone(), args.clone());
         {
             let __dispatch_subject = __pat0;
             if &*__dispatch_subject == "Bool.and" {
@@ -223,15 +302,17 @@ pub fn evalBuiltin(
                                     if __list_subject.is_empty() {
                                         crate::proof_kernel::aver_generated::kernel::eval::both(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b), true)
                                     } else {
-                                        None
+                                        crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                     }
                                 }
                             } else {
-                                None
+                                crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                                    name, args,
+                                )
                             }
                         }
                     } else {
-                        None
+                        crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                     }
                 }
             } else {
@@ -249,15 +330,19 @@ pub fn evalBuiltin(
                                         if __list_subject.is_empty() {
                                             crate::proof_kernel::aver_generated::kernel::eval::both(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b), false)
                                         } else {
-                                            None
+                                            crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                         }
                                     }
                                 } else {
-                                    None
+                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                                        name, args,
+                                    )
                                 }
                             }
                         } else {
-                            None
+                            crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                                name, args,
+                            )
                         }
                     }
                 } else {
@@ -271,11 +356,13 @@ pub fn evalBuiltin(
                                     if __list_subject.is_empty() {
                                         crate::proof_kernel::aver_generated::kernel::eval::negate(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a))
                                     } else {
-                                        None
+                                        crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                     }
                                 }
                             } else {
-                                None
+                                crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                                    name, args,
+                                )
                             }
                         }
                     } else {
@@ -295,15 +382,17 @@ pub fn evalBuiltin(
                                                 if __list_subject.is_empty() {
                                                     crate::proof_kernel::aver_generated::kernel::eval::division(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&k), true)
                                                 } else {
-                                                    None
+                                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                                 }
                                             }
                                         } else {
-                                            None
+                                            crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                         }
                                     }
                                 } else {
-                                    None
+                                    crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                                        name, args,
+                                    )
                                 }
                             }
                         } else {
@@ -323,19 +412,21 @@ pub fn evalBuiltin(
                                                     if __list_subject.is_empty() {
                                                         crate::proof_kernel::aver_generated::kernel::eval::division(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&k), false)
                                                     } else {
-                                                        None
+                                                        crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                                     }
                                                 }
                                             } else {
-                                                None
+                                                crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                             }
                                         }
                                     } else {
-                                        None
+                                        crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(name, args)
                                     }
                                 }
                             } else {
-                                None
+                                crate::proof_kernel::aver_generated::kernel::eval::listBuiltin(
+                                    name, args,
+                                )
                             }
                         }
                     }
@@ -440,6 +531,277 @@ pub fn divided(
         {
             Ok(r @ _) => Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(r)),
             Err(e @ _) => None,
+        }
+    }
+}
+
+/// List.prepend, concat, len, reverse, take and drop on closed lists, as Aver defines them: a count below zero counts as zero.
+pub fn listBuiltin(
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (name, args.clone());
+        {
+            let __dispatch_subject = __pat0;
+            if &*__dispatch_subject == "List.prepend" {
+                {
+                    let __list_subject = __pat1;
+                    if let Some((a, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                        {
+                            let __list_subject = __pat2;
+                            if let Some((l, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                {
+                                    let __list_subject = __pat3;
+                                    if __list_subject.is_empty() {
+                                        crate::proof_kernel::aver_generated::kernel::eval::prepended(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&l))
+                                    } else {
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                if &*__dispatch_subject == "List.concat" {
+                    {
+                        let __list_subject = __pat1;
+                        if let Some((a, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                            {
+                                let __list_subject = __pat4;
+                                if let Some((b, __pat5)) =
+                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                {
+                                    {
+                                        let __list_subject = __pat5;
+                                        if __list_subject.is_empty() {
+                                            crate::proof_kernel::aver_generated::kernel::eval::concatenated(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                } else {
+                    if &*__dispatch_subject == "List.len" {
+                        {
+                            let __list_subject = __pat1;
+                            if let Some((l, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                {
+                                    let __list_subject = __pat6;
+                                    if __list_subject.is_empty() {
+                                        crate::proof_kernel::aver_generated::kernel::eval::lengthOf(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&l))
+                                    } else {
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    } else {
+                        if &*__dispatch_subject == "List.reverse" {
+                            {
+                                let __list_subject = __pat1;
+                                if let Some((l, __pat7)) =
+                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                {
+                                    {
+                                        let __list_subject = __pat7;
+                                        if __list_subject.is_empty() {
+                                            crate::proof_kernel::aver_generated::kernel::eval::reversed(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&l))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                        } else {
+                            if &*__dispatch_subject == "List.take" {
+                                {
+                                    let __list_subject = __pat1;
+                                    if let Some((l, __pat8)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        {
+                                            let __list_subject = __pat8;
+                                            if let Some((n, __pat9)) =
+                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            {
+                                                {
+                                                    let __list_subject = __pat9;
+                                                    if __list_subject.is_empty() {
+                                                        crate::proof_kernel::aver_generated::kernel::eval::sliced(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&l), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&n), true)
+                                                    } else {
+                                                        None
+                                                    }
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                }
+                            } else {
+                                if &*__dispatch_subject == "List.drop" {
+                                    {
+                                        let __list_subject = __pat1;
+                                        if let Some((l, __pat10)) =
+                                            aver_rt::list_uncons_cloned(&__list_subject)
+                                        {
+                                            {
+                                                let __list_subject = __pat10;
+                                                if let Some((n, __pat11)) =
+                                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                                {
+                                                    {
+                                                        let __list_subject = __pat11;
+                                                        if __list_subject.is_empty() {
+                                                            crate::proof_kernel::aver_generated::kernel::eval::sliced(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&l), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&n), false)
+                                                        } else {
+                                                            None
+                                                        }
+                                                    }
+                                                } else {
+                                                    None
+                                                }
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// An element in front of a list.
+pub fn prepended(a @ _: &Option<Val>, l @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (a.clone(), l.clone());
+        match __pat0 {
+            Some(v) => match __pat1 {
+                Some(__pat2) => match __pat2 {
+                    crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
+                        crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
+                            aver_rt::AverList::prepend(v, &vs),
+                        ),
+                    ),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// One list after the other.
+pub fn concatenated(a @ _: &Option<Val>, b @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (a.clone(), b.clone());
+        match __pat0 {
+            Some(__pat2) => match __pat2 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(x) => match __pat1 {
+                    Some(__pat3) => match __pat3 {
+                        crate::proof_kernel::aver_generated::kernel::eval::Val::VList(y) => Some(
+                            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(
+                                aver_rt::AverList::concat(&x, &y),
+                            ),
+                        ),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// How many elements.
+pub fn lengthOf(l @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    match l.clone() {
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => Some(
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
+                    aver_rt::AverInt::from_i64(vs.len() as i64),
+                ),
+            ),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The elements backwards.
+pub fn reversed(l @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    match l.clone() {
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => {
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs.reverse()))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The first n elements (front) or all but them; n below zero counts as zero.
+pub fn sliced(l @ _: &Option<Val>, n @ _: &Option<Val>, front @ _: bool) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (l.clone(), n.clone());
+        match __pat0 {
+            Some(__pat2) => match __pat2 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VList(vs) => {
+                    match __pat1 {
+                        Some(__pat3) => match __pat3 {
+                            crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(k) => {
+                                if front {
+                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VList({ let __n = aver_rt::clamp_list_count(&(k)); aver_rt::AverList::from_vec((vs).iter().take(__n).cloned().collect::<Vec<_>>()) }))
+                                } else {
+                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VList({ let __n = aver_rt::clamp_list_count(&(k)); (vs).drop_first(__n) }))
+                                }
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
         }
     }
 }

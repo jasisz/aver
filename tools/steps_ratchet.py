@@ -5,12 +5,12 @@ Every corpus file that declares a law (`examples/`, `proof-corpus/`,
 `projects/*`) is proved, and per file the baseline `tools/steps-baseline.json`
 records two levels:
 
-- `steps`: laws closed by proof steps. Measured by default with
-  `aver proof --backend aver`, where the kernel written in Aver checks the
-  steps in process, so this needs no Lean and runs on every pull request.
-- `tactic`: laws Lean closes with tactics and not with steps. Measured only
-  with `--lean`, which runs `aver proof --check-json` per file and needs Lean;
-  it also re-measures `steps` under Lean, which must agree with the default.
+- `steps`: laws closed by proof steps the kernel written in Aver checks,
+  with `aver proof --backend aver`, in process. This needs no Lean and runs
+  on every pull request.
+- `tactic`: the other laws Lean closes (with tactics, or with steps that
+  cite a law only tactics close). Measured only with `--lean`, which also
+  runs `aver proof --check-json` per file and needs Lean.
 
 A law that leaves a level it is recorded at fails and is named: a law that
 reopens, and a law that falls from steps back to tactics. Withdrawing a tactic
@@ -75,20 +75,39 @@ def summarize(report: dict) -> dict:
     return {"steps": by("steps"), "tactic": by("tactic"), "laws": len(closed_by)}
 
 
-def measure(aver: Path, entry: str, lean: bool) -> dict:
+def report(aver: Path, entry: str, lean: bool) -> dict:
+    """One `--check-json` report, with the Aver kernel or with Lean. A Lean
+    report also lists, under `universal`, every law its manifest credits."""
     with tempfile.TemporaryDirectory(prefix="aver-steps-ratchet-") as out:
         cmd = [str(aver), "proof", entry, "--module-root", module_root(entry)]
         if not lean:
             cmd += ["--backend", "aver"]
         cmd += ["-o", out, "--check-json", "--sorry-budget", "1000000", "--declined-budget", "1000000"]
         run = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
-    lines = [line for line in run.stdout.splitlines() if line.startswith("{")]
-    if not lines:
-        raise RuntimeError(f"{entry}: {' '.join(cmd[1:])} failed\n{run.stdout}{run.stderr}")
-    report = json.loads(lines[-1])
-    if report.get("steps_rejected"):
-        raise RuntimeError(f"{entry}: a step proof was refused: {', '.join(report['steps_rejected'])}")
-    return summarize(report)
+        lines = [line for line in run.stdout.splitlines() if line.startswith("{")]
+        if not lines:
+            raise RuntimeError(f"{entry}: {' '.join(cmd[1:])} failed\n{run.stdout}{run.stderr}")
+        found = json.loads(lines[-1])
+        manifest = Path(out) / "proof_manifest.json"
+        if lean and manifest.exists():
+            laws = json.loads(manifest.read_text()).get("laws", [])
+            found["universal"] = sorted(l["law"] for l in laws if l.get("tier") == "universal")
+    if found.get("steps_rejected"):
+        raise RuntimeError(f"{entry}: a step proof was refused: {', '.join(found['steps_rejected'])}")
+    return found
+
+
+def measure(aver: Path, entry: str, lean: bool) -> dict:
+    steps = summarize(report(aver, entry, False))
+    if not lean:
+        return steps
+    by_lean = report(aver, entry, True)
+    closed = set(by_lean.get("universal", []))
+    return {
+        "steps": steps["steps"],
+        "tactic": sorted(closed - set(steps["steps"])),
+        "laws": steps["laws"],
+    }
 
 
 def compare(baseline: dict, current: dict, levels: tuple[str, ...]) -> tuple[list[str], list[str]]:

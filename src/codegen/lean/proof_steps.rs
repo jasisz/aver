@@ -390,6 +390,103 @@ impl Renderer<'_> {
                     self.expr(on)
                 )
             }
+            // `f.induct`, the functional induction principle Lean derives
+            // from `f`'s own recursion, with the claim as its motive and
+            // one explicit function per case: the parameters that are not
+            // matched, the arm's pattern variables, then one hypothesis per
+            // recursive call.
+            Proof::Induct {
+                fn_id, args, cases, ..
+            } => {
+                let def = self.script.def(*fn_id).ok_or("induct: no definition")?;
+                let j = crate::ir::proof_steps::induct::structural_param(def)?
+                    .ok_or("induct: the function does not recurse")?;
+                let (v, general) = crate::ir::proof_steps::induct::varied(
+                    args,
+                    j,
+                    &self.script.obligation.givens,
+                )?;
+                let ResolvedExpr::Match { arms, .. } = &def.body.node else {
+                    return Err("induct: the body is not a match".into());
+                };
+                let lean = super::syntax::aver_name_to_lean;
+                let place = |k: usize| -> String {
+                    if k == j {
+                        lean(&v)
+                    } else {
+                        general
+                            .iter()
+                            .find(|(g, _)| *g == k)
+                            .map(|(_, n)| lean(n))
+                            .unwrap_or_else(|| "_".to_string())
+                    }
+                };
+                let f_name = emit_expr(
+                    &Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(*fn_id), Vec::new())),
+                    self.ctx,
+                );
+                // Lean leaves out of `f.induct` every parameter each
+                // recursive call passes on unchanged.
+                let fixed: Vec<bool> = (0..args.len())
+                    .map(|k| {
+                        k != j
+                            && crate::ir::proof_steps::induct::self_calls(&def.body, *fn_id)
+                                .iter()
+                                .all(|(call, inner)| {
+                                    matches!(&call[k].node, ResolvedExpr::Ident(n)
+                                        if *n == def.params[k] && !inner.contains(n))
+                                })
+                    })
+                    .collect();
+                let varies = |k: &usize| !fixed[*k];
+                let motive_binders: Vec<String> =
+                    (0..args.len()).filter(varies).map(place).collect();
+                let mut s = format!(
+                    "({f_name}.induct (motive := fun {} => {})",
+                    motive_binders.join(" "),
+                    self.eqn(&eq)
+                );
+                let mut scope_hyps: Vec<Hyps> = Vec::new();
+                for (arm, case) in arms.iter().zip(cases) {
+                    let (_, ihs) = crate::ir::proof_steps::induct::case(
+                        def,
+                        args,
+                        j,
+                        &v,
+                        &general,
+                        arm,
+                        &case.binders,
+                        &case.ihs,
+                        &eq.lhs,
+                        &eq.rhs,
+                    )?;
+                    let mut scope = hyps.clone();
+                    scope.extend(ihs);
+                    scope_hyps.push(scope);
+                }
+                for (case, scope) in cases.iter().zip(&scope_hyps) {
+                    let mut binders: Vec<String> = (0..args.len())
+                        .filter(|k| *k != j && varies(k))
+                        .map(place)
+                        .collect();
+                    binders.extend(case.binders.iter().map(|b| lean(b)));
+                    binders.extend(case.ihs.iter().cloned());
+                    let body = self.proof(&case.proof, scope)?;
+                    if binders.is_empty() {
+                        s.push_str(&format!(" ({body})"));
+                    } else {
+                        s.push_str(&format!(" (fun {} => {body})", binders.join(" ")));
+                    }
+                }
+                for (k, a) in args.iter().enumerate() {
+                    if varies(&k) {
+                        s.push(' ');
+                        s.push_str(&self.expr(a));
+                    }
+                }
+                s.push(')');
+                s
+            }
             // `true = false` (or the other way round) is refuted by `decide`.
             Proof::Absurd { contradiction, .. } => {
                 format!("absurd {} (by decide)", self.proof(contradiction, hyps)?)
@@ -622,8 +719,11 @@ impl Renderer<'_> {
         } else {
             format!("∀{binders}, {statement}")
         };
+        // Only the left side is opened: the right side of an arm of a
+        // recursive function calls the function again. `conv` may close the
+        // goal itself, hence `all_goals`.
         self.support.push(format!(
-            "have {name} : {quantified} := (by {intro}unfold {f_name}; {tactic})"
+            "have {name} : {quantified} := (by {intro}(conv => lhs; unfold {f_name}); all_goals ({tactic}))"
         ));
         self.unfolds.insert((fn_id, arm, value_key), name.clone());
         Ok((name, extra))
@@ -728,9 +828,52 @@ fn law_theorem(key: &str, ctx: &CodegenContext) -> Option<String> {
     None
 }
 
+/// Whether `t` builds or reads the inside of a refined record, which Lean
+/// models as a `Subtype` the step terms cannot spell.
+fn touches_refinement(t: &Term, ctx: &CodegenContext) -> bool {
+    let refined = ctx.proof_ir.refined_types.values();
+    let here = match &t.node {
+        ResolvedExpr::RecordCreate { type_name, .. }
+        | ResolvedExpr::RecordUpdate { type_name, .. } => {
+            crate::codegen::common::find_refined_type(ctx, type_name).is_some()
+        }
+        ResolvedExpr::Attr(_, field) => refined.clone().any(|d| d.carrier_field == *field),
+        _ => false,
+    };
+    if here {
+        return true;
+    }
+    if let ResolvedExpr::Match { arms, .. } = &t.node
+        && arms.iter().any(|a| touches_refinement(&a.body, ctx))
+    {
+        return true;
+    }
+    term::children(t)
+        .into_iter()
+        .any(|c| touches_refinement(c, ctx))
+}
+
 /// Render `script` as a term for its law's theorem, after `intro` of the
 /// givens (and `h_when`).
 pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, String> {
+    // Every term of the proof comes from these, by unfolding, rewriting
+    // and computing; the Lean model of a refined record is a `Subtype`,
+    // which the step terms do not spell, so such a law keeps its tactics.
+    let ob = &script.obligation;
+    let mut sources: Vec<&Term> = vec![&ob.lhs, &ob.rhs];
+    sources.extend(ob.premise.iter());
+    for d in &script.defs {
+        sources.push(&d.body);
+        sources.extend(d.lets.iter().map(|(_, v)| v));
+    }
+    sources.extend(script.consts.iter().map(|c| &c.value));
+    for l in &script.laws {
+        sources.extend([&l.lhs, &l.rhs]);
+        sources.extend(l.premise.iter());
+    }
+    if sources.into_iter().any(|t| touches_refinement(t, ctx)) {
+        return Err("the proof reads the inside of a refined record".into());
+    }
     let mut laws = BTreeMap::new();
     for l in &script.laws {
         if let Some(name) = law_theorem(&l.key, ctx) {

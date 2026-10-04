@@ -1,0 +1,321 @@
+module Induct
+    intent =
+        "The termination gate for a definition that calls itself, and the pieces of an induction"
+        "that follows a function's own recursion: its recursive calls, the parameter it recurses on,"
+        "and the givens that vary with it. See src/ir/proof_steps/induct.rs."
+    exposes [Call, Place, Varied, selfCalls, structuralParam, refuseMutualRecursion, varied, nthTerm]
+    depends [Kernel.Term, Kernel.Subst, Kernel.Proof]
+    effects []
+
+record Call
+    args: List<Term>
+    inner: List<String>
+
+record Place
+    at: Int
+    name: String
+
+record Varied
+    v: String
+    general: List<Place>
+
+fn selfCalls(t: Term, f: String, bound: List<String>) -> List<Call>
+    ? "The calls of f in t, a call before the calls in its arguments, a match's subject before its arms, each with the names inner arms bind around it."
+    match t
+        Term.TCall(g, xs) -> match g == f
+            true -> List.prepend(Call(args = xs, inner = bound), callsAll(xs, f, bound))
+            false -> callsAll(xs, f, bound)
+        Term.TMatch(s, arms) -> List.concat(selfCalls(s, f, bound), callsArms(arms, f, bound))
+        Term.TGet(o, n) -> selfCalls(o, f, bound)
+        Term.TBi(n, xs) -> callsAll(xs, f, bound)
+        Term.TOp(o, a, b) -> List.concat(selfCalls(a, f, bound), selfCalls(b, f, bound))
+        Term.TNeg(a) -> selfCalls(a, f, bound)
+        Term.TCtor(c, xs) -> callsAll(xs, f, bound)
+        Term.TParts(xs) -> callsAll(xs, f, bound)
+        Term.TList(xs) -> callsAll(xs, f, bound)
+        Term.TTuple(xs) -> callsAll(xs, f, bound)
+        Term.TRec(n, fs) -> callsFields(fs, f, bound)
+        Term.TUpd(n, b, fs) -> List.concat(selfCalls(b, f, bound), callsFields(fs, f, bound))
+        _ -> []
+
+verify selfCalls
+    selfCalls(Term.TCall("f", [Term.TCall("f", [Term.TVar("t")])]), "f", []) => [Call(args = [Term.TCall("f", [Term.TVar("t")])], inner = []), Call(args = [Term.TVar("t")], inner = [])]
+    selfCalls(Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("t")]))]), "f", []) => [Call(args = [Term.TVar("t")], inner = ["h", "t"])]
+    selfCalls(Term.TCall("g", [Term.TInt(1)]), "f", []) => []
+
+fn callsAll(xs: List<Term>, f: String, bound: List<String>) -> List<Call>
+    ? "Calls of f in several terms, in order."
+    match xs
+        [] -> []
+        [x, ..rest] -> List.concat(selfCalls(x, f, bound), callsAll(rest, f, bound))
+
+verify callsAll
+    callsAll([], "f", []) => []
+
+fn callsFields(fs: List<Field>, f: String, bound: List<String>) -> List<Call>
+    ? "Calls of f in record fields, in order."
+    match fs
+        [] -> []
+        [x, ..rest] -> List.concat(selfCalls(x.value, f, bound), callsFields(rest, f, bound))
+
+verify callsFields
+    callsFields([], "f", []) => []
+
+fn callsArms(arms: List<Arm>, f: String, bound: List<String>) -> List<Call>
+    ? "Calls of f in match arms, each arm's pattern names added to what is bound."
+    match arms
+        [] -> []
+        [a, ..rest] -> List.concat(selfCalls(a.body, f, List.concat(bound, Kernel.Subst.patNames(a.pattern))), callsArms(rest, f, bound))
+
+verify callsArms
+    callsArms([], "f", []) => []
+
+fn letCalls(ls: List<Binding>, f: String) -> Int
+    ? "How many calls of f the local bindings make."
+    match ls
+        [] -> 0
+        [b, ..rest] -> List.len(selfCalls(b.value, f, [])) + letCalls(rest, f)
+
+verify letCalls
+    letCalls([Kernel.Term.bind("y", Term.TCall("f", []))], "f") => 1
+
+fn structuralParam(d: Def) -> Result<Option<Int>, String>
+    ? "None when d does not call itself; the place of the parameter it recurses on when every recursive call passes there a part of the value its arm matched; a refusal otherwise."
+    match (letCalls(d.lets, d.name) == 0, selfCalls(d.body, d.name, []))
+        (true, []) -> Result.Ok(Option.None)
+        _ -> recursion(d)
+
+verify structuralParam
+    structuralParam(Def(name = "f", params = ["x"], lets = [], body = Term.TVar("x"))) => Result.Ok(Option.None)
+    structuralParam(Def(name = "f", params = ["x"], lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PNil, body = Term.TInt(0)), Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("t")]))]))) => Result.Ok(Option.Some(0))
+    structuralParam(Def(name = "f", params = ["x"], lets = [], body = Term.TMatch(Term.TVar("x"), [Arm(pattern = Pat.PCons("h", "t"), body = Term.TCall("f", [Term.TVar("x")]))]))) => Result.Err("f recurses on something that is not a part of the value it matches")
+    structuralParam(Def(name = "f", params = ["x"], lets = [], body = Term.TCall("f", [Term.TVar("x")]))) => Result.Err("f recurses outside a match on a parameter")
+
+fn recursion(d: Def) -> Result<Option<Int>, String>
+    ? "The gate for a definition that does call itself."
+    match (d.lets, d.body)
+        ([], Term.TMatch(Term.TVar(p), arms)) -> recursionOn(d, indexOf(d.params, p, 0), arms)
+        ([], _) -> Result.Err("{d.name} recurses outside a match on a parameter")
+        _ -> Result.Err("{d.name} recurses from a local binding")
+
+verify recursion
+    recursion(Def(name = "f", params = [], lets = [Kernel.Term.bind("y", Term.TInt(1))], body = Term.TUnit)) => Result.Err("f recurses from a local binding")
+
+fn recursionOn(d: Def, j: Int, arms: List<Arm>) -> Result<Option<Int>, String>
+    ? "Every arm's recursive calls pass a part of the value at place j."
+    match j < 0
+        true -> Result.Err("{d.name} recurses on a match whose subject is not a parameter")
+        false -> match armsShrink(arms, d.name, j, List.len(d.params))
+            true -> Result.Ok(Option.Some(j))
+            false -> Result.Err("{d.name} recurses on something that is not a part of the value it matches")
+
+verify recursionOn
+    recursionOn(Def(name = "f", params = [], lets = [], body = Term.TUnit), 0 - 1, []) => Result.Err("f recurses on a match whose subject is not a parameter")
+
+fn armsShrink(arms: List<Arm>, f: String, j: Int, n: Int) -> Bool
+    ? "Every arm passes, at place j of each recursive call, a name its pattern binds and no inner arm rebinds."
+    match arms
+        [] -> true
+        [a, ..rest] -> Bool.and(callsShrink(selfCalls(a.body, f, []), Kernel.Subst.patNames(a.pattern), j, n), armsShrink(rest, f, j, n))
+
+verify armsShrink
+    armsShrink([], "f", 0, 1) => true
+
+fn callsShrink(cs: List<Call>, parts: List<String>, j: Int, n: Int) -> Bool
+    ? "Each call passes one of the parts at place j."
+    match cs
+        [] -> true
+        [c, ..rest] -> Bool.and(Bool.and(List.len(c.args) == n, smaller(nthTerm(c.args, j), parts, c.inner)), callsShrink(rest, parts, j, n))
+
+verify callsShrink
+    callsShrink([Call(args = [Term.TVar("t")], inner = [])], ["h", "t"], 0, 1) => true
+    callsShrink([Call(args = [Term.TVar("t")], inner = ["t"])], ["h", "t"], 0, 1) => false
+
+fn smaller(t: Option<Term>, parts: List<String>, inner: List<String>) -> Bool
+    ? "A name the arm's pattern binds, not rebound inside."
+    match t
+        Option.Some(Term.TVar(b)) -> Bool.and(List.contains(parts, b), Bool.not(List.contains(inner, b)))
+        _ -> false
+
+verify smaller
+    smaller(Option.Some(Term.TVar("t")), ["t"], []) => true
+    smaller(Option.Some(Term.TInt(1)), ["t"], []) => false
+
+fn indexOf(xs: List<String>, x: String, i: Int) -> Int
+    ? "Where x is in xs, from i; -1 when it is not."
+    match xs
+        [] -> 0 - 1
+        [y, ..rest] -> match y == x
+            true -> i
+            false -> indexOf(rest, x, i + 1)
+
+verify indexOf
+    indexOf(["a", "b"], "b", 0) => 1
+    indexOf(["a"], "c", 0) => 0 - 1
+
+fn nthTerm(xs: List<Term>, i: Int) -> Option<Term>
+    ? "The term at place i."
+    match xs
+        [] -> Option.None
+        [x, ..rest] -> match i == 0
+            true -> Option.Some(x)
+            false -> nthTerm(rest, i - 1)
+
+verify nthTerm
+    nthTerm([Term.TInt(1), Term.TInt(2)], 1) => Option.Some(Term.TInt(2))
+    nthTerm([], 0) => Option.None
+
+fn refuseMutualRecursion(ds: List<Def>) -> Result<Unit, String>
+    ? "No definition reaches itself through another definition of the script."
+    match ds
+        [] -> Result.Ok(Unit)
+        _ -> eachNotMutual(ds, ds)
+
+verify refuseMutualRecursion
+    refuseMutualRecursion([Def(name = "f", params = [], lets = [], body = Term.TCall("g", [])), Def(name = "g", params = [], lets = [], body = Term.TCall("f", []))]) => Result.Err("f is part of a mutual recursion")
+    refuseMutualRecursion([Def(name = "f", params = [], lets = [], body = Term.TCall("f", [])), Def(name = "g", params = [], lets = [], body = Term.TCall("f", []))]) => Result.Ok(Unit)
+
+fn eachNotMutual(todo: List<Def>, ds: List<Def>) -> Result<Unit, String>
+    ? "Check each definition in turn."
+    match todo
+        [] -> Result.Ok(Unit)
+        [d, ..rest] -> match reaches(callees(d, ds), d.name, ds, [], List.len(ds))
+            true -> Result.Err("{d.name} is part of a mutual recursion")
+            false -> eachNotMutual(rest, ds)
+
+verify eachNotMutual
+    eachNotMutual([], []) => Result.Ok(Unit)
+
+fn reaches(frontier: List<String>, target: String, ds: List<Def>, seen: List<String>, fuel: Int) -> Bool
+    ? "Whether target is among the definitions reachable from the frontier; fuel is the number of definitions, enough for any path that does not repeat."
+    match (frontier, fuel > 0)
+        ([], _) -> false
+        (_, false) -> false
+        ([g, ..rest], true) -> match g == target
+            true -> true
+            false -> match List.contains(seen, g)
+                true -> reaches(rest, target, ds, seen, fuel)
+                false -> reaches(List.concat(rest, calleesOf(g, ds, ds)), target, ds, List.prepend(g, seen), fuel - 1)
+
+verify reaches
+    reaches([], "f", [], [], 1) => false
+
+fn calleesOf(name: String, todo: List<Def>, ds: List<Def>) -> List<String>
+    ? "The definitions of ds that the one named name calls."
+    match todo
+        [] -> []
+        [d, ..rest] -> match d.name == name
+            true -> callees(d, ds)
+            false -> calleesOf(name, rest, ds)
+
+verify calleesOf
+    calleesOf("f", [], []) => []
+    calleesOf("g", [Def(name = "f", params = [], lets = [], body = Term.TUnit), Def(name = "g", params = [], lets = [], body = Term.TCall("f", []))], [Def(name = "f", params = [], lets = [], body = Term.TUnit), Def(name = "g", params = [], lets = [], body = Term.TCall("f", []))]) => ["f"]
+
+fn callees(d: Def, ds: List<Def>) -> List<String>
+    ? "The other definitions of the script d calls."
+    onlyDefs(List.concat(namesCalled(d.body), letNames(d.lets)), ds, d.name)
+
+verify callees
+    callees(Def(name = "f", params = [], lets = [], body = Term.TCall("f", [])), []) => []
+
+fn letNames(ls: List<Binding>) -> List<String>
+    ? "Functions the local bindings call."
+    match ls
+        [] -> []
+        [b, ..rest] -> List.concat(namesCalled(b.value), letNames(rest))
+
+verify letNames
+    letNames([]) => []
+
+fn onlyDefs(ns: List<String>, ds: List<Def>, own: String) -> List<String>
+    ? "The names that are other definitions of the script."
+    match ns
+        [] -> []
+        [n, ..rest] -> match Bool.and(n != own, isDef(n, ds))
+            true -> List.prepend(n, onlyDefs(rest, ds, own))
+            false -> onlyDefs(rest, ds, own)
+
+verify onlyDefs
+    onlyDefs(["g"], [], "f") => []
+
+fn isDef(n: String, ds: List<Def>) -> Bool
+    ? "Whether the script defines n."
+    match ds
+        [] -> false
+        [d, ..rest] -> Bool.or(d.name == n, isDef(n, rest))
+
+verify isDef
+    isDef("f", []) => false
+
+fn namesCalled(t: Term) -> List<String>
+    ? "Every function a term calls."
+    match t
+        Term.TCall(g, xs) -> List.prepend(g, namesAll(xs))
+        Term.TMatch(s, arms) -> List.concat(namesCalled(s), namesArms(arms))
+        Term.TGet(o, n) -> namesCalled(o)
+        Term.TBi(n, xs) -> namesAll(xs)
+        Term.TOp(o, a, b) -> List.concat(namesCalled(a), namesCalled(b))
+        Term.TNeg(a) -> namesCalled(a)
+        Term.TCtor(c, xs) -> namesAll(xs)
+        Term.TParts(xs) -> namesAll(xs)
+        Term.TList(xs) -> namesAll(xs)
+        Term.TTuple(xs) -> namesAll(xs)
+        Term.TRec(n, fs) -> namesFields(fs)
+        Term.TUpd(n, b, fs) -> List.concat(namesCalled(b), namesFields(fs))
+        _ -> []
+
+verify namesCalled
+    namesCalled(Term.TOp("+", Term.TCall("g", []), Term.TCall("h", []))) => ["g", "h"]
+
+fn namesAll(xs: List<Term>) -> List<String>
+    ? "Functions several terms call."
+    match xs
+        [] -> []
+        [x, ..rest] -> List.concat(namesCalled(x), namesAll(rest))
+
+verify namesAll
+    namesAll([]) => []
+
+fn namesFields(fs: List<Field>) -> List<String>
+    ? "Functions record fields call."
+    match fs
+        [] -> []
+        [x, ..rest] -> List.concat(namesCalled(x.value), namesFields(rest))
+
+verify namesFields
+    namesFields([]) => []
+
+fn namesArms(arms: List<Arm>) -> List<String>
+    ? "Functions match arms call."
+    match arms
+        [] -> []
+        [a, ..rest] -> List.concat(namesCalled(a.body), namesArms(rest))
+
+verify namesArms
+    namesArms([]) => []
+
+fn varied(xs: List<Term>, j: Int, givens: List<String>) -> Result<Varied, String>
+    ? "The given at the matched place, and the other givens among the arguments that vary with it, each at the first place it appears."
+    match nthTerm(xs, j)
+        Option.Some(Term.TVar(v)) -> match List.contains(givens, v)
+            true -> Result.Ok(Varied(v = v, general = generalised(xs, 0, j, v, givens, [])))
+            false -> Result.Err("the argument at the matched place must be a given")
+        _ -> Result.Err("the argument at the matched place must be a given")
+
+verify varied
+    varied([Term.TVar("xs"), Term.TVar("acc")], 0, ["xs", "acc"]) => Result.Ok(Varied(v = "xs", general = [Place(at = 1, name = "acc")]))
+    varied([Term.TVar("xs"), Term.TInt(0)], 0, ["xs"]) => Result.Ok(Varied(v = "xs", general = []))
+    varied([Term.TInt(0)], 0, []) => Result.Err("the argument at the matched place must be a given")
+
+fn generalised(xs: List<Term>, k: Int, j: Int, v: String, givens: List<String>, seen: List<String>) -> List<Place>
+    ? "Places other than j holding a given other than v not seen before."
+    match xs
+        [] -> []
+        [Term.TVar(n), ..rest] -> match Bool.and(Bool.and(k != j, n != v), Bool.and(List.contains(givens, n), Bool.not(List.contains(seen, n))))
+            true -> List.prepend(Place(at = k, name = n), generalised(rest, k + 1, j, v, givens, List.prepend(n, seen)))
+            false -> generalised(rest, k + 1, j, v, givens, seen)
+        [x, ..rest] -> generalised(rest, k + 1, j, v, givens, seen)
+
+verify generalised
+    generalised([Term.TVar("a"), Term.TVar("a")], 0, 2, "v", ["a"], []) => [Place(at = 0, name = "a")]

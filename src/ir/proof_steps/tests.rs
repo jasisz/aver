@@ -216,3 +216,68 @@ fn a_catch_all_arm_is_chosen_only_for_a_value_the_earlier_arms_exclude() {
     assert!(super::check::arm_equation(&var("c"), &arms, 2, &[], &[zero]).is_err());
     assert!(super::check::arm_equation(&var("c"), &arms, 2, &[], &[var("x")]).is_err());
 }
+
+#[test]
+fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
+    use crate::ir::hir::ResolvedCallee;
+    use crate::ir::identity::FnId;
+    let call = |args: Vec<super::Term>| {
+        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(7)), args))
+    };
+    let arm = |pattern, body| ResolvedMatchArm {
+        pattern,
+        body: Box::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let def = |tail_call: super::Term| super::Def {
+        fn_id: FnId(7),
+        name: "f".into(),
+        params: vec!["xs".into()],
+        lets: Vec::new(),
+        body: Spanned::bare(ResolvedExpr::Match {
+            subject: Box::new(var("xs")),
+            arms: vec![
+                arm(ResolvedPattern::EmptyList, term::int(&0.into())),
+                arm(ResolvedPattern::Cons("h".into(), "t".into()), tail_call),
+            ],
+        }),
+    };
+    let on_tail = def(call(vec![var("t")]));
+    assert_eq!(super::induct::structural_param(&on_tail), Ok(Some(0)));
+    let on_itself = def(call(vec![var("xs")]));
+    assert!(super::induct::structural_param(&on_itself).is_err());
+    let mut other = on_tail.clone();
+    other.fn_id = FnId(8);
+    other.name = "g".into();
+    other.body = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(7)),
+        vec![var("xs")],
+    ));
+    let mut back = on_tail.clone();
+    back.body = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(8)),
+        vec![var("xs")],
+    ));
+    assert!(super::induct::refuse_mutual_recursion(&[back, other]).is_err());
+}
+
+#[test]
+fn closed_lists_compute_with_aver_slice_semantics() {
+    let list = |xs: &[i64]| {
+        Spanned::bare(ResolvedExpr::List(
+            xs.iter().map(|x| term::int(&(*x).into())).collect(),
+        ))
+    };
+    let take = term::builtin(
+        "List.take",
+        vec![list(&[1, 2, 3]), term::int(&(-1).into())],
+        None,
+    );
+    assert_eq!(term::eval_closed(&take), Some(list(&[])));
+    let len = term::builtin("List.len", vec![list(&[4, 5])], None);
+    assert_eq!(term::eval_closed(&len), Some(term::int(&2.into())));
+    let cons = term::builtin("List.prepend", vec![term::int(&1.into()), list(&[2])], None);
+    assert_eq!(term::eval_closed(&cons), Some(list(&[1, 2])));
+    let open = term::builtin("List.len", vec![var("xs")], None);
+    assert_eq!(term::eval_closed(&open), None);
+}

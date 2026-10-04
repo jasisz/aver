@@ -41,7 +41,8 @@
    "chuteIndex.inRange",
    "foxCount.exactlyOne",
    "resolveLip.conserves",
-   "resolveLip.noFalseMiss"
+   "resolveLip.noFalseMiss",
+   "stepAll.leftFold"
   ]
  },
  "examples/games/tetris/logic.av": {
@@ -54,6 +55,50 @@
    "clamp16.fitsSixteenBits"
   ]
  },
+ "proof-corpus/decomposed/prod/lemma_16.av": {
+  "steps": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_03.av": {
+  "steps": [
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_04.av": {
+  "steps": [
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_06.av": {
+  "steps": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_16.av": {
+  "steps": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_23.av": {
+  "steps": [
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_33.av": {
+  "steps": [
+   "mult.multIdentRight",
+   "plus.plusIdentLeft"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_34.av": {
+  "steps": [
+   "plus.plusRightZero"
+  ]
+ },
  "proof-corpus/decomposed/prod/prop_39.av": {
   "steps": [
    "barbar.barbarTrueRight"
@@ -61,7 +106,8 @@
  },
  "proof-corpus/decomposed/prod/prop_42.av": {
   "steps": [
-   "elem.barbarIdempotent"
+   "elem.barbarIdempotent",
+   "elem.elemInEmpty"
   ]
  },
  "proof-corpus/decomposed/prod/prop_43.av": {
@@ -74,10 +120,35 @@
    "barbar.barbarTrueLeft"
   ]
  },
+ "proof-corpus/tip/isaplanner/prop_11.av": {
+  "steps": [
+   "drop.dropZero"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_40.av": {
+  "steps": [
+   "take.takeZeroNil"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_46.av": {
+  "steps": [
+   "zip.zipNilLeft"
+  ]
+ },
  "proof-corpus/tip/isaplanner/prop_58.av": {
   "steps": [
    "dropInt.dropIntSelf",
    "zip.zipSelf"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_01.av": {
+  "steps": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_17.av": {
+  "steps": [
+   "plus.plusShiftTwo"
   ]
  }
 }

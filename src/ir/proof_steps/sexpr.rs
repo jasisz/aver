@@ -27,6 +27,7 @@
 //!          | (rule RULE ((NAME TERM)…) PROOF…) | (law KEY ((NAME TERM)…) [PROOF])
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
+//!          | (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
 //! ```
 
 use crate::ast::{BinOp, Literal};
@@ -363,6 +364,31 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             proof(if_true, names)?,
             proof(if_false, names)?
         ),
+        Proof::Induct {
+            fn_id,
+            args,
+            lhs,
+            rhs,
+            cases,
+        } => {
+            let mut s = format!(
+                "(induct {} ({}) {} {}",
+                names.fn_name(*fn_id),
+                list(args, names)?,
+                term(lhs, names)?,
+                term(rhs, names)?
+            );
+            for c in cases {
+                s.push_str(&format!(
+                    " (case ({}) ({}) {})",
+                    c.binders.join(" "),
+                    c.ihs.join(" "),
+                    proof(&c.proof, names)?
+                ));
+            }
+            s.push(')');
+            s
+        }
         Proof::Absurd {
             contradiction,
             lhs,

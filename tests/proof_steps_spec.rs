@@ -812,11 +812,209 @@ fn the_aver_backend_says_where_the_steps_producer_stopped() {
     let text = String::from_utf8_lossy(&result.stdout);
     for expected in [
         "  f.isH: closed by steps",
-        "  f.isG: not closed by this backend (steps: evaluation stops at `x + 1` and `1 + x`)",
+        "  f.isG: not closed by this backend (steps: evaluation stops at `x + 1` and `1 + x`",
         "  g.overlapping: not closed by this backend (steps: law f.isG and law f.isH both rewrite",
     ] {
         assert!(text.contains(expected), "missing `{expected}`\n{text}");
     }
+    let _ = fs::remove_dir_all(out);
+}
+
+/// The sub-form `index` of the first form opening with `head`.
+fn nth_form(text: &str, head: &str, index: usize) -> (usize, usize) {
+    let open = text.find(head).unwrap_or_else(|| panic!("no `{head}`"));
+    sub_forms(text, open)[index]
+}
+
+const INDUCTION_LAWS: [&str; 4] = [
+    "app.lengthAdds",
+    "plus.succRight",
+    "plus.zeroRight",
+    "revOnto.isReverseThenAppend",
+];
+
+#[test]
+fn both_kernels_induct_along_the_laws_function_and_refuse_mutations() {
+    let out = scratch("induct");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("induction.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), INDUCTION_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let law = read("app.lengthAdds");
+    assert!(law.contains("(proof (induct app "), "{law}");
+    // (induct FN (ARG…) LHS RHS CASE…): the cases are sub-forms 3 and 4,
+    // each (case (NAME…) (IH…) PROOF).
+    let (base_from, base_to) = nth_form(&law, "(induct ", 3);
+    let (step_from, step_to) = nth_form(&law, "(induct ", 4);
+    let part = |from: usize, to: usize, i: usize| {
+        let (a, b) = sub_forms(&law[from..to], 0)[i];
+        (from + a, from + b)
+    };
+    let (names_from, names_to) = part(step_from, step_to, 0);
+    let (ihs_from, ihs_to) = part(step_from, step_to, 1);
+    let (proof_from, proof_to) = part(base_from, base_to, 2);
+    let ih = law[ihs_from + 1..ihs_to - 1].trim().to_string();
+    let names: Vec<&str> = law[names_from + 1..names_to - 1]
+        .split_whitespace()
+        .collect();
+    assert_eq!(names.len(), 2, "{law}");
+    for (kind, text) in [
+        (
+            "the hypothesis used in the base case",
+            format!("{}(hyp {ih}){}", &law[..proof_from], &law[proof_to..]),
+        ),
+        (
+            "the hypothesis at the wrong list",
+            format!(
+                "{}({} {}){}",
+                &law[..names_from],
+                names[1],
+                names[0],
+                &law[names_to..]
+            ),
+        ),
+        (
+            "a missing case",
+            format!("{}{}", law[..step_from].trim_end(), &law[step_to..]),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{kind}: {refused:?}\n{text}"
+        );
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn induction_follows_only_the_function_the_law_is_about() {
+    let out = scratch("induct-which");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction_refused.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        text.contains("double does not recurse but len does"),
+        "{}",
+        format_output(&result)
+    );
+    // A claim that recurses on two givens of the same function is a
+    // choice the law has to make, not one the producer guesses.
+    let both = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    let text = String::from_utf8_lossy(&both.stdout);
+    assert!(
+        text.contains("app recurses on a in one call and on b in another"),
+        "{}",
+        format_output(&both)
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_inducts_with_the_functional_induction_principle_and_refuses_mutations() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("induct-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "induction.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in INDUCTION_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Induction.lean")).unwrap();
+    let law = "app.lengthAdds";
+    let line = exact_line(&lean, "app_law_lengthAdds").to_string();
+    let at = line
+        .find("app.induct (motive :=")
+        .unwrap_or_else(|| panic!("{line}"));
+    // app.induct (motive := …) BASE STEP xs: the base case and the step
+    // case are the two forms after the motive.
+    let motive_open = at + "app.induct ".len();
+    let base_open = closing(&line, motive_open) + 2;
+    let base_close = closing(&line, base_open);
+    let step_open = base_close + 2;
+    let step_close = closing(&line, step_open);
+    let missing = format!("{}{}", &line[..base_close + 1], &line[step_close + 1..]);
+    assert!(
+        lean_refuses(
+            &out,
+            "Induction.lean",
+            &lean.replacen(&line, &missing, 1),
+            law
+        ),
+        "a missing case: Lean must refuse the step term"
+    );
+    let ih = line[step_open..step_close]
+        .trim_start_matches("(fun ")
+        .split(" =>")
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .last()
+        .unwrap()
+        .to_string();
+    let base_uses_ih = format!("{}({ih}){}", &line[..base_open], &line[base_close + 1..]);
+    assert!(
+        lean_refuses(
+            &out,
+            "Induction.lean",
+            &lean.replacen(&line, &base_uses_ih, 1),
+            law
+        ),
+        "the hypothesis used in the base case: Lean must refuse the step term"
+    );
     let _ = fs::remove_dir_all(out);
 }
 

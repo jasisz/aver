@@ -20,6 +20,7 @@
 //! The serialised form ([`sexpr`]) is versioned by [`FORMAT_VERSION`].
 
 pub mod check;
+pub mod induct;
 pub mod rules;
 pub mod sexpr;
 pub mod show;
@@ -193,6 +194,16 @@ pub enum Proof {
         lhs: Term,
         rhs: Term,
     },
+    /// Induction following the recursion of `fn_id`, which the claim
+    /// `lhs = rhs` applies to `args`: one case per arm of its `match`, in
+    /// order (see [`induct`]).
+    Induct {
+        fn_id: FnId,
+        args: Vec<Term>,
+        lhs: Term,
+        rhs: Term,
+        cases: Vec<InductCase>,
+    },
     /// Case split on every value of a given of finite type: `cases[i]`
     /// proves `lhs = rhs` with `var` replaced by value `i` (also in the
     /// hypotheses in scope), in the order [`Finite::values`] lists them.
@@ -282,6 +293,17 @@ impl Finite {
     }
 }
 
+/// One case of an [`Proof::Induct`] step: fresh names for the arm's
+/// pattern variables, one hypothesis name per recursive call in the arm
+/// (in the order [`induct::self_calls`] lists them), and the proof of the
+/// claim at the arm's pattern under those hypotheses.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InductCase {
+    pub binders: Vec<String>,
+    pub ihs: Vec<String>,
+    pub proof: Proof,
+}
+
 /// The obligation a step script closes: a law's claim under its givens.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Obligation {
@@ -339,6 +361,7 @@ impl Proof {
             } => if_true.size() + if_false.size(),
             Proof::Enum { cases, .. } => cases.iter().map(Proof::size).sum(),
             Proof::Absurd { contradiction, .. } => contradiction.size(),
+            Proof::Induct { cases, .. } => cases.iter().map(|c| c.proof.size()).sum(),
         }
     }
 }

@@ -61,6 +61,13 @@ pub enum Proof {
         crate::proof_kernel::aver_generated::kernel::term::Term,
         crate::proof_kernel::aver_generated::kernel::term::Term,
     ),
+    PInduct(
+        AverStr,
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        aver_rt::AverList<Case>,
+    ),
 }
 
 impl Proof {
@@ -74,13 +81,14 @@ impl Proof {
             Proof::PConst(..) => 5,
             Proof::PEnum(..) => 6,
             Proof::PHyp(..) => 7,
-            Proof::PLaw(..) => 8,
-            Proof::PProj(..) => 9,
-            Proof::PRefl(..) => 10,
-            Proof::PRule(..) => 11,
-            Proof::PSymm(..) => 12,
-            Proof::PTrans(..) => 13,
-            Proof::PUnfold(..) => 14,
+            Proof::PInduct(..) => 8,
+            Proof::PLaw(..) => 9,
+            Proof::PProj(..) => 10,
+            Proof::PRefl(..) => 11,
+            Proof::PRule(..) => 12,
+            Proof::PSymm(..) => 13,
+            Proof::PTrans(..) => 14,
+            Proof::PUnfold(..) => 15,
         }
     }
 }
@@ -132,6 +140,14 @@ impl Ord for Proof {
             }
             (Proof::PHyp(a0), Proof::PHyp(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
+            (Proof::PInduct(a0, a1, a2, a3, a4), Proof::PInduct(b0, b1, b2, b3, b4)) => {
+                std::cmp::Ordering::Equal
+                    .then_with(|| a0.cmp(b0))
+                    .then_with(|| a1.cmp(b1))
+                    .then_with(|| a2.cmp(b2))
+                    .then_with(|| a3.cmp(b3))
+                    .then_with(|| a4.cmp(b4))
             }
             (Proof::PLaw(a0, a1, a2), Proof::PLaw(b0, b1, b2)) => std::cmp::Ordering::Equal
                 .then_with(|| a0.cmp(b0))
@@ -254,7 +270,57 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
+            Proof::PInduct(f0, f1, f2, f3, f4) => format!(
+                "PInduct({})",
+                vec![
+                    f0.aver_display_inner(),
+                    f1.aver_display_inner(),
+                    f2.aver_display_inner(),
+                    f3.aver_display_inner(),
+                    f4.aver_display_inner()
+                ]
+                .join(", ")
+            ),
         }
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Case {
+    pub binders: aver_rt::AverList<AverStr>,
+    pub ihs: aver_rt::AverList<AverStr>,
+    pub proof: Proof,
+}
+
+impl PartialOrd for Case {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Case {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.binders.cmp(&other.binders))
+            .then_with(|| self.ihs.cmp(&other.ihs))
+            .then_with(|| self.proof.cmp(&other.proof))
+    }
+}
+
+impl aver_rt::AverDisplay for Case {
+    fn aver_display(&self) -> String {
+        format!(
+            "Case({})",
+            vec![
+                format!("binders: {}", self.binders.aver_display_inner()),
+                format!("ihs: {}", self.ihs.aver_display_inner()),
+                format!("proof: {}", self.proof.aver_display_inner())
+            ]
+            .join(", ")
+        )
     }
     fn aver_display_inner(&self) -> String {
         self.aver_display()

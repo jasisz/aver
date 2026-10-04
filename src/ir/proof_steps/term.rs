@@ -419,12 +419,16 @@ pub fn at<'a>(t: &'a Term, path: &[usize]) -> &'a Term {
 }
 
 /// Evaluate a closed term built from literals, Int arithmetic, Euclidean
-/// division by a literal, comparisons and Bool operations. `None` when the
-/// term has any other shape.
+/// division by a literal, comparisons, Bool operations, and lists of such
+/// values with `List.prepend`, `concat`, `len`, `reverse`, `take` and `drop`
+/// (a count below zero counts as zero). `None` when the term has any other
+/// shape.
 pub fn eval_closed(t: &Term) -> Option<Term> {
+    #[derive(Clone, PartialEq)]
     enum V {
         I(BigInt),
         B(bool),
+        L(Vec<V>),
     }
     fn go(t: &Term) -> Option<V> {
         if let Some(i) = int_value(t) {
@@ -437,11 +441,22 @@ pub fn eval_closed(t: &Term) -> Option<Term> {
             (V::I(x), V::I(y)) => Some((x, y)),
             _ => None,
         };
+        let list = |a: &Term| match go(a)? {
+            V::L(xs) => Some(xs),
+            _ => None,
+        };
+        let count = |n: &Term| -> Option<usize> {
+            match go(n)? {
+                V::I(k) if k.sign() == num_bigint::Sign::Minus => Some(0),
+                V::I(k) => Some(usize::try_from(k).unwrap_or(usize::MAX)),
+                _ => None,
+            }
+        };
         let bools = |args: &[Term]| -> Option<Vec<bool>> {
             args.iter()
                 .map(|a| match go(a)? {
                     V::B(b) => Some(b),
-                    V::I(_) => None,
+                    _ => None,
                 })
                 .collect()
         };
@@ -458,6 +473,7 @@ pub fn eval_closed(t: &Term) -> Option<Term> {
                     let same = match (go(a)?, go(b)?) {
                         (V::I(x), V::I(y)) => x == y,
                         (V::B(x), V::B(y)) => x == y,
+                        (V::L(x), V::L(y)) => x == y,
                         _ => return None,
                     };
                     Some(V::B(if matches!(op, BinOp::Eq) { same } else { !same }))
@@ -480,15 +496,46 @@ pub fn eval_closed(t: &Term) -> Option<Term> {
                 "Bool.and" => bools(args).map(|v| V::B(v.iter().all(|b| *b))),
                 "Bool.or" => bools(args).map(|v| V::B(v.iter().any(|b| *b))),
                 "Bool.not" if args.len() == 1 => bools(args).map(|v| V::B(!v[0])),
+                "List.prepend" if args.len() == 2 => {
+                    let mut xs = list(&args[1])?;
+                    xs.insert(0, go(&args[0])?);
+                    Some(V::L(xs))
+                }
+                "List.concat" if args.len() == 2 => {
+                    let mut xs = list(&args[0])?;
+                    xs.extend(list(&args[1])?);
+                    Some(V::L(xs))
+                }
+                "List.len" if args.len() == 1 => Some(V::I(BigInt::from(list(&args[0])?.len()))),
+                "List.reverse" if args.len() == 1 => {
+                    let mut xs = list(&args[0])?;
+                    xs.reverse();
+                    Some(V::L(xs))
+                }
+                "List.take" if args.len() == 2 => {
+                    let xs = list(&args[0])?;
+                    let n = count(&args[1])?.min(xs.len());
+                    Some(V::L(xs[..n].to_vec()))
+                }
+                "List.drop" if args.len() == 2 => {
+                    let xs = list(&args[0])?;
+                    let n = count(&args[1])?.min(xs.len());
+                    Some(V::L(xs[n..].to_vec()))
+                }
                 _ => None,
             },
+            ResolvedExpr::List(xs) => Some(V::L(xs.iter().map(go).collect::<Option<_>>()?)),
             _ => None,
         }
     }
-    match go(t)? {
-        V::I(i) => Some(int(&i)),
-        V::B(b) => Some(boolean(b)),
+    fn back(v: V) -> Term {
+        match v {
+            V::I(i) => int(&i),
+            V::B(b) => boolean(b),
+            V::L(xs) => Spanned::bare(ResolvedExpr::List(xs.into_iter().map(back).collect())),
+        }
     }
+    Some(back(go(t)?))
 }
 
 /// Euclidean division: `x = q*k + r`, `0 <= r < |k|`.

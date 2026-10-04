@@ -192,7 +192,7 @@ impl Env<'_> {
         })
     }
 
-    fn try_equation(&mut self, eq: &Equation, t: &Term) -> Option<(Proof, Term)> {
+    pub(crate) fn try_equation(&mut self, eq: &Equation, t: &Term) -> Option<(Proof, Term)> {
         match eq {
             Equation::Law(law) => {
                 let mut found = Vec::new();

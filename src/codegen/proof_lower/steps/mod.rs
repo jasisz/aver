@@ -11,7 +11,12 @@
 //!   guard, until both sides are the same term;
 //! - **finite domains**: when evaluation alone does not close the law,
 //!   split every given of finite type into all of its values and evaluate
-//!   each case.
+//!   each case;
+//! - **induction**: along the recursion of the function the law is about,
+//!   each case closed by evaluation with its hypotheses and cited laws.
+//!
+//! Evaluation may rewrite with the laws a `using` list cites, left to
+//! right, where it stops.
 //!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 
@@ -19,6 +24,7 @@ mod chain;
 mod env;
 mod eval;
 mod finite;
+mod induction;
 mod rewrite;
 
 use crate::codegen::proof_lower::ProofLowerInputs;
@@ -184,6 +190,26 @@ fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof,
     }
 }
 
+/// An environment for one attempt: the law's `when` in scope and its
+/// cited laws, minus any that would loop, as rewrite rules.
+fn fresh_env<'a>(
+    inputs: &'a ProofLowerInputs<'a>,
+    ob: &Obligation,
+    using: &Option<Vec<LawRef>>,
+) -> Env<'a> {
+    let mut env = Env::new(inputs);
+    if let Some(p) = &ob.premise {
+        env.hyps.push(("when".into(), chain::eqn_true(p)));
+    }
+    env.rewrite_laws = using
+        .iter()
+        .flatten()
+        .filter(|l| rewrite::loops(l).is_none())
+        .cloned()
+        .collect();
+    env
+}
+
 fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Script, String> {
     if !t.reason_inductions.is_empty() {
         return Err("a law with `because` steps".into());
@@ -192,34 +218,46 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Sc
         return Err("more than one premise".into());
     }
     let ob = obligation(inputs, t);
-    let mut env = Env::new(inputs);
-    if let Some(p) = &ob.premise {
-        env.hyps.push(("when".into(), chain::eqn_true(p)));
-    }
-    let proof = match (&t.strategy, &t.using) {
-        (
-            ProofStrategy::Commutative { .. }
-            | ProofStrategy::Associative { .. }
-            | ProofStrategy::IdentityElement { .. },
-            _,
-        ) => algebra(&mut env, t, &ob)?,
-        (_, Some(names)) if !names.is_empty() => {
-            let laws = cited(inputs, ir, t, names).ok_or("a cited law has no theorem")?;
-            citations(&mut env, laws, &ob)?
+    let using = match &t.using {
+        Some(names) if !names.is_empty() => {
+            Some(cited(inputs, ir, t, names).ok_or("a cited law has no theorem")?)
         }
-        _ => match env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH) {
-            Ok(proof) => proof,
-            Err(_) if !ob.finite.is_empty() => {
-                // Start again: the failed attempt may have opened
-                // definitions and bound hypothesis names.
-                env = Env::new(inputs);
-                if let Some(p) = &ob.premise {
-                    env.hyps.push(("when".into(), chain::eqn_true(p)));
+        _ => None,
+    };
+    // Each attempt starts from a fresh environment: a failed one may have
+    // opened definitions and bound hypothesis names.
+    let mut env = fresh_env(inputs, &ob, &using);
+    let proof = match &t.strategy {
+        ProofStrategy::Commutative { .. }
+        | ProofStrategy::Associative { .. }
+        | ProofStrategy::IdentityElement { .. } => algebra(&mut env, t, &ob)?,
+        _ => {
+            let mut refusals: Vec<String> = Vec::new();
+            let mut found = None;
+            for attempt in 0..4 {
+                let outcome = match attempt {
+                    0 => match &using {
+                        Some(laws) => citations(&mut env, laws.clone(), &ob),
+                        None => continue,
+                    },
+                    1 => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH),
+                    2 if ob.finite.is_empty() => continue,
+                    2 => env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH),
+                    _ => env.prove_by_induction(t.fn_id, &ob, SPLIT_DEPTH),
+                };
+                match outcome {
+                    Ok(proof) => {
+                        found = Some(proof);
+                        break;
+                    }
+                    Err(why) => {
+                        refusals.push(why);
+                        env = fresh_env(inputs, &ob, &using);
+                    }
                 }
-                env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH)?
             }
-            Err(why) => return Err(why),
-        },
+            found.ok_or_else(|| refusals.join("; "))?
+        }
     };
     if proof.size() > MAX_PROOF_NODES {
         return Err(format!(

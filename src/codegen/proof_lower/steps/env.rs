@@ -18,9 +18,16 @@ pub(crate) struct Env<'a> {
     /// Module-level bindings opened so far, in first-use order.
     pub used_consts: Vec<String>,
     pub laws: Vec<LawRef>,
+    /// Laws the author cited with `using`, which evaluation may apply left
+    /// to right where it stops.
+    pub rewrite_laws: Vec<LawRef>,
     pub hyps: Vec<(String, Eqn)>,
     pub fuel: usize,
     next_hyp: usize,
+    /// Induction hypotheses named so far, so names stay distinct.
+    pub next_ih: usize,
+    /// Evaluations in progress, one inside another.
+    pub nesting: usize,
 }
 
 impl<'a> Env<'a> {
@@ -32,9 +39,12 @@ impl<'a> Env<'a> {
             consts: HashMap::new(),
             used_consts: Vec::new(),
             laws: Vec::new(),
+            rewrite_laws: Vec::new(),
             hyps: Vec::new(),
             fuel: 4000,
             next_hyp: 0,
+            next_ih: 0,
+            nesting: 0,
         }
     }
 
@@ -51,8 +61,9 @@ impl<'a> Env<'a> {
         Ok(())
     }
 
-    /// A definition steps may open: pure, non-recursive, local bindings then
-    /// one expression.
+    /// A definition steps may open: pure, local bindings then one
+    /// expression, and, if it calls itself, through the termination gate of
+    /// [`crate::ir::proof_steps::induct::structural_param`].
     pub(crate) fn def(&mut self, id: FnId) -> Option<Def> {
         if let Some(found) = self.defs.get(&id) {
             return found.clone();
@@ -113,9 +124,6 @@ impl<'a> Env<'a> {
 
     fn build_def(&self, id: FnId) -> Option<Def> {
         let symbols = self.inputs.symbol_table;
-        if self.inputs.recursive_fns.contains(&id) {
-            return None;
-        }
         let key = symbols.fn_entry(id).key.clone();
         let scope = key.scope_str();
         let fd = match scope {
@@ -160,13 +168,24 @@ impl<'a> Env<'a> {
             Some(prefix) => format!("{prefix}.{}", key.name),
             None => key.name.clone(),
         };
-        Some(Def {
+        let def = Def {
             fn_id: id,
             name,
             params: fd.params.iter().map(|(n, _)| n.clone()).collect(),
             lets,
             body,
-        })
+        };
+        // A recursive function opens only when its own recursion passes the
+        // gate; one recursive only through others never does.
+        if self.inputs.recursive_fns.contains(&id)
+            && !matches!(
+                crate::ir::proof_steps::induct::structural_param(&def),
+                Ok(Some(_))
+            )
+        {
+            return None;
+        }
+        Some(def)
     }
 
     pub(crate) fn hyp_for(&self, t: &Term) -> Option<(String, Term)> {
