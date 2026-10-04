@@ -178,7 +178,9 @@ jobs:
     # too slow for a pull request, so it runs nightly and on dispatch; the
     # `steps` level runs on every pull request in ci.yml. A law that falls from
     # steps to tactics, or a portfolio withdrawn once steps replace it, shows up
-    # here as a change to the baseline.
+    # here as a change to the baseline. Until the tactic level is recorded
+    # (`python3 tools/steps_ratchet.py --lean --update`), the script says so and
+    # checks the steps level only.
     name: Proof levels ratchet (steps and tactics)
     runs-on: ubuntu-latest
     if: (github.event_name == 'schedule' && github.repository == 'jasisz/aver') || github.event_name == 'workflow_dispatch'

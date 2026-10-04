@@ -162,13 +162,23 @@ def main(argv: list[str]) -> int:
     if not aver.is_file():
         print(f"{aver}: no aver binary; build it with `cargo build --bin aver`", file=sys.stderr)
         return 2
-    levels = LEVELS if args.lean else ("steps",)
+    baseline = json.loads(args.baseline.read_text()) if args.baseline.exists() else {}
+    lean = args.lean
+    if lean and not args.update and not any(row.get("tactic") for row in baseline.values()):
+        # Nothing to compare the tactic level with: measuring it would only
+        # report every tactic-closed law as new.
+        print(
+            "the baseline records no tactic level yet; checking the steps level only "
+            "(record it with `python3 tools/steps_ratchet.py --lean --update`)"
+        )
+        lean = False
+    levels = LEVELS if lean else ("steps",)
 
     entries = [e for e in corpus(REPO_ROOT) if not args.only or e in args.only]
     current: dict = {}
     errors: list[str] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(measure, aver, entry, args.lean): entry for entry in entries}
+        futures = {pool.submit(measure, aver, entry, lean): entry for entry in entries}
         for future in concurrent.futures.as_completed(futures):
             try:
                 current[futures[future]] = future.result()
@@ -182,7 +192,6 @@ def main(argv: list[str]) -> int:
     counts = ", ".join(f"{sum(len(s[level]) for s in current.values())} by {level}" for level in levels)
     print(f"{len(current)} files, {laws} laws: {counts}")
 
-    baseline = json.loads(args.baseline.read_text()) if args.baseline.exists() else {}
     scope = {e: baseline[e] for e in baseline if not args.only or e in args.only}
     drops, gains = compare(scope, current, levels)
 
@@ -200,7 +209,7 @@ def main(argv: list[str]) -> int:
         print("laws that left a level they are recorded at in tools/steps-baseline.json:", file=sys.stderr)
         print("\n".join(drops), file=sys.stderr)
     if gains:
-        update = "python3 tools/steps_ratchet.py" + (" --lean" if args.lean else "") + " --update"
+        update = "python3 tools/steps_ratchet.py" + (" --lean" if lean else "") + " --update"
         print(f"laws newly closed; record them in this commit with `{update}`:", file=sys.stderr)
         print("\n".join(gains), file=sys.stderr)
     return 1 if drops or gains else 0
