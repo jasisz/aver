@@ -9,7 +9,7 @@ fn knowledge_example_has_only_universal_laws_and_clean_axioms() {
     let (summary, run) = run_lean_check_json("examples/knowledge/knowledge.av", &dir, 0, &[]);
     assert!(run.status.success(), "{}", format_output(&run));
     assert_eq!(summary["universal_laws"], 20, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap())
@@ -98,7 +98,7 @@ fn distinct_key_writes_commute_for_all_supported_scalar_orders() {
     let (summary, run) = run_lean_check_json("tests/fixtures/map_commutation.av", &dir, 0, &[]);
     assert!(run.status.success(), "{}", format_output(&run));
     assert_eq!(summary["universal_laws"], 3, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
     // The fallback comparator deliberately cannot discharge the new theorem.
     // Check this with Lean's instance search, alongside an arbitrary malformed

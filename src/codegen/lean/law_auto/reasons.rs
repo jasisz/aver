@@ -556,7 +556,6 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 statement: format!("∀ {params}, {}", premise_chain(&reasons[..index], &prop)),
                 hints: hints.clone(),
                 obligation: true,
-                baseline_universal: true,
             }
             .wrap(&mut lines, waterfall_start);
         }

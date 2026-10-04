@@ -109,9 +109,9 @@ fn proof_keystone_floor_arm_lean_closes_kernel_genuine() {
         (
             summary["universal"].as_bool(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(true), Some(4), Some(0)),
+        (Some(true), Some(4), None),
         "all four law theorems must be certified universal.\n{}",
         format_output(&run)
     );
@@ -138,10 +138,10 @@ fn proof_prelude_wrapper_composes_without_admitting_a_false_neighbor() {
         (
             summary["build_errors"].as_u64(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
             summary["sorries"].as_u64(),
         ),
-        (Some(0), Some(4), Some(0), Some(1)),
+        (Some(0), Some(4), None, Some(1)),
         "the wrapper must compose, while the false law stays open:\n{}",
         format_output(&run)
     );
@@ -182,10 +182,10 @@ fn proof_equation_composition_closes_observations_and_keeps_false_law_open() {
         (
             summary["build_errors"].as_u64(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
             summary["sorries"].as_u64(),
         ),
-        (Some(0), Some(3), Some(0), Some(1)),
+        (Some(0), Some(3), None, Some(1)),
         "true observations must close and the false neighbor must remain open:\n{}",
         format_output(&run)
     );

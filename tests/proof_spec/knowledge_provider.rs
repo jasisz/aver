@@ -15,7 +15,7 @@ fn knowledge_provider_laws_are_universal_and_audited() {
     );
     assert!(run.status.success(), "{}", format_output(&run));
     assert_eq!(summary["universal_laws"], 32, "{summary}");
-    for key in ["bounded_laws", "build_errors", "sorries"] {
+    for key in ["build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
     let manifest: serde_json::Value =

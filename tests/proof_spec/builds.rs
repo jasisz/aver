@@ -223,9 +223,9 @@ fn proof_export_builds_frac_monotone_geone_flip_when_lake_is_available() {
         (
             summary["universal"].as_bool(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(true), Some(2), Some(0)),
+        (Some(true), Some(2), None),
         "recursive positivity plus flipped ge-one should both be universal.\n{}",
         format_output(&run)
     );
@@ -358,8 +358,9 @@ fn proof_export_builds_json_when_lake_is_available() {
     // over the pinned escape table. The whole json example now builds
     // sorry-free; every synthesized lemma carries a
     // `first | (…; done) | sorry` floor, so a template regression
-    // surfaces HERE as a loud count drift, never a build error.
-    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 0);
+    // surfaces HERE as a loud count drift, never a build error. The 24
+    // guarded laws no arm closes for every input are declined.
+    assert_proof_builds_with_budgets("examples/data/json.av", "aver-proof-json", 0, 24);
 }
 
 #[test]
@@ -404,9 +405,9 @@ fn proof_clique_cursor_monotonicity_is_universal_cross_domain() {
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(3), Some(0)),
+        (Some(3), None),
         "self-contained clique (scanExpr), monotone-cursor scanner (skipWs), and \
          the CITING clique (scanSeq, which cites both) must all certify \
          universal via the rung.\n{}",
@@ -417,7 +418,7 @@ fn proof_clique_cursor_monotonicity_is_universal_cross_domain() {
 
 #[test]
 fn proof_export_builds_grok_s_language_when_lake_is_available() {
-    assert_proof_builds("examples/core/grok_s_language.av", "aver-proof-grok");
+    assert_proof_builds_with_budgets("examples/core/grok_s_language.av", "aver-proof-grok", 0, 2);
 }
 
 #[test]
@@ -697,51 +698,12 @@ fn proof_export_builds_rational_ring_laws_kernel_genuine_when_lake_is_available(
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(10), Some(0)),
+        (Some(10), None),
         "explicit law counts: all ten ring laws certified universal, no \
          bounded-domain degradation — same markers and #print-axioms audit \
          the `universal` bool keys on.\n{}",
-        format_output(&run)
-    );
-    let _ = std::fs::remove_dir_all(&output_dir);
-}
-
-/// Audit miscount guard: two DISTINCT conditional laws on the same
-/// function legally named `part1` and `part2` emit theorems
-/// (`scaledProduct_law_part1`, `scaledProduct_law_part2`) whose names
-/// collide with the `<base>_part<N>` chunk-partition naming. Each carries
-/// its OWN `-- aver:law-class … bounded-domain` marker, so the audit must
-/// key its `bounded_laws` dedup on each theorem's own class (direct lookup
-/// first) and count TWO — never fold them onto one phantom base by name
-/// alone. Both laws stay bounded (`a*a - 2*b*b != 0` has no core closer),
-/// so the file is a clean `bounded_laws == 2` probe.
-#[test]
-fn proof_bounded_laws_counts_distinct_part_named_laws_separately() {
-    if !lean_required::lake_available() {
-        eprintln!("skipping bounded-laws miscount test: `lake` not available");
-        return;
-    }
-    let output_dir = temp_output_dir("aver-proof-bounded-part-named");
-    let (summary, run) = run_lean_check_json(
-        "tests/fixtures/bounded_part_named_laws.av",
-        &output_dir,
-        0,
-        &[],
-    );
-    assert_eq!(
-        summary["sorries"].as_u64(),
-        Some(0),
-        "{}",
-        format_output(&run)
-    );
-    assert_eq!(summary["passed"].as_bool(), Some(true));
-    assert_eq!(
-        summary["bounded_laws"].as_u64(),
-        Some(2),
-        "two distinct `part1`/`part2` laws must count as TWO bounded laws — \
-         folding them onto one base by name miscounts legal input.\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&output_dir);
@@ -850,44 +812,38 @@ fn proof_export_closes_transparent_chain_cross_domain_witness_when_lake_is_avail
 }
 
 #[test]
-fn proof_probe_gating_reverts_not_implied_transparent_chain_to_bounded_when_lake_is_available() {
-    // Probe-gating safety rail (the green -> red repro turned regression):
-    // `tightRoom.capacityChain` has the EXACT shape the arm recognizes, so the
-    // recognizer admits it and the probe attempts it universally — but the
-    // premises do NOT imply the over-strong conclusion, so `omega` cannot close
-    // it. The probe must see the `AVERSPEC_SORRY` floor and REVERT the law to its
-    // sound bounded sampled statement, leaving the whole project `passed`. Remove
-    // the probe gate (force universal-or-sorry) and this law's universal theorem
-    // carries a sorry — `passed` flips false / `sorries` climbs — so this test
-    // fails loudly, exactly the red build the gate prevents.
+fn proof_declines_not_implied_transparent_chain_when_lake_is_available() {
+    // `tightRoom.capacityChain` has the EXACT shape the transparent-chain arm
+    // recognizes, so it is attempted universally — but the premises do NOT
+    // imply the over-strong conclusion, so `omega` cannot close it. The law is
+    // an attempt: the check declines it (no sorry) and the rest of the project
+    // still passes within a declined budget of one.
     if !lean_required::lake_available() {
         eprintln!("skipping transparent-chain not-implied test: `lake` not available");
         return;
     }
     let output_dir = temp_output_dir("aver-proof-transparent-chain-not-implied");
-    let (summary, run) = run_lean_check_json(
+    let (summary, run) = run_lean_check_json_with_args(
         "tests/fixtures/transparent_chain_not_implied.av",
         &output_dir,
         0,
         &[],
+        &["--declined-budget", "1"],
     );
     assert_eq!(
-        summary["sorries"].as_u64(),
-        Some(0),
-        "{}",
+        (
+            summary["sorries"].as_u64(),
+            summary["passed"].as_bool(),
+            summary["declined_claims"][0]["claim"].as_str(),
+        ),
+        (Some(0), Some(true), Some("tightRoom.capacityChain")),
+        "an in-shape but not-implied chain must be declined, never a sorry.\n{}",
         format_output(&run)
     );
     assert_eq!(
-        summary["passed"].as_bool(),
-        Some(true),
-        "an in-shape but not-implied chain must revert to bounded and keep the \
-         project passing, never flip it red.\n{}",
-        format_output(&run)
-    );
-    assert_eq!(
-        manifest_law_tier(&output_dir, "tightRoom.capacityChain").as_deref(),
-        Some("bounded"),
-        "the not-implied chain must land bounded, not universal.\n{}",
+        manifest_law_tier(&output_dir, "tightRoom.capacityChain"),
+        None,
+        "the not-implied chain must not be credited.\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&output_dir);

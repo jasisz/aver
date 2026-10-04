@@ -29,10 +29,9 @@
 //! are a subset of mine" — never on a law, figure, or function name. It is
 //! reusable for any composition of earlier universals with light glue (the K5
 //! Section 8.2 remainder/digit lemmas each cite several earlier universals this
-//! way). The whole proof sits under a `first | (…) | sorry` floor with the
-//! speculative `AVERSPEC_SORRY` trace, so a law the recognizer admits but whose
-//! orchestration does not actually close falls back to its bounded sampled
-//! statement — credit stays fail-closed behind the `#print axioms` whitelist.
+//! way). The whole proof sits under a `first | (…) | sorry` floor, so a law the
+//! recognizer admits but whose orchestration does not actually close stays open
+//! — credit stays fail-closed behind the `#print axioms` whitelist.
 
 use super::super::super::expr::aver_name_to_lean;
 use super::super::super::expr::{emit_expr, resolve_rewrite_output};
@@ -273,10 +272,10 @@ fn match_modulo_unfold(
 }
 
 /// Whether `prev`/`prev_law` is closed UNIVERSALLY by a DETERMINISTIC strategy
-/// (one whose universal disposition does not depend on the speculative probe),
-/// so its `{fn}_law_{name}` theorem is the clean `∀ … = true` form and can be
-/// cited directly. Excludes the keystone and this very arm (both probe-gated),
-/// which keeps a citation from referencing a theorem that re-emits bounded.
+/// (not one of the speculative arms), so its `{fn}_law_{name}` theorem is the
+/// clean `∀ … = true` form and can be cited directly. Excludes the keystone and
+/// this very arm (both speculative), which keeps a citation from leaning on a
+/// theorem that may not close.
 fn deterministically_universal(
     prev: &VerifyBlock,
     prev_law: &VerifyLaw,
@@ -418,8 +417,8 @@ fn mentions_unbound(e: &Expr, vars: &HashSet<String>, subst: &HashMap<String, Ex
 }
 
 /// Plan the orchestration, or `None` when the shape does not apply. Liberal by
-/// design: the speculative probe is the oracle (a plan whose proof does not
-/// close falls back to bounded), but it requires the load-bearing structure —
+/// design: Lean is the oracle (a plan whose proof does not close stays open),
+/// but it requires the load-bearing structure —
 /// an applier universal aliasing the goal AND at least one supplier universal.
 fn plan(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<MultiCite> {
     law.when.as_ref()?;
@@ -529,17 +528,13 @@ fn plan(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> Option<Multi
 }
 
 /// Statement-builder hook (mirror of the emit): whether this law is closed
-/// universally by the multi-citation arm. Probe-gated like the keystone.
+/// universally by the multi-citation arm. Speculative like the keystone.
 pub(in crate::codegen::lean) fn recognize_multicite_composition(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    if plan(vb, law, ctx).is_none() {
-        return false;
-    }
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    super::super::super::tactic_ir::speculative::admits(&id, false)
+    plan(vb, law, ctx).is_some()
 }
 
 /// Emit the multi-citation orchestration. Keeps the auto-generated universal
@@ -592,11 +587,7 @@ pub(in crate::codegen::lean) fn emit_multicite_composition_law(
         "       | (simp only [{alias_csv}] at * <;> assumption))"
     ));
 
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!(
-        "  | {}",
-        super::super::super::tactic_ir::speculative::floor(&id)
-    );
+    let floor = "  | sorry".to_string();
 
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!("  intro {} h_when", intro_names.join(" ")));

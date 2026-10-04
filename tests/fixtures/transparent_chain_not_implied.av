@@ -1,15 +1,12 @@
 module TransparentChainNotImplied
     intent =
-        "Regression for the probe-gating safety rail. `tightRoom` has the EXACT"
-        "shape the transparent-chain arm recognizes (a citable-predicate premise"
-        "chain with one peak split, all-Int givens), so the recognizer admits it"
-        "and the speculative probe attempts it universally -- but the chain does"
-        "NOT imply the conclusion (`5 + load < cap` needs load <= cap - 6, while"
-        "the premises only force load <= cap - 4), so `omega` cannot close it."
-        "The probe must observe the AVERSPEC_SORRY floor and REVERT this law to"
-        "its sound bounded sampled statement: the whole project stays passed,"
-        "never flipped red. The sibling universal laws confirm the arm still"
-        "fires where the chain IS implied."
+        "`tightRoom` has the EXACT shape the transparent-chain arm recognizes"
+        "(a citable-predicate premise chain with one peak split, all-Int givens),"
+        "so it is attempted universally -- but the chain does NOT imply the"
+        "conclusion (`5 + load < cap` needs load <= cap - 6, while the premises"
+        "only force load <= cap - 4), so `omega` cannot close it. The law is"
+        "declined, never a sorry. The sibling universal laws confirm the arm"
+        "still fires where the chain IS implied."
     effects []
 
 fn separated(a: Int, b: Int) -> Bool

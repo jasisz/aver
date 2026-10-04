@@ -10,16 +10,14 @@ use super::*;
 /// conses the premise guarantees by one `rcases` and lets `simp_all`
 /// evaluate the fixed-position reads. Live Lean gate; the fourth law (a sum
 /// over the reversed list under the same premise) needs induction proper
-/// and must stay BOUNDED, never `sorry`.
+/// and is declined, never a `sorry`.
 ///
 /// The fixture also carries the fuel-induction trio (a base-256 countdown,
 /// its accumulator law, a structural reader, and the `when m >= 0` round
-/// trip). Under the speculative PROBE the keystone tries that round trip
-/// first, and with every cone def abstract (all recursive) its simp list
-/// came out EMPTY — `simp only [, Bool.and_eq_true, …]`, a syntax error
-/// that failed the whole probe build and silently cost the three shuffle
-/// laws their universal statements (the shape of the btc-listener stack
-/// laws). The list is built as a list now; the probe must build.
+/// trip). The keystone tries that round trip, and with every cone def
+/// abstract (all recursive) its simp list once came out EMPTY — `simp only
+/// [, Bool.and_eq_true, …]`, a syntax error that failed the whole build (the
+/// shape of the btc-listener stack laws). The list is built as a list now.
 #[test]
 fn proof_list_prefix_guard_lean_closes_fixed_window_laws() {
     if !lean_required::lake_available() {
@@ -27,8 +25,13 @@ fn proof_list_prefix_guard_lean_closes_fixed_window_laws() {
         return;
     }
     let output_dir = temp_output_dir("aver-proof-list-prefix");
-    let (summary, run) =
-        run_lean_check_json("tests/fixtures/list_prefix_guard.av", &output_dir, 0, &[]);
+    let (summary, run) = run_lean_check_json_with_args(
+        "tests/fixtures/list_prefix_guard.av",
+        &output_dir,
+        0,
+        &[],
+        &["--declined-budget", "1"],
+    );
     assert_eq!(
         summary["build_errors"].as_u64(),
         Some(0),
@@ -38,22 +41,22 @@ fn proof_list_prefix_guard_lean_closes_fixed_window_laws() {
     assert_eq!(
         summary["sorries"].as_u64(),
         Some(0),
-        "the non-closing law must revert to bounded, never sorry.\n{}",
+        "the non-closing law must be declined, never a sorry.\n{}",
         format_output(&run)
     );
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined_claims"][0]["claim"].as_str(),
+            summary["passed"].as_bool(),
         ),
-        (Some(6), Some(1)),
+        (
+            Some(6),
+            Some("total.reverseKeepsTheSumOfLongLists"),
+            Some(true)
+        ),
         "the three fixed-window laws and the countdown trio certify; the sum \
-         law stays bounded.\n{}",
-        format_output(&run)
-    );
-    assert!(
-        !String::from_utf8_lossy(&run.stderr).contains("probe build failed"),
-        "the speculative probe must build (no malformed arm):\n{}",
+         law is declined.\n{}",
         format_output(&run)
     );
     let lean = std::fs::read_to_string(output_dir.join("ListPrefixGuard.lean"))
@@ -83,8 +86,8 @@ fn proof_list_prefix_guard_lean_closes_fixed_window_laws() {
             "{base} must expose the premise's conses in its cons arm:\n{body}"
         );
         assert!(
-            lean.contains(&format!("-- aver:law-class {base} universal")),
-            "{base} must be classed universal:\n{lean}"
+            lean.contains(&format!("-- aver:law-class {base} attempt")),
+            "{base} must be stated universally as an attempt:\n{lean}"
         );
     }
     assert!(

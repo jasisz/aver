@@ -125,9 +125,6 @@ def main():
     wrapper.chmod(0o755)
     env = dict(os.environ, PATH=str(shim) + os.pathsep + os.environ.get("PATH", ""),
                AVER_PROOF_BENCH_LAKE=os.path.abspath(lake))
-    # External debugging modes must not add copy/build work to the measurement.
-    for key in ["AVER_SPECULATIVE_KEEP", "AVER_SPECULATIVE_LOG"]:
-        env.pop(key, None)
     initial = dict(binary_sha256=digest(binary), sources=source_hashes())
     metadata = dict(binary=str(binary), platform=platform.platform(),
                     python=sys.version, lake=lake, inputs=initial)

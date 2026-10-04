@@ -28,8 +28,8 @@
 //! constructor injection on the `Int` position field and `omega`). Ranks are a
 //! longest-path assignment over the subgraph of same-position / whitespace-weak
 //! / result-carried (semantic) edges; a cycle there makes the emitter decline
-//! (fail-closed), so the law falls back to its bounded-domain proof rather than
-//! a silently weaker universal.
+//! (fail-closed), so the law is left to the other arms rather than given a
+//! silently weaker universal.
 //!
 //! This leg discharges only SELF-CONTAINED cliques: every cursor-feeding callee
 //! must be a clique sibling. A clique whose cursor cone reaches a non-clique
@@ -1027,8 +1027,8 @@ fn build_shape<'a>(
     // whitespace helper that does not graduate, cannot discharge a universal
     // hypothesis, so citing it would only floor to `sorry`. A missing,
     // later-declared, or non-universal law makes the clique DECLINE (fail-closed)
-    // with a diagnostic naming exactly what is needed — the law then keeps its
-    // bounded-domain proof rather than a silently weaker universal.
+    // with a diagnostic naming exactly what is needed — the law is then left to
+    // the other arms rather than given a silently weaker universal.
     let mut citations: Vec<Citation> = Vec::new();
     let mut hyp_of: HashMap<String, String> = HashMap::new();
     let mut missing: Vec<String> = Vec::new();
@@ -1082,8 +1082,7 @@ fn build_shape<'a>(
         if depth == PROBE_DEPTH_TOP {
             eprintln!(
                 "aver: clique cursor-monotonicity for `{}` declines — no universal \
-                 advance law in the pool (declared before line {}) for: {}. The law \
-                 keeps its bounded-domain proof.",
+                 advance law in the pool (declared before line {}) for: {}.",
                 ls.target,
                 vb.line,
                 missing.join(", ")

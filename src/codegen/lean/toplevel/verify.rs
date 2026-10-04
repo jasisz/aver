@@ -7,8 +7,6 @@ use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
-const BOUNDED_LAW_DOMAIN_VALUE_EDGE: usize = 128;
-const BOUNDED_LAW_DOMAIN_CASE_EDGE: usize = 512;
 const LAW_SAMPLE_CAP: usize = 512;
 
 /// Emit a Lean 4 type definition from an Aver TypeDef.
@@ -1119,175 +1117,31 @@ fn emit_verify_law_block(
         rhs: law_rhs.clone(),
         sample_guards: law.sample_guards.clone(),
     };
-    // A recognized EASY conditional comparison-bridge `when`-law (`prop_70
-    // leSucc`) is proven UNIVERSALLY by the dedicated bridge emit, so its
-    // theorem statement drops the sampled-domain disjunctions (`omit_domain`)
-    // and is classed `universal`. Restricted to non-refinement-lifted laws (the
-    // lifted path already drops the domain through the quantifier type and uses
-    // its own premise handling). Must agree with the proof emitter — both key on
-    // the same recognizer.
-    let conditional_universal = law.when.is_some()
-        && lifted_vars.is_empty()
-        && (guided
-            // Clique-propagated position-monotonicity (`when F(s, pos) ==
-            // ok(v, p) -> p >= pos`) over a self-contained parser SCC: proven
-            // universally by the rank-slotted `induction fuel` conjunction and
-            // projected through the fuel wrapper. The emit replaces the theorem
-            // with the universal form, so dropping the sampled domain keeps
-            // statement and proof aligned.
-            || super::law_auto::recognize_clique_position_monotonicity(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_conditional_comparison_bridge(
-                vb,
-                &law_for_auto_proof,
-                ctx,
-            )
-            || super::law_auto::recognize_conditional_inductive_generic(
-                vb,
-                &law_for_auto_proof,
-                ctx,
-            )
-            // Fuel induction over a well-founded Int-countdown fn: proven
-            // universally by `induction k` on a `Nat` fuel bounding the
-            // countdown given, so the statement drops the sampled domain to
-            // `∀ givens, <when> = true -> claim`. The proof emit keys on the
-            // same recognizer; credit stays fail-closed behind `#print axioms`.
-            || super::law_auto::recognize_wf_fuel_induction(vb, &law_for_auto_proof, ctx)
-                .is_some()
-            // A `when`-premised `NonlinearNonneg` law (the Newton-Raphson
-            // factor-sign guards) is proved UNIVERSALLY by the generic
-            // `aver_int_order` step, so its statement drops the sampled
-            // domain (`omit_domain`) to `∀ givens, <when> = true -> claim`
-            // and is classed `universal`. The proof emit keys on the same
-            // pin, so statement and proof agree. Credit stays fail-closed:
-            // the `#print axioms` whitelist still decides, and the
-            // `first | (…) | sorry` floor can never be credited.
-            || matches!(
-                pinned_law_strategy,
-                Some(crate::ir::ProofStrategy::NonlinearNonneg { .. })
-            )
-            // Keystone — the non-recursive laws-as-lemmas composition (`grind`
-            // over the earlier-sibling pool). Drops the sampled domain to the
-            // true `∀ givens, <when> = true -> claim`; the proof emit keys on the
-            // same recognizer, and the speculative probe commits the universal
-            // only when `grind`+pool actually closes (else bounded fallback).
-            || super::law_auto::recognize_pool_composition_generic(vb, &law_for_auto_proof, ctx)
-            // Multi-citation composition (the K5 reciprocal bucket bound): the
-            // goal is supplied by APPLYING an earlier universal whose premises
-            // are themselves discharged from an earlier universal's conclusion.
-            // Drops the sampled domain to the true `∀ givens, <when> = true ->
-            // claim`; the proof emit keys on the same recognizer, and the
-            // speculative probe commits the universal only when the orchestration
-            // actually closes (else bounded fallback).
-            || super::law_auto::recognize_multicite_composition(vb, &law_for_auto_proof, ctx)
-            // Finite bounded-Int-domain law (the K5 reciprocal seed table): a
-            // single `Int` given guarded into `[LO, HI)`, proven universally by
-            // pure-kernel enumeration (`decide` over a bounded-`Nat` forall).
-            // The emit replaces the theorem with the `Prop`-hypothesis universal
-            // form, so dropping the sampled domain here keeps them in lockstep.
-            || super::law_auto::recognize_finite_int_domain(vb, &law_for_auto_proof, ctx)
-            // Interval-monotonicity law (the K5 reciprocal table bucket bound):
-            // an affine-in-interval-var magnitude bound over the exact-rational
-            // order, proven universally by the rational interval-monotonicity
-            // argument. The emit replaces the theorem with the `Prop`-hypothesis
-            // universal form, so dropping the sampled domain keeps them aligned.
-            || super::law_auto::recognize_interval_monotonicity(vb, &law_for_auto_proof, ctx)
-            // Transparent arithmetic premise chain: the `when` premise cites
-            // citable transparent arithmetic law predicates, and the proof
-            // unfolds those bodies before `split at h_when <;> omega`. The
-            // statement and proof share this recognizer so the sampled domain is
-            // dropped only for shapes the deterministic arm owns.
-            || super::law_auto::recognize_transparent_chain(vb, &law_for_auto_proof, ctx)
-            // Exact-rational order facts about an opaque unary `Fraction` cone fn
-            // `F` (the K5 signed power of two): its POSITIVITY (`F(k).top > 0 &&
-            // F(k).bottom > 0`), its AT-LEAST-ONE (`when k >= 0 -> isNonNeg(minus(
-            // F(k), oneFraction))`), and the all-exponent MONOTONICITY (`isNonNeg
-            // (minus (F E_hi) (F E_lo))` under `E_lo <= E_hi`). The first two cite
-            // the recursive-positivity pool law; the monotonicity is laws-as-lemmas
-            // composition citing `F`'s homomorphism + positivity + `>= 1` laws,
-            // chained through the generic Fraction order kit (`F` opaque). Each
-            // emit replaces the theorem with the universal form, so dropping the
-            // sampled domain keeps statement and proof aligned.
-            || super::law_auto::recognize_frac_positivity(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_frac_geone(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_frac_monotone_compose(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_monotone_reflect(vb, &law_for_auto_proof, ctx)
-            || super::law_auto::recognize_magnitude_bracket_reflect(
-                vb,
-                &law_for_auto_proof,
-                ctx,
-            )
-            // General recursive-monotonicity law (`f(LO) <= f(HI)` for any pure
-            // recursive `Int -> Int` `f` under `LO <= HI`): proven universally by
-            // the shared recursive-mono kit (`f.induct` positivity + monotonicity)
-            // and a one-line citation. The emit replaces the theorem with the
-            // universal form, so dropping the sampled domain keeps statement and
-            // proof aligned.
-            || super::law_auto::recognize_recursive_monotone(vb, &law_for_auto_proof, ctx)
-            // Content-blind homomorphism law (`subject(OP1(a, b)) = OP2(subject(a),
-            // subject(b))` for a recursive subject, OP1/OP2 captured from the AST):
-            // the guarded power-of-two case carries a `when m >= 0; n >= 0` premise
-            // and is proven universally by the de-risked `subject.induct` skeleton.
-            // The emit replaces the theorem with the universal form, so dropping the
-            // sampled domain keeps statement and proof aligned. (The unconditional
-            // structural case — a list-length homomorphism — has no sampled domain to
-            // drop and is classed universal by the default unconditional path.)
-            || super::law_auto::recognize_homomorphism(vb, &law_for_auto_proof, ctx)
-            // Use the same admission as the citation pool for universal floor laws.
-            || super::law_auto::recognize_universal_floor_law(vb, &law_for_auto_proof, ctx)
-            // Rational-order chaining law (the reciprocal-magnitude composition,
-            // Lemma 8.2.4): the conclusion is the Fraction order fact `isNonNeg
-            // (minus (pow2Signed BIG) A)`, proven universally by chaining the
-            // scaled-bound / envelope / placement premises through the generic
-            // `frac_le_trans` kit and citing the signed power-of-two
-            // monotonicity + homomorphism pool laws. The emit replaces the
-            // theorem with the universal form, so dropping the sampled domain
-            // keeps statement and proof aligned.
-            || super::law_auto::recognize_frac_order_chain(vb, &law_for_auto_proof, ctx)
-            // Generic rational-order transitivity-chain law (Lemma 8.1.1, the
-            // two-step reciprocal-error bound): the conclusion is a STRICT
-            // Fraction comparison `lessThan L R` whose premises spell out a
-            // 1..3-link comparison chain linking the endpoints, closed
-            // universally by the self-contained order kit plus a fixed
-            // have-sequence assembler. The emit replaces the theorem with the
-            // universal form, so dropping the sampled domain keeps statement
-            // and proof aligned.
-            || super::law_auto::recognize_frac_order_transitivity(vb, &law_for_auto_proof, ctx)
-            // Triangle-sum law (the rounded Newton-Raphson reciprocal step): a
-            // strict `absFraction`-of-a-three-term-sum bound over the exact-
-            // rational order, proven universally by the generic triangle kit
-            // (`tri_sum3`) citing the two rounding bound universals. The emit
-            // replaces the theorem with the universal form, so dropping the
-            // sampled domain keeps statement and proof aligned.
-            || super::law_auto::recognize_triangle_sum(vb, &law_for_auto_proof, ctx)
-            // Validated-wrapper correctness (the Theorem-2 shape): an error-
-            // checking wrapper that returns `Result.Ok(core(…))` on valid input.
-            // The proof body unfolds only the wrapper and closes by reflexivity
-            // on the shared opaque core, so the statement drops its sampled
-            // domain to the true `∀ givens, <when> = true -> claim` universal.
-            || super::law_auto::recognize_validated_wrapper(vb, &law_for_auto_proof, ctx)
-            // CORE when-linear consequence: a conditional `holds` law whose
-            // whole call cone is effect-free straight-line arithmetic (the k5
-            // `nonNegOfPositive` shape). The proof arm unfolds the cone and
-            // closes by `omega`/`grind`; dropping the sampled domain keeps the
-            // universal statement in lockstep with that proof.
-            || (cert_model && super::law_auto::recognize_core_when_linear(vb, &law_for_auto_proof, ctx))
-            // Mathlib BREAK-GLASS (`--allow-mathlib` only, entry-module only): a
-            // walling `when`-law no core recognizer above claimed is emitted in
-            // true-universal form and closed by the generic Mathlib portfolio.
-            // LAST in the OR and gated on the opt-in flag, so the default path is
-            // byte-identical and a core-claimed law keeps its core (non-Mathlib)
-            // proof. Kept in lockstep with the `emit_mathlib_break_glass_law` arm
-            // (also last in the proof cascade).
-            || super::law_auto::recognize_mathlib_break_glass(ctx, &law_for_auto_proof));
+    // Every law is stated in its universal form only: a `when`-law as
+    // `∀ givens, <when> = true -> claim`, never bounded to its sample domain.
+    // What differs is what a refusal means. A `when`-law whose proof comes from
+    // a deterministic arm below is a CLAIM: if Lean refuses it, that is a
+    // sorry. One handed to a speculative arm (the keystone pool composition,
+    // the multi-citation orchestration, the transparent premise chain, the
+    // generic conditional induction) or to no arm at all is an ATTEMPT (see
+    // `LAW_CLASS_ATTEMPT`): if Lean refuses it, `aver proof --check` declines
+    // the law as not proved for every input, and its samples stay with
+    // `aver verify`. A law whose givens are all refinement-lifted carries its
+    // premises in the quantifier types and is a claim as before.
+    let all_lifted =
+        !lifted_vars.is_empty() && law.givens.iter().all(|g| lifted_vars.contains_key(&g.name));
+    let attempt = law.when.is_some()
+        && !all_lifted
+        && !guided
+        && !super::law_auto::when_law_is_claim(vb, &law_for_auto_proof, ctx, cert_model);
     let mut universal_fell_to_sorry = false;
     // The universal statement of the theorem the law-class marker names, as
     // the emitter assembled it — the certificate producer's law-claim is built
     // from this instead of re-parsing the emitted file. Recorded in the
-    // certificate model only; `None` whenever no single theorem named
-    // `theorem_base` carries the whole claim (a partitioned statement, or a
-    // strategy whose substituted declaration is not one line), which is
-    // fail-closed: a law-claim is additive surface, so omitting one is never
-    // wrong.
+    // certificate model only; `None` whenever the theorem named `theorem_base`
+    // does not carry the whole claim (a strategy whose substituted declaration
+    // is not one line), which is fail-closed: a law-claim is additive surface,
+    // so omitting one is never wrong.
     let mut claim_statement: Option<String> = None;
     if !quant_params.is_empty() && !skip_universal {
         let waterfall_start = lines.len();
@@ -1297,85 +1151,45 @@ fn emit_verify_law_block(
             ctx,
             &theorem_base,
         ));
-        let theorem_parts = law_theorem_parts(
+        let prop = law_theorem_prop(
             law,
             ctx,
-            &theorem_base,
             &lhs_template,
             &rhs_template,
             when_template.as_deref(),
             &lifted_vars,
-            conditional_universal,
-        );
-        // Statement-class marker — the channel `aver proof --check`'s
-        // `universal` metric keys on (see `LAW_CLASS_MARKER_PREFIX`).
-        // Recorded HERE because this is where the statement was built:
-        // `bounded_domain` says whether sampled-domain disjunction
-        // premises bound the claim to the finite sample domain. For a
-        // `replaces_theorem` auto-proof the strategy emits its own
-        // (universal-form) statement; keeping this class for it is
-        // conservative — a mislabel can only withhold credit, never
-        // grant it. ONE exception flips the class the other way:
-        // `FloorDivWindow` replaces the bounded statement with the
-        // TRUE universal form `∀ givens, <when> = true -> claim`
-        // (validated emission — the rendered file contains no
-        // statement bounded by sampled domains for this law), so the
-        // marker says `universal`. Credit stays fail-closed: the
-        // `#print axioms` whitelist still decides, and a sorry'd or
-        // native_decide'd proof can never be credited.
-        // Strategies that emit their OWN true-universal statement
-        // (`replaces_theorem`) and so must override the bounded-domain
-        // default class: `FloorDivWindow` and `TailRecFixedBaseFold`
-        // (the `qexp` tail-recursive-fold shape). Both render a genuine
-        // `∀ givens, ... = ...` theorem named `theorem_base` and route
-        // through the `emit_verify_law_forall_auto_proof` path below.
-        let floor_window_universal = matches!(
-            pinned_law_strategy,
-            Some(crate::ir::ProofStrategy::FloorDivWindow { .. })
-                | Some(crate::ir::ProofStrategy::TailRecFixedBaseFold { .. })
         );
         // The marker carries a THIRD field: the `fn.law` identity label
         // (`format!("{fn}.{law}")`). The file-level audit reads it to key the
         // per-law proof manifest on the stable, edit-robust identity instead
         // of reverse-parsing the (mangled, `_law_`-ambiguous) theorem name.
-        // Additive: the marker parser consumes only the first two fields, so
-        // an older reader ignores it.
         let law_label = scoped_claim(ctx, format!("{}.{}", vb.fn_name, law.name));
-        // Universal unless some part carries sampled-domain premises — and a
-        // `FloorDivWindow`/`TailRecFixedBaseFold` statement is universal even
-        // then, because those strategies replace the bounded statement with
-        // the true `∀ givens, <when> = true -> claim` form.
-        let stmt_universal =
-            !theorem_parts.iter().any(|part| part.bounded_domain) || floor_window_universal;
-        // Certificate model: a bounded-domain statement is not a law-claim
-        // (its premises bind it to the finite sample domain), so the cert
-        // surface drops it entirely — comment only, no theorem, no marker.
-        if cert_model && !stmt_universal {
+        // Certificate model: an attempt is not a law-claim — a refusal would
+        // decline the whole package — so the cert surface drops it entirely:
+        // comment only, no theorem, no marker.
+        if cert_model && attempt {
             return (
-                format!("-- cert-model law {law_label}: bounded-domain statement is not exported"),
+                format!(
+                    "-- cert-model law {law_label}: speculative universal proof is not exported"
+                ),
                 case_index_start + vb.cases.len(),
             );
         }
+        // Statement-class marker — the channel `aver proof --check` keys on
+        // (see `LAW_CLASS_MARKER_PREFIX`). Recorded HERE because this is where
+        // the law was classed a claim or an attempt.
         lines.push(format!(
             "{}{} {} {}",
             super::LAW_CLASS_MARKER_PREFIX,
             theorem_base,
-            if stmt_universal {
-                super::LAW_CLASS_UNIVERSAL
+            if attempt {
+                super::LAW_CLASS_ATTEMPT
             } else {
-                super::LAW_CLASS_BOUNDED_DOMAIN
+                super::LAW_CLASS_UNIVERSAL
             },
             law_label,
         ));
-        // (Removed: refinement_auto_proof — Aver-specific bypass.
-        // Refinement-lifted laws now flow through law_auto via the
-        // IR-pinned `ProofStrategy::LinearArithmetic { lifted: true }`.
-        // The lowerer detects the `Refined(value = given)` carrier
-        // shape and pins the strategy; emit_simp_omega_from_ir
-        // skips by_cases when lifted=true. Step 30 retired this
-        // separate code path so all laws go through one dispatch.)
         if guided {
-            let prop = &theorem_parts[0].prop;
             lines.extend(super::law_auto::emit_reason_law(
                 vb,
                 &law_for_auto_proof,
@@ -1384,164 +1198,70 @@ fn emit_verify_law_block(
                     base: &theorem_base,
                     label: &law_label,
                     binders: &quant_binders,
-                    prop,
+                    prop: &prop,
                     guard: when_template.as_deref(),
                 },
             ));
             if cert_model {
-                claim_statement = Some(universal_statement(&quant_params, prop));
+                claim_statement = Some(universal_statement(&quant_params, &prop));
             }
-        } else if floor_window_universal
-            && let Some(auto_proof) = emit_verify_law_forall_auto_proof(
-                vb,
-                &law_for_auto_proof,
-                ctx,
-                verify_mode,
-                &theorem_base,
-                &quant_params,
-                &theorem_parts[0].prop,
-                cert_model,
-            )
-        {
+        } else if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
+            vb,
+            &law_for_auto_proof,
+            ctx,
+            verify_mode,
+            &theorem_base,
+            &quant_params,
+            &prop,
+            cert_model,
+            attempt
+                || (law.when.is_none()
+                    && lifted_vars.is_empty()
+                    && matches!(
+                        pinned_law_strategy,
+                        None | Some(crate::ir::ProofStrategy::BackendDispatch)
+                            | Some(crate::ir::ProofStrategy::LinearArithmetic { .. })
+                    )),
+        ) {
             if cert_model {
                 claim_statement = if auto_proof.replaces_theorem {
                     substituted_theorem_statement(&auto_proof.support_lines, &theorem_base)
                 } else {
-                    Some(universal_statement(&quant_params, &theorem_parts[0].prop))
+                    Some(universal_statement(&quant_params, &prop))
                 };
             }
             lines.extend(auto_proof.support_lines);
             if !auto_proof.replaces_theorem {
                 lines.push(format!(
                     "theorem {} : ∀ {}, {} := by",
-                    theorem_base, quant_params, theorem_parts[0].prop
+                    theorem_base, quant_params, prop
                 ));
             }
             lines.extend(auto_proof.body.render_body());
         } else {
-            // Support lines (e.g. shared `{theorem_base}_digit_pred` private
-            // theorems) are keyed on the shared `theorem_base`, so every part's
-            // proof references the SAME names. Collect them across all parts,
-            // dedup identical lines preserving order, and emit once before the
-            // parts — emitting per-first-part only would drop later parts' refs
-            // and emitting per-part would redeclare the shared names.
-            let mut part_bodies: Vec<Vec<String>> = Vec::with_capacity(theorem_parts.len());
-            let mut support_lines: Vec<String> = Vec::new();
-            // Past the chunk edge a single part can still hold ~512 rcases
-            // leaves; give the partitioned theorems the same per-theorem
-            // heartbeats budget the `_checked_domain` parts use (scoped `in`,
-            // never file-wide). A single (unpartitioned) theorem keeps its
-            // byte-identical pre-chunking header.
-            let partitioned = theorem_parts.len() > 1;
-            for part in &theorem_parts {
-                let law_for_part = crate::ast::VerifyLaw {
-                    givens: part.law.givens.clone(),
-                    ..law_for_auto_proof.clone()
-                };
-                let mut body: Vec<String> = Vec::new();
-                let header_prefix = if partitioned {
-                    "set_option maxHeartbeats 800000 in\n"
-                } else {
-                    ""
-                };
-                if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
-                    vb,
-                    &law_for_part,
-                    ctx,
-                    verify_mode,
-                    &theorem_base,
-                    &quant_params,
-                    &part.prop,
-                    cert_model,
-                ) {
-                    // Only an UNPARTITIONED law states its whole claim in one
-                    // theorem named `theorem_base` — the parts of a partitioned
-                    // one are separate `<base>_partN` theorems and no single
-                    // name carries the claim, so none is recorded.
-                    if cert_model && !partitioned {
-                        claim_statement = if auto_proof.replaces_theorem {
-                            substituted_theorem_statement(&auto_proof.support_lines, &part.name)
-                        } else {
-                            Some(universal_statement(&quant_params, &part.prop))
-                        };
-                    }
-                    if auto_proof.replaces_theorem {
-                        // The strategy emitted a part-specific theorem statement
-                        // inside its support lines; it is not shared across parts
-                        // and must stay in this part's body.
-                        body.extend(auto_proof.support_lines);
-                    } else if partitioned {
-                        // Multiple parts share `{theorem_base}`-keyed support
-                        // theorems; collect them once and dedup the IDENTICAL
-                        // declarations each part re-emits. (Only safe across parts:
-                        // a single part's support stack may legitimately repeat a
-                        // tactic line — `unfold F`, `rw [F.eq_def, …]` — inside
-                        // distinct theorems, which a line-level dedup would wrongly
-                        // strip, so the unpartitioned arm below keeps them verbatim.)
-                        for line in auto_proof.support_lines {
-                            if !support_lines.contains(&line) {
-                                support_lines.push(line);
-                            }
-                        }
-                        body.push(format!(
-                            "{}theorem {} : ∀ {}, {} := by",
-                            header_prefix, part.name, quant_params, part.prop
-                        ));
-                    } else {
-                        // Single part: emit the support stack verbatim before the
-                        // theorem (no cross-part sharing, so no dedup — see above).
-                        body.extend(auto_proof.support_lines);
-                        body.push(format!(
-                            "{}theorem {} : ∀ {}, {} := by",
-                            header_prefix, part.name, quant_params, part.prop
-                        ));
-                    }
-                    body.extend(auto_proof.body.render_body());
-                } else {
-                    body.push(format!(
-                        "{}theorem {} : ∀ {}, {} := by",
-                        header_prefix, part.name, quant_params, part.prop
-                    ));
-                    body.push(
-                        "  -- verify law is sampled; universal proof must be provided manually"
-                            .to_string(),
-                    );
-                    body.push("  sorry".to_string());
-                    universal_fell_to_sorry = true;
-                }
-                part_bodies.push(body);
-            }
-            lines.extend(support_lines);
-            for body in part_bodies {
-                lines.extend(body);
-            }
+            lines.push(format!(
+                "theorem {} : ∀ {}, {} := by",
+                theorem_base, quant_params, prop
+            ));
+            lines.push(
+                "  -- verify law is sampled; universal proof must be provided manually".to_string(),
+            );
+            lines.push("  sorry".to_string());
+            universal_fell_to_sorry = true;
         }
         if !guided
             && !cert_model
             && crate::codegen::lean::waterfall::enabled()
             && let Some(hints) = super::law_auto::waterfall_dependencies(vb, law, ctx)
         {
-            let universal = law_theorem_parts(
-                law,
-                ctx,
-                &theorem_base,
-                &lhs_template,
-                &rhs_template,
-                when_template.as_deref(),
-                &lifted_vars,
-                true,
-            );
-            if universal.len() == 1 && !universal[0].bounded_domain {
-                crate::codegen::lean::waterfall::Candidate {
-                    name: theorem_base.clone(),
-                    label: law_label,
-                    statement: universal_statement(&quant_params, &universal[0].prop),
-                    hints,
-                    obligation: false,
-                    baseline_universal: stmt_universal,
-                }
-                .wrap(&mut lines, waterfall_start);
+            crate::codegen::lean::waterfall::Candidate {
+                name: theorem_base.clone(),
+                label: law_label,
+                statement: universal_statement(&quant_params, &prop),
+                hints,
+                obligation: false,
             }
+            .wrap(&mut lines, waterfall_start);
         }
     }
 
@@ -2084,7 +1804,7 @@ pub(crate) fn law_as_lemma_statement(
     let lhs = emit_expr(&resolve_rewrite_output(&law_lhs, ctx, None), ctx);
     let rhs = emit_expr(&resolve_rewrite_output(&law_rhs, ctx, None), ctx);
     // A `when`-law is cited as the conditional rewrite the auto-prover proved:
-    // `<premise> = true -> lhs = rhs`, matching the `omit_domain` theorem.
+    // `<premise> = true -> lhs = rhs`, matching the universal theorem.
     match &law.when {
         Some(when) => {
             let premise = emit_expr(&resolve_rewrite_output(when, ctx, None), ctx);
@@ -2092,14 +1812,6 @@ pub(crate) fn law_as_lemma_statement(
         }
         None => Some((theorem_base, format!("{lhs} = {rhs}"))),
     }
-}
-
-#[derive(Clone)]
-struct LawTheoremPart {
-    name: String,
-    prop: String,
-    bounded_domain: bool,
-    law: VerifyLaw,
 }
 
 fn sample_indices(total: usize) -> Vec<usize> {
@@ -2114,148 +1826,9 @@ fn sample_indices(total: usize) -> Vec<usize> {
         .collect()
 }
 
-fn emitted_domain_values(
-    law: &VerifyLaw,
-    lifted_vars: &std::collections::HashMap<String, String>,
-) -> Vec<Option<Vec<Spanned<Expr>>>> {
-    law.givens
-        .iter()
-        .map(|given| {
-            (!lifted_vars.contains_key(&given.name)).then(|| law_given_domain_values(&given.domain))
-        })
-        .collect()
-}
-
-fn bounded_law_slice(
-    domain_values: &[Option<Vec<Spanned<Expr>>>],
-) -> Option<(usize, usize, Vec<Spanned<Expr>>)> {
-    let mut total_cases = 1usize;
-    let mut largest: Option<(usize, Vec<Spanned<Expr>>)> = None;
-    for (idx, values) in domain_values.iter().enumerate() {
-        let Some(values) = values else { continue };
-        total_cases = total_cases.saturating_mul(values.len());
-        if largest
-            .as_ref()
-            .is_none_or(|(_, current)| values.len() > current.len())
-        {
-            largest = Some((idx, values.clone()));
-        }
-    }
-    let (idx, values) = largest?;
-    if values.is_empty() {
-        return None;
-    }
-    let other_cases = (total_cases / values.len()).max(1);
-    let chunk_by_value = if values.len() > BOUNDED_LAW_DOMAIN_VALUE_EDGE {
-        BOUNDED_LAW_DOMAIN_VALUE_EDGE
-    } else if total_cases > BOUNDED_LAW_DOMAIN_CASE_EDGE {
-        (BOUNDED_LAW_DOMAIN_CASE_EDGE / other_cases).max(1)
-    } else {
-        values.len()
-    };
-    (chunk_by_value < values.len()).then_some((idx, chunk_by_value, values))
-}
-
-fn law_with_sliced_domain(
-    law: &VerifyLaw,
-    given_idx: usize,
-    values: &[Spanned<Expr>],
-) -> VerifyLaw {
-    let mut part = law.clone();
-    part.givens[given_idx].domain = VerifyGivenDomain::Explicit(values.to_vec());
-    part
-}
-
-#[allow(clippy::too_many_arguments)]
-fn law_theorem_parts(
-    law: &VerifyLaw,
-    ctx: &CodegenContext,
-    theorem_base: &str,
-    lhs_template: &str,
-    rhs_template: &str,
-    when_template: Option<&str>,
-    lifted_vars: &std::collections::HashMap<String, String>,
-    omit_domain: bool,
-) -> Vec<LawTheoremPart> {
-    // `omit_domain` (a recognized conditional-comparison-bridge `when`-law)
-    // drops the sampled-domain disjunctions, so the statement is the
-    // TRUE-universal `∀ givens, when = true -> claim`. The resulting
-    // `bounded_domain = false` keeps the single-part path (no domain chunking —
-    // there is no large disjunction to split) and flips the law-class marker to
-    // `universal`.
-    let (prop, bounded_domain) = law_theorem_prop(
-        law,
-        ctx,
-        lhs_template,
-        rhs_template,
-        when_template,
-        lifted_vars,
-        omit_domain,
-    );
-    let single = || {
-        vec![LawTheoremPart {
-            name: theorem_base.to_string(),
-            prop: prop.clone(),
-            bounded_domain,
-            law: law.clone(),
-        }]
-    };
-    if !bounded_domain {
-        return single();
-    }
-    let domain_values = emitted_domain_values(law, lifted_vars);
-    let Some((given_idx, chunk_size, values)) = bounded_law_slice(&domain_values) else {
-        return single();
-    };
-    values
-        .chunks(chunk_size)
-        .enumerate()
-        .map(|(part_idx, chunk)| {
-            let part_law = law_with_sliced_domain(law, given_idx, chunk);
-            let (part_prop, part_bounded) = law_theorem_prop(
-                &part_law,
-                ctx,
-                lhs_template,
-                rhs_template,
-                when_template,
-                lifted_vars,
-                false,
-            );
-            LawTheoremPart {
-                // Manifest-vs-manifest collision hazard: a `<base>_part<N>`
-                // chunk name can in principle collide with a sibling law
-                // literally named `<base>_part<N>`. This is fail-closed today —
-                // the file-level collision guard demotes a
-                // duplicated theorem name, and the audit keys `bounded_laws` on
-                // each part's class marker (direct-lookup-first), so a real law
-                // named `<base>_partN` is never folded onto a phantom base. A
-                // proactive name-uniqueness guard at emission is deferred.
-                name: format!("{}_part{}", theorem_base, part_idx + 1),
-                prop: part_prop,
-                bounded_domain: part_bounded,
-                law: part_law,
-            }
-        })
-        .collect()
-}
-
-/// Build the law theorem's statement body. Returns `(prop, bounded_domain)`:
-/// `bounded_domain` is `true` iff sampled-domain disjunction premises
-/// (`a = 0 ∨ a = 1 ∨ …`) were prepended — the statement then only claims the
-/// law over the finite sample domain, NOT universally. This flag is the
-/// single source of truth for the `-- aver:law-class` marker the caller
-/// emits (see `LAW_CLASS_MARKER_PREFIX`): the checker's `universal` metric
-/// keys on it instead of re-deriving the class from names or statements.
-/// A `when`-premise alone (`… = true ->`) does NOT bound the statement —
-/// it is a conditional but still universally quantified claim (the
-/// refinement-lifted case, where every given's domain premise is dropped).
-///
-/// `omit_domain` is the universal statement mode for a conditional law the
-/// auto-prover closes through induction + the laws-as-lemmas pool: it renders
-/// `∀ givens, <when> = true -> claim` by skipping the sampled-domain
-/// disjunctions entirely, so the universal statement differs from the bounded
-/// manifest theorem only by those premises. A law the conditional recognizers
-/// decline passes `false` and keeps the bounded sampled-domain statement.
+/// Build the law theorem's statement body: `<when> = true -> lhs = rhs` for a
+/// conditional law, `lhs = rhs` otherwise. A law is always stated for every
+/// input; its sample domain never enters the statement.
 pub(in crate::codegen::lean) fn law_theorem_prop(
     law: &VerifyLaw,
     ctx: &CodegenContext,
@@ -2263,49 +1836,23 @@ pub(in crate::codegen::lean) fn law_theorem_prop(
     rhs_template: &str,
     when_template: Option<&str>,
     lifted_vars: &std::collections::HashMap<String, String>,
-    omit_domain: bool,
-) -> (String, bool) {
-    let mut premises = Vec::new();
-    let when_redundant_with_lifts = law
-        .when
-        .as_ref()
-        .map(|w| {
-            crate::codegen::common::when_is_redundant_with_refinement_lifts(w, lifted_vars, ctx)
-        })
-        .unwrap_or(false);
-    if law.when.is_some() && !omit_domain {
-        // Lifted vars are quantified over the refinement record
-        // (`a : Natural`), not the carrier `Int`, so the disjunctive
-        // domain premise (`a = 0 ∨ a = 1 ∨ …`) is type-mismatched
-        // (Lean sees `0 : Int` against `a : Natural`). Skip the
-        // domain premise for any lifted given.
-        premises.extend(law.givens.iter().filter_map(|given| {
-            if lifted_vars.contains_key(&given.name) {
-                None
-            } else {
-                Some(law_given_domain_prop(given, ctx))
-            }
-        }));
-    }
-    let bounded_domain = !premises.is_empty();
+) -> String {
+    let conclusion = format!("{lhs_template} = {rhs_template}");
     // `when` drop is only sound when the predicate is syntactically
     // equivalent (via commutator-relaxed compare) to the conjunction
     // of lifted givens' refinement invariants — otherwise stronger /
     // orthogonal user predicates would be silently lost from the
     // emitted theorem (e.g. `when a >= 10` over `a : Natural` whose
     // invariant is `a.val >= 0`).
-    if let Some(when_expr) = when_template
-        && !when_redundant_with_lifts
-    {
-        premises.push(format!("{when_expr} = true"));
+    let when_redundant_with_lifts = law.when.as_ref().is_some_and(|w| {
+        crate::codegen::common::when_is_redundant_with_refinement_lifts(w, lifted_vars, ctx)
+    });
+    match when_template {
+        Some(when_expr) if !when_redundant_with_lifts => {
+            format!("{when_expr} = true -> {conclusion}")
+        }
+        _ => conclusion,
     }
-    let conclusion = format!("{lhs_template} = {rhs_template}");
-    let prop = if premises.is_empty() {
-        conclusion
-    } else {
-        format!("{} -> {}", premises.join(" -> "), conclusion)
-    };
-    (prop, bounded_domain)
 }
 
 fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) -> String {
@@ -2319,48 +1866,6 @@ fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) ->
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-    }
-}
-
-fn law_given_domain_prop(given: &VerifyGiven, ctx: &CodegenContext) -> String {
-    let raw_name = aver_name_to_lean(&given.name);
-    // Subtype-carried oracle bindings (`rng : RandomIntInBounds`) need
-    // `.val` projection on the LHS of the equality so the comparison
-    // type-checks against the underlying plain function the user's
-    // stub delivers. Other givens compare the raw value directly.
-    let given_name = if oracle_subtype_for(&given.type_name).is_some() {
-        format!("{raw_name}.val")
-    } else {
-        raw_name
-    };
-    let values = law_given_domain_values(&given.domain);
-    match values.as_slice() {
-        [] => "False".to_string(),
-        [value] => format!(
-            "{given_name} = {}",
-            emit_int_anchored(&resolve_rewrite_output(value, ctx, None), ctx)
-        ),
-        _ => values
-            .iter()
-            .map(|value| {
-                format!(
-                    "{given_name} = {}",
-                    emit_int_anchored(&resolve_rewrite_output(value, ctx, None), ctx)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ∨ "),
-    }
-}
-
-pub(in crate::codegen::lean) fn law_given_domain_values(
-    domain: &VerifyGivenDomain,
-) -> Vec<Spanned<Expr>> {
-    match domain {
-        VerifyGivenDomain::IntRange { start, end } => (*start..=*end)
-            .map(|n| Spanned::bare(Expr::Literal(Literal::Int(n))))
-            .collect(),
-        VerifyGivenDomain::Explicit(values) => values.clone(),
     }
 }
 

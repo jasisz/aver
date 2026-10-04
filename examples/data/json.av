@@ -1326,13 +1326,13 @@ fn printResult(root: Json) -> Unit
 // `skipWs` closes universally on its own (a graduating string-position scanner).
 // The `parseValue` clique law is recognized by the clique cursor-monotonicity
 // rung, which would discharge its external cursor edges by CITING the pool laws
-// below. But those four sub-parser advance laws are themselves only BOUNDED:
+// below. But those four sub-parser advance laws are not proved for every input:
 // `parseString`/`parseNumber` are their own mutually-recursive cliques whose
 // cursor cone reaches further non-clique helpers with no advance law, and
 // `parseLiteral`/`dispatchNumberOrErr` are non-clique single functions no rung
-// proves universally. Since a bounded law cannot discharge a universal
-// hypothesis, the rung DECLINES (fail-closed) and `parseValueAdvances` keeps its
-// bounded-domain proof. The four laws stay here as the explicit external-law
+// proves universally. Since an unproved law cannot discharge a universal
+// hypothesis, the rung DECLINES (fail-closed) and `parseValueAdvances` is left
+// to the other arms. The four laws stay here as the explicit external-law
 // bill: the day any of them closes universally, the citation flips automatically
 // (the mechanism is exercised universally by bracket_scan.av's `scanSeq`).
 verify skipWs law skipWsAdvances

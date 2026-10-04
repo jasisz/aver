@@ -25,11 +25,8 @@ mod multicite;
 
 pub(in crate::codegen::lean) use keystone::{
     emit_pool_composition_generic_law, equation_grind_arm, keystone_floor_arms,
-    recognize_pool_composition_generic,
 };
-pub(in crate::codegen::lean) use multicite::{
-    emit_multicite_composition_law, recognize_multicite_composition,
-};
+pub(in crate::codegen::lean) use multicite::emit_multicite_composition_law;
 
 /// `first | (<simp>; done) | (<simp>; omega) | sorry` — the per-arm portfolio
 /// shared by the Peano bridge theorems (`<simp>` is e.g. `simp [f]` /
@@ -1812,13 +1809,12 @@ fn has_indirect_variants(variants: &[TypeVariant], type_name: &str) -> bool {
     })
 }
 
-fn premise_intro_names(law: &VerifyLaw, intro_names: &[String]) -> Vec<String> {
-    let mut names = Vec::new();
+fn premise_intro_names(law: &VerifyLaw) -> Vec<String> {
     if law.when.is_some() {
-        names.extend(intro_names.iter().map(|name| format!("h_{name}")));
-        names.push("h_when".to_string());
+        vec!["h_when".to_string()]
+    } else {
+        Vec::new()
     }
-    names
 }
 
 fn comparison_lean_names(
@@ -1852,7 +1848,7 @@ fn comparison_lean_shape(
 /// Whether [`emit_conditional_comparison_bridge_law`] will close this law as a
 /// TRUE-universal conditional. The caller (`emit_verify_law_block`) reads this
 /// to decide whether to drop the sampled-domain disjunctions from the theorem
-/// statement (`omit_domain`). Proof lowering owns the shape decision; this
+/// statement. Proof lowering owns the shape decision; this
 /// helper is only a typed strategy lookup, so statement and proof consume the
 /// same `ProofIR` fact.
 pub(in crate::codegen::lean) fn recognize_conditional_comparison_bridge(
@@ -1982,7 +1978,7 @@ pub(in crate::codegen::lean) fn emit_conditional_comparison_bridge_law(
 /// validated-wrapper shape (premise + subject-call LHS + `Result.Ok` RHS +
 /// `match`-dispatch subject body). `emit_verify_law_block` consults this to lift
 /// the law's statement off its sampled domain to the true `∀ givens, <when> =
-/// true -> claim` universal (`omit_domain`), matching the unbounded statement
+/// true -> claim` universal, matching the unbounded statement
 /// the proof body discharges.
 pub(in crate::codegen::lean) fn recognize_validated_wrapper(
     vb: &VerifyBlock,
@@ -2128,8 +2124,7 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
     let arm = format!(
         "  | (simp only [{unfold_set}]; simp_all [Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq] <;> (first | rfl | omega))"
     );
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!("  | {}", super::super::tactic_ir::speculative::floor(&id));
+    let floor = "  | sorry".to_string();
     Some(AutoProof {
         support_lines: Vec::new(),
         body: Tactic::raw(vec![intro, "  first".to_string(), arm, floor]),
@@ -2139,7 +2134,7 @@ pub(in crate::codegen::lean) fn emit_validated_wrapper_law(
 }
 
 /// Whether [`emit_conditional_inductive_generic_law`] will attempt this law as a
-/// universal — the `omit_domain` driver reads this. A conditional law that
+/// universal. A conditional law that
 /// recurses on a list given, with an equational conclusion, that the bespoke
 /// conditional recognizers (comparison/membership/sortedness) all decline. This
 /// is the DECOMPOSITION path: the figure's algebraic content lives as earlier
@@ -2164,31 +2159,24 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
     };
     // The binary-recursion shape: induct on one list, case-split EXACTLY ONE
     // partner list (the length-linked pair, like zip-reverse's `xs`/`ys` or the
-    // snoc-distribution's `as`/`bs`). A single-list conditional law (zero
-    // partners — e.g. json's `parse(render items)` roundtrips) is NOT reliably
-    // closed by this generic `simp_all` portfolio, so it stays on its sound
-    // bounded fallback rather than committing to a universal it would `sorry`.
+    // snoc-distribution's `as`/`bs`).
     let other_lists = law
         .givens
         .iter()
         .enumerate()
         .filter(|(i, g)| *i != target_idx && g.type_name.trim().starts_with("List<"))
         .count();
-    // The two-list (exactly one partner) shape is the proven binary recursion —
-    // always attempted universally (unchanged). The single-list shape (zero
-    // partners — sortedness, json roundtrips, the per-element-fold-with-Bool-fold
-    // premise) is the Gap-1 SPECULATIVE case: too diverse to classify statically
-    // (the generic portfolio closes some and `sorry`s others), so it is admitted
-    // only under the speculative probe / commit driver — try-universal, fall back
-    // to the bounded sampled statement. More than one partner declines outright.
+    // The two-list (exactly one partner) shape is the binary recursion; the
+    // single-list shape (zero partners — sortedness, json roundtrips, the
+    // per-element-fold-with-Bool-fold premise) is too diverse to classify
+    // statically. Both are speculative: the generic portfolio closes some and
+    // `sorry`s others. More than one partner declines outright.
     if other_lists > 1 {
         return false;
     }
     let single_list = other_lists == 0;
-    // Exclusive with the comparison-bridge arm (it runs first; keep the
-    // `omit_domain` gate single-valued so the statement driver and the emit
-    // agree). The membership family is now subsumed by this generic driver
-    // (probe-decided, no helper-pool gate), so it flows straight through.
+    // Exclusive with the comparison-bridge arm (it runs first). The membership
+    // family is subsumed by this generic driver, so it flows straight through.
     if recognize_conditional_comparison_bridge(vb, law, ctx) {
         return false;
     }
@@ -2202,22 +2190,11 @@ pub(in crate::codegen::lean) fn recognize_conditional_inductive_generic(
     // DECREMENTS a co-given synchronously with the list — `drop`/`take` over a
     // free `Nat` (`prop_39`'s `elem(x, drop(y, z))`) — is not closed by plain
     // induction on the target list (the cons IH lands at the wrong predecessor),
-    // so it keeps its sound bounded fallback rather than being probed.
+    // so it is not attempted by this driver.
     if single_list && law_recurses_on_cogiven(law, ctx, target_idx) {
         return false;
     }
-    // SPECULATIVE admission — the probe is the proof-success oracle, not a static
-    // helper-count heuristic (a no-helper law can close by bare `simp_all` + the
-    // IH; a helper-rich one can still fail). The structural checks above decide
-    // whether the driver may TRY; the probe decides whether it actually CLOSED.
-    // `default` = the law's pre-probe disposition (two-list conditionals attempted
-    // directly, single-list declined to bounded), so a no-probe `transpile` stays
-    // byte-compatible; a probe-then-commit run overrides it from the empirical
-    // result (promoting a single-list closer, demoting a two-list non-closer like
-    // `prop_42`). The earlier helper laws still join the proof as MATERIAL (the
-    // emit's pool), they are simply no longer an admission gate.
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    super::super::tactic_ir::speculative::admits(&id, other_lists == 1)
+    true
 }
 
 /// Close a conditional inductive law GENERICALLY: list induction on the
@@ -2337,13 +2314,9 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     } else {
         format!("intro {} h_when", after.join(" "))
     };
-    // The `sorry` floor. Under the speculative PROBE pass it carries an
-    // `AVERSPEC_SORRY:<fn.law>` trace so a non-closing portfolio (single- OR
-    // two-list) is observable in the build log (Lean's `first` never runs the
-    // floor's trace when an earlier branch closes). Both induction arms share the
-    // floor: if EITHER arm falls through, the law did not close universally.
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!("    | {}", super::super::tactic_ir::speculative::floor(&id));
+    // The `sorry` floor, shared by both induction arms: if EITHER arm falls
+    // through, the law did not close universally.
+    let floor = "    | sorry".to_string();
     // The recursive verified fn unfolded ALONE (not the whole def set): a
     // conclusion that wraps the verified fn's call in a non-recursive helper
     // (`leHead z (insort x l)`, `sorted (insort x l)`) must split the verified
@@ -2363,7 +2336,7 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     // lemmas backward. The common conditional law applies the verified fn DIRECTLY
     // (`elem (… ++ …)`, `zip … = …` — outer fn = subject) and closes on the cheap
     // rungs, so it must NOT pay the search. Fail-safe either way: a wrongly-gated
-    // law just keeps its sound bounded fallback (the probe catches it).
+    // law just stays open (the check catches it).
     let is_wrapper = matches!(
         &law.lhs.node,
         crate::ast::Expr::FnCall(callee, _)
@@ -2378,8 +2351,8 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
     // law). Emitted only for the wrapper shape. The uid carries the verify block's
     // source LINE because the bare `{fn}_{law}` join is ambiguous — a fn named
     // `X_Y` with law `Z` and a fn `X` with law `Y_Z` both yield `X_Y_Z`, and a
-    // duplicate `private theorem` is a HARD Lean error that fails the probe build
-    // and silently degrades the WHOLE module to its bounded fallback. The line is
+    // duplicate `private theorem` is a HARD Lean error that fails the WHOLE
+    // module's build. The line is
     // unique per law block, so it disambiguates any such pair (these adapters are
     // content-identical across laws; only their names must stay distinct).
     let law_uid = format!(
@@ -2465,8 +2438,8 @@ pub(in crate::codegen::lean) fn emit_conditional_inductive_generic_law(
         // decides the subject's guard, the Bool bridge turns the
         // `when` premise and a Bool-valued goal into propositions, and `omega`
         // closes each branch. Tried after the inductive closers so a law that
-        // closed before keeps its proof text; under the speculative probe a
-        // non-closing split only falls to the floor.
+        // closed before keeps its proof text; a non-closing split only falls
+        // to the floor.
         arithmetic_rung.clone(),
     ]);
     // Comparison-premise rung in the BASE case too (`prop_86`'s `elem x (ins y [])
@@ -2696,8 +2669,7 @@ fn cons_prefix_pattern(depth: usize) -> String {
 /// co-given) in lockstep with peeling the list `z`; plain induction on the target
 /// list `z` does not track `y`'s decrement, so the cons IH lands at the wrong
 /// predecessor and the generic portfolio cannot close it. Such a single-list
-/// conditional must keep its sound bounded fallback rather than be admitted
-/// speculatively. Scans `lhs`, `rhs`, and the `when` premise; conservative
+/// conditional is not attempted by the generic driver. Scans `lhs`, `rhs`, and the `when` premise; conservative
 /// (`param_decremented_in_recursion` only fires on the clean succ-binder shape).
 fn law_recurses_on_cogiven(law: &VerifyLaw, ctx: &CodegenContext, target_idx: usize) -> bool {
     use crate::ast::Expr;
@@ -4930,7 +4902,7 @@ fn emit_simple_induction(
     simp_defs.extend(discovered_simp.iter().cloned());
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
-    let premise_names = premise_intro_names(law, intro_names);
+    let premise_names = premise_intro_names(law);
 
     // Canonical-Peano operation bridges: lift any `+`/`-`/`*`/`≤`/`<` the law
     // uses to the builtin so `omega` (or core `Nat.mul_*` lemmas) decides the

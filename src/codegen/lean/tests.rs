@@ -1070,7 +1070,7 @@ verify pickGreater law ordered
 
     assert!(lean.contains("-- when (a > b)"));
     assert!(lean.contains(
-            "theorem pickGreater_law_ordered : ∀ (a : Int) (b : Int), a = 1 ∨ a = 2 -> b = 1 ∨ b = 2 -> (a > b) = true -> pickGreater a b = a := by"
+            "theorem pickGreater_law_ordered : ∀ (a : Int) (b : Int), (a > b) = true -> pickGreater a b = a := by"
         ));
     // Sample guards Int-ascribe their substituted numerals: a bare
     // `(1 - 2 > 0)` premise would elaborate over Nat, where truncated
@@ -1210,9 +1210,9 @@ verify clampNonNegative law clampNonNegativeSpec
 
     assert!(lean.contains("-- when (x >= 0)"));
     assert!(lean.contains(
-            "theorem clampNonNegative_eq_clampNonNegativeSpec : ∀ (x : Int), x = (-2) ∨ x = (-1) ∨ x = 0 ∨ x = 1 ∨ x = 2 -> (x >= 0) = true -> clampNonNegative x = clampNonNegativeSpec x := by"
+            "theorem clampNonNegative_eq_clampNonNegativeSpec : ∀ (x : Int), (x >= 0) = true -> clampNonNegative x = clampNonNegativeSpec x := by"
         ));
-    assert!(lean.contains("intro x h_x h_when"));
+    assert!(lean.contains("intro x h_when"));
     assert!(lean.contains("simpa [clampNonNegative, clampNonNegativeSpec]"));
     assert!(!lean.contains(
             "-- universal theorem clampNonNegative_eq_clampNonNegativeSpec omitted: sampled law shape is not auto-proved yet"
@@ -1224,9 +1224,8 @@ verify clampNonNegative law clampNonNegativeSpec
 fn transpile_proves_conditional_comparison_bridge_law_as_universal() {
     // `prop_70 leSucc`: `when le(m, n) -> le(m, S n) => true`. The conditional
     // comparison-bridge emit closes it as the TRUE-universal
-    // `∀ m n, le m n = true -> le m (n + 1) = true` — the sampled-domain
-    // disjunctions are dropped (`omit_domain`) so the law is classed `universal`,
-    // and the premise + goal are bridged to `≤` and discharged by `omega`.
+    // `∀ m n, le m n = true -> le m (n + 1) = true`, classed `universal` (a
+    // claim), and the premise + goal are bridged to `≤` and discharged by `omega`.
     let mut ctx = ctx_from_source(
         r#"
 module CondCmpBridge
@@ -1254,7 +1253,7 @@ verify le law leSucc
     let out = transpile(&mut ctx);
     let lean = generated_lean_file(&out);
 
-    // Classed `universal`, NOT `bounded-domain`.
+    // Classed `universal` (a claim), NOT `attempt`.
     assert!(lean.contains("-- aver:law-class le_law_leSucc universal le.leSucc"));
     // The TRUE-universal conditional statement: no `m = 0 ∨ …` sampled-domain
     // premise, the `when` survives as the `= true ->` implication.
@@ -1344,9 +1343,8 @@ verify elem law elemConcat
     let out = transpile(&mut ctx);
     let lean = generated_lean_file(&out);
 
-    // Classed `universal`, NOT `bounded-domain` (the sampled-domain disjunctions
-    // are dropped via `omit_domain`).
-    assert!(lean.contains("-- aver:law-class elem_law_elemConcat universal elem.elemConcat"));
+    // Stated for every input as an attempt of the generic conditional driver.
+    assert!(lean.contains("-- aver:law-class elem_law_elemConcat attempt elem.elemConcat"));
     // The TRUE-universal conditional statement (no `y = [..] ∨ …` domain premise).
     assert!(lean.contains(
         "theorem elem_law_elemConcat : ∀ (x : Nat) (y : List Nat) (z : List Nat), elem x y = true -> elem x (y ++ z) = true := by"
@@ -1444,7 +1442,7 @@ verify zip law zipRev
     // zipRev is classed `universal` and proved by the GENERIC driver: list
     // induction threading the premise, with the snoc-distribution HELPER LAW
     // cited from the pool inside the proof's `simp_all` set.
-    assert!(lean.contains("-- aver:law-class zip_law_zipRev universal zip.zipRev"));
+    assert!(lean.contains("-- aver:law-class zip_law_zipRev attempt zip.zipRev"));
     assert!(lean.contains(
         "theorem zip_law_zipRev : ∀ (xs : List Int) (ys : List Int), natEq (len xs) (len ys) = true -> zip (rev xs) (rev ys) = revPair (zip xs ys) := by"
     ));
@@ -4187,19 +4185,19 @@ fn json_example_uses_total_defs_and_domain_guarded_laws_in_proof_mode() {
     assert!(lean.contains("-- when jsonRoundtripSafe j"));
     assert!(!lean.contains("-- hint: verify law '"));
     assert!(!lean.contains("private theorem toString'_law_parseRoundtrip_aux"));
-    assert!(
-        lean.contains("theorem toString'_law_parseRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨")
-    );
+    assert!(lean.contains(
+        "theorem toString'_law_parseRoundtrip : ∀ (j : Json), jsonRoundtripSafe j = true ->"
+    ));
     assert!(
         lean.contains("jsonRoundtripSafe j = true -> fromString (toString' j) = Except.ok j := by")
     );
-    assert!(lean.contains("theorem finishFloat_law_fromCanonicalFloat : ∀ (f : Float), f = 3.5 ∨"));
+    assert!(lean.contains(
+        "theorem finishFloat_law_fromCanonicalFloat : ∀ (f : Float), floatRoundtripSafe f = true ->"
+    ));
     assert!(lean.contains("theorem finishInt_law_fromCanonicalInt_checked_domain :"));
-    assert!(
-        lean.contains(
-            "theorem toString'_law_parseValueRoundtrip : ∀ (j : Json), j = Json.jsonNull ∨"
-        )
-    );
+    assert!(lean.contains(
+        "theorem toString'_law_parseValueRoundtrip : ∀ (j : Json), jsonRoundtripSafe j = true ->"
+    ));
     assert!(lean.contains("theorem toString'_law_parseRoundtrip_sample_1 :"));
     assert!(
         lean.contains(
@@ -4608,11 +4606,9 @@ fn grok_s_language_example_uses_total_ranked_sizeof_mutual_recursion() {
     assert!(!lean.contains("def toString'__fuel"));
     assert!(lean.contains("-- when validSymbolNames e"));
     assert!(!lean.contains("private theorem toString'_law_parseRoundtrip_aux"));
-    assert!(
-        lean.contains(
-            "theorem toString'_law_parseRoundtrip : ∀ (e : Sexpr), e = Sexpr.atomNum 42 ∨"
-        )
-    );
+    assert!(lean.contains(
+        "theorem toString'_law_parseRoundtrip : ∀ (e : Sexpr), validSymbolNames e = true ->"
+    ));
     assert!(lean.contains("validSymbolNames e = true -> parse (toString' e) = Except.ok e := by"));
     assert!(lean.contains("theorem toString'_law_parseSexprRoundtrip :"));
     assert!(lean.contains("theorem toString'_law_parseRoundtrip_sample_1 :"));
@@ -4689,10 +4685,10 @@ fn notepad_store_example_stays_inside_proof_subset() {
     assert!(lean.contains("-- when noteRoundtripSafe note"));
     assert!(lean.contains("-- when notesRoundtripSafe notes"));
     assert!(lean.contains(
-            "theorem serializeLine_law_lineRoundtrip : ∀ (note : Note), note = { id' := 1, title := \"Hello\", body := \"World\" : Note } ∨"
+            "theorem serializeLine_law_lineRoundtrip : ∀ (note : Note), noteRoundtripSafe note = true ->"
         ));
     assert!(lean.contains(
-        "theorem serializeLines_law_notesRoundtrip : ∀ (notes : List Note), notes = ([] : List Note) ∨"
+        "theorem serializeLines_law_notesRoundtrip : ∀ (notes : List Note), notesRoundtripSafe notes = true ->"
     ));
     assert!(lean.contains("notesRoundtripSafe notes = true ->"));
     assert!(lean.contains("parseNotes (s!\"{String.intercalate \"\\n\" (serializeLines notes)}\\n\") = Except.ok notes"));
@@ -5179,9 +5175,9 @@ verify nonNeg law nonNegOfPositive
     );
     assert!(
         lean.contains(
-            "-- cert-model law nonNeg.nonNegOfPositive: bounded-domain statement is not exported"
+            "-- cert-model law nonNeg.nonNegOfPositive: speculative universal proof is not exported"
         ),
-        "the law must stay bounded-domain and be dropped from the certificate surface:\n{lean}"
+        "the law must stay an attempt and be dropped from the certificate surface:\n{lean}"
     );
 }
 

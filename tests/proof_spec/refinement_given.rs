@@ -1,13 +1,12 @@
 use super::*;
 
 /// A `given` over a refinement record (`tests/fixtures/refinement_given_domain.av`).
-/// `Natural` lifts to a Lean `Subtype`, so each sample is `⟨0, proof⟩`. Three
+/// `Natural` lifts to a Lean `Subtype`, so each sample is `⟨0, proof⟩`. Two
 /// things used to break the build for every law in the file: the lakefile
 /// declared the library under the module's name, and `Min` is a core Lean
-/// name; a sample substituted into the `when` had no expected type
-/// (`(⟨0, …⟩).val`); and the sampled-domain proof ran `cases` on `d = ⟨0, …⟩`,
-/// a dependent elimination failure outside any `sorry` floor. Now the two
-/// provable laws are universal and the nonlinear one keeps its sampled proof.
+/// name; and a sample substituted into the `when` had no expected type
+/// (`(⟨0, …⟩).val`). Now the two
+/// provable laws are universal and the nonlinear one is declined.
 #[test]
 fn proof_given_over_refinement_record_builds() {
     if !lean_required::lake_available() {
@@ -15,32 +14,29 @@ fn proof_given_over_refinement_record_builds() {
         return;
     }
     let output_dir = temp_output_dir("aver-proof-refinement-given");
-    let (summary, run) = run_lean_check_json(
+    let (summary, run) = run_lean_check_json_with_args(
         "tests/fixtures/refinement_given_domain.av",
         &output_dir,
         0,
         &[],
+        &["--declined-budget", "1"],
     );
     assert_eq!(
         (
             summary["build_errors"].as_u64(),
             summary["sorries"].as_u64(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined_claims"][0]["claim"].as_str(),
         ),
-        (Some(0), Some(0), Some(2), Some(1)),
+        (Some(0), Some(0), Some(2), Some("keep.squareBelow")),
         "every law over the refinement record must build and close.\n{}",
         format_output(&run)
     );
     let lean =
         std::fs::read_to_string(output_dir.join("Min.lean")).expect("Min.lean must be emitted");
     assert!(
-        lean.contains("-- aver:law-class keep_law_squareBelow bounded-domain"),
-        "the nonlinear law must keep its sampled-domain proof:\n{lean}"
-    );
-    assert!(
-        lean.contains("first | subst h_d_case | cases h_d_case"),
-        "the sampled proof must substitute the refinement sample:\n{lean}"
+        lean.contains("-- aver:law-class keep_law_squareBelow attempt"),
+        "the nonlinear law must be stated universally as an attempt:\n{lean}"
     );
     let _ = std::fs::remove_dir_all(&output_dir);
 }

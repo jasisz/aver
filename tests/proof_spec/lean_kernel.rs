@@ -1515,26 +1515,21 @@ fn proof_lean_proves_list_prod_kernel_clean_universal() {
 }
 
 #[test]
-fn proof_lean_speculative_proves_single_list_conditional_universal() {
-    // Gap-1 speculative-universal mechanism: a SINGLE-LIST conditional law
-    // (`when allZero(xs) -> sumList(xs) = Z`) cannot be statically classified as
-    // universal-closeable (the generic conditional driver closes some single-list
-    // shapes and `sorry`s others), so the probe states it universally, learns
-    // from ONE instrumented build that it CLOSES — the `cases hd` rung splits the
-    // per-element premise (`allZero (hd :: tl)`) so the conditional IH applies —
-    // and commits it as a genuine universal. Result is `universal:true`, 0
-    // sorries, `#print axioms` clean of `sorryAx`. The helper `sumCons` is the
-    // homomorphism the conditional law decomposes through. Regression guard for
-    // the whole single-list conditional try-universal-fall-back-to-sampled path.
+fn proof_lean_proves_single_list_conditional_universal() {
+    // A SINGLE-LIST conditional law (`when allZero(xs) -> sumList(xs) = Z`) is
+    // an attempt: the generic conditional driver closes some single-list shapes
+    // and `sorry`s others. This one CLOSES — the `cases hd` rung splits the
+    // per-element premise (`allZero (hd :: tl)`) so the conditional IH applies
+    // — so it is credited as a genuine universal: `universal:true`, 0 sorries,
+    // `#print axioms` clean of `sorryAx`. The helper `sumCons` is the
+    // homomorphism the conditional law decomposes through.
     if !lean_required::lake_available() {
-        eprintln!("skipping lean speculative-universal test: `lake` not available");
+        eprintln!("skipping lean single-list conditional test: `lake` not available");
         return;
     }
     let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let out = temp_output_dir("aver-speculative-out");
-    let probe = temp_output_dir("aver-speculative-probe");
+    let out = temp_output_dir("aver-single-list-out");
     let run = Command::new(aver_bin)
-        .env("AVER_SPECULATIVE_KEEP", &probe)
         .arg("proof")
         .arg("--examples")
         .arg("proof-corpus/decomposed/handwritten/all_zero_sum.av")
@@ -1547,19 +1542,10 @@ fn proof_lean_speculative_proves_single_list_conditional_universal() {
         .output()
         .expect("expected `aver proof --check --check-json` to run");
     let lean = std::fs::read_to_string(out.join("AllZeroSum.lean")).expect("read AllZeroSum.lean");
-    // The conditional law must be COMMITTED as a universal-classed theorem (no
-    // sampled-domain disjunction premises) — the probe promoted it after the
-    // build proved it closes.
+    // Stated for every input (no sampled-domain premises), as an attempt.
     assert!(
-        lean.contains("-- aver:law-class sumList_law_sumAllZero universal"),
-        "sumAllZero must be committed as a universal-classed conditional:\n{lean}"
-    );
-    // Removing an unreachable diagnostic used to rebuild a successfully
-    // checked module. Preserve its bytes so Lake can reuse the probe artifact.
-    assert_eq!(
-        lean,
-        std::fs::read_to_string(probe.join("AllZeroSum.lean")).unwrap(),
-        "a fully closed probe must keep its source bytes when committed"
+        lean.contains("-- aver:law-class sumList_law_sumAllZero attempt"),
+        "sumAllZero must be stated universally as an attempt:\n{lean}"
     );
     let json_line = run
         .stdout
@@ -1581,7 +1567,6 @@ fn proof_lean_speculative_proves_single_list_conditional_universal() {
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&out);
-    let _ = std::fs::remove_dir_all(&probe);
 }
 
 #[test]
@@ -1813,14 +1798,15 @@ verify ledgerWithinCeiling law nonstrictChainWitness
         .arg("-o")
         .arg(&out)
         .arg("--check")
+        .args(["--declined-budget", "1"])
         .arg("--check-json")
         .output()
         .expect("expected `aver proof --check --check-json` to run");
     let lean =
         std::fs::read_to_string(out.join("LedgerBounds.lean")).expect("read LedgerBounds.lean");
-    // The rung flipped the connected chain to universal and left the
-    // disconnected near-miss bounded — pinned on the law-class markers so both
-    // the fire (foreign names) and the clean revert are asserted structurally.
+    // The rung claims the connected chain and leaves the disconnected near-miss
+    // an attempt — pinned on the law-class markers so both the fire (foreign
+    // names) and the decline are asserted structurally.
     assert!(
         lean.contains(
             "-- aver:law-class ledgerWithinCeiling_law_chainWitness universal ledgerWithinCeiling.chainWitness"
@@ -1830,9 +1816,9 @@ verify ledgerWithinCeiling law nonstrictChainWitness
     );
     assert!(
         lean.contains(
-            "-- aver:law-class ledgerWithinCeiling_law_gapWitness bounded-domain ledgerWithinCeiling.gapWitness"
+            "-- aver:law-class ledgerWithinCeiling_law_gapWitness attempt ledgerWithinCeiling.gapWitness"
         ),
-        "the disconnected near-miss law must REVERT to bounded-domain (the rung \
+        "the disconnected near-miss law must stay an attempt (the rung \
          declines a chain it cannot connect):\n{lean}"
     );
     assert!(
@@ -1863,12 +1849,18 @@ verify ledgerWithinCeiling law nonstrictChainWitness
             summary["sorries"].as_u64(),
             summary["universal"].as_bool(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined_claims"][0]["claim"].as_str(),
         ),
-        (Some(true), Some(0), Some(true), Some(3), Some(1)),
+        (
+            Some(true),
+            Some(0),
+            Some(true),
+            Some(3),
+            Some("ledgerWithinCeiling.gapWitness")
+        ),
         "the foreign transitivity-chain witness must kernel-prove the three \
-         connected shapes as GENUINE universals (`ofReduceBool`-free) and keep \
-         the disconnected near-miss bounded — three universal, one bounded, zero \
+         connected shapes as GENUINE universals (`ofReduceBool`-free) and decline \
+         the disconnected near-miss — three universal, one declined, zero \
          sorries.\n{}",
         format_output(&run)
     );

@@ -111,7 +111,7 @@ fn waterfall_discovers_replays_and_rejects_false_reasons() {
     );
     assert!(output.status.success(), "{}", format_output(&output));
     assert_eq!(summary["universal_laws"], 1);
-    assert_eq!(summary["bounded_laws"], 0);
+    assert!(summary.get("declined").is_none());
     let generated = std::fs::read_to_string(guarded.join("WaterfallGuarded.lean")).unwrap();
     assert!(generated.contains("lessF zeroF x = true -> nonNeg x = true"));
     assert!(!generated.contains("import waterfall"));

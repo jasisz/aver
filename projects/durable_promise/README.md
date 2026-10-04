@@ -42,7 +42,7 @@ value by construction rather than by a nullable field.
 ## What is PROVEN vs sample-verified
 
 **All 8 law theorems are proven universal on the Lean kernel** (`aver proof --backend lean
---check` reports `"universal":true, "sorries":0, "universal_laws":8, "bounded_laws":0`).
+--check` reports `"universal":true, "sorries":0, "universal_laws":8`).
 Nothing here is sample-only. Every theorem's `#print axioms` set is exactly the three
 standard Lean foundational axioms — no `sorryAx`:
 

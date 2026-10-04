@@ -31,23 +31,15 @@ different result. A zero exit status from the benchmark
 means the requested checks finished. It says nothing about whether every law is
 universal. K5 Kernel keeps four bounded laws on purpose.
 
-## Reusing successful speculative proofs
+## One build for guarded laws
 
-The Lean exporter first tries eligible laws universally. It then re-emits the
-project with the failed candidates put back as bounded statements. Until this
-change, the successful candidates changed text too: their unreachable diagnostic
-fallback `(trace "AVERSPEC_SORRY:…"; sorry)` was rewritten to `sorry`. Lake saw
-new source and rebuilt those modules and everything depending on them.
-
-Successful candidates now keep the same fallback text. Lake reuses a module only
-when its source and dependencies are unchanged, so a demoted law still rebuilds
-its module and dependents. The committed build, the final build and the axiom
-audit all still run. The diagnostic fires only if proof search reaches `sorry`.
-It proves nothing and gives no universal credit. The audit still rejects
-`sorryAx` and any axiom outside the whitelist.
-
-The saving is repeated elaboration for candidates that close. The initial search
-is no faster, and modules downstream of a demoted dependency still rebuild.
+Up to 0.30 the Lean exporter ran an extra `lake build` before the real one: it
+stated every speculative guarded law universally, learned which ones closed, and
+re-emitted the rest over their sample domains only. On a large module that probe
+cost as much as the check itself. The exporter now states every law for every
+input and builds once. A guarded law whose speculative proof does not close is
+declined by `--check` instead of being restated, so the probe has nothing left to
+decide.
 
 ## Compose explanations before splitting cases
 

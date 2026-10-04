@@ -268,9 +268,9 @@ fn proof_floor_window_lean_closes_kernel_genuine() {
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(4), Some(0)),
+        (Some(4), None),
         "explicit law counts: exactly the four universal-classed law \
          theorems certified, none degraded to bounded-domain.\n{}",
         format_output(&run)
@@ -320,9 +320,9 @@ fn proof_floor_arith_witness_lean_closes_kernel_genuine() {
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(7), Some(0)),
+        (Some(7), None),
         "explicit law counts: exactly the seven universal-classed witness \
          theorems certified (every cancel / absorb orientation corner plus \
          the two comparator-canonicalization spellings), none degraded to \
@@ -459,9 +459,9 @@ fn proof_divisor_shape_positivity_lean_closes_kernel_genuine() {
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(5), Some(0)),
+        (Some(5), None),
         "exactly the five universal-classed law theorems certified, none bounded.\n{}",
         format_output(&run)
     );
@@ -558,9 +558,9 @@ fn proof_divisor_shape_positivity_witness_lean_closes_kernel_genuine() {
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(3), Some(0)),
+        (Some(3), None),
         "exactly three universal-classed witness law theorems, none bounded.\n{}",
         format_output(&run)
     );
@@ -614,10 +614,10 @@ verify floorDiv law absorbBare
         .expect("aver proof should run");
     assert!(run.status.success(), "{}", format_output(&run));
     let lean = std::fs::read_to_string(out_lean.join("UnderivableDivisor.lean")).expect("lean out");
-    // Declines to the sound bounded fallback, NOT a false universal.
+    // The rung declines: the law is only an attempt, NOT a claim.
     assert!(
-        lean.contains("-- aver:law-class floorDiv_law_absorbBare bounded-domain"),
-        "an unguarded, shape-underivable divisor must decline to bounded-domain:\n{lean}"
+        lean.contains("-- aver:law-class floorDiv_law_absorbBare attempt"),
+        "an unguarded, shape-underivable divisor must leave the law an attempt:\n{lean}"
     );
     assert!(
         !lean.contains("-- aver:law-class floorDiv_law_absorbBare universal"),
@@ -740,7 +740,7 @@ verify viewWindow law importedWindow
     );
     assert!(output.status.success(), "{}", format_output(&output));
     assert_eq!(summary["universal_laws"], 5, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
     let _ = std::fs::remove_dir_all(root);
 }

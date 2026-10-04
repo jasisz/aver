@@ -689,6 +689,8 @@ fn run_forward_ref_variant(variant: &str) -> (serde_json::Value, std::process::O
         .arg(&output_dir)
         .arg("--check")
         .arg("--check-json")
+        // `atLeastOne.wrap` is not proved for every input and is declined.
+        .args(["--declined-budget", "1"])
         .output()
         .expect("expected citation-closure topology fixture to run");
     let json_line = run

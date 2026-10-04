@@ -21,9 +21,9 @@ fn proof_quotient_remainder_laws_close_universally() {
             summary["build_errors"].as_u64(),
             summary["sorries"].as_u64(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(0), Some(0), Some(2), Some(0)),
+        (Some(0), Some(0), Some(2), None),
         "both division laws must close universally.\n{}",
         format_output(&run)
     );

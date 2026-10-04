@@ -341,12 +341,7 @@ fn scan_root(root: &str, contents: &str) -> Vec<Declaration> {
             }
         }
     }
-    let identity_of = |bare: &str| -> Option<String> {
-        labels
-            .get(bare)
-            .cloned()
-            .or_else(|| super::law_class_base_name(bare).and_then(|base| labels.get(base).cloned()))
-    };
+    let identity_of = |bare: &str| -> Option<String> { labels.get(bare).cloned() };
 
     let mut declarations: Vec<Declaration> = Vec::new();
     let mut namespaces: Vec<String> = Vec::new();

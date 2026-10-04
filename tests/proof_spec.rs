@@ -163,6 +163,18 @@ fn assert_proof_builds_with_sorry_budget(
     prefix: &str,
     expected_sorries: usize,
 ) {
+    assert_proof_builds_with_budgets(example_path, prefix, expected_sorries, 0);
+}
+
+/// `assert_proof_builds_with_sorry_budget`, also expecting exactly
+/// `expected_declined` declined claims (guarded laws whose attempted universal
+/// proof did not close, and claims the exporter refused to state).
+fn assert_proof_builds_with_budgets(
+    example_path: &str,
+    prefix: &str,
+    expected_sorries: usize,
+    expected_declined: usize,
+) {
     if !lean_required::lake_available() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
@@ -200,6 +212,8 @@ fn assert_proof_builds_with_sorry_budget(
         // warnings) yet a count-only check would pass.
         .arg("--sorry-budget")
         .arg(expected_sorries.to_string())
+        .arg("--declined-budget")
+        .arg(expected_declined.to_string())
         .output()
         .expect("expected `aver proof --check --check-json` to run");
 
@@ -235,6 +249,14 @@ fn assert_proof_builds_with_sorry_budget(
         example_path,
         expected_sorries,
         actual,
+        format_output(&run)
+    );
+
+    assert_eq!(
+        summary["declined"].as_u64().unwrap_or(0) as usize,
+        expected_declined,
+        "{}: declined count drift.\n{}",
+        example_path,
         format_output(&run)
     );
 

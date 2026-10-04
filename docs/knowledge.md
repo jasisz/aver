@@ -89,7 +89,7 @@ over, even though an Aver program cannot build those map representations.
 
 The model now sits next to its consumer in `examples/knowledge/`. Run the
 whole program, generated loop included, from that project root. Its proof
-checks every law universally, with no bounded or open obligations:
+checks every law universally, with no declined or open obligations:
 
 ```sh
 cd examples/knowledge

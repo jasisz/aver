@@ -20,7 +20,6 @@ mod monotone_reflect;
 mod nested_floor;
 mod reasons;
 mod recursive_mono;
-mod sampled;
 mod shared;
 pub(in crate::codegen::lean) use reasons::dependencies as waterfall_dependencies;
 pub(in crate::codegen::lean) use reasons::{ReasonClaim, emit_reason_law};
@@ -36,7 +35,6 @@ use super::recursive_pure_fn_names;
 use crate::ast::{Expr, VerifyBlock, VerifyGivenDomain, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
-use sampled::emit_guarded_domain_law;
 
 /// Cross-file law pool — EMIT-side gate (re-exported for `transpile`):
 /// the `(module_prefix, theorem_base)` dep-law theorems some consumer law
@@ -46,7 +44,7 @@ pub(crate) use induction::admitted_dep_law_theorems;
 pub(crate) use induction::dep_theorem_order_keys;
 
 /// `emit_verify_law_block` reads this to decide whether a `when`-law's theorem
-/// statement should drop its sampled-domain disjunctions (`omit_domain`) and be
+/// statement should drop its sampled-domain disjunctions and be
 /// emitted in TRUE-universal form — exactly when the conditional
 /// comparison-bridge emit will close it. Re-exported so the statement builder
 /// and the proof emitter stay in lockstep.
@@ -54,35 +52,28 @@ pub(in crate::codegen::lean) use induction::recognize_conditional_comparison_bri
 
 /// Generic conditional-inductive close (the decomposition path: list induction
 /// threading the premise, then `simp_all` over the fn defs and the laws-as-
-/// lemmas pool). Also feeds the `omit_domain` statement driver, kept in
+/// lemmas pool). Also feeds the claim classification, kept in
 /// lockstep with the emit.
 pub(in crate::codegen::lean) use induction::recognize_conditional_inductive_generic;
 
-pub(in crate::codegen::lean) use induction::recognize_pool_composition_generic;
 /// Fuel induction over a well-founded Int-countdown fn
 /// (`RecursionContract::WellFoundedToNat`): the law's single countdown fn is
 /// unfolded once under a `Nat` fuel bounding the countdown given, with ground
 /// IH instances computed from the fn's own self-calls. A recognized `when`-law
-/// is stated universally (`omit_domain`), so the statement driver keys on the
+/// is stated universally, so the statement driver keys on the
 /// same recognizer as the emit.
 pub(in crate::codegen::lean) use wf_fuel::recognize_wf_fuel_induction;
 
 /// Validated-wrapper shape (the Theorem-2 wrapper-correctness law: a thin
 /// error-checking wrapper returning `Result.Ok(core(…))` on valid input). Feeds
-/// the `omit_domain` statement driver, kept in lockstep with
+/// the claim classification, kept in lockstep with
 /// `emit_validated_wrapper_law` so the unbounded `∀` statement and the
 /// subject-only-unfold proof body stay aligned.
 pub(in crate::codegen::lean) use induction::recognize_validated_wrapper;
 
-/// Multi-citation composition — the generic "premises from one earlier
-/// universal's conclusion, goal from another earlier universal's conclusion"
-/// orchestration. Feeds the `omit_domain` statement driver, kept in lockstep
-/// with the emit (both probe-gated).
-pub(in crate::codegen::lean) use induction::recognize_multicite_composition;
-
 /// Interval-monotonicity rung — the affine-in-interval-var magnitude bound
 /// over the exact-rational order (the K5 reciprocal table bucket family).
-/// Feeds the `omit_domain` statement driver so the universal statement and
+/// Feeds the claim classification so the universal statement and
 /// the helper-kit-plus-assembly proof stay in lockstep.
 pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
 
@@ -90,7 +81,7 @@ pub(in crate::codegen::lean) use interval_mono::recognize_interval_monotonicity;
 /// law claiming `p >= pos` for a member of a mutually-recursive string-position
 /// parser SCC. Proven universally by one rank-slotted `induction fuel`
 /// conjunction over the whole (self-contained) clique, then projected through
-/// the fuel wrapper. Feeds the `omit_domain` statement driver so the universal
+/// the fuel wrapper. Feeds the claim classification so the universal
 /// statement and the conjunction-plus-projection proof stay in lockstep.
 pub(in crate::codegen::lean) use clique_mono::recognize_clique_position_monotonicity;
 
@@ -99,7 +90,7 @@ pub(in crate::codegen::lean) use clique_mono::recognize_clique_position_monotoni
 /// MONOTONICITY composition (`isNonNeg (minus (F HI) (F LO))` under `LO <= HI`,
 /// closed by citing `F`'s homomorphism + positivity + `>= 1` pool laws and
 /// chaining through the generic Fraction order kit — `F` is never unfolded).
-/// Each feeds the `omit_domain` statement driver so the universal statement and
+/// Each feeds the claim classification so the universal statement and
 /// the laws-as-lemmas proof stay in lockstep.
 pub(in crate::codegen::lean) use frac_monotone_compose::{
     frac_monotone_compose_cited_deps, recognize_frac_geone, recognize_frac_monotone_compose,
@@ -120,7 +111,7 @@ pub(in crate::codegen::lean) use monotone_reflect::{
 /// General recursive positivity / monotonicity rung — the name-blind,
 /// structurally-keyed core (`BASE <= f(ARG)` and `f(LO) <= f(HI)` for ANY pure
 /// recursive `Int -> Int` `f` with a `p <= 0` single-step recursion) that the
-/// pow2Signed Fraction-order wrapper also feeds. Drives the `omit_domain`
+/// pow2Signed Fraction-order wrapper also feeds. Drives the universal
 /// statement so the universal statement and the shared kit proof stay in
 /// lockstep.
 pub(in crate::codegen::lean) use recursive_mono::{
@@ -141,21 +132,21 @@ pub(in crate::codegen::lean) fn recognize_universal_floor_law(
 
 /// Content-blind homomorphism rung — the name-blind, shape-only recognizer for
 /// `subject(OP1(a, b)) = OP2(subject(a), subject(b))` (subject recursive, OP1 /
-/// OP2 captured from the AST). Feeds the `omit_domain` statement driver so the
+/// OP2 captured from the AST). Feeds the claim classification so the
 /// universal statement and the de-risked induction proof stay in lockstep.
 pub(in crate::codegen::lean) use homomorphism::recognize_homomorphism;
 
 /// Rational-order chaining rung — the broad, reusable Fraction `<=`
 /// (`isNonNeg (minus C A)`) rung and its first consumer, the reciprocal-
-/// magnitude composition (Lemma 8.2.4). Feeds the `omit_domain` statement
-/// driver so the universal statement and the helper-kit-plus-chain proof stay
+/// magnitude composition (Lemma 8.2.4). Feeds the claim classification so
+/// the universal statement and the helper-kit-plus-chain proof stay
 /// in lockstep.
 pub(in crate::codegen::lean) use frac_order_chain::recognize_frac_order_chain;
 
 /// Generic rational-order transitivity-chain rung — a STRICT `lessThan L R`
 /// conclusion whose premises spell out a 1..3-link comparison chain linking the
 /// endpoints (Lemma 8.1.1, the two-step reciprocal-error bound). Feeds the
-/// `omit_domain` statement driver so the universal statement and the
+/// claim classification so the universal statement and the
 /// self-contained kit-plus-assembler proof stay in lockstep.
 pub(in crate::codegen::lean) use frac_order_transitivity::recognize_frac_order_transitivity;
 
@@ -166,7 +157,7 @@ pub(in crate::codegen::lean) use frac_order_chain::frac_order_chain_cited_deps;
 
 /// Triangle-sum rung — the strict bound on an `absFraction`-of-a-three-term-
 /// sum over the exact-rational order (the rounded Newton-Raphson reciprocal
-/// step family). Feeds the `omit_domain` statement driver so the universal
+/// step family). Feeds the claim classification so the universal
 /// statement and the cited-bounds-plus-`tri_sum3` proof stay in lockstep.
 pub(in crate::codegen::lean) use triangle_sum::recognize_triangle_sum;
 
@@ -176,12 +167,12 @@ pub(in crate::codegen::lean) use triangle_sum::recognize_triangle_sum;
 pub(in crate::codegen::lean) use triangle_sum::triangle_sum_cited_deps;
 
 /// Transparent arithmetic premise-chain arm: a `when` law whose premises cite
-/// already-citable transparent arithmetic predicates. Feeds the `omit_domain`
-/// statement driver, kept in lockstep with `emit_transparent_chain_law`.
+/// already-citable transparent arithmetic predicates. Feeds the claim
+/// classification, kept in lockstep with `emit_transparent_chain_law`.
 pub(in crate::codegen::lean) use transparent_chain::recognize_transparent_chain;
 
-// The finite bounded-Int-domain ProofIR strategy feeds the `omit_domain`
-// statement driver so the universal statement and the enumerate-then-`decide`
+// The finite bounded-Int-domain ProofIR strategy feeds the claim
+// classification so the universal statement and the enumerate-then-`decide`
 // proof stay in lockstep.
 
 /// `aver proof --explain` residual probe: turn an emitted main law theorem's
@@ -301,6 +292,7 @@ pub fn emit_verify_law_forall_auto_proof(
     quant_params: &str,
     theorem_prop: &str,
     cert_model: bool,
+    speculative: bool,
 ) -> Option<AutoProof> {
     let inner = emit_verify_law_forall_auto_proof_inner(
         vb,
@@ -311,6 +303,7 @@ pub fn emit_verify_law_forall_auto_proof(
         quant_params,
         theorem_prop,
         cert_model,
+        speculative,
     )?;
     // ADDITIVE, SHAPE-GATED `grind` outright-closer rung — prepended at
     // the TOP of the ladder, but ONLY for laws whose goal is
@@ -578,7 +571,7 @@ fn maybe_wrap_with_grind_rung(
 
 /// Whether the finite bounded-Int-domain emit will close this law UNIVERSALLY.
 /// The statement builder reads this (alongside the other conditional
-/// recognizers) to drop the sampled-domain disjunctions (`omit_domain`) and
+/// recognizers) to drop the sampled-domain disjunctions and
 /// class the law `universal`. This is a ProofIR strategy lookup; shape
 /// recognition and the non-recursive-cone gate already ran in `proof_lower`.
 pub(in crate::codegen::lean) fn recognize_finite_int_domain(
@@ -653,6 +646,11 @@ fn emit_verify_law_forall_auto_proof_inner(
     quant_params: &str,
     theorem_prop: &str,
     cert_model: bool,
+    // Whether the speculative arms (keystone, multi-citation, transparent
+    // chain, generic conditional induction) may take this law: an attempt,
+    // or an unconditional law over plain givens. They step aside for a claim
+    // so a deterministic arm is never shadowed by one.
+    speculative: bool,
 ) -> Option<AutoProof> {
     if verify_mode != VerifyEmitMode::NativeDecide {
         return None;
@@ -721,6 +719,7 @@ fn emit_verify_law_forall_auto_proof_inner(
     // strategy below recognizes — see `recognize_conditional_inductive_generic`
     // — so a `when`-law over a well-founded countdown fn reaches that arm.)
     if law.when.is_some()
+        && speculative
         && let Some(proof) =
             induction::emit_conditional_inductive_generic_law(vb, law, ctx, &intro_names)
     {
@@ -980,8 +979,8 @@ fn emit_verify_law_forall_auto_proof_inner(
     // instantiate a supplying universal whose conclusion head is absent from the
     // goal, nor fold the goal's definitional alias onto an applied universal's
     // trigger — this arm emits that obtain-conjuncts-then-apply skeleton from the
-    // shape (name-blind). Probe-gated like the keystone, so a plan whose
-    // orchestration does not close falls back to its bounded sampled statement.
+    // shape (name-blind). Speculative like the keystone: a `when`-law whose
+    // orchestration does not close is declined by the check.
     // Transparent arithmetic premise chain: every `when` conjunct is a call to
     // an already-citable law predicate whose transitively-unfolded body lies in
     // the linear-Int fragment {comparisons, +, -, literal·term, if/max}, and the
@@ -989,31 +988,37 @@ fn emit_verify_law_forall_auto_proof_inner(
     // fragment. Closed in true-universal form by unfolding those bodies and
     // `split at h_when <;> omega`.
     //
-    // Placed BEFORE the two probe-gated generic drivers (multicite / keystone),
+    // Placed BEFORE the two speculative generic drivers (multicite / keystone),
     // by NECESSITY: the keystone's `simp only [...] <;> grind` over the pool
     // CLAIMS this shape too but its `grind` cannot do the max/min split plus the
-    // linear chain, so it records the law's `AVERSPEC_SORRY` floor as a FAILURE —
-    // shadowing this arm and reverting the flip to bounded. This arm's recognizer
+    // linear chain, so it would fall to its sorry floor — shadowing this arm.
+    // This arm's recognizer
     // is strictly narrower than the keystone's (a PURE-non-recursive subject and
     // premise fns, all Int givens, the transparent-arithmetic fragment, exactly
     // one premise-side split), and `omega` is complete on that fragment, so it can
     // only claim shapes it provably closes — it never steals or regresses a
     // keystone / multicite shape (those cite opaque `Fraction` / recursive cone
     // fns this recognizer rejects) and cannot shadow the recursive Induction /
-    // FloorDivWindow rungs below. Probe-gated (`speculative::admits`) exactly like
-    // the keystone: a chain the probe cannot certify reverts to bounded.
+    // FloorDivWindow rungs below. Speculative like the keystone: a chain Lean
+    // refuses is declined by the check.
     if law.when.is_some()
+        && speculative
         && let Some(proof) =
             transparent_chain::emit_transparent_chain_law(vb, law, ctx, &intro_names)
     {
         return Some(proof);
     }
 
-    if let Some(proof) = induction::emit_multicite_composition_law(vb, law, ctx, &intro_names) {
+    if speculative
+        && let Some(proof) = induction::emit_multicite_composition_law(vb, law, ctx, &intro_names)
+    {
         return Some(proof);
     }
 
-    if let Some(proof) = induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names) {
+    if speculative
+        && let Some(proof) =
+            induction::emit_pool_composition_generic_law(vb, law, ctx, &intro_names)
+    {
         return Some(proof);
     }
 
@@ -1773,7 +1778,7 @@ fn emit_verify_law_forall_auto_proof_inner(
             // above has declined (so the law genuinely walls in core), and firing
             // here — instead of falling to the sampled `native_decide` proof —
             // keeps the universal statement (`recognize_mathlib_break_glass` set
-            // `omit_domain`) in lockstep with a universal proof. Gated on the
+            // universal) in lockstep with a universal proof. Gated on the
             // opt-in flag + entry-module scope, so the DEFAULT path is byte-
             // identical (a dep module never imports Mathlib, keeping its core
             // `simp`/`grind` simp set fast) and a core-claimed law keeps its core
@@ -1830,14 +1835,6 @@ fn emit_verify_law_forall_auto_proof_inner(
                 return Some(proof);
             }
             None
-        })
-        .or_else(|| {
-            emit_guarded_domain_law(law).map(|body| AutoProof {
-                support_lines: Vec::new(),
-                body,
-                replaces_theorem: false,
-                first_arm_is_guaranteed_closer: false,
-            })
         })
         .or_else(|| {
             // Pure builtin empty-map facts (`Map.get(empty, k) = None`,
@@ -1981,13 +1978,54 @@ fn emit_verify_law_forall_auto_proof_inner(
         })
 }
 
+/// Whether a `when`-law's universal proof comes from a deterministic arm: a
+/// CLAIM, whose refusal by Lean is a sorry. A `when`-law outside this set is an
+/// ATTEMPT (see `LAW_CLASS_ATTEMPT`): a speculative arm tries it, or none does,
+/// and a refusal declines the law. The speculative arms (keystone,
+/// multi-citation, transparent chain, single-list conditional induction) step
+/// aside for a claim, so a deterministic arm is never shadowed by one.
+pub(in crate::codegen::lean) fn when_law_is_claim(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    cert_model: bool,
+) -> bool {
+    recognize_clique_position_monotonicity(vb, law, ctx)
+        || recognize_conditional_comparison_bridge(vb, law, ctx)
+        || recognize_wf_fuel_induction(vb, law, ctx).is_some()
+        || matches!(
+            law_strategy_for(ctx, &vb.fn_name, &law.name),
+            Some(
+                crate::ir::ProofStrategy::NonlinearNonneg { .. }
+                    | crate::ir::ProofStrategy::FloorDivWindow { .. }
+                    | crate::ir::ProofStrategy::TailRecFixedBaseFold { .. }
+            )
+        )
+        || recognize_finite_int_domain(vb, law, ctx)
+        || recognize_interval_monotonicity(vb, law, ctx)
+        || recognize_frac_positivity(vb, law, ctx)
+        || recognize_frac_geone(vb, law, ctx)
+        || recognize_frac_monotone_compose(vb, law, ctx)
+        || recognize_monotone_reflect(vb, law, ctx)
+        || recognize_magnitude_bracket_reflect(vb, law, ctx)
+        || recognize_recursive_monotone(vb, law, ctx)
+        || recognize_homomorphism(vb, law, ctx)
+        || recognize_universal_floor_law(vb, law, ctx)
+        || recognize_frac_order_chain(vb, law, ctx)
+        || recognize_frac_order_transitivity(vb, law, ctx)
+        || recognize_triangle_sum(vb, law, ctx)
+        || recognize_validated_wrapper(vb, law, ctx)
+        || (cert_model && recognize_core_when_linear(vb, law, ctx))
+        || recognize_mathlib_break_glass(ctx, law)
+}
+
 /// Predicate half of the CORE when-linear-consequence arm: a conditional
 /// `holds` law (`when P(...) -> subject(...) holds`) whose subject call heads
 /// the LHS and whose whole call cone — subject, `when` guards, and everything
 /// they reach — unfolds into bare integer arithmetic. That is exactly the
 /// shape `simp only [cone]` reduces to an arithmetic implication for
 /// `omega`/`grind`, so the statement builder drops the sampled-domain
-/// disjunctions (`omit_domain`) and classes the law `universal`, keeping
+/// disjunctions and classes the law `universal`, keeping
 /// statement and proof body in lockstep. CERT-MODEL ONLY: both the statement
 /// flip and the proof arm are gated on `cert_model`, so `aver proof` output —
 /// and the bounded credit the corpus already earns there — is byte-identical.
@@ -2154,7 +2192,7 @@ fn transparent_arithmetic_expr(
 /// set, ANY entry-module `when`-law is a break-glass candidate (the actual
 /// close is decided by the portfolio + `#print axioms`, not the shape). The
 /// statement builder reads this to drop the sampled-domain disjunctions
-/// (`omit_domain`) and class the law `universal`, keeping the universal
+/// and class the law `universal`, keeping the universal
 /// statement and the break-glass proof body in lockstep. Returns `false` when
 /// the flag is off, so the default path never reaches the universal statement.
 pub(in crate::codegen::lean) fn recognize_mathlib_break_glass(
@@ -3202,7 +3240,6 @@ pub(super) fn support_theorem(header: &str, body: super::tactic_ir::Tactic) -> S
 fn extend_intro_names_with_premises(law: &VerifyLaw, intro_names: &[String]) -> Vec<String> {
     let mut names = intro_names.to_vec();
     if law.when.is_some() {
-        names.extend(intro_names.iter().map(|name| format!("h_{name}")));
         names.push("h_when".to_string());
     }
     names

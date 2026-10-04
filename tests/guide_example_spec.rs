@@ -109,7 +109,7 @@ fn the_guide_example_reaches_the_lean_wall_without_an_open_law() {
         .find(|line| line.starts_with('{'))
         .unwrap_or_else(|| panic!("{}", format_output(&out)));
     let summary: serde_json::Value = serde_json::from_str(line).unwrap();
-    for field in ["build_errors", "bounded_laws", "sorries"] {
+    for field in ["build_errors", "sorries"] {
         assert_eq!(summary[field], 0, "{field}: {}", format_output(&out));
     }
     assert!(out.status.success(), "{}", format_output(&out));

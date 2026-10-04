@@ -5,21 +5,15 @@
 //! those predicate bodies plus their transparent non-recursive helpers. The
 //! body gate is shape-keyed, not name-keyed.
 //!
-//! Probe-gated exactly like the keystone (`induction::keystone`): both the
-//! statement recognizer ([`recognize_transparent_chain`], which feeds the
-//! `omit_domain` universal-statement driver) and the proof emit
-//! ([`emit_transparent_chain_law`]) key on
-//! [`tactic_ir::speculative::admits`], so a chain whose `omega` close the probe
-//! cannot certify REVERTS to the sound bounded sampled-domain statement instead
-//! of forcing a passing project red. Outside any probe (`admits` default
-//! `false`) the law stays bounded — byte-identical to before this arm.
+//! Speculative like the keystone (`induction::keystone`): the statement
+//! recognizer ([`recognize_transparent_chain`]) and the proof emit
+//! ([`emit_transparent_chain_law`]) share one shape gate, and a chain whose
+//! `omega` close Lean refuses is declined by `aver proof --check`.
 //!
 //! Named boundary: the citable-pool check resolves premises against EARLIER
 //! sibling laws in the entry module (`enclosing_verify_blocks`) or a dependency
-//! module's own law list. Under entry-only speculative probing a dependency
-//! module's `when`-law that is itself only probe-committable is not yet a stable
-//! citation, so the intended fixtures keep the cited pool laws in the SAME module
-//! as the chain law. Widening to freely cross-module pool citations is a
+//! module's own law list. The intended fixtures keep the cited pool laws in the
+//! SAME module as the chain law. Widening to freely cross-module pool citations is a
 //! separate change and deliberately out of scope here.
 
 use std::collections::BTreeSet;
@@ -30,7 +24,6 @@ use crate::ast::{
     BinOp, Expr, FnDef, Literal, Pattern, Spanned, VerifyBlock, VerifyKind, VerifyLaw,
 };
 use crate::codegen::CodegenContext;
-use crate::codegen::lean::tactic_ir::speculative;
 
 struct TransparentChain {
     subject_lean: String,
@@ -59,13 +52,7 @@ pub(in crate::codegen::lean) fn recognize_transparent_chain(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> bool {
-    if recognize_transparent_chain_shape(vb, law, ctx).is_none() {
-        return false;
-    }
-    // Probe-gated: the universal statement form (`omit_domain`) and the proof
-    // emit stay in lockstep because both consult `admits`. Default `false` keeps
-    // a non-probe transpile on the bounded fallback (keystone precedent).
-    speculative::admits(&law_id(vb, law), false)
+    recognize_transparent_chain_shape(vb, law, ctx).is_some()
 }
 
 pub(in crate::codegen::lean) fn emit_transparent_chain_law(
@@ -78,37 +65,20 @@ pub(in crate::codegen::lean) fn emit_transparent_chain_law(
         subject_lean,
         premise_unfolds,
     } = recognize_transparent_chain_shape(vb, law, ctx)?;
-    // Same gate as the statement recognizer: a chain the probe did not commit
-    // (or a plain transpile with no probe) declines here, so the caller falls
-    // through to the bounded guarded-domain fallback and the statement stays
-    // bounded.
-    let id = law_id(vb, law);
-    if !speculative::admits(&id, false) {
-        return None;
-    }
     let mut intros = intro_names.to_vec();
     intros.push("h_when".to_string());
     let premise_defs = premise_unfolds.join(" ");
-    // Fail-closed floor. Under the probe it carries the `AVERSPEC_SORRY:<id>`
-    // trace so a non-closing chain surfaces in the build log (and `floor`
-    // registers the id as one that emitted a floor); the committed re-emit then
-    // states only the closers universally. Closed candidates keep the same diagnostic floor for Lake reuse.
-    let floor = speculative::floor(&id);
     Some(AutoProof {
         support_lines: Vec::new(),
         body: crate::codegen::lean::tactic_ir::Tactic::raw(super::intro_then(
             &intros,
             vec![format!(
-                "first | (unfold {subject_lean}; unfold {premise_defs} at h_when; simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le] at h_when ⊢; split at h_when <;> omega) | {floor}"
+                "first | (unfold {subject_lean}; unfold {premise_defs} at h_when; simp only [Bool.and_eq_true, decide_eq_true_eq, ge_iff_le] at h_when ⊢; split at h_when <;> omega) | sorry"
             )],
         )),
         replaces_theorem: false,
         first_arm_is_guaranteed_closer: false,
     })
-}
-
-fn law_id(vb: &VerifyBlock, law: &VerifyLaw) -> String {
-    format!("{}.{}", vb.fn_name, law.name)
 }
 
 fn recognize_transparent_chain_shape(

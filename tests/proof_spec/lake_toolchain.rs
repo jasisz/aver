@@ -82,7 +82,7 @@ fn proof_uses_project_toolchain_without_an_elan_default() {
     )
     .unwrap();
     assert_eq!(summary["universal_laws"], 2, "{output}");
-    assert_eq!(summary["bounded_laws"], 0, "{output}");
+    assert!(summary.get("declined").is_none(), "{output}");
     assert_eq!(summary["sorries"], 0, "{output}");
     assert_eq!(summary["build_errors"], 0, "{output}");
     assert!(

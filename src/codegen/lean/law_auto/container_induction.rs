@@ -32,8 +32,7 @@
 //! ih]` + an `omega` tail for the numeric walker).
 //!
 //! Fail-closed like the transparent-chain arm (#634): the whole induction sits
-//! under a `first | (..) | sorry` floor (with the `AVERSPEC_SORRY:<id>` trace +
-//! candidate recording under a probe), and every support lemma is floored too, so a
+//! under a `first | (..) | sorry` floor, and every support lemma is floored too, so a
 //! mis-recognized shape degrades to an honest sorry — bounded, never a red build.
 //! The statement is already the `∀`-universal form the emitter builds for any
 //! unconditional recursive-ADT law, so no sampled-domain flip is involved; the
@@ -48,7 +47,7 @@ use crate::ast::{
     Expr, FnDef, Literal, Pattern, Spanned, TypeDef, TypeVariant, VerifyBlock, VerifyLaw,
 };
 use crate::codegen::CodegenContext;
-use crate::codegen::lean::tactic_ir::{Tactic, speculative};
+use crate::codegen::lean::tactic_ir::Tactic;
 
 /// A recognized forced walker pair `(f, fList)` over an ADT `T` with a single
 /// `Node(List<T>)` recursive constructor and a leaf constructor.
@@ -71,10 +70,6 @@ enum Claim {
 struct Recognized {
     pair: Pair,
     claim: Claim,
-}
-
-fn law_id(vb: &VerifyBlock, law: &VerifyLaw) -> String {
-    format!("{}.{}", vb.fn_name, law.name)
 }
 
 pub(in crate::codegen::lean) fn emit_container_induction_law(
@@ -139,9 +134,6 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
         }
     };
 
-    let id = law_id(vb, law);
-    let floor = speculative::floor(&id);
-
     let t = &intro_names[0];
     let mut induction_block = vec![format!(
         "(induction {t} using {induct}\n        (motive2 := {motive2}) with"
@@ -153,7 +145,7 @@ pub(in crate::codegen::lean) fn emit_container_induction_law(
     let last = induction_block.pop().unwrap();
     induction_block.push(format!("{last})"));
     let block = induction_block.join("\n");
-    let body_line = format!("first\n    | {block}\n    | {floor}");
+    let body_line = format!("first\n    | {block}\n    | sorry");
 
     Some(AutoProof {
         support_lines: support,

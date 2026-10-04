@@ -36,7 +36,6 @@ pub struct Candidate {
     pub statement: String,
     pub hints: Vec<String>,
     pub obligation: bool,
-    pub baseline_universal: bool,
 }
 
 impl Candidate {
