@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! script  := (steps VERSION (obligation KEY (GIVEN…) PREMISE TERM TERM)
-//!                    (defs (def NAME (PARAM…) TERM)…)
+//!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM)…)
 //!                    (consts (const NAME TERM)…)
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…)
 //!                    (proof PROOF))
@@ -382,9 +382,10 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
     );
     for d in &s.defs {
         out.push_str(&format!(
-            "\n  (def {} ({}) {})",
+            "\n  (def {} ({}) {} {})",
             d.name,
             d.params.join(" "),
+            bindings(&d.lets, names)?,
             term(&d.body, names)?
         ));
     }

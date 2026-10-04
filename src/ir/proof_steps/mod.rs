@@ -30,7 +30,7 @@ pub use term::Term;
 use crate::ir::identity::FnId;
 
 /// Version of the step data. Bump on any change a replayer could observe.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 /// An equation `lhs = rhs` between two terms.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,15 +60,47 @@ pub struct LawRef {
     pub rhs: Term,
 }
 
-/// A source definition an [`Proof::Unfold`] step opens. The body is the
-/// function's single expression with its parameters as variables.
+/// A source definition an [`Proof::Unfold`] step opens: the function's
+/// local bindings, in source order, then its final expression, with its
+/// parameters as variables.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Def {
     pub fn_id: FnId,
     /// Canonical qualified name (`Domain.LockTime.reached`).
     pub name: String,
     pub params: Vec<String>,
+    /// `name = value` bindings before the final expression. Each value may
+    /// read the parameters and the bindings before it.
+    pub lets: Vec<(String, Term)>,
     pub body: Term,
+}
+
+impl Def {
+    /// The substitution that opens the definition at `args`: each parameter
+    /// to its argument, then each binding, in order, to its value with
+    /// everything before it already substituted. A later name shadows an
+    /// earlier one, so it comes first.
+    pub fn outer(&self, args: &[Term]) -> Result<Vec<(String, Term)>, String> {
+        if self.params.len() != args.len() {
+            return Err(format!(
+                "{} takes {} arguments",
+                self.name,
+                self.params.len()
+            ));
+        }
+        let mut map: Vec<(String, Term)> = self
+            .params
+            .iter()
+            .cloned()
+            .zip(args.iter().cloned())
+            .rev()
+            .collect();
+        for (name, value) in &self.lets {
+            let v = term::subst(value, &map)?;
+            map.insert(0, (name.clone(), v));
+        }
+        Ok(map)
+    }
 }
 
 /// A module-level binding (`base = 40` outside any fn) an

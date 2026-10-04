@@ -381,8 +381,7 @@ impl Renderer<'_> {
             .map(|i| term::var(&format!("x{i}")))
             .collect();
         let call = Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(fn_id), xs.clone()));
-        let outer: Vec<(String, Term)> =
-            def.params.iter().cloned().zip(xs.iter().cloned()).collect();
+        let outer = def.outer(&xs)?;
         let mut binders = String::new();
         let mut names: Vec<String> = Vec::new();
         for (i, (_, ty)) in fd.params.iter().enumerate() {

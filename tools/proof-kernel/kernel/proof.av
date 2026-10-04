@@ -1,6 +1,7 @@
 module Proof
     intent =
-        "Proof steps, definitions, module-level bindings, cited laws and the script that ties them"
+        "Proof steps, definitions (local bindings, then one expression), module-level bindings, cited"
+        "laws and the script that ties them"
         "to one obligation."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
     exposes [Proof, Def, Const, Law, Script, Hyp, premiseOf]
@@ -25,6 +26,7 @@ type Proof
 record Def
     name: String
     params: List<String>
+    lets: List<Binding>
     body: Term
 
 record Const

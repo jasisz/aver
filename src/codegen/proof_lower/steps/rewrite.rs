@@ -221,15 +221,7 @@ impl Env<'_> {
                     return None;
                 }
                 let def = self.def(*id)?;
-                if def.params.len() != args.len() {
-                    return None;
-                }
-                let outer: Vec<(String, Term)> = def
-                    .params
-                    .iter()
-                    .cloned()
-                    .zip(args.iter().cloned())
-                    .collect();
+                let outer = def.outer(args).ok()?;
                 let body = term::subst(&def.body, &outer).ok()?;
                 self.mark_used(*id);
                 Some((

@@ -145,15 +145,7 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             let def = script
                 .def(*fn_id)
                 .ok_or_else(|| "unfold: no such definition".to_string())?;
-            if def.params.len() != args.len() {
-                return Err("unfold: wrong number of arguments".into());
-            }
-            let outer: Vec<(String, Term)> = def
-                .params
-                .iter()
-                .cloned()
-                .zip(args.iter().cloned())
-                .collect();
+            let outer = def.outer(args).map_err(|m| format!("unfold: {m}"))?;
             let lhs = Spanned::bare(ResolvedExpr::Call(
                 crate::ir::hir::ResolvedCallee::Fn(*fn_id),
                 args.iter().map(canon).collect(),

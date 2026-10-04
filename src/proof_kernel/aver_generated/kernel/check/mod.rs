@@ -834,7 +834,7 @@ pub fn unfold(
     }
 }
 
-/// The whole body, or one arm under its premise.
+/// The whole body, or one arm under its premise; the local bindings are substituted first, in order.
 pub fn unfoldArm(
     d @ _: &crate::proof_kernel::aver_generated::kernel::proof::Def,
     k @ _: aver_rt::AverInt,
@@ -845,7 +845,10 @@ pub fn unfoldArm(
     path @ _: AverStr,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    let outer @ _ = crate::proof_kernel::aver_generated::kernel::check::zipBind(&d.params, xs);
+    let outer @ _ = crate::proof_kernel::aver_generated::kernel::check::bindLets(
+        d.lets.clone(),
+        crate::proof_kernel::aver_generated::kernel::check::zipBind(&d.params, xs).reverse(),
+    )?;
     let lhs @ _ =
         crate::proof_kernel::aver_generated::kernel::term::Term::TCall(d.name.clone(), xs.clone());
     {
@@ -869,6 +872,25 @@ pub fn unfoldArm(
                 &d.body, k, &outer, ys, pre, &lhs, env, path,
             )
         }
+    }
+}
+
+/// Each local binding, in order, bound to its value under everything before it; the latest name comes first.
+#[inline(always)]
+pub fn bindLets(
+    mut lets @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+    mut outer @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
+) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>, AverStr>
+{
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(lets, [] => { return Ok(outer); }, [b, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::term::bind(b.name, &crate::proof_kernel::aver_generated::kernel::subst::subst(&b.value, &outer)?), &outer);
+            lets = __tco0;
+            outer = __tco1;
+            continue;
+        } })
     }
 }
 

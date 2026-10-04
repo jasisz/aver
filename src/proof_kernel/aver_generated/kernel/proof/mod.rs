@@ -222,6 +222,7 @@ impl aver_rt::AverDisplay for Proof {
 pub struct Def {
     pub name: AverStr,
     pub params: aver_rt::AverList<AverStr>,
+    pub lets: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Binding>,
     pub body: crate::proof_kernel::aver_generated::kernel::term::Term,
 }
 
@@ -235,6 +236,7 @@ impl Ord for Def {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         std::cmp::Ordering::Equal
             .then_with(|| self.body.cmp(&other.body))
+            .then_with(|| self.lets.cmp(&other.lets))
             .then_with(|| self.name.cmp(&other.name))
             .then_with(|| self.params.cmp(&other.params))
     }
@@ -247,6 +249,7 @@ impl aver_rt::AverDisplay for Def {
             vec![
                 format!("name: {}", self.name.aver_display_inner()),
                 format!("params: {}", self.params.aver_display_inner()),
+                format!("lets: {}", self.lets.aver_display_inner()),
                 format!("body: {}", self.body.aver_display_inner())
             ]
             .join(", ")

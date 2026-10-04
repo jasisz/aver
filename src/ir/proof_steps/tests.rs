@@ -140,3 +140,23 @@ fn a_binding_unfolds_to_the_value_the_script_carries() {
     s.consts[0].value = term::int(&41.into());
     assert!(check_script(&s).is_err());
 }
+
+#[test]
+fn a_definition_opens_its_local_bindings_in_order() {
+    let def = super::Def {
+        fn_id: crate::ir::identity::FnId(0),
+        name: "f".into(),
+        params: vec!["x".into()],
+        lets: vec![
+            ("y".into(), add(var("x"), var("x"))),
+            ("z".into(), add(var("y"), var("x"))),
+        ],
+        body: var("z"),
+    };
+    let outer = def.outer(&[var("a")]).unwrap();
+    assert_eq!(
+        term::subst(&def.body, &outer).unwrap(),
+        add(add(var("a"), var("a")), var("a"))
+    );
+    assert!(def.outer(&[]).is_err());
+}

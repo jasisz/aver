@@ -234,8 +234,8 @@ verify unfold
     unfold("f", 0, [], [], [], emptyEnv(), "p") => Result.Err("step p: no definition of f")
 
 fn unfoldArm(d: Def, k: Int, xs: List<Term>, ys: List<Term>, pre: List<Proof>, env: Env, path: String) -> Result<Eqn, String>
-    ? "The whole body, or one arm under its premise."
-    outer = zipBind(d.params, xs)
+    ? "The whole body, or one arm under its premise; the local bindings are substituted first, in order."
+    outer = bindLets(d.lets, List.reverse(zipBind(d.params, xs)))?
     lhs = Term.TCall(d.name, xs)
     match (k, ys, pre)
         (0, [], []) -> Result.Ok(Eqn(lhs = lhs, rhs = Kernel.Subst.subst(d.body, outer)?))
@@ -243,8 +243,20 @@ fn unfoldArm(d: Def, k: Int, xs: List<Term>, ys: List<Term>, pre: List<Proof>, e
         _ -> unfoldMatch(d.body, k, outer, ys, pre, lhs, env, path)
 
 verify unfoldArm
-    unfoldArm(Def(name = "one", params = [], body = Term.TInt(1)), 0, [], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("one", []), rhs = Term.TInt(1)))
-    unfoldArm(Def(name = "one", params = [], body = Term.TInt(1)), 1, [], [], [], emptyEnv(), "p") => Result.Err("step p: the body is not a match")
+    unfoldArm(Def(name = "one", params = [], lets = [], body = Term.TInt(1)), 0, [], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("one", []), rhs = Term.TInt(1)))
+    unfoldArm(Def(name = "one", params = [], lets = [], body = Term.TInt(1)), 1, [], [], [], emptyEnv(), "p") => Result.Err("step p: the body is not a match")
+    unfoldArm(Def(name = "f", params = ["x"], lets = [Kernel.Term.bind("y", Term.TOp("+", Term.TVar("x"), Term.TInt(1))), Kernel.Term.bind("z", Term.TOp("*", Term.TVar("y"), Term.TVar("x")))], body = Term.TVar("z")), 0, [Term.TVar("a")], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("f", [Term.TVar("a")]), rhs = Term.TOp("*", Term.TOp("+", Term.TVar("a"), Term.TInt(1)), Term.TVar("a"))))
+    unfoldArm(Def(name = "f", params = ["x"], lets = [Kernel.Term.bind("x", Term.TOp("+", Term.TVar("x"), Term.TInt(1)))], body = Term.TVar("x")), 0, [Term.TVar("a")], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("f", [Term.TVar("a")]), rhs = Term.TOp("+", Term.TVar("a"), Term.TInt(1))))
+
+fn bindLets(lets: List<Binding>, outer: List<Binding>) -> Result<List<Binding>, String>
+    ? "Each local binding, in order, bound to its value under everything before it; the latest name comes first."
+    match lets
+        [] -> Result.Ok(outer)
+        [b, ..rest] -> bindLets(rest, List.prepend(Kernel.Term.bind(b.name, Kernel.Subst.subst(b.value, outer)?), outer))
+
+verify bindLets
+    bindLets([], []) => Result.Ok([])
+    bindLets([Kernel.Term.bind("y", Term.TVar("x"))], [Kernel.Term.bind("x", Term.TInt(2))]) => Result.Ok([Kernel.Term.bind("y", Term.TInt(2)), Kernel.Term.bind("x", Term.TInt(2))])
 
 fn unfoldMatch(body: Term, k: Int, outer: List<Binding>, ys: List<Term>, pre: List<Proof>, lhs: Term, env: Env, path: String) -> Result<Eqn, String>
     ? "Arm k of the body's match."

@@ -182,15 +182,7 @@ impl Env<'_> {
                 let Some(def) = self.def(*id) else {
                     return self.args_then_settle(cur);
                 };
-                let outer: Vec<(String, Term)> = def
-                    .params
-                    .iter()
-                    .cloned()
-                    .zip(args.iter().cloned())
-                    .collect();
-                if def.params.len() != args.len() {
-                    return Err("arity mismatch".into());
-                }
+                let outer = def.outer(args)?;
                 let ResolvedExpr::Match { subject, arms } = &def.body.node else {
                     self.mark_used(*id);
                     let body = term::subst(&def.body, &outer)?;

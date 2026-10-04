@@ -12,8 +12,10 @@ fn verdict(text: String) -> Result<String, String>
     Kernel.Check.checkScript(Kernel.Decode.script(sexp)?)
 
 verify verdict
-    verdict("(steps 2 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (laws) (proof (refl (i 1))))") => Result.Ok("k")
-    verdict("(steps 2 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (laws) (proof (hyp h)))") => Result.Err("step proof: hypothesis h is not in scope")
-    verdict("(steps 2 (obligation k () (none) (v base) (i 40)) (defs) (consts (const base (i 40))) (laws) (proof (const base)))") => Result.Ok("k")
-    verdict("(steps 2 (obligation k () (none) (v base) (i 41)) (defs) (consts (const base (i 40))) (laws) (proof (const base)))") => Result.Err("step proof: the proof ends at a different equation than the claim")
-    verdict("(steps 1)") => Result.Err("unsupported step format version 1")
+    verdict("(steps 3 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (laws) (proof (refl (i 1))))") => Result.Ok("k")
+    verdict("(steps 3 (obligation k () (none) (i 1) (i 1)) (defs) (consts) (laws) (proof (hyp h)))") => Result.Err("step proof: hypothesis h is not in scope")
+    verdict("(steps 3 (obligation k () (none) (v base) (i 40)) (defs) (consts (const base (i 40))) (laws) (proof (const base)))") => Result.Ok("k")
+    verdict("(steps 3 (obligation k () (none) (v base) (i 41)) (defs) (consts (const base (i 40))) (laws) (proof (const base)))") => Result.Err("step proof: the proof ends at a different equation than the claim")
+    verdict("(steps 3 (obligation k (a) (none) (call f (v a)) (op + (v a) (i 1))) (defs (def f (x) ((y (op + (v x) (i 1)))) (v y))) (consts) (laws) (proof (unfold f 0 ((v a)) ())))") => Result.Ok("k")
+    verdict("(steps 3 (obligation k (a) (none) (call f (v a)) (v y)) (defs (def f (x) ((y (op + (v x) (i 1)))) (v y))) (consts) (laws) (proof (unfold f 0 ((v a)) ())))") => Result.Err("step proof: the proof ends at a different equation than the claim")
+    verdict("(steps 2)") => Result.Err("unsupported step format version 2")

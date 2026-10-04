@@ -51,7 +51,8 @@ impl<'a> Env<'a> {
         Ok(())
     }
 
-    /// A definition steps may open: pure, non-recursive, one expression.
+    /// A definition steps may open: pure, non-recursive, local bindings then
+    /// one expression.
     pub(crate) fn def(&mut self, id: FnId) -> Option<Def> {
         if let Some(found) = self.defs.get(&id) {
             return found.clone();
@@ -134,14 +135,27 @@ impl<'a> Env<'a> {
         if !fd.effects.is_empty() {
             return None;
         }
-        let [Stmt::Expr(body)] = fd.body.stmts() else {
+        let (last, before) = fd.body.stmts().split_last()?;
+        let Stmt::Expr(body) = last else {
             return None;
         };
-        let body = qualify_bindings(
-            &canon(&self.inputs.resolve_expr(body, scope)),
-            self.inputs,
-            scope,
-        );
+        let read = |e| {
+            qualify_bindings(
+                &canon(&self.inputs.resolve_expr(e, scope)),
+                self.inputs,
+                scope,
+            )
+        };
+        let mut lets = Vec::new();
+        for stmt in before {
+            match stmt {
+                Stmt::Binding(name, _, value) if name != "_" => {
+                    lets.push((name.clone(), read(value)))
+                }
+                _ => return None,
+            }
+        }
+        let body = read(body);
         let name = match scope {
             Some(prefix) => format!("{prefix}.{}", key.name),
             None => key.name.clone(),
@@ -150,6 +164,7 @@ impl<'a> Env<'a> {
             fn_id: id,
             name,
             params: fd.params.iter().map(|(n, _)| n.clone()).collect(),
+            lets,
             body,
         })
     }

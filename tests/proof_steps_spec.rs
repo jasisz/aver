@@ -108,8 +108,22 @@ fn the_producers_write_steps_for_the_shapes_they_know() {
         .map(|(law, _)| law)
         .collect();
     assert_eq!(bytes, ["decode.eightReadBack"]);
+    let lets_out = scratch("shapes-lets");
+    let lets: Vec<String> = export_steps("lets.av", &lets_out)
+        .into_iter()
+        .map(|(law, _)| law)
+        .collect();
+    assert_eq!(
+        lets,
+        [
+            "bumped.positiveStays",
+            "score.nothingClearedScoresNothing",
+            "sumAndDouble.isTwiceTheSum",
+        ]
+    );
     let _ = fs::remove_dir_all(out);
     let _ = fs::remove_dir_all(bytes_out);
+    let _ = fs::remove_dir_all(lets_out);
 }
 
 #[test]
@@ -125,6 +139,12 @@ fn the_replayer_accepts_every_emitted_proof() {
             .into_iter()
             .map(|(_, p)| p),
     );
+    let lets_out = scratch("accept-lets");
+    files.extend(
+        export_steps("lets.av", &lets_out)
+            .into_iter()
+            .map(|(_, p)| p),
+    );
     let result = replay(&files);
     assert!(result.status.success(), "{}", format_output(&result));
     let text = String::from_utf8_lossy(&result.stdout);
@@ -136,6 +156,7 @@ fn the_replayer_accepts_every_emitted_proof() {
     );
     let _ = fs::remove_dir_all(out);
     let _ = fs::remove_dir_all(bytes_out);
+    let _ = fs::remove_dir_all(lets_out);
 }
 
 /// Replace the first occurrence of `from` after the proof starts.
@@ -445,6 +466,83 @@ fn the_embedded_kernel_refuses_mutated_scripts() {
             "{from} -> {to}: {refused:?}"
         );
     }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn both_kernels_unfold_through_local_bindings_and_refuse_mutations() {
+    let out = scratch("lets");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("lets.av", &out).into_iter().collect();
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let sum = read("sumAndDouble.isTwiceTheSum");
+    assert!(sum.contains("((total (op + (v a) (v b))) (twice (op + (v total) (v total))))"));
+    let bumped = read("bumped.positiveStays");
+    for (kind, text) in [
+        (
+            "arguments swapped",
+            mutate_proof(&sum, "((v a) (v b))", "((v b) (v a))"),
+        ),
+        (
+            "the other arm",
+            mutate_proof(&bumped, "(unfold bumped 1", "(unfold bumped 2"),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{kind}: {refused:?}"
+        );
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_unfolds_through_local_bindings_and_refuses_a_mutation() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("lets-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "lets.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let lean = fs::read_to_string(out.join("Lets.lean")).unwrap();
+    let law = "sumAndDouble.isTwiceTheSum";
+    assert!(!lean_refuses(&out, "Lets.lean", &lean, law));
+    let line = exact_line(&lean, "sumAndDouble_law_isTwiceTheSum").to_string();
+    let at = line.find("exact (show").expect("the step term");
+    let (lemmas, term) = line.split_at(at);
+    let swapped = term.replacen("__aver_unfold_0 (a) (b)", "__aver_unfold_0 (b) (a)", 1);
+    assert_ne!(term, swapped, "{term}");
+    let mutated = lean.replacen(&line, &format!("{lemmas}{swapped}"), 1);
+    assert!(
+        lean_refuses(&out, "Lets.lean", &mutated, law),
+        "arguments swapped: Lean must refuse the mutated step term"
+    );
     let _ = fs::remove_dir_all(out);
 }
 
