@@ -69,7 +69,7 @@ impl<'a> ModuleTypeSurface<'a> {
 }
 
 /// Resolve the type surface exported by every module in a loaded tree.
-pub fn collect_module_type_exports(modules: &[(String, Vec<TopLevel>)]) -> ModuleTypeExports {
+pub fn collect_module_type_exports(modules: &[(&str, &[TopLevel])]) -> ModuleTypeExports {
     let surfaces: Vec<ModuleTypeSurface<'_>> = modules
         .iter()
         .map(|(name, items)| ModuleTypeSurface::from_items(name, items))

@@ -280,7 +280,7 @@ impl SymbolRegistry {
     /// fields / sum constructors and opacity) without exposing unrelated
     /// transitive modules.
     pub fn from_visible_modules(
-        modules: &[(String, Vec<TopLevel>)],
+        modules: &[(&str, &[TopLevel])],
         visible_modules: &[String],
         type_exports: &ModuleTypeExports,
     ) -> Self {
@@ -291,7 +291,7 @@ impl SymbolRegistry {
         // handled separately below because their declaring module differs from
         // the module whose `exposes` list made them visible.
         for (module_name, items) in modules {
-            if !visible.contains(module_name.as_str()) {
+            if !visible.contains(module_name) {
                 continue;
             }
             let exports = collect_module_exports(items);
@@ -320,14 +320,14 @@ impl SymbolRegistry {
 
         // Walk in loader/source order so registry construction stays stable.
         for (module_name, items) in modules {
-            for item in items {
+            for item in *items {
                 let TopLevel::TypeDef(type_def) = item else {
                     continue;
                 };
                 let type_name = match type_def {
                     TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
                 };
-                let key = (module_name.clone(), type_name.clone());
+                let key = (module_name.to_string(), type_name.clone());
                 let Some(is_opaque) = targets.remove(&key) else {
                     continue;
                 };

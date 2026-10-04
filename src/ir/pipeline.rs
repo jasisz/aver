@@ -901,30 +901,53 @@ pub fn lower_loaded_process_modules(
     Vec<crate::types::checker::TypeError>,
     std::collections::HashSet<usize>,
 ) {
+    lower_loaded_process_modules_except(loaded, module_root, marked, |_| false)
+}
+
+/// [`lower_loaded_process_modules`] for a list some of whose modules are
+/// already in their lowered form: `settled(index)` says which, and those are
+/// neither type-checked nor lowered again. A program lowers every dependency
+/// once when it is loaded; the per-unit dependency lists it hands out later
+/// substitute that form in and name it settled here, so a shared dependency
+/// is checked once for the whole program rather than once per importer.
+pub fn lower_loaded_process_modules_except(
+    loaded: &mut [LoadedModule],
+    module_root: Option<&str>,
+    marked: &crate::config::MarkedCapabilities,
+    settled: impl Fn(usize) -> bool,
+) -> (
+    Vec<crate::types::checker::TypeError>,
+    std::collections::HashSet<usize>,
+) {
     let mut failed = std::collections::HashSet::new();
     // Legacy dependency-only doors have no entry name. Reserve the loop for
     // the entry instead of letting the first yielding dependency claim it.
     let marked = marked.with_run_entry("<entry>");
     let mut errors = Vec::new();
     for index in 0..loaded.len() {
-        if !crate::yield_lowering::may_have_processes(&loaded[index].items)
-            && !crate::ir::nested_patterns::has_nested_patterns(&loaded[index].items)
+        if settled(index)
+            || (!crate::yield_lowering::may_have_processes(&loaded[index].items)
+                && !crate::ir::nested_patterns::has_nested_patterns(&loaded[index].items))
         {
             continue;
         }
-        let deps: Vec<LoadedModule> = loaded[..index].to_vec();
+        // The modules before this one are its dependencies as the importer
+        // will read them; borrowed in place rather than copied per module.
+        let (deps, rest) = loaded.split_at_mut(index);
+        let deps: &[LoadedModule] = deps;
+        let module = &mut rest[0];
         // A module whose effect lists only might make it a process keeps its
         // items as written when it turns out to have none.
-        let as_written = (!crate::ir::nested_patterns::has_nested_patterns(&loaded[index].items))
-            .then(|| loaded[index].items.clone());
-        let mut items = std::mem::take(&mut loaded[index].items);
+        let as_written = (!crate::ir::nested_patterns::has_nested_patterns(&module.items))
+            .then(|| module.items.clone());
+        let mut items = std::mem::take(&mut module.items);
         let user_program_len = items.len();
         let front = front(
             &mut items,
             FrontConfig {
                 run_tco: true,
                 coordinator_stop: Default::default(),
-                typecheck: Some(&TypecheckMode::WithCheckedLoaded(&deps)),
+                typecheck: Some(&TypecheckMode::WithCheckedLoaded(deps)),
                 user_program_len,
                 marked: &marked,
                 on_after_pass: None,
