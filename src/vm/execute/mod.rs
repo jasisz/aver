@@ -27,6 +27,30 @@ pub struct VM {
     frames: Vec<CallFrame>,
     globals: Vec<NanValue>,
     code: CodeStore,
+    /// The chunk constants that hold an arena reference, as (chunk, slot).
+    ///
+    /// A stable collection rewrites only arena references, and a constant is
+    /// written by nothing else once the VM exists, so this set is fixed for
+    /// the VM's lifetime: a reference stays a reference when it moves, and an
+    /// immediate is never replaced by one. Collecting from this list instead
+    /// of from every constant keeps a top-level return proportional to what
+    /// the program holds rather than to how many chunks it has — `aver
+    /// verify` compiles a helper chunk per case, so the full walk grew with
+    /// the case count on every case.
+    heap_constant_slots: Vec<(u32, u32)>,
+    /// The globals that have held an arena reference, in index order.
+    ///
+    /// Unlike a constant, a global can be written while the program runs
+    /// (`SET_GLOBAL`, which records the slot here), so this is a superset: a
+    /// slot stays listed after an immediate overwrites it. That is harmless,
+    /// because a stable collection passes an immediate root through
+    /// untouched; what matters is that no slot holding a reference is
+    /// missing, and that the slots keep their index order.
+    heap_global_slots: Vec<u32>,
+    /// The symbols holding an arena reference. Fixed for the same reason as
+    /// `heap_constant_slots`, and walked instead of the whole table for the
+    /// same reason: the table has a symbol per chunk.
+    heap_symbol_ids: Vec<u32>,
     pub arena: Arena,
     runtime: VmRuntime,
     /// Deferred setup error for the effects-only legacy replay API. Keeping
@@ -156,7 +180,7 @@ enum ReturnControl {
 }
 
 impl VM {
-    pub fn new(code: CodeStore, globals: Vec<NanValue>, mut arena: Arena) -> Self {
+    pub fn new(mut code: CodeStore, globals: Vec<NanValue>, mut arena: Arena) -> Self {
         // This hidden type must exist before `build_parallel_base_context`
         // clones the arena: child results preserve record type ids when they
         // are deep-imported back into the parent.
@@ -175,11 +199,34 @@ impl VM {
                 arena.note_held_elsewhere(*value);
             }
         }
+        let heap_constant_slots = code
+            .functions
+            .iter()
+            .enumerate()
+            .flat_map(|(chunk_index, chunk)| {
+                chunk
+                    .constants
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, value)| value.heap_index().is_some())
+                    .map(move |(slot, _)| (chunk_index as u32, slot as u32))
+            })
+            .collect();
+        let heap_symbol_ids = code.symbols.heap_holding_symbols();
+        let heap_global_slots = globals
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| value.heap_index().is_some())
+            .map(|(index, _)| index as u32)
+            .collect();
         VM {
             stack: Vec::with_capacity(1024),
             frames: Vec::with_capacity(64),
             globals,
             code,
+            heap_constant_slots,
+            heap_symbol_ids,
+            heap_global_slots,
             arena,
             runtime: VmRuntime::new(),
             replay_setup_error: None,
@@ -202,6 +249,15 @@ impl VM {
             slot_uniqueness: VmSlotUniquenessStats::default(),
             runtime_ownership: VmRuntimeOwnershipStats::default(),
             vector_ownership: VmRuntimeOwnershipStats::default(),
+        }
+    }
+
+    /// Record that global `index` now holds an arena reference, so a stable
+    /// collection treats it as a root.
+    fn note_heap_global(&mut self, index: usize) {
+        let index = index as u32;
+        if let Err(position) = self.heap_global_slots.binary_search(&index) {
+            self.heap_global_slots.insert(position, index);
         }
     }
 

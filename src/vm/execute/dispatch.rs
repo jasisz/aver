@@ -303,6 +303,9 @@ impl VM {
                         self.globals.resize(idx + 1, NanValue::UNIT);
                     }
                     self.globals[idx] = val;
+                    if val.heap_index().is_some() {
+                        self.note_heap_global(idx);
+                    }
                 }
 
                 POP => {

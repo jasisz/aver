@@ -44,47 +44,62 @@ impl VM {
     /// roots alone, so a value it does not see is dropped and every index
     /// after it moves.
     pub(super) fn collect_stable_roots(&mut self, frame_roots: &mut [NanValue]) {
+        // Only arena references are rewritten, and an immediate root has no
+        // effect on the collection, so the globals, constants and symbols
+        // that cannot hold one are left out of the root list. The ones that
+        // are passed keep the order the full walk gave them, which is the
+        // order the compacted stable space is rebuilt in. Walking everything
+        // made each top-level return proportional to the size of the program
+        // — and `aver verify` compiles a helper chunk, a global and a symbol
+        // per case, so every case paid for every other case.
         let root_count = frame_roots.len();
-        let global_count = self.globals.len();
-        let constant_count: usize = self
-            .code
-            .functions
-            .iter()
-            .map(|chunk| chunk.constants.len())
-            .sum();
+        let global_count = self.heap_global_slots.len();
+        let constant_count = self.heap_constant_slots.len();
         let mut all_roots = Vec::with_capacity(root_count + global_count + constant_count);
         all_roots.extend_from_slice(frame_roots);
-        all_roots.extend(self.globals.iter().copied());
-        for chunk in &self.code.functions {
-            all_roots.extend(chunk.constants.iter().copied());
+        for &slot in &self.heap_global_slots {
+            all_roots.push(self.globals[slot as usize]);
+        }
+        for &(chunk, slot) in &self.heap_constant_slots {
+            all_roots.push(self.code.functions[chunk as usize].constants[slot as usize]);
         }
         let symbols_offset = all_roots.len();
-        all_roots.extend(self.code.symbols.values_mut().map(|value| *value));
+        for &symbol_id in &self.heap_symbol_ids {
+            all_roots.extend(
+                self.code
+                    .symbols
+                    .symbol_values_mut(symbol_id)
+                    .map(|value| *value),
+            );
+        }
         self.arena.collect_stable_from_roots(&mut all_roots);
 
         frame_roots.copy_from_slice(&all_roots[..root_count]);
-        for (dst, src) in self.globals.iter_mut().zip(
-            all_roots[root_count..root_count + global_count]
-                .iter()
-                .copied(),
-        ) {
-            *dst = src;
-        }
-        let mut constant_offset = root_count + global_count;
-        for chunk in &mut self.code.functions {
-            let len = chunk.constants.len();
-            chunk
-                .constants
-                .copy_from_slice(&all_roots[constant_offset..constant_offset + len]);
-            constant_offset += len;
-        }
-        for (slot, value) in self
-            .code
-            .symbols
-            .values_mut()
-            .zip(all_roots[symbols_offset..].iter().copied())
+        let constants_offset = root_count + global_count;
+        for (&slot, value) in self
+            .heap_global_slots
+            .iter()
+            .zip(&all_roots[root_count..constants_offset])
         {
-            *slot = value;
+            self.globals[slot as usize] = *value;
+        }
+        for (&(chunk, slot), value) in self
+            .heap_constant_slots
+            .iter()
+            .zip(&all_roots[constants_offset..symbols_offset])
+        {
+            self.code.functions[chunk as usize].constants[slot as usize] = *value;
+        }
+        let mut symbol_values = all_roots[symbols_offset..].iter().copied();
+        for &symbol_id in &self.heap_symbol_ids {
+            for (slot, value) in self
+                .code
+                .symbols
+                .symbol_values_mut(symbol_id)
+                .zip(&mut symbol_values)
+            {
+                *slot = value;
+            }
         }
     }
 
