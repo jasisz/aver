@@ -8,13 +8,17 @@
 //! - **citations**: a law with an explicit `using` list: rewrite with the
 //!   cited laws and the Euclidean recomposition rule to a normal form;
 //! - **evaluation**: evaluate both sides, splitting on each undecided Bool
-//!   guard, until both sides are the same term.
+//!   guard, until both sides are the same term;
+//! - **finite domains**: when evaluation alone does not close the law,
+//!   split every given of finite type into all of its values and evaluate
+//!   each case.
 //!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 
 mod chain;
 mod env;
 mod eval;
+mod finite;
 mod rewrite;
 
 use crate::codegen::proof_lower::ProofLowerInputs;
@@ -89,6 +93,7 @@ fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
     Obligation {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
+        finite: finite::finite_givens(inputs, t),
         premise: premise_of(inputs, t),
         lhs: law_term(inputs, t, &t.claim_lhs),
         rhs: law_term(inputs, t, &t.claim_rhs),
@@ -176,7 +181,19 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Sc
             let laws = cited(inputs, ir, t, names).ok_or("a cited law has no theorem")?;
             citations(&mut env, laws, &ob)?
         }
-        _ => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH)?,
+        _ => match env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH) {
+            Ok(proof) => proof,
+            Err(_) if !ob.finite.is_empty() => {
+                // Start again: the failed attempt may have opened
+                // definitions and bound hypothesis names.
+                env = Env::new(inputs);
+                if let Some(p) = &ob.premise {
+                    env.hyps.push(("when".into(), chain::eqn_true(p)));
+                }
+                env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH)?
+            }
+            Err(why) => return Err(why),
+        },
     };
     if proof.size() > MAX_PROOF_NODES {
         return Err(format!(

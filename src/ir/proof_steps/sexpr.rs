@@ -5,11 +5,13 @@
 //! to be the format's own documentation:
 //!
 //! ```text
-//! script  := (steps VERSION (obligation KEY (GIVEN…) PREMISE TERM TERM)
+//! script  := (steps VERSION (obligation KEY (OGIVEN…) PREMISE TERM TERM)
 //!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM)…)
 //!                    (consts (const NAME TERM)…)
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…)
 //!                    (proof PROOF))
+//! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
+//! TYPE    := (tbool) | (tsum CTOR…) | (trec TYPE (FIELD TYPE)…) | (ttuple TYPE…)
 //! PREMISE := (none) | TERM
 //! TERM    := (i INT) | (b true|false) | (s "TEXT") | (unit) | (v NAME) | (hole)
 //!          | (get TERM FIELD) | (call FN TERM…) | (bi BUILTIN TERM…)
@@ -24,6 +26,7 @@
 //!          | (arm ARM (TERM…) TERM PROOF) | (proj TERM) | (hyp NAME)
 //!          | (rule RULE ((NAME TERM)…) PROOF…) | (law KEY ((NAME TERM)…) [PROOF])
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
+//!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
 //! ```
 
 use crate::ast::{BinOp, Literal};
@@ -33,7 +36,7 @@ use crate::ir::hir::{
 use crate::ir::identity::FnId;
 
 use super::term::{HOLE, Term};
-use super::{FORMAT_VERSION, Proof, Script};
+use super::{FORMAT_VERSION, Finite, Proof, Script};
 
 /// How identities are spelled in the data.
 pub trait Names {
@@ -360,7 +363,65 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             proof(if_true, names)?,
             proof(if_false, names)?
         ),
+        Proof::Absurd {
+            contradiction,
+            lhs,
+            rhs,
+        } => format!(
+            "(absurd {} {} {})",
+            proof(contradiction, names)?,
+            term(lhs, names)?,
+            term(rhs, names)?
+        ),
+        Proof::Enum {
+            var,
+            lhs,
+            rhs,
+            cases,
+        } => {
+            let mut s = format!("(enum {var} {} {}", term(lhs, names)?, term(rhs, names)?);
+            for c in cases {
+                s.push(' ');
+                s.push_str(&proof(c, names)?);
+            }
+            s.push(')');
+            s
+        }
     })
+}
+
+pub fn finite(f: &Finite, names: &dyn Names) -> String {
+    match f {
+        Finite::Bool => "(tbool)".to_string(),
+        Finite::Sum(ctors) => {
+            let mut s = String::from("(tsum");
+            for c in ctors {
+                s.push(' ');
+                s.push_str(&names.ctor_name(c));
+            }
+            s.push(')');
+            s
+        }
+        Finite::Record {
+            type_name, fields, ..
+        } => {
+            let mut s = format!("(trec {type_name}");
+            for (n, t) in fields {
+                s.push_str(&format!(" ({n} {})", finite(t, names)));
+            }
+            s.push(')');
+            s
+        }
+        Finite::Tuple(parts) => {
+            let mut s = String::from("(ttuple");
+            for t in parts {
+                s.push(' ');
+                s.push_str(&finite(t, names));
+            }
+            s.push(')');
+            s
+        }
+    }
 }
 
 fn premise(p: &Option<Term>, names: &dyn Names) -> Result<String, String> {
@@ -372,10 +433,18 @@ fn premise(p: &Option<Term>, names: &dyn Names) -> Result<String, String> {
 
 pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
     let o = &s.obligation;
+    let givens: Vec<String> = o
+        .givens
+        .iter()
+        .map(|g| match o.finite.iter().find(|(n, _)| n == g) {
+            Some((_, f)) => format!("({g} {})", finite(f, names)),
+            None => g.clone(),
+        })
+        .collect();
     let mut out = format!(
         "(steps {FORMAT_VERSION}\n (obligation {} ({}) {} {} {})\n (defs",
         o.key,
-        o.givens.join(" "),
+        givens.join(" "),
         premise(&o.premise, names)?,
         term(&o.lhs, names)?,
         term(&o.rhs, names)?

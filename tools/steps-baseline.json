@@ -27,7 +27,10 @@
   "stillToSend.acceptedNothingKeepsEverything"
  ],
  "examples/games/eggcatch/core.av": [
-  "resolveLip.conserves"
+  "chuteIndex.inRange",
+  "foxCount.exactlyOne",
+  "resolveLip.conserves",
+  "resolveLip.noFalseMiss"
  ],
  "examples/games/tetris/logic.av": [
   "computeScore.zeroLinesZeroScore"

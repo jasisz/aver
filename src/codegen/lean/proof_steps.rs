@@ -156,7 +156,9 @@ struct Renderer<'a> {
     /// Lean theorem names of cited laws, by law key.
     laws: BTreeMap<String, String>,
     /// Emitted unfold lemmas, by (function, arm).
-    unfolds: BTreeMap<(FnId, u32), String>,
+    /// Emitted unfold lemmas, by (function, arm, chosen value of a
+    /// catch-all arm).
+    unfolds: BTreeMap<(FnId, u32, String), String>,
     support: Vec<String>,
 }
 
@@ -265,9 +267,9 @@ impl Renderer<'_> {
                 binders,
                 premise,
             } => {
-                let name = self.unfold_lemma(*fn_id, *arm)?;
+                let (name, extra) = self.unfold_lemma(*fn_id, *arm, binders)?;
                 let mut s = name;
-                for a in args.iter().chain(binders) {
+                for a in args.iter().chain(&extra) {
                     s.push(' ');
                     s.push_str(&self.expr(a));
                 }
@@ -286,8 +288,21 @@ impl Renderer<'_> {
                 let ResolvedExpr::Match { arms, .. } = &t.node else {
                     return Err("arm: not a match".into());
                 };
-                let tactic = arm_tactic(&arms[*arm as usize - 1].pattern, t, "h_arm")?;
-                let _ = binders;
+                let pat = &arms[*arm as usize - 1].pattern;
+                let literal;
+                let pat = match binders.as_slice() {
+                    [v] if crate::ir::proof_steps::check::is_catch_all(pat) => {
+                        match term::bool_value(v) {
+                            Some(b) => {
+                                literal = ResolvedPattern::Literal(crate::ast::Literal::Bool(b));
+                                &literal
+                            }
+                            None => pat,
+                        }
+                    }
+                    _ => pat,
+                };
+                let tactic = arm_tactic(pat, t, "h_arm")?;
                 format!("(fun h_arm => by {tactic}) {}", self.proof(premise, hyps)?)
             }
             // A `when` that is a bare comparison is stated `(a < b) = true`,
@@ -360,16 +375,139 @@ impl Renderer<'_> {
                     self.expr(on)
                 )
             }
+            // `true = false` (or the other way round) is refuted by `decide`.
+            Proof::Absurd { contradiction, .. } => {
+                format!("absurd {} (by decide)", self.proof(contradiction, hyps)?)
+            }
+            // A term-mode `match` on the given, one arm per value, with
+            // every hypothesis that mentions the given matched alongside
+            // so it is read at that value. A missing or wrong case is an
+            // elaboration error of the step term, which then falls back to
+            // the portfolio.
+            Proof::Enum { var, cases, .. } => {
+                let (_, ty) = self
+                    .script
+                    .obligation
+                    .finite
+                    .iter()
+                    .find(|(n, _)| n == var)
+                    .ok_or_else(|| format!("enum: {var} is not of finite type"))?;
+                let dependent: Vec<String> = hyps
+                    .iter()
+                    .filter(|(_, e)| {
+                        let mut fv = Vec::new();
+                        term::free_vars(&e.lhs, &mut fv);
+                        term::free_vars(&e.rhs, &mut fv);
+                        fv.contains(var)
+                    })
+                    .map(|(n, _)| self.hyp_name(n))
+                    .fold(Vec::new(), |mut acc, n| {
+                        if !acc.contains(&n) {
+                            acc.push(n);
+                        }
+                        acc
+                    });
+                let mut discriminants = vec![super::syntax::aver_name_to_lean(var)];
+                discriminants.extend(dependent.iter().cloned());
+                let mut s = format!("(match {} with", discriminants.join(", "));
+                let patterns = self.match_patterns(ty);
+                for ((value, pattern), case) in ty.values().iter().zip(patterns).zip(cases) {
+                    let at = [(var.clone(), value.clone())];
+                    let scoped: Hyps = hyps
+                        .iter()
+                        .map(|(n, e)| {
+                            Ok((
+                                n.clone(),
+                                Eqn::new(term::subst(&e.lhs, &at)?, term::subst(&e.rhs, &at)?),
+                            ))
+                        })
+                        .collect::<Result<_, String>>()?;
+                    let mut heads = vec![pattern];
+                    heads.extend(dependent.iter().cloned());
+                    s.push_str(&format!(
+                        " | {} => {}",
+                        heads.join(", "),
+                        self.proof(case, &scoped)?
+                    ));
+                }
+                s.push(')');
+                s
+            }
         };
         Ok(format!("(show {} from {body})", self.eqn(&eq)))
+    }
+
+    /// One Lean pattern per value of a finite type, in the order
+    /// [`crate::ir::proof_steps::Finite::values`] lists the values.
+    fn match_patterns(&self, ty: &crate::ir::proof_steps::Finite) -> Vec<String> {
+        use crate::ir::proof_steps::Finite;
+        let product = |parts: Vec<Vec<String>>| -> Vec<Vec<String>> {
+            parts.into_iter().fold(vec![Vec::new()], |acc, part| {
+                acc.iter()
+                    .flat_map(|prefix| {
+                        part.iter().map(move |p| {
+                            let mut next = prefix.clone();
+                            next.push(p.clone());
+                            next
+                        })
+                    })
+                    .collect()
+            })
+        };
+        match ty {
+            Finite::Bool => vec!["false".into(), "true".into()],
+            Finite::Sum(_) => ty.values().iter().map(|v| emit_expr(v, self.ctx)).collect(),
+            Finite::Record { fields, .. } => {
+                product(fields.iter().map(|(_, f)| self.match_patterns(f)).collect())
+                    .into_iter()
+                    .map(|ps| format!("⟨{}⟩", ps.join(", ")))
+                    .collect()
+            }
+            Finite::Tuple(parts) => product(parts.iter().map(|f| self.match_patterns(f)).collect())
+                .into_iter()
+                .map(|ps| format!("({})", ps.join(", ")))
+                .collect(),
+        }
     }
 
     /// A local `have __aver_unfold_<n> : ∀ (x…) (y…) [h], f x… = arm`,
     /// proved once inside the step branch: if Lean cannot prove it, only
     /// that branch fails and the law falls back to its portfolio.
-    fn unfold_lemma(&mut self, fn_id: FnId, arm: u32) -> Result<String, String> {
-        if let Some(name) = self.unfolds.get(&(fn_id, arm)) {
-            return Ok(name.clone());
+    ///
+    /// A catch-all arm holds only for values the earlier arms exclude, so
+    /// its lemma is stated for the one value the step chose (its free
+    /// variables quantified); the returned terms are what the step passes
+    /// after the arguments.
+    fn unfold_lemma(
+        &mut self,
+        fn_id: FnId,
+        arm: u32,
+        chosen: &[Term],
+    ) -> Result<(String, Vec<Term>), String> {
+        let catch_all = self
+            .script
+            .def(fn_id)
+            .and_then(|d| match &d.body.node {
+                ResolvedExpr::Match { arms, .. } if arm > 0 => arms
+                    .get(arm as usize - 1)
+                    .map(|a| crate::ir::proof_steps::check::is_catch_all(&a.pattern)),
+                _ => None,
+            })
+            .unwrap_or(false);
+        let (value_key, extra) = match (catch_all, chosen) {
+            (true, [v]) => {
+                let mut fv = Vec::new();
+                term::free_vars(v, &mut fv);
+                (
+                    self.expr(v),
+                    fv.iter().map(|n| term::var(n)).collect::<Vec<_>>(),
+                )
+            }
+            (true, _) => return Err("unfold: a catch-all arm takes its value".into()),
+            (false, _) => (String::new(), chosen.to_vec()),
+        };
+        if let Some(name) = self.unfolds.get(&(fn_id, arm, value_key.clone())) {
+            return Ok((name.clone(), extra));
         }
         let def = self
             .script
@@ -407,17 +545,50 @@ impl Renderer<'_> {
                 return Err("unfold: not a match".into());
             };
             let pat = &arms[arm as usize - 1].pattern;
-            let n = term::pattern_binders(pat).len();
+            let n = if catch_all {
+                extra.len()
+            } else {
+                term::pattern_binders(pat).len()
+            };
             let ys: Vec<Term> = (0..n).map(|i| term::var(&format!("y{i}"))).collect();
             for i in 0..n {
                 binders.push_str(&format!(" (y{i} : _)"));
                 names.push(format!("y{i}"));
             }
-            let (premise, body) = arm_equation(subject, arms, arm, &outer, &ys)?;
+            // A catch-all arm's value, with its free variables renamed to
+            // the lemma's own binders.
+            let value = match (catch_all, chosen) {
+                (true, [v]) => {
+                    let rename: Vec<(String, Term)> = extra
+                        .iter()
+                        .zip(&ys)
+                        .map(|(x, y)| match &x.node {
+                            ResolvedExpr::Ident(n) => (n.clone(), y.clone()),
+                            _ => unreachable!("free variables are names"),
+                        })
+                        .collect();
+                    Some(term::subst(v, &rename)?)
+                }
+                _ => None,
+            };
+            let selected = match &value {
+                Some(v) => vec![v.clone()],
+                None => ys.clone(),
+            };
+            let (premise, body) = arm_equation(subject, arms, arm, &outer, &selected)?;
             binders.push_str(&format!(" (h : {})", self.eqn(&premise)));
             names.push("h".to_string());
             statement = format!("{} = {}", self.expr(&call), self.expr(&body));
             let subject = term::subst(subject, &outer)?;
+            // A catch-all chosen for a Bool is the branch of that literal.
+            let as_literal;
+            let pat = match value.as_ref().and_then(term::bool_value) {
+                Some(b) => {
+                    as_literal = ResolvedPattern::Literal(crate::ast::Literal::Bool(b));
+                    &as_literal
+                }
+                None => pat,
+            };
             tactic = arm_tactic(pat, &subject, "h")?;
         }
         let intro = if names.is_empty() {
@@ -433,8 +604,8 @@ impl Renderer<'_> {
         self.support.push(format!(
             "have {name} : {quantified} := (by {intro}unfold {f_name}; {tactic})"
         ));
-        self.unfolds.insert((fn_id, arm), name.clone());
-        Ok(name)
+        self.unfolds.insert((fn_id, arm, value_key), name.clone());
+        Ok((name, extra))
     }
 }
 

@@ -46,8 +46,16 @@ fn is_int(t: &Term) -> bool {
 /// The arm of a match whose pattern head the value `v` has, with the
 /// pattern's bindings. `None` when no arm can be selected syntactically.
 fn select_arm(arms: &[crate::ir::hir::ResolvedMatchArm], v: &Term) -> Option<(u32, Vec<Term>)> {
+    use crate::ir::proof_steps::check::{excludes, is_catch_all};
     for (i, arm) in arms.iter().enumerate() {
         let k = (i + 1) as u32;
+        if is_catch_all(&arm.pattern) {
+            // Chosen for this value once every earlier arm excludes it.
+            return arms[..i]
+                .iter()
+                .all(|earlier| excludes(&earlier.pattern, v))
+                .then(|| (k, vec![canon(v)]));
+        }
         match (&arm.pattern, &v.node) {
             (ResolvedPattern::Literal(l), ResolvedExpr::Literal(x)) => {
                 if l == x {
@@ -402,6 +410,7 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
         obligation: Obligation {
             key: String::new(),
             givens: Vec::new(),
+            finite: Vec::new(),
             premise: None,
             lhs: term::boolean(true),
             rhs: term::boolean(true),

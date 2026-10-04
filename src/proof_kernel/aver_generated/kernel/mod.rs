@@ -4,6 +4,8 @@ pub mod decode;
 
 pub mod eval;
 
+pub mod finite;
+
 pub mod proof;
 
 pub mod rules;

@@ -15,6 +15,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Changed
 
 - **`aver proof` closes more laws by proof steps: a function that names values before its final expression (`mult = level + 1` then a `match`) is now opened by a step, in Lean and in the kernel written in Aver.** The step format is now version 3: a definition carries its local bindings, which a step substitutes in order.
+- **A law whose givens have finitely many values (`Bool`, a type whose variants carry nothing, records of those) is proved by listing every value**, a full proof rather than samples: a new `enum` step splits a given into all its values, an `absurd` step closes a case its `when` rules out, and a step may now choose a `_` or named catch-all arm for a value the earlier arms exclude. Lean checks the split as a `match` with one arm per value. The step format is now version 4.
 
 ## 0.30.0 "Turn" — 2026-10-03
 

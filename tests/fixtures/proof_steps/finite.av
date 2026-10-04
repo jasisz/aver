@@ -1,0 +1,66 @@
+module Finite
+    intent = "Laws over givens with finitely many values, which proof steps close by listing every value."
+    exposes [Light, Lamp, next, safe, lit, agree]
+    effects []
+
+type Light
+    Red
+    Amber
+    Green
+
+record Lamp
+    light: Light
+    on: Bool
+
+fn next(l: Light) -> Light
+    ? "The light that follows."
+    match l
+        Light.Red -> Light.Green
+        Light.Amber -> Light.Red
+        Light.Green -> Light.Amber
+
+verify next
+    next(Light.Red) => Light.Green
+
+verify next law cyclesInThree
+    given l: Light = [Light.Red, Light.Amber, Light.Green]
+    next(next(next(l))) => l
+
+fn safe(l: Light) -> Bool
+    ? "Whether traffic must stop."
+    match l
+        Light.Green -> false
+        _ -> true
+
+verify safe
+    safe(Light.Red) => true
+
+verify safe law notSafeMeansNextIsAmber
+    given l: Light = [Light.Red, Light.Amber, Light.Green]
+    when safe(l) == false
+    next(l) => Light.Amber
+
+fn lit(lamp: Lamp) -> Bool
+    ? "A lamp shows its light only when it is on."
+    match lamp.on
+        true -> safe(lamp.light)
+        false -> false
+
+verify lit
+    lit(Lamp(light = Light.Red, on = true)) => true
+
+verify lit law offIsDark
+    given lamp: Lamp = [Lamp(light = Light.Red, on = false), Lamp(light = Light.Green, on = true)]
+    lit(lamp) => Bool.and(lamp.on, safe(lamp.light))
+
+fn agree(a: Bool, b: Bool) -> Bool
+    ? "Both or neither."
+    a == b
+
+verify agree
+    agree(true, false) => false
+
+verify agree law symmetric
+    given a: Bool = [true, false]
+    given b: Bool = [true, false]
+    agree(a, b) => agree(b, a)
