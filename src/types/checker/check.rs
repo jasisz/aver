@@ -203,7 +203,7 @@ impl TypeChecker {
     ) {
         let pairs: Vec<_> = modules
             .iter()
-            .map(|m| (m.dep_name.clone(), m.items.clone()))
+            .map(|m| (m.dep_name.as_str(), m.items.as_slice()))
             .collect();
         self.module_type_exports = crate::visibility::collect_module_type_exports(&pairs);
         for module in modules {
@@ -266,7 +266,7 @@ impl TypeChecker {
             .extend(visible_modules.iter().cloned());
         let pairs: Vec<_> = modules
             .iter()
-            .map(|m| (m.dep_name.clone(), m.items.clone()))
+            .map(|m| (m.dep_name.as_str(), m.items.as_slice()))
             .collect();
         let registry = crate::visibility::SymbolRegistry::from_visible_modules(
             &pairs,
