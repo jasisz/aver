@@ -814,6 +814,25 @@ class ReleaseCiTests(unittest.TestCase):
             green, _detail = release.ci_verified_commit("b" * 40)
         self.assertTrue(green)
 
+    def test_pull_request_runs_do_not_satisfy_the_gate(self) -> None:
+        rows = [
+            {
+                "name": "Certification",
+                "status": "completed",
+                "conclusion": "success",
+                "event": "pull_request",
+            },
+            {"name": "CI", "status": "completed", "conclusion": "success", "event": "push"},
+            {"name": "Proof", "status": "completed", "conclusion": "success", "event": "push"},
+        ]
+        result = subprocess.CompletedProcess(
+            ["gh", "run", "list"], 0, stdout=json.dumps(rows), stderr=""
+        )
+        with mock.patch.object(release, "run", return_value=result):
+            green, detail = release.ci_verified_commit("c" * 40)
+        self.assertFalse(green)
+        self.assertIn("Certification", detail)
+
     def test_candidate_records_the_exact_main_base(self) -> None:
         plan = release.create_release_plan(
             "0.27.0", versions(), versions(main="0.27.0"), registry()

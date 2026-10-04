@@ -134,7 +134,7 @@ def ci_verified_commit(commit: str) -> tuple[bool, str]:
                 "--limit",
                 "50",
                 "--json",
-                "name,conclusion,status",
+                "name,conclusion,status,event",
             ],
             capture=True,
             check=True,
@@ -151,6 +151,11 @@ def ci_verified_commit(commit: str) -> tuple[bool, str]:
     latest: dict[str, dict[str, object]] = {}
     for result in runs:
         if not isinstance(result, dict):
+            continue
+        # A pull-request run on the same SHA is the reduced smoke matrix
+        # (Certification runs one hardening case per attack class there), so
+        # it never stands in for the push, schedule or manual run.
+        if result.get("event") == "pull_request":
             continue
         name = result.get("name")
         if isinstance(name, str) and name in RELEASE_CI_WORKFLOWS:

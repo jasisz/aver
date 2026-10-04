@@ -63,6 +63,23 @@ jobs:
                   bad.append(f"{suite} {family}: expected 1..{n}, got {sorted(seen)}")
           if not any(lane.get('smoke') for lane in lanes):
               bad.append("no lane is marked smoke — every pull request would run nothing")
+          # A pull-request-only lane names its tests one by one. A renamed or
+          # deleted test would silently leave the smoke set, so every name has
+          # to still be a test of its suite, listed once.
+          seen = set()
+          for lane in lanes:
+              if lane.get('pr_only') and not lane.get('smoke'):
+                  bad.append(f"{lane['lane']}: a pull-request-only lane must be smoke")
+              names = re.findall(r'test\(=([A-Za-z0-9_:]+)\)', lane.get('filter') or '')
+              if not names:
+                  continue
+              source = open(f"tests/{lane['suite']}.rs").read()
+              for name in names:
+                  if not re.search(rf'\bfn {re.escape(name)}\(', source):
+                      bad.append(f"{lane['suite']} {lane['lane']}: no test named {name}")
+                  if (lane['suite'], name) in seen:
+                      bad.append(f"{lane['suite']}: {name} is named by two lanes")
+                  seen.add((lane['suite'], name))
           # Every certificate suite runs here, where Lean is installed. A suite
           # without a lane would run only in ci.yml, whose runners have no
           # `lake`, and its Lean-backed tests would skip there without a word.
@@ -87,12 +104,30 @@ jobs:
           set -euo pipefail
 
           # A pull request runs the smoke lanes only: the cheap ones that
-          # still reach every suite, plus the hardening tampers and the
+          # still reach every suite, one hardening tamper per attack class
+          # (the `pr-smoke-*` lanes, which name their tests), and the
           # guard-isolation lanes, whose failures are soundness regressions. They
           # are marked in .github/cert-lanes.json rather than listed here, so
           # the full set stays the single source and a lane cannot be dropped
-          # from one place and kept in the other.
+          # from one place and kept in the other. The complete hardening
+          # suite runs on the schedule, on manual runs and on every release
+          # candidate (`release/**`), where `pr_only` lanes are left out.
+          #
+          # A pull request whose every changed path is outside the
+          # certificate's reach (tools/ci_pr_gate.py lists those paths) runs
+          # no lane at all. An unreadable file list runs the smoke lanes.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            files=$(gh api --paginate \
+              "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
+              --jq '.[] | .filename, (.previous_filename // empty)') || files=""
+            # The API lists at most 3000 files; past that the list is not the whole PR.
+            if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then files=""; fi
+            if [ "$(printf '%s\n' "$files" | python3 tools/ci_pr_gate.py cert)" = "false" ]; then
+              echo "every changed path is outside the certificate's reach — no lane runs"
+              printf '%s\n' "$files"
+              echo "lanes=[]" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "lanes=$(jq -c '[.[] | select(.smoke)]' .github/cert-lanes.json)" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -110,7 +145,7 @@ jobs:
             fi
           fi
 
-          echo "lanes=$(jq -c '.' .github/cert-lanes.json)" >> "$GITHUB_OUTPUT"
+          echo "lanes=$(jq -c '[.[] | select(.pr_only | not)]' .github/cert-lanes.json)" >> "$GITHUB_OUTPUT"
 
   cert-kernel:
     needs: decide
@@ -147,9 +182,13 @@ jobs:
     # prefix out. A model or fixture added to the lists inside a suite lands in
     # an existing shard test, so these lanes never need editing for coverage —
     # only to add throughput.
-    # The hardening suite is also sliced, with every slice in PR smoke:
-    # the unsplit suite exceeded the job's hour limit while tests were still
-    # passing. All tests and verifier limits stay unchanged.
+    # The hardening suite is also sliced: the unsplit suite exceeded the
+    # job's hour limit while tests were still passing. The eight slices run
+    # in the full matrix. A pull request runs the `pr-smoke-*` lanes instead,
+    # which name one tamper per attack class plus the acceptance controls
+    # (most declines cost a cold rebuild of the wall, because the checker
+    # retries a failed cache-assisted build from clean). All tests and
+    # verifier limits stay unchanged.
     name: Cert Kernel (${{ matrix.suite }}${{ matrix.lane && format(' {0}', matrix.lane) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60

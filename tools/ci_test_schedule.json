@@ -3,7 +3,9 @@
   "source": {
     "workflow_run": "https://github.com/jasisz/aver/actions/runs/33095728752",
     "measured_at": "2026-08-27",
-    "default_weight_seconds": 1.0
+    "default_weight_seconds": 1.0,
+    "case_weights_run": "https://github.com/jasisz/aver/actions/runs/37199873994",
+    "case_weights_measured_at": "2026-10-04"
   },
   "split_targets": [
     "provider_vm_host_spec",
@@ -25,5 +27,15 @@
     "verify_runner_regressions": 1.08,
     "verify_step_budget_spec": 826.34,
     "vm_pattern_shadow_matrix": 8.58
+  },
+  "case_weights_seconds": {
+    "provider_vm_host_spec::a_cooperative_stop_reaches_a_program_running_on_the_cached_host": 411.53,
+    "provider_vm_host_spec::bound_providers_run_on_wasm_gc_and_refuse_backends_without_a_host": 359.52,
+    "provider_vm_host_spec::configured_packages_run_and_verify_on_one_cached_vm_host": 345.92,
+    "provider_vm_host_spec::custom_wasm_gc_provider_effects_record_and_replay": 477.83,
+    "verify_step_budget_spec::a_raised_ceiling_reaches_check_run_compile_and_proof": 602.03,
+    "verify_step_budget_spec::a_raised_ceiling_reaches_the_remaining_doors": 589.16,
+    "verify_step_budget_spec::an_entry_that_only_raises_max_cases_is_not_reported_stale": 301.77,
+    "verify_step_budget_spec::reordering_two_matching_entries_changes_nothing": 578.83
   }
 }

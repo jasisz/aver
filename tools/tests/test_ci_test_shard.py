@@ -45,10 +45,36 @@ class WeightedShardTests(unittest.TestCase):
         )
 
         self.assertEqual(sum(shards, []), ["ordinary"])
-        self.assertEqual(
-            sharding.nextest_command({"huge"}, 1, 4)[-2:],
-            ["--partition", "slice:2/4"],
-        )
+
+    def test_slowest_cases_spread_and_every_case_runs_once(self) -> None:
+        cases = [("huge", f"case_{i}") for i in range(10)] + [("big", "x"), ("big", "y")]
+        weights = {
+            "huge::case_0": 600.0,
+            "huge::case_1": 590.0,
+            "huge::case_2": 580.0,
+            "big::x": 480.0,
+            "big::y": 300.0,
+        }
+        shards = sharding.weighted_cases(cases, 4, weights, [0.0] * 4)
+        heavy = [
+            sum(1 for target, case in shard if f"{target}::{case}" in weights)
+            for shard in shards
+        ]
+        self.assertEqual(max(heavy), 2)
+        self.assertEqual(sorted(sum(shards, [])), sorted(cases))
+        # The same input gives the same assignment on every runner.
+        self.assertEqual(shards, sharding.weighted_cases(list(reversed(cases)), 4, weights, [0.0] * 4))
+
+    def test_nextest_command_names_its_cases_exactly(self) -> None:
+        command = sharding.nextest_command([("big", "x"), ("huge", "m::y")])
+        self.assertEqual(command[command.index("-E") + 1],
+                         "(binary(=big) & test(=x)) | (binary(=huge) & test(=m::y))")
+        self.assertEqual([command[i + 1] for i, arg in enumerate(command) if arg == "--test"],
+                         ["big", "huge"])
+
+    def test_stale_case_weight_fails_closed(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "missing cases: huge::gone"):
+            sharding.weighted_cases([("huge", "here")], 2, {"huge::gone": 5.0}, [0.0, 0.0])
 
     def test_stale_schedule_entry_fails_closed(self) -> None:
         with self.assertRaisesRegex(SystemExit, "missing targets: old_name"):
@@ -66,6 +92,8 @@ class WeightedShardTests(unittest.TestCase):
             {"provider_vm_host_spec", "verify_step_budget_spec"},
         )
         self.assertGreater(weights["provider_vm_host_spec"], 900)
+        for key in sharding.load_case_weights():
+            self.assertIn(key.split("::", 1)[0], split_targets)
 
 
 if __name__ == "__main__":

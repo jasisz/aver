@@ -39,6 +39,12 @@ jobs:
       - name: Release tooling
         run: python3 -m unittest discover -s tools/tests -p 'test_*.py'
 
+      - name: Every feature-gated integration test runs somewhere
+        # A test file (or a test in it) behind `feature = "wasm"` or
+        # `feature = "wasip2"` compiles to nothing in the default-feature
+        # shards, and runs only where a step names it under that feature.
+        run: python3 tools/ci_test_coverage.py
+
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -168,9 +174,43 @@ jobs:
       - name: Test aver-rt
         run: cargo test -p aver-rt
 
+  wasm_plan:
+    # The `pack` lane builds two release Wasmtime hosts from a fresh cache,
+    # which is the cache-isolation contract it tests, so its fourteen minutes
+    # cannot be cached away. A pull request runs it only when it changes what
+    # a pack is built from (tools/ci_pr_gate.py lists those paths); every
+    # push to main, every release candidate, the nightly and manual runs
+    # always run it. An unreadable file list runs it.
+    name: WASM lanes for this event
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || github.repository == 'jasisz/aver'
+    outputs:
+      lanes: ${{ steps.pick.outputs.lanes }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pick lanes
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          lanes='["checks","wasm-gc","wasip2","pack"]'
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            files=$(gh api --paginate \
+              "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
+              --jq '.[] | .filename, (.previous_filename // empty)') || files=""
+            if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then files=""; fi
+            if [ "$(printf '%s\n' "$files" | python3 tools/ci_pr_gate.py pack)" = "false" ]; then
+              echo "no changed path feeds the Wasmtime pack; it runs on the push to main"
+              lanes='["checks","wasm-gc","wasip2"]'
+            fi
+          fi
+          echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
+
   wasm_lanes:
     name: WASM (${{ matrix.lane }})
     runs-on: ubuntu-latest
+    needs: [wasm_plan]
     # Scheduled runs belong to this repository. A fork with Actions enabled
     # otherwise runs our cron on its owner's account and mails them about any
     # failure. Every other trigger still works in a fork, so a contributor can
@@ -183,7 +223,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [checks, wasm-gc, wasip2, pack]
+        lane: ${{ fromJSON(needs.wasm_plan.outputs.lanes) }}
     timeout-minutes: 45
     env:
       # The wasm/wasip2 feature set pulls in wasmtime + component-model
@@ -359,17 +399,30 @@ jobs:
             work_shape_spec \
             yield_spec \
             yield_request_traces_spec \
-            yield_imported_effects_spec
+            yield_imported_effects_spec \
+            process_stop_requested_spec \
+            tcp_nonblocking_spec \
+            wasm_gc_unicode_trim_regression \
+            wasm_gc_verify_nested_values \
+            yield_module_helpers_spec
           do
             cargo test -p aver-lang --features wasm --test "$test"
           done
+          # One wasm-gated test in a suite whose other cases run in the
+          # default-feature shards, several over twelve-thousand-case domains;
+          # run only the gated one here.
+          cargo test -p aver-lang --features wasm --test verify_step_budget_spec -- \
+            the_vm_and_wasm_gc_lanes_agree_about_which_cases_are_runnable --exact
 
       - name: Test wasip2 suites
         if: matrix.lane == 'wasip2'
         # `wasip2` is a separate feature; `wasm` alone leaves every
         # `#![cfg(feature = "wasip2")]` test file at 0 tests. Keep these
         # component-model suites in their own loop so only wasip2 tests pay
-        # for the heavier wasmtime-wasi dependency graph.
+        # for the heavier wasmtime-wasi dependency graph. A suite whose tests
+        # are gated on both `wasm` and `wasip2` runs here, where both are on;
+        # tools/ci_test_coverage.py fails the build when a gated suite is in
+        # neither loop.
         run: |
           set -euo pipefail
           for test in \
@@ -387,7 +440,11 @@ jobs:
             wasm_work_spec \
             knowledge_provider_spec \
             work_shape_spec \
-            yield_spec
+            yield_spec \
+            capability_wit_spec \
+            compile_spec \
+            nested_patterns_spec \
+            yield_verify_spec
           do
             cargo test -p aver-lang --features wasm,wasip2 --test "$test"
           done
