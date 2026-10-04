@@ -61,9 +61,12 @@ fn finite_of(
                 .map(|p| finite_of(inputs, p, scope, depth - 1))
                 .collect::<Option<_>>()?,
         )),
-        Type::Named { name, .. } => {
+        Type::Named { id, name } => {
             let symbols = inputs.symbol_table;
-            let id = symbols.resolve_type_id_in(name, scope)?;
+            let id = match id {
+                Some(id) => *id,
+                None => symbols.resolve_type_id_in(name, scope)?,
+            };
             let entry = symbols.type_entry_if_present(id)?;
             if entry.is_capability_resource {
                 return None;
