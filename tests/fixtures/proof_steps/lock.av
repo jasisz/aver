@@ -1,0 +1,154 @@
+module Lock
+    intent = "Lock time rules and small arithmetic wrappers whose laws proof lowering proves as data."
+    exposes [lockTimeChecked, sequenceChecked, pick]
+    effects []
+
+type Step
+    Continue(List<Int>)
+    Stop(String)
+
+record Locking
+    version: Int
+    lockTime: Int
+    sequence: Int
+
+fn refused(code: Int, why: String) -> Step
+    ? "Stop with a reason."
+    Step.Stop("{code} {why}")
+
+verify refused
+    refused(177, "no") => Step.Stop("177 no")
+
+fn threshold() -> Int
+    ? "Height below, time above."
+    500000000
+
+verify threshold
+    threshold() => 500000000
+
+fn sameKind(a: Int, b: Int) -> Bool
+    ? "Both Heights, or both times."
+    (a < threshold()) == (b < threshold())
+
+verify sameKind
+    sameKind(5, 7) => true
+
+fn lockTimeChecked(value: Int, locking: Locking, state: List<Int>) -> Step
+    ? "BIP65."
+    match sameKind(value, locking.lockTime)
+        false -> refused(177, "compares a Height with a time")
+        true -> reached(value, locking, state)
+
+fn reached(value: Int, locking: Locking, state: List<Int>) -> Step
+    ? "Locked far enough."
+    match value > locking.lockTime
+        true -> refused(177, "locks past")
+        false -> notFinal(locking, state)
+
+verify reached
+    reached(9, Locking(version = 1, lockTime = 5, sequence = 0), []) => Step.Stop("177 locks past")
+
+fn notFinal(locking: Locking, state: List<Int>) -> Step
+    ? "A final sequence disables the lock."
+    match locking.sequence == 4294967295
+        true -> refused(177, "final")
+        false -> Step.Continue(state)
+
+verify notFinal
+    notFinal(Locking(version = 1, lockTime = 5, sequence = 0), []) => Step.Continue([])
+
+fn cltvSpec(value: Int, lockTime: Int, sequence: Int) -> Bool
+    ? "The rule in one line."
+    Bool.and(Bool.and(sameKind(value, lockTime), value <= lockTime), sequence != 4294967295)
+
+verify cltvSpec
+    cltvSpec(5, 9, 0) => true
+
+fn continued(step: Step) -> Bool
+    ? "Whether the step carried on."
+    match step
+        Step.Continue(state) -> true
+        Step.Stop(why) -> false
+
+verify continued
+    continued(Step.Stop("x")) => false
+
+verify lockTimeChecked law agreesWithSpec
+    given value: Int = [0, 1, 499999999, 500000000, 500000001]
+    given lockTime: Int = [0, 1, 499999999, 500000000]
+    given sequence: Int = [0, 4294967295]
+    continued(lockTimeChecked(value, Locking(version = 1, lockTime = lockTime, sequence = sequence), [])) => cltvSpec(value, lockTime, sequence)
+
+fn disableFlag() -> Int
+    ? "The disable bit."
+    2147483648
+
+verify disableFlag
+    disableFlag() => 2147483648
+
+fn sequenceChecked(value: Int, locking: Locking, state: List<Int>) -> Step
+    ? "BIP112, cut short."
+    match Bits.and(value, disableFlag()) != 0
+        true -> Step.Continue(state)
+        false -> versioned(value, locking, state)
+
+fn versioned(value: Int, locking: Locking, state: List<Int>) -> Step
+    ? "Version two or later."
+    match locking.version < 2
+        true -> refused(178, "needs version two")
+        false -> Step.Continue(state)
+
+verify versioned
+    versioned(0, Locking(version = 1, lockTime = 0, sequence = 0), []) => Step.Stop("178 needs version two")
+
+fn csvSpec(value: Int, version: Int) -> Bool
+    ? "The rule in one line."
+    Bool.or(Bits.and(value, disableFlag()) != 0, version >= 2)
+
+verify csvSpec
+    csvSpec(0, 2) => true
+
+verify sequenceChecked law agreesWithSpec
+    given value: Int = [0, 2147483648]
+    given version: Int = [0, 1, 2]
+    continued(sequenceChecked(value, Locking(version = version, lockTime = 0, sequence = 0), [])) => csvSpec(value, version)
+
+fn add(a: Int, b: Int) -> Int
+    ? "Sum."
+    a + b
+
+verify add law commutes
+    given a: Int = [0, 1, -2]
+    given b: Int = [3, 4]
+    add(a, b) => add(b, a)
+
+verify add law associates
+    given a: Int = [0, 1]
+    given b: Int = [3, 4]
+    given c: Int = [5]
+    add(add(a, b), c) => add(a, add(b, c))
+
+verify add law zeroIsIdentity
+    given a: Int = [0, 1, -2]
+    add(a, 0) => a
+
+fn mul(a: Int, b: Int) -> Int
+    ? "Product."
+    a * b
+
+verify mul law oneIsIdentity
+    given a: Int = [0, 1, -2]
+    mul(1, a) => a
+fn pick(x: Int) -> Int
+    ? "One for a positive number."
+    match x > 0
+        true -> 1
+        false -> 0
+
+verify pick
+    pick(3) => 1
+
+verify pick law positiveIsOne
+    given x: Int = [1, 2, -1]
+    when x > 0
+    pick(x) => 1

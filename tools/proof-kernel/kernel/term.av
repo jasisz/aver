@@ -1,0 +1,68 @@
+module Term
+    intent =
+        "Terms of the proof-step data: Aver expressions as the compiler wrote them."
+        "Variables are names; a hole marks the rewrite position of a congruence step."
+    exposes [Term, Arm, Field, Pat, Binding, Eqn, isHole, bind]
+    effects []
+
+type Term
+    TInt(Int)
+    TBool(Bool)
+    TStr(String)
+    TUnit
+    TVar(String)
+    THole
+    TGet(Term, String)
+    TCall(String, List<Term>)
+    TBi(String, List<Term>)
+    TOp(String, Term, Term)
+    TNeg(Term)
+    TCtor(String, List<Term>)
+    TMatch(Term, List<Arm>)
+    TParts(List<Term>)
+    TList(List<Term>)
+    TTuple(List<Term>)
+    TRec(String, List<Field>)
+    TUpd(String, Term, List<Field>)
+
+record Arm
+    pattern: Pat
+    body: Term
+
+record Field
+    name: String
+    value: Term
+
+type Pat
+    PWild
+    PVar(String)
+    PLit(Term)
+    PNil
+    PCons(String, String)
+    PTuple(List<Pat>)
+    PCtor(String, List<String>)
+
+record Binding
+    name: String
+    value: Term
+
+record Eqn
+    lhs: Term
+    rhs: Term
+
+fn isHole(t: Term) -> Bool
+    ? "Whether a term is the hole."
+    match t
+        Term.THole -> true
+        _ -> false
+
+verify isHole
+    isHole(Term.THole) => true
+    isHole(Term.TVar("x")) => false
+
+fn bind(name: String, value: Term) -> Binding
+    ? "One substitution entry."
+    Binding(name = name, value = value)
+
+verify bind
+    bind("x", Term.TInt(1)) => Binding(name = "x", value = Term.TInt(1))

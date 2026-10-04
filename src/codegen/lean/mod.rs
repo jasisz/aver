@@ -17,6 +17,7 @@ mod law_auto;
 pub mod lemma_calc;
 mod pattern;
 mod prelude;
+mod proof_steps;
 pub(crate) mod recurrence;
 mod sample_literal;
 mod string_case;

@@ -1200,6 +1200,7 @@ fn emit_verify_law_block(
                     binders: &quant_binders,
                     prop: &prop,
                     guard: when_template.as_deref(),
+                    allow_steps: !cert_model,
                 },
             ));
             if cert_model {

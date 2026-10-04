@@ -493,6 +493,11 @@ pub struct LawTheorem {
     /// explanations and guard, in discovery order. Samples do not contribute.
     /// Search data only: callbacks and builtin implementations are not expanded.
     pub function_cone: Vec<FnId>,
+    /// The law's explicit `using` list, as written; `None` when absent.
+    pub using: Option<Vec<String>>,
+    /// The proof as data, when a step producer recognised the law
+    /// (`crate::ir::proof_steps`). Backends try it before any search.
+    pub steps: Option<crate::ir::proof_steps::Script>,
 }
 
 #[derive(Debug, Clone)]

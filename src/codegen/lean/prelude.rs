@@ -1502,6 +1502,9 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     if include_all_helpers || body.contains("aver_int_order") {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
     }
+    if include_all_helpers || body.contains("AverSteps.") {
+        parts.push(super::proof_steps::LEAN_PRELUDE_AVER_STEPS.to_string());
+    }
 
     parts.join("\n\n")
 }
@@ -1819,6 +1822,11 @@ pub(super) fn build_common_lean(union_body: &str, cert_model: bool) -> String {
     // builtin call.
     if needs_order_kit && !cert_model {
         parts.push(LEAN_PRELUDE_NONLINEAR_NONNEG.to_string());
+    }
+    // The wall rules proof steps are rendered with, demand-driven like the
+    // order kit.
+    if union_body.contains("AverSteps.") && !cert_model {
+        parts.push(super::proof_steps::LEAN_PRELUDE_AVER_STEPS.to_string());
     }
     if needs_case_ground {
         parts.push(include_str!("prelude/verify_ground.lean").to_string());

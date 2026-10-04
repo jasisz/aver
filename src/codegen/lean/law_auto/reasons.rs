@@ -24,6 +24,9 @@ pub(in crate::codegen::lean) struct ReasonClaim<'a> {
     pub binders: &'a [(String, String)],
     pub prop: &'a str,
     pub guard: Option<&'a str>,
+    /// Whether a proof written as data may lead (never in a certificate
+    /// model, whose text gate admits only its own vocabulary).
+    pub allow_steps: bool,
 }
 
 pub(in crate::codegen::lean) fn dependencies(
@@ -547,6 +550,24 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             lines.push("  first".to_string());
             lines.push(format!("  | {candidate}"));
             lines.push("  |".to_string());
+            lines.extend(structured.into_iter().map(|line| format!("  {line}")));
+        }
+        // A proof written as data leads everything: the kernel checks it,
+        // and the whole strategy above is its fallback.
+        if final_step
+            && claim.allow_steps
+            && let Some(script) = super::law_steps_for(ctx, &vb.fn_name, &law.name)
+            && let Ok(rendered) = crate::codegen::lean::proof_steps::render(&script, ctx)
+        {
+            let structured = lines.split_off(strategy_start);
+            lines.push("  first".to_string());
+            lines.push(format!("  | ({})", rendered.tactic()));
+            lines.push("  |".to_string());
+            lines.push(format!(
+                "    trace \"{}{}\"",
+                crate::codegen::lean::proof_steps::STEPS_REJECTED_MARKER,
+                script.obligation.key
+            ));
             lines.extend(structured.into_iter().map(|line| format!("  {line}")));
         }
         if let Some(hints) = &facts {

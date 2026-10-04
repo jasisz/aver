@@ -1,0 +1,118 @@
+module Sexp
+    intent =
+        "The reader for proof-step data: S-expressions of atoms, quoted texts and lists."
+        "The compiler writes the data (src/ir/proof_steps/sexpr.rs); this reads it back."
+    exposes [Sexp, readAll]
+    effects []
+
+type Sexp
+    Atom(String)
+    Text(String)
+    Node(List<Sexp>)
+
+fn readAll(text: String) -> Result<Sexp, String>
+    ? "One S-expression and nothing after it but blanks."
+    match readOne(skipBlank(String.chars(text)))
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok((s, rest)) -> match skipBlank(rest)
+            [] -> Result.Ok(s)
+            _ -> Result.Err("text after the S-expression")
+
+verify readAll
+    readAll("(a b)") => Result.Ok(Sexp.Node([Sexp.Atom("a"), Sexp.Atom("b")]))
+    readAll(" (x (\"q \\\" r\") ()) ") => Result.Ok(Sexp.Node([Sexp.Atom("x"), Sexp.Node([Sexp.Text("q \" r")]), Sexp.Node([])]))
+    readAll("(a") => Result.Err("unexpected end of data")
+    readAll("a b") => Result.Err("text after the S-expression")
+
+fn readOne(cs: List<String>) -> Result<Tuple<Sexp, List<String>>, String>
+    ? "Read one S-expression from the front of the characters."
+    match cs
+        [] -> Result.Err("unexpected end of data")
+        ["(", ..rest] -> readList(skipBlank(rest), [])
+        ["\"", ..rest] -> readText(rest, "")
+        [")", ..rest] -> Result.Err("unexpected )")
+        _ -> readAtom(cs, "")
+
+verify readOne
+    readOne(["a", ")"]) => Result.Ok((Sexp.Atom("a"), [")"]))
+    readOne([")"]) => Result.Err("unexpected )")
+
+fn readList(cs: List<String>, acc: List<Sexp>) -> Result<Tuple<Sexp, List<String>>, String>
+    ? "The items of a list up to its closing parenthesis."
+    match cs
+        [] -> Result.Err("unexpected end of data")
+        [")", ..rest] -> Result.Ok((Sexp.Node(List.reverse(acc)), rest))
+        _ -> readListItem(cs, acc)
+
+verify readList
+    readList([")"], []) => Result.Ok((Sexp.Node([]), []))
+
+fn readListItem(cs: List<String>, acc: List<Sexp>) -> Result<Tuple<Sexp, List<String>>, String>
+    ? "One item of a list, then the rest of the list."
+    match readOne(cs)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok((item, rest)) -> readList(skipBlank(rest), List.prepend(item, acc))
+
+verify readListItem
+    readListItem(["a", ")"], []) => Result.Ok((Sexp.Node([Sexp.Atom("a")]), []))
+
+fn readText(cs: List<String>, acc: String) -> Result<Tuple<Sexp, List<String>>, String>
+    ? "A quoted text; backslash escapes a quote, a backslash or a newline."
+    match cs
+        [] -> Result.Err("unterminated text")
+        ["\"", ..rest] -> Result.Ok((Sexp.Text(acc), rest))
+        ["\\", "n", ..rest] -> readText(rest, acc + "\n")
+        ["\\", c, ..rest] -> readText(rest, acc + c)
+        [c, ..rest] -> readText(rest, acc + c)
+
+verify readText
+    readText(["a", "\""], "") => Result.Ok((Sexp.Text("a"), []))
+    readText(["a"], "") => Result.Err("unterminated text")
+
+fn readAtom(cs: List<String>, acc: String) -> Result<Tuple<Sexp, List<String>>, String>
+    ? "An atom runs until a blank, a parenthesis or a quote."
+    match cs
+        [] -> Result.Ok((Sexp.Atom(acc), []))
+        [c, ..rest] -> match isDelimiter(c)
+            true -> Result.Ok((Sexp.Atom(acc), cs))
+            false -> readAtom(rest, acc + c)
+
+verify readAtom
+    readAtom(["a", "b", " "], "") => Result.Ok((Sexp.Atom("ab"), [" "]))
+
+fn isDelimiter(c: String) -> Bool
+    ? "Characters that end an atom."
+    match c
+        "(" -> true
+        ")" -> true
+        "\"" -> true
+        _ -> isBlank(c)
+
+verify isDelimiter
+    isDelimiter("(") => true
+    isDelimiter("a") => false
+
+fn isBlank(c: String) -> Bool
+    ? "Spaces, tabs and line breaks."
+    match c
+        " " -> true
+        "\n" -> true
+        "\t" -> true
+        "\r" -> true
+        _ -> false
+
+verify isBlank
+    isBlank(" ") => true
+    isBlank("x") => false
+
+fn skipBlank(cs: List<String>) -> List<String>
+    ? "Drop leading blanks."
+    match cs
+        [] -> []
+        [c, ..rest] -> match isBlank(c)
+            true -> skipBlank(rest)
+            false -> cs
+
+verify skipBlank
+    skipBlank([" ", "\n", "a"]) => ["a"]
+    skipBlank([]) => []

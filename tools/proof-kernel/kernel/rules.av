@@ -1,0 +1,143 @@
+module Rules
+    intent =
+        "The wall: every rule a step may apply, as an equation schema over named binders."
+        "The replayer's own copy of src/ir/proof_steps/rules.rs; an identifier not listed here is refused."
+    exposes [Schema, schema]
+    depends [Kernel.Term]
+    effects []
+
+record Schema
+    binders: List<String>
+    premises: List<Eqn>
+    concl: Eqn
+
+fn v(n: String) -> Term
+    ? "A schema variable."
+    Term.TVar(n)
+
+verify v
+    v("a") => Term.TVar("a")
+
+fn eq(l: Term, r: Term) -> Eqn
+    ? "An equation."
+    Eqn(lhs = l, rhs = r)
+
+verify eq
+    eq(Term.TUnit, Term.TUnit) => Eqn(lhs = Term.TUnit, rhs = Term.TUnit)
+
+fn is(t: Term, value: Bool) -> Eqn
+    ? "A Bool term equals a literal."
+    eq(t, Term.TBool(value))
+
+verify is
+    is(Term.TVar("a"), true) => Eqn(lhs = Term.TVar("a"), rhs = Term.TBool(true))
+
+fn conn(name: String, a: Term, b: Term) -> Term
+    ? "Bool.and or Bool.or."
+    Term.TBi(name, [a, b])
+
+verify conn
+    conn("Bool.and", Term.TVar("a"), Term.TVar("b")) => Term.TBi("Bool.and", [Term.TVar("a"), Term.TVar("b")])
+
+fn plain(binders: List<String>, l: Term, r: Term) -> Option<Schema>
+    ? "A rule without premises."
+    Option.Some(Schema(binders = binders, premises = [], concl = eq(l, r)))
+
+verify plain
+    plain([], Term.TUnit, Term.TUnit) => Option.Some(Schema(binders = [], premises = [], concl = eq(Term.TUnit, Term.TUnit)))
+
+fn schema(id: String) -> Option<Schema>
+    ? "The rule with this identifier."
+    match id
+        "bool.and.true_l" -> plain(["b"], conn("Bool.and", Term.TBool(true), v("b")), v("b"))
+        "bool.and.false_l" -> plain(["b"], conn("Bool.and", Term.TBool(false), v("b")), Term.TBool(false))
+        "bool.and.true_r" -> plain(["a"], conn("Bool.and", v("a"), Term.TBool(true)), v("a"))
+        "bool.and.false_r" -> plain(["a"], conn("Bool.and", v("a"), Term.TBool(false)), Term.TBool(false))
+        "bool.or.true_l" -> plain(["b"], conn("Bool.or", Term.TBool(true), v("b")), Term.TBool(true))
+        "bool.or.false_l" -> plain(["b"], conn("Bool.or", Term.TBool(false), v("b")), v("b"))
+        "bool.or.true_r" -> plain(["a"], conn("Bool.or", v("a"), Term.TBool(true)), Term.TBool(true))
+        "bool.or.false_r" -> plain(["a"], conn("Bool.or", v("a"), Term.TBool(false)), v("a"))
+        "bool.not.true" -> plain([], Term.TBi("Bool.not", [Term.TBool(true)]), Term.TBool(false))
+        "bool.not.false" -> plain([], Term.TBi("Bool.not", [Term.TBool(false)]), Term.TBool(true))
+        "bool.and.elim_l" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(conn("Bool.and", v("a"), v("b")), true)], concl = is(v("a"), true)))
+        "bool.and.elim_r" -> Option.Some(Schema(binders = ["a", "b"], premises = [is(conn("Bool.and", v("a"), v("b")), true)], concl = is(v("b"), true)))
+        _ -> comparisonSchema(id)
+
+verify schema
+    schema("simp") => Option.None
+    schema("bool.not.true") => Option.Some(Schema(binders = [], premises = [], concl = eq(Term.TBi("Bool.not", [Term.TBool(true)]), Term.TBool(false))))
+
+fn complement(p: String, pv: Bool, q: String, qv: Bool) -> Option<Schema>
+    ? "A decided comparison decides its complement."
+    Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp(p, v("a"), v("b")), pv)], concl = is(Term.TOp(q, v("a"), v("b")), qv)))
+
+verify complement
+    complement(">", false, "<=", true) => Option.Some(Schema(binders = ["a", "b"], premises = [is(Term.TOp(">", v("a"), v("b")), false)], concl = is(Term.TOp("<=", v("a"), v("b")), true)))
+
+fn comparisonSchema(id: String) -> Option<Schema>
+    ? "The comparison complement rules."
+    match id
+        "int.le.of_not_gt" -> complement(">", false, "<=", true)
+        "int.le.false_of_gt" -> complement(">", true, "<=", false)
+        "int.ge.of_not_lt" -> complement("<", false, ">=", true)
+        "int.ge.false_of_lt" -> complement("<", true, ">=", false)
+        "int.lt.of_not_ge" -> complement(">=", false, "<", true)
+        "int.lt.false_of_ge" -> complement(">=", true, "<", false)
+        "int.gt.of_not_le" -> complement("<=", false, ">", true)
+        "int.gt.false_of_le" -> complement("<=", true, ">", false)
+        "int.eq.of_not_ne" -> complement("!=", false, "==", true)
+        "int.eq.false_of_ne" -> complement("!=", true, "==", false)
+        "int.ne.of_not_eq" -> complement("==", false, "!=", true)
+        "int.ne.false_of_eq" -> complement("==", true, "!=", false)
+        _ -> ringSchema(id)
+
+verify comparisonSchema
+    comparisonSchema("nope") => Option.None
+
+fn ringSchema(id: String) -> Option<Schema>
+    ? "Ring laws of Int."
+    match id
+        "int.add_comm" -> plain(["a", "b"], Term.TOp("+", v("a"), v("b")), Term.TOp("+", v("b"), v("a")))
+        "int.mul_comm" -> plain(["a", "b"], Term.TOp("*", v("a"), v("b")), Term.TOp("*", v("b"), v("a")))
+        "int.add_assoc" -> plain(["a", "b", "c"], Term.TOp("+", Term.TOp("+", v("a"), v("b")), v("c")), Term.TOp("+", v("a"), Term.TOp("+", v("b"), v("c"))))
+        "int.mul_assoc" -> plain(["a", "b", "c"], Term.TOp("*", Term.TOp("*", v("a"), v("b")), v("c")), Term.TOp("*", v("a"), Term.TOp("*", v("b"), v("c"))))
+        "int.add_zero" -> plain(["a"], Term.TOp("+", v("a"), Term.TInt(0)), v("a"))
+        "int.zero_add" -> plain(["a"], Term.TOp("+", Term.TInt(0), v("a")), v("a"))
+        "int.mul_one" -> plain(["a"], Term.TOp("*", v("a"), Term.TInt(1)), v("a"))
+        "int.one_mul" -> plain(["a"], Term.TOp("*", Term.TInt(1), v("a")), v("a"))
+        "int.sub_zero" -> plain(["a"], Term.TOp("-", v("a"), Term.TInt(0)), v("a"))
+        _ -> divisionSchema(id)
+
+verify ringSchema
+    ringSchema("int.add_zero") => plain(["a"], Term.TOp("+", v("a"), Term.TInt(0)), v("a"))
+
+fn divE(a: Term, k: Term) -> Term
+    ? "Euclidean division by a literal, as the compiler writes it."
+    Term.TBi("__int_div_euclid", [a, k])
+
+verify divE
+    divE(v("a"), Term.TInt(2)) => Term.TBi("__int_div_euclid", [v("a"), Term.TInt(2)])
+
+fn modE(a: Term, k: Term) -> Term
+    ? "Euclidean remainder by a literal."
+    Term.TBi("__int_mod_euclid", [a, k])
+
+verify modE
+    modE(v("a"), Term.TInt(2)) => Term.TBi("__int_mod_euclid", [v("a"), Term.TInt(2)])
+
+fn range(t: Term, bound: Term) -> Term
+    ? "0 <= t and t < bound."
+    conn("Bool.and", Term.TOp("<=", Term.TInt(0), t), Term.TOp("<", t, bound))
+
+verify range
+    range(v("a"), v("m")) => conn("Bool.and", Term.TOp("<=", Term.TInt(0), v("a")), Term.TOp("<", v("a"), v("m")))
+
+fn divisionSchema(id: String) -> Option<Schema>
+    ? "Euclidean division by a positive divisor."
+    match id
+        "int.div_mod_recompose" -> Option.Some(Schema(binders = ["a", "k"], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = eq(Term.TOp("+", Term.TOp("*", divE(v("a"), v("k")), v("k")), modE(v("a"), v("k"))), v("a"))))
+        "int.div_range" -> Option.Some(Schema(binders = ["a", "k", "m", "n"], premises = [is(range(v("a"), v("m")), true), is(conn("Bool.and", Term.TOp(">", v("k"), Term.TInt(0)), Term.TOp("==", v("m"), Term.TOp("*", v("n"), v("k")))), true)], concl = is(range(divE(v("a"), v("k")), v("n")), true)))
+        _ -> Option.None
+
+verify divisionSchema
+    divisionSchema("int.div_range") == Option.None => false

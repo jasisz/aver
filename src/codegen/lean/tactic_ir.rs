@@ -108,7 +108,7 @@ impl Tactic {
     /// leaf in the tree (`None` if the tree has no non-blank leaf line).
     /// Structural keywords (`first`, `| …`, `induction … with`) are NOT leaves
     /// and do not count — only authored tactic text does.
-    fn leaf_min_indent(&self) -> Option<usize> {
+    pub(crate) fn leaf_min_indent(&self) -> Option<usize> {
         match self {
             Tactic::Leaf(s) => s
                 .lines()

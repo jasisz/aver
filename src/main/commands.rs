@@ -9193,6 +9193,27 @@ fn run_proof_check(
                 .collect();
             obj.insert("obligations".into(), serde_json::Value::Object(obligations));
         }
+        // Proofs written as data: which obligations a step term closed, and
+        // which step terms the kernel refused (a producer bug to report, the
+        // law then falls back to its tactics). Emitted only when any law had
+        // steps.
+        let steps = proof_steps_report::collect(output_dir, &format!("{stdout}{stderr}"));
+        if !steps.emitted.is_empty() {
+            let closed_by: serde_json::Map<String, serde_json::Value> = lean_law_audit
+                .laws
+                .iter()
+                .chain(&lean_law_audit.obligations)
+                .map(|o| {
+                    let universal = o.tier.as_str() == "universal";
+                    (o.law.clone(), steps.closed_by(&o.law, universal).into())
+                })
+                .collect();
+            obj.insert("closed_by".into(), serde_json::Value::Object(closed_by));
+            obj.insert(
+                "steps_rejected".into(),
+                serde_json::Value::Array(steps.rejected.iter().map(|l| l.clone().into()).collect()),
+            );
+        }
         // `true` means the check FAILED with the compiler-model bug above
         // regardless of budgets.
         obj.insert("model_panicked".into(), (model_panic_hits > 0).into());
@@ -9628,6 +9649,8 @@ mod law_reason_report;
 mod proof_explain;
 #[path = "proof_fingerprints.rs"]
 mod proof_fingerprints;
+#[path = "proof_steps_report.rs"]
+mod proof_steps_report;
 
 /// The file-level audit records as one per-law manifest, keyed on the `fn.law`
 /// identity and sorted by it for byte-reproducibility.
