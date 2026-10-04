@@ -10,7 +10,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
-- **A module-level binding (`base = 40` outside any function) works when a function reads it, on every backend.** A binding in a dependency (`Lib.shifted` reading `Lib`'s `base`) used to stop `aver run` with `undefined variable: base` and made `aver verify` skip the file; it was also missing on wasm-gc. The Rust backend failed to build any program whose function read a binding, in the entry or a dependency. `aver proof` now declares each binding as a Lean definition in its module and unfolds it in the proofs of laws over functions that read it; a binding it cannot declare is reported with the reason instead of failing later in Lean.
+- **A module-level binding (`base = 40` outside any function) works when a function reads it, on every backend.** A binding in a dependency (`Lib.shifted` reading `Lib`'s `base`) used to stop `aver run` with `undefined variable: base` and made `aver verify` skip the file; it was also missing on wasm-gc. The Rust backend failed to build any program whose function read a binding, in the entry or a dependency. `aver proof` now declares each binding as a Lean definition in its module and unfolds it in the proofs of laws over functions that read it; a binding it cannot declare is reported with the reason instead of failing later in Lean. Proof steps open a binding with a new `const` step, which Lean and the kernel written in Aver both check; the step format is now version 2.
 
 ## 0.30.0 "Turn" — 2026-10-03
 

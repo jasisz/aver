@@ -21,6 +21,7 @@ pub enum Proof {
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
         aver_rt::AverList<Proof>,
     ),
+    PConst(AverStr),
     PArm(
         aver_rt::AverInt,
         aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
@@ -58,14 +59,15 @@ impl Proof {
             Proof::PCases(..) => 1,
             Proof::PCompute(..) => 2,
             Proof::PCongr(..) => 3,
-            Proof::PHyp(..) => 4,
-            Proof::PLaw(..) => 5,
-            Proof::PProj(..) => 6,
-            Proof::PRefl(..) => 7,
-            Proof::PRule(..) => 8,
-            Proof::PSymm(..) => 9,
-            Proof::PTrans(..) => 10,
-            Proof::PUnfold(..) => 11,
+            Proof::PConst(..) => 4,
+            Proof::PHyp(..) => 5,
+            Proof::PLaw(..) => 6,
+            Proof::PProj(..) => 7,
+            Proof::PRefl(..) => 8,
+            Proof::PRule(..) => 9,
+            Proof::PSymm(..) => 10,
+            Proof::PTrans(..) => 11,
+            Proof::PUnfold(..) => 12,
         }
     }
 }
@@ -101,6 +103,9 @@ impl Ord for Proof {
             (Proof::PCongr(a0, a1), Proof::PCongr(b0, b1)) => std::cmp::Ordering::Equal
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1)),
+            (Proof::PConst(a0), Proof::PConst(b0)) => {
+                std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
+            }
             (Proof::PHyp(a0), Proof::PHyp(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
@@ -161,6 +166,7 @@ impl aver_rt::AverDisplay for Proof {
                 ]
                 .join(", ")
             ),
+            Proof::PConst(f0) => format!("PConst({})", f0.aver_display_inner()),
             Proof::PArm(f0, f1, f2, f3) => format!(
                 "PArm({})",
                 vec![
@@ -252,6 +258,42 @@ impl aver_rt::AverDisplay for Def {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Const {
+    pub name: AverStr,
+    pub value: crate::proof_kernel::aver_generated::kernel::term::Term,
+}
+
+impl PartialOrd for Const {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Const {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.name.cmp(&other.name))
+            .then_with(|| self.value.cmp(&other.value))
+    }
+}
+
+impl aver_rt::AverDisplay for Const {
+    fn aver_display(&self) -> String {
+        format!(
+            "Const({})",
+            vec![
+                format!("name: {}", self.name.aver_display_inner()),
+                format!("value: {}", self.value.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Law {
     pub key: AverStr,
     pub givens: aver_rt::AverList<AverStr>,
@@ -300,6 +342,7 @@ impl aver_rt::AverDisplay for Law {
 pub struct Script {
     pub obligation: Law,
     pub defs: aver_rt::AverList<Def>,
+    pub consts: aver_rt::AverList<Const>,
     pub laws: aver_rt::AverList<Law>,
     pub proof: Proof,
 }
@@ -313,6 +356,7 @@ impl PartialOrd for Script {
 impl Ord for Script {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         std::cmp::Ordering::Equal
+            .then_with(|| self.consts.cmp(&other.consts))
             .then_with(|| self.defs.cmp(&other.defs))
             .then_with(|| self.laws.cmp(&other.laws))
             .then_with(|| self.obligation.cmp(&other.obligation))
@@ -327,6 +371,7 @@ impl aver_rt::AverDisplay for Script {
             vec![
                 format!("obligation: {}", self.obligation.aver_display_inner()),
                 format!("defs: {}", self.defs.aver_display_inner()),
+                format!("consts: {}", self.consts.aver_display_inner()),
                 format!("laws: {}", self.laws.aver_display_inner()),
                 format!("proof: {}", self.proof.aver_display_inner())
             ]

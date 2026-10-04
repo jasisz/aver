@@ -178,6 +178,28 @@ fn is_bool_term(t: &Term) -> bool {
 
 impl Renderer<'_> {
     fn expr(&self, t: &Term) -> String {
+        // A dependency's binding reads as `Lib.base`; Lean spells each
+        // segment of that path on its own (`Lib.local'`).
+        let qualified: Vec<(String, Term)> = self
+            .script
+            .consts
+            .iter()
+            .filter(|c| c.name.contains('.'))
+            .map(|c| {
+                let read = term::var(&super::syntax::aver_path_to_lean(&c.name));
+                if let Some(ty) = c.value.ty() {
+                    read.set_ty(ty.clone());
+                }
+                (c.name.clone(), read)
+            })
+            .collect();
+        let renamed;
+        let t = if qualified.is_empty() {
+            t
+        } else {
+            renamed = term::subst(t, &qualified).unwrap_or_else(|_| t.clone());
+            &renamed
+        };
         let s = emit_expr(t, self.ctx);
         if is_bool_term(t) {
             format!("({s} : Bool)")
@@ -205,7 +227,9 @@ impl Renderer<'_> {
     fn proof(&mut self, p: &Proof, hyps: &Hyps) -> Result<String, String> {
         let eq = self.concl(p, hyps)?;
         let body = match p {
-            Proof::Refl(_) | Proof::Proj { .. } => "rfl".to_string(),
+            // A module-level binding is a Lean `def` with no parameters;
+            // its value is its definitional unfolding.
+            Proof::Refl(_) | Proof::Proj { .. } | Proof::UnfoldConst { .. } => "rfl".to_string(),
             Proof::Symm(inner) => format!("Eq.symm {}", self.proof(inner, hyps)?),
             Proof::Trans { steps, .. } => {
                 let mut parts = Vec::new();

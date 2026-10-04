@@ -5,6 +5,7 @@ use ::aver_rt::aver_list_match;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Env {
     pub defs: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
+    pub consts: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
     pub laws: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
     pub hyps: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
 }
@@ -18,6 +19,7 @@ impl PartialOrd for Env {
 impl Ord for Env {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         std::cmp::Ordering::Equal
+            .then_with(|| self.consts.cmp(&other.consts))
             .then_with(|| self.defs.cmp(&other.defs))
             .then_with(|| self.hyps.cmp(&other.hyps))
             .then_with(|| self.laws.cmp(&other.laws))
@@ -30,6 +32,7 @@ impl aver_rt::AverDisplay for Env {
             "Env({})",
             vec![
                 format!("defs: {}", self.defs.aver_display_inner()),
+                format!("consts: {}", self.consts.aver_display_inner()),
                 format!("laws: {}", self.laws.aver_display_inner()),
                 format!("hyps: {}", self.hyps.aver_display_inner())
             ]
@@ -213,6 +216,7 @@ pub fn emptyEnv() -> Env {
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::check::Env {
         defs: aver_rt::AverList::empty(),
+        consts: aver_rt::AverList::empty(),
         laws: aver_rt::AverList::empty(),
         hyps: aver_rt::AverList::empty(),
     }
@@ -279,6 +283,13 @@ pub fn conclude(
         crate::proof_kernel::aver_generated::kernel::proof::Proof::PUnfold(f, k, xs, ys, pre) => {
             crate::proof_kernel::aver_generated::kernel::check::unfold(
                 f, k, &xs, &ys, &pre, env, path,
+            )
+        }
+        crate::proof_kernel::aver_generated::kernel::proof::Proof::PConst(n) => {
+            crate::proof_kernel::aver_generated::kernel::check::constant(
+                n,
+                env.consts.clone(),
+                path,
             )
         }
         crate::proof_kernel::aver_generated::kernel::proof::Proof::PArm(k, ys, t, q) => {
@@ -683,6 +694,7 @@ pub fn withHyp(
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::check::Env {
         defs: env.defs.clone(),
+        consts: env.consts.clone(),
         laws: env.laws.clone(),
         hyps: aver_rt::AverList::prepend(
             crate::proof_kernel::aver_generated::kernel::proof::Hyp {
@@ -708,6 +720,23 @@ pub fn findDef(
         aver_list_match!(ds, [] => { return None; }, [d, rest] => { if (d.name == name) { return Some(d); } else { {
             let __tco1 = rest;
             ds = __tco1;
+            continue;
+        } } })
+    }
+}
+
+/// A module-level binding's value: the variable that reads it equals the value the script carries.
+#[inline(always)]
+pub fn constant(
+    mut n @ _: AverStr,
+    mut cs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
+    mut path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    loop {
+        crate::proof_kernel::cancel_checkpoint();
+        aver_list_match!(cs, [] => { return crate::proof_kernel::aver_generated::kernel::check::refuse(path, aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(40)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("no module-level binding ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n)))); __b })); }, [c, rest] => { if (c.name == n) { return Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: crate::proof_kernel::aver_generated::kernel::term::Term::TVar(n), rhs: c.value }); } else { {
+            let __tco1 = rest;
+            cs = __tco1;
             continue;
         } } })
     }
@@ -1615,6 +1644,7 @@ pub fn checkScript(
     crate::proof_kernel::cancel_checkpoint();
     let env @ _ = crate::proof_kernel::aver_generated::kernel::check::Env {
         defs: s.defs.clone(),
+        consts: s.consts.clone(),
         laws: s.laws.clone(),
         hyps: crate::proof_kernel::aver_generated::kernel::check::lawHyps(&s.obligation),
     };

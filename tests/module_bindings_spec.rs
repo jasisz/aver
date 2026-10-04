@@ -18,7 +18,9 @@
 //! (two modules each holding a `base`, a binding whose value calls into
 //! another module that reads its own binding); the proof export declares
 //! each binding in its module's namespace, in dependency order, and the
-//! laws over fns reading them are proved for every input.
+//! laws over fns reading them are proved for every input — by the tactic
+//! portfolio, and by proof steps that open a binding with the `const` step,
+//! checked alike by Lean and by the kernel written in Aver.
 
 #[path = "support/aver_cmd.rs"]
 mod aver_cmd;
@@ -87,6 +89,10 @@ verify g law addsOffset
     given x: Int = [0, 1, 2]
     g(x) => x + 80
 
+verify f law readsBase
+    given x: Int = [0, 1, 2]
+    f(x) => 40 + x
+
 fn main() -> Unit
     ! [Console.print]
     Console.print(String.fromInt(f(2)))
@@ -143,6 +149,10 @@ verify shifted
 verify shifted law addsAll
     given x: Int = [0, 1, 2]
     shifted(x) => x + 125
+
+verify shifted law readsEveryBinding
+    given x: Int = [0, 1, 2]
+    shifted(x) => 125 + x
 "#;
 
 const APP: &str = r#"module App
@@ -162,6 +172,10 @@ verify h
 verify h law shiftsAll
     given x: Int = [0, 1, 2]
     h(x) => x + 132
+
+verify h law readsBothModules
+    given x: Int = [0, 1, 2]
+    h(x) => 125 + x + base
 
 fn main() -> Unit
     ! [Console.print]
@@ -234,16 +248,16 @@ fn assert_verify_passes(dir: &Path, args: &[&str], cases: usize) {
 fn vm_runs_and_verifies_bindings_in_the_entry_and_in_dependencies() {
     let one = single();
     assert_eq!(aver(&one, &["run"]).unwrap(), SINGLE_OUT);
-    // 5 plain cases + 2 laws × 3 samples.
-    assert_verify_passes(&one, &["verify"], 11);
+    // 5 plain cases + 3 laws × 3 samples.
+    assert_verify_passes(&one, &["verify"], 14);
 
     let many = multi();
     assert_eq!(
         aver(&many, &["run"]).unwrap_or_else(|e| panic!("VM run failed:\n{e}")),
         APP_OUT
     );
-    // App 2 + 3, Lib 1 + 3, Core 1.
-    assert_verify_passes(&many, &["verify"], 10);
+    // App 2 + 2 × 3, Lib 1 + 2 × 3, Core 1.
+    assert_verify_passes(&many, &["verify"], 16);
 
     let _ = fs::remove_dir_all(one);
     let _ = fs::remove_dir_all(many);
@@ -284,7 +298,7 @@ fn vm_verify_fails_a_false_case_over_a_dependency_binding() {
 #[cfg(feature = "wasm")]
 #[test]
 fn wasm_gc_agrees_with_the_vm_on_run_and_verify() {
-    for (dir, expected, cases) in [(single(), SINGLE_OUT, 11), (multi(), APP_OUT, 10)] {
+    for (dir, expected, cases) in [(single(), SINGLE_OUT, 14), (multi(), APP_OUT, 16)] {
         assert_eq!(
             aver(&dir, &["run", "--wasm-gc"])
                 .unwrap_or_else(|e| panic!("wasm-gc run failed:\n{e}")),
@@ -424,6 +438,80 @@ fn proof_check_proves_the_laws_over_bindings() {
             "laws over module-level bindings must be proved:\n{}",
             format_output(&out)
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// `aver proof [--backend aver] --check-json` on `dir`: the summary line.
+fn proof_summary(dir: &Path, backend: &[&str]) -> serde_json::Value {
+    let out = Command::new(aver_bin())
+        .current_dir(repo_root())
+        .arg("proof")
+        .arg(entry(dir))
+        .arg("--module-root")
+        .arg(dir)
+        .args(backend)
+        .args(["--check-json", "--sorry-budget", "99", "-o"])
+        .arg(dir.join(format!("lean{}", backend.len())))
+        .output()
+        .expect("aver proof runs");
+    let line = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("no summary:\n{}", format_output(&out)));
+    serde_json::from_str(&line).expect("summary is JSON")
+}
+
+/// The laws written so that evaluation alone decides them close by proof
+/// steps: each read of a binding is one `const` step to its value, in the
+/// entry (`base`), in a dependency (`Lib.base`, `Lib.offset` through
+/// `Lib.twice`) and in a dependency of a dependency (`Core.step`, reached
+/// through `Lib.bumped`).
+const STEP_LAWS: &[(&str, &[&str])] = &[
+    ("single", &["f.readsBase"]),
+    (
+        "multi",
+        &["Lib.shifted.readsEveryBinding", "h.readsBothModules"],
+    ),
+];
+
+fn assert_closed_by_steps(summary: &serde_json::Value, laws: &[&str]) {
+    for law in laws {
+        assert_eq!(
+            summary["closed_by"][law], "steps",
+            "{law} must close by proof steps:\n{summary}"
+        );
+    }
+    if !summary["steps_rejected"].is_null() {
+        assert_eq!(
+            summary["steps_rejected"],
+            serde_json::json!([]),
+            "{summary}"
+        );
+    }
+}
+
+#[test]
+fn the_aver_kernel_closes_laws_over_bindings_by_steps() {
+    for (dir, (_, laws)) in [single(), multi()].into_iter().zip(STEP_LAWS) {
+        let summary = proof_summary(&dir, &["--backend", "aver"]);
+        assert_eq!(summary["backend"], "aver");
+        assert_closed_by_steps(&summary, laws);
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn lean_closes_the_same_laws_over_bindings_by_steps() {
+    if !lean_required::lake_available() {
+        return;
+    }
+    for (dir, (_, laws)) in [single(), multi()].into_iter().zip(STEP_LAWS) {
+        let summary = proof_summary(&dir, &[]);
+        assert_eq!(summary["backend"], "lean");
+        assert_closed_by_steps(&summary, laws);
         let _ = fs::remove_dir_all(dir);
     }
 }

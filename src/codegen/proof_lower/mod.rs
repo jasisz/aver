@@ -2571,6 +2571,23 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 
 mod law_dependencies;
 mod law_induction;
+
+/// The module-level bindings of `scope` (a dependency's prefix), or of the
+/// entry module for `None`.
+pub(crate) fn module_bindings_of(
+    inputs: &ProofLowerInputs,
+    scope: Option<&str>,
+) -> Vec<crate::codegen::ModuleBinding> {
+    match scope {
+        Some(prefix) => inputs
+            .dep_modules
+            .iter()
+            .find(|m| m.prefix == prefix)
+            .map(|m| m.bindings.clone())
+            .unwrap_or_default(),
+        None => crate::codegen::collect_module_bindings(inputs.entry_items),
+    }
+}
 mod steps;
 
 /// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.

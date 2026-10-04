@@ -15,7 +15,6 @@
 use std::collections::{BTreeSet, HashSet};
 
 use crate::ast::{Expr, FnDef, Spanned, Stmt, TopLevel};
-use crate::codegen::ModuleBinding;
 use crate::ir::ProofStrategy;
 
 use super::ProofLowerInputs;
@@ -86,7 +85,7 @@ fn reached_bindings(
         .map(|(_, pending)| pending)
         .collect();
     while let Some(item) = pending.pop() {
-        let bindings = bindings_of(item.owner.as_deref(), inputs);
+        let bindings = super::module_bindings_of(inputs, item.owner.as_deref());
         for expr in &item.exprs {
             let mut reads: Vec<String> = Vec::new();
             crate::call_graph::walk_expr(expr, &mut |node| {
@@ -150,18 +149,6 @@ fn spell(spelling: Option<&str>, name: &str) -> String {
     match spelling {
         Some(prefix) => format!("{prefix}.{name}"),
         None => name.to_string(),
-    }
-}
-
-fn bindings_of(owner: Option<&str>, inputs: &ProofLowerInputs) -> Vec<ModuleBinding> {
-    match owner {
-        Some(prefix) => inputs
-            .dep_modules
-            .iter()
-            .find(|m| m.prefix == prefix)
-            .map(|m| m.bindings.clone())
-            .unwrap_or_default(),
-        None => crate::codegen::collect_module_bindings(inputs.entry_items),
     }
 }
 

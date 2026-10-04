@@ -9,12 +9,13 @@ module Check
 
 record Env
     defs: List<Def>
+    consts: List<Const>
     laws: List<Law>
     hyps: List<Hyp>
 
 fn emptyEnv() -> Env
     ? "No definitions, laws or hypotheses."
-    Env(defs = [], laws = [], hyps = [])
+    Env(defs = [], consts = [], laws = [], hyps = [])
 
 verify emptyEnv
     emptyEnv().hyps => []
@@ -34,6 +35,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PTrans(ts, ps) -> trans(ts, ps, env, path)
         Proof.PCongr(c, q) -> congr(c, q, env, path)
         Proof.PUnfold(f, k, xs, ys, pre) -> unfold(f, k, xs, ys, pre, env, path)
+        Proof.PConst(n) -> constant(n, env.consts, path)
         Proof.PArm(k, ys, t, q) -> armStep(k, ys, t, q, env, path)
         Proof.PProj(t) -> proj(t, path)
         Proof.PHyp(h) -> hyp(h, env.hyps, path)
@@ -183,7 +185,7 @@ verify cases
 
 fn withHyp(env: Env, h: String, on: Term, value: Bool) -> Env
     ? "The environment with one more hypothesis in front."
-    Env(defs = env.defs, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps))
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps))
 
 verify withHyp
     List.len(withHyp(emptyEnv(), "h", Term.TVar("c"), true).hyps) => 1
@@ -198,6 +200,18 @@ fn findDef(name: String, ds: List<Def>) -> Option<Def>
 
 verify findDef
     findDef("f", []) => Option.None
+
+fn constant(n: String, cs: List<Const>, path: String) -> Result<Eqn, String>
+    ? "A module-level binding's value: the variable that reads it equals the value the script carries."
+    match cs
+        [] -> refuse(path, "no module-level binding {n}")
+        [c, ..rest] -> match c.name == n
+            true -> Result.Ok(Eqn(lhs = Term.TVar(n), rhs = c.value))
+            false -> constant(n, rest, path)
+
+verify constant
+    constant("base", [Const(name = "base", value = Term.TInt(40))], "p") => Result.Ok(Eqn(lhs = Term.TVar("base"), rhs = Term.TInt(40)))
+    constant("Lib.base", [Const(name = "base", value = Term.TInt(40))], "p") => Result.Err("step p: no module-level binding Lib.base")
 
 fn zipBind(names: List<String>, values: List<Term>) -> List<Binding>
     ? "Pair names with terms, as far as both go."
@@ -442,15 +456,15 @@ verify lawPremises
 
 fn checkScript(s: Script) -> Result<String, String>
     ? "The proof must prove exactly the obligation, under its when."
-    env = Env(defs = s.defs, laws = s.laws, hyps = lawHyps(s.obligation))
+    env = Env(defs = s.defs, consts = s.consts, laws = s.laws, hyps = lawHyps(s.obligation))
     e = conclude(s.proof, env, "proof")?
     match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)
         true -> Result.Ok(s.obligation.key)
         false -> Result.Err("step proof: the proof ends at a different equation than the claim")
 
 verify checkScript
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), defs = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), defs = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
 
 fn lawHyps(ob: Law) -> List<Hyp>
     ? "The obligation's when, as hypothesis `when`."

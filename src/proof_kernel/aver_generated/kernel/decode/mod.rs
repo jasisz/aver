@@ -930,40 +930,50 @@ pub fn proofOf(
                         if &*__dispatch_subject == "unfold" {
                             crate::proof_kernel::aver_generated::kernel::decode::unfoldProof(args)
                         } else {
-                            if &*__dispatch_subject == "arm" {
-                                crate::proof_kernel::aver_generated::kernel::decode::armProof(args)
+                            if &*__dispatch_subject == "const" {
+                                Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PConst(crate::proof_kernel::aver_generated::kernel::decode::onlyAtom(args)?))
                             } else {
-                                if &*__dispatch_subject == "proj" {
-                                    Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PProj(crate::proof_kernel::aver_generated::kernel::decode::oneTerm(args)?))
+                                if &*__dispatch_subject == "arm" {
+                                    crate::proof_kernel::aver_generated::kernel::decode::armProof(
+                                        args,
+                                    )
                                 } else {
-                                    if &*__dispatch_subject == "hyp" {
-                                        Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PHyp(crate::proof_kernel::aver_generated::kernel::decode::onlyAtom(args)?))
+                                    if &*__dispatch_subject == "proj" {
+                                        Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PProj(crate::proof_kernel::aver_generated::kernel::decode::oneTerm(args)?))
                                     } else {
-                                        if &*__dispatch_subject == "rule" {
-                                            crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("rule"))
+                                        if &*__dispatch_subject == "hyp" {
+                                            Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PHyp(crate::proof_kernel::aver_generated::kernel::decode::onlyAtom(args)?))
                                         } else {
-                                            if &*__dispatch_subject == "law" {
-                                                crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("law"))
+                                            if &*__dispatch_subject == "rule" {
+                                                crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("rule"))
                                             } else {
-                                                if &*__dispatch_subject == "compute" {
-                                                    crate::proof_kernel::aver_generated::kernel::decode::computeProof(args)
+                                                if &*__dispatch_subject == "law" {
+                                                    crate::proof_kernel::aver_generated::kernel::decode::instanceProof(args, AverStr::from("law"))
                                                 } else {
-                                                    if &*__dispatch_subject == "cases" {
-                                                        crate::proof_kernel::aver_generated::kernel::decode::casesProof(args)
+                                                    if &*__dispatch_subject == "compute" {
+                                                        crate::proof_kernel::aver_generated::kernel::decode::computeProof(args)
                                                     } else {
-                                                        Err(aver_rt::AverStr::from({
-                                                            let mut __b = {
-                                                                let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0));
-                                                                __b.push_str(&AverStr::from(
-                                                                    "unknown rule ",
-                                                                ));
+                                                        if &*__dispatch_subject == "cases" {
+                                                            crate::proof_kernel::aver_generated::kernel::decode::casesProof(args)
+                                                        } else {
+                                                            Err(aver_rt::AverStr::from({
+                                                                let mut __b = {
+                                                                    let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0));
+                                                                    __b.push_str(&AverStr::from(
+                                                                        "unknown rule ",
+                                                                    ));
+                                                                    __b
+                                                                };
+                                                                __b.push_str(
+                                                                    &aver_rt::AverStr::from(
+                                                                        aver_rt::aver_display(
+                                                                            &(tag),
+                                                                        ),
+                                                                    ),
+                                                                );
                                                                 __b
-                                                            };
-                                                            __b.push_str(&aver_rt::AverStr::from(
-                                                                aver_rt::aver_display(&(tag)),
-                                                            ));
-                                                            __b
-                                                        }))
+                                                            }))
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1699,7 +1709,58 @@ pub fn defs(
     aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::def(&s)?, &crate::proof_kernel::aver_generated::kernel::decode::defs(&rest)?)))
 }
 
-/// (steps 1 (obligation …) (defs …) (laws …) (proof …)); version 1 only.
+/// (const NAME TERM)
+pub fn constant(
+    s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Const, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match s.clone() {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat0) => {
+            let __list_subject = __pat0;
+            if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                match __pat1 {
+                    crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
+                        match &*__pat3 {
+                            "const" => {
+                                let __list_subject = __pat2;
+                                if let Some((__pat4, __pat5)) =
+                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                {
+                                    match __pat4 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
+            { let __list_subject = __pat5; if let Some((v, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Const { name: n, value: crate::proof_kernel::aver_generated::kernel::decode::term(&v)? }) } else { Err(AverStr::from("malformed const")) } } } else { Err(AverStr::from("malformed const")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed const"))
+        }
+    }
+                                } else {
+                                    Err(AverStr::from("malformed const"))
+                                }
+                            }
+                            _ => Err(AverStr::from("malformed const")),
+                        }
+                    }
+                    _ => Err(AverStr::from("malformed const")),
+                }
+            } else {
+                Err(AverStr::from("malformed const"))
+            }
+        }
+        _ => Err(AverStr::from("malformed const")),
+    }
+}
+
+/// Module-level bindings.
+#[inline(always)]
+pub fn consts(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::constant(&s)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&rest)?)))
+}
+
+/// (steps 2 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 2 only.
 pub fn script(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Script, AverStr> {
@@ -1718,7 +1779,7 @@ pub fn script(
                                 {
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
-            { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&v)); if __int_match_subject == aver_rt::AverInt::from_i64(49) { { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
+            { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&v)); if __int_match_subject == aver_rt::AverInt::from_i64(50) { { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat8) => {
             { let __list_subject = __pat8; if let Some((__pat9, ds)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat9 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat10) => {
@@ -1726,17 +1787,38 @@ pub fn script(
         "defs" => {
             { let __list_subject = __pat7; if let Some((__pat11, __pat12)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat11 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat13) => {
-            { let __list_subject = __pat13; if let Some((__pat14, ls)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat14 {
+            { let __list_subject = __pat13; if let Some((__pat14, cs)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat14 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat15) => {
             match &*__pat15 {
-        "laws" => {
+        "consts" => {
             { let __list_subject = __pat12; if let Some((__pat16, __pat17)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat16 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat18) => {
-            { let __list_subject = __pat18; if let Some((__pat19, __pat20)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat19 {
-        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat21) => {
-            match &*__pat21 {
+            { let __list_subject = __pat18; if let Some((__pat19, ls)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat19 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat20) => {
+            match &*__pat20 {
+        "laws" => {
+            { let __list_subject = __pat17; if let Some((__pat21, __pat22)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat21 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat23) => {
+            { let __list_subject = __pat23; if let Some((__pat24, __pat25)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat24 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat26) => {
+            match &*__pat26 {
         "proof" => {
-            { let __list_subject = __pat20; if let Some((p, __pat22)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat22; if __list_subject.is_empty() { { let __list_subject = __pat17; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Script { obligation: crate::proof_kernel::aver_generated::kernel::decode::law(&o, AverStr::from("obligation"))?, defs: crate::proof_kernel::aver_generated::kernel::decode::defs(&ds)?, laws: crate::proof_kernel::aver_generated::kernel::decode::laws(&ls)?, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(&p)? }) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+            { let __list_subject = __pat25; if let Some((p, __pat27)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat27; if __list_subject.is_empty() { { let __list_subject = __pat22; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Script { obligation: crate::proof_kernel::aver_generated::kernel::decode::law(&o, AverStr::from("obligation"))?, defs: crate::proof_kernel::aver_generated::kernel::decode::defs(&ds)?, consts: crate::proof_kernel::aver_generated::kernel::decode::consts(&cs)?, laws: crate::proof_kernel::aver_generated::kernel::decode::laws(&ls)?, proof: crate::proof_kernel::aver_generated::kernel::decode::proof(&p)? }) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
+        },
+        _ => {
+            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
+        }
+    } } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b })) } }
         },
         _ => {
             Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(48)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unsupported step format version ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(v)))); __b }))
