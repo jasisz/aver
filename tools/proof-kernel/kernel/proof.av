@@ -25,6 +25,7 @@ type Proof
     PEnum(String, Term, Term, List<Proof>)
     PAbsurd(Proof, Term, Term)
     PInduct(String, List<Term>, Term, Term, List<Case>)
+    PListInduct(String, Term, Term, Proof, String, String, String, Proof)
     PRing(Term, Term)
     PLinear(Term, Bool, List<String>, List<Int>)
 
@@ -57,6 +58,7 @@ record Given
 record Script
     obligation: Law
     finite: List<Given>
+    lists: List<String>
     defs: List<Def>
     consts: List<Const>
     laws: List<Law>

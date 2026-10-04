@@ -13,11 +13,12 @@ record Env
     laws: List<Law>
     hyps: List<Hyp>
     finite: List<Given>
+    lists: List<String>
     givens: List<String>
 
 fn emptyEnv() -> Env
     ? "No definitions, laws or hypotheses."
-    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], givens = [])
+    Env(defs = [], consts = [], laws = [], hyps = [], finite = [], lists = [], givens = [])
 
 verify emptyEnv
     emptyEnv().hyps => []
@@ -48,6 +49,7 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PEnum(v, l, r, cs) -> enumStep(v, l, r, cs, env, path)
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
         Proof.PInduct(f, xs, l, r, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), cs, env, path)
+        Proof.PListInduct(v, l, r, n, h, t, ih, c) -> listInduct(v, Eqn(lhs = l, rhs = r), n, [h, t, ih], c, env, path)
         Proof.PRing(l, r) -> ring(l, r, path)
         Proof.PLinear(g, v, hs, ws) -> linear(g, v, hs, ws, env, path)
 
@@ -192,7 +194,7 @@ verify cases
 
 fn withHyp(env: Env, h: String, on: Term, value: Bool) -> Env
     ? "The environment with one more hypothesis in front."
-    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps), finite = env.finite, givens = env.givens)
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps), finite = env.finite, lists = env.lists, givens = env.givens)
 
 verify withHyp
     List.len(withHyp(emptyEnv(), "h", Term.TVar("c"), true).hyps) => 1
@@ -294,7 +296,7 @@ verify substHyps
 
 fn withHyps(env: Env, hs: List<Hyp>) -> Env
     ? "The environment with its hypotheses replaced."
-    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = hs, finite = env.finite, givens = env.givens)
+    Env(defs = env.defs, consts = env.consts, laws = env.laws, hyps = hs, finite = env.finite, lists = env.lists, givens = env.givens)
 
 verify withHyps
     withHyps(emptyEnv(), []).hyps => []
@@ -661,15 +663,15 @@ verify lawPremises
 fn checkScript(s: Script) -> Result<String, String>
     ? "The proof must prove exactly the obligation, under its when."
     Kernel.Induct.refuseMutualRecursion(s.defs)?
-    env = Env(defs = s.defs, consts = s.consts, laws = s.laws, hyps = lawHyps(s.obligation), finite = s.finite, givens = s.obligation.givens)
+    env = Env(defs = s.defs, consts = s.consts, laws = s.laws, hyps = lawHyps(s.obligation), finite = s.finite, lists = s.lists, givens = s.obligation.givens)
     e = conclude(s.proof, env, "proof")?
     match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)
         true -> Result.Ok(s.obligation.key)
         false -> Result.Err("step proof: the proof ends at a different equation than the claim")
 
 verify checkScript
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
 
 fn lawHyps(ob: Law) -> List<Hyp>
     ? "The obligation's when, as hypothesis `when`."
@@ -953,3 +955,28 @@ fn caseProves(p: Proof, goal: Eqn, env: Env, path: String) -> Result<Unit, Strin
 
 verify caseProves
     caseProves(Proof.PRefl(Term.TInt(1)), Eqn(lhs = Term.TInt(1), rhs = Term.TInt(2)), emptyEnv(), "p") => Result.Err("step p: the case proves a different equation")
+
+fn listInduct(v: String, claim: Eqn, n: Proof, names: List<String>, c: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "Induction on a given of list type: the claim at [], and at List.prepend(head, tail) under a hypothesis, the claim at tail."
+    match (List.contains(env.lists, v), hypsMention(env.hyps, [v]), names)
+        (false, _, _) -> refuse(path, "{v} is not a given of list type")
+        (_, true, _) -> refuse(path, "a hypothesis in scope mentions {v}")
+        (_, _, [h, t, ih]) -> match freshAll([h, t], takenNames(claim, env.hyps), env, [])
+            false -> refuse(path, "the names are not fresh")
+            true -> listCases(v, claim, n, h, t, ih, c, env, path)
+        _ -> refuse(path, "malformed list induction")
+
+verify listInduct
+    listInduct("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), ["h", "t", "ih"], Proof.PRefl(Term.TUnit), emptyEnv(), "p") => Result.Err("step p: xs is not a given of list type")
+
+fn listCases(v: String, claim: Eqn, n: Proof, h: String, t: String, ih: String, c: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "The empty-list case, then the cell case under the claim at the tail."
+    caseProves(n, instantiate(claim, [Kernel.Term.bind(v, Term.TList([]))], path)?, env, "{path}/nil")?
+    atTail = instantiate(claim, [Kernel.Term.bind(v, Term.TVar(t))], path)?
+    goal = instantiate(claim, [Kernel.Term.bind(v, Term.TBi("List.prepend", [Term.TVar(h), Term.TVar(t)]))], path)?
+    caseProves(c, goal, withHyps(env, List.prepend(Hyp(name = ih, eqn = atTail), env.hyps)), "{path}/cons")?
+    Result.Ok(claim)
+
+verify listCases
+    listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
+    listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/cons: the case proves a different equation")

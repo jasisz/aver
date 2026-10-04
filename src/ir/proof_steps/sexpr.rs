@@ -11,6 +11,7 @@
 //!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…)
 //!                    (proof PROOF))
 //! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
+//!          | (NAME (tlist))            ; a given of list type
 //! TYPE    := (tbool) | (tsum CTOR…) | (trec TYPE (FIELD TYPE)…) | (ttuple TYPE…)
 //! PREMISE := (none) | TERM
 //! TERM    := (i INT) | (b true|false) | (s "TEXT") | (unit) | (v NAME) | (hole)
@@ -28,6 +29,7 @@
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
 //!          | (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
+//!          | (listinduct NAME TERM TERM PROOF (NAME NAME NAME) PROOF)
 //!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…))
 //! ```
 
@@ -455,6 +457,22 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             term(lhs, names)?,
             term(rhs, names)?
         ),
+        Proof::InductList {
+            var,
+            lhs,
+            rhs,
+            nil,
+            head,
+            tail,
+            ih,
+            cons,
+        } => format!(
+            "(listinduct {var} {} {} {} ({head} {tail} {ih}) {})",
+            term(lhs, names)?,
+            term(rhs, names)?,
+            proof(nil, names)?,
+            proof(cons, names)?
+        ),
         Proof::Enum {
             var,
             lhs,
@@ -520,6 +538,7 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
         .iter()
         .map(|g| match o.finite.iter().find(|(n, _)| n == g) {
             Some((_, f)) => format!("({g} {})", finite(f, names)),
+            None if o.lists.contains(g) => format!("({g} (tlist))"),
             None => g.clone(),
         })
         .collect();

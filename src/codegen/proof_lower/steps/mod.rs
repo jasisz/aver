@@ -109,6 +109,7 @@ fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
         finite: finite::finite_givens(inputs, t),
+        lists: finite::list_givens(t),
         premise: premise_of(inputs, t),
         lhs: law_term(inputs, t, &t.claim_lhs),
         rhs: law_term(inputs, t, &t.claim_rhs),

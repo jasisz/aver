@@ -524,6 +524,36 @@ impl Renderer<'_> {
                 s.push(')');
                 s
             }
+            // `List.rec` with the claim as its motive: the empty-list case,
+            // then the cell case over the head, the tail and the claim at
+            // the tail.
+            Proof::InductList {
+                var,
+                nil,
+                head,
+                tail,
+                ih,
+                cons,
+                lhs,
+                rhs,
+            } => {
+                let lean = super::syntax::aver_name_to_lean;
+                let at_tail = [(var.clone(), term::var(tail))];
+                let mut scope = hyps.clone();
+                scope.push((
+                    ih.clone(),
+                    Eqn::new(term::subst(lhs, &at_tail)?, term::subst(rhs, &at_tail)?),
+                ));
+                let base = self.proof(nil, hyps)?;
+                let step = self.proof(cons, &scope)?;
+                format!(
+                    "(List.rec (motive := fun {v} => {}) ({base}) (fun {} {} {ih} => {step}) {v})",
+                    self.eqn(&eq),
+                    lean(head),
+                    lean(tail),
+                    v = lean(var),
+                )
+            }
             // Each decided comparison becomes a Prop fact and Lean's core
             // decision procedure for linear integer arithmetic closes the
             // goal from them alone; the kernel written in Aver checks the

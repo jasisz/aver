@@ -702,6 +702,7 @@ pub(crate) fn empty_script() -> crate::ir::proof_steps::Script {
             key: String::new(),
             givens: Vec::new(),
             finite: Vec::new(),
+            lists: Vec::new(),
             premise: None,
             lhs: term::boolean(true),
             rhs: term::boolean(true),

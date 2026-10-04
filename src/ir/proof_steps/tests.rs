@@ -11,6 +11,7 @@ fn script(lhs: super::Term, rhs: super::Term, proof: Proof) -> Script {
             key: "f.law".into(),
             givens: vec!["a".into(), "b".into()],
             finite: Vec::new(),
+            lists: Vec::new(),
             premise: None,
             lhs,
             rhs,
@@ -160,6 +161,84 @@ fn both_checkers_agree_on_every_wall_rule() {
             "{}",
             rule.id()
         );
+    }
+}
+
+/// `List.concat(xs, []) = xs` by induction on `xs`, a given of list type:
+/// both checkers accept it, and refuse it when `xs` is not declared a list,
+/// when the hypothesis is used in the empty-list case, when the cell's two
+/// names are the same, and when a hypothesis in scope mentions `xs`.
+#[test]
+fn both_checkers_induct_on_a_list_given_and_refuse_mutations() {
+    use super::sexpr::{BuiltinsOnly, script as serialise};
+    let concat = |a: super::Term, b: super::Term| term::builtin("List.concat", vec![a, b], None);
+    let cell = |h: &str, t: &str| term::builtin("List.prepend", vec![var(h), var(t)], None);
+    let rule = |rule: WallRule, subst: Vec<(&str, super::Term)>| Proof::Rule {
+        rule,
+        subst: subst.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        premises: Vec::new(),
+    };
+    let proof = |nil: Proof, head: &str, tail: &str| Proof::InductList {
+        var: "xs".into(),
+        lhs: concat(var("xs"), term::nil()),
+        rhs: var("xs"),
+        nil: Box::new(nil),
+        head: head.into(),
+        tail: tail.into(),
+        ih: "ih".into(),
+        cons: Box::new(Proof::Trans {
+            terms: vec![
+                concat(cell(head, tail), term::nil()),
+                term::builtin(
+                    "List.prepend",
+                    vec![var(head), concat(var(tail), term::nil())],
+                    None,
+                ),
+                cell(head, tail),
+            ],
+            steps: vec![
+                rule(
+                    WallRule::ConcatCons,
+                    vec![("x", var(head)), ("a", var(tail)), ("b", term::nil())],
+                ),
+                Proof::Congr {
+                    ctx: term::builtin("List.prepend", vec![var(head), term::hole()], None),
+                    inner: Box::new(Proof::Hyp("ih".into())),
+                },
+            ],
+        }),
+    };
+    let base = || rule(WallRule::ConcatNil, vec![("b", term::nil())]);
+    let mut good = script(
+        concat(var("xs"), term::nil()),
+        var("xs"),
+        proof(base(), "h", "t"),
+    );
+    good.obligation.givens = vec!["xs".into()];
+    good.obligation.lists = vec!["xs".into()];
+    let both = |s: &Script| {
+        let rust = check_script(s);
+        let kernel = crate::proof_kernel::verdict(&serialise(s, &BuiltinsOnly).unwrap());
+        (rust, kernel)
+    };
+    assert_eq!(both(&good), (Ok(()), Ok("f.law".to_string())));
+    let mut untyped = good.clone();
+    untyped.obligation.lists.clear();
+    let mut ih_in_base = good.clone();
+    ih_in_base.proof = proof(Proof::Hyp("ih".into()), "h", "t");
+    let mut same_names = good.clone();
+    same_names.proof = proof(base(), "t", "t");
+    let mut when_mentions = good.clone();
+    when_mentions.obligation.premise = Some(term::binop(BinOp::Eq, var("xs"), var("xs")));
+    for (kind, s) in [
+        ("not a list", untyped),
+        ("hypothesis in the base case", ih_in_base),
+        ("one name twice", same_names),
+        ("a when on the list", when_mentions),
+    ] {
+        let (rust, kernel) = both(&s);
+        assert!(rust.is_err(), "{kind}: Rust accepted");
+        assert!(kernel.is_err(), "{kind}: kernel accepted");
     }
 }
 

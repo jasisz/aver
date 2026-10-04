@@ -68,6 +68,16 @@ pub enum Proof {
         crate::proof_kernel::aver_generated::kernel::term::Term,
         aver_rt::AverList<Case>,
     ),
+    PListInduct(
+        AverStr,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        std::sync::Arc<Proof>,
+        AverStr,
+        AverStr,
+        AverStr,
+        std::sync::Arc<Proof>,
+    ),
     PRing(
         crate::proof_kernel::aver_generated::kernel::term::Term,
         crate::proof_kernel::aver_generated::kernel::term::Term,
@@ -94,13 +104,14 @@ impl Proof {
             Proof::PInduct(..) => 8,
             Proof::PLaw(..) => 9,
             Proof::PLinear(..) => 10,
-            Proof::PProj(..) => 11,
-            Proof::PRefl(..) => 12,
-            Proof::PRing(..) => 13,
-            Proof::PRule(..) => 14,
-            Proof::PSymm(..) => 15,
-            Proof::PTrans(..) => 16,
-            Proof::PUnfold(..) => 17,
+            Proof::PListInduct(..) => 11,
+            Proof::PProj(..) => 12,
+            Proof::PRefl(..) => 13,
+            Proof::PRing(..) => 14,
+            Proof::PRule(..) => 15,
+            Proof::PSymm(..) => 16,
+            Proof::PTrans(..) => 17,
+            Proof::PUnfold(..) => 18,
         }
     }
 }
@@ -172,6 +183,18 @@ impl Ord for Proof {
                     .then_with(|| a2.cmp(b2))
                     .then_with(|| a3.cmp(b3))
             }
+            (
+                Proof::PListInduct(a0, a1, a2, a3, a4, a5, a6, a7),
+                Proof::PListInduct(b0, b1, b2, b3, b4, b5, b6, b7),
+            ) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1))
+                .then_with(|| a2.cmp(b2))
+                .then_with(|| a3.cmp(b3))
+                .then_with(|| a4.cmp(b4))
+                .then_with(|| a5.cmp(b5))
+                .then_with(|| a6.cmp(b6))
+                .then_with(|| a7.cmp(b7)),
             (Proof::PProj(a0), Proof::PProj(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
@@ -300,6 +323,20 @@ impl aver_rt::AverDisplay for Proof {
                     f2.aver_display_inner(),
                     f3.aver_display_inner(),
                     f4.aver_display_inner()
+                ]
+                .join(", ")
+            ),
+            Proof::PListInduct(f0, f1, f2, f3, f4, f5, f6, f7) => format!(
+                "PListInduct({})",
+                vec![
+                    f0.aver_display_inner(),
+                    f1.aver_display_inner(),
+                    f2.aver_display_inner(),
+                    f3.aver_display_inner(),
+                    f4.aver_display_inner(),
+                    f5.aver_display_inner(),
+                    f6.aver_display_inner(),
+                    f7.aver_display_inner()
                 ]
                 .join(", ")
             ),
@@ -526,6 +563,7 @@ impl aver_rt::AverDisplay for Given {
 pub struct Script {
     pub obligation: Law,
     pub finite: aver_rt::AverList<Given>,
+    pub lists: aver_rt::AverList<AverStr>,
     pub defs: aver_rt::AverList<Def>,
     pub consts: aver_rt::AverList<Const>,
     pub laws: aver_rt::AverList<Law>,
@@ -545,6 +583,7 @@ impl Ord for Script {
             .then_with(|| self.defs.cmp(&other.defs))
             .then_with(|| self.finite.cmp(&other.finite))
             .then_with(|| self.laws.cmp(&other.laws))
+            .then_with(|| self.lists.cmp(&other.lists))
             .then_with(|| self.obligation.cmp(&other.obligation))
             .then_with(|| self.proof.cmp(&other.proof))
     }
@@ -557,6 +596,7 @@ impl aver_rt::AverDisplay for Script {
             vec![
                 format!("obligation: {}", self.obligation.aver_display_inner()),
                 format!("finite: {}", self.finite.aver_display_inner()),
+                format!("lists: {}", self.lists.aver_display_inner()),
                 format!("defs: {}", self.defs.aver_display_inner()),
                 format!("consts: {}", self.consts.aver_display_inner()),
                 format!("laws: {}", self.laws.aver_display_inner()),

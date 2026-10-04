@@ -206,6 +206,20 @@ pub enum Proof {
         rhs: Term,
         cases: Vec<InductCase>,
     },
+    /// Induction on a given of list type, apart from any function's
+    /// recursion: `nil` proves the claim `lhs = rhs` at `var = []`, and
+    /// `cons` proves it at `var = List.prepend(head, tail)` with hypothesis
+    /// `ih`, the claim at `var = tail`. The other givens stay fixed.
+    InductList {
+        var: String,
+        lhs: Term,
+        rhs: Term,
+        nil: Box<Proof>,
+        head: String,
+        tail: String,
+        ih: String,
+        cons: Box<Proof>,
+    },
     /// `goal = value` for an Int comparison `goal`: its opposite and the
     /// hypotheses `hyps`, each read as `p >= 0` and weighted by `weights`
     /// (the opposite first), add up to a negative constant (see
@@ -327,6 +341,9 @@ pub struct Obligation {
     /// The givens of a finite type, with that type: what a
     /// [`Proof::Enum`] split may enumerate.
     pub finite: Vec<(String, Finite)>,
+    /// The givens of a list type: what a [`Proof::InductList`] step may
+    /// induct on.
+    pub lists: Vec<String>,
     pub premise: Option<Term>,
     pub lhs: Term,
     pub rhs: Term,
@@ -379,6 +396,7 @@ impl Proof {
             Proof::Enum { cases, .. } => cases.iter().map(Proof::size).sum(),
             Proof::Absurd { contradiction, .. } => contradiction.size(),
             Proof::Induct { cases, .. } => cases.iter().map(|c| c.proof.size()).sum(),
+            Proof::InductList { nil, cons, .. } => nil.size() + cons.size(),
         }
     }
 }
