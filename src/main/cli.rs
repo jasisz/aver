@@ -9,15 +9,14 @@ pub(super) struct Cli {
     pub(super) command: Commands,
 }
 
-/// Proof backend. Lean is the only one; the flag stays so existing
-/// `--backend lean` invocations keep working, and `--backend dafny` fails
+/// Proof backend: `lean` (the default) or `aver`; `--backend dafny` fails
 /// with a message saying the backend was removed.
 fn parse_proof_backend(value: &str) -> Result<String, String> {
     match value {
-        "lean" => Ok(value.to_string()),
+        "lean" | "aver" => Ok(value.to_string()),
         "dafny" => Err("the Dafny backend was removed; use Lean (the default)".to_string()),
         other => Err(format!(
-            "unknown proof backend `{other}`; the only backend is `lean`"
+            "unknown proof backend `{other}`; the backends are `lean` and `aver`"
         )),
     }
 }
@@ -678,7 +677,10 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
-        /// Proof backend. `lean` is the only one (and the default).
+        /// Proof backend. `lean` (the default): the Lean kernel judges the
+        /// exported model, with step proofs first and tactics behind them.
+        /// `aver`: the proof kernel written in Aver judges the step proofs
+        /// alone, in process, without Lean.
         #[arg(long, default_value = "lean", value_parser = parse_proof_backend)]
         backend: String,
         /// Include the `verify` examples and what only they reach. Without it,

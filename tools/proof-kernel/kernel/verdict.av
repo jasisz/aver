@@ -1,0 +1,17 @@
+module Verdict
+    intent =
+        "One step script in, the law it proves or the refusal of its first wrong step out."
+        "Pure: the CLI in main.av and the aver binary (src/proof_kernel, generated) both call it."
+    exposes [verdict]
+    depends [Kernel.Sexp, Kernel.Decode, Kernel.Check]
+    effects []
+
+fn verdict(text: String) -> Result<String, String>
+    ? "Read one script and check it: the law it proves, or the refusal."
+    sexp = Kernel.Sexp.readAll(text)?
+    Kernel.Check.checkScript(Kernel.Decode.script(sexp)?)
+
+verify verdict
+    verdict("(steps 1 (obligation k () (none) (i 1) (i 1)) (defs) (laws) (proof (refl (i 1))))") => Result.Ok("k")
+    verdict("(steps 1 (obligation k () (none) (i 1) (i 1)) (defs) (laws) (proof (hyp h)))") => Result.Err("step proof: hypothesis h is not in scope")
+    verdict("(steps 2)") => Result.Err("unsupported step format version 2")

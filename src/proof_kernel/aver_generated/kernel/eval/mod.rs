@@ -1,0 +1,423 @@
+#[allow(unused_imports)]
+use crate::proof_kernel::*;
+use ::aver_rt::aver_list_match;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Val {
+    VInt(aver_rt::AverInt),
+    VBool(bool),
+}
+
+impl Val {
+    fn aver_key_rank(&self) -> usize {
+        match self {
+            Val::VBool(..) => 0,
+            Val::VInt(..) => 1,
+        }
+    }
+}
+
+impl PartialOrd for Val {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Val {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let rank = self.aver_key_rank().cmp(&other.aver_key_rank());
+        if rank != std::cmp::Ordering::Equal {
+            return rank;
+        }
+        match (self, other) {
+            (Val::VBool(a0), Val::VBool(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
+            (Val::VInt(a0), Val::VInt(b0)) => std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0)),
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+impl aver_rt::AverDisplay for Val {
+    fn aver_display(&self) -> String {
+        match self {
+            Val::VInt(f0) => format!("VInt({})", f0.aver_display_inner()),
+            Val::VBool(f0) => format!("VBool({})", f0.aver_display_inner()),
+        }
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+/// The value of a closed term, if it is one this evaluator knows.
+pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Term) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    match t.clone() {
+        crate::proof_kernel::aver_generated::kernel::term::Term::TInt(n) => {
+            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(n))
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Term::TBool(b) => {
+            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(b))
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Term::TOp(o, a, b) => {
+            let a = (*a).clone();
+            let b = (*b).clone();
+            crate::proof_kernel::aver_generated::kernel::eval::evalOp(
+                o,
+                &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
+                &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b),
+            )
+        }
+        crate::proof_kernel::aver_generated::kernel::term::Term::TBi(name, args) => {
+            crate::proof_kernel::aver_generated::kernel::eval::evalBuiltin(name, &args)
+        }
+        _ => None,
+    }
+}
+
+/// A binary operator on two values.
+pub fn evalOp(o @ _: AverStr, a @ _: &Option<Val>, b @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (a.clone(), b.clone());
+        match __pat0 {
+            Some(__pat2) => match __pat2 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x) => match __pat1 {
+                    Some(__pat3) => match __pat3 {
+                        crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(y) => {
+                            crate::proof_kernel::aver_generated::kernel::eval::intOp(o, x, y)
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(x) => match __pat1 {
+                    Some(__pat4) => match __pat4 {
+                        crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(y) => {
+                            crate::proof_kernel::aver_generated::kernel::eval::boolOp(o, x, y)
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+            },
+            _ => None,
+        }
+    }
+}
+
+/// Int arithmetic and comparison.
+#[inline(always)]
+pub fn intOp(o @ _: AverStr, x @ _: aver_rt::AverInt, y @ _: aver_rt::AverInt) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __dispatch_subject = o;
+        if &*__dispatch_subject == "+" {
+            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.add(&y)))
+        } else {
+            if &*__dispatch_subject == "-" {
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.sub(&y)))
+            } else {
+                if &*__dispatch_subject == "*" {
+                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x.mul(&y)))
+                } else {
+                    if &*__dispatch_subject == "<" {
+                        Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x < y)))
+                    } else {
+                        if &*__dispatch_subject == ">" {
+                            Some(
+                                crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(
+                                    (x > y),
+                                ),
+                            )
+                        } else {
+                            if &*__dispatch_subject == "<=" {
+                                Some(
+                                    crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(
+                                        (x <= y),
+                                    ),
+                                )
+                            } else {
+                                if &*__dispatch_subject == ">=" {
+                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x >= y)))
+                                } else {
+                                    if &*__dispatch_subject == "==" {
+                                        Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x == y)))
+                                    } else {
+                                        if &*__dispatch_subject == "!=" {
+                                            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x != y)))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Equality of Bools.
+#[inline(always)]
+pub fn boolOp(o @ _: AverStr, x @ _: bool, y @ _: bool) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __dispatch_subject = o;
+        if &*__dispatch_subject == "==" {
+            Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x == y)))
+        } else {
+            if &*__dispatch_subject == "!=" {
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x != y)))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// The builtins the evaluator knows.
+pub fn evalBuiltin(
+    name @ _: AverStr,
+    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
+) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (name, args.clone());
+        {
+            let __dispatch_subject = __pat0;
+            if &*__dispatch_subject == "Bool.and" {
+                {
+                    let __list_subject = __pat1;
+                    if let Some((a, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                        {
+                            let __list_subject = __pat2;
+                            if let Some((b, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                {
+                                    let __list_subject = __pat3;
+                                    if __list_subject.is_empty() {
+                                        crate::proof_kernel::aver_generated::kernel::eval::both(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b), true)
+                                    } else {
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                if &*__dispatch_subject == "Bool.or" {
+                    {
+                        let __list_subject = __pat1;
+                        if let Some((a, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                            {
+                                let __list_subject = __pat4;
+                                if let Some((b, __pat5)) =
+                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                {
+                                    {
+                                        let __list_subject = __pat5;
+                                        if __list_subject.is_empty() {
+                                            crate::proof_kernel::aver_generated::kernel::eval::both(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b), false)
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                } else {
+                    if &*__dispatch_subject == "Bool.not" {
+                        {
+                            let __list_subject = __pat1;
+                            if let Some((a, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                {
+                                    let __list_subject = __pat6;
+                                    if __list_subject.is_empty() {
+                                        crate::proof_kernel::aver_generated::kernel::eval::negate(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a))
+                                    } else {
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    } else {
+                        if &*__dispatch_subject == "__int_div_euclid" {
+                            {
+                                let __list_subject = __pat1;
+                                if let Some((a, __pat7)) =
+                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                {
+                                    {
+                                        let __list_subject = __pat7;
+                                        if let Some((k, __pat8)) =
+                                            aver_rt::list_uncons_cloned(&__list_subject)
+                                        {
+                                            {
+                                                let __list_subject = __pat8;
+                                                if __list_subject.is_empty() {
+                                                    crate::proof_kernel::aver_generated::kernel::eval::division(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&k), true)
+                                                } else {
+                                                    None
+                                                }
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                        } else {
+                            if &*__dispatch_subject == "__int_mod_euclid" {
+                                {
+                                    let __list_subject = __pat1;
+                                    if let Some((a, __pat9)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        {
+                                            let __list_subject = __pat9;
+                                            if let Some((k, __pat10)) =
+                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            {
+                                                {
+                                                    let __list_subject = __pat10;
+                                                    if __list_subject.is_empty() {
+                                                        crate::proof_kernel::aver_generated::kernel::eval::division(&crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a), &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&k), false)
+                                                    } else {
+                                                        None
+                                                    }
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Bool.and (isAnd) or Bool.or of two values.
+pub fn both(a @ _: &Option<Val>, b @ _: &Option<Val>, isAnd @ _: bool) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (a.clone(), b.clone());
+        match __pat0 {
+            Some(__pat2) => match __pat2 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(x) => {
+                    match __pat1 {
+                        Some(__pat3) => match __pat3 {
+                            crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(y) => {
+                                if isAnd {
+                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x && y)))
+                                } else {
+                                    Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((x || y)))
+                                }
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// Bool.not of a value.
+pub fn negate(a @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    match a.clone() {
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VBool(x) => {
+                Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VBool((!x)))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Euclidean quotient or remainder; a zero divisor is not closed.
+pub fn division(a @ _: &Option<Val>, k @ _: &Option<Val>, quotient @ _: bool) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let (__pat0, __pat1) = (a.clone(), k.clone());
+        match __pat0 {
+            Some(__pat2) => match __pat2 {
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x) => match __pat1 {
+                    Some(__pat3) => match __pat3 {
+                        crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(y) => {
+                            crate::proof_kernel::aver_generated::kernel::eval::divided(
+                                x, y, quotient,
+                            )
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// The Euclidean result of dividing x by y.
+#[inline(always)]
+pub fn divided(
+    x @ _: aver_rt::AverInt,
+    y @ _: aver_rt::AverInt,
+    quotient @ _: bool,
+) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    if quotient {
+        match (match (x).div_euclid(&(y)) {
+            Some(__q) => Ok(__q),
+            None => Err("division by zero".to_string()),
+        })
+        .into_aver()
+        {
+            Ok(q @ _) => Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(q)),
+            Err(e @ _) => None,
+        }
+    } else {
+        match (match (x).rem_euclid(&(y)) {
+            Some(__r) => Ok(__r),
+            None => Err("division by zero".to_string()),
+        })
+        .into_aver()
+        {
+            Ok(r @ _) => Some(crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(r)),
+            Err(e @ _) => None,
+        }
+    }
+}

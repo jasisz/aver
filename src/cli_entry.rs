@@ -524,6 +524,45 @@ fn main_impl(
             output,
             name,
             module_root,
+            backend,
+            examples,
+            verify_mode,
+            check,
+            sorry_budget,
+            declined_budget,
+            check_json,
+            explain,
+            minimize,
+            allow_mathlib,
+            waterfall,
+            gate,
+            write_baseline,
+            compare_manifest,
+        } if backend == "aver" => {
+            let _ = (
+                verify_mode,
+                examples,
+                declined_budget,
+                explain,
+                minimize,
+                allow_mathlib,
+            );
+            let _ = (waterfall, gate, write_baseline, compare_manifest);
+            commands::cmd_proof_aver(
+                file,
+                output,
+                name.as_deref(),
+                module_root.as_deref(),
+                *check,
+                *sorry_budget,
+                *check_json,
+            );
+        }
+        Commands::Proof {
+            file,
+            output,
+            name,
+            module_root,
             backend: _,
             examples,
             verify_mode,

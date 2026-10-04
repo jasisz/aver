@@ -1,0 +1,14 @@
+module ProofKernelEmbed
+    intent =
+        "The entry the aver binary embeds: compiled to Rust into src/proof_kernel by"
+        "tools/regenerate_proof_kernel.py, so `aver proof --backend aver` checks steps in process."
+    exposes [verdict]
+    depends [Kernel.Verdict]
+    effects []
+
+fn verdict(text: String) -> Result<String, String>
+    ? "The kernel's verdict on one step script."
+    Kernel.Verdict.verdict(text)
+
+verify verdict
+    verdict("(steps 2)") => Result.Err("unsupported step format version 2")
