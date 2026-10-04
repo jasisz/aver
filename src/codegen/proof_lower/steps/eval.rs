@@ -23,8 +23,15 @@ enum Step {
     Blocked(Term),
 }
 
-/// How deep evaluations may nest before the producer refuses.
-const MAX_NESTING: usize = 64;
+/// How deep evaluations may nest before the producer refuses: each level
+/// costs several large frames of the compiler's own stack, and a test
+/// thread has 2 MiB.
+const MAX_NESTING: usize = 24;
+
+/// Whether `part` occurs in `t`.
+fn holds(t: &Term, part: &Term) -> bool {
+    canon(t) == *part || term::children(t).into_iter().any(|c| holds(c, part))
+}
 
 /// Complement rules: `(a P b) = v` decides `(a Q b) = w`.
 const COMPLEMENTS: [(BinOp, bool, BinOp, bool, WallRule); 12] = [
@@ -454,7 +461,11 @@ impl Env<'_> {
         for law in self.rewrite_laws.clone() {
             let eq = Equation::Law(Box::new(law.clone()));
             if let Some((p, to)) = self.try_equation(&eq, cur) {
-                found.push((law.key.clone(), p, to));
+                // A result that holds the term it rewrote would be rewritten
+                // again forever (`f(x, [])` to `g(f(x, []))`).
+                if !holds(&to, &canon(cur)) {
+                    found.push((law.key.clone(), p, to));
+                }
             }
         }
         let Some((key, p, to)) = found.first().cloned() else {

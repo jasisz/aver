@@ -315,7 +315,11 @@ impl Env<'_> {
         let mut found: Vec<(usize, Proof, Term)> = Vec::new();
         for (i, eq) in eqs.iter().enumerate() {
             if let Some((p, to)) = self.try_equation(eq, t) {
-                found.push((i, p, to));
+                // A result that holds its own redex would be rewritten again
+                // forever; that equation does not apply here.
+                if !holds_term(&to, &canon(t)) {
+                    found.push((i, p, to));
+                }
             }
         }
         if let Some((first, p, to)) = found.first().cloned() {
@@ -419,4 +423,9 @@ pub(crate) fn loops(law: &LawRef) -> Option<String> {
             law.key
         )
     })
+}
+
+/// Whether `part` occurs in `t`.
+fn holds_term(t: &Term, part: &Term) -> bool {
+    canon(t) == *part || term::children(t).into_iter().any(|c| holds_term(c, part))
 }
