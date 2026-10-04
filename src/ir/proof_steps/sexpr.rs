@@ -8,7 +8,8 @@
 //! script  := (steps VERSION (obligation KEY (OGIVEN…) PREMISE TERM TERM)
 //!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM)…)
 //!                    (consts (const NAME TERM)…)
-//!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…)
+//!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…
+//!                          (fact KEY (OGIVEN…) TERM TERM PROOF)…)
 //!                    (proof PROOF))
 //! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
 //!          | (NAME (tlist))            ; a given of list type
@@ -569,6 +570,29 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
     }
     out.push_str(")\n (laws");
     for l in &s.laws {
+        if let Some(fact) = &l.fact {
+            let lists = &fact.obligation.lists;
+            let givens: Vec<String> = l
+                .givens
+                .iter()
+                .map(|g| {
+                    if lists.contains(g) {
+                        format!("({g} (tlist))")
+                    } else {
+                        g.clone()
+                    }
+                })
+                .collect();
+            out.push_str(&format!(
+                "\n  (fact {} ({}) {} {} {})",
+                l.key,
+                givens.join(" "),
+                term(&l.lhs, names)?,
+                term(&l.rhs, names)?,
+                proof(&fact.proof, names)?
+            ));
+            continue;
+        }
         out.push_str(&format!(
             "\n  (law {} ({}) {} {} {})",
             l.key,

@@ -242,6 +242,55 @@ fn both_checkers_induct_on_a_list_given_and_refuse_mutations() {
     }
 }
 
+/// Every builtin fact proves its own statement in both checkers, and a
+/// citation is refused when it states the fact differently from the proof
+/// it carries.
+#[test]
+fn every_builtin_fact_checks_and_a_misstated_citation_is_refused() {
+    use super::sexpr::{BuiltinsOnly, script as serialise};
+    for fact in super::facts::all() {
+        assert!(super::facts::is_fact_name(fact.key), "{}", fact.key);
+        assert_eq!(check_script(&fact.script), Ok(()), "{}", fact.key);
+        assert_eq!(
+            crate::proof_kernel::verdict(&serialise(&fact.script, &BuiltinsOnly).unwrap()),
+            Ok(fact.key.to_string())
+        );
+        let ob = &fact.script.obligation;
+        let cite = Proof::Law {
+            law: fact.key.into(),
+            subst: ob.givens.iter().map(|g| (g.clone(), var(g))).collect(),
+            premise: None,
+        };
+        let mut citing = script(ob.lhs.clone(), ob.rhs.clone(), cite);
+        citing.obligation.givens = ob.givens.clone();
+        citing.laws.push(fact.law_ref());
+        assert_eq!(check_script(&citing), Ok(()), "{}", fact.key);
+        let mut misstated = citing.clone();
+        misstated.laws[0].rhs = misstated.laws[0].lhs.clone();
+        misstated.obligation.rhs = misstated.obligation.lhs.clone();
+        assert!(check_script(&misstated).is_err(), "{}", fact.key);
+    }
+}
+
+/// Two closed lists compute equal only when they are the same list.
+#[test]
+fn compute_compares_whole_lists() {
+    let l = |vs: &[i64]| term::list(vs.iter().map(|v| term::int(&(*v).into())).collect());
+    let take = term::builtin("List.take", vec![l(&[1, 2, 3]), term::int(&2.into())], None);
+    let s = |rhs: super::Term| {
+        script(
+            take.clone(),
+            rhs.clone(),
+            Proof::Compute {
+                lhs: take.clone(),
+                rhs,
+            },
+        )
+    };
+    assert_eq!(check_script(&s(l(&[1, 2]))), Ok(()));
+    assert!(check_script(&s(l(&[1, 3]))).is_err());
+}
+
 /// A module-level binding opens to its value and to nothing else: the step
 /// names the binding, the script carries its value, and a binding the
 /// script does not carry proves nothing.

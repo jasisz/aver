@@ -20,6 +20,7 @@
 //! The serialised form ([`sexpr`]) is versioned by [`FORMAT_VERSION`].
 
 pub mod check;
+pub mod facts;
 pub mod induct;
 pub mod linear;
 pub mod ring;
@@ -50,8 +51,9 @@ impl Eqn {
 }
 
 /// An earlier, separately proved law a step may cite. The replayer takes
-/// its statement as given (it is that law's own obligation); the citation
-/// instantiates every given explicitly and proves every premise.
+/// its statement as given (it is that law's own obligation), except for a
+/// builtin fact, which carries its proof and is checked first; the
+/// citation instantiates every given explicitly and proves every premise.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LawRef {
     /// `fn.law` as written in the source, qualified by module when the
@@ -62,6 +64,9 @@ pub struct LawRef {
     pub premise: Option<Term>,
     pub lhs: Term,
     pub rhs: Term,
+    /// For a builtin fact ([`facts`]), its own script: the checkers check
+    /// it, and that it states this law, before any step may cite it.
+    pub fact: Option<Box<Script>>,
 }
 
 /// A source definition an [`Proof::Unfold`] step opens: the function's

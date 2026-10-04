@@ -543,6 +543,74 @@ pub fn inductNext(
     )
 }
 
+#[allow(non_camel_case_types)]
+enum __MutualTco4 {
+    CheckFacts(aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>),
+    CheckFactThen(
+        Result<AverStr, AverStr>,
+        AverStr,
+        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
+    ),
+}
+
+fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<(), AverStr> {
+    loop {
+        __state = match __state {
+            __MutualTco4::CheckFacts(mut fs @ _) => {
+                crate::proof_kernel::cancel_checkpoint();
+                aver_list_match!(fs, [] => { return Ok(()) }, [f, rest] => __MutualTco4::CheckFactThen(crate::proof_kernel::aver_generated::kernel::check::checkScript(&crate::proof_kernel::aver_generated::kernel::proof::Script { obligation: f.law.clone(), finite: aver_rt::AverList::empty(), lists: f.lists, defs: aver_rt::AverList::empty(), consts: aver_rt::AverList::empty(), laws: aver_rt::AverList::empty(), facts: aver_rt::AverList::empty(), proof: f.proof }), f.law.key.clone(), rest))
+            }
+            __MutualTco4::CheckFactThen(mut done @ _, mut key @ _, mut rest @ _) => {
+                crate::proof_kernel::cancel_checkpoint();
+                match done {
+                    Ok(k @ _) => __MutualTco4::CheckFacts(rest),
+                    Err(why @ _) => {
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = {
+                                    let mut __b = {
+                                        let mut __b = aver_rt::Buffer::with_capacity(
+                                            (aver_rt::AverInt::from_i64(39))
+                                                .to_usize()
+                                                .unwrap_or(0),
+                                        );
+                                        __b.push_str(&AverStr::from("fact "));
+                                        __b
+                                    };
+                                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                        &(key),
+                                    )));
+                                    __b
+                                };
+                                __b.push_str(&AverStr::from(": "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(why))));
+                            __b
+                        }));
+                    }
+                }
+            }
+        };
+    }
+}
+
+/// Each builtin fact proves its statement over builtins alone: no definitions, no laws, no when.
+pub fn checkFacts(
+    fs @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
+) -> Result<(), AverStr> {
+    __mutual_tco_trampoline_4(__MutualTco4::CheckFacts(fs))
+}
+
+/// The rest of the facts, once this one checked.
+pub fn checkFactThen(
+    done @ _: Result<AverStr, AverStr>,
+    key @ _: AverStr,
+    rest @ _: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
+) -> Result<(), AverStr> {
+    __mutual_tco_trampoline_4(__MutualTco4::CheckFactThen(done, key, rest))
+}
+
 /// No definitions, laws or hypotheses.
 pub fn emptyEnv() -> Env {
     crate::proof_kernel::cancel_checkpoint();
@@ -2517,16 +2585,20 @@ pub fn lawPremises(
     aver_list_match!(l.premise.clone(), [] => aver_rt::AverList::empty(), [p, rest] => aver_rt::AverList::from_vec(vec![crate::proof_kernel::aver_generated::kernel::term::Eqn { lhs: p, rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(true) }]))
 }
 
-/// The proof must prove exactly the obligation, under its when.
+/// The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first.
 pub fn checkScript(
     s @ _: &crate::proof_kernel::aver_generated::kernel::proof::Script,
 ) -> Result<AverStr, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     crate::proof_kernel::aver_generated::kernel::induct::refuseMutualRecursion(&s.defs)?;
+    crate::proof_kernel::aver_generated::kernel::check::checkFacts(s.facts.clone())?;
     let env @ _ = crate::proof_kernel::aver_generated::kernel::check::Env {
         defs: s.defs.clone(),
         consts: s.consts.clone(),
-        laws: s.laws.clone(),
+        laws: aver_rt::AverList::concat(
+            &s.laws.clone(),
+            &crate::proof_kernel::aver_generated::kernel::check::factLaws(&s.facts),
+        ),
         hyps: crate::proof_kernel::aver_generated::kernel::check::lawHyps(&s.obligation),
         finite: s.finite.clone(),
         lists: s.lists.clone(),
@@ -3435,4 +3507,13 @@ pub fn listCases(
         }),
     )?;
     Ok(claim.clone())
+}
+
+/// The statements of checked facts, as laws a step may cite.
+#[inline(always)]
+pub fn factLaws(
+    fs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
+) -> aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(fs.clone(), [] => aver_rt::AverList::empty(), [f, rest] => aver_rt::AverList::prepend(f.law, &crate::proof_kernel::aver_generated::kernel::check::factLaws(&rest)))
 }

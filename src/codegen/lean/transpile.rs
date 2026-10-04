@@ -1497,7 +1497,19 @@ pub(super) fn transpile_unified(
     let entry_content = entry_parts.join("\n\n");
 
     // ---- AverCommon.lean ----
-    let common_content = build_common_lean(&union_body, cert_model);
+    // The builtin facts the proofs cite, stated once for every element type
+    // after the prelude they are proved with.
+    let facts = match super::proof_steps::render_cited_facts(&union_body, ctx) {
+        Ok(text) => text,
+        Err(why) => panic!("a builtin fact does not render: {why}"),
+    };
+    union_body.push_str(&facts);
+    let mut common_content = build_common_lean(&union_body, cert_model);
+    if !facts.is_empty() {
+        common_content.push_str("\n\n");
+        common_content.push_str(&facts);
+        common_content.push('\n');
+    }
     let uses_crypto_sha256 = union_body.contains("Crypto.sha256");
 
     // Project files

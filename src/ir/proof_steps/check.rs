@@ -328,14 +328,10 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
         Proof::Compute { lhs, rhs } => {
             let l =
                 term::eval_closed(lhs).ok_or_else(|| "compute: lhs is not closed".to_string())?;
-            let r = if term::is_literal(rhs) {
-                rhs.clone()
-            } else {
-                term::eval_closed(rhs).ok_or_else(|| "compute: rhs is not closed".to_string())?
-            };
-            if term::int_value(&l) != term::int_value(&r)
-                || term::bool_value(&l) != term::bool_value(&r)
-            {
+            let r =
+                term::eval_closed(rhs).ok_or_else(|| "compute: rhs is not closed".to_string())?;
+            // Values in canonical form, lists element by element.
+            if l != r {
                 return Err("compute: the sides evaluate differently".into());
             }
             Ok(Eqn::new(canon(lhs), canon(rhs)))
@@ -475,6 +471,11 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
 /// Check a whole script: the proof must prove the obligation.
 pub fn check_script(script: &Script) -> Result<(), String> {
     super::induct::refuse_mutual_recursion(&script.defs)?;
+    for law in &script.laws {
+        if let Some(fact) = &law.fact {
+            check_fact(law, fact).map_err(|m| format!("fact {}: {m}", law.key))?;
+        }
+    }
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
         hyps.push(("when".to_string(), Eqn::new(canon(p), term::boolean(true))));
@@ -486,6 +487,25 @@ pub fn check_script(script: &Script) -> Result<(), String> {
     } else {
         Err("the proof ends at a different equation than the claim".into())
     }
+}
+
+/// A builtin fact: a script over builtins alone, with nothing to cite and
+/// no `when`, that proves exactly the statement the citation uses.
+fn check_fact(law: &super::LawRef, fact: &Script) -> Result<(), String> {
+    let ob = &fact.obligation;
+    if !fact.defs.is_empty() || !fact.consts.is_empty() || !fact.laws.is_empty() {
+        return Err("a fact uses only builtins".into());
+    }
+    if ob.key != law.key
+        || ob.givens != law.givens
+        || ob.premise.is_some()
+        || law.premise.is_some()
+        || ob.lhs != law.lhs
+        || ob.rhs != law.rhs
+    {
+        return Err("the citation does not state the fact its proof proves".into());
+    }
+    check_script(fact)
 }
 
 /// The claim an [`Proof::InductList`] step proves, once both cases are

@@ -524,6 +524,45 @@ impl aver_rt::AverDisplay for Law {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Fact {
+    pub law: Law,
+    pub lists: aver_rt::AverList<AverStr>,
+    pub proof: Proof,
+}
+
+impl PartialOrd for Fact {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Fact {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.law.cmp(&other.law))
+            .then_with(|| self.lists.cmp(&other.lists))
+            .then_with(|| self.proof.cmp(&other.proof))
+    }
+}
+
+impl aver_rt::AverDisplay for Fact {
+    fn aver_display(&self) -> String {
+        format!(
+            "Fact({})",
+            vec![
+                format!("law: {}", self.law.aver_display_inner()),
+                format!("lists: {}", self.lists.aver_display_inner()),
+                format!("proof: {}", self.proof.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Given {
     pub name: AverStr,
     pub fin: crate::proof_kernel::aver_generated::kernel::term::Fin,
@@ -567,6 +606,7 @@ pub struct Script {
     pub defs: aver_rt::AverList<Def>,
     pub consts: aver_rt::AverList<Const>,
     pub laws: aver_rt::AverList<Law>,
+    pub facts: aver_rt::AverList<Fact>,
     pub proof: Proof,
 }
 
@@ -581,6 +621,7 @@ impl Ord for Script {
         std::cmp::Ordering::Equal
             .then_with(|| self.consts.cmp(&other.consts))
             .then_with(|| self.defs.cmp(&other.defs))
+            .then_with(|| self.facts.cmp(&other.facts))
             .then_with(|| self.finite.cmp(&other.finite))
             .then_with(|| self.laws.cmp(&other.laws))
             .then_with(|| self.lists.cmp(&other.lists))
@@ -600,6 +641,7 @@ impl aver_rt::AverDisplay for Script {
                 format!("defs: {}", self.defs.aver_display_inner()),
                 format!("consts: {}", self.consts.aver_display_inner()),
                 format!("laws: {}", self.laws.aver_display_inner()),
+                format!("facts: {}", self.facts.aver_display_inner()),
                 format!("proof: {}", self.proof.aver_display_inner())
             ]
             .join(", ")

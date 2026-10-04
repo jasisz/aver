@@ -1249,6 +1249,152 @@ fn lean_checks_the_list_rules_and_refuses_a_mutation() {
     let _ = fs::remove_dir_all(out);
 }
 
+const FACT_LAWS: [&str; 4] = [
+    "batch.sizeAdds",
+    "batch.threeBatches",
+    "joined.lengthAdds",
+    "joined.regroups",
+];
+
+#[test]
+fn a_cited_builtin_fact_is_checked_with_the_law_and_refused_when_mutated() {
+    let out = scratch("facts");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("facts.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), FACT_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        let text = read(law);
+        assert!(text.contains("\n  (fact List."), "{text}");
+        assert_eq!(aver::proof_kernel::verdict(&text), Ok(law.clone()));
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "a wrong step inside the fact's proof",
+            swap(
+                "joined.lengthAdds",
+                "(symm (rule list.len.nil ()))",
+                "(rule list.len.nil ())",
+            ),
+        ),
+        (
+            "a fact stated with a different right side",
+            swap(
+                "joined.lengthAdds",
+                "(fact List.len.ofConcat ((a (tlist)) (b (tlist))) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v b)))",
+                "(fact List.len.ofConcat ((a (tlist)) (b (tlist))) (bi List.len (bi List.concat (v a) (v b))) (op + (bi List.len (v a)) (bi List.len (v a)))",
+            ),
+        ),
+        (
+            "a fact whose induction is on a given not declared a list",
+            swap(
+                "joined.regroups",
+                "(fact List.concat.assoc ((a (tlist))",
+                "(fact List.concat.assoc (a",
+            ),
+        ),
+        ("a fact cited without its proof", {
+            let text = read("joined.regroups");
+            let from = text.find("\n  (fact ").unwrap();
+            let to = text[from..].find("\n (proof ").unwrap() + from;
+            format!("{}){}", &text[..from], &text[to..])
+        }),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}\n{text}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn a_using_name_in_the_list_namespace_must_be_a_builtin_fact() {
+    let dir = scratch("facts-reserved");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("reserved.av"),
+        "module Reserved\n    intent = \"A law citing a fact that does not exist.\"\n    exposes [joined]\n    effects []\n\nfn joined(xs: List<Int>, ys: List<Int>) -> List<Int>\n    ? \"Both lists.\"\n    List.concat(xs, ys)\n\nverify joined law lengthAdds\n    given xs: List<Int> = [[], [1]]\n    given ys: List<Int> = [[], [2]]\n    using [List.len.ofJoin]\n    List.len(joined(xs, ys)) => List.len(xs) + List.len(ys)\n",
+    )
+    .unwrap();
+    let result = aver_in(&dir, &["check", "reserved.av"]);
+    let text = format_output(&result);
+    assert!(!result.status.success(), "{text}");
+    assert!(
+        text.contains("'List.len.ofJoin', which is not a builtin fact"),
+        "{text}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn lean_states_each_cited_fact_once_for_every_element_type() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("facts-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "facts.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in FACT_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let common = fs::read_to_string(out.join("AverCommon.lean")).unwrap();
+    for theorem in [
+        "theorem AverFacts.list_len_ofConcat {α : Type} (a b : List α) :",
+        "theorem AverFacts.list_concat_assoc {α : Type} (a b c : List α) :",
+    ] {
+        assert_eq!(common.matches(theorem).count(), 1, "{common}");
+    }
+    assert!(!common.contains("List Unit"), "{common}");
+    // A wrong step in a fact is a build error of the shared file: there is
+    // no fallback for it.
+    let wrong = common.replacen(
+        "AverSteps.list_concat_cons (x) (t) (b)",
+        "AverSteps.list_concat_nil (b)",
+        1,
+    );
+    assert_ne!(wrong, common);
+    fs::write(out.join("AverCommon.lean"), &wrong).unwrap();
+    let built = Command::new("lake")
+        .args(["env", "lean", "AverCommon.lean"])
+        .current_dir(&out)
+        .output()
+        .expect("lake runs");
+    assert!(!built.status.success(), "{}", format_output(&built));
+    let _ = fs::remove_dir_all(out);
+}
+
 #[test]
 fn the_embedded_kernel_is_generated_from_the_aver_source() {
     let out = Command::new("python3")

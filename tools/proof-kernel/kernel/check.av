@@ -661,17 +661,18 @@ verify lawPremises
     lawPremises(Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit)) => []
 
 fn checkScript(s: Script) -> Result<String, String>
-    ? "The proof must prove exactly the obligation, under its when."
+    ? "The proof must prove exactly the obligation, under its when; every cited builtin fact is checked first."
     Kernel.Induct.refuseMutualRecursion(s.defs)?
-    env = Env(defs = s.defs, consts = s.consts, laws = s.laws, hyps = lawHyps(s.obligation), finite = s.finite, lists = s.lists, givens = s.obligation.givens)
+    checkFacts(s.facts)?
+    env = Env(defs = s.defs, consts = s.consts, laws = List.concat(s.laws, factLaws(s.facts)), hyps = lawHyps(s.obligation), finite = s.finite, lists = s.lists, givens = s.obligation.givens)
     e = conclude(s.proof, env, "proof")?
     match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)
         true -> Result.Ok(s.obligation.key)
         false -> Result.Err("step proof: the proof ends at a different equation than the claim")
 
 verify checkScript
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
-    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), finite = [], lists = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), finite = [], lists = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
 
 fn lawHyps(ob: Law) -> List<Hyp>
     ? "The obligation's when, as hypothesis `when`."
@@ -980,3 +981,31 @@ fn listCases(v: String, claim: Eqn, n: Proof, h: String, t: String, ih: String, 
 verify listCases
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PRefl(Term.TBi("List.prepend", [Term.TVar("h"), Term.TVar("t")])), emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")))
     listCases("xs", Eqn(lhs = Term.TVar("xs"), rhs = Term.TVar("xs")), Proof.PRefl(Term.TList([])), "h", "t", "ih", Proof.PHyp("ih"), emptyEnv(), "p") => Result.Err("step p/cons: the case proves a different equation")
+
+fn checkFacts(fs: List<Fact>) -> Result<Unit, String>
+    ? "Each builtin fact proves its statement over builtins alone: no definitions, no laws, no when."
+    match fs
+        [] -> Result.Ok(Unit)
+        [f, ..rest] -> checkFactThen(checkScript(Script(obligation = f.law, finite = [], lists = f.lists, defs = [], consts = [], laws = [], facts = [], proof = f.proof)), f.law.key, rest)
+
+verify checkFacts
+    checkFacts([]) => Result.Ok(Unit)
+    checkFacts([Fact(law = Law(key = "List.k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), lists = [], proof = Proof.PRefl(Term.TInt(1)))]) => Result.Err("fact List.k: step proof: the proof ends at a different equation than the claim")
+
+fn checkFactThen(done: Result<String, String>, key: String, rest: List<Fact>) -> Result<Unit, String>
+    ? "The rest of the facts, once this one checked."
+    match done
+        Result.Ok(k) -> checkFacts(rest)
+        Result.Err(why) -> Result.Err("fact {key}: {why}")
+
+verify checkFactThen
+    checkFactThen(Result.Err("no"), "List.k", []) => Result.Err("fact List.k: no")
+
+fn factLaws(fs: List<Fact>) -> List<Law>
+    ? "The statements of checked facts, as laws a step may cite."
+    match fs
+        [] -> []
+        [f, ..rest] -> List.prepend(f.law, factLaws(rest))
+
+verify factLaws
+    factLaws([]) => []

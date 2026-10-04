@@ -110,6 +110,17 @@ pub fn dependency_errors<'a>(
             unreachable!()
         };
         for dependency in law.using.iter().flatten() {
+            if crate::ir::proof_steps::facts::is_fact_name(dependency) {
+                if crate::ir::proof_steps::facts::named(dependency).is_none() {
+                    errors.push((
+                        block.line,
+                        format!(
+                            "Law '{name}' uses '{dependency}', which is not a builtin fact; names starting with 'List.' are reserved for builtin facts"
+                        ),
+                    ));
+                }
+                continue;
+            }
             if !available.contains(dependency) {
                 errors.push((
                     block.line,

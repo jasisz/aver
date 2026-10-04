@@ -45,6 +45,15 @@ pub(in crate::codegen::lean) fn dependencies(
         let mut selected = selected.clone();
         selected.sort();
         for name in selected {
+            if let Some(fact) = crate::ir::proof_steps::facts::named(&name) {
+                // Stated for every element type: `@` keeps `α` quantified
+                // instead of asking Lean to guess it here.
+                names.push(format!(
+                    "@{}",
+                    crate::codegen::lean::proof_steps::fact_theorem(&fact)
+                ));
+                continue;
+            }
             let local = earlier.iter().find_map(|b| {
                 let VerifyKind::Law(l) = &b.kind else {
                     return None;

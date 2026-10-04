@@ -630,14 +630,36 @@ fn lawOf(expected: Bool, k: String, gs: List<String>, p: List<Term>, l: Term, r:
 verify lawOf
     lawOf(false, "k", [], [], Term.TUnit, Term.TUnit) => Result.Err("unexpected head for k")
 
-fn laws(ss: List<Sexp>) -> Result<List<Law>, String>
-    ? "Cited laws."
+record Cited
+    laws: List<Law>
+    facts: List<Fact>
+
+fn laws(ss: List<Sexp>) -> Result<Cited, String>
+    ? "Cited laws, and cited builtin facts with their proofs."
     match ss
-        [] -> Result.Ok([])
-        [s, ..rest] -> Result.Ok(List.prepend(law(s, "law")?, laws(rest)?))
+        [] -> Result.Ok(Cited(laws = [], facts = []))
+        [s, ..rest] -> withCited(s, laws(rest)?)
 
 verify laws
-    laws([]) => Result.Ok([])
+    laws([]) => Result.Ok(Cited(laws = [], facts = []))
+
+fn withCited(s: Sexp, rest: Cited) -> Result<Cited, String>
+    ? "One cited law or fact in front of the rest."
+    match s
+        Sexp.Node([Sexp.Atom("fact"), Sexp.Atom(k), gs, l, r, p]) -> Result.Ok(Cited(laws = rest.laws, facts = List.prepend(factOf(k, obligationGivens(items(gs)?)?, term(l)?, term(r)?, proof(p)?)?, rest.facts)))
+        _ -> Result.Ok(Cited(laws = List.prepend(law(s, "law")?, rest.laws), facts = rest.facts))
+
+verify withCited
+    withCited(Sexp.Atom("x"), Cited(laws = [], facts = [])) => Result.Err("malformed law")
+
+fn factOf(k: String, gs: Givens, l: Term, r: Term, p: Proof) -> Result<Fact, String>
+    ? "(fact KEY (GIVEN…) TERM TERM PROOF): a fact has no when and no given of finite type."
+    match gs.finite
+        [] -> Result.Ok(Fact(law = Law(key = k, givens = gs.names, premise = [], lhs = l, rhs = r), lists = gs.lists, proof = p))
+        _ -> Result.Err("fact {k}: a given of finite type")
+
+verify factOf
+    factOf("k", Givens(names = ["b"], finite = [Given(name = "b", fin = Fin.FBool)], lists = []), Term.TUnit, Term.TUnit, Proof.PRefl(Term.TUnit)) => Result.Err("fact k: a given of finite type")
 
 fn def(s: Sexp) -> Result<Def, String>
     ? "(def NAME (PARAM…) ((NAME TERM)…) TERM): parameters, local bindings in order, the final expression."
@@ -687,10 +709,10 @@ fn script(s: Sexp) -> Result<Script, String>
 verify script
     script(Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("3")])) => Result.Err("unsupported step format version 3")
 
-fn scriptOf(o: Tuple<Law, Givens>, ds: List<Def>, cs: List<Const>, ls: List<Law>, p: Proof) -> Result<Script, String>
+fn scriptOf(o: Tuple<Law, Givens>, ds: List<Def>, cs: List<Const>, ls: Cited, p: Proof) -> Result<Script, String>
     ? "The script once its parts are read."
     match o
-        (ob, gs) -> Result.Ok(Script(obligation = ob, finite = gs.finite, lists = gs.lists, defs = ds, consts = cs, laws = ls, proof = p))
+        (ob, gs) -> Result.Ok(Script(obligation = ob, finite = gs.finite, lists = gs.lists, defs = ds, consts = cs, laws = ls.laws, facts = ls.facts, proof = p))
 
 verify scriptOf
-    scriptOf((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [])), [], [], [], Proof.PRefl(Term.TUnit)) => Result.Ok(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], defs = [], consts = [], laws = [], proof = Proof.PRefl(Term.TUnit)))
+    scriptOf((Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), Givens(names = [], finite = [], lists = [])), [], [], Cited(laws = [], facts = []), Proof.PRefl(Term.TUnit)) => Result.Ok(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit), finite = [], lists = [], defs = [], consts = [], laws = [], facts = [], proof = Proof.PRefl(Term.TUnit)))

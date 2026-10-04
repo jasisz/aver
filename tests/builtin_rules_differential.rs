@@ -14,7 +14,7 @@ mod lean_required;
 
 use aver::ir::proof_steps::sexpr::{BuiltinsOnly, script};
 use aver::ir::proof_steps::term::{self, Term};
-use aver::ir::proof_steps::{Eqn, Obligation, Proof, Script, WallRule};
+use aver::ir::proof_steps::{Eqn, Obligation, Proof, Script, WallRule, facts};
 use aver_cmd::{aver_bin, format_output};
 
 use std::fs;
@@ -68,7 +68,7 @@ struct Schema {
 }
 
 fn schemas() -> Vec<Schema> {
-    WallRule::ALL
+    let mut out: Vec<Schema> = WallRule::ALL
         .iter()
         .filter(|r| r.id().starts_with("list."))
         .map(|r| {
@@ -80,7 +80,17 @@ fn schemas() -> Vec<Schema> {
                 concl,
             }
         })
-        .collect()
+        .collect();
+    for f in facts::all() {
+        let ob = &f.script.obligation;
+        out.push(Schema {
+            name: f.key.to_string(),
+            binders: ob.givens.clone(),
+            premises: Vec::new(),
+            concl: Eqn::new(ob.lhs.clone(), ob.rhs.clone()),
+        });
+    }
+    out
 }
 
 /// A sampled instance: both sides and the value the compiler's evaluator

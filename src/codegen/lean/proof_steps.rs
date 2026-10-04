@@ -197,6 +197,23 @@ struct Renderer<'a> {
     /// catch-all arm).
     unfolds: BTreeMap<(FnId, u32, String), String>,
     support: Vec<String>,
+    /// Rendering a builtin fact over `List α`: an empty list is `[] : List α`.
+    generic: bool,
+}
+
+/// `t` with every empty list that has no type typed `List α`.
+fn over_alpha(t: &Term) -> Term {
+    if let ResolvedExpr::List(xs) = &t.node
+        && xs.is_empty()
+        && t.ty().is_none()
+    {
+        let out = t.clone();
+        out.set_ty(crate::ast::Type::List(Box::new(crate::ast::Type::named(
+            "α",
+        ))));
+        return out;
+    }
+    term::map_children(t, &mut |c| Ok(over_alpha(c))).expect("total")
 }
 
 fn is_prop_comparison(t: &Term) -> bool {
@@ -232,6 +249,13 @@ impl Renderer<'_> {
                 (c.name.clone(), read)
             })
             .collect();
+        let generic;
+        let t = if self.generic {
+            generic = over_alpha(t);
+            &generic
+        } else {
+            t
+        };
         let renamed;
         let t = if qualified.is_empty() {
             t
@@ -911,7 +935,47 @@ fn same_file_blocks(ctx: &CodegenContext) -> Vec<&crate::ast::VerifyBlock> {
 
 /// The Lean theorem a law key names, as `dependencies` in the reason
 /// emitter finds it.
+/// Each builtin fact `body` cites, as one theorem over every element type,
+/// stated from the fact's own terms and proved by its steps.
+pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<String, String> {
+    let mut out = Vec::new();
+    for fact in crate::ir::proof_steps::facts::all() {
+        if !body.contains(&fact_theorem(&fact)) {
+            continue;
+        }
+        let script = &fact.script;
+        let mut r = Renderer {
+            script,
+            ctx,
+            laws: BTreeMap::new(),
+            unfolds: BTreeMap::new(),
+            support: Vec::new(),
+            generic: true,
+        };
+        let ob = &script.obligation;
+        let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
+        let term = r.proof(&script.proof, &Hyps::new())?;
+        if !r.support.is_empty() || ob.givens != ob.lists {
+            return Err(format!("fact {}: not a fact over lists alone", fact.key));
+        }
+        out.push(format!(
+            "set_option autoImplicit false in\ntheorem {} {{α : Type}} ({} : List α) :\n    {statement} :=\n  {term}",
+            fact_theorem(&fact),
+            ob.givens.join(" ")
+        ));
+    }
+    Ok(out.join("\n\n"))
+}
+
+/// The Lean theorem a builtin fact is stated as, in `AverCommon`.
+pub(crate) fn fact_theorem(fact: &crate::ir::proof_steps::facts::Fact) -> String {
+    format!("AverFacts.{}", fact.lean)
+}
+
 fn law_theorem(key: &str, ctx: &CodegenContext) -> Option<String> {
+    if let Some(fact) = crate::ir::proof_steps::facts::named(key) {
+        return Some(fact_theorem(&fact));
+    }
     let own = ctx.active_module_scope();
     let local_key = |prefix: Option<&str>, fn_name: &str, law: &str| match prefix {
         Some(p) => format!("{p}.{fn_name}.{law}"),
@@ -1053,6 +1117,7 @@ pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, 
         laws,
         unfolds: BTreeMap::new(),
         support: Vec::new(),
+        generic: false,
     };
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
