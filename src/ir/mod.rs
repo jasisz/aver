@@ -23,6 +23,7 @@ pub mod nested_patterns;
 mod pass_diag;
 pub mod pipeline;
 pub mod proof_ir;
+pub mod proof_steps;
 mod string_index;
 pub mod symbol_table;
 pub mod vars;
