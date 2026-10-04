@@ -554,16 +554,14 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         }
         // A proof written as data leads everything: the kernel checks it,
         // and the whole strategy above is its fallback.
-        let mut steps_support = Vec::new();
         if final_step
             && claim.allow_steps
             && let Some(script) = super::law_steps_for(ctx, &vb.fn_name, &law.name)
-            && let Ok(rendered) =
-                crate::codegen::lean::proof_steps::render(&script, ctx, claim.base)
+            && let Ok(rendered) = crate::codegen::lean::proof_steps::render(&script, ctx)
         {
             let structured = lines.split_off(strategy_start);
             lines.push("  first".to_string());
-            lines.push(format!("  | exact {}", rendered.term));
+            lines.push(format!("  | ({})", rendered.tactic()));
             lines.push("  |".to_string());
             lines.push(format!(
                 "    trace \"{}{}\"",
@@ -571,7 +569,6 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 script.obligation.key
             ));
             lines.extend(structured.into_iter().map(|line| format!("  {line}")));
-            steps_support = rendered.support;
         }
         if let Some(hints) = &facts {
             crate::codegen::lean::waterfall::Candidate {
@@ -582,9 +579,6 @@ pub(in crate::codegen::lean) fn emit_reason_law(
                 obligation: true,
             }
             .wrap(&mut lines, waterfall_start);
-        }
-        for (i, line) in steps_support.into_iter().enumerate() {
-            lines.insert(waterfall_start + i, line);
         }
     }
     lines.push(format!(

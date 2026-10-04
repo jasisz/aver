@@ -214,7 +214,7 @@ fn exact_line<'a>(lean: &'a str, theorem: &str) -> &'a str {
         .expect("the steps branch")
 }
 
-fn lean_refuses(dir: &Path, lean_file: &str, lean: &str, theorem: &str) -> bool {
+fn lean_refuses(dir: &Path, lean_file: &str, lean: &str, law: &str) -> bool {
     fs::write(dir.join(lean_file), lean).unwrap();
     let out = Command::new("lake")
         .args(["env", "lean", lean_file])
@@ -226,7 +226,7 @@ fn lean_refuses(dir: &Path, lean_file: &str, lean: &str, theorem: &str) -> bool 
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    text.contains(&format!("AVER_STEPS_REJECTED:{theorem}"))
+    text.contains(&format!("AVER_STEPS_REJECTED:{law}"))
 }
 
 #[test]
@@ -252,26 +252,28 @@ fn lean_accepts_the_step_terms_and_refuses_mutated_ones() {
     assert!(result.status.success(), "{}", format_output(&result));
     let lean = fs::read_to_string(out.join("Lock.lean")).unwrap();
     let theorem = "lockTimeChecked_law_agreesWithSpec";
+    let law = "lockTimeChecked.agreesWithSpec";
     assert!(
-        !lean_refuses(&out, "Lock.lean", &lean, theorem),
+        !lean_refuses(&out, "Lock.lean", &lean, law),
         "the emitted step term must close the law"
     );
     let line = exact_line(&lean, theorem).to_string();
     // The two arms of `continued`, to send a step to the wrong one.
     let arm_lemma = |ctor: &str| {
-        lean.lines()
-            .find(|l| {
-                l.contains("private theorem __aver_steps_lockTimeChecked")
-                    && l.contains(&format!("(Step.{ctor} y0))"))
-            })
-            .and_then(|l| l.split_whitespace().nth(2))
+        line.split("have ")
+            .skip(1)
+            .find(|clause| clause.contains(&format!("(Step.{ctor} y0))")))
+            .and_then(|clause| clause.split_whitespace().next())
             .unwrap_or_else(|| panic!("no unfold lemma for {ctor}"))
             .to_string()
     };
     let (stop, cont) = (arm_lemma("stop"), arm_lemma("continue'"));
+    // Mutate the term only, after the local unfold lemmas.
     let first_replaced = |from: &str, to: &str| {
-        assert!(line.contains(from), "`{from}` is not in the step term");
-        line.replacen(from, to, 1)
+        let at = line.find("exact (show").expect("the step term");
+        let (lemmas, term) = line.split_at(at);
+        assert!(term.contains(from), "`{from}` is not in the step term");
+        format!("{lemmas}{}", term.replacen(from, to, 1))
     };
     let mutants = [
         (
@@ -291,7 +293,7 @@ fn lean_accepts_the_step_terms_and_refuses_mutated_ones() {
     for (kind, mutated) in mutants {
         let text = lean.replacen(&line, &mutated, 1);
         assert!(
-            lean_refuses(&out, "Lock.lean", &text, theorem),
+            lean_refuses(&out, "Lock.lean", &text, law),
             "{kind}: Lean must refuse the mutated step term"
         );
     }
@@ -307,7 +309,7 @@ fn lean_accepts_the_step_terms_and_refuses_mutated_ones() {
             &out,
             "Lock.lean",
             &lean.replacen(&comm, &swapped, 1),
-            "add_law_commutes"
+            "add.commutes"
         ),
         "wrong substitution: Lean must refuse the mutated step term"
     );

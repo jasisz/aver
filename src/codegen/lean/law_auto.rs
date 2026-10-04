@@ -327,7 +327,7 @@ pub fn emit_verify_law_forall_auto_proof(
         None
     } else {
         law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
-            super::proof_steps::render(&script, ctx, theorem_base)
+            super::proof_steps::render(&script, ctx)
                 .ok()
                 .map(|r| (script.obligation.key.clone(), r))
         })
@@ -364,7 +364,6 @@ pub fn emit_verify_law_forall_auto_proof(
             .map(|g| aver_name_to_lean(&g.name))
             .collect();
         let intro = extend_intro_names_with_premises(law, &givens);
-        proof.support_lines.extend(rendered.support.iter().cloned());
         let body = std::mem::replace(&mut proof.body, super::tactic_ir::Tactic::Sorry);
         proof.body = super::proof_steps::lead_portfolio(&rendered, &intro, &key, body);
     }

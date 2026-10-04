@@ -4,7 +4,7 @@
 //! `congrArg`, and an application of one lemma per rule. The Lean-specific
 //! parts are exactly two tables: wall rule → `AverSteps.*` lemma name (the
 //! lemmas live in the prelude, proved once), and law → theorem name.
-//! Definitions are opened through `__aver_steps_<base>_unfold_<n>` lemmas emitted next
+//! Definitions are opened through `__aver_unfold_<n>` lemmas stated next
 //! to the law, one per (function, arm), never through Lean's own equation
 //! numbering. Every intermediate equation is stated with `show`, so the
 //! kernel checks the data and elaboration never searches.
@@ -128,18 +128,31 @@ fn lemma(rule: WallRule) -> &'static str {
     }
 }
 
-/// A rendered step proof: support lemmas to place before the theorem and
-/// the term that proves the obligation once the givens and the `when`
-/// hypothesis are introduced.
+/// A rendered step proof: the local unfold lemmas (`have …`) and the term
+/// that proves the obligation once the givens and the `when` hypothesis are
+/// introduced.
 pub(crate) struct Rendered {
     pub support: Vec<String>,
     pub term: String,
 }
 
+impl Rendered {
+    /// The tactic text of the step branch: every local lemma, then the term.
+    pub(crate) fn tactic(&self) -> String {
+        let mut s = String::new();
+        for h in &self.support {
+            s.push_str(h);
+            s.push_str("; ");
+        }
+        s.push_str("exact ");
+        s.push_str(&self.term);
+        s
+    }
+}
+
 struct Renderer<'a> {
     script: &'a Script,
     ctx: &'a CodegenContext,
-    base: String,
     /// Lean theorem names of cited laws, by law key.
     laws: BTreeMap<String, String>,
     /// Emitted unfold lemmas, by (function, arm).
@@ -313,7 +326,9 @@ impl Renderer<'_> {
         Ok(format!("(show {} from {body})", self.eqn(&eq)))
     }
 
-    /// `__aver_steps_<base>_unfold_<n> (x…) (y…) [h] : f x… = arm`, proved once.
+    /// A local `have __aver_unfold_<n> : ∀ (x…) (y…) [h], f x… = arm`,
+    /// proved once inside the step branch: if Lean cannot prove it, only
+    /// that branch fails and the law falls back to its portfolio.
     fn unfold_lemma(&mut self, fn_id: FnId, arm: u32) -> Result<String, String> {
         if let Some(name) = self.unfolds.get(&(fn_id, arm)) {
             return Ok(name.clone());
@@ -331,23 +346,25 @@ impl Renderer<'_> {
         let outer: Vec<(String, Term)> =
             def.params.iter().cloned().zip(xs.iter().cloned()).collect();
         let mut binders = String::new();
+        let mut names: Vec<String> = Vec::new();
         for (i, (_, ty)) in fd.params.iter().enumerate() {
             binders.push_str(&format!(
                 " (x{i} : {})",
                 super::types::type_annotation_to_lean(ty)
             ));
+            names.push(format!("x{i}"));
         }
         let f_name = emit_expr(
             &Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(fn_id), Vec::new())),
             self.ctx,
         );
-        let name = format!("__aver_steps_{}_unfold_{}", self.base, self.unfolds.len());
+        let name = format!("__aver_unfold_{}", self.unfolds.len());
         let statement;
-        let proof;
+        let tactic;
         if arm == 0 {
             let body = term::subst(&def.body, &outer)?;
             statement = format!("{} = {}", self.expr(&call), self.expr(&body));
-            proof = format!("by unfold {f_name}; rfl");
+            tactic = "rfl".to_string();
         } else {
             let ResolvedExpr::Match { subject, arms } = &def.body.node else {
                 return Err("unfold: not a match".into());
@@ -357,15 +374,27 @@ impl Renderer<'_> {
             let ys: Vec<Term> = (0..n).map(|i| term::var(&format!("y{i}"))).collect();
             for i in 0..n {
                 binders.push_str(&format!(" (y{i} : _)"));
+                names.push(format!("y{i}"));
             }
             let (premise, body) = arm_equation(subject, arms, arm, &outer, &ys)?;
             binders.push_str(&format!(" (h : {})", self.eqn(&premise)));
+            names.push("h".to_string());
             statement = format!("{} = {}", self.expr(&call), self.expr(&body));
             let subject = term::subst(subject, &outer)?;
-            proof = format!("by unfold {f_name}; {}", arm_tactic(pat, &subject, "h")?);
+            tactic = arm_tactic(pat, &subject, "h")?;
         }
+        let intro = if names.is_empty() {
+            String::new()
+        } else {
+            format!("intro {}; ", names.join(" "))
+        };
+        let quantified = if binders.is_empty() {
+            statement
+        } else {
+            format!("∀{binders}, {statement}")
+        };
         self.support.push(format!(
-            "private theorem {name}{binders} : {statement} := {proof}"
+            "have {name} : {quantified} := (by {intro}unfold {f_name}; {tactic})"
         ));
         self.unfolds.insert((fn_id, arm), name.clone());
         Ok(name)
@@ -395,7 +424,10 @@ fn arm_tactic(pat: &ResolvedPattern, subject: &Term, h: &str) -> Result<String, 
                 format!("exact ite_eq_right {evidence}")
             }
         }
-        _ => format!("rw [{h}]"),
+        // A variable subject is replaced outright; otherwise rewrite it.
+        // Either way the selected arm is then a definitional reduction.
+        _ if matches!(subject.node, ResolvedExpr::Ident(_)) => format!("subst {h}; rfl"),
+        _ => format!("rw [{h}]; try rfl"),
     })
 }
 
@@ -467,13 +499,9 @@ fn law_theorem(key: &str, ctx: &CodegenContext) -> Option<String> {
     None
 }
 
-/// Render `script` as a term for the theorem `base`, after `intro` of the
+/// Render `script` as a term for its law's theorem, after `intro` of the
 /// givens (and `h_when`).
-pub(crate) fn render(
-    script: &Script,
-    ctx: &CodegenContext,
-    base: &str,
-) -> Result<Rendered, String> {
+pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, String> {
     let mut laws = BTreeMap::new();
     for l in &script.laws {
         if let Some(name) = law_theorem(&l.key, ctx) {
@@ -483,7 +511,6 @@ pub(crate) fn render(
     let mut r = Renderer {
         script,
         ctx,
-        base: base.to_string(),
         laws,
         unfolds: BTreeMap::new(),
         support: Vec::new(),
@@ -520,7 +547,7 @@ pub(crate) fn lead_portfolio(
     // the rendered block stays aligned.
     let pad = " ".repeat(portfolio.leaf_min_indent().unwrap_or(0));
     Tactic::First(vec![
-        Tactic::Leaf(format!("{pad}{intro_line}exact {}", rendered.term)),
+        Tactic::Leaf(format!("{pad}{intro_line}{}", rendered.tactic())),
         Tactic::Seq(vec![
             Tactic::Leaf(format!("{pad}trace \"{STEPS_REJECTED_MARKER}{label}\"")),
             portfolio,
