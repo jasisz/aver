@@ -56,6 +56,7 @@ fn law_ref(inputs: &ProofLowerInputs, t: &LawTheorem) -> LawRef {
         premise: premise_of(inputs, t),
         lhs: law_term(inputs, t, &t.claim_lhs),
         rhs: law_term(inputs, t, &t.claim_rhs),
+        fact: None,
     }
 }
 
@@ -89,19 +90,29 @@ fn cited(
         let local = format!("{}.{}", key.name, c.law_name);
         (key.scope == own_scope && *name == local) || *name == law_key(inputs, c)
     };
-    if names
+    use crate::ir::proof_steps::facts;
+    // Builtin facts first, in the order the facts are listed.
+    let mut out: Vec<LawRef> = facts::all()
         .iter()
-        .any(|n| !ir.law_theorems.iter().any(|c| names_law(c, n)))
-    {
+        .filter(|f| names.iter().any(|n| n == f.key))
+        .map(facts::Fact::law_ref)
+        .collect();
+    if names.iter().any(|n| {
+        if facts::is_fact_name(n) {
+            facts::named(n).is_none()
+        } else {
+            !ir.law_theorems.iter().any(|c| names_law(c, n))
+        }
+    }) {
         return None;
     }
-    Some(
+    out.extend(
         ir.law_theorems
             .iter()
             .filter(|c| names.iter().any(|n| names_law(c, n)))
-            .map(|c| law_ref(inputs, c))
-            .collect(),
-    )
+            .map(|c| law_ref(inputs, c)),
+    );
+    Some(out)
 }
 
 fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
@@ -109,6 +120,7 @@ fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
         key: law_key(inputs, t),
         givens: t.quantifiers.iter().map(|q| q.name.clone()).collect(),
         finite: finite::finite_givens(inputs, t),
+        lists: finite::list_givens(t),
         premise: premise_of(inputs, t),
         lhs: law_term(inputs, t, &t.claim_lhs),
         rhs: law_term(inputs, t, &t.claim_rhs),

@@ -2,6 +2,81 @@
 use crate::proof_kernel::*;
 use ::aver_rt::aver_list_match;
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Givens {
+    pub names: aver_rt::AverList<AverStr>,
+    pub finite: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
+    pub lists: aver_rt::AverList<AverStr>,
+}
+
+impl PartialOrd for Givens {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Givens {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.finite.cmp(&other.finite))
+            .then_with(|| self.lists.cmp(&other.lists))
+            .then_with(|| self.names.cmp(&other.names))
+    }
+}
+
+impl aver_rt::AverDisplay for Givens {
+    fn aver_display(&self) -> String {
+        format!(
+            "Givens({})",
+            vec![
+                format!("names: {}", self.names.aver_display_inner()),
+                format!("finite: {}", self.finite.aver_display_inner()),
+                format!("lists: {}", self.lists.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Cited {
+    pub laws: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
+    pub facts: aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Fact>,
+}
+
+impl PartialOrd for Cited {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Cited {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+            .then_with(|| self.facts.cmp(&other.facts))
+            .then_with(|| self.laws.cmp(&other.laws))
+    }
+}
+
+impl aver_rt::AverDisplay for Cited {
+    fn aver_display(&self) -> String {
+        format!(
+            "Cited({})",
+            vec![
+                format!("laws: {}", self.laws.aver_display_inner()),
+                format!("facts: {}", self.facts.aver_display_inner())
+            ]
+            .join(", ")
+        )
+    }
+    fn aver_display_inner(&self) -> String {
+        self.aver_display()
+    }
+}
+
 /// An atom's text.
 pub fn atom(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
@@ -969,16 +1044,16 @@ pub fn proofOf(
                                                                         crate::proof_kernel::aver_generated::kernel::decode::inductProof(args)
                                                                     } else {
                                                                         if &*__dispatch_subject
-                                                                            == "ring"
+                                                                            == "listinduct"
                                                                         {
-                                                                            crate::proof_kernel::aver_generated::kernel::decode::ringProof(args)
+                                                                            crate::proof_kernel::aver_generated::kernel::decode::listInductProof(args)
                                                                         } else {
                                                                             if &*__dispatch_subject
-                                                                                == "linear"
+                                                                                == "ring"
                                                                             {
-                                                                                crate::proof_kernel::aver_generated::kernel::decode::linearProof(args)
+                                                                                crate::proof_kernel::aver_generated::kernel::decode::ringProof(args)
                                                                             } else {
-                                                                                Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b }))
+                                                                                if &*__dispatch_subject == "linear" { crate::proof_kernel::aver_generated::kernel::decode::linearProof(args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b })) }
                                                                             }
                                                                         }
                                                                     }
@@ -1507,6 +1582,85 @@ pub fn ringProof(
     }
 }
 
+/// (listinduct NAME TERM TERM PROOF (HEAD TAIL IH) PROOF)
+pub fn listInductProof(
+    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = args.clone();
+        if let Some((__pat0, __pat1)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            match __pat0 {
+                crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
+                    let __list_subject = __pat1;
+                    if let Some((l, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                        {
+                            let __list_subject = __pat2;
+                            if let Some((r, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                {
+                                    let __list_subject = __pat3;
+                                    if let Some((n, __pat4)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        {
+                                            let __list_subject = __pat4;
+                                            if let Some((__pat5, __pat6)) =
+                                                aver_rt::list_uncons_cloned(&__list_subject)
+                                            {
+                                                match __pat5 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat7) => {
+            { let __list_subject = __pat7; if let Some((__pat8, __pat9)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat8 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(h) => {
+            { let __list_subject = __pat9; if let Some((__pat10, __pat11)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat10 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(t) => {
+            { let __list_subject = __pat11; if let Some((__pat12, __pat13)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat12 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(ih) => {
+            { let __list_subject = __pat13; if __list_subject.is_empty() { { let __list_subject = __pat6; if let Some((c, __pat14)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat14; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PListInduct(v, crate::proof_kernel::aver_generated::kernel::decode::term(&l)?, crate::proof_kernel::aver_generated::kernel::decode::term(&r)?, std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::decode::proof(&n)?), h, t, ih, std::sync::Arc::new(crate::proof_kernel::aver_generated::kernel::decode::proof(&c)?))) } else { Err(AverStr::from("malformed listinduct")) } } } else { Err(AverStr::from("malformed listinduct")) } } } else { Err(AverStr::from("malformed listinduct")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed listinduct"))
+        }
+    } } else { Err(AverStr::from("malformed listinduct")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed listinduct"))
+        }
+    } } else { Err(AverStr::from("malformed listinduct")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed listinduct"))
+        }
+    } } else { Err(AverStr::from("malformed listinduct")) } }
+        },
+        _ => {
+            Err(AverStr::from("malformed listinduct"))
+        }
+    }
+                                            } else {
+                                                Err(AverStr::from("malformed listinduct"))
+                                            }
+                                        }
+                                    } else {
+                                        Err(AverStr::from("malformed listinduct"))
+                                    }
+                                }
+                            } else {
+                                Err(AverStr::from("malformed listinduct"))
+                            }
+                        }
+                    } else {
+                        Err(AverStr::from("malformed listinduct"))
+                    }
+                }
+                _ => Err(AverStr::from("malformed listinduct")),
+            }
+        } else {
+            Err(AverStr::from("malformed listinduct"))
+        }
+    }
+}
+
 /// (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
 pub fn inductProof(
     args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
@@ -1710,84 +1864,100 @@ pub fn finFields(
     } })
 }
 
-/// The obligation's givens: a bare name, or (NAME TYPE) for a given of finite type.
+/// The obligation's givens: a bare name, (NAME TYPE) for a given of finite type, or (NAME (tlist)) for a given of list type.
 #[inline(always)]
 pub fn obligationGivens(
     ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
-) -> Result<
-    (
-        aver_rt::AverList<AverStr>,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
-    ),
-    AverStr,
-> {
+) -> Result<Givens, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(ss.clone(), [] => Ok((aver_rt::AverList::empty(), aver_rt::AverList::empty())), [s, rest] => crate::proof_kernel::aver_generated::kernel::decode::withGiven(&s, &crate::proof_kernel::aver_generated::kernel::decode::obligationGivens(&rest)?))
+    aver_list_match!(ss.clone(), [] => Ok(crate::proof_kernel::aver_generated::kernel::decode::Givens { names: aver_rt::AverList::empty(), finite: aver_rt::AverList::empty(), lists: aver_rt::AverList::empty() }), [s, rest] => crate::proof_kernel::aver_generated::kernel::decode::withGiven(&s, &crate::proof_kernel::aver_generated::kernel::decode::obligationGivens(&rest)?))
 }
 
 /// One given in front of the rest.
 pub fn withGiven(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
-    rest @ _: &(
-        aver_rt::AverList<AverStr>,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
-    ),
-) -> Result<
-    (
-        aver_rt::AverList<AverStr>,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
-    ),
-    AverStr,
-> {
+    rest @ _: &Givens,
+) -> Result<Givens, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    {
-        let (__pat0, __pat1) = (s.clone(), rest.clone());
-        match __pat0 {
-            crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
-                let (names, typed) = __pat1;
-                Ok((aver_rt::AverList::prepend(n, &names), typed))
-            }
-            crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat2) => {
-                let __list_subject = __pat2;
-                if let Some((__pat3, __pat4)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    match __pat3 {
-                        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
-                            let __list_subject = __pat4;
-                            if let Some((t, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject)
-                            {
-                                {
-                                    let __list_subject = __pat5;
-                                    if __list_subject.is_empty() {
+    match s.clone() {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => Ok(
+            crate::proof_kernel::aver_generated::kernel::decode::Givens {
+                names: aver_rt::AverList::prepend(n, &rest.names.clone()),
+                finite: rest.finite.clone(),
+                lists: rest.lists.clone(),
+            },
+        ),
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat0) => {
+            let __list_subject = __pat0;
+            if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                match __pat1 {
+                    crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(n) => {
+                        let __list_subject = __pat2;
+                        if let Some((t, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                            match t.clone() {
+                                crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(
+                                    __pat4,
+                                ) => {
+                                    let __list_subject = __pat4;
+                                    if let Some((__pat5, __pat6)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        match __pat5 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat7) => {
+            match &*__pat7 {
+        "tlist" => {
+            { let __list_subject = __pat6; if __list_subject.is_empty() { { let __list_subject = __pat3; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::decode::Givens { names: aver_rt::AverList::prepend(n.clone(), &rest.names.clone()), finite: rest.finite.clone(), lists: aver_rt::AverList::prepend(n, &rest.lists.clone()) }) } else { Err(AverStr::from("malformed given")) } } } else { { let __list_subject = __pat3; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::decode::Givens { names: aver_rt::AverList::prepend(n.clone(), &rest.names.clone()), finite: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Given { name: n, fin: crate::proof_kernel::aver_generated::kernel::decode::fin(&t)? }, &rest.finite.clone()), lists: rest.lists.clone() }) } else { Err(AverStr::from("malformed given")) } } } }
+        },
+        _ => {
+            { let __list_subject = __pat3; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::decode::Givens { names: aver_rt::AverList::prepend(n.clone(), &rest.names.clone()), finite: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Given { name: n, fin: crate::proof_kernel::aver_generated::kernel::decode::fin(&t)? }, &rest.finite.clone()), lists: rest.lists.clone() }) } else { Err(AverStr::from("malformed given")) } }
+        }
+    }
+        },
+        _ => {
+            { let __list_subject = __pat3; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::decode::Givens { names: aver_rt::AverList::prepend(n.clone(), &rest.names.clone()), finite: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Given { name: n, fin: crate::proof_kernel::aver_generated::kernel::decode::fin(&t)? }, &rest.finite.clone()), lists: rest.lists.clone() }) } else { Err(AverStr::from("malformed given")) } }
+        }
+    }
+                                    } else {
                                         {
-                                            let (names, typed) = __pat1;
-                                            Ok((aver_rt::AverList::prepend(n.clone(), &names), aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Given { name: n, fin: crate::proof_kernel::aver_generated::kernel::decode::fin(&t)? }, &typed)))
+                                            let __list_subject = __pat3;
+                                            if __list_subject.is_empty() {
+                                                Ok(crate::proof_kernel::aver_generated::kernel::decode::Givens { names: aver_rt::AverList::prepend(n.clone(), &rest.names.clone()), finite: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Given { name: n, fin: crate::proof_kernel::aver_generated::kernel::decode::fin(&t)? }, &rest.finite.clone()), lists: rest.lists.clone() })
+                                            } else {
+                                                Err(AverStr::from("malformed given"))
+                                            }
                                         }
+                                    }
+                                }
+                                _ => {
+                                    let __list_subject = __pat3;
+                                    if __list_subject.is_empty() {
+                                        Ok(crate::proof_kernel::aver_generated::kernel::decode::Givens { names: aver_rt::AverList::prepend(n.clone(), &rest.names.clone()), finite: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::proof::Given { name: n, fin: crate::proof_kernel::aver_generated::kernel::decode::fin(&t)? }, &rest.finite.clone()), lists: rest.lists.clone() })
                                     } else {
                                         Err(AverStr::from("malformed given"))
                                     }
                                 }
-                            } else {
-                                Err(AverStr::from("malformed given"))
                             }
+                        } else {
+                            Err(AverStr::from("malformed given"))
                         }
-                        _ => Err(AverStr::from("malformed given")),
                     }
-                } else {
-                    Err(AverStr::from("malformed given"))
+                    _ => Err(AverStr::from("malformed given")),
                 }
+            } else {
+                Err(AverStr::from("malformed given"))
             }
-            _ => Err(AverStr::from("malformed given")),
         }
+        _ => Err(AverStr::from("malformed given")),
     }
 }
 
-/// (obligation KEY (GIVEN…) PREMISE TERM TERM): the law it states and its givens of finite type.
+/// (obligation KEY (GIVEN…) PREMISE TERM TERM): the law it states and its typed givens.
 pub fn obligation(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
 ) -> Result<
     (
         crate::proof_kernel::aver_generated::kernel::proof::Law,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
+        Givens,
     ),
     AverStr,
 > {
@@ -1832,34 +2002,28 @@ pub fn obligation(
 /// The obligation once its parts are read.
 pub fn obligationOf(
     k @ _: AverStr,
-    gs @ _: &(
-        aver_rt::AverList<AverStr>,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
-    ),
+    gs @ _: &Givens,
     p @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Term>,
     l @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
     r @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
 ) -> Result<
     (
         crate::proof_kernel::aver_generated::kernel::proof::Law,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
+        Givens,
     ),
     AverStr,
 > {
     crate::proof_kernel::cancel_checkpoint();
-    {
-        let (names, typed) = gs.clone();
-        Ok((
-            crate::proof_kernel::aver_generated::kernel::proof::Law {
-                key: k,
-                givens: names,
-                premise: p.clone(),
-                lhs: l.clone(),
-                rhs: r.clone(),
-            },
-            typed,
-        ))
-    }
+    Ok((
+        crate::proof_kernel::aver_generated::kernel::proof::Law {
+            key: k,
+            givens: gs.names.clone(),
+            premise: p.clone(),
+            lhs: l.clone(),
+            rhs: r.clone(),
+        },
+        gs.clone(),
+    ))
 }
 
 /// (none) or a term.
@@ -2146,13 +2310,132 @@ pub fn lawOf(
     }
 }
 
-/// Cited laws.
+/// Cited laws, and cited builtin facts with their proofs.
 #[inline(always)]
 pub fn laws(
     ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
-) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>, AverStr> {
+) -> Result<Cited, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
-    aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(&s, AverStr::from("law"))?, &crate::proof_kernel::aver_generated::kernel::decode::laws(&rest)?)))
+    aver_list_match!(ss.clone(), [] => Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::empty(), facts: aver_rt::AverList::empty() }), [s, rest] => crate::proof_kernel::aver_generated::kernel::decode::withCited(&s, &crate::proof_kernel::aver_generated::kernel::decode::laws(&rest)?))
+}
+
+/// One cited law or fact in front of the rest.
+pub fn withCited(
+    s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
+    rest @ _: &Cited,
+) -> Result<Cited, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match s.clone() {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat0) => {
+            let __list_subject = __pat0;
+            if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                match __pat1 {
+                    crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat3) => {
+                        match &*__pat3 {
+                            "fact" => {
+                                let __list_subject = __pat2;
+                                if let Some((__pat4, __pat5)) =
+                                    aver_rt::list_uncons_cloned(&__list_subject)
+                                {
+                                    match __pat4 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(k) => {
+            { let __list_subject = __pat5; if let Some((gs, __pat6)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat6; if let Some((l, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat7; if let Some((r, __pat8)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat8; if let Some((p, __pat9)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat9; if __list_subject.is_empty() { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: rest.laws.clone(), facts: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::factOf(k, &crate::proof_kernel::aver_generated::kernel::decode::obligationGivens(&crate::proof_kernel::aver_generated::kernel::decode::items(&gs)?)?, &crate::proof_kernel::aver_generated::kernel::decode::term(&l)?, &crate::proof_kernel::aver_generated::kernel::decode::term(&r)?, &crate::proof_kernel::aver_generated::kernel::decode::proof(&p)?)?, &rest.facts.clone()) }) } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } } } else { Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() }) } }
+        },
+        _ => {
+            Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() })
+        }
+    }
+                                } else {
+                                    Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited { laws: aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?, &rest.laws.clone()), facts: rest.facts.clone() })
+                                }
+                            }
+                            _ => Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited {
+                                laws: aver_rt::AverList::prepend(
+                                    crate::proof_kernel::aver_generated::kernel::decode::law(
+                                        s,
+                                        AverStr::from("law"),
+                                    )?,
+                                    &rest.laws.clone(),
+                                ),
+                                facts: rest.facts.clone(),
+                            }),
+                        }
+                    }
+                    _ => Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited {
+                        laws: aver_rt::AverList::prepend(
+                            crate::proof_kernel::aver_generated::kernel::decode::law(
+                                s,
+                                AverStr::from("law"),
+                            )?,
+                            &rest.laws.clone(),
+                        ),
+                        facts: rest.facts.clone(),
+                    }),
+                }
+            } else {
+                Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited {
+                    laws: aver_rt::AverList::prepend(
+                        crate::proof_kernel::aver_generated::kernel::decode::law(
+                            s,
+                            AverStr::from("law"),
+                        )?,
+                        &rest.laws.clone(),
+                    ),
+                    facts: rest.facts.clone(),
+                })
+            }
+        }
+        _ => Ok(crate::proof_kernel::aver_generated::kernel::decode::Cited {
+            laws: aver_rt::AverList::prepend(
+                crate::proof_kernel::aver_generated::kernel::decode::law(s, AverStr::from("law"))?,
+                &rest.laws.clone(),
+            ),
+            facts: rest.facts.clone(),
+        }),
+    }
+}
+
+/// (fact KEY (GIVEN…) TERM TERM PROOF): a fact has no when and no given of finite type.
+pub fn factOf(
+    k @ _: AverStr,
+    gs @ _: &Givens,
+    l @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    r @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    p @ _: &crate::proof_kernel::aver_generated::kernel::proof::Proof,
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Fact, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = gs.finite.clone();
+        if __list_subject.is_empty() {
+            Ok(crate::proof_kernel::aver_generated::kernel::proof::Fact {
+                law: crate::proof_kernel::aver_generated::kernel::proof::Law {
+                    key: k,
+                    givens: gs.names.clone(),
+                    premise: aver_rt::AverList::empty(),
+                    lhs: l.clone(),
+                    rhs: r.clone(),
+                },
+                lists: gs.lists.clone(),
+                proof: p.clone(),
+            })
+        } else {
+            Err(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity(
+                            (aver_rt::AverInt::from_i64(45)).to_usize().unwrap_or(0),
+                        );
+                        __b.push_str(&AverStr::from("fact "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(k))));
+                    __b
+                };
+                __b.push_str(&AverStr::from(": a given of finite type"));
+                __b
+            }))
+        }
+    }
 }
 
 /// (def NAME (PARAM…) ((NAME TERM)…) TERM): parameters, local bindings in order, the final expression.
@@ -2257,7 +2540,7 @@ pub fn consts(
     aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverList::empty()), [s, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::decode::constant(&s)?, &crate::proof_kernel::aver_generated::kernel::decode::consts(&rest)?)))
 }
 
-/// (steps 4 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 4 only.
+/// (steps 5 (obligation …) (defs …) (consts …) (laws …) (proof …)); version 5 only.
 pub fn script(
     s @ _: &crate::proof_kernel::aver_generated::kernel::sexp::Sexp,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Script, AverStr> {
@@ -2276,7 +2559,7 @@ pub fn script(
                                 {
                                     match __pat4 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
-            { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&v)); if __int_match_subject == aver_rt::AverInt::from_i64(52) { { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
+            { let __int_match_subject = aver_rt::AverInt::from_i64(aver_rt::str_code1(&v)); if __int_match_subject == aver_rt::AverInt::from_i64(53) { { let __list_subject = rest; if let Some((o, __pat5)) = aver_rt::list_uncons_cloned(&__list_subject) { { let __list_subject = __pat5; if let Some((__pat6, __pat7)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat6 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Node(__pat8) => {
             { let __list_subject = __pat8; if let Some((__pat9, ds)) = aver_rt::list_uncons_cloned(&__list_subject) { match __pat9 {
         crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(__pat10) => {
@@ -2387,22 +2670,24 @@ pub fn script(
 pub fn scriptOf(
     o @ _: &(
         crate::proof_kernel::aver_generated::kernel::proof::Law,
-        aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Given>,
+        Givens,
     ),
     ds @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Def>,
     cs @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Const>,
-    ls @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Law>,
+    ls @ _: &Cited,
     p @ _: &crate::proof_kernel::aver_generated::kernel::proof::Proof,
 ) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Script, AverStr> {
     crate::proof_kernel::cancel_checkpoint();
     {
-        let (ob, typed) = o.clone();
+        let (ob, gs) = o.clone();
         Ok(crate::proof_kernel::aver_generated::kernel::proof::Script {
             obligation: ob,
-            finite: typed,
+            finite: gs.finite,
+            lists: gs.lists,
             defs: ds.clone(),
             consts: cs.clone(),
-            laws: ls.clone(),
+            laws: ls.laws.clone(),
+            facts: ls.facts.clone(),
             proof: p.clone(),
         })
     }

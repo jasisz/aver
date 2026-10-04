@@ -278,7 +278,16 @@ fn int_arg(arg: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
 
 fn emit_list_length_subject(arg: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     match &arg.node {
-        ResolvedExpr::List(items) if items.is_empty() => "(([] : List Unit))".to_string(),
+        // The length of an empty list is the same at every element type;
+        // one the list carries is kept, so a statement over `List α` stays
+        // over `List α`.
+        ResolvedExpr::List(items) if items.is_empty() => match arg
+            .ty()
+            .filter(|ty| crate::types::checker::type_is_fully_concrete(ty))
+        {
+            Some(ty) => format!("(([] : {}))", super::types::type_to_lean(ty)),
+            None => "(([] : List Unit))".to_string(),
+        },
         _ => p(&super::expr::emit_expr(arg, ctx)),
     }
 }

@@ -85,6 +85,31 @@ theorem div_range (a k m n : Int) (h1 : (decide (0 <= a) && decide (a < m)) = tr
   obtain ⟨h0, hm⟩ := h1
   obtain ⟨hk, rfl⟩ := h2
   exact ⟨Int.ediv_nonneg h0 (Int.le_of_lt hk), (Int.ediv_lt_iff_lt_mul hk).mpr hm⟩
+theorem list_concat_nil {α : Type} (b : List α) : (([] : List α) ++ b) = b := rfl
+theorem list_concat_cons {α : Type} (x : α) (a b : List α) : ((x :: a) ++ b) = (x :: (a ++ b)) := rfl
+theorem list_len_nil {α : Type} : ((([] : List α)).length : Int) = 0 := rfl
+theorem list_len_cons {α : Type} (x : α) (a : List α) : (((x :: a)).length : Int) = (a.length : Int) + 1 := rfl
+theorem list_take_nil {α : Type} (n : Int) : ([] : List α).take (Int.toNat n) = [] := by
+  cases Int.toNat n <;> rfl
+theorem list_take_cons_le {α : Type} (x : α) (a : List α) (n : Int) (h : decide (n <= 0) = true) :
+    (x :: a).take (Int.toNat n) = [] := by
+  rw [Int.toNat_of_nonpos (of_decide_eq_true h)]; rfl
+theorem list_take_cons_gt {α : Type} (x : α) (a : List α) (n : Int) (h : decide (n > 0) = true) :
+    (x :: a).take (Int.toNat n) = (x :: a.take (Int.toNat (n - 1))) := by
+  have e : Int.toNat n = Int.toNat (n - 1) + 1 := by have := of_decide_eq_true h; omega
+  rw [e]; rfl
+theorem list_drop_nil {α : Type} (n : Int) : ([] : List α).drop (Int.toNat n) = [] := by
+  cases Int.toNat n <;> rfl
+theorem list_drop_cons_le {α : Type} (x : α) (a : List α) (n : Int) (h : decide (n <= 0) = true) :
+    (x :: a).drop (Int.toNat n) = (x :: a) := by
+  rw [Int.toNat_of_nonpos (of_decide_eq_true h)]; rfl
+theorem list_drop_cons_gt {α : Type} (x : α) (a : List α) (n : Int) (h : decide (n > 0) = true) :
+    (x :: a).drop (Int.toNat n) = a.drop (Int.toNat (n - 1)) := by
+  have e : Int.toNat n = Int.toNat (n - 1) + 1 := by have := of_decide_eq_true h; omega
+  rw [e]; rfl
+theorem list_reverse_nil {α : Type} : ([] : List α).reverse = [] := rfl
+theorem list_reverse_cons {α : Type} (x : α) (a : List α) : (x :: a).reverse = (a.reverse ++ [x]) :=
+  List.reverse_cons
 end AverSteps"#;
 
 /// The only rule-specific Lean table.
@@ -125,6 +150,18 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::SubZero => "AverSteps.sub_zero",
         WallRule::DivModRecompose => "AverSteps.div_mod_recompose",
         WallRule::DivRange => "AverSteps.div_range",
+        WallRule::ConcatNil => "AverSteps.list_concat_nil",
+        WallRule::ConcatCons => "AverSteps.list_concat_cons",
+        WallRule::LenNil => "AverSteps.list_len_nil",
+        WallRule::LenCons => "AverSteps.list_len_cons",
+        WallRule::TakeNil => "AverSteps.list_take_nil",
+        WallRule::TakeConsLe => "AverSteps.list_take_cons_le",
+        WallRule::TakeConsGt => "AverSteps.list_take_cons_gt",
+        WallRule::DropNil => "AverSteps.list_drop_nil",
+        WallRule::DropConsLe => "AverSteps.list_drop_cons_le",
+        WallRule::DropConsGt => "AverSteps.list_drop_cons_gt",
+        WallRule::ReverseNil => "AverSteps.list_reverse_nil",
+        WallRule::ReverseCons => "AverSteps.list_reverse_cons",
     }
 }
 
@@ -160,6 +197,23 @@ struct Renderer<'a> {
     /// catch-all arm).
     unfolds: BTreeMap<(FnId, u32, String), String>,
     support: Vec<String>,
+    /// Rendering a builtin fact over `List α`: an empty list is `[] : List α`.
+    generic: bool,
+}
+
+/// `t` with every empty list that has no type typed `List α`.
+fn over_alpha(t: &Term) -> Term {
+    if let ResolvedExpr::List(xs) = &t.node
+        && xs.is_empty()
+        && t.ty().is_none()
+    {
+        let out = t.clone();
+        out.set_ty(crate::ast::Type::List(Box::new(crate::ast::Type::named(
+            "α",
+        ))));
+        return out;
+    }
+    term::map_children(t, &mut |c| Ok(over_alpha(c))).expect("total")
 }
 
 fn is_prop_comparison(t: &Term) -> bool {
@@ -195,6 +249,13 @@ impl Renderer<'_> {
                 (c.name.clone(), read)
             })
             .collect();
+        let generic;
+        let t = if self.generic {
+            generic = over_alpha(t);
+            &generic
+        } else {
+            t
+        };
         let renamed;
         let t = if qualified.is_empty() {
             t
@@ -486,6 +547,36 @@ impl Renderer<'_> {
                 }
                 s.push(')');
                 s
+            }
+            // `List.rec` with the claim as its motive: the empty-list case,
+            // then the cell case over the head, the tail and the claim at
+            // the tail.
+            Proof::InductList {
+                var,
+                nil,
+                head,
+                tail,
+                ih,
+                cons,
+                lhs,
+                rhs,
+            } => {
+                let lean = super::syntax::aver_name_to_lean;
+                let at_tail = [(var.clone(), term::var(tail))];
+                let mut scope = hyps.clone();
+                scope.push((
+                    ih.clone(),
+                    Eqn::new(term::subst(lhs, &at_tail)?, term::subst(rhs, &at_tail)?),
+                ));
+                let base = self.proof(nil, hyps)?;
+                let step = self.proof(cons, &scope)?;
+                format!(
+                    "(List.rec (motive := fun {v} => {}) ({base}) (fun {} {} {ih} => {step}) {v})",
+                    self.eqn(&eq),
+                    lean(head),
+                    lean(tail),
+                    v = lean(var),
+                )
             }
             // Each decided comparison becomes a Prop fact and Lean's core
             // decision procedure for linear integer arithmetic closes the
@@ -844,7 +935,47 @@ fn same_file_blocks(ctx: &CodegenContext) -> Vec<&crate::ast::VerifyBlock> {
 
 /// The Lean theorem a law key names, as `dependencies` in the reason
 /// emitter finds it.
+/// Each builtin fact `body` cites, as one theorem over every element type,
+/// stated from the fact's own terms and proved by its steps.
+pub(crate) fn render_cited_facts(body: &str, ctx: &CodegenContext) -> Result<String, String> {
+    let mut out = Vec::new();
+    for fact in crate::ir::proof_steps::facts::all() {
+        if !body.contains(&fact_theorem(&fact)) {
+            continue;
+        }
+        let script = &fact.script;
+        let mut r = Renderer {
+            script,
+            ctx,
+            laws: BTreeMap::new(),
+            unfolds: BTreeMap::new(),
+            support: Vec::new(),
+            generic: true,
+        };
+        let ob = &script.obligation;
+        let statement = r.eqn(&Eqn::new(ob.lhs.clone(), ob.rhs.clone()));
+        let term = r.proof(&script.proof, &Hyps::new())?;
+        if !r.support.is_empty() || ob.givens != ob.lists {
+            return Err(format!("fact {}: not a fact over lists alone", fact.key));
+        }
+        out.push(format!(
+            "set_option autoImplicit false in\ntheorem {} {{α : Type}} ({} : List α) :\n    {statement} :=\n  {term}",
+            fact_theorem(&fact),
+            ob.givens.join(" ")
+        ));
+    }
+    Ok(out.join("\n\n"))
+}
+
+/// The Lean theorem a builtin fact is stated as, in `AverCommon`.
+pub(crate) fn fact_theorem(fact: &crate::ir::proof_steps::facts::Fact) -> String {
+    format!("AverFacts.{}", fact.lean)
+}
+
 fn law_theorem(key: &str, ctx: &CodegenContext) -> Option<String> {
+    if let Some(fact) = crate::ir::proof_steps::facts::named(key) {
+        return Some(fact_theorem(&fact));
+    }
     let own = ctx.active_module_scope();
     let local_key = |prefix: Option<&str>, fn_name: &str, law: &str| match prefix {
         Some(p) => format!("{p}.{fn_name}.{law}"),
@@ -986,6 +1117,7 @@ pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, 
         laws,
         unfolds: BTreeMap::new(),
         support: Vec::new(),
+        generic: false,
     };
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {

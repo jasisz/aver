@@ -328,14 +328,10 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
         Proof::Compute { lhs, rhs } => {
             let l =
                 term::eval_closed(lhs).ok_or_else(|| "compute: lhs is not closed".to_string())?;
-            let r = if term::is_literal(rhs) {
-                rhs.clone()
-            } else {
-                term::eval_closed(rhs).ok_or_else(|| "compute: rhs is not closed".to_string())?
-            };
-            if term::int_value(&l) != term::int_value(&r)
-                || term::bool_value(&l) != term::bool_value(&r)
-            {
+            let r =
+                term::eval_closed(rhs).ok_or_else(|| "compute: rhs is not closed".to_string())?;
+            // Values in canonical form, lists element by element.
+            if l != r {
                 return Err("compute: the sides evaluate differently".into());
             }
             Ok(Eqn::new(canon(lhs), canon(rhs)))
@@ -368,6 +364,17 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             cases,
         } => induct_conclusion(*fn_id, args, lhs, rhs, cases, script, hyps)
             .map_err(|m| format!("induct: {m}")),
+        Proof::InductList {
+            var,
+            lhs,
+            rhs,
+            nil,
+            head,
+            tail,
+            ih,
+            cons,
+        } => list_induct_conclusion(var, lhs, rhs, nil, [head, tail, ih], cons, script, hyps)
+            .map_err(|m| format!("listinduct: {m}")),
         Proof::Linear {
             goal,
             value,
@@ -464,6 +471,11 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
 /// Check a whole script: the proof must prove the obligation.
 pub fn check_script(script: &Script) -> Result<(), String> {
     super::induct::refuse_mutual_recursion(&script.defs)?;
+    for law in &script.laws {
+        if let Some(fact) = &law.fact {
+            check_fact(law, fact).map_err(|m| format!("fact {}: {m}", law.key))?;
+        }
+    }
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
         hyps.push(("when".to_string(), Eqn::new(canon(p), term::boolean(true))));
@@ -475,6 +487,81 @@ pub fn check_script(script: &Script) -> Result<(), String> {
     } else {
         Err("the proof ends at a different equation than the claim".into())
     }
+}
+
+/// A builtin fact: a script over builtins alone, with nothing to cite and
+/// no `when`, that proves exactly the statement the citation uses.
+fn check_fact(law: &super::LawRef, fact: &Script) -> Result<(), String> {
+    let ob = &fact.obligation;
+    if !fact.defs.is_empty() || !fact.consts.is_empty() || !fact.laws.is_empty() {
+        return Err("a fact uses only builtins".into());
+    }
+    if ob.key != law.key
+        || ob.givens != law.givens
+        || ob.premise.is_some()
+        || law.premise.is_some()
+        || ob.lhs != law.lhs
+        || ob.rhs != law.rhs
+    {
+        return Err("the citation does not state the fact its proof proves".into());
+    }
+    check_script(fact)
+}
+
+/// The claim an [`Proof::InductList`] step proves, once both cases are
+/// checked.
+#[allow(clippy::too_many_arguments)]
+fn list_induct_conclusion(
+    var: &str,
+    lhs: &Term,
+    rhs: &Term,
+    nil: &Proof,
+    [head, tail, ih]: [&String; 3],
+    cons: &Proof,
+    script: &Script,
+    hyps: &Hyps,
+) -> Result<Eqn, String> {
+    let ob = &script.obligation;
+    if !ob.lists.iter().any(|g| g == var) {
+        return Err(format!("{var} is not a given of list type"));
+    }
+    let mut taken = Vec::new();
+    term::free_vars(lhs, &mut taken);
+    term::free_vars(rhs, &mut taken);
+    for (_, e) in hyps {
+        let mut fv = Vec::new();
+        term::free_vars(&e.lhs, &mut fv);
+        term::free_vars(&e.rhs, &mut fv);
+        if fv.iter().any(|n| n == var) {
+            return Err(format!("a hypothesis in scope mentions {var}"));
+        }
+        taken.extend(fv);
+    }
+    for (k, b) in [head, tail].into_iter().enumerate() {
+        if taken.contains(b)
+            || ob.givens.contains(b)
+            || script.constant(b).is_some()
+            || (k == 1 && b == head)
+        {
+            return Err(format!("{b} is not a fresh name"));
+        }
+    }
+    let at = |value: Term| -> Result<Eqn, String> {
+        let m = [(var.to_string(), value)];
+        Ok(Eqn::new(term::subst(lhs, &m)?, term::subst(rhs, &m)?))
+    };
+    let got = conclusion(nil, script, hyps).map_err(|m| format!("nil: {m}"))?;
+    if !same_eqn(&got, &at(term::nil())?) {
+        return Err("nil: the case proves a different equation".into());
+    }
+    let mut scope = hyps.clone();
+    scope.push((ih.clone(), at(term::var(tail))?));
+    let got = conclusion(cons, script, &scope).map_err(|m| format!("cons: {m}"))?;
+    let cell = term::builtin("List.prepend", vec![term::var(head), term::var(tail)], None);
+    if !same_eqn(&got, &at(cell)?) {
+        return Err("cons: the case proves a different equation".into());
+    }
+    Ok(Eqn::new(canon(lhs), canon(rhs)))
 }
 
 /// The claim an [`Proof::Induct`] step proves, once every case is checked.

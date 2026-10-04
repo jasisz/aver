@@ -121,6 +121,18 @@ pub(crate) fn finite_givens(inputs: &ProofLowerInputs, t: &LawTheorem) -> Vec<(S
         .collect()
 }
 
+/// The givens whose type is a `List`.
+pub(crate) fn list_givens(t: &LawTheorem) -> Vec<String> {
+    t.quantifiers
+        .iter()
+        .filter(|q| {
+            let QuantifierType::Plain(ty) = &q.binder_type;
+            matches!(crate::types::parse_type_str(ty), crate::ast::Type::List(_))
+        })
+        .map(|q| q.name.clone())
+        .collect()
+}
+
 impl Env<'_> {
     /// Prove `lhs = rhs` by splitting every given in `split` into its
     /// values, then evaluating each case.

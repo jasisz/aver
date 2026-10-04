@@ -1,0 +1,48 @@
+module Facts
+    intent = "Laws over concrete lists that cite builtin facts in `using`."
+    exposes [Tx, joined, batch]
+    effects []
+
+record Tx
+    id: Int
+    amount: Int
+
+fn joined(xs: List<Int>, ys: List<Int>) -> List<Int>
+    ? "Both lists, one after the other."
+    List.concat(xs, ys)
+
+verify joined
+    joined([1], [2]) => [1, 2]
+
+verify joined law lengthAdds
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    using [List.len.ofConcat]
+    List.len(joined(xs, ys)) => List.len(xs) + List.len(ys)
+
+verify joined law regroups
+    given xs: List<Int> = [[], [1]]
+    given ys: List<Int> = [[], [2]]
+    given zs: List<Int> = [[], [3]]
+    using [List.concat.assoc]
+    joined(joined(xs, ys), zs) => joined(xs, joined(ys, zs))
+
+fn batch(a: List<Tx>, b: List<Tx>) -> List<Tx>
+    ? "Two batches of transactions as one."
+    List.concat(a, b)
+
+verify batch
+    batch([], [Tx(id = 1, amount = 5)]) => [Tx(id = 1, amount = 5)]
+
+verify batch law sizeAdds
+    given a: List<Tx> = [[], [Tx(id = 1, amount = 5)]]
+    given b: List<Tx> = [[], [Tx(id = 2, amount = 7)]]
+    using [List.len.ofConcat]
+    List.len(batch(a, b)) => List.len(a) + List.len(b)
+
+verify batch law threeBatches
+    given a: List<Tx> = [[], [Tx(id = 1, amount = 5)]]
+    given b: List<Tx> = [[], [Tx(id = 2, amount = 7)]]
+    given c: List<Tx> = [[], [Tx(id = 3, amount = 9)]]
+    using [List.concat.assoc]
+    batch(batch(a, b), c) => batch(a, batch(b, c))

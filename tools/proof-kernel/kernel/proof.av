@@ -4,7 +4,7 @@ module Proof
         "laws and the script that ties them"
         "to one obligation."
         "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
-    exposes [Proof, Case, Def, Const, Law, Script, Hyp, Given, premiseOf]
+    exposes [Proof, Case, Def, Const, Law, Fact, Script, Hyp, Given, premiseOf]
     depends [Kernel.Term]
     effects []
 
@@ -25,6 +25,7 @@ type Proof
     PEnum(String, Term, Term, List<Proof>)
     PAbsurd(Proof, Term, Term)
     PInduct(String, List<Term>, Term, Term, List<Case>)
+    PListInduct(String, Term, Term, Proof, String, String, String, Proof)
     PRing(Term, Term)
     PLinear(Term, Bool, List<String>, List<Int>)
 
@@ -50,6 +51,11 @@ record Law
     lhs: Term
     rhs: Term
 
+record Fact
+    law: Law
+    lists: List<String>
+    proof: Proof
+
 record Given
     name: String
     fin: Fin
@@ -57,9 +63,11 @@ record Given
 record Script
     obligation: Law
     finite: List<Given>
+    lists: List<String>
     defs: List<Def>
     consts: List<Const>
     laws: List<Law>
+    facts: List<Fact>
     proof: Proof
 
 record Hyp

@@ -8,9 +8,11 @@
 //! script  := (steps VERSION (obligation KEY (OGIVEN…) PREMISE TERM TERM)
 //!                    (defs (def NAME (PARAM…) ((NAME TERM)…) TERM)…)
 //!                    (consts (const NAME TERM)…)
-//!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…)
+//!                    (laws (law KEY (GIVEN…) PREMISE TERM TERM)…
+//!                          (fact KEY (OGIVEN…) TERM TERM PROOF)…)
 //!                    (proof PROOF))
 //! OGIVEN  := NAME | (NAME TYPE)       ; a given of finite type, with its type
+//!          | (NAME (tlist))            ; a given of list type
 //! TYPE    := (tbool) | (tsum CTOR…) | (trec TYPE (FIELD TYPE)…) | (ttuple TYPE…)
 //! PREMISE := (none) | TERM
 //! TERM    := (i INT) | (b true|false) | (s "TEXT") | (unit) | (v NAME) | (hole)
@@ -28,6 +30,7 @@
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
 //!          | (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
+//!          | (listinduct NAME TERM TERM PROOF (NAME NAME NAME) PROOF)
 //!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…))
 //! ```
 
@@ -44,6 +47,23 @@ use super::{FORMAT_VERSION, Finite, Proof, Script};
 pub trait Names {
     fn fn_name(&self, id: FnId) -> String;
     fn ctor_name(&self, ctor: &ResolvedCtor) -> String;
+}
+
+/// Names for data that mentions no user function or type: the builtin
+/// facts, whose terms are builtins over variables.
+pub struct BuiltinsOnly;
+
+impl Names for BuiltinsOnly {
+    fn fn_name(&self, id: FnId) -> String {
+        format!("__fn_{}", id.0)
+    }
+
+    fn ctor_name(&self, ctor: &ResolvedCtor) -> String {
+        match ctor {
+            ResolvedCtor::Builtin(b) => builtin_ctor_name(*b).to_string(),
+            ResolvedCtor::User { name, .. } | ResolvedCtor::Unresolved { name } => name.clone(),
+        }
+    }
 }
 
 impl Names for crate::ir::SymbolTable {
@@ -438,6 +458,22 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             term(lhs, names)?,
             term(rhs, names)?
         ),
+        Proof::InductList {
+            var,
+            lhs,
+            rhs,
+            nil,
+            head,
+            tail,
+            ih,
+            cons,
+        } => format!(
+            "(listinduct {var} {} {} {} ({head} {tail} {ih}) {})",
+            term(lhs, names)?,
+            term(rhs, names)?,
+            proof(nil, names)?,
+            proof(cons, names)?
+        ),
         Proof::Enum {
             var,
             lhs,
@@ -503,6 +539,7 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
         .iter()
         .map(|g| match o.finite.iter().find(|(n, _)| n == g) {
             Some((_, f)) => format!("({g} {})", finite(f, names)),
+            None if o.lists.contains(g) => format!("({g} (tlist))"),
             None => g.clone(),
         })
         .collect();
@@ -533,6 +570,29 @@ pub fn script(s: &Script, names: &dyn Names) -> Result<String, String> {
     }
     out.push_str(")\n (laws");
     for l in &s.laws {
+        if let Some(fact) = &l.fact {
+            let lists = &fact.obligation.lists;
+            let givens: Vec<String> = l
+                .givens
+                .iter()
+                .map(|g| {
+                    if lists.contains(g) {
+                        format!("({g} (tlist))")
+                    } else {
+                        g.clone()
+                    }
+                })
+                .collect();
+            out.push_str(&format!(
+                "\n  (fact {} ({}) {} {} {})",
+                l.key,
+                givens.join(" "),
+                term(&l.lhs, names)?,
+                term(&l.rhs, names)?,
+                proof(&fact.proof, names)?
+            ));
+            continue;
+        }
         out.push_str(&format!(
             "\n  (law {} ({}) {} {} {})",
             l.key,

@@ -1,0 +1,70 @@
+module Lists
+    intent = "Laws the constructor equations of the list builtins settle, a count decided or split on."
+    exposes [pushed, oneIfPositive]
+    effects []
+
+fn pushed(x: Int, xs: List<Int>) -> List<Int>
+    ? "x in front of xs."
+    List.prepend(x, xs)
+
+verify pushed
+    pushed(1, [2]) => [1, 2]
+
+fn oneIfPositive(n: Int) -> Int
+    ? "1 for a positive count, 0 otherwise."
+    match n > 0
+        true -> 1
+        false -> 0
+
+verify oneIfPositive
+    oneIfPositive(3) => 1
+    oneIfPositive(0 - 3) => 0
+
+verify pushed law growsByOne
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [3]]
+    List.len(pushed(x, xs)) => List.len(xs) + 1
+
+verify pushed law joinsInFront
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [3]]
+    given ys: List<Int> = [[], [4]]
+    List.concat(pushed(x, xs), ys) => pushed(x, List.concat(xs, ys))
+
+verify pushed law takeKeepsHead
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [3]]
+    given n: Int = [1, 2, 3]
+    when n > 0
+    List.take(pushed(x, xs), n) => pushed(x, List.take(xs, n - 1))
+
+verify pushed law takeNothing
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [3]]
+    given n: Int = [0 - 1, 0]
+    when n <= 0
+    List.take(pushed(x, xs), n) => []
+
+verify pushed law dropOneMore
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [3]]
+    given n: Int = [1, 2, 3]
+    when n > 0
+    List.drop(pushed(x, xs), n) => List.drop(xs, n - 1)
+
+verify pushed law dropNothing
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [3]]
+    given n: Int = [0 - 1, 0]
+    when n <= 0
+    List.drop(pushed(x, xs), n) => pushed(x, xs)
+
+verify pushed law reversedEndsWithHead
+    given x: Int = [1, 2]
+    given xs: List<Int> = [[], [3, 4]]
+    List.reverse(pushed(x, xs)) => List.concat(List.reverse(xs), List.prepend(x, []))
+
+verify oneIfPositive law isLenOfTakeOfOne
+    given x: Int = [1, 2]
+    given n: Int = [0 - 1, 0, 1, 2]
+    List.len(List.take(pushed(x, []), n)) => oneIfPositive(n)

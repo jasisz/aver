@@ -84,7 +84,14 @@ pub(super) fn run(
             let script = t.steps.as_ref()?;
             Some((
                 law_key(&ctx.symbol_table, t),
-                script.laws.iter().map(|l| l.key.clone()).collect(),
+                // A builtin fact carries its proof, which the kernel just
+                // checked as part of the citing script.
+                script
+                    .laws
+                    .iter()
+                    .filter(|l| l.fact.is_none())
+                    .map(|l| l.key.clone())
+                    .collect(),
             ))
         })
         .collect();

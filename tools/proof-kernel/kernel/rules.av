@@ -2,6 +2,7 @@ module Rules
     intent =
         "The wall: every rule a step may apply, as an equation schema over named binders."
         "The replayer's own copy of src/ir/proof_steps/rules.rs; an identifier not listed here is refused."
+        "The list rules are the constructor equations of the list builtins, with Aver's truncation of a count."
     exposes [Schema, schema]
     depends [Kernel.Term]
     effects []
@@ -137,7 +138,55 @@ fn divisionSchema(id: String) -> Option<Schema>
     match id
         "int.div_mod_recompose" -> Option.Some(Schema(binders = ["a", "k"], premises = [is(Term.TOp(">", v("k"), Term.TInt(0)), true)], concl = eq(Term.TOp("+", Term.TOp("*", divE(v("a"), v("k")), v("k")), modE(v("a"), v("k"))), v("a"))))
         "int.div_range" -> Option.Some(Schema(binders = ["a", "k", "m", "n"], premises = [is(range(v("a"), v("m")), true), is(conn("Bool.and", Term.TOp(">", v("k"), Term.TInt(0)), Term.TOp("==", v("m"), Term.TOp("*", v("n"), v("k")))), true)], concl = is(range(divE(v("a"), v("k")), v("n")), true)))
-        _ -> Option.None
+        _ -> listSchema(id)
 
 verify divisionSchema
     divisionSchema("int.div_range") == Option.None => false
+
+fn cons(x: Term, xs: Term) -> Term
+    ? "An element in front of a list."
+    Term.TBi("List.prepend", [x, xs])
+
+verify cons
+    cons(v("x"), Term.TList([])) => Term.TBi("List.prepend", [v("x"), Term.TList([])])
+
+fn lb(name: String, args: List<Term>) -> Term
+    ? "A list builtin applied to its arguments."
+    Term.TBi("List.{name}", args)
+
+verify lb
+    lb("len", [v("a")]) => Term.TBi("List.len", [v("a")])
+
+fn counted(binders: List<String>, positive: Bool, l: Term, r: Term) -> Option<Schema>
+    ? "A rule on a count n that holds when n > 0 (positive) or when n <= 0."
+    premise = match positive
+        true -> is(Term.TOp(">", v("n"), Term.TInt(0)), true)
+        false -> is(Term.TOp("<=", v("n"), Term.TInt(0)), true)
+    Option.Some(Schema(binders = binders, premises = [premise], concl = eq(l, r)))
+
+verify counted
+    counted(["n"], false, Term.TUnit, Term.TUnit) => Option.Some(Schema(binders = ["n"], premises = [is(Term.TOp("<=", v("n"), Term.TInt(0)), true)], concl = eq(Term.TUnit, Term.TUnit)))
+
+fn listSchema(id: String) -> Option<Schema>
+    ? "Each list builtin on the empty list and on an element in front of a list."
+    xa = cons(v("x"), v("a"))
+    nil = Term.TList([])
+    less = Term.TOp("-", v("n"), Term.TInt(1))
+    match id
+        "list.concat.nil" -> plain(["b"], lb("concat", [nil, v("b")]), v("b"))
+        "list.concat.cons" -> plain(["x", "a", "b"], lb("concat", [xa, v("b")]), cons(v("x"), lb("concat", [v("a"), v("b")])))
+        "list.len.nil" -> plain([], lb("len", [nil]), Term.TInt(0))
+        "list.len.cons" -> plain(["x", "a"], lb("len", [xa]), Term.TOp("+", lb("len", [v("a")]), Term.TInt(1)))
+        "list.take.nil" -> plain(["n"], lb("take", [nil, v("n")]), nil)
+        "list.take.cons_le" -> counted(["x", "a", "n"], false, lb("take", [xa, v("n")]), nil)
+        "list.take.cons_gt" -> counted(["x", "a", "n"], true, lb("take", [xa, v("n")]), cons(v("x"), lb("take", [v("a"), less])))
+        "list.drop.nil" -> plain(["n"], lb("drop", [nil, v("n")]), nil)
+        "list.drop.cons_le" -> counted(["x", "a", "n"], false, lb("drop", [xa, v("n")]), xa)
+        "list.drop.cons_gt" -> counted(["x", "a", "n"], true, lb("drop", [xa, v("n")]), lb("drop", [v("a"), less]))
+        "list.reverse.nil" -> plain([], lb("reverse", [nil]), nil)
+        "list.reverse.cons" -> plain(["x", "a"], lb("reverse", [xa]), lb("concat", [lb("reverse", [v("a")]), cons(v("x"), nil)]))
+        _ -> Option.None
+
+verify listSchema
+    listSchema("list.len.nil") => plain([], Term.TBi("List.len", [Term.TList([])]), Term.TInt(0))
+    listSchema("list.len") => Option.None
