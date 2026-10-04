@@ -1106,6 +1106,7 @@ mod tests {
         types: Vec<TypeDef>,
     ) -> ModuleInfo {
         ModuleInfo {
+            bindings: Vec::new(),
             prefix: prefix.to_string(),
             depends: depends.iter().map(|d| (*d).to_string()).collect(),
             exposes: exposes.iter().map(|e| (*e).to_string()).collect(),

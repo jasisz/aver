@@ -287,6 +287,7 @@ fn the_vm_bytecode_reads_the_codepoint_at_the_cursor() {
         },
     );
     let dep_modules = vec![aver::codegen::ModuleInfo {
+        bindings: Vec::new(),
         prefix: "Bytes".to_string(),
         depends: vec![],
         exposes: vec![],
@@ -418,6 +419,7 @@ fn the_vm_bytecode_collects_bytes_at_the_cursor() {
         },
     );
     let dep_modules = vec![aver::codegen::ModuleInfo {
+        bindings: Vec::new(),
         prefix: "Bytes".to_string(),
         depends: vec![],
         exposes: vec![],

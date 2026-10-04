@@ -2324,6 +2324,13 @@ fn collapse_fnvalue_projection(expr: &MirExpr) -> Option<String> {
 /// the parity gate isn't active there, so the conservative fn-reference
 /// shape is fine (coverage only inspects `Some` vs `None`).
 fn emit_mir_static_ref(name: &str, ctx: &MirEmitCtx<'_>) -> String {
+    // A module-level binding of the module being emitted is answered by its
+    // getter (`emit_module_binding_getters`).
+    if let Some(cg) = ctx.codegen
+        && cg.is_module_binding(ctx.current_module_scope, name)
+    {
+        return format!("{}()", module_binding_getter(name));
+    }
     if name == "Option.None" || name == "None" {
         return "None".to_string();
     }
@@ -2603,6 +2610,82 @@ pub(super) fn emit_mir_top_stmt_values(
             })
         })
         .collect::<Option<Vec<_>>>()
+}
+
+/// The Rust fn that answers a module-level binding's value. The `__`
+/// prefix is the compiler's own namespace (the parser rejects user names
+/// that start with it), and behind it any Aver identifier — a Rust keyword
+/// such as `static` included — is a plain Rust identifier.
+pub(super) fn module_binding_getter(name: &str) -> String {
+    format!("__binding_{name}")
+}
+
+/// One getter fn per module-level binding of `scope` (`None` = the entry).
+///
+/// A binding (`base = 40` outside any fn) is read from fn bodies, so it
+/// cannot live as a `let` in `main` the way it once did: a fn reading it
+/// named a variable that did not exist there, and rustc rejected the
+/// program. Each binding becomes `__binding_<name>()`, which evaluates the
+/// value once per thread and hands out clones; a read of the binding
+/// anywhere in the module renders as a call to it
+/// ([`emit_mir_static_ref`]). The checker allows no effects in a binding's
+/// value, so evaluating it on first read gives the value the VM computes
+/// before `main`.
+///
+/// A binding whose type or value the walker cannot render becomes a
+/// `compile_error!` naming it, never a silently missing fn.
+pub(super) fn emit_module_binding_getters(scope: Option<&str>, ctx: &CodegenContext) -> String {
+    let bindings = ctx.module_bindings(scope);
+    if bindings.is_empty() {
+        return String::new();
+    }
+    let mut policy = MirFnEmitPolicy::empty();
+    policy.current_module_scope = scope.map(str::to_string);
+    let mut out = String::new();
+    for binding in &bindings {
+        let getter = module_binding_getter(&binding.name);
+        let rendered = binding.declared_type().map(|ty| {
+            let resolved = ctx.resolve_expr(&binding.value, scope);
+            let value = ctx.mir_program.as_ref().and_then(|base| {
+                let mut prog = base.clone();
+                let lowered = crate::ir::mir::lower_top_level_value(&resolved, &mut prog).ok()?;
+                let emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
+                emit_mir_expr(&lowered, &emit_ctx)
+            });
+            (super::types::type_to_rust_scoped(&ty, ctx, scope), value)
+        });
+        match rendered {
+            Ok((rust_ty, Some(value))) => {
+                out.push_str(&format!(
+                    "/// The module-level binding `{name}`.\n\
+                     #[allow(non_snake_case)]\n\
+                     pub fn {getter}() -> {rust_ty} {{\n    \
+                     thread_local! {{\n        \
+                     static VALUE: std::cell::OnceCell<{rust_ty}> = const {{ std::cell::OnceCell::new() }};\n    \
+                     }}\n    \
+                     VALUE.with(|value| value.get_or_init(|| {value}).clone())\n}}\n\n",
+                    name = binding.name,
+                ));
+            }
+            failed => {
+                let reason = match failed {
+                    Err(reason) => reason,
+                    _ => "the Rust backend cannot render its value".to_string(),
+                };
+                let refusal = super::toplevel::emit_program_refusal_expr(
+                    ctx,
+                    format!(
+                        "the module-level binding `{}` (line {}) is not compiled: {reason}",
+                        binding.name, binding.value.line
+                    ),
+                );
+                out.push_str(&format!(
+                    "#[allow(non_snake_case, unreachable_code)]\npub fn {getter}() -> ! {refusal}\n\n"
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// Emit `MirExpr::IndependentProduct` (`(a, b, c)!` / `(a, b, c)?!`)

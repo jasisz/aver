@@ -839,6 +839,11 @@ fn entry_module_sections(
         sections.push(toplevel::emit_public_fn_def(fd, resolved_fd, ctx, None));
     }
 
+    let binding_getters = from_mir::emit_module_binding_getters(None, ctx);
+    if !binding_getters.is_empty() {
+        sections.push(binding_getters);
+    }
+
     if main_fn.is_some() || !top_level_stmts.is_empty() {
         sections.push(toplevel::emit_public_main(main_fn, top_level_stmts, ctx));
     }
@@ -953,6 +958,11 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             ctx,
             Some(&module.prefix),
         ));
+    }
+
+    let binding_getters = from_mir::emit_module_binding_getters(Some(&module.prefix), ctx);
+    if !binding_getters.is_empty() {
+        sections.push(binding_getters);
     }
 
     sections
@@ -1155,6 +1165,7 @@ mod tests {
                     crate::codegen::capability_metadata(&lm.items);
                 let decl = crate::visibility::module_decl(&lm.items);
                 crate::codegen::ModuleInfo {
+                    bindings: crate::codegen::collect_module_bindings(&lm.items),
                     prefix: lm.dep_name.clone(),
                     depends,
                     exposes: decl.map(|d| d.exposes.clone()).unwrap_or_default(),
@@ -1824,11 +1835,11 @@ fn await(n: Int) -> Int
     }
 
     /// A binding written at module level, outside any function, is a
-    /// `TopLevel::Stmt` — it lives in `ctx.items` and in nothing else, so
-    /// the emitter renders it into `fn main` as `let {name} = …;`. That is
-    /// exactly as unspellable as a binding inside a function and gets the
-    /// same rename; `let r#self = 41i64;` is ``error: `self` cannot be a
-    /// raw identifier``.
+    /// `TopLevel::Stmt` — it lives in `ctx.items` and in nothing else. It
+    /// was once a `let` in `fn main`, where `let r#self = 41i64;` is
+    /// ``error: `self` cannot be a raw identifier``; it is now answered by
+    /// the getter `__binding_self()`, whose `__` prefix makes any Aver name
+    /// a plain Rust identifier, and the fn reading it calls that getter.
     #[test]
     fn module_level_bindings_are_renamed_too() {
         let mut ctx = ctx_from_source(
@@ -1838,8 +1849,8 @@ fn await(n: Int) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
         assert!(
-            entry.contains("_avr_self"),
-            "the module-level binding was not renamed:\n{entry}"
+            entry.contains("pub fn __binding_self()") && entry.contains("__binding_self()\n"),
+            "the module-level binding has no getter, or `read` does not call it:\n{entry}"
         );
         assert!(
             !entry.contains("r#self"),

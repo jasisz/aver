@@ -418,6 +418,77 @@ struct RecursiveFnNames<'a> {
     standard: &'a HashSet<String>,
 }
 
+/// A module-level binding (`base = 40`) as a Lean constant in its module's
+/// namespace, `def base : Int := 40`, so the fns that read it — and the laws
+/// about them — name a definition the file has. A law's proof unfolds it
+/// with the fns it unfolds (`proof_lower::with_binding_unfolds`).
+///
+/// A binding the export cannot declare is refused in the file, with the
+/// reason; `aver proof` reports the same refusal as a warning
+/// ([`module_binding_refusals`]), so a fn left reading a name that is not
+/// there never fails Lean without a word.
+fn emit_module_binding(
+    binding: &crate::codegen::ModuleBinding,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+) -> Vec<String> {
+    let name = super::expr::aver_name_to_lean(&binding.name);
+    match binding.declared_type() {
+        Ok(ty) => ctx.with_module_scope(scope, || {
+            let resolved = ctx.resolve_expr(&binding.value, scope);
+            vec![
+                format!(
+                    "/-- The module-level binding `{}`. -/\ndef {} : {} :=\n  {}",
+                    binding.name,
+                    name,
+                    super::types::type_to_lean(&ty),
+                    super::expr::emit_expr(&resolved, ctx)
+                ),
+                String::new(),
+            ]
+        }),
+        Err(reason) => vec![
+            format!(
+                "-- module-level binding `{}` was not exported: {reason}",
+                binding.name
+            ),
+            String::new(),
+        ],
+    }
+}
+
+/// Every module-level binding the proof export refuses, with its line and
+/// why, across the entry and its dependencies.
+pub(crate) fn module_binding_refusals(ctx: &CodegenContext) -> Vec<(usize, String)> {
+    let entry = crate::codegen::collect_module_bindings(&ctx.items)
+        .into_iter()
+        .map(|binding| (None, binding));
+    let deps = ctx.modules.iter().flat_map(|module| {
+        module
+            .bindings
+            .iter()
+            .cloned()
+            .map(move |binding| (Some(module.prefix.clone()), binding))
+    });
+    entry
+        .chain(deps)
+        .filter_map(|(module, binding)| {
+            let reason = binding.declared_type().err()?;
+            let owner = module
+                .map(|prefix| format!(" of module `{prefix}`"))
+                .unwrap_or_default();
+            Some((
+                binding.value.line,
+                format!(
+                    "module-level binding `{}`{owner} is not exported to Lean: {reason}; the fns \
+                     that read it fail to elaborate",
+                    binding.name
+                ),
+            ))
+        })
+        .collect()
+}
+
 fn emit_pure_component(
     comp: &[&crate::ast::FnDef],
     scope: Option<&str>,
@@ -725,6 +796,7 @@ fn declared_fn_names(body: &str, module: &crate::codegen::ModuleInfo) -> HashSet
                     crate::ast::CapabilityItem::Resource { .. } => None,
                 }),
         )
+        .chain(module.bindings.iter().map(|binding| binding.name.as_str()))
         .map(super::syntax::aver_name_to_lean)
         .collect();
     body.lines()
@@ -1045,6 +1117,7 @@ pub(super) fn transpile_unified(
             ctx,
             &module.type_defs,
             &module.fn_defs,
+            &module.bindings,
             scope,
         );
         for decl in &decl_plan.order {
@@ -1082,6 +1155,9 @@ pub(super) fn transpile_unified(
                         &mut sampled_fns,
                         &capability_opacity,
                     ));
+                }
+                super::decl_order::ScopedDecl::Binding(index) => {
+                    body_sections.extend(emit_module_binding(&module.bindings[index], scope, ctx));
                 }
             }
         }
@@ -1237,8 +1313,14 @@ pub(super) fn transpile_unified(
             &measure_sig_type_refs,
         ));
     }
-    let entry_plan =
-        super::decl_order::plan_scoped_declarations(ctx, &ctx.type_defs, &ctx.fn_defs, None);
+    let entry_bindings = crate::codegen::collect_module_bindings(&ctx.items);
+    let entry_plan = super::decl_order::plan_scoped_declarations(
+        ctx,
+        &ctx.type_defs,
+        &ctx.fn_defs,
+        &entry_bindings,
+        None,
+    );
     for decl in &entry_plan.order {
         match *decl {
             super::decl_order::ScopedDecl::Type(index) => {
@@ -1276,6 +1358,9 @@ pub(super) fn transpile_unified(
                     &mut sampled_fns,
                     &capability_opacity,
                 ));
+            }
+            super::decl_order::ScopedDecl::Binding(index) => {
+                entry_body_sections.extend(emit_module_binding(&entry_bindings[index], None, ctx));
             }
         }
     }

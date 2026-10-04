@@ -184,6 +184,7 @@ fn symbols_dep_modules_from_loaded(
                 crate::codegen::capability_metadata(&m.items);
             let decl = crate::visibility::module_decl(&m.items);
             crate::codegen::ModuleInfo {
+                bindings: crate::codegen::collect_module_bindings(&m.items),
                 prefix: m.dep_name.clone(),
                 depends: decl.map(|d| d.depends.clone()).unwrap_or_default(),
                 exposes: decl.map(|d| d.exposes.clone()).unwrap_or_default(),

@@ -1,8 +1,5 @@
 use super::emit_ctx::{EmitCtx, should_borrow_param};
-use super::expr::{
-    aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_binding_pattern,
-    explicit_parameter_pattern,
-};
+use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust, explicit_parameter_pattern};
 use super::representation::{
     RepresentationCapabilities, RepresentationContract, type_def_contract,
 };
@@ -1273,15 +1270,19 @@ fn emit_main_with_visibility(
     // statement.
     // A `None` is a hard codegen error (the MIR walker could not render
     // a top-level statement) — never a silent drop.
+    //
+    // A binding's value lives in its getter
+    // (`from_mir::emit_module_binding_getters`), which every read calls;
+    // `main` only forces it, in source order, so it is evaluated before
+    // `main` runs just as the VM evaluates it.
     if !top_stmts.is_empty() {
         let resolved: Vec<Spanned<crate::ir::hir::ResolvedExpr>> = top_stmts
             .iter()
-            .map(|stmt| {
-                let value = match stmt {
-                    Stmt::Binding(_, _, value) => value,
-                    Stmt::Expr(value) => value,
-                };
-                ctx.resolve_expr(value, ectx.current_module_scope.as_deref())
+            .filter_map(|stmt| match stmt {
+                Stmt::Expr(value) => {
+                    Some(ctx.resolve_expr(value, ectx.current_module_scope.as_deref()))
+                }
+                Stmt::Binding(..) => None,
             })
             .collect();
         let refs: Vec<&Spanned<crate::ir::hir::ResolvedExpr>> = resolved.iter().collect();
@@ -1307,31 +1308,38 @@ fn emit_main_with_visibility(
                 })
                 .collect()
         });
-        for (stmt, rendered) in top_stmts.iter().zip(values.iter()) {
-            // Same templating as the MIR fn-body let-chain: `Binding` → a
-            // named `let`, `Expr` → a discarded statement.
+        let mut rendered_exprs = values.iter();
+        for stmt in top_stmts.iter() {
             let line = match stmt {
+                // A binding's value is its getter's; `main` forces it.
                 Stmt::Binding(name, _, _) => {
                     format!(
-                        "let {} = {};",
-                        explicit_binding_pattern(name),
-                        rendered.value
+                        "let _ = {}();",
+                        super::from_mir::module_binding_getter(name)
                     )
                 }
-                // A bare expression statement binds nothing, so a value with
-                // no observable effect is DEAD — and dropping it is what the
-                // same statement inside a fn body already gets: the body
-                // lowers to a `Let` chain and MIR's DCE elides
-                // `let <unread> = <pure>; body`. Module-level statements are
-                // lowered one value at a time, outside `MirProgram.fns`, so
-                // that pass never sees them. Emitting them anyway is not a
-                // harmless difference: `Result.Err` alone under a `module M`
-                // is a `Project` over a `FnValue`, which renders as the Rust
-                // field access `Result.Err;` — E0423, a namespace is not a
-                // value — while the identical statement in a fn body was
-                // dropped before any emitter saw it.
-                Stmt::Expr(_) if rendered.pure => continue,
-                Stmt::Expr(_) => format!("{};", rendered.value),
+                Stmt::Expr(_) => {
+                    let Some(rendered) = rendered_exprs.next() else {
+                        continue;
+                    };
+                    // A bare expression statement binds nothing, so a value
+                    // with no observable effect is DEAD — and dropping it is
+                    // what the same statement inside a fn body already gets:
+                    // the body lowers to a `Let` chain and MIR's DCE elides
+                    // `let <unread> = <pure>; body`. Module-level statements
+                    // are lowered one value at a time, outside
+                    // `MirProgram.fns`, so that pass never sees them.
+                    // Emitting them anyway is not a harmless difference:
+                    // `Result.Err` alone under a `module M` is a `Project`
+                    // over a `FnValue`, which renders as the Rust field access
+                    // `Result.Err;` — E0423, a namespace is not a value —
+                    // while the identical statement in a fn body was dropped
+                    // before any emitter saw it.
+                    if rendered.pure {
+                        continue;
+                    }
+                    format!("{};", rendered.value)
+                }
             };
             writeln!(out, "{}{}", indent, line).unwrap();
         }

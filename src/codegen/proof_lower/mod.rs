@@ -2533,12 +2533,17 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             None => Vec::new(),
         };
 
-        let strategy = classify_law_strategy(
+        let strategy = binding_unfolds::with_binding_unfolds(
+            classify_law_strategy(
+                law,
+                &vb.fn_name,
+                inputs,
+                &ir.refined_types,
+                &ir.fn_contracts,
+                law_scope_ref,
+            ),
             law,
-            &vb.fn_name,
             inputs,
-            &ir.refined_types,
-            &ir.fn_contracts,
             law_scope_ref,
         );
 
@@ -2919,6 +2924,7 @@ fn classify_law_strategy(
     ProofStrategy::BackendDispatch
 }
 
+mod binding_unfolds;
 mod bounded_int_domain;
 mod conditional_comparison;
 mod finite_domain;
