@@ -323,7 +323,7 @@ pub fn emit_verify_law_forall_auto_proof(
     // first alternative, so grind can do NEW work — guaranteed closers
     // like `omega`/`rfl` are left byte-identical).
     let mut proof = maybe_wrap_with_grind_rung(vb, law, ctx, inner);
-    let steps_rendered = if proof.replaces_theorem {
+    let steps_rendered = if proof.replaces_theorem || cert_model {
         None
     } else {
         law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {

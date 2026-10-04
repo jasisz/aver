@@ -24,6 +24,9 @@ pub(in crate::codegen::lean) struct ReasonClaim<'a> {
     pub binders: &'a [(String, String)],
     pub prop: &'a str,
     pub guard: Option<&'a str>,
+    /// Whether a proof written as data may lead (never in a certificate
+    /// model, whose text gate admits only its own vocabulary).
+    pub allow_steps: bool,
 }
 
 pub(in crate::codegen::lean) fn dependencies(
@@ -553,6 +556,7 @@ pub(in crate::codegen::lean) fn emit_reason_law(
         // and the whole strategy above is its fallback.
         let mut steps_support = Vec::new();
         if final_step
+            && claim.allow_steps
             && let Some(script) = super::law_steps_for(ctx, &vb.fn_name, &law.name)
             && let Ok(rendered) =
                 crate::codegen::lean::proof_steps::render(&script, ctx, claim.base)

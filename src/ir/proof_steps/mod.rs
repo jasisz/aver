@@ -186,3 +186,6 @@ impl Proof {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
