@@ -316,3 +316,149 @@ fn lean_accepts_the_step_terms_and_refuses_mutated_ones() {
     );
     let _ = fs::remove_dir_all(out);
 }
+
+fn aver_backend_json(
+    fixture: &str,
+    out: &Path,
+    path_env: Option<&str>,
+) -> (Output, serde_json::Value) {
+    let mut command = Command::new(aver_bin());
+    command
+        .args([
+            "proof",
+            fixture,
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "99",
+        ])
+        .current_dir(repo_root().join(FIXTURES));
+    if let Some(path) = path_env {
+        command.env("PATH", path);
+    }
+    let result = command.output().expect("aver runs");
+    let line = String::from_utf8_lossy(&result.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("{}", format_output(&result)));
+    (result, serde_json::from_str(&line).unwrap())
+}
+
+fn closed_by_steps(summary: &serde_json::Value) -> Vec<String> {
+    summary["closed_by"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(law, by)| by.as_str() == Some("steps") && !law.ends_with(".implication"))
+        .map(|(law, _)| law.clone())
+        .collect()
+}
+
+#[test]
+fn the_aver_backend_closes_by_steps_without_lean_on_the_path() {
+    let out = scratch("aver-backend");
+    // An empty PATH: no `lean`, no `lake`; the kernel runs in process.
+    let (result, summary) = aver_backend_json("lock.av", &out, Some(""));
+    assert!(result.status.success(), "{}", format_output(&result));
+    assert_eq!(summary["backend"], "aver");
+    assert_eq!(summary["passed"], true);
+    assert_eq!(summary["steps_rejected"], serde_json::json!([]));
+    assert_eq!(
+        closed_by_steps(&summary),
+        [
+            "add.associates",
+            "add.commutes",
+            "add.zeroIsIdentity",
+            "lockTimeChecked.agreesWithSpec",
+            "mul.oneIsIdentity",
+            "pick.positiveIsOne",
+            "sequenceChecked.agreesWithSpec",
+        ]
+    );
+    // A law whose steps cite a law the backend did not close is not closed.
+    let (_, bytes) = aver_backend_json("bytes.av", &out, Some(""));
+    assert_eq!(bytes["closed_by"]["decode.eightReadBack"], "open");
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn both_backends_close_the_same_laws_by_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("both-aver");
+    let (_, aver) = aver_backend_json("lock.av", &out, None);
+    let lean_out = scratch("both-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "lock.av",
+            "-o",
+            lean_out.to_str().unwrap(),
+            "--check-json",
+        ],
+    );
+    let line = String::from_utf8_lossy(&result.stdout)
+        .lines()
+        .rev()
+        .find(|l| l.starts_with('{'))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("{}", format_output(&result)));
+    let lean: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(lean["backend"], "lean");
+    assert_eq!(closed_by_steps(&aver), closed_by_steps(&lean));
+    let _ = fs::remove_dir_all(out);
+    let _ = fs::remove_dir_all(lean_out);
+}
+
+#[test]
+fn the_embedded_kernel_refuses_mutated_scripts() {
+    let out = scratch("embedded");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("lock.av", &out).into_iter().collect();
+    let lock = fs::read_to_string(&files["lockTimeChecked.agreesWithSpec"]).unwrap();
+    let started = std::time::Instant::now();
+    assert_eq!(
+        aver::proof_kernel::verdict(&lock),
+        Ok("lockTimeChecked.agreesWithSpec".to_string())
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    for (from, to) in [
+        ("(hyp h_steps2)", "(hyp h_steps1)"),
+        ("(i 500000000)", "(i 500000001)"),
+        ("(unfold continued 2", "(unfold continued 1"),
+        ("(hyp h_steps3)", "(hyp h_steps7)"),
+        ("(rule bool.and.true_l", "(rule bool.and.simp"),
+    ] {
+        let refused = aver::proof_kernel::verdict(&mutate_proof(&lock, from, to));
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("step proof")),
+            "{from} -> {to}: {refused:?}"
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn the_embedded_kernel_is_generated_from_the_aver_source() {
+    let out = Command::new("python3")
+        .args([
+            "tools/regenerate_proof_kernel.py",
+            "--check",
+            "--aver-bin",
+            aver_bin(),
+        ])
+        .current_dir(repo_root())
+        .output()
+        .expect("python3 runs");
+    assert!(out.status.success(), "{}", format_output(&out));
+}

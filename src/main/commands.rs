@@ -9645,12 +9645,36 @@ struct ProofManifest {
 
 #[path = "law_reason_report.rs"]
 mod law_reason_report;
+#[path = "proof_aver.rs"]
+mod proof_aver;
 #[path = "proof_explain/mod.rs"]
 mod proof_explain;
 #[path = "proof_fingerprints.rs"]
 mod proof_fingerprints;
 #[path = "proof_steps_report.rs"]
 mod proof_steps_report;
+
+/// `aver proof --backend aver`: step proofs checked by the embedded Aver
+/// proof kernel, without Lean.
+pub(super) fn cmd_proof_aver(
+    file: &str,
+    output_dir: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+    check: bool,
+    sorry_budget: Option<usize>,
+    check_json: bool,
+) {
+    proof_aver::run(
+        file,
+        output_dir,
+        project_name,
+        module_root_override,
+        check,
+        sorry_budget,
+        check_json,
+    );
+}
 
 /// The file-level audit records as one per-law manifest, keyed on the `fn.law`
 /// identity and sorted by it for byte-reproducibility.

@@ -5,18 +5,8 @@ module ProofKernel
         "Prints one line per script, `accepted <law>` or `refused <file>: step <path>: <reason>`,"
         "and fails when any script is refused. Lean decides proof credit; this replayer is the seed"
         "of a kernel written in Aver and is not trusted for verdicts yet."
-    depends [Kernel.Sexp, Kernel.Decode, Kernel.Check]
+    depends [Kernel.Verdict]
     effects [Args.get, Console.print, Disk.readText]
-
-fn verdict(text: String) -> Result<String, String>
-    ? "Read one script and check it: the law it proves, or the refusal."
-    sexp = Kernel.Sexp.readAll(text)?
-    Kernel.Check.checkScript(Kernel.Decode.script(sexp)?)
-
-verify verdict
-    verdict("(steps 1 (obligation k () (none) (i 1) (i 1)) (defs) (laws) (proof (refl (i 1))))") => Result.Ok("k")
-    verdict("(steps 1 (obligation k () (none) (i 1) (i 1)) (defs) (laws) (proof (hyp h)))") => Result.Err("step proof: hypothesis h is not in scope")
-    verdict("(steps 2)") => Result.Err("unsupported step format version 2")
 
 fn checkFiles(paths: List<String>, refused: Int) -> Int
     ? "Check every file, print a line for each, count the refusals."
@@ -30,7 +20,7 @@ fn checkFile(path: String) -> Int
     ! [Console.print, Disk.readText]
     match Disk.readText(path)
         Result.Err(e) -> report("refused {path}: cannot read: {e}", 1)
-        Result.Ok(text) -> match verdict(text)
+        Result.Ok(text) -> match Kernel.Verdict.verdict(text)
             Result.Ok(key) -> report("accepted {key}", 0)
             Result.Err(why) -> report("refused {path}: {why}", 1)
 

@@ -153,7 +153,7 @@ jobs:
           -E 'binary(proof_spec) | binary(map_iteration_order) | binary(yield_module_helpers_spec)
           | (binary(yield_spec) & test(/_lean_check_builds_with_zero_errors_and_no_sorry$/))
           | (binary(guide_example_spec) & test(=the_guide_example_reaches_the_lean_wall_without_an_open_law))
-          | (binary(proof_steps_spec) & test(=lean_accepts_the_step_terms_and_refuses_mutated_ones))
+          | (binary(proof_steps_spec) & (test(=lean_accepts_the_step_terms_and_refuses_mutated_ones) | test(=both_backends_close_the_same_laws_by_steps)))
           | (binary(run_all_spec) & test(=the_programs_laws_reach_the_lean_wall))
           | (binary(yield_verify_spec) & test(=coordinator_laws_are_universal_beside_the_vm_schedule_scenarios))
           | (binary(verify_step_budget_spec) & test(=the_proof_lane_declines_a_case_verify_did_not_answer))
