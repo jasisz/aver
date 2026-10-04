@@ -273,6 +273,21 @@ jobs:
           path: /tmp/aver-cert-prelude-store
           key: prelude-store-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/**', 'aver-cert/src/verifier.rs', 'aver-cert/src/prelude_cache.rs', 'aver-cert/src/lean_process.rs') }}
 
+      - name: Cache the guard probes' wall seed
+        # The guard-isolation probes run `lake build` themselves, outside the
+        # checker. tests/support/wall_seed.rs builds the artifact-independent
+        # wall once into this store and copies it into each probe; the copy is
+        # checked against the manifest written when the seed was built, and a
+        # mismatch fails the test. The key covers the wall sources and
+        # `lean-toolchain` (both under wall/current), the root list in wall.rs
+        # and the seed layout, so any change to them builds a fresh seed.
+        # The checker and `aver-cert verify` never read this store.
+        if: matrix.suite == 'cert_whole_module_guard_iso'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/aver-test-wall-seed
+          key: wall-seed-${{ runner.os }}-${{ hashFiles('aver-cert/assets/wall/current/**', 'aver-cert/src/wall.rs', 'tests/support/wall_seed.rs') }}
+
       - name: Install nextest
         if: matrix.mode == 'nextest'
         uses: taiki-e/install-action@nextest
@@ -304,6 +319,7 @@ jobs:
         if: matrix.mode == 'nextest'
         env:
           AVER_CERT_PHASE_TIMEOUT_SECS: ${{ matrix.phase_timeout_secs || 900 }}
+          AVER_TEST_WALL_SEED: /tmp/aver-test-wall-seed
         run: >-
           cargo nextest run -p aver-lang --features ${{ matrix.features || 'wasm' }} --test ${{ matrix.suite }}
           -E '${{ matrix.filter }}'

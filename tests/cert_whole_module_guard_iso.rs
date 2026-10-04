@@ -23,6 +23,8 @@ use aver_cmd::aver_command;
 mod cert_wall;
 #[path = "support/scratch_dir.rs"]
 mod scratch_dir;
+#[path = "support/wall_seed.rs"]
+mod wall_seed;
 
 use cert_wall::materialize as materialize_wall;
 use scratch_dir::{ScratchDir, temp_dir};
@@ -37,8 +39,10 @@ fn lake_available() -> bool {
 /// Compile `fixture` (a path under the repository root) with `--certify`,
 /// materialize the wall into its package and build the package's acceptance
 /// root (`ArtifactCertificate`, which imports `Artifact`), so a probe can
-/// import it. Returns the scratch directory, the package directory and the
-/// artifact bytes.
+/// import it. The artifact-independent wall modules come from the shared seed
+/// (`support/wall_seed.rs`); Lake rebuilds any whose trace does not match.
+/// Returns the scratch directory, the package directory and the artifact
+/// bytes.
 fn built_package(fixture: &str, extra: &[&str], prefix: &str) -> (ScratchDir, PathBuf, Vec<u8>) {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = temp_dir(prefix);
@@ -69,6 +73,7 @@ fn built_package(fixture: &str, extra: &[&str], prefix: &str) -> (ScratchDir, Pa
     let wasm = std::fs::read(out_dir.join(format!("{stem}.wasm"))).unwrap();
     let cert = out_dir.join("cert");
     materialize_wall(&cert);
+    wall_seed::seed(&cert);
     let build = Command::new("lake")
         .current_dir(&cert)
         .args(["build", "ArtifactCertificate"])
@@ -88,6 +93,8 @@ fn built_package(fixture: &str, extra: &[&str], prefix: &str) -> (ScratchDir, Pa
 /// library lists their whole import closure within the wall, because a
 /// `roots` list is not extended by imports and a module outside it is never
 /// built (and the modules that import package data cannot be built here).
+/// The modules come pre-built from the shared seed; Lake rebuilds any whose
+/// trace does not match the staged sources.
 fn built_wall(prefix: &str, roots: &[&str]) -> ScratchDir {
     let wall_dir = temp_dir(prefix);
     std::fs::create_dir_all(&wall_dir).unwrap();
@@ -122,19 +129,9 @@ fn built_wall(prefix: &str, roots: &[&str]) -> ScratchDir {
             pending.extend(imports_of(&module));
         }
     }
-    let roots = closure
-        .iter()
-        .map(|root| format!("`{root}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    std::fs::write(
-        wall_dir.join("lakefile.lean"),
-        format!(
-            "import Lake\nopen Lake DSL\n\npackage «avercert» where\n  version := v!\"0.1.0\"\n\n\
-             @[default_target]\nlean_lib «AverCert» where\n  srcDir := \".\"\n  roots := #[{roots}]\n"
-        ),
-    )
-    .unwrap();
+    let roots = closure.iter().map(String::as_str).collect::<Vec<_>>();
+    std::fs::write(wall_dir.join("lakefile.lean"), wall_seed::lakefile(&roots)).unwrap();
+    wall_seed::seed(&wall_dir);
     let build = Command::new("lake")
         .current_dir(&wall_dir)
         .arg("build")
@@ -2445,4 +2442,35 @@ example : (groupPolicy [(1, sumFromP)]).1 = .simulatesModelTotally := by decide 
 "#
     );
     assert_probe_holds(&cert, "TerminationGuardIso.lean", &lean);
+}
+
+/// Lake does not notice an `.olean` changed after it was built: it reuses any
+/// output whose trace matches. So the shared wall seed carries its own
+/// manifest, and a copy that differs from it in any file, or that names
+/// another wall, must refuse to seed a probe (the probe then fails) rather
+/// than let it build against altered modules.
+#[test]
+fn an_altered_wall_seed_refuses_to_seed() {
+    let root = temp_dir("wall-seed-tamper");
+    let entry = root.join("entry");
+    let lib = entry.join(".lake/build/lib/lean");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("CertDecode.olean"), b"built").unwrap();
+    std::fs::write(lib.join("CertDecode.trace"), b"trace").unwrap();
+    wall_seed::write_manifest(&entry, "wall-key");
+    let lake = entry.join(".lake");
+    assert!(wall_seed::check_copy_for_key(&entry, &lake, "wall-key").is_ok());
+
+    assert!(wall_seed::check_copy_for_key(&entry, &lake, "other-wall").is_err());
+
+    std::fs::write(lib.join("CertDecode.olean"), b"forged").unwrap();
+    assert!(wall_seed::check_copy_for_key(&entry, &lake, "wall-key").is_err());
+    std::fs::write(lib.join("CertDecode.olean"), b"built").unwrap();
+
+    std::fs::write(lib.join("Extra.olean"), b"extra").unwrap();
+    assert!(wall_seed::check_copy_for_key(&entry, &lake, "wall-key").is_err());
+    std::fs::remove_file(lib.join("Extra.olean")).unwrap();
+
+    std::fs::remove_file(lib.join("CertDecode.trace")).unwrap();
+    assert!(wall_seed::check_copy_for_key(&entry, &lake, "wall-key").is_err());
 }
