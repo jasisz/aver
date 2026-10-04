@@ -27,6 +27,8 @@
 //!          | (rule RULE ((NAME TERM)…) PROOF…) | (law KEY ((NAME TERM)…) [PROOF])
 //!          | (compute TERM TERM) | (cases TERM NAME PROOF PROOF)
 //!          | (enum NAME TERM TERM PROOF…) | (absurd PROOF TERM TERM)
+//!          | (induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)
+//!          | (ring TERM TERM) | (linear TERM BOOL (NAME…) (INT…))
 //! ```
 
 use crate::ast::{BinOp, Literal};
@@ -115,6 +117,22 @@ fn op_symbol(op: BinOp) -> &'static str {
     }
 }
 
+/// An operator spelled by the type it works on, so that a rule about Int
+/// arithmetic never applies to joining texts or to Float arithmetic, which
+/// have other laws (`+` on texts does not commute; on Floats it does not
+/// associate). Int keeps the plain symbols.
+fn typed_op_symbol(op: BinOp, ty: Option<&crate::ast::Type>) -> String {
+    use crate::ast::Type;
+    let plain = op_symbol(op);
+    let arithmetic = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div);
+    let ordering = matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte);
+    match ty {
+        Some(Type::Str) if op == BinOp::Add => "++".to_string(),
+        Some(Type::Float) if arithmetic || ordering => format!("{plain}."),
+        _ => plain.to_string(),
+    }
+}
+
 fn literal(lit: &Literal) -> Result<String, String> {
     Ok(match lit {
         Literal::Int(v) => format!("(i {v})"),
@@ -194,7 +212,13 @@ pub fn term(t: &Term, names: &dyn Names) -> Result<String, String> {
         ResolvedExpr::BinOp(op, a, b) => {
             format!(
                 "(op {} {} {})",
-                op_symbol(*op),
+                typed_op_symbol(
+                    *op,
+                    t.ty()
+                        .filter(|ty| **ty != crate::ast::Type::Bool)
+                        .or(a.ty())
+                        .or(b.ty())
+                ),
                 term(a, names)?,
                 term(b, names)?
             )
@@ -362,6 +386,47 @@ pub fn proof(p: &Proof, names: &dyn Names) -> Result<String, String> {
             term(on, names)?,
             proof(if_true, names)?,
             proof(if_false, names)?
+        ),
+        Proof::Induct {
+            fn_id,
+            args,
+            lhs,
+            rhs,
+            cases,
+        } => {
+            let mut s = format!(
+                "(induct {} ({}) {} {}",
+                names.fn_name(*fn_id),
+                list(args, names)?,
+                term(lhs, names)?,
+                term(rhs, names)?
+            );
+            for c in cases {
+                s.push_str(&format!(
+                    " (case ({}) ({}) {})",
+                    c.binders.join(" "),
+                    c.ihs.join(" "),
+                    proof(&c.proof, names)?
+                ));
+            }
+            s.push(')');
+            s
+        }
+        Proof::Ring { lhs, rhs } => format!("(ring {} {})", term(lhs, names)?, term(rhs, names)?),
+        Proof::Linear {
+            goal,
+            value,
+            hyps,
+            weights,
+        } => format!(
+            "(linear {} {value} ({}) ({}))",
+            term(goal, names)?,
+            hyps.join(" "),
+            weights
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         Proof::Absurd {
             contradiction,

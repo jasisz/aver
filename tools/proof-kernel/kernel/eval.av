@@ -1,7 +1,8 @@
 module Eval
     intent =
         "Evaluation of closed terms for the compute rule: Int arithmetic, Euclidean division by a"
-        "nonzero literal, comparisons and the Bool connectives. Anything else is not closed."
+        "nonzero literal, comparisons, the Bool connectives, and lists of such values with"
+        "prepend, concat, len, reverse, take and drop. Anything else is not closed."
     exposes [Val, evalClosed]
     depends [Kernel.Term]
     effects []
@@ -9,6 +10,7 @@ module Eval
 type Val
     VInt(Int)
     VBool(Bool)
+    VList(List<Val>)
 
 fn evalClosed(t: Term) -> Option<Val>
     ? "The value of a closed term, if it is one this evaluator knows."
@@ -16,19 +18,62 @@ fn evalClosed(t: Term) -> Option<Val>
         Term.TInt(n) -> Option.Some(Val.VInt(n))
         Term.TBool(b) -> Option.Some(Val.VBool(b))
         Term.TOp(o, a, b) -> evalOp(o, evalClosed(a), evalClosed(b))
+        Term.TNeg(a) -> negated(evalClosed(a))
+        Term.TList(xs) -> listOf(evalAll(xs))
         Term.TBi(name, args) -> evalBuiltin(name, args)
         _ -> Option.None
 
 verify evalClosed
     evalClosed(Term.TOp("-", Term.TInt(8), Term.TInt(1))) => Option.Some(Val.VInt(7))
     evalClosed(Term.TVar("x")) => Option.None
+    evalClosed(Term.TOp("<", Term.TInt(32767), Term.TNeg(Term.TInt(32768)))) => Option.Some(Val.VBool(false))
     evalClosed(Term.TBi("__int_div_euclid", [Term.TInt(0 - 7), Term.TInt(2)])) => Option.Some(Val.VInt(0 - 4))
+
+fn evalAll(xs: List<Term>) -> List<Option<Val>>
+    ? "The value of each term."
+    match xs
+        [] -> []
+        [x, ..rest] -> List.prepend(evalClosed(x), evalAll(rest))
+
+verify evalAll
+    evalAll([Term.TInt(1)]) => [Option.Some(Val.VInt(1))]
+
+fn listOf(vs: List<Option<Val>>) -> Option<Val>
+    ? "A list value when every element is closed."
+    match vs
+        [] -> Option.Some(Val.VList([]))
+        [Option.Some(v), ..rest] -> consOnto(v, listOf(rest))
+        _ -> Option.None
+
+verify listOf
+    listOf([Option.Some(Val.VInt(1)), Option.None]) => Option.None
+    listOf([Option.Some(Val.VInt(1))]) => Option.Some(Val.VList([Val.VInt(1)]))
+
+fn consOnto(v: Val, rest: Option<Val>) -> Option<Val>
+    ? "v in front of a list value."
+    match rest
+        Option.Some(Val.VList(vs)) -> Option.Some(Val.VList(List.prepend(v, vs)))
+        _ -> Option.None
+
+verify consOnto
+    consOnto(Val.VInt(1), Option.None) => Option.None
+
+fn negated(a: Option<Val>) -> Option<Val>
+    ? "The negation of an Int value."
+    match a
+        Option.Some(Val.VInt(x)) -> Option.Some(Val.VInt(0 - x))
+        _ -> Option.None
+
+verify negated
+    negated(Option.Some(Val.VInt(3))) => Option.Some(Val.VInt(0 - 3))
+    negated(Option.Some(Val.VBool(true))) => Option.None
 
 fn evalOp(o: String, a: Option<Val>, b: Option<Val>) -> Option<Val>
     ? "A binary operator on two values."
     match (a, b)
         (Option.Some(Val.VInt(x)), Option.Some(Val.VInt(y))) -> intOp(o, x, y)
         (Option.Some(Val.VBool(x)), Option.Some(Val.VBool(y))) -> boolOp(o, x, y)
+        (Option.Some(Val.VList(x)), Option.Some(Val.VList(y))) -> listOp(o, x, y)
         _ -> Option.None
 
 verify evalOp
@@ -64,6 +109,17 @@ verify boolOp
     boolOp("==", true, true) => Option.Some(Val.VBool(true))
     boolOp("+", true, true) => Option.None
 
+fn listOp(o: String, x: List<Val>, y: List<Val>) -> Option<Val>
+    ? "Equality of lists."
+    match o
+        "==" -> Option.Some(Val.VBool(x == y))
+        "!=" -> Option.Some(Val.VBool(x != y))
+        _ -> Option.None
+
+verify listOp
+    listOp("==", [Val.VInt(1)], [Val.VInt(1)]) => Option.Some(Val.VBool(true))
+    listOp("<", [], []) => Option.None
+
 fn evalBuiltin(name: String, args: List<Term>) -> Option<Val>
     ? "The builtins the evaluator knows."
     match (name, args)
@@ -72,7 +128,7 @@ fn evalBuiltin(name: String, args: List<Term>) -> Option<Val>
         ("Bool.not", [a]) -> negate(evalClosed(a))
         ("__int_div_euclid", [a, k]) -> division(evalClosed(a), evalClosed(k), true)
         ("__int_mod_euclid", [a, k]) -> division(evalClosed(a), evalClosed(k), false)
-        _ -> Option.None
+        _ -> listBuiltin(name, args)
 
 verify evalBuiltin
     evalBuiltin("Bool.and", [Term.TBool(true), Term.TBool(false)]) => Option.Some(Val.VBool(false))
@@ -123,3 +179,68 @@ fn divided(x: Int, y: Int, quotient: Bool) -> Option<Val>
 verify divided
     divided(0 - 7, 2, false) => Option.Some(Val.VInt(1))
     divided(1, 0, true) => Option.None
+
+fn listBuiltin(name: String, args: List<Term>) -> Option<Val>
+    ? "List.prepend, concat, len, reverse, take and drop on closed lists, as Aver defines them: a count below zero counts as zero."
+    match (name, args)
+        ("List.prepend", [a, l]) -> prepended(evalClosed(a), evalClosed(l))
+        ("List.concat", [a, b]) -> concatenated(evalClosed(a), evalClosed(b))
+        ("List.len", [l]) -> lengthOf(evalClosed(l))
+        ("List.reverse", [l]) -> reversed(evalClosed(l))
+        ("List.take", [l, n]) -> sliced(evalClosed(l), evalClosed(n), true)
+        ("List.drop", [l, n]) -> sliced(evalClosed(l), evalClosed(n), false)
+        _ -> Option.None
+
+verify listBuiltin
+    listBuiltin("List.len", [Term.TList([Term.TInt(1), Term.TInt(2)])]) => Option.Some(Val.VInt(2))
+    listBuiltin("List.take", [Term.TList([Term.TInt(1), Term.TInt(2)]), Term.TInt(0 - 1)]) => Option.Some(Val.VList([]))
+    listBuiltin("List.drop", [Term.TList([Term.TInt(1), Term.TInt(2)]), Term.TInt(1)]) => Option.Some(Val.VList([Val.VInt(2)]))
+    listBuiltin("List.concat", [Term.TList([Term.TInt(1)]), Term.TBi("List.prepend", [Term.TInt(2), Term.TList([])])]) => Option.Some(Val.VList([Val.VInt(1), Val.VInt(2)]))
+    listBuiltin("List.head", []) => Option.None
+
+fn prepended(a: Option<Val>, l: Option<Val>) -> Option<Val>
+    ? "An element in front of a list."
+    match (a, l)
+        (Option.Some(v), Option.Some(Val.VList(vs))) -> Option.Some(Val.VList(List.prepend(v, vs)))
+        _ -> Option.None
+
+verify prepended
+    prepended(Option.Some(Val.VInt(1)), Option.Some(Val.VInt(2))) => Option.None
+
+fn concatenated(a: Option<Val>, b: Option<Val>) -> Option<Val>
+    ? "One list after the other."
+    match (a, b)
+        (Option.Some(Val.VList(x)), Option.Some(Val.VList(y))) -> Option.Some(Val.VList(List.concat(x, y)))
+        _ -> Option.None
+
+verify concatenated
+    concatenated(Option.None, Option.None) => Option.None
+
+fn lengthOf(l: Option<Val>) -> Option<Val>
+    ? "How many elements."
+    match l
+        Option.Some(Val.VList(vs)) -> Option.Some(Val.VInt(List.len(vs)))
+        _ -> Option.None
+
+verify lengthOf
+    lengthOf(Option.Some(Val.VInt(1))) => Option.None
+
+fn reversed(l: Option<Val>) -> Option<Val>
+    ? "The elements backwards."
+    match l
+        Option.Some(Val.VList(vs)) -> Option.Some(Val.VList(List.reverse(vs)))
+        _ -> Option.None
+
+verify reversed
+    reversed(Option.Some(Val.VList([Val.VInt(1), Val.VInt(2)]))) => Option.Some(Val.VList([Val.VInt(2), Val.VInt(1)]))
+
+fn sliced(l: Option<Val>, n: Option<Val>, front: Bool) -> Option<Val>
+    ? "The first n elements (front) or all but them; n below zero counts as zero."
+    match (l, n)
+        (Option.Some(Val.VList(vs)), Option.Some(Val.VInt(k))) -> match front
+            true -> Option.Some(Val.VList(List.take(vs, k)))
+            false -> Option.Some(Val.VList(List.drop(vs, k)))
+        _ -> Option.None
+
+verify sliced
+    sliced(Option.Some(Val.VList([Val.VInt(1)])), Option.Some(Val.VInt(5)), true) => Option.Some(Val.VList([Val.VInt(1)]))

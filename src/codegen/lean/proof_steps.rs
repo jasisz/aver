@@ -350,11 +350,26 @@ impl Renderer<'_> {
                     s.push(' ');
                     s.push_str(&self.expr(v));
                 }
+                let cited = self.script.law(law);
                 if let Some(p) = premise {
+                    let p = self.proof(p, hyps)?;
+                    // A bare comparison as `when` is a Prop in the theorem.
+                    let prop = cited
+                        .and_then(|l| l.premise.as_ref())
+                        .is_some_and(is_prop_comparison);
                     s.push(' ');
-                    s.push_str(&self.proof(p, hyps)?);
+                    if prop {
+                        s.push_str(&format!(
+                            "(propext ⟨fun _ => rfl, fun _ => of_decide_eq_true {p}⟩)"
+                        ));
+                    } else {
+                        s.push_str(&p);
+                    }
                 }
-                s
+                match cited {
+                    Some(l) => from_statement(&l.lhs, &l.rhs, format!("({s})")),
+                    None => s,
+                }
             }
             Proof::Compute { .. } => "by decide".to_string(),
             Proof::Cases {
@@ -373,6 +388,149 @@ impl Renderer<'_> {
                 format!(
                     "AverSteps.bool_cases {} (fun {hyp} => {pf}) (fun {hyp} => {pt})",
                     self.expr(on)
+                )
+            }
+            // `f.induct`, the functional induction principle Lean derives
+            // from `f`'s own recursion, with the claim as its motive and
+            // one explicit function per case: the parameters that are not
+            // matched, the arm's pattern variables, then one hypothesis per
+            // recursive call.
+            Proof::Induct {
+                fn_id, args, cases, ..
+            } => {
+                let def = self.script.def(*fn_id).ok_or("induct: no definition")?;
+                let j = crate::ir::proof_steps::induct::structural_param(def)?
+                    .ok_or("induct: the function does not recurse")?;
+                let (v, general) = crate::ir::proof_steps::induct::varied(
+                    args,
+                    j,
+                    &self.script.obligation.givens,
+                )?;
+                let ResolvedExpr::Match { arms, .. } = &def.body.node else {
+                    return Err("induct: the body is not a match".into());
+                };
+                let lean = super::syntax::aver_name_to_lean;
+                let place = |k: usize| -> String {
+                    if k == j {
+                        lean(&v)
+                    } else {
+                        general
+                            .iter()
+                            .find(|(g, _)| *g == k)
+                            .map(|(_, n)| lean(n))
+                            .unwrap_or_else(|| "_".to_string())
+                    }
+                };
+                let f_name = emit_expr(
+                    &Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(*fn_id), Vec::new())),
+                    self.ctx,
+                );
+                // Lean leaves out of `f.induct` every parameter each
+                // recursive call passes on unchanged.
+                let fixed: Vec<bool> = (0..args.len())
+                    .map(|k| {
+                        k != j
+                            && crate::ir::proof_steps::induct::self_calls(&def.body, *fn_id)
+                                .iter()
+                                .all(|(call, inner)| {
+                                    matches!(&call[k].node, ResolvedExpr::Ident(n)
+                                        if *n == def.params[k] && !inner.contains(n))
+                                })
+                    })
+                    .collect();
+                let varies = |k: &usize| !fixed[*k];
+                let motive_binders: Vec<String> =
+                    (0..args.len()).filter(varies).map(place).collect();
+                let mut s = format!(
+                    "({f_name}.induct (motive := fun {} => {})",
+                    motive_binders.join(" "),
+                    self.eqn(&eq)
+                );
+                let mut scope_hyps: Vec<Hyps> = Vec::new();
+                for (arm, case) in arms.iter().zip(cases) {
+                    let (_, ihs) = crate::ir::proof_steps::induct::case(
+                        def,
+                        args,
+                        j,
+                        &v,
+                        &general,
+                        arm,
+                        &case.binders,
+                        &case.ihs,
+                        &eq.lhs,
+                        &eq.rhs,
+                    )?;
+                    let mut scope = hyps.clone();
+                    scope.extend(ihs);
+                    scope_hyps.push(scope);
+                }
+                for (case, scope) in cases.iter().zip(&scope_hyps) {
+                    let mut binders: Vec<String> = (0..args.len())
+                        .filter(|k| *k != j && varies(k))
+                        .map(place)
+                        .collect();
+                    binders.extend(case.binders.iter().map(|b| lean(b)));
+                    binders.extend(case.ihs.iter().cloned());
+                    let body = self.proof(&case.proof, scope)?;
+                    if binders.is_empty() {
+                        s.push_str(&format!(" ({body})"));
+                    } else {
+                        s.push_str(&format!(" (fun {} => {body})", binders.join(" ")));
+                    }
+                }
+                for (k, a) in args.iter().enumerate() {
+                    if varies(&k) {
+                        s.push(' ');
+                        s.push_str(&self.expr(a));
+                    }
+                }
+                s.push(')');
+                s
+            }
+            // Each decided comparison becomes a Prop fact and Lean's core
+            // decision procedure for linear integer arithmetic closes the
+            // goal from them alone; the kernel written in Aver checks the
+            // weights instead.
+            Proof::Linear {
+                goal,
+                value,
+                hyps: names,
+                ..
+            } => {
+                let mut facts = String::new();
+                for (i, n) in names.iter().enumerate() {
+                    let (_, e) = hyps
+                        .iter()
+                        .rev()
+                        .find(|(h, _)| h == n)
+                        .ok_or("linear: no such hypothesis")?;
+                    let proof = self.proof(&Proof::Hyp(n.clone()), hyps)?;
+                    let fact = match term::bool_value(&e.rhs) {
+                        Some(true) => format!("of_decide_eq_true {proof}"),
+                        _ => format!("of_decide_eq_false {proof}"),
+                    };
+                    facts.push_str(&format!("have steps_fact{i} := {fact}; "));
+                }
+                // The comparison as the Prop `omega` proves.
+                let prop = emit_expr(goal, self.ctx);
+                if *value {
+                    format!("decide_eq_true (show {prop} from by {facts}omega)")
+                } else {
+                    format!("decide_eq_false (show ¬ ({prop}) from by {facts}omega)")
+                }
+            }
+            // Both sides read as `Lean.Grind.CommRing.Expr` over one list of
+            // atoms; the normaliser Lean's core proves sound
+            // (`CommRing.norm_int`) maps both to one polynomial, which the
+            // kernel checks by evaluation.
+            Proof::Ring { lhs, rhs } => {
+                let mut atoms: Vec<Term> = Vec::new();
+                let el = reify(lhs, &mut atoms);
+                let er = reify(rhs, &mut atoms);
+                let rendered: Vec<String> = atoms.iter().map(|a| self.expr(a)).collect();
+                let ctx = rarray(&rendered);
+                format!(
+                    "((Lean.Grind.CommRing.norm_int {ctx} {el} (Lean.Grind.CommRing.Expr.toPoly_k {er}) rfl).trans (Lean.Grind.CommRing.norm_int {ctx} {er} (Lean.Grind.CommRing.Expr.toPoly_k {er}) rfl).symm)"
                 )
             }
             // `true = false` (or the other way round) is refuted by `decide`.
@@ -539,7 +697,7 @@ impl Renderer<'_> {
         if arm == 0 {
             let body = term::subst(&def.body, &outer)?;
             statement = format!("{} = {}", self.expr(&call), self.expr(&body));
-            tactic = "rfl".to_string();
+            tactic = format!("first | rfl | {SAME_MATCHES}");
         } else {
             let ResolvedExpr::Match { subject, arms } = &def.body.node else {
                 return Err("unfold: not a match".into());
@@ -589,7 +747,13 @@ impl Renderer<'_> {
                 }
                 None => pat,
             };
-            tactic = arm_tactic(pat, &subject, "h")?;
+            // A match the statement writes out is elaborated apart from the
+            // definition's, so the two need not be equal by `rfl` alone.
+            tactic = match arm_tactic(pat, &subject, "h")?.as_str() {
+                "subst h; rfl" => format!("subst h; first | rfl | {SAME_MATCHES}"),
+                "rw [h]; try rfl" => format!("rw [h]; all_goals first | rfl | {SAME_MATCHES}"),
+                other => other.to_string(),
+            };
         }
         let intro = if names.is_empty() {
             String::new()
@@ -601,8 +765,11 @@ impl Renderer<'_> {
         } else {
             format!("∀{binders}, {statement}")
         };
+        // Only the left side is opened: the right side of an arm of a
+        // recursive function calls the function again. `conv` may close the
+        // goal itself, hence `all_goals`.
         self.support.push(format!(
-            "have {name} : {quantified} := (by {intro}unfold {f_name}; {tactic})"
+            "have {name} : {quantified} := (by {intro}(conv => lhs; unfold {f_name}); all_goals ({tactic}))"
         ));
         self.unfolds.insert((fn_id, arm, value_key), name.clone());
         Ok((name, extra))
@@ -707,9 +874,106 @@ fn law_theorem(key: &str, ctx: &CodegenContext) -> Option<String> {
     None
 }
 
+/// `t` as a `Lean.Grind.CommRing.Expr`, the way [`crate::ir::proof_steps::ring`]
+/// reads it: ring operations on Int, every other subterm an atom.
+fn reify(t: &Term, atoms: &mut Vec<Term>) -> String {
+    use crate::ast::Type;
+    let e = "Lean.Grind.CommRing.Expr";
+    if let Some(v) = term::int_value(t) {
+        return format!("({e}.num ({v}))");
+    }
+    let int_op = !matches!(t.ty(), Some(Type::Str | Type::Float));
+    match &t.node {
+        ResolvedExpr::BinOp(BinOp::Add, a, b) if int_op => {
+            format!("({e}.add {} {})", reify(a, atoms), reify(b, atoms))
+        }
+        ResolvedExpr::BinOp(BinOp::Sub, a, b) if int_op => {
+            format!("({e}.sub {} {})", reify(a, atoms), reify(b, atoms))
+        }
+        ResolvedExpr::BinOp(BinOp::Mul, a, b) if int_op => {
+            format!("({e}.mul {} {})", reify(a, atoms), reify(b, atoms))
+        }
+        ResolvedExpr::Neg(a) if int_op => format!("({e}.neg {})", reify(a, atoms)),
+        _ => {
+            let c = term::canon(t);
+            let i = match atoms.iter().position(|x| *x == c) {
+                Some(i) => i,
+                None => {
+                    atoms.push(c);
+                    atoms.len() - 1
+                }
+            };
+            format!("({e}.var {i})")
+        }
+    }
+}
+
+/// A `Lean.RArray` of the rendered atoms, index `i` at position `i`.
+fn rarray(items: &[String]) -> String {
+    fn build(items: &[String], from: usize) -> String {
+        match items.len() {
+            0 => "(Lean.RArray.leaf (0 : Int))".to_string(),
+            1 => format!("(Lean.RArray.leaf {})", items[0]),
+            n => {
+                let mid = n / 2;
+                format!(
+                    "(Lean.RArray.branch {} {} {})",
+                    from + mid,
+                    build(&items[..mid], from),
+                    build(&items[mid..], from + mid)
+                )
+            }
+        }
+    }
+    build(items, 0)
+}
+
+/// Whether `t` builds or reads the inside of a refined record, which Lean
+/// models as a `Subtype` the step terms cannot spell.
+fn touches_refinement(t: &Term, ctx: &CodegenContext) -> bool {
+    let refined = ctx.proof_ir.refined_types.values();
+    let here = match &t.node {
+        ResolvedExpr::RecordCreate { type_name, .. }
+        | ResolvedExpr::RecordUpdate { type_name, .. } => {
+            crate::codegen::common::find_refined_type(ctx, type_name).is_some()
+        }
+        ResolvedExpr::Attr(_, field) => refined.clone().any(|d| d.carrier_field == *field),
+        _ => false,
+    };
+    if here {
+        return true;
+    }
+    if let ResolvedExpr::Match { arms, .. } = &t.node
+        && arms.iter().any(|a| touches_refinement(&a.body, ctx))
+    {
+        return true;
+    }
+    term::children(t)
+        .into_iter()
+        .any(|c| touches_refinement(c, ctx))
+}
+
 /// Render `script` as a term for its law's theorem, after `intro` of the
 /// givens (and `h_when`).
 pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, String> {
+    // Every term of the proof comes from these, by unfolding, rewriting
+    // and computing; the Lean model of a refined record is a `Subtype`,
+    // which the step terms do not spell, so such a law keeps its tactics.
+    let ob = &script.obligation;
+    let mut sources: Vec<&Term> = vec![&ob.lhs, &ob.rhs];
+    sources.extend(ob.premise.iter());
+    for d in &script.defs {
+        sources.push(&d.body);
+        sources.extend(d.lets.iter().map(|(_, v)| v));
+    }
+    sources.extend(script.consts.iter().map(|c| &c.value));
+    for l in &script.laws {
+        sources.extend([&l.lhs, &l.rhs]);
+        sources.extend(l.premise.iter());
+    }
+    if sources.into_iter().any(|t| touches_refinement(t, ctx)) {
+        return Err("the proof reads the inside of a refined record".into());
+    }
     let mut laws = BTreeMap::new();
     for l in &script.laws {
         if let Some(name) = law_theorem(&l.key, ctx) {
@@ -728,11 +992,58 @@ pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, 
         hyps.push(("when".into(), Eqn::new(p.clone(), term::boolean(true))));
     }
     let term = r.proof(&script.proof, &hyps)?;
+    let term = to_statement(&script.obligation, term);
     Ok(Rendered {
         support: r.support,
         term,
     })
 }
+
+/// A cited law's theorem states a comparison as a Prop; the steps read it
+/// as an equation of Bools, every comparison through `decide`.
+fn from_statement(lhs: &Term, rhs: &Term, h: String) -> String {
+    match (is_prop_comparison(lhs), is_prop_comparison(rhs)) {
+        (false, false) => h,
+        // `decide A = R` from `A = (R = true)`.
+        (true, false) => format!(
+            "(Bool.eq_iff_iff.mpr ⟨fun d => Eq.mp {h} (of_decide_eq_true d), fun r => decide_eq_true (Eq.mpr {h} r)⟩)"
+        ),
+        // `L = decide B` from `(L = true) = B`.
+        (false, true) => format!(
+            "(Bool.eq_iff_iff.mpr ⟨fun l => decide_eq_true (Eq.mp {h} l), fun d => Eq.mpr {h} (of_decide_eq_true d)⟩)"
+        ),
+        // `decide A = decide B` from `A = B`.
+        (true, true) => format!(
+            "(Bool.eq_iff_iff.mpr ⟨fun d => decide_eq_true (Eq.mp {h} (of_decide_eq_true d)), fun d => decide_eq_true (Eq.mpr {h} (of_decide_eq_true d))⟩)"
+        ),
+    }
+}
+
+/// The step term proves the claim as an equation of Bools, every Int
+/// comparison read through `decide`. Lean states a comparison as a Prop, so
+/// a claim with a comparison on one side, or on both, is an equation of
+/// Props: carry the proof across.
+fn to_statement(ob: &crate::ir::proof_steps::Obligation, t: String) -> String {
+    match (is_prop_comparison(&ob.lhs), is_prop_comparison(&ob.rhs)) {
+        (false, false) => t,
+        // `A = (R = true)` from `decide A = R`.
+        (true, false) => format!(
+            "(propext ⟨fun h => ({t}).symm.trans (decide_eq_true h), fun h => of_decide_eq_true (({t}).trans h)⟩)"
+        ),
+        // `(L = true) = B` from `L = decide B`.
+        (false, true) => format!(
+            "(propext ⟨fun h => of_decide_eq_true (({t}).symm.trans h), fun h => ({t}).trans (decide_eq_true h)⟩)"
+        ),
+        // `A = B` from `decide A = decide B`.
+        (true, true) => format!(
+            "(propext ⟨fun h => of_decide_eq_true (({t}).symm.trans (decide_eq_true h)), fun h => of_decide_eq_true (({t}).trans (decide_eq_true h))⟩)"
+        ),
+    }
+}
+
+/// Closes `body = body'` where both write the same matches, elaborated
+/// apart: split every match and compare the branches.
+const SAME_MATCHES: &str = "(dsimp only; (repeat' split) <;> simp_all)";
 
 /// The marker a rejected step proof leaves in the build log.
 pub(crate) const STEPS_REJECTED_MARKER: &str = "AVER_STEPS_REJECTED:";
@@ -764,15 +1075,24 @@ pub(crate) fn lead_portfolio(
 }
 
 /// One `proof_steps/<law>.steps` file per law with a step proof: the
-/// serialised script the Aver replayer checks.
+/// serialised script the Aver replayer checks. A law no producer wrote
+/// steps for gets `proof_steps/<law>.refused` instead, with where the
+/// producer stopped.
 pub(crate) fn step_files(ctx: &CodegenContext) -> Vec<(String, String)> {
     ctx.proof_ir
         .law_theorems
         .iter()
         .filter_map(|t| {
-            let script = t.steps.as_ref()?;
-            let text = crate::ir::proof_steps::sexpr::script(script, &ctx.symbol_table).ok()?;
-            Some((format!("proof_steps/{}.steps", script.obligation.key), text))
+            if let Some(script) = t.steps.as_ref() {
+                let text = crate::ir::proof_steps::sexpr::script(script, &ctx.symbol_table).ok()?;
+                return Some((format!("proof_steps/{}.steps", script.obligation.key), text));
+            }
+            let why = t.steps_refusal.as_ref()?;
+            let key = crate::ir::proof_steps::sexpr::Names::fn_name(&ctx.symbol_table, t.fn_id);
+            Some((
+                format!("proof_steps/{key}.{}.refused", t.law_name),
+                format!("{why}\n"),
+            ))
         })
         .collect()
 }

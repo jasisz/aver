@@ -4807,7 +4807,9 @@ verify twice law doubling
          at the end of its portfolio:\n{lean}"
     );
     assert!(
-        lean.contains("intro n\n  first | (simp only [twice] <;> omega) | ("),
+        // The step proof (a ring step) goes first; behind it the portfolio
+        // still leads with the closer.
+        lean.contains("intro n\n    first | (simp only [twice] <;> omega) | ("),
         "the linear-arithmetic closer must stay the LEADING alternative of the \
          portfolio:\n{lean}"
     );

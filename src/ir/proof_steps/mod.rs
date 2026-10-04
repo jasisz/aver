@@ -20,8 +20,12 @@
 //! The serialised form ([`sexpr`]) is versioned by [`FORMAT_VERSION`].
 
 pub mod check;
+pub mod induct;
+pub mod linear;
+pub mod ring;
 pub mod rules;
 pub mod sexpr;
+pub mod show;
 pub mod term;
 
 pub use rules::WallRule;
@@ -192,6 +196,29 @@ pub enum Proof {
         lhs: Term,
         rhs: Term,
     },
+    /// Induction following the recursion of `fn_id`, which the claim
+    /// `lhs = rhs` applies to `args`: one case per arm of its `match`, in
+    /// order (see [`induct`]).
+    Induct {
+        fn_id: FnId,
+        args: Vec<Term>,
+        lhs: Term,
+        rhs: Term,
+        cases: Vec<InductCase>,
+    },
+    /// `goal = value` for an Int comparison `goal`: its opposite and the
+    /// hypotheses `hyps`, each read as `p >= 0` and weighted by `weights`
+    /// (the opposite first), add up to a negative constant (see
+    /// [`linear`]).
+    Linear {
+        goal: Term,
+        value: bool,
+        hyps: Vec<String>,
+        weights: Vec<num_bigint::BigInt>,
+    },
+    /// `lhs = rhs` for two Int terms that are the same polynomial over
+    /// their atoms (see [`ring`]).
+    Ring { lhs: Term, rhs: Term },
     /// Case split on every value of a given of finite type: `cases[i]`
     /// proves `lhs = rhs` with `var` replaced by value `i` (also in the
     /// hypotheses in scope), in the order [`Finite::values`] lists them.
@@ -281,6 +308,17 @@ impl Finite {
     }
 }
 
+/// One case of an [`Proof::Induct`] step: fresh names for the arm's
+/// pattern variables, one hypothesis name per recursive call in the arm
+/// (in the order [`induct::self_calls`] lists them), and the proof of the
+/// claim at the arm's pattern under those hypotheses.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InductCase {
+    pub binders: Vec<String>,
+    pub ihs: Vec<String>,
+    pub proof: Proof,
+}
+
 /// The obligation a step script closes: a law's claim under its givens.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Obligation {
@@ -325,7 +363,9 @@ impl Proof {
             | Proof::Proj { .. }
             | Proof::Hyp(_)
             | Proof::Compute { .. }
-            | Proof::UnfoldConst { .. } => 0,
+            | Proof::UnfoldConst { .. }
+            | Proof::Ring { .. }
+            | Proof::Linear { .. } => 0,
             Proof::Symm(p) => p.size(),
             Proof::Trans { steps, .. } => steps.iter().map(Proof::size).sum(),
             Proof::Congr { inner, .. } => inner.size(),
@@ -338,6 +378,7 @@ impl Proof {
             } => if_true.size() + if_false.size(),
             Proof::Enum { cases, .. } => cases.iter().map(Proof::size).sum(),
             Proof::Absurd { contradiction, .. } => contradiction.size(),
+            Proof::Induct { cases, .. } => cases.iter().map(|c| c.proof.size()).sum(),
         }
     }
 }

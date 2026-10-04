@@ -11,8 +11,11 @@ use aver::ir::LawTheorem;
 /// How one law ended under the aver backend.
 enum Verdict {
     Steps,
+    /// The producer checked the script but the kernel refused it: a
+    /// producer bug, which fails the run.
     Refused(String),
-    Open,
+    /// No producer wrote steps; why, when one said.
+    Open(Option<String>),
     /// The script checks, but cites a law this backend did not close.
     CitesOpen(String),
 }
@@ -54,7 +57,7 @@ pub(super) fn run(
     for theorem in &ctx.proof_ir.law_theorems {
         let key = law_key(&ctx.symbol_table, theorem);
         let verdict = match &theorem.steps {
-            None => Verdict::Open,
+            None => Verdict::Open(theorem.steps_refusal.clone()),
             Some(script) => match aver::ir::proof_steps::sexpr::script(script, &ctx.symbol_table) {
                 Err(why) => Verdict::Refused(why),
                 Ok(text) => {
@@ -154,7 +157,8 @@ pub(super) fn run(
         for (key, verdict) in &verdicts {
             let line = match verdict {
                 Verdict::Steps => "closed by steps".to_string(),
-                Verdict::Open => "not closed by this backend".to_string(),
+                Verdict::Open(None) => "not closed by this backend".to_string(),
+                Verdict::Open(Some(why)) => format!("not closed by this backend (steps: {why})"),
                 Verdict::Refused(why) => format!("not closed by this backend (kernel: {why})"),
                 Verdict::CitesOpen(law) => {
                     format!("not closed by this backend (it cites {law}, which is not)")
@@ -167,6 +171,17 @@ pub(super) fn run(
             verdicts.len(),
             elapsed.as_secs_f64() * 1000.0
         );
+    }
+    if !refused.is_empty() {
+        eprintln!(
+            "aver proof (backend aver): the kernel refused the steps of {} (a proof-step producer error; please report it)",
+            refused
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        std::process::exit(1);
     }
     if checking && !passed {
         std::process::exit(1);

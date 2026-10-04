@@ -11,7 +11,12 @@
 //!   guard, until both sides are the same term;
 //! - **finite domains**: when evaluation alone does not close the law,
 //!   split every given of finite type into all of its values and evaluate
-//!   each case.
+//!   each case;
+//! - **induction**: along the recursion of the function the law is about,
+//!   each case closed by evaluation with its hypotheses and cited laws.
+//!
+//! Evaluation may rewrite with the laws a `using` list cites, left to
+//! right, where it stops.
 //!
 //! A law no producer handles keeps `steps: None` and its tactic portfolio.
 
@@ -19,6 +24,7 @@ mod chain;
 mod env;
 mod eval;
 mod finite;
+mod induction;
 mod rewrite;
 
 use crate::codegen::proof_lower::ProofLowerInputs;
@@ -68,7 +74,9 @@ fn premise_of(inputs: &ProofLowerInputs, t: &LawTheorem) -> Option<Term> {
     }
 }
 
-/// The laws a `using` list names, resolved against the citing law's module.
+/// The laws a `using` list names, resolved against the citing law's
+/// module. `using` is a set: the laws come back in the order they are
+/// defined, whatever order the list names them in.
 fn cited(
     inputs: &ProofLowerInputs,
     ir: &ProofIR,
@@ -76,17 +84,24 @@ fn cited(
     names: &[String],
 ) -> Option<Vec<LawRef>> {
     let own_scope = inputs.symbol_table.fn_entry(t.fn_id).key.scope.clone();
-    let mut out = Vec::new();
-    for name in names {
-        let found = ir.law_theorems.iter().find(|c| {
-            let key = &inputs.symbol_table.fn_entry(c.fn_id).key;
-            let local = format!("{}.{}", key.name, c.law_name);
-            let qualified = law_key(inputs, c);
-            (key.scope == own_scope && *name == local) || *name == qualified
-        })?;
-        out.push(law_ref(inputs, found));
+    let names_law = |c: &LawTheorem, name: &String| {
+        let key = &inputs.symbol_table.fn_entry(c.fn_id).key;
+        let local = format!("{}.{}", key.name, c.law_name);
+        (key.scope == own_scope && *name == local) || *name == law_key(inputs, c)
+    };
+    if names
+        .iter()
+        .any(|n| !ir.law_theorems.iter().any(|c| names_law(c, n)))
+    {
+        return None;
     }
-    Some(out)
+    Some(
+        ir.law_theorems
+            .iter()
+            .filter(|c| names.iter().any(|n| names_law(c, n)))
+            .map(|c| law_ref(inputs, c))
+            .collect(),
+    )
 }
 
 fn obligation(inputs: &ProofLowerInputs, t: &LawTheorem) -> Obligation {
@@ -142,20 +157,57 @@ fn algebra(env: &mut Env, t: &LawTheorem, ob: &Obligation) -> Result<Proof, Stri
 }
 
 fn citations(env: &mut Env, laws: Vec<LawRef>, ob: &Obligation) -> Result<Proof, String> {
-    let mut eqs: Vec<Equation> = laws
+    // A law that would rewrite its own result is left out, with its reason
+    // kept for the refusal.
+    let (looping, usable): (Vec<_>, Vec<_>) =
+        laws.into_iter().partition(|l| rewrite::loops(l).is_some());
+    let reasons: Vec<String> = looping.iter().filter_map(rewrite::loops).collect();
+    let mut eqs: Vec<Equation> = usable
         .iter()
         .cloned()
         .map(|l| Equation::Law(Box::new(l)))
         .collect();
     eqs.push(Equation::Wall(WallRule::DivModRecompose));
-    env.laws = laws;
-    let left = env.rewrite(&ob.lhs, &eqs)?;
-    let right = env.rewrite(&ob.rhs, &eqs)?;
+    env.laws = usable;
+    let with_reasons = |why: String| {
+        if reasons.is_empty() {
+            why
+        } else {
+            format!("{why} ({})", reasons.join("; "))
+        }
+    };
+    let left = env.rewrite(&ob.lhs, &eqs).map_err(with_reasons)?;
+    let right = env.rewrite(&ob.rhs, &eqs).map_err(with_reasons)?;
     if left.cur() == right.cur() {
         Ok(chain::meet(left, right))
     } else {
-        Err("the cited laws do not rewrite the sides to one term".into())
+        let names = env.inputs.symbol_table;
+        Err(with_reasons(format!(
+            "the cited laws rewrite the sides to `{}` and `{}`",
+            crate::ir::proof_steps::show::term(left.cur(), names),
+            crate::ir::proof_steps::show::term(right.cur(), names)
+        )))
     }
+}
+
+/// An environment for one attempt: the law's `when` in scope and its
+/// cited laws, minus any that would loop, as rewrite rules.
+fn fresh_env<'a>(
+    inputs: &'a ProofLowerInputs<'a>,
+    ob: &Obligation,
+    using: &Option<Vec<LawRef>>,
+) -> Env<'a> {
+    let mut env = Env::new(inputs);
+    if let Some(p) = &ob.premise {
+        env.hyps.push(("when".into(), chain::eqn_true(p)));
+    }
+    env.rewrite_laws = using
+        .iter()
+        .flatten()
+        .filter(|l| rewrite::loops(l).is_none())
+        .cloned()
+        .collect();
+    env
 }
 
 fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Script, String> {
@@ -166,34 +218,46 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Sc
         return Err("more than one premise".into());
     }
     let ob = obligation(inputs, t);
-    let mut env = Env::new(inputs);
-    if let Some(p) = &ob.premise {
-        env.hyps.push(("when".into(), chain::eqn_true(p)));
-    }
-    let proof = match (&t.strategy, &t.using) {
-        (
-            ProofStrategy::Commutative { .. }
-            | ProofStrategy::Associative { .. }
-            | ProofStrategy::IdentityElement { .. },
-            _,
-        ) => algebra(&mut env, t, &ob)?,
-        (_, Some(names)) if !names.is_empty() => {
-            let laws = cited(inputs, ir, t, names).ok_or("a cited law has no theorem")?;
-            citations(&mut env, laws, &ob)?
+    let using = match &t.using {
+        Some(names) if !names.is_empty() => {
+            Some(cited(inputs, ir, t, names).ok_or("a cited law has no theorem")?)
         }
-        _ => match env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH) {
-            Ok(proof) => proof,
-            Err(_) if !ob.finite.is_empty() => {
-                // Start again: the failed attempt may have opened
-                // definitions and bound hypothesis names.
-                env = Env::new(inputs);
-                if let Some(p) = &ob.premise {
-                    env.hyps.push(("when".into(), chain::eqn_true(p)));
+        _ => None,
+    };
+    // Each attempt starts from a fresh environment: a failed one may have
+    // opened definitions and bound hypothesis names.
+    let mut env = fresh_env(inputs, &ob, &using);
+    let proof = match &t.strategy {
+        ProofStrategy::Commutative { .. }
+        | ProofStrategy::Associative { .. }
+        | ProofStrategy::IdentityElement { .. } => algebra(&mut env, t, &ob)?,
+        _ => {
+            let mut refusals: Vec<String> = Vec::new();
+            let mut found = None;
+            for attempt in 0..4 {
+                let outcome = match attempt {
+                    0 => match &using {
+                        Some(laws) => citations(&mut env, laws.clone(), &ob),
+                        None => continue,
+                    },
+                    1 => env.prove_by_evaluation(&ob.lhs, &ob.rhs, SPLIT_DEPTH),
+                    2 if ob.finite.is_empty() => continue,
+                    2 => env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH),
+                    _ => env.prove_by_induction(t.fn_id, &ob, SPLIT_DEPTH),
+                };
+                match outcome {
+                    Ok(proof) => {
+                        found = Some(proof);
+                        break;
+                    }
+                    Err(why) => {
+                        refusals.push(why);
+                        env = fresh_env(inputs, &ob, &using);
+                    }
                 }
-                env.prove_by_cases(&ob.finite, &ob.lhs, &ob.rhs, SPLIT_DEPTH)?
             }
-            Err(why) => return Err(why),
-        },
+            found.ok_or_else(|| refusals.join("; "))?
+        }
     };
     if proof.size() > MAX_PROOF_NODES {
         return Err(format!(
@@ -209,6 +273,9 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Sc
         proof,
     };
     check_script(&script)?;
+    // A script the kernel could not read back would be a producer error
+    // later; refuse it here, by name.
+    crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)?;
     Ok(script)
 }
 
@@ -224,6 +291,15 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 Err(why) => eprintln!("steps: {key}: none ({why})"),
             }
         }
-        ir.law_theorems[i].steps = result.ok();
+        match result {
+            Ok(script) => {
+                ir.law_theorems[i].steps = Some(script);
+                ir.law_theorems[i].steps_refusal = None;
+            }
+            Err(why) => {
+                ir.law_theorems[i].steps = None;
+                ir.law_theorems[i].steps_refusal = Some(why);
+            }
+        }
     }
 }

@@ -8770,11 +8770,25 @@ fn run_proof_check(
         .saturating_sub(all_sites - sorry_sites.len())
         + isolated_charged.len();
     let budget = sorry_budget_v;
+    // A step proof the producer checked but Lean refused is a producer bug,
+    // never a quiet fall back to the tactics behind it.
+    let steps = proof_steps_report::collect(output_dir, &format!("{stdout}{stderr}"));
+    if !steps.rejected.is_empty() {
+        eprintln!(
+            "{}",
+            format!(
+                "--check: Lean refused the step proof of {} (a proof-step producer error; please report it)",
+                steps.rejected.iter().cloned().collect::<Vec<_>>().join(", ")
+            )
+            .red()
+        );
+    }
     let passed = output.status.success()
         && isolated_errors.is_ok()
         && sorries <= sorry_budget_v
         && model_panic_hits == 0
-        && declined_within_budget;
+        && declined_within_budget
+        && steps.rejected.is_empty();
     if !declined_within_budget {
         // Headline only: the per-claim list already went to stdout above (and
         // under `--check-json` it travels in `declined_claims`), so repeating
@@ -9198,7 +9212,6 @@ fn run_proof_check(
         // which step terms the kernel refused (a producer bug to report, the
         // law then falls back to its tactics). Emitted only when any law had
         // steps.
-        let steps = proof_steps_report::collect(output_dir, &format!("{stdout}{stderr}"));
         if !steps.emitted.is_empty() {
             let closed_by: serde_json::Map<String, serde_json::Value> = lean_law_audit
                 .laws
@@ -9326,6 +9339,22 @@ fn run_proof_check(
                     );
                 }
             } else {
+                // Each law with what closed it: steps, tactics, or nothing;
+                // an open law shows where the steps producer stopped.
+                for law in &audit.laws {
+                    let universal = law.tier == LawTier::Universal;
+                    match steps.closed_by(&law.law, universal) {
+                        "open" => match steps.refused.get(&law.law) {
+                            Some(why) => println!(
+                                "  {}: {}, not closed (steps: {why})",
+                                law.law,
+                                law.tier.as_str()
+                            ),
+                            None => println!("  {}: {}, not closed", law.law, law.tier.as_str()),
+                        },
+                        by => println!("  {}: closed by {by}", law.law),
+                    }
+                }
                 for obligation in &audit.obligations {
                     println!("  {}: {}", obligation.law, obligation.tier.as_str());
                 }

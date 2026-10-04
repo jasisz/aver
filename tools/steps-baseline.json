@@ -1,54 +1,252 @@
 {
- "examples/data/flatten.av": [
-  "flattenThenCount.countViaFlatten"
- ],
- "examples/data/words.av": [
-  "countAll.viaExpand"
- ],
- "examples/formal/law_auto.av": [
-  "add.associative",
-  "add.commutative",
-  "add.commutativeSwapSides",
-  "add.identityZero",
-  "add.identityZeroLeft",
-  "addOne.identityViaAdd",
-  "id.reflexive",
-  "mul.associative",
-  "mul.commutative",
-  "mul.identityOne",
-  "mul.identityOneLeft",
-  "sub.rightIdentity"
- ],
- "examples/formal/spec_laws.av": [
-  "absVal.absValSpec",
-  "clampNonNegative.clampNonNegativeSpec"
- ],
- "examples/formal/tcp_write_now.av": [
-  "stillToSend.acceptedNothingKeepsEverything"
- ],
- "examples/games/eggcatch/core.av": [
-  "chuteIndex.inRange",
-  "foxCount.exactlyOne",
-  "resolveLip.conserves",
-  "resolveLip.noFalseMiss"
- ],
- "examples/games/tetris/logic.av": [
-  "computeScore.zeroLinesZeroScore"
- ],
- "proof-corpus/decomposed/prod/prop_39.av": [
-  "barbar.barbarTrueRight"
- ],
- "proof-corpus/decomposed/prod/prop_42.av": [
-  "elem.barbarIdempotent"
- ],
- "proof-corpus/decomposed/prod/prop_43.av": [
-  "barbar.barbarTrueRight"
- ],
- "proof-corpus/decomposed/prod/prop_44.av": [
-  "barbar.barbarTrueLeft"
- ],
- "proof-corpus/tip/isaplanner/prop_58.av": [
-  "dropInt.dropIntSelf",
-  "zip.zipSelf"
- ]
+ "examples/data/flatten.av": {
+  "steps": [
+   "flattenThenCount.countViaFlatten"
+  ]
+ },
+ "examples/data/words.av": {
+  "steps": [
+   "countAll.viaExpand"
+  ]
+ },
+ "examples/formal/law_auto.av": {
+  "steps": [
+   "add.associative",
+   "add.commutative",
+   "add.commutativeSwapSides",
+   "add.identityZero",
+   "add.identityZeroLeft",
+   "addOne.identityViaAdd",
+   "id.reflexive",
+   "mul.associative",
+   "mul.commutative",
+   "mul.identityOne",
+   "mul.identityOneLeft",
+   "sub.antiCommutative",
+   "sub.rightIdentity"
+  ]
+ },
+ "examples/formal/spec_laws.av": {
+  "steps": [
+   "absVal.absValSpec",
+   "clampNonNegative.clampNonNegativeSpec"
+  ]
+ },
+ "examples/formal/tcp_write_now.av": {
+  "steps": [
+   "stillToSend.acceptedEverythingLeavesNothing",
+   "stillToSend.acceptedNothingKeepsEverything",
+   "stillToSend.acceptedPrefixNeverOvershoots"
+  ]
+ },
+ "examples/games/eggcatch/core.av": {
+  "steps": [
+   "chuteIndex.inRange",
+   "foxCount.exactlyOne",
+   "nextPos.advancesByOne",
+   "resolveLip.conserves",
+   "resolveLip.noFalseMiss",
+   "startBoard.conserves",
+   "stepAll.leftFold"
+  ]
+ },
+ "examples/games/tetris/logic.av": {
+  "steps": [
+   "computeScore.levelScalesLineScore",
+   "computeScore.tetrisDoublesSingle",
+   "computeScore.zeroLinesZeroScore"
+  ]
+ },
+ "projects/k5_fdiv/domain/awaymodel.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/binadeorder.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/estimate.av": {
+  "steps": [
+   "nrNewErrNum.nrErrorSquares"
+  ]
+ },
+ "projects/k5_fdiv/domain/exponent.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/fprep.av": {
+  "steps": [
+   "productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/fracround.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/kernel.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/modelscale.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/recip.av": {
+  "steps": [
+   "Domain.Estimate.nrNewErrNum.nrErrorSquares",
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/remainder.av": {
+  "steps": [
+   "Domain.Estimate.nrNewErrNum.nrErrorSquares",
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice",
+   "awayDigitOvershoot.guarded"
+  ]
+ },
+ "projects/k5_fdiv/domain/round.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/roundscale.av": {
+  "steps": [
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/stickyint.av": {
+  "steps": [
+   "sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/stickyscale.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/truncscale.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/valuechain.av": {
+  "steps": [
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/song/wave.av": {
+  "steps": [
+   "clamp16.fitsSixteenBits"
+  ]
+ },
+ "proof-corpus/decomposed/prod/lemma_16.av": {
+  "steps": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_03.av": {
+  "steps": [
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_04.av": {
+  "steps": [
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_06.av": {
+  "steps": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_16.av": {
+  "steps": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_23.av": {
+  "steps": [
+   "plus.plusSuccRight",
+   "plus.plusZeroRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_33.av": {
+  "steps": [
+   "mult.multIdentRight",
+   "plus.plusIdentLeft"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_34.av": {
+  "steps": [
+   "plus.plusRightZero"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_39.av": {
+  "steps": [
+   "barbar.barbarTrueRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_42.av": {
+  "steps": [
+   "elem.barbarIdempotent",
+   "elem.elemInEmpty"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_43.av": {
+  "steps": [
+   "barbar.barbarTrueRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_44.av": {
+  "steps": [
+   "barbar.barbarTrueLeft"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_11.av": {
+  "steps": [
+   "drop.dropZero"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_40.av": {
+  "steps": [
+   "take.takeZeroNil"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_46.av": {
+  "steps": [
+   "zip.zipNilLeft"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_58.av": {
+  "steps": [
+   "dropInt.dropIntSelf",
+   "zip.zipSelf"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_01.av": {
+  "steps": [
+   "plus.plusSuccRight"
+  ]
+ },
+ "proof-corpus/tip/prod/lemma_17.av": {
+  "steps": [
+   "plus.plusShiftTwo"
+  ]
+ }
 }

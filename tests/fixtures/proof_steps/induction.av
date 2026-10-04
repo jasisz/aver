@@ -1,0 +1,79 @@
+module Induction
+    intent = "Laws proved by induction along the recursion of the function each one is about."
+    exposes [Nat, plus, app, len, rev, revOnto]
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    ? "Peano addition, recursing on the first argument."
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify plus
+    plus(Nat.S(Nat.Z), Nat.S(Nat.Z)) => Nat.S(Nat.S(Nat.Z))
+
+verify plus law zeroRight
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, Nat.Z) => x
+
+verify plus law succRight
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    plus(x, Nat.S(y)) => Nat.S(plus(x, y))
+
+fn app(xs: List<Int>, ys: List<Int>) -> List<Int>
+    ? "Append, recursing on the first list."
+    match xs
+        [] -> ys
+        [h, ..t] -> List.prepend(h, app(t, ys))
+
+verify app
+    app([1], [2]) => [1, 2]
+
+fn len(xs: List<Int>) -> Nat
+    ? "Length as a Peano number."
+    match xs
+        [] -> Nat.Z
+        [h, ..t] -> Nat.S(len(t))
+
+verify len
+    len([7]) => Nat.S(Nat.Z)
+
+verify app law assoc
+    given a: List<Int> = [[], [1], [1, 2]]
+    given b: List<Int> = [[], [3]]
+    given c: List<Int> = [[], [4]]
+    app(app(a, b), c) => app(a, app(b, c))
+
+verify app law lengthAdds
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given ys: List<Int> = [[], [3]]
+    len(app(xs, ys)) => plus(len(xs), len(ys))
+
+fn rev(xs: List<Int>) -> List<Int>
+    ? "Reverse, the slow way."
+    match xs
+        [] -> []
+        [h, ..t] -> app(rev(t), List.prepend(h, []))
+
+verify rev
+    rev([1, 2]) => [2, 1]
+
+fn revOnto(xs: List<Int>, acc: List<Int>) -> List<Int>
+    ? "Reverse onto an accumulator."
+    match xs
+        [] -> acc
+        [h, ..t] -> revOnto(t, List.prepend(h, acc))
+
+verify revOnto
+    revOnto([1, 2], [3]) => [2, 1, 3]
+
+verify revOnto law isReverseThenAppend
+    given xs: List<Int> = [[], [1], [1, 2]]
+    given acc: List<Int> = [[], [9]]
+    using [app.assoc]
+    revOnto(xs, acc) => app(rev(xs), acc)

@@ -55,9 +55,10 @@ fn compare_manifest_names_the_changed_definition_under_a_failed_law() {
         "no script hash: {manifest}"
     );
 
-    // Run 2: the helper the law opens changes and the law is now false; its
-    // own script is byte for byte the same. The report says so and names the
-    // changed definition, not the law's own function.
+    // Run 2: the helper the law opens changes and the law is now false. Its
+    // script changes too, since its step proof (a ring step over the
+    // unfolded helper) is gone; the report names the changed definition, not
+    // the law's own function.
     let previous = source.path().join("previous.json");
     std::fs::copy(&manifest_path, &previous).unwrap();
     std::fs::write(&main, BEFORE.replace("    n + n\n", "    n + n + n\n")).unwrap();
@@ -84,7 +85,7 @@ fn compare_manifest_names_the_changed_definition_under_a_failed_law() {
     assert_eq!(
         summary["changed"],
         serde_json::json!({
-            "quad.fourfold": {"script": "same", "definitions": ["Compare.double"]}
+            "quad.fourfold": {"script": "changed", "definitions": ["Compare.double"]}
         }),
         "{summary}"
     );

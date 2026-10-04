@@ -204,6 +204,7 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             let def = script
                 .def(*fn_id)
                 .ok_or_else(|| "unfold: no such definition".to_string())?;
+            super::induct::structural_param(def).map_err(|m| format!("unfold: {m}"))?;
             let outer = def.outer(args).map_err(|m| format!("unfold: {m}"))?;
             let lhs = Spanned::bare(ResolvedExpr::Call(
                 crate::ir::hir::ResolvedCallee::Fn(*fn_id),
@@ -359,6 +360,53 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             }
             Ok(t)
         }
+        Proof::Induct {
+            fn_id,
+            args,
+            lhs,
+            rhs,
+            cases,
+        } => induct_conclusion(*fn_id, args, lhs, rhs, cases, script, hyps)
+            .map_err(|m| format!("induct: {m}")),
+        Proof::Linear {
+            goal,
+            value,
+            hyps: names,
+            weights,
+        } => {
+            let mut atoms = Vec::new();
+            let mut facts = vec![
+                super::linear::as_nonneg(goal, !value, &mut atoms)
+                    .ok_or("linear: the goal is not an Int comparison")?,
+            ];
+            for n in names {
+                let (_, e) = hyps
+                    .iter()
+                    .rev()
+                    .find(|(h, _)| h == n)
+                    .ok_or_else(|| format!("linear: hypothesis {n} is not in scope"))?;
+                let v = term::bool_value(&e.rhs)
+                    .ok_or_else(|| format!("linear: hypothesis {n} is not a decided comparison"))?;
+                facts.push(
+                    super::linear::as_nonneg(&e.lhs, v, &mut atoms).ok_or_else(|| {
+                        format!("linear: hypothesis {n} is not an Int comparison")
+                    })?,
+                );
+            }
+            match super::linear::combine(&facts, weights) {
+                Some(sum) if super::linear::contradicts(&sum) => {
+                    Ok(Eqn::new(canon(goal), term::boolean(*value)))
+                }
+                _ => Err("linear: the weights do not add up to a contradiction".into()),
+            }
+        }
+        Proof::Ring { lhs, rhs } => {
+            if super::ring::same_polynomial(lhs, rhs) {
+                Ok(Eqn::new(canon(lhs), canon(rhs)))
+            } else {
+                Err("ring: the two sides are different polynomials".into())
+            }
+        }
         Proof::Absurd {
             contradiction,
             lhs,
@@ -415,6 +463,7 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
 
 /// Check a whole script: the proof must prove the obligation.
 pub fn check_script(script: &Script) -> Result<(), String> {
+    super::induct::refuse_mutual_recursion(&script.defs)?;
     let mut hyps = Hyps::new();
     if let Some(p) = &script.obligation.premise {
         hyps.push(("when".to_string(), Eqn::new(canon(p), term::boolean(true))));
@@ -426,4 +475,87 @@ pub fn check_script(script: &Script) -> Result<(), String> {
     } else {
         Err("the proof ends at a different equation than the claim".into())
     }
+}
+
+/// The claim an [`Proof::Induct`] step proves, once every case is checked.
+fn induct_conclusion(
+    fn_id: crate::ir::identity::FnId,
+    args: &[Term],
+    lhs: &Term,
+    rhs: &Term,
+    cases: &[super::InductCase],
+    script: &Script,
+    hyps: &Hyps,
+) -> Result<Eqn, String> {
+    let def = script.def(fn_id).ok_or("no such definition")?;
+    let j = super::induct::structural_param(def)?.ok_or("the function does not recurse")?;
+    let ResolvedExpr::Match { arms, .. } = &def.body.node else {
+        return Err("the body is not a match".into());
+    };
+    if args.len() != def.params.len() {
+        return Err("wrong number of arguments".into());
+    }
+    let givens = &script.obligation.givens;
+    let (v, general) = super::induct::varied(args, j, givens)?;
+    let mut taken = Vec::new();
+    term::free_vars(lhs, &mut taken);
+    term::free_vars(rhs, &mut taken);
+    for (_, e) in hyps {
+        let mut fv = Vec::new();
+        term::free_vars(&e.lhs, &mut fv);
+        term::free_vars(&e.rhs, &mut fv);
+        if fv
+            .iter()
+            .any(|n| *n == v || general.iter().any(|(_, g)| g == n))
+        {
+            return Err("a hypothesis in scope mentions a variable the induction varies".into());
+        }
+        taken.extend(fv);
+    }
+    if arms.len() != cases.len() {
+        return Err(format!("{} arms, {} cases", arms.len(), cases.len()));
+    }
+    let has = |p: fn(&ResolvedPattern) -> bool| arms.iter().any(|a| p(&a.pattern));
+    if (has(|p| matches!(p, ResolvedPattern::EmptyList))
+        != has(|p| matches!(p, ResolvedPattern::Cons(..))))
+        || has(|p| {
+            !matches!(
+                p,
+                ResolvedPattern::EmptyList | ResolvedPattern::Cons(..) | ResolvedPattern::Ctor(..)
+            )
+        })
+    {
+        return Err("the arms are not one per constructor".into());
+    }
+    for (i, (arm, case)) in arms.iter().zip(cases).enumerate() {
+        for (k, b) in case.binders.iter().enumerate() {
+            if taken.contains(b)
+                || givens.contains(b)
+                || script.constant(b).is_some()
+                || case.binders[..k].contains(b)
+            {
+                return Err(format!("case {i}: {b} is not a fresh name"));
+            }
+        }
+        let (goal, ihs) = super::induct::case(
+            def,
+            args,
+            j,
+            &v,
+            &general,
+            arm,
+            &case.binders,
+            &case.ihs,
+            lhs,
+            rhs,
+        )
+        .map_err(|m| format!("case {i}: {m}"))?;
+        let mut scope = hyps.clone();
+        scope.extend(ihs);
+        let got = conclusion(&case.proof, script, &scope).map_err(|m| format!("case {i}: {m}"))?;
+        if !same_eqn(&got, &goal) {
+            return Err(format!("case {i}: the case proves a different equation"));
+        }
+    }
+    Ok(Eqn::new(canon(lhs), canon(rhs)))
 }

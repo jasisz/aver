@@ -216,3 +216,114 @@ fn a_catch_all_arm_is_chosen_only_for_a_value_the_earlier_arms_exclude() {
     assert!(super::check::arm_equation(&var("c"), &arms, 2, &[], &[zero]).is_err());
     assert!(super::check::arm_equation(&var("c"), &arms, 2, &[], &[var("x")]).is_err());
 }
+
+#[test]
+fn a_recursive_definition_opens_only_when_it_recurses_on_a_part_of_its_match() {
+    use crate::ir::hir::ResolvedCallee;
+    use crate::ir::identity::FnId;
+    let call = |args: Vec<super::Term>| {
+        Spanned::bare(ResolvedExpr::Call(ResolvedCallee::Fn(FnId(7)), args))
+    };
+    let arm = |pattern, body| ResolvedMatchArm {
+        pattern,
+        body: Box::new(body),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let def = |tail_call: super::Term| super::Def {
+        fn_id: FnId(7),
+        name: "f".into(),
+        params: vec!["xs".into()],
+        lets: Vec::new(),
+        body: Spanned::bare(ResolvedExpr::Match {
+            subject: Box::new(var("xs")),
+            arms: vec![
+                arm(ResolvedPattern::EmptyList, term::int(&0.into())),
+                arm(ResolvedPattern::Cons("h".into(), "t".into()), tail_call),
+            ],
+        }),
+    };
+    let on_tail = def(call(vec![var("t")]));
+    assert_eq!(super::induct::structural_param(&on_tail), Ok(Some(0)));
+    let on_itself = def(call(vec![var("xs")]));
+    assert!(super::induct::structural_param(&on_itself).is_err());
+    let mut other = on_tail.clone();
+    other.fn_id = FnId(8);
+    other.name = "g".into();
+    other.body = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(7)),
+        vec![var("xs")],
+    ));
+    let mut back = on_tail.clone();
+    back.body = Spanned::bare(ResolvedExpr::Call(
+        ResolvedCallee::Fn(FnId(8)),
+        vec![var("xs")],
+    ));
+    assert!(super::induct::refuse_mutual_recursion(&[back, other]).is_err());
+}
+
+#[test]
+fn closed_lists_compute_with_aver_slice_semantics() {
+    let list = |xs: &[i64]| {
+        Spanned::bare(ResolvedExpr::List(
+            xs.iter().map(|x| term::int(&(*x).into())).collect(),
+        ))
+    };
+    let take = term::builtin(
+        "List.take",
+        vec![list(&[1, 2, 3]), term::int(&(-1).into())],
+        None,
+    );
+    assert_eq!(term::eval_closed(&take), Some(list(&[])));
+    let len = term::builtin("List.len", vec![list(&[4, 5])], None);
+    assert_eq!(term::eval_closed(&len), Some(term::int(&2.into())));
+    let cons = term::builtin("List.prepend", vec![term::int(&1.into()), list(&[2])], None);
+    assert_eq!(term::eval_closed(&cons), Some(list(&[1, 2])));
+    let open = term::builtin("List.len", vec![var("xs")], None);
+    assert_eq!(term::eval_closed(&open), None);
+}
+
+#[test]
+fn the_ring_step_compares_polynomials_and_leaves_text_joining_alone() {
+    use crate::ast::Type;
+    let mul = |a, b| term::binop(BinOp::Mul, a, b);
+    let two = || term::int(&2.into());
+    // (a + b) * (a + b) = a*a + 2*a*b + b*b
+    let lhs = mul(add(var("a"), var("b")), add(var("a"), var("b")));
+    let rhs = add(
+        add(mul(var("a"), var("a")), mul(mul(two(), var("a")), var("b"))),
+        mul(var("b"), var("b")),
+    );
+    assert!(super::ring::same_polynomial(&lhs, &rhs));
+    assert!(!super::ring::same_polynomial(
+        &lhs,
+        &mul(var("a"), var("b"))
+    ));
+    let join = |x: super::Term, y: super::Term| {
+        let t = Spanned::bare(ResolvedExpr::BinOp(BinOp::Add, Box::new(x), Box::new(y)));
+        t.set_ty(Type::Str);
+        t
+    };
+    assert!(!super::ring::same_polynomial(
+        &join(var("s"), var("t")),
+        &join(var("t"), var("s"))
+    ));
+}
+
+#[test]
+fn a_linear_certificate_needs_nonnegative_weights_that_reach_a_negative_constant() {
+    use super::linear;
+    let gt = |a, b| term::binop(BinOp::Gt, a, b);
+    let one = || term::int(&1.into());
+    let zero = || term::int(&0.into());
+    let mut atoms = Vec::new();
+    // x > 0 and not (x + 1 > 1) contradict each other.
+    let facts = vec![
+        linear::as_nonneg(&gt(var("x"), zero()), true, &mut atoms).unwrap(),
+        linear::as_nonneg(&gt(add(var("x"), one()), one()), false, &mut atoms).unwrap(),
+    ];
+    let w = linear::certificate(&facts).expect("a certificate");
+    assert!(linear::contradicts(&linear::combine(&facts, &w).unwrap()));
+    assert!(linear::combine(&facts, &[1.into(), (-1).into()]).is_none());
+    let alone = vec![facts[0].clone()];
+    assert!(linear::certificate(&alone).is_none());
+}

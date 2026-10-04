@@ -85,6 +85,7 @@ fn ordered(vars: &[String], found: Vec<(String, Term)>) -> Option<Vec<(String, T
 }
 
 /// An equation the rewriter may apply left to right.
+#[derive(Clone)]
 pub(crate) enum Equation {
     Law(Box<LawRef>),
     Wall(WallRule),
@@ -191,7 +192,7 @@ impl Env<'_> {
         })
     }
 
-    fn try_equation(&mut self, eq: &Equation, t: &Term) -> Option<(Proof, Term)> {
+    pub(crate) fn try_equation(&mut self, eq: &Equation, t: &Term) -> Option<(Proof, Term)> {
         match eq {
             Equation::Law(law) => {
                 let mut found = Vec::new();
@@ -287,25 +288,59 @@ impl Env<'_> {
         None
     }
 
+    /// The name of an equation, for a refusal.
+    pub(crate) fn equation_name(&self, eq: &Equation) -> String {
+        use crate::ir::proof_steps::sexpr::Names;
+        match eq {
+            Equation::Law(law) => format!("law {}", law.key),
+            Equation::Wall(rule) => format!("rule {}", rule.id()),
+            Equation::Unfold(id) => {
+                format!(
+                    "the definition of {}",
+                    self.inputs.symbol_table.fn_name(*id)
+                )
+            }
+        }
+    }
+
+    /// The outermost-leftmost position some equation rewrites. Where two
+    /// equations rewrite the same position to different terms the outcome
+    /// would depend on which one is tried first, so that is a refusal.
     fn rewrite_somewhere(
         &mut self,
         eqs: &[Equation],
         t: &Term,
         path: &mut Vec<usize>,
-    ) -> Option<(Vec<usize>, Proof, Term)> {
-        for eq in eqs {
+    ) -> Result<Option<(Vec<usize>, Proof, Term)>, String> {
+        let mut found: Vec<(usize, Proof, Term)> = Vec::new();
+        for (i, eq) in eqs.iter().enumerate() {
             if let Some((p, to)) = self.try_equation(eq, t) {
-                return Some((path.clone(), p, to));
+                // A result that holds its own redex would be rewritten again
+                // forever; that equation does not apply here.
+                if !holds_term(&to, &canon(t)) {
+                    found.push((i, p, to));
+                }
             }
+        }
+        if let Some((first, p, to)) = found.first().cloned() {
+            if let Some((other, _, _)) = found.iter().find(|(_, _, o)| canon(o) != canon(&to)) {
+                return Err(format!(
+                    "{} and {} both rewrite `{}`, to different terms; cite only one of them",
+                    self.equation_name(&eqs[first]),
+                    self.equation_name(&eqs[*other]),
+                    crate::ir::proof_steps::show::term(t, self.inputs.symbol_table)
+                ));
+            }
+            return Ok(Some((path.clone(), p, to)));
         }
         for (i, c) in term::children(t).into_iter().enumerate() {
             path.push(i);
-            if let Some(found) = self.rewrite_somewhere(eqs, c, path) {
-                return Some(found);
+            if let Some(found) = self.rewrite_somewhere(eqs, c, path)? {
+                return Ok(Some(found));
             }
             path.pop();
         }
-        None
+        Ok(None)
     }
 
     /// One application of the first equation that applies at the root.
@@ -316,6 +351,7 @@ impl Env<'_> {
     /// Rewrite `t` to normal form under the given laws and wall rules.
     pub(crate) fn rewrite(&mut self, t: &Term, eqs: &[Equation]) -> Result<Chain, String> {
         let mut chain = Chain::new(t);
+        let mut seen: Vec<Term> = vec![canon(t)];
         for _ in 0..400 {
             self.burn()?;
             let cur = chain.cur().clone();
@@ -331,11 +367,65 @@ impl Env<'_> {
                 );
                 continue;
             }
-            match self.rewrite_somewhere(eqs, &cur, &mut Vec::new()) {
-                Some((path, proof, to)) => chain.push_at(&path, proof, &to),
+            match self.rewrite_somewhere(eqs, &cur, &mut Vec::new())? {
+                Some((path, proof, to)) => {
+                    let name =
+                        crate::ir::proof_steps::show::rule_name(&proof, self.inputs.symbol_table);
+                    chain.push_at(&path, proof, &to);
+                    let next = canon(chain.cur());
+                    if seen.contains(&next) {
+                        return Err(format!(
+                            "rewriting comes back to `{}` after {name}: the cited laws loop",
+                            crate::ir::proof_steps::show::term(&next, self.inputs.symbol_table)
+                        ));
+                    }
+                    seen.push(next);
+                }
                 None => return Ok(chain),
             }
         }
-        Err("rewriting did not reach a normal form".into())
+        Err(format!(
+            "rewriting keeps growing `{}` and never reaches a normal form",
+            crate::ir::proof_steps::show::term(chain.cur(), self.inputs.symbol_table)
+        ))
     }
+}
+
+/// Why a law cannot be a left-to-right rewrite rule: its right side holds
+/// its left side again with only the givens renamed (a commutativity law,
+/// for one), so rewriting with it applies it again to its own result
+/// forever. A right side that holds the left side at smaller arguments (a
+/// recursion step) is kept; rewriting refuses by name if it ever comes back
+/// to a term it already had.
+pub(crate) fn loops(law: &LawRef) -> Option<String> {
+    fn holds_instance(pat: &Term, t: &Term, vars: &[String]) -> bool {
+        let mut found = Vec::new();
+        let renaming = matches(pat, t, vars, &mut found)
+            && found
+                .iter()
+                .all(|(_, v)| matches!(&v.node, ResolvedExpr::Ident(n) if vars.contains(n)));
+        renaming
+            || term::children(t)
+                .into_iter()
+                .any(|c| holds_instance(pat, c, vars))
+    }
+    if let ResolvedExpr::Ident(n) = &law.lhs.node
+        && law.givens.contains(n)
+    {
+        return Some(format!(
+            "law {} has a bare given on its left side, which every term matches",
+            law.key
+        ));
+    }
+    holds_instance(&law.lhs, &law.rhs, &law.givens).then(|| {
+        format!(
+            "law {} rewrites a term into one it applies to again, so rewriting with it never stops; it is not used as a rewrite rule",
+            law.key
+        )
+    })
+}
+
+/// Whether `part` occurs in `t`.
+fn holds_term(t: &Term, part: &Term) -> bool {
+    canon(t) == *part || term::children(t).into_iter().any(|c| holds_term(c, part))
 }

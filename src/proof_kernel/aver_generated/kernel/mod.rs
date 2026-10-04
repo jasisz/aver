@@ -6,7 +6,11 @@ pub mod eval;
 
 pub mod finite;
 
+pub mod induct;
+
 pub mod proof;
+
+pub mod ring;
 
 pub mod rules;
 

@@ -1,0 +1,24 @@
+module InductionRefused
+    intent = "A law about a function that does not recurse: steps do not induct along another one."
+    exposes [len, double]
+    effects []
+
+fn len(xs: List<Int>) -> Int
+    ? "Length."
+    match xs
+        [] -> 0
+        [h, ..t] -> 1 + len(t)
+
+verify len
+    len([1]) => 1
+
+fn double(xs: List<Int>) -> Int
+    ? "Twice the length."
+    len(xs) + len(xs)
+
+verify double
+    double([1]) => 2
+
+verify double law isTwiceTheLength
+    given xs: List<Int> = [[], [1]]
+    double(xs) >= len(xs) => true
