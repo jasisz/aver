@@ -1,0 +1,80 @@
+module Bytes8
+    intent =
+        "A little-endian codec whose eight-byte read-back law follows from cited laws:"
+        "proof lowering proves it by rewriting with them, as data."
+    exposes [encode, decode]
+    effects []
+
+fn encode(value: Int, width: Int) -> List<Int>
+    ? "A non-negative integer as width little-endian bytes."
+    encodeInto(value, width, [])
+
+verify encode
+    encode(258, 2) => [2, 1]
+    encode(1, 4) => [1, 0, 0, 0]
+
+verify encode law peelsLowByte
+    given value: Int = [0, 1, 256, 65535]
+    given width: Int = [1, 2, 4, 8]
+    when Bool.and(width > 0, width <= 8)
+    using [encodeInto.prefixAccumulator]
+    encode(value, width) => List.prepend(Int.mod(value, 256), encode(Int.div(value, 256), width - 1))
+
+fn encodeInto(value: Int, width: Int, acc: List<Int>) -> List<Int>
+    ? "Low byte first, then the rest shifted down by a byte."
+    match width <= 0
+        true -> List.reverse(acc)
+        false -> encodeInto(Int.div(value, 256), width - 1, List.prepend(Int.mod(value, 256), acc))
+
+verify encodeInto
+    encodeInto(258, 2, []) => [2, 1]
+    encodeInto(0, 0, [7]) => [7]
+
+verify encodeInto law prefixAccumulator
+    given value: Int = [0, 1, 65535]
+    given width: Int = [-1, 0, 1, 2, 8]
+    given acc: List<Int> = [[], [7], [1, 2]]
+    when width <= 8
+    encodeInto(value, width, acc) => List.concat(List.reverse(acc), encodeInto(value, width, []))
+
+fn decode(bytes: List<Int>) -> Int
+    ? "Little-endian bytes back to an integer."
+    decodeFrom(List.reverse(bytes), 0)
+
+verify decode
+    decode([2, 1]) => 258
+    decode([]) => 0
+
+verify decode law addsLowByte
+    given tail: List<Int> = [[], [0], [1, 2]]
+    given digit: Int = [-1, 0, 255]
+    using [decodeFrom.lastDigit]
+    decode(List.prepend(digit, tail)) => decode(tail) * 256 + digit
+
+fn decodeFrom(reversed: List<Int>, acc: Int) -> Int
+    ? "Most significant byte first."
+    match reversed
+        [] -> acc
+        [head, ..tail] -> decodeFrom(tail, acc * 256 + head)
+
+verify decodeFrom
+    decodeFrom([1, 2], 0) => 258
+    decodeFrom([], 5) => 5
+
+verify decodeFrom law lastDigit
+    given prefix: List<Int> = [[], [0], [1, 2]]
+    given acc: Int = [-1, 0, 5]
+    given digit: Int = [-1, 0, 255]
+    decodeFrom(List.concat(prefix, [digit]), acc) => decodeFrom(prefix, acc) * 256 + digit
+
+verify decode law fourReadBack
+    given value: Int = [0, 1, 4294967295]
+    when Bool.and(0 <= value, value < 4294967296)
+    using [encode.peelsLowByte, decode.addsLowByte]
+    decode(encode(value, 4)) => value
+
+verify decode law eightReadBack
+    given value: Int = [0, 1, 18446744073709551615]
+    when Bool.and(0 <= value, value < 18446744073709551616)
+    using [decode.fourReadBack, encode.peelsLowByte, decode.addsLowByte]
+    decode(encode(value, 8)) => value
