@@ -57,7 +57,12 @@ pub fn int(value: &BigInt) -> Term {
 
 /// The empty list.
 pub fn nil() -> Term {
-    Spanned::bare(ResolvedExpr::List(Vec::new()))
+    list(Vec::new())
+}
+
+/// A list literal.
+pub fn list(items: Vec<Term>) -> Term {
+    Spanned::bare(ResolvedExpr::List(items))
 }
 
 pub fn boolean(value: bool) -> Term {
