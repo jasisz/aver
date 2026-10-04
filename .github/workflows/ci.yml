@@ -14,6 +14,14 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
+# A newer push to the same pull request, or a newer commit on main,
+# supersedes a run still in progress: only the latest one is worth a runner.
+# Nightly, dispatched and release runs keep their own group and are never
+# cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'main' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+
 env:
   CARGO_TERM_COLOR: always
 
