@@ -56,10 +56,25 @@ pub enum WallRule {
     // Euclidean division by a positive divisor.
     DivModRecompose,
     DivRange,
+    // Constructor equations of the list builtins: each builtin on `[]` and
+    // on `List.prepend(x, a)`, with Aver's truncation of a count (a count
+    // at or below zero takes nothing and drops nothing).
+    ConcatNil,
+    ConcatCons,
+    LenNil,
+    LenCons,
+    TakeNil,
+    TakeConsLe,
+    TakeConsGt,
+    DropNil,
+    DropConsLe,
+    DropConsGt,
+    ReverseNil,
+    ReverseCons,
 }
 
 impl WallRule {
-    pub const ALL: [WallRule; 35] = [
+    pub const ALL: [WallRule; 47] = [
         WallRule::AndTrueL,
         WallRule::AndFalseL,
         WallRule::AndTrueR,
@@ -95,6 +110,18 @@ impl WallRule {
         WallRule::SubZero,
         WallRule::DivModRecompose,
         WallRule::DivRange,
+        WallRule::ConcatNil,
+        WallRule::ConcatCons,
+        WallRule::LenNil,
+        WallRule::LenCons,
+        WallRule::TakeNil,
+        WallRule::TakeConsLe,
+        WallRule::TakeConsGt,
+        WallRule::DropNil,
+        WallRule::DropConsLe,
+        WallRule::DropConsGt,
+        WallRule::ReverseNil,
+        WallRule::ReverseCons,
     ];
 
     /// Stable identifier, shared with the replayer.
@@ -135,6 +162,18 @@ impl WallRule {
             WallRule::SubZero => "int.sub_zero",
             WallRule::DivModRecompose => "int.div_mod_recompose",
             WallRule::DivRange => "int.div_range",
+            WallRule::ConcatNil => "list.concat.nil",
+            WallRule::ConcatCons => "list.concat.cons",
+            WallRule::LenNil => "list.len.nil",
+            WallRule::LenCons => "list.len.cons",
+            WallRule::TakeNil => "list.take.nil",
+            WallRule::TakeConsLe => "list.take.cons_le",
+            WallRule::TakeConsGt => "list.take.cons_gt",
+            WallRule::DropNil => "list.drop.nil",
+            WallRule::DropConsLe => "list.drop.cons_le",
+            WallRule::DropConsGt => "list.drop.cons_gt",
+            WallRule::ReverseNil => "list.reverse.nil",
+            WallRule::ReverseCons => "list.reverse.cons",
         }
     }
 
@@ -160,6 +199,15 @@ impl WallRule {
             WallRule::AddAssoc | WallRule::MulAssoc => &["a", "b", "c"],
             WallRule::DivModRecompose => &["a", "k"],
             WallRule::DivRange => &["a", "k", "m", "n"],
+            WallRule::ConcatNil => &["b"],
+            WallRule::ConcatCons => &["x", "a", "b"],
+            WallRule::LenNil | WallRule::ReverseNil => &[],
+            WallRule::LenCons | WallRule::ReverseCons => &["x", "a"],
+            WallRule::TakeNil | WallRule::DropNil => &["n"],
+            WallRule::TakeConsLe
+            | WallRule::TakeConsGt
+            | WallRule::DropConsLe
+            | WallRule::DropConsGt => &["x", "a", "n"],
             _ => &["a", "b"],
         }
     }
@@ -180,6 +228,15 @@ impl WallRule {
         };
         let div = |x: Term, k: Term| term::intrinsic(BuiltinIntrinsic::IntDivEuclid, vec![x, k]);
         let modu = |x: Term, k: Term| term::intrinsic(BuiltinIntrinsic::IntModEuclid, vec![x, k]);
+        let x = || var("x");
+        let n = || var("n");
+        let nil = term::nil;
+        let cons = |h: Term, t: Term| term::builtin("List.prepend", vec![h, t], None);
+        let list = |name: &str, args: Vec<Term>| term::builtin(name, args, None);
+        let len = |l: Term| term::builtin("List.len", vec![l], Some(crate::ast::Type::Int));
+        let at_most_zero = || is(cmp(BinOp::Lte, n(), i(0)), true);
+        let above_zero = || is(cmp(BinOp::Gt, n(), i(0)), true);
+        let pred = || binop(BinOp::Sub, n(), i(1));
         match self {
             WallRule::AndTrueL => (vec![], Eqn::new(bool_and(t(), b()), b())),
             WallRule::AndFalseL => (vec![], Eqn::new(bool_and(f(), b()), f())),
@@ -263,6 +320,54 @@ impl WallRule {
                         cmp(BinOp::Lt, div(a(), var("k")), var("n")),
                     ),
                     true,
+                ),
+            ),
+            WallRule::ConcatNil => (vec![], Eqn::new(list("List.concat", vec![nil(), b()]), b())),
+            WallRule::ConcatCons => (
+                vec![],
+                Eqn::new(
+                    list("List.concat", vec![cons(x(), a()), b()]),
+                    cons(x(), list("List.concat", vec![a(), b()])),
+                ),
+            ),
+            WallRule::LenNil => (vec![], Eqn::new(len(nil()), i(0))),
+            WallRule::LenCons => (
+                vec![],
+                Eqn::new(len(cons(x(), a())), binop(BinOp::Add, len(a()), i(1))),
+            ),
+            WallRule::TakeNil => (vec![], Eqn::new(list("List.take", vec![nil(), n()]), nil())),
+            WallRule::TakeConsLe => (
+                vec![at_most_zero()],
+                Eqn::new(list("List.take", vec![cons(x(), a()), n()]), nil()),
+            ),
+            WallRule::TakeConsGt => (
+                vec![above_zero()],
+                Eqn::new(
+                    list("List.take", vec![cons(x(), a()), n()]),
+                    cons(x(), list("List.take", vec![a(), pred()])),
+                ),
+            ),
+            WallRule::DropNil => (vec![], Eqn::new(list("List.drop", vec![nil(), n()]), nil())),
+            WallRule::DropConsLe => (
+                vec![at_most_zero()],
+                Eqn::new(list("List.drop", vec![cons(x(), a()), n()]), cons(x(), a())),
+            ),
+            WallRule::DropConsGt => (
+                vec![above_zero()],
+                Eqn::new(
+                    list("List.drop", vec![cons(x(), a()), n()]),
+                    list("List.drop", vec![a(), pred()]),
+                ),
+            ),
+            WallRule::ReverseNil => (vec![], Eqn::new(list("List.reverse", vec![nil()]), nil())),
+            WallRule::ReverseCons => (
+                vec![],
+                Eqn::new(
+                    list("List.reverse", vec![cons(x(), a())]),
+                    list(
+                        "List.concat",
+                        vec![list("List.reverse", vec![a()]), cons(x(), nil())],
+                    ),
                 ),
             ),
         }

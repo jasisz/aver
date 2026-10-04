@@ -113,6 +113,56 @@ fn every_wall_rule_round_trips_its_identifier() {
     }
 }
 
+/// Each wall rule with at most one premise of the form `p = true`, as a one-step script whose
+/// `when` is the premise: both checkers accept it, and both refuse it once
+/// its conclusion is changed.
+#[test]
+fn both_checkers_agree_on_every_wall_rule() {
+    use super::sexpr::{BuiltinsOnly, script as serialise};
+    for rule in WallRule::ALL {
+        let (premises, concl) = rule.schema();
+        // A `when` states a premise `p = true`; the others are covered
+        // by the producers' tests.
+        if premises.len() > 1
+            || premises
+                .iter()
+                .any(|p| term::bool_value(&p.rhs) != Some(true))
+        {
+            continue;
+        }
+        let premise = premises.first().map(|p| p.lhs.clone());
+        let subst: Vec<(String, super::Term)> = rule
+            .binders()
+            .iter()
+            .map(|b| (b.to_string(), var(b)))
+            .collect();
+        let step = Proof::Rule {
+            rule,
+            subst,
+            premises: premise.iter().map(|_| Proof::Hyp("when".into())).collect(),
+        };
+        let mut s = script(concl.lhs.clone(), concl.rhs.clone(), step);
+        s.obligation.givens = rule.binders().iter().map(|b| b.to_string()).collect();
+        s.obligation.premise = premise;
+        assert_eq!(check_script(&s), Ok(()), "{}", rule.id());
+        let text = serialise(&s, &BuiltinsOnly).unwrap();
+        assert_eq!(
+            crate::proof_kernel::verdict(&text),
+            Ok("f.law".to_string()),
+            "{}",
+            rule.id()
+        );
+        s.obligation.rhs = term::builtin("List.reverse", vec![concl.rhs.clone()], None);
+        assert!(check_script(&s).is_err(), "{}", rule.id());
+        let text = serialise(&s, &BuiltinsOnly).unwrap();
+        assert!(
+            crate::proof_kernel::verdict(&text).is_err(),
+            "{}",
+            rule.id()
+        );
+    }
+}
+
 /// A module-level binding opens to its value and to nothing else: the step
 /// names the binding, the script carries its value, and a binding the
 /// script does not carry proves nothing.

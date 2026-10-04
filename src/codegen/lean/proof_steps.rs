@@ -85,6 +85,31 @@ theorem div_range (a k m n : Int) (h1 : (decide (0 <= a) && decide (a < m)) = tr
   obtain ⟨h0, hm⟩ := h1
   obtain ⟨hk, rfl⟩ := h2
   exact ⟨Int.ediv_nonneg h0 (Int.le_of_lt hk), (Int.ediv_lt_iff_lt_mul hk).mpr hm⟩
+theorem list_concat_nil {α : Type} (b : List α) : (([] : List α) ++ b) = b := rfl
+theorem list_concat_cons {α : Type} (x : α) (a b : List α) : ((x :: a) ++ b) = (x :: (a ++ b)) := rfl
+theorem list_len_nil {α : Type} : ((([] : List α)).length : Int) = 0 := rfl
+theorem list_len_cons {α : Type} (x : α) (a : List α) : (((x :: a)).length : Int) = (a.length : Int) + 1 := rfl
+theorem list_take_nil {α : Type} (n : Int) : ([] : List α).take (Int.toNat n) = [] := by
+  cases Int.toNat n <;> rfl
+theorem list_take_cons_le {α : Type} (x : α) (a : List α) (n : Int) (h : decide (n <= 0) = true) :
+    (x :: a).take (Int.toNat n) = [] := by
+  rw [Int.toNat_of_nonpos (of_decide_eq_true h)]; rfl
+theorem list_take_cons_gt {α : Type} (x : α) (a : List α) (n : Int) (h : decide (n > 0) = true) :
+    (x :: a).take (Int.toNat n) = (x :: a.take (Int.toNat (n - 1))) := by
+  have e : Int.toNat n = Int.toNat (n - 1) + 1 := by have := of_decide_eq_true h; omega
+  rw [e]; rfl
+theorem list_drop_nil {α : Type} (n : Int) : ([] : List α).drop (Int.toNat n) = [] := by
+  cases Int.toNat n <;> rfl
+theorem list_drop_cons_le {α : Type} (x : α) (a : List α) (n : Int) (h : decide (n <= 0) = true) :
+    (x :: a).drop (Int.toNat n) = (x :: a) := by
+  rw [Int.toNat_of_nonpos (of_decide_eq_true h)]; rfl
+theorem list_drop_cons_gt {α : Type} (x : α) (a : List α) (n : Int) (h : decide (n > 0) = true) :
+    (x :: a).drop (Int.toNat n) = a.drop (Int.toNat (n - 1)) := by
+  have e : Int.toNat n = Int.toNat (n - 1) + 1 := by have := of_decide_eq_true h; omega
+  rw [e]; rfl
+theorem list_reverse_nil {α : Type} : ([] : List α).reverse = [] := rfl
+theorem list_reverse_cons {α : Type} (x : α) (a : List α) : (x :: a).reverse = (a.reverse ++ [x]) :=
+  List.reverse_cons
 end AverSteps"#;
 
 /// The only rule-specific Lean table.
@@ -125,6 +150,18 @@ fn lemma(rule: WallRule) -> &'static str {
         WallRule::SubZero => "AverSteps.sub_zero",
         WallRule::DivModRecompose => "AverSteps.div_mod_recompose",
         WallRule::DivRange => "AverSteps.div_range",
+        WallRule::ConcatNil => "AverSteps.list_concat_nil",
+        WallRule::ConcatCons => "AverSteps.list_concat_cons",
+        WallRule::LenNil => "AverSteps.list_len_nil",
+        WallRule::LenCons => "AverSteps.list_len_cons",
+        WallRule::TakeNil => "AverSteps.list_take_nil",
+        WallRule::TakeConsLe => "AverSteps.list_take_cons_le",
+        WallRule::TakeConsGt => "AverSteps.list_take_cons_gt",
+        WallRule::DropNil => "AverSteps.list_drop_nil",
+        WallRule::DropConsLe => "AverSteps.list_drop_cons_le",
+        WallRule::DropConsGt => "AverSteps.list_drop_cons_gt",
+        WallRule::ReverseNil => "AverSteps.list_reverse_nil",
+        WallRule::ReverseCons => "AverSteps.list_reverse_cons",
     }
 }
 

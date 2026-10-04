@@ -55,6 +55,11 @@ pub fn int(value: &BigInt) -> Term {
     typed(ResolvedExpr::Literal(lit), Some(Type::Int))
 }
 
+/// The empty list.
+pub fn nil() -> Term {
+    Spanned::bare(ResolvedExpr::List(Vec::new()))
+}
+
 pub fn boolean(value: bool) -> Term {
     typed(
         ResolvedExpr::Literal(Literal::Bool(value)),

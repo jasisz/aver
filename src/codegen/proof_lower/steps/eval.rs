@@ -378,7 +378,100 @@ impl Env<'_> {
                 v,
             ))));
         }
+        if let Some(step) = self.list_step(cur)? {
+            return Ok(step);
+        }
         self.settle(cur, blocked)
+    }
+
+    /// A list builtin whose list argument is `[]` or `List.prepend(x, a)`
+    /// takes one step by its constructor equation. A count is decided
+    /// first (`n <= 0`, else `n > 0`); an undecided count is where the
+    /// prover splits.
+    fn list_step(&mut self, cur: &Term) -> Result<Option<Step>, String> {
+        let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &cur.node else {
+            return Ok(None);
+        };
+        let Some(list) = args.first() else {
+            return Ok(None);
+        };
+        let shape = match &list.node {
+            ResolvedExpr::List(xs) if xs.is_empty() => None,
+            ResolvedExpr::Call(ResolvedCallee::Builtin(b), parts)
+                if b == "List.prepend" && parts.len() == 2 =>
+            {
+                Some((parts[0].clone(), parts[1].clone()))
+            }
+            _ => return Ok(None),
+        };
+        let bind = |names: &[&str], values: Vec<Term>| -> Vec<(String, Term)> {
+            names.iter().map(|n| n.to_string()).zip(values).collect()
+        };
+        let (rule, subst) = match (name.as_str(), args.len(), shape) {
+            ("List.concat", 2, None) => (WallRule::ConcatNil, bind(&["b"], vec![args[1].clone()])),
+            ("List.concat", 2, Some((x, a))) => (
+                WallRule::ConcatCons,
+                bind(&["x", "a", "b"], vec![x, a, args[1].clone()]),
+            ),
+            ("List.len", 1, None) => (WallRule::LenNil, Vec::new()),
+            ("List.len", 1, Some((x, a))) => (WallRule::LenCons, bind(&["x", "a"], vec![x, a])),
+            ("List.reverse", 1, None) => (WallRule::ReverseNil, Vec::new()),
+            ("List.reverse", 1, Some((x, a))) => {
+                (WallRule::ReverseCons, bind(&["x", "a"], vec![x, a]))
+            }
+            ("List.take", 2, None) => (WallRule::TakeNil, bind(&["n"], vec![args[1].clone()])),
+            ("List.drop", 2, None) => (WallRule::DropNil, bind(&["n"], vec![args[1].clone()])),
+            ("List.take" | "List.drop", 2, Some((x, a))) => {
+                let take = name == "List.take";
+                let n = args[1].clone();
+                let zero = term::int(&0.into());
+                let decided =
+                    |env: &mut Self, op: BinOp| -> Result<Option<(bool, Proof)>, String> {
+                        let ev = env.whnf(&term::binop(op, n.clone(), zero.clone()))?;
+                        let Some(v) = term::bool_value(ev.chain.cur()) else {
+                            return Ok(None);
+                        };
+                        Ok(Some((v, ev.chain.finish().1)))
+                    };
+                let (rule, premise) = match decided(self, BinOp::Lte)? {
+                    Some((true, p)) => (
+                        if take {
+                            WallRule::TakeConsLe
+                        } else {
+                            WallRule::DropConsLe
+                        },
+                        p,
+                    ),
+                    Some((false, _)) => match decided(self, BinOp::Gt)? {
+                        Some((true, p)) => (
+                            if take {
+                                WallRule::TakeConsGt
+                            } else {
+                                WallRule::DropConsGt
+                            },
+                            p,
+                        ),
+                        _ => return Ok(None),
+                    },
+                    None => {
+                        let at_most = canon(&term::binop(BinOp::Lte, n.clone(), zero));
+                        return self.settle(cur, Some(at_most)).map(Some);
+                    }
+                };
+                let subst = bind(&["x", "a", "n"], vec![x, a, n]);
+                let (_, concl) = rule.instantiate(&subst).expect("rule binders");
+                return Ok(Some(Step::Progress(Box::new((
+                    Proof::Rule {
+                        rule,
+                        subst,
+                        premises: vec![premise],
+                    },
+                    concl.rhs,
+                )))));
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(self.rule_step(rule, subst)))
     }
 
     fn rule_step(&self, rule: WallRule, subst: Vec<(String, Term)>) -> Step {

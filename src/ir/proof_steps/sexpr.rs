@@ -46,6 +46,23 @@ pub trait Names {
     fn ctor_name(&self, ctor: &ResolvedCtor) -> String;
 }
 
+/// Names for data that mentions no user function or type: the builtin
+/// facts, whose terms are builtins over variables.
+pub struct BuiltinsOnly;
+
+impl Names for BuiltinsOnly {
+    fn fn_name(&self, id: FnId) -> String {
+        format!("__fn_{}", id.0)
+    }
+
+    fn ctor_name(&self, ctor: &ResolvedCtor) -> String {
+        match ctor {
+            ResolvedCtor::Builtin(b) => builtin_ctor_name(*b).to_string(),
+            ResolvedCtor::User { name, .. } | ResolvedCtor::Unresolved { name } => name.clone(),
+        }
+    }
+}
+
 impl Names for crate::ir::SymbolTable {
     fn fn_name(&self, id: FnId) -> String {
         let key = &self.fn_entry(id).key;

@@ -1078,7 +1078,7 @@ fn joining_texts_is_never_read_as_int_arithmetic() {
     // step applies to it, even in a script made by hand.
     let script = |op: &str| {
         format!(
-            "(steps 4 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+            "(steps 5 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
         )
     };
     assert_eq!(
@@ -1128,6 +1128,123 @@ fn lean_checks_ring_and_linear_steps() {
     assert!(
         lean_refuses(&out, "Arith.lean", &lean.replacen(&line, &wrong, 1), law),
         "a different polynomial: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+const LIST_LAWS: [&str; 8] = [
+    "oneIfPositive.isLenOfTakeOfOne",
+    "pushed.dropNothing",
+    "pushed.dropOneMore",
+    "pushed.growsByOne",
+    "pushed.joinsInFront",
+    "pushed.reversedEndsWithHead",
+    "pushed.takeKeepsHead",
+    "pushed.takeNothing",
+];
+
+#[test]
+fn both_kernels_check_the_list_rules_and_refuse_mutations() {
+    let out = scratch("lists");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("lists.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), LIST_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let swap = |law: &str, from: &str, to: &str| {
+        let text = read(law);
+        assert!(text.contains(from), "{law}: {text}");
+        text.replacen(from, to, 1)
+    };
+    for (kind, text) in [
+        (
+            "a positive count read as none",
+            swap(
+                "pushed.takeKeepsHead",
+                "list.take.cons_gt",
+                "list.take.cons_le",
+            ),
+        ),
+        (
+            "no count read as a positive one",
+            swap(
+                "pushed.dropNothing",
+                "list.drop.cons_le",
+                "list.drop.cons_gt",
+            ),
+        ),
+        (
+            "the empty list's length for a longer one",
+            swap(
+                "pushed.growsByOne",
+                "(rule list.len.cons ((x (v x)) (a (v xs))))",
+                "(rule list.len.nil ())",
+            ),
+        ),
+        (
+            "the head joined at the wrong end",
+            swap("pushed.joinsInFront", "list.concat.cons", "list.concat.nil"),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn lean_checks_the_list_rules_and_refuses_a_mutation() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("lists-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "lists.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in LIST_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Lists.lean")).unwrap();
+    let law = "pushed.takeKeepsHead";
+    let line = exact_line(&lean, "pushed_law_takeKeepsHead").to_string();
+    let wrong = line.replacen(
+        "AverSteps.list_take_cons_gt",
+        "AverSteps.list_take_cons_le",
+        1,
+    );
+    assert_ne!(line, wrong, "{line}");
+    assert!(
+        lean_refuses(&out, "Lists.lean", &lean.replacen(&line, &wrong, 1), law),
+        "a positive count read as none: Lean must refuse the step term"
     );
     let _ = fs::remove_dir_all(out);
 }
