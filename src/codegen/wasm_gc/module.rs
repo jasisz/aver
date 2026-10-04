@@ -118,23 +118,14 @@ use crate::ast::{FnDef, TopLevel, TypeDef};
 
 /// Emit a trap-stub body into `func`: just `unreachable; end`.
 ///
-/// Used for the residual fn shapes the MIR body emitter doesn't cover.
-/// First-class `Fn`-param dispatch now lowers to `call_indirect` on the
-/// funcref table, so the only fns that still trap are those reaching a
-/// first-class fn value with no table slot — a `FnValue` of a builtin /
-/// variant, or a `LocalSlot` whose name is a let-bound fn value rather
-/// than a `Fn` param. `unreachable` is a polymorphic stack-type
-/// instruction, so it validates for ANY fn signature with zero extra
-/// locals.
-///
-/// A stub is SILENT — the module compiles clean and traps at runtime
-/// with no diagnostic — so any emit gap that a user can hit by writing
-/// ordinary code does not belong here. String interpolation of a
-/// non-primitive embed used to arrive here and now raises a
-/// `WasmGcError` at the emitter instead (see
-/// `body::from_mir::strings::emit_mir_interpolated_str`); the residual
-/// `Ok(None)` bails across the MIR emitter still route here, and
-/// `AVER_WASMGC_REQUIRE_MIR=1` lists them.
+/// A stub is SILENT — the module compiles clean and traps at runtime —
+/// so a fn the MIR body emitter gives up on is a compile error naming the
+/// fn and what it contains (see the refusal after the caller_fn
+/// pre-pass). The one fn that still gets a stub is a proof helper reading
+/// a `BranchPath`, which nothing compiled to wasm-gc can call;
+/// `AVER_WASMGC_REQUIRE_MIR=1` refuses that one too. `unreachable` is a
+/// polymorphic stack-type instruction, so it validates for ANY fn
+/// signature with zero extra locals.
 fn emit_trap_stub_body(func: &mut Function) {
     func.instruction(&Instruction::Unreachable);
     func.instruction(&Instruction::End);
@@ -149,6 +140,10 @@ pub(super) fn emit_module_with(
     capability_wasm_gc_plan: Option<&super::CapabilityWasmGcPlan>,
     packed_sequences_enabled: bool,
 ) -> Result<(Vec<u8>, usize, crate::codegen::cert::ModulePlans), WasmGcError> {
+    // A module-level binding read from a fn body has no global to read on
+    // wasm-gc; its value is substituted where it is read (`top_level.rs`).
+    let inlined_items = super::top_level::inline_module_bindings(items)?;
+    let items: &[TopLevel] = inlined_items.as_deref().unwrap_or(items);
     let fn_defs: Vec<&FnDef> = items
         .iter()
         .filter_map(|it| match it {
@@ -3267,6 +3262,8 @@ pub(super) fn emit_module_with(
     }
 
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
+    // Why each fn the body emitter gave up on was left behind, in words.
+    let mut stub_reasons: Vec<Option<String>> = vec![None; fn_defs.len()];
 
     // Pre-pass over user fn bodies — populates `caller_fn_collector`
     // with every fn name that emits caller_fn at a call site. Needed
@@ -3310,6 +3307,11 @@ pub(super) fn emit_module_with(
             None => false,
         };
         mir_dispatch[i] = used_mir;
+        if !used_mir {
+            stub_reasons[i] = Some(super::body::take_unsupported_reason().unwrap_or_else(|| {
+                "a construct the wasm-gc body emitter does not lower".to_string()
+            }));
+        }
     }
     // `fn_map` records a helper the moment the emitter resolves its index to
     // put a `call` in front of it. A fn that later bails to a trap stub can
@@ -3318,25 +3320,31 @@ pub(super) fn emit_module_with(
     let aint_cmp_called = fn_map.aint_cmp_called.get();
     let aint_eq_called = fn_map.aint_eq_called.get();
 
-    // `AVER_WASMGC_REQUIRE_MIR=1` turns the per-fn trap-stub fallback
-    // into a hard error that lists every fn which did NOT emit from MIR
-    // (today only higher-order verify-only shapes like `pairSpec`).
-    // Diagnostic / development only: the production path leaves it unset
-    // and emits the trap stub silently.
-    if std::env::var_os("AVER_WASMGC_REQUIRE_MIR").is_some() {
-        let fell_back: Vec<&str> = (0..mir_dispatch.len())
-            .filter(|&i| !mir_dispatch[i])
-            .map(|i| resolved_fn_defs[i].name.as_str())
-            .collect();
-        if !fell_back.is_empty() {
-            return Err(WasmGcError::Validation(format!(
-                "AVER_WASMGC_REQUIRE_MIR: {} of {} fns were not covered by the MIR body \
-                 emitter (emitted a trap stub instead): {}",
-                fell_back.len(),
-                mir_dispatch.len(),
-                fell_back.join(", ")
-            )));
-        }
+    // A fn the body emitter gave up on would ship as an `unreachable` stub
+    // that compiles clean and traps the first time it runs. That is a
+    // compile error naming the fn and what it contains. The one exception
+    // is a proof helper reading a `BranchPath`: wasm-gc deliberately has no
+    // `BranchPath` runtime and nothing compiled to wasm-gc can build one,
+    // so the helper cannot be reached from the program; it keeps its stub.
+    // `AVER_WASMGC_REQUIRE_MIR=1` refuses that exception too, for tests
+    // that want to see every stub.
+    let require_all = std::env::var_os("AVER_WASMGC_REQUIRE_MIR").is_some();
+    let refused: Vec<String> = (0..mir_dispatch.len())
+        .filter(|&i| !mir_dispatch[i])
+        .filter_map(|i| {
+            let reason = stub_reasons[i].as_deref().unwrap_or_default();
+            let proof_only = reason.starts_with(super::body::PROOF_ONLY_BRANCH_PATH);
+            (require_all || !proof_only)
+                .then(|| format!("fn `{}`: {reason}", resolved_fn_defs[i].name))
+        })
+        .collect();
+    if !refused.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "the wasm-gc backend cannot compile {} of {} fns: {}",
+            refused.len(),
+            mir_dispatch.len(),
+            refused.join("; ")
+        )));
     }
 
     // ── Export section ─────────────────────────────────────────────
@@ -7332,13 +7340,18 @@ fn discover_builtins_in_expr(
             // String-subject match (`match path { "/" -> ... }`)
             // needs `StringEq` to compare each non-default arm's
             // literal against the subject. Register it eagerly when
-            // any arm is `Pattern::Literal(Str(_))`.
-            if arms.iter().any(|a| {
-                matches!(
-                    &a.pattern,
-                    crate::ir::hir::ResolvedPattern::Literal(crate::ast::Literal::Str(_))
-                )
-            }) {
+            // any arm is `Pattern::Literal(Str(_))`, at the top or as an
+            // element of a tuple pattern (`("a", 0) -> …`).
+            fn has_string_literal(pattern: &crate::ir::hir::ResolvedPattern) -> bool {
+                match pattern {
+                    crate::ir::hir::ResolvedPattern::Literal(crate::ast::Literal::Str(_)) => true,
+                    crate::ir::hir::ResolvedPattern::Tuple(items) => {
+                        items.iter().any(has_string_literal)
+                    }
+                    _ => false,
+                }
+            }
+            if arms.iter().any(|a| has_string_literal(&a.pattern)) {
                 builtins.register(BuiltinName::StringEq);
             }
             for arm in arms {

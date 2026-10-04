@@ -574,6 +574,13 @@ impl SlotTable {
         Ok(idx)
     }
 
+    /// A fresh local of `ty` that holds one computed match subject, so the
+    /// arms' tests read it instead of computing it again. One per match
+    /// site; the dry run and the real emit reserve them in the same order.
+    pub(in crate::codegen::wasm_gc) fn match_subject_local(&self, ty: ValType) -> u32 {
+        self.push_lazy_local(ty)
+    }
+
     fn push_lazy_local(&self, ty: ValType) -> u32 {
         let mut lazy = self.lazy_locals.borrow_mut();
         let idx = (self.by_slot.len() + lazy.len()) as u32;

@@ -39,8 +39,8 @@ mod infer;
 mod slots;
 
 pub(super) use emit::{emit_caller_fn_idx, emit_default_value, emit_string_literal_bytes};
-pub(super) use from_mir::emit_fn_body_via_mir;
 pub use from_mir::{CoverageReport, coverage_report};
+pub(super) use from_mir::{PROOF_ONLY_BRANCH_PATH, emit_fn_body_via_mir, take_unsupported_reason};
 pub(super) use slots::SlotTable;
 
 /// Maps fn identity → wasm fn index + return type. Built once per
