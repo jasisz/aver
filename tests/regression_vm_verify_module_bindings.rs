@@ -144,13 +144,9 @@ fn failures(results: &[VerifyResult]) -> Vec<&(String, String, String)> {
     results.iter().flat_map(|r| &r.failures).collect()
 }
 
-/// The third backend. On main the wasm-gc emitter has no lowering for a
-/// read of a module-level binding (it traps on `unreachable`); the
-/// `fix/wasmgc-kernel-trap` branch inlines the bindings. Drop the `ignore`
-/// and add this file to the wasm lane in ci.yml once that lands.
+/// The third backend: wasm-gc inlines a module-level binding at each read.
 #[cfg(feature = "wasm")]
 #[test]
-#[ignore = "wasm-gc reads of module-level bindings land with fix/wasmgc-kernel-trap"]
 fn wasm_gc_verify_agrees_with_vm_on_module_bindings() {
     let items = parse_source(SRC).unwrap_or_else(|e| panic!("parse: {e:?}"));
     let results = aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc(
