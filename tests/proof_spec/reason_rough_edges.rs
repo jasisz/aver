@@ -6,7 +6,6 @@ fn conditional_probe_handles_an_empty_unfold_set_with_sibling_lemmas() {
         return;
     }
     let dir = temp_output_dir("aver-empty-simp");
-    let probe_log = dir.with_extension("probe.log");
     let run = Command::new(env!("CARGO_BIN_EXE_aver"))
         .args([
             "proof",
@@ -16,11 +15,13 @@ fn conditional_probe_handles_an_empty_unfold_set_with_sibling_lemmas() {
             "-o",
         ])
         .arg(&dir)
-        .env("AVER_SPECULATIVE_LOG", &probe_log)
         .output()
         .unwrap();
-    let probe = std::fs::read_to_string(&probe_log).unwrap();
-    assert!(!probe.contains("unexpected token"), "{probe}");
+    assert!(
+        !format_output(&run).contains("unexpected token"),
+        "{}",
+        format_output(&run)
+    );
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap())
             .unwrap();
@@ -32,7 +33,6 @@ fn conditional_probe_handles_an_empty_unfold_set_with_sibling_lemmas() {
         .unwrap();
     assert_eq!(sibling["tier"], "universal", "{}", format_output(&run));
     let _ = std::fs::remove_dir_all(dir);
-    let _ = std::fs::remove_file(probe_log);
 }
 
 #[test]

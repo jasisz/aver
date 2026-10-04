@@ -238,7 +238,7 @@ fn lean_proves_the_imported_helpers_first_request_universally() {
     )
     .unwrap();
     assert_eq!(report["universal_laws"], 1, "{text}");
-    assert_eq!(report["bounded_laws"], 0, "{text}");
+    assert!(report.get("declined").is_none(), "{text}");
     assert_eq!(report["sorries"], 0, "{text}");
     assert_eq!(report["build_errors"], 0, "{text}");
 }

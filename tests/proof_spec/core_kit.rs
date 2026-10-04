@@ -13,11 +13,11 @@ fn assert_all_universal(fixture: &str, prefix: &str, module: &str, laws: u64) ->
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
             summary["sorries"].as_u64(),
             summary["build_errors"].as_u64(),
         ),
-        (Some(laws), Some(0), Some(0), Some(0)),
+        (Some(laws), None, Some(0), Some(0)),
         "every law of {fixture} must close universally:\n{}",
         format_output(&run)
     );
@@ -112,11 +112,11 @@ fn proof_guarded_claims_over_branching_cone_close() {
         return;
     };
     assert!(
-        lean.contains("-- aver:law-class place_law_staysUnderCap universal"),
+        lean.contains("-- aver:law-class place_law_staysUnderCap attempt"),
         "the record claim must be stated universally:\n{lean}"
     );
     assert!(
-        lean.contains("-- aver:law-class unheard_law_aPoolWithSomebodyKeepsTheRule universal"),
+        lean.contains("-- aver:law-class unheard_law_aPoolWithSomebodyKeepsTheRule attempt"),
         "the Option claim must be stated universally:\n{lean}"
     );
 }

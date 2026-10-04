@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.31.0 (unreleased)
+
+### Migration
+
+- **`aver proof` states every law for every input, in one `lake build`.** A `when`-law whose speculative proof does not close is declined (`declined_claims`, `--declined-budget`) instead of being restated over its samples; `aver verify` still checks those. `bounded_laws` leaves `--check-json`, and a 0.30 `--gate` baseline with `bounded` laws fails with a message to re-record it.
+
 ## 0.30.0 "Turn" — 2026-10-03
 
 > _Programs wait, work and answer in turns written in plain Aver, and more of what they compile to is certified on the exact bytes._

@@ -8260,27 +8260,17 @@ pub(super) fn cmd_proof(
     ctx.declined_cases = ground_truth.declined;
     ctx.vm_passed_cases = ground_truth.passed;
     let lean_files = cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
-    // Under `--allow-mathlib` the speculative/minimize re-emit passes are
-    // SKIPPED: they run their own `lake build` probes that would choke on
-    // the not-yet-wired `aver_mathlib` macro (the Mathlib import + macro
-    // are injected by `setup_mathlib_for_project` AFTER the final emit, and
-    // a re-emit would clobber them). The break-glass arm already promotes a
-    // walling `when`-law to its true-universal form directly, so neither
-    // pass is needed on the opt-in tier.
-    if !allow_mathlib {
-        // Speculative-universal: a SINGLE-LIST conditional law cannot be
-        // statically classified as universal-closeable, so try each
-        // universally in one probe build and re-emit with the ones that
-        // CLOSED stated universally and the rest on their bounded fallback
-        // (try-universal, fall-back-to-sampled — analog of `--minimize` for
-        // the statement form). No-op when the file has no such candidate.
-        run_lean_speculative(file, output_dir, &mut ctx, verify_mode);
-        // `--minimize`: learn each portfolio's winning branch from one
-        // instrumented build, then re-emit collapsed (fail-safe — restores
-        // the normal proof if the collapsed project does not build).
-        if minimize {
-            run_lean_minimize(file, output_dir, &mut ctx, verify_mode);
-        }
+    // Under `--allow-mathlib` the `--minimize` re-emit pass is SKIPPED: it runs
+    // its own `lake build` probe that would choke on the not-yet-wired
+    // `aver_mathlib` macro (the Mathlib import + macro are injected by
+    // `setup_mathlib_for_project` AFTER the final emit, and a re-emit would
+    // clobber them).
+    //
+    // `--minimize`: learn each portfolio's winning branch from one
+    // instrumented build, then re-emit collapsed (fail-safe — restores the
+    // normal proof if the collapsed project does not build).
+    if minimize && !allow_mathlib {
+        run_lean_minimize(file, output_dir, &mut ctx, verify_mode);
     }
     // `--allow-mathlib`: wire the prebuilt Mathlib cache into the generated
     // lake project — add `require mathlib` + reuse the cached packages, and
@@ -8670,9 +8660,71 @@ fn run_proof_check(
             .red()
         );
     }
-    let isolated_error_labels: Vec<String> = match &isolated_errors {
-        Ok(names) if !names.is_empty() => lean_isolated_error_labels(output_dir, names),
-        _ => Vec::new(),
+    // Model panic lines in the captured build output. The emitted
+    // exports panic only at compiler-generated sites (fuel-wrapper
+    // exhaustion or partial prelude builtins
+    // string), and Lean's `panic!` RETURNS the type's `default` instead of
+    // aborting — under `native_decide` both sides of a model-vs-model sample
+    // equation then reduce to `default` and the kernel certifies a vacuous
+    // (possibly false) equality with lake exit 0 and zero sorries. The panic
+    // line is the only trace, so ANY hit is a hard check failure (see
+    // `count_model_panic_lines`).
+    let model_panic_hits = lean_codegen::count_model_panic_lines(&stdout)
+        + lean_codegen::count_model_panic_lines(&stderr);
+
+    // Did the proof establish each law's UNIVERSAL `∀`-claim by genuine
+    // kernel reasoning? The proof-corpus runner keys on the file-level
+    // `universal` field for an honest "what Aver kernel-proves" count.
+    //
+    // Same short-circuit the bool always had: a failed counted build (or a
+    // model panic) earns no audit run at all — the probe would otherwise
+    // `#print axioms` against a stale or partial environment.
+    let isolated: &[String] = isolated_errors.as_deref().unwrap_or(&[]);
+    let lean_law_audit: LeanLawAudit = if output.status.success() && model_panic_hits == 0 {
+        lean_universal_audit(output_dir, isolated)
+    } else {
+        LeanLawAudit::FAIL_CLOSED
+    };
+    // An ATTEMPT Lean refused (see `LAW_CLASS_ATTEMPT`) is not a proof the
+    // export claimed: it is declined — not proved for every input, its samples
+    // left to `aver verify` — and its floor is not charged as a sorry.
+    let refused: HashSet<&str> = lean_law_audit
+        .refused_attempts
+        .iter()
+        .map(|(theorem, _)| theorem.as_str())
+        .collect();
+    let mut declined: Vec<aver::codegen::DeclinedClaim> = declined.to_vec();
+    declined.extend(lean_law_audit.refused_attempts.iter().map(|(_, label)| {
+        aver::codegen::DeclinedClaim {
+            kind: aver::codegen::DeclineKind::Law,
+            claim: label.clone(),
+            reason: "its universal proof did not close in Lean, so it is not proved for \
+                     every input; `aver verify` checks its samples"
+                .to_string(),
+        }
+    }));
+    if !refused.is_empty() && !check_json {
+        println!(
+            "{}",
+            format!(
+                "  {} law(s) declined — not proved for every input:",
+                refused.len()
+            )
+            .yellow()
+        );
+        for (_, label) in &lean_law_audit.refused_attempts {
+            println!("{}", format!("    law {label}").yellow());
+        }
+    }
+    let isolated_charged: Vec<String> = isolated
+        .iter()
+        .filter(|name| !refused.contains(name.as_str()))
+        .cloned()
+        .collect();
+    let isolated_error_labels: Vec<String> = if isolated_charged.is_empty() {
+        Vec::new()
+    } else {
+        lean_isolated_error_labels(output_dir, &isolated_charged)
     };
     if !isolated_error_labels.is_empty() && !check_json {
         eprintln!(
@@ -8693,8 +8745,9 @@ fn run_proof_check(
     // Gating on exit status closes that false-green.
     let sorry_budget_v = sorry_budget.unwrap_or(0);
     // A DECLINED claim is a third failure mode, and the one no other counter
-    // can see: the claim never reached the backend, so there is no error to
-    // count and no `sorry` to catch. Charge it too.
+    // can see: the claim never reached the backend, or the backend refused an
+    // attempt, so there is no error to count and no `sorry` to catch. Charge
+    // it too.
     //
     // Charging is what makes it safe to widen a refusal. Widening moves a
     // claim out of `build_errors` / `sorries` and into `declined`; if
@@ -8705,22 +8758,16 @@ fn run_proof_check(
     let declined_budget_v = declined_budget.unwrap_or(0);
     let declined_count = declined.len();
     let declined_within_budget = declined_count <= declined_budget_v;
-    // Model panic lines in the captured build output. The emitted
-    // exports panic only at compiler-generated sites (fuel-wrapper
-    // exhaustion or partial prelude builtins
-    // string), and Lean's `panic!` RETURNS the type's `default` instead of
-    // aborting — under `native_decide` both sides of a model-vs-model sample
-    // equation then reduce to `default` and the kernel certifies a vacuous
-    // (possibly false) equality with lake exit 0 and zero sorries. The panic
-    // line is the only trace, so ANY hit is a hard check failure (see
-    // `count_model_panic_lines`).
-    // A theorem whose proof failed to elaborate carries a synthetic `sorry`
-    // and no warning; it is charged exactly like a caught one.
-    let sorries = count_lean_sorries(&stderr)
-        + count_lean_sorries(&stdout)
-        + isolated_errors.as_ref().map_or(0, Vec::len);
-    let model_panic_hits = lean_codegen::count_model_panic_lines(&stdout)
-        + lean_codegen::count_model_panic_lines(&stderr);
+    // Each `declaration uses 'sorry'` warning, with the law theorem it sits
+    // in. A theorem whose proof failed to elaborate carries a synthetic
+    // `sorry` and no warning; it is charged exactly like a caught one. A
+    // refused attempt's floor is not charged (it is declined above).
+    let mut sorry_sites = lean_sorry_sites(output_dir, &format!("{stdout}{stderr}"));
+    let all_sites = sorry_sites.len();
+    sorry_sites.retain(|(theorem, _)| !refused.contains(theorem.as_str()));
+    let sorries = (count_lean_sorries(&stderr) + count_lean_sorries(&stdout))
+        .saturating_sub(all_sites - sorry_sites.len())
+        + isolated_charged.len();
     let budget = sorry_budget_v;
     let passed = output.status.success()
         && isolated_errors.is_ok()
@@ -8734,7 +8781,7 @@ fn run_proof_check(
         eprintln!(
             "{}",
             format!(
-                "--check: {} claim(s) were declined, not exported and therefore never proved \
+                "--check: {} claim(s) were declined and therefore never proved \
                  (budget {}). Fix the claim, or acknowledge the refusal with --declined-budget {}.",
                 declined_count, declined_budget_v, declined_count,
             )
@@ -8747,10 +8794,10 @@ fn run_proof_check(
     // the budgets still gate). `build_errors` surfaces a hard Lean error that
     // `sorries` hides. An error the isolation guard dropped is still a hard
     // error: counted here so `build_errors == 0` keeps meaning "no proof
-    // escaped its `sorry` floor".
+    // escaped its `sorry` floor". A declined attempt is not counted.
     let lean_build_errors = count_lean_build_errors(&stderr)
         + count_lean_build_errors(&stdout)
-        + isolated_errors.as_ref().map_or(0, Vec::len);
+        + isolated_charged.len();
 
     if model_panic_hits > 0 {
         eprintln!(
@@ -8767,38 +8814,15 @@ fn run_proof_check(
         );
     }
 
-    // Honest-coverage signal: did the proof establish the law's
-    // UNIVERSAL `∀`-claim by genuine kernel reasoning, or only by bounded
-    // `native_decide` enumeration over the finite sample domain? `passed`
-    // stays deliberately lenient — a bounded verify-on-domain is a
-    // legitimate (if weaker) check the corpus must not regress on (e.g.
-    // `examples/refinement/email`) — so the proof-corpus runner keys on this
-    // `universal` field instead for an honest "what Aver kernel-proves"
-    // count.
-    //
-    // Same short-circuit the bool always had: a failed counted build (or a
-    // model panic) earns no audit run at all — the probe would otherwise
-    // `#print axioms` against a stale or partial environment.
-    let lean_law_audit: LeanLawAudit = if output.status.success() && model_panic_hits == 0 {
-        lean_universal_audit(
-            output_dir,
-            sorries,
-            isolated_errors.as_deref().unwrap_or(&[]),
-        )
-    } else {
-        LeanLawAudit::FAIL_CLOSED
-    };
-    let universal = lean_law_audit.universal;
+    let universal = lean_law_audit.clean && sorries == 0;
 
-    // Which law(s) actually FAILED in the gate build: map each
-    // `declaration uses 'sorry'` warning back to the `fn.law` identity of the
-    // theorem that carries it, via the emitted `-- aver:law-class` markers. This
-    // is the machine-readable answer to "which law failed?" — previously the user
-    // had to `lake build` the generated project by hand and grep the sorry
-    // warning's line number against the emitted theorems. Empty for a clean
-    // build. Also anchors `--explain`'s residual attribution below.
-    let sorry_laws: Vec<String> = if sorries > 0 {
-        let mut laws = lean_sorry_laws(output_dir, &format!("{stdout}{stderr}"));
+    // Which law(s) actually FAILED in the gate build: each charged
+    // `declaration uses 'sorry'` warning mapped back to the `fn.law` identity
+    // of the theorem that carries it, via the emitted `-- aver:law-class`
+    // markers. Empty for a clean build. Also anchors `--explain`'s residual
+    // attribution below.
+    let sorry_laws: Vec<String> = {
+        let mut laws: Vec<String> = sorry_sites.into_iter().map(|(_, label)| label).collect();
         // An isolated `verify` case is not a law; it is listed in
         // `isolated_cases` instead.
         laws.extend(
@@ -8810,8 +8834,6 @@ fn run_proof_check(
         laws.sort();
         laws.dedup();
         laws
-    } else {
-        Vec::new()
     };
 
     // Proof manifest: the file-level audit's per-law records as one
@@ -8822,13 +8844,13 @@ fn run_proof_check(
     //
     // `--explain` (opt-in, fail-soft): BEFORE writing the manifest,
     // run an isolated residual probe over the laws that did NOT close
-    // universally (tier Failed / Bounded) and merge each law's `unsolved goals`
+    // universally (tier Failed, or a declined attempt) and merge each law's `unsolved goals`
     // text onto its `open_goal` by `fn.law` identity. Strictly additive: a law
     // with no residual found stays `open_goal: None`, and with `--explain`
     // absent the probe never runs, so the written bytes are unchanged. The probe
     // is gated on the COUNTED build having succeeded (no audit otherwise), and
     // its own outcome can never touch `passed` / `universal` / the exit code.
-    let mut manifest: ProofManifest = build_proof_manifest(&lean_law_audit.laws, declined);
+    let mut manifest: ProofManifest = build_proof_manifest(&lean_law_audit.laws, &declined);
     manifest.obligations = lean_law_audit.obligations.clone();
     // Declaration and script hashes of the emitted project. Read off the files
     // lake built, so they cover the export as checked, whatever the audit
@@ -8854,9 +8876,7 @@ fn run_proof_check(
         // residual). The open set is read from the emitted markers — not just
         // `m.laws` — so a law the audit could not record at all (no lakefile
         // root, an unreadable class channel) is still probed rather than
-        // silently skipped. A Bounded record IS probed (its native_decide twin
-        // closes, but the law's own universal `∀`-statement is the
-        // residual-bearing shape).
+        // silently skipped. A declined attempt has no record and is probed.
         let closed_universal: std::collections::HashSet<&str> = m
             .laws
             .iter()
@@ -8883,12 +8903,20 @@ fn run_proof_check(
         // that was already proven). So split by `sorry_laws` (the laws whose
         // theorem truly carries the gate-build sorry): sorry-bearers are the
         // genuine `open_goals`; a residual from a non-sorry law is probe context
-        // (`probe_of`), never presented as the failure. With no sorries the probe
-        // only ran over bounded laws, so keep every residual as `open_goals`
-        // (unchanged behavior — no `probe_of`).
+        // (`probe_of`), never presented as the failure. A declined attempt is a
+        // genuine failure too. With no sorries keep every residual as
+        // `open_goals` (no `probe_of`).
         if !sorry_laws.is_empty() {
-            let sorry_set: std::collections::HashSet<&str> =
-                sorry_laws.iter().map(String::as_str).collect();
+            let sorry_set: std::collections::HashSet<&str> = sorry_laws
+                .iter()
+                .map(String::as_str)
+                .chain(
+                    lean_law_audit
+                        .refused_attempts
+                        .iter()
+                        .map(|(_, label)| label.as_str()),
+                )
+                .collect();
             let mut genuine: std::collections::BTreeMap<String, String> =
                 std::collections::BTreeMap::new();
             for (law, goal) in std::mem::take(&mut open_goals) {
@@ -8978,7 +9006,8 @@ fn run_proof_check(
     write_proof_manifest(output_dir, &manifest);
     // `--compare-manifest`: for every claim that did not close —
     // a record at tier `failed` or `missing`, a theorem carrying the
-    // gate-build sorry, or a claim the build located a hard error in — say
+    // gate-build sorry, a declined attempt, or a claim the build located a
+    // hard error in — say
     // whether its own script changed and which definitions in its cone
     // changed since the earlier manifest. Diagnostic only: never touches
     // `passed` or the exit code. An unreadable manifest, or one written
@@ -9019,6 +9048,12 @@ fn run_proof_check(
                     .map(|record| record.law.clone())
                     .collect();
                 open.extend(sorry_laws.iter().cloned());
+                open.extend(
+                    lean_law_audit
+                        .refused_attempts
+                        .iter()
+                        .map(|(_, label)| label.clone()),
+                );
                 open.extend(proof_explain::failed_claims(
                     output_dir,
                     &format!("{stdout}{stderr}"),
@@ -9143,14 +9178,13 @@ fn run_proof_check(
             );
         }
         obj.insert("universal".into(), universal.into());
-        // ADDITIVE law-count fields, sourced from the same class markers and
+        // ADDITIVE law-count field, sourced from the same class markers and
         // `#print axioms` audit the `universal` bool keys on (computed in the
         // counted build).
         obj.insert(
             "universal_laws".into(),
             lean_law_audit.universal_laws.into(),
         );
-        obj.insert("bounded_laws".into(), lean_law_audit.bounded_laws.into());
         if !lean_law_audit.obligations.is_empty() {
             let obligations: serde_json::Map<String, serde_json::Value> = lean_law_audit
                 .obligations
@@ -9844,6 +9878,24 @@ fn gate_manifest(baseline: &ProofManifest, current: &ProofManifest) -> GateRepor
     let mut regressions = 0usize;
     let mut promoted: Vec<&str> = Vec::new();
 
+    // A baseline written before 0.31 can hold `bounded` laws: a `when`-law
+    // stated only over its sample domain. `aver proof` no longer states a law
+    // that way. Say so first; a bounded law that did not close for every input
+    // still fails below, as MISSING.
+    let bounded = baseline
+        .laws
+        .iter()
+        .filter(|l| l.tier == LawTier::Bounded)
+        .count();
+    if bounded > 0 {
+        lines.push(format!(
+            "--gate: the baseline records {bounded} law(s) at tier `bounded`, which aver no \
+             longer produces: a law is stated only for every input, and one whose proof does \
+             not close is declined and shows below as MISSING. Review the change and \
+             re-record the baseline with --write-baseline."
+        ));
+    }
+
     for bl in &baseline.laws {
         match current_by.get(bl.law.as_str()) {
             None => {
@@ -10082,24 +10134,25 @@ struct ManifestLaw {
 }
 
 /// Result of the Lean law-theorem audit (`lean_universal_audit`): the
-/// file-level `universal` verdict plus the two additive law-count fields
-/// surfaced in `--check-json`, and the per-law records the proof manifest
-/// is built from.
+/// file-level verdict, the `universal_laws` count surfaced in `--check-json`,
+/// the per-law records the proof manifest is built from, and the attempts Lean
+/// refused.
 struct LeanLawAudit {
-    /// EXACTLY the old `lean_universal_proof` bool: every law theorem in
-    /// the crediting set is kernel-clean, at least one is explicitly
-    /// classed universal, and the file has no sorries.
-    universal: bool,
-    /// Law theorems classed `universal` whose own `#print axioms` line
-    /// passed the kernel-axiom whitelist.
+    /// Every law theorem the audit credits from is kernel-clean, at least one
+    /// is explicitly classed, and the probe ran. The caller adds the "no
+    /// sorries" conjunct, after taking the refused attempts' sorries out.
+    clean: bool,
+    /// Law theorems whose own `#print axioms` line passed the kernel-axiom
+    /// whitelist.
     universal_laws: usize,
-    /// Law theorems classed `bounded-domain` by the emitter's statement-
-    /// class marker.
-    bounded_laws: usize,
     /// Per-law manifest records (file-level audit half), keyed on the
     /// `fn.law` identity read from the class marker, forming the manifest.
     laws: Vec<ManifestLaw>,
     obligations: Vec<ManifestLaw>,
+    /// Attempt-classed law theorems (`LAW_CLASS_ATTEMPT`) Lean did not
+    /// close, as `(root-qualified theorem, fn.law)`. Declined by the caller,
+    /// not charged as sorries.
+    refused_attempts: Vec<(String, String)>,
 }
 
 impl LeanLawAudit {
@@ -10107,92 +10160,46 @@ impl LeanLawAudit {
     /// readable at all (no lakefile roots, no law theorems, failed counted
     /// build) — the same fail-closed bias the bool always had.
     const FAIL_CLOSED: LeanLawAudit = LeanLawAudit {
-        universal: false,
+        clean: false,
         universal_laws: 0,
-        bounded_laws: 0,
         laws: Vec::new(),
         obligations: Vec::new(),
+        refused_attempts: Vec::new(),
     };
 }
 
-/// Honest-coverage distinguisher for the Lean backend: did the emitted
-/// proof establish the law's UNIVERSAL `∀`-claim by genuine kernel
-/// reasoning, or only by bounded `native_decide` enumeration over the
-/// finite sample domain?
+/// Honest-coverage distinguisher for the Lean backend: did the emitted proof
+/// establish each law's UNIVERSAL `∀`-claim by genuine kernel reasoning?
 ///
-/// `passed` stays deliberately lenient — a bounded verify-on-domain is a
-/// legitimate (if weaker) check the corpus must not regress on (e.g.
-/// `examples/refinement/email`). But the proof-corpus coverage runner wants
-/// the HONEST count: only laws whose `∀`-theorem is kernel-clean.
+/// The ground-truth signal is `#print axioms`: a genuine proof depends only on
+/// logical axioms (`propext` / `Classical.choice` / `Quot.sound`), while
+/// `native_decide` injects `Lean.ofReduceBool` and a caught floor `sorryAx`.
+/// We collect the main law theorems (`*_law_*` / `*_eq_*`, excluding the
+/// `_checked_domain` and `_sample_N` sample checks built off the same base)
+/// and run `#print axioms` on each against the freshly built environment.
 ///
-/// The ground-truth signal is `#print axioms`: a genuine proof depends only
-/// on logical axioms (`propext` / `Classical.choice` / `Quot.sound`), while
-/// `native_decide` injects `Lean.ofReduceBool` — the kernel trusting the
-/// compiler's reduction of a `Bool` over the concrete domain, NOT the
-/// universal claim. We collect the main law theorems (`*_law_*` / `*_eq_*`,
-/// excluding the `_checked_domain` and `_sample_N` bounded cross-checks
-/// built off the same base) and run `#print axioms` on each against the
-/// freshly built environment. The law is universal iff EVERY participating
-/// theorem is `ofReduceBool`-free — and at least one exists, and there are
-/// no sorries.
-///
-/// Axiom-cleanliness alone is NOT enough: the theorem's STATEMENT must also
-/// be the law's genuine `∀`-claim. A `when`-law over non-refinement-lifted
-/// givens is emitted with sampled-domain disjunction premises prepended
-/// (`a = 0 ∨ a = 1 ∨ … ->`), so even a real-tactic, axiom-clean proof of it
-/// only establishes the law on the finite sample domain. Whether those
-/// premises were prepended is knowable only at the statement-construction
-/// site, so the emitter records a per-theorem class marker in the `.lean`
-/// source (`-- aver:law-class <name> universal|bounded-domain`, see
+/// Every law theorem states the law for every input; the emitter records per
+/// theorem whether it is a claim or an attempt in a class marker in the
+/// `.lean` source (`-- aver:law-class <name> universal|attempt <fn.law>`, see
 /// `lean::LAW_CLASS_MARKER_PREFIX`) and this checker consumes it — it never
 /// re-derives the class from names or by parsing statements:
-///   - `bounded-domain`-classed theorems are EXCLUDED from universal
-///     crediting (their axiom profile no longer matters here; sorries still
-///     count file-wide via the `sorries` gate above);
-///   - universal credit requires at least one emitted law theorem
-///     explicitly classed `universal` — a dir with law theorems but no
-///     markers (stale/foreign export not produced by this emitter) FAILS
-///     CLOSED to `false` instead of reverting to name heuristics. The
-///     `--check` flow always runs on a fresh emission (`cmd_proof` emits,
-///     then calls `run_proof_check`, the only caller), so the channel is
-///     present in practice;
-///   - a name-matched theorem WITHOUT a marker (auxiliary `*_eq_*`-shaped
-///     helper lemmas some strategies emit) stays in the axiom check —
-///     conservative: it can only withhold credit, never grant it.
+///   - a law theorem without a marker (a stale/foreign export not produced by
+///     this emitter, or a helper whose name happens to contain `_eq_`) is not
+///     a law obligation; a dir with no marked law theorem FAILS CLOSED;
+///   - a claim that does not close records tier `failed` (and its floor is a
+///     sorry the caller charges);
+///   - an attempt that does not close leaves the crediting set and is returned
+///     in `refused_attempts`, for the caller to decline.
 ///
-/// A task whose universal theorem was dropped entirely (`skip_universal`:
-/// const-RHS singleton or a fuel-bounded recursive callee)
-/// emits no `*_law_*` theorem, so the
-/// empty set correctly reports `false`.
+/// Conservative on any failure (missing `lake`, import error, non-zero exit):
+/// no credit. A false "not-universal" only lowers the coverage number, never
+/// inflates it — the right bias for an honest metric.
 ///
-/// Conservative on any failure (missing `lake`, import error, non-zero
-/// exit): returns `false`. A false "not-universal" only lowers the coverage
-/// number, never inflates it — the right bias for an honest metric.
-///
-/// Besides the file-level `universal` bool the audit returns two ADDITIVE
-/// counts sourced from the SAME class markers and the SAME `#print axioms`
-/// probe output (no new trust surface):
-///   - `universal_laws`: law theorems classed `universal` whose own probe
-///     line stays within the kernel-axiom whitelist;
-///   - `bounded_laws`: law theorems classed `bounded-domain` (a pure
-///     classification count — no certificate involved).
-///
-/// A file with residual sorries still gets its per-theorem probe: the
-/// sorry-floored theorem's own axiom line carries `sorryAx` (tier `failed`,
-/// not counted), while every kernel-clean sibling keeps its `universal`
-/// record and counts — one open law in a module no longer erases the
-/// certificate of the laws that did close. The file-level bool alone keeps
-/// the "no sorries" conjunct.
-///
-/// The bool's semantics are untouched: `universal` remains the
-/// all-or-nothing verdict over the whole crediting set (universal-classed
-/// AND unmarked theorems), computed from the exact same expression as
-/// before the counts existed.
 /// `isolated` names the theorems the isolation check reported as failed to
 /// elaborate: they are left out of the `#print axioms` probe (a missing one
 /// would make the probe itself fail and cost every sibling its credit) and
-/// record tier `failed`.
-fn lean_universal_audit(dir: &str, sorries: usize, isolated: &[String]) -> LeanLawAudit {
+/// record tier `failed` (or are refused, for an attempt).
+fn lean_universal_audit(dir: &str, isolated: &[String]) -> LeanLawAudit {
     use std::process::Command;
     // Every lakefile root is part of the program proof. The first is the entry;
     // later roots include dependency modules (plus shared support roots, which
@@ -10273,99 +10280,16 @@ fn lean_universal_audit(dir: &str, sorries: usize, isolated: &[String]) -> LeanL
             }
         }
     }
-    // Every law theorem emitted by this compiler has a class marker (chunked
-    // parts inherit their base marker). Roots such as `AverCommon` also contain
-    // helper theorems whose ordinary names happen to include `_eq_`; importing
-    // those roots into the whole-program audit must not promote support lemmas
-    // into user law obligations.
+    // Every law theorem emitted by this compiler has a class marker. Roots
+    // such as `AverCommon` also contain helper theorems whose ordinary names
+    // happen to include `_eq_`; importing those roots into the whole-program
+    // audit must not promote support lemmas into user law obligations.
     law_thms.retain(|thm| law_class_for_theorem(thm, &classes).is_some());
     if law_thms.is_empty() {
         return LeanLawAudit::FAIL_CLOSED;
     }
     law_thms.sort();
     law_thms.dedup();
-    // Class COUNTS, read off the same markers the crediting set below
-    // keys on. `bounded_laws` is a pure classification count (the
-    // emitter decided at statement-construction time that the theorem
-    // only states the law on the finite sample domain) — it needs no
-    // kernel certificate, so it survives every downstream gate.
-    let bounded_law_keys = law_thms
-        .iter()
-        .filter_map(|t| {
-            let class = law_class_for_theorem(t, &classes)?;
-            (class == lean_codegen::LAW_CLASS_BOUNDED_DOMAIN)
-                .then(|| law_dedup_key(t, &classes).to_string())
-        })
-        .collect::<std::collections::HashSet<_>>();
-    let bounded_laws = bounded_law_keys.len();
-    // Per-law manifest records for the `bounded-domain`-classed laws: deduped
-    // by `fn.law` identity, tier `bounded`. These carry no kernel certificate
-    // (they're native_decide'd over the finite sample domain), so their axiom
-    // set is empty in the manifest. Computed BEFORE the `retain` below drops
-    // bounded theorems from `law_thms`, and reused (cloned) on every return
-    // path — the bounded set is the same regardless of how the universal half
-    // resolves.
-    let bounded_records: Vec<ManifestLaw> = {
-        let mut by_label: std::collections::BTreeMap<String, ManifestLaw> =
-            std::collections::BTreeMap::new();
-        for thm in &law_thms {
-            if !matches!(
-                law_class_for_theorem(thm, &classes),
-                Some(lean_codegen::LAW_CLASS_BOUNDED_DOMAIN)
-            ) {
-                continue;
-            }
-            let key = law_dedup_key(thm, &classes);
-            let label = manifest_label_for(key, &labels);
-            by_label
-                .entry(label.clone())
-                .or_insert_with(|| ManifestLaw {
-                    law: label,
-                    backend: "lean".to_string(),
-                    tier: LawTier::Bounded,
-                    axioms: Vec::new(),
-                    theorem: thm.clone(),
-                    open_goal: None,
-                    credit: None,
-                    provenance: None,
-                });
-        }
-        by_label.into_values().collect()
-    };
-    // A build with residual sorries still runs the per-theorem probe below:
-    // `#print axioms` on a sorry-floored theorem lists `sorryAx`, so that law
-    // records tier `failed` while every kernel-clean sibling keeps its own
-    // `universal` record and counts in `universal_laws`. Only the FILE-level
-    // `universal` bool keeps its all-or-nothing "no sorries" conjunct (see
-    // the final assembly). Per-law credit is decided by each theorem's own
-    // axiom line, never by the dir's sorry count.
-    let file_has_sorries = sorries > 0;
-    // Consume the statement-class channel (see the doc comment above):
-    // bounded-domain theorems leave the crediting set; at least one
-    // explicitly universal-classed theorem must remain or the dir earns no
-    // universal credit (fail-closed when the channel is absent).
-    let mut universal_class_present = false;
-    let mut universal_classed: Vec<String> = Vec::new();
-    law_thms.retain(|thm| match law_class_for_theorem(thm, &classes) {
-        Some(lean_codegen::LAW_CLASS_BOUNDED_DOMAIN) => false,
-        Some(lean_codegen::LAW_CLASS_UNIVERSAL) => {
-            universal_class_present = true;
-            universal_classed.push(thm.clone());
-            true
-        }
-        // Unmarked (or unknown class tag): keep it in the axiom check —
-        // conservative — but it cannot by itself earn universal credit.
-        _ => true,
-    });
-    if !universal_class_present {
-        return LeanLawAudit {
-            universal: false,
-            universal_laws: 0,
-            bounded_laws,
-            laws: bounded_records,
-            obligations: Vec::new(),
-        };
-    }
     // Throwaway checker: print each main law theorem's axiom dependency
     // against the already-built environment.
     let mut src = String::new();
@@ -10381,114 +10305,76 @@ fn lean_universal_audit(dir: &str, sorries: usize, isolated: &[String]) -> LeanL
     }
     let checker = std::path::Path::new(dir).join("_aver_axcheck.lean");
     if std::fs::write(&checker, &src).is_err() {
-        return LeanLawAudit {
-            universal: false,
-            universal_laws: 0,
-            bounded_laws,
-            laws: bounded_records,
-            obligations: Vec::new(),
-        };
+        return LeanLawAudit::FAIL_CLOSED;
     }
     let out = Command::new("lake")
         .args(["env", "lean", "_aver_axcheck.lean"])
         .current_dir(dir)
         .output();
     let _ = std::fs::remove_file(&checker);
-    match out {
-        Ok(o) => {
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            );
-            // WHITELIST: every axiom a law theorem depends on must be one of
-            // the three core logical axioms. A blacklist (no `ofReduceBool` =
-            // native_decide, no `sorryAx`) was equivalent while every line of
-            // emitted Lean came from typed IR — but the discovery feedback
-            // loop embeds COMMITTED `DiscoveredLemmas.lean` text verbatim, so
-            // an artifact smuggling e.g. a top-level `axiom` declaration must
-            // flip the metric to false, not slide past a name blacklist. The
-            // output format is `'name' depends on axioms: [a, b]` (or `does
-            // not depend on any axioms`); the two blacklist probes stay as a
-            // belt-and-suspenders floor against output-format drift.
-            let universal = !file_has_sorries
-                && o.status.success()
-                && lean_axiom_lines_whitelisted(&combined)
-                && !combined.contains("Lean.ofReduceBool")
-                && !combined.contains("sorryAx");
-            // Per-theorem attribution over the SAME probe output: a
-            // universal-classed theorem is counted iff its own `#print
-            // axioms` line stays within the kernel whitelist (the same
-            // per-declaration parser `theorem_credit_from_axioms` uses).
-            // When `universal` is true above, every line passed,
-            // so `universal_laws` equals the universal-classed count —
-            // the file-level bool keeps EXACTLY its all-or-nothing
-            // semantics, the count just shows how many theorems the
-            // certificate covers (and, on a degraded file, how many
-            // survived).
-            let universal_laws = if o.status.success() {
-                universal_classed
-                    .iter()
-                    .filter(|theorem| {
-                        !obligation_theorems.contains(*theorem)
-                            && theorem_credit_from_axioms(&combined, theorem)
-                    })
-                    .count()
-            } else {
-                0
-            };
-            // Per-law manifest records for the universal-classed laws, from
-            // the SAME probe output: tier `universal` iff the theorem's own
-            // `#print axioms` line stays within the kernel whitelist (the
-            // exact `theorem_credit_from_axioms` decision `universal_laws` counts),
-            // else `failed`. Axioms are the parsed, sorted set the gate diffs.
-            // Deduped by `fn.law` identity so chunked `_part<N>` theorems
-            // collapse onto one law (strongest-wins if they disagree).
-            let mut universal_records: std::collections::BTreeMap<String, ManifestLaw> =
-                std::collections::BTreeMap::new();
-            for thm in &universal_classed {
-                let key = law_dedup_key(thm, &classes);
-                let label = manifest_label_for(key, &labels);
-                let credited = o.status.success() && theorem_credit_from_axioms(&combined, thm);
-                let tier = if credited {
-                    LawTier::Universal
-                } else {
-                    LawTier::Failed
-                };
-                let axioms = axioms_for_theorem(&combined, thm).unwrap_or_default();
-                let record = ManifestLaw {
-                    law: label.clone(),
-                    backend: "lean".to_string(),
-                    tier,
-                    axioms,
-                    theorem: thm.clone(),
-                    open_goal: None,
-                    credit: None,
-                    provenance: None,
-                };
-                manifest_keep_stronger(&mut universal_records, record);
-            }
-            let mut laws = bounded_records;
-            laws.extend(universal_records.into_values());
-            laws.sort_by(|a, b| a.law.cmp(&b.law));
-            let (obligations, laws) = laws
-                .into_iter()
-                .partition(|law: &ManifestLaw| obligation_theorems.contains(&law.theorem));
-            LeanLawAudit {
-                universal,
-                universal_laws,
-                bounded_laws,
-                laws,
-                obligations,
-            }
+    let Ok(o) = out else {
+        return LeanLawAudit::FAIL_CLOSED;
+    };
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    // WHITELIST, per theorem: every axiom a law theorem depends on must be one
+    // of the three core logical axioms (`theorem_credit_from_axioms`). A
+    // blacklist (no `ofReduceBool`, no `sorryAx`) was equivalent while every
+    // line of emitted Lean came from typed IR — but the discovery feedback
+    // loop embeds COMMITTED `DiscoveredLemmas.lean` text verbatim, so an
+    // artifact smuggling e.g. a top-level `axiom` declaration must lose credit,
+    // not slide past a name blacklist. A failed probe credits nothing.
+    let credited = |thm: &String| o.status.success() && theorem_credit_from_axioms(&combined, thm);
+    let mut refused_attempts: Vec<(String, String)> = Vec::new();
+    let mut records: std::collections::BTreeMap<String, ManifestLaw> =
+        std::collections::BTreeMap::new();
+    let mut universal_laws = 0usize;
+    let mut clean = o.status.success();
+    for thm in &law_thms {
+        let label = manifest_label_for(thm, &labels);
+        let ok = credited(thm);
+        if !ok && law_class_for_theorem(thm, &classes) == Some(lean_codegen::LAW_CLASS_ATTEMPT) {
+            refused_attempts.push((thm.clone(), label));
+            continue;
         }
-        Err(_) => LeanLawAudit {
-            universal: false,
-            universal_laws: 0,
-            bounded_laws,
-            laws: bounded_records,
-            obligations: Vec::new(),
-        },
+        clean &= ok;
+        if ok && !obligation_theorems.contains(thm) {
+            universal_laws += 1;
+        }
+        // Tier `universal` iff the theorem's own `#print axioms` line stays
+        // within the kernel whitelist, else `failed`. Axioms are the parsed,
+        // sorted set the gate diffs. Deduped by `fn.law` identity
+        // (strongest-wins if two theorems of one law disagree).
+        let record = ManifestLaw {
+            law: label,
+            backend: "lean".to_string(),
+            tier: if ok {
+                LawTier::Universal
+            } else {
+                LawTier::Failed
+            },
+            axioms: axioms_for_theorem(&combined, thm).unwrap_or_default(),
+            theorem: thm.clone(),
+            open_goal: None,
+            credit: None,
+            provenance: None,
+        };
+        manifest_keep_stronger(&mut records, record);
+    }
+    // A program whose every law was a refused attempt has nothing proven.
+    clean &= !records.is_empty();
+    let (obligations, laws) = records
+        .into_values()
+        .partition(|law: &ManifestLaw| obligation_theorems.contains(&law.theorem));
+    LeanLawAudit {
+        clean,
+        universal_laws,
+        laws,
+        obligations,
+        refused_attempts,
     }
 }
 
@@ -10516,16 +10402,14 @@ fn parse_lean_decl_location(line: &str) -> Option<(String, usize)> {
 }
 
 /// Map each `declaration uses 'sorry'` warning in a Lean `lake build` log to the
-/// `fn.law` identity of the enclosing law theorem, via the emitted
-/// `-- aver:law-class` markers. Returns the SORTED, DEDUPED set of law identities
-/// whose theorem carries a residual `sorry` in the GATE build — the answer to
-/// "which law failed?" that otherwise required a manual `lake build` + grep. The
-/// gate build's floor is a bare `sorry` (not the probe's `AVERSPEC_SORRY` trace),
-/// so the warning's `file:line` is the only signal: it points at the theorem's
-/// declaration line, so the enclosing theorem is the nearest one whose line is
-/// `<= the warning line`. Lean-only; empty when the build has no sorries or the
-/// emitted sources are unreadable.
-fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
+/// enclosing theorem (root-qualified) and its `fn.law` identity, via the emitted
+/// `-- aver:law-class` markers — the answer to "which law failed?" that
+/// otherwise required a manual `lake build` + grep. The warning's `file:line`
+/// points at the theorem's declaration line, so the enclosing theorem is the
+/// nearest one whose line is `<= the warning line`. One entry per warning (not
+/// deduplicated); empty when the build has no sorries or the emitted sources
+/// are unreadable.
+fn lean_sorry_sites(dir: &str, build_output: &str) -> Vec<(String, String)> {
     let locations: Vec<(String, usize)> = build_output
         .lines()
         .filter(|l| l.contains("declaration uses") && l.contains("sorry"))
@@ -10576,7 +10460,7 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
             file_thms.insert(relative, thms);
         }
     }
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<(String, String)> = Vec::new();
     for (file, warn_line) in &locations {
         let Some(thms) = file_thms.get(file) else {
             continue;
@@ -10588,11 +10472,9 @@ fn lean_sorry_laws(dir: &str, build_output: &str) -> Vec<String> {
             .filter(|(tl, _)| tl <= warn_line)
             .max_by_key(|(tl, _)| *tl)
         {
-            out.push(manifest_label_for(thm, &labels));
+            out.push((thm.clone(), manifest_label_for(thm, &labels)));
         }
     }
-    out.sort();
-    out.dedup();
     out
 }
 
@@ -11475,29 +11357,6 @@ fn axioms_for_theorem(output: &str, theorem: &str) -> Option<Vec<String>> {
     }
 }
 
-/// `true` iff EVERY `depends on axioms: […]` record in `output` reports only the
-/// core logical axioms (`propext`, `Classical.choice`, `Quot.sound`). Each
-/// bracket is read in full across wrapped continuation lines, so an axiom on a
-/// second physical line cannot slip past the whitelist. Text not matching the
-/// `depends on axioms: […]` shape is ignored — the caller's blacklist probes
-/// remain the floor for those.
-fn lean_axiom_lines_whitelisted(output: &str) -> bool {
-    const MARK: &str = "depends on axioms:";
-    let mut search = output;
-    while let Some(idx) = search.find(MARK) {
-        let tail = &search[idx + MARK.len()..];
-        if parse_axiom_bracket(tail)
-            .iter()
-            .any(|a| !STANDARD_LEAN_AXIOMS.contains(&a.as_str()))
-        {
-            return false;
-        }
-        let advance = tail.find(']').map_or(tail.len(), |c| c + 1);
-        search = &tail[advance..];
-    }
-    true
-}
-
 /// True for the main universal law theorem names emitted by the Lean
 /// backend (`<fn>_law_<law>` or `<fn>_eq_<spec>`), excluding the bounded
 /// cross-checks built off the same base (`_checked_domain`, `_sample_N`)
@@ -11531,31 +11390,7 @@ fn law_class_for_theorem<'a>(
     theorem: &str,
     classes: &'a std::collections::HashMap<String, String>,
 ) -> Option<&'a str> {
-    classes.get(theorem).map(String::as_str).or_else(|| {
-        law_class_base_name(theorem).and_then(|base| classes.get(base).map(String::as_str))
-    })
-}
-
-/// Counting key that collapses `<base>_part<N>` chunk declarations onto their
-/// base law, mirroring `law_class_for_theorem`'s direct-lookup-first logic: the
-/// base name is used ONLY when the part carries no class marker of its own (so
-/// its class was resolved via the base-name fallback). A theorem with its OWN
-/// `-- aver:law-class` marker is a distinct law even if it happens to be named
-/// `part1`/`part2`, so it keeps its own name as the key.
-fn law_dedup_key<'a>(
-    theorem: &'a str,
-    classes: &std::collections::HashMap<String, String>,
-) -> &'a str {
-    if classes.contains_key(theorem) {
-        return theorem;
-    }
-    law_class_base_name(theorem).unwrap_or(theorem)
-}
-
-fn law_class_base_name(theorem: &str) -> Option<&str> {
-    let idx = theorem.rfind("_part")?;
-    let tail = &theorem[idx + "_part".len()..];
-    (!tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit())).then_some(&theorem[..idx])
+    classes.get(theorem).map(String::as_str)
 }
 
 /// Parse the root modules out of a generated `lakefile.lean`
@@ -11674,13 +11509,7 @@ fn lean_isolated_error_labels(dir: &str, errored: &[String]) -> Vec<String> {
     }
     let mut out: Vec<String> = errored
         .iter()
-        .map(|name| {
-            labels
-                .get(name)
-                .or_else(|| law_class_base_name(name).and_then(|base| labels.get(base)))
-                .cloned()
-                .unwrap_or_else(|| name.clone())
-        })
+        .map(|name| labels.get(name).cloned().unwrap_or_else(|| name.clone()))
         .collect();
     out.sort();
     out.dedup();
@@ -11777,241 +11606,6 @@ fn cmd_proof_lean(
         .map(|(path, _)| path)
         .filter(|path| path.ends_with(".lean") && path != "lakefile.lean")
         .collect()
-}
-
-/// Speculative-universal (Lean): the "try-universal, fall-back-to-sampled"
-/// statement-form decision for SINGLE-LIST conditional laws (Gap 1). A single
-/// list given with a `when` premise is too diverse to classify statically — the
-/// generic conditional driver closes some (sortedness, the per-element-fold
-/// shape) and `sorry`s others (the json roundtrips, whose conclusion is a
-/// String/parse equation the list-induction portfolio cannot peel). So the
-/// decision is made EMPIRICALLY, exactly as `--minimize` learns a portfolio's
-/// winning branch from one instrumented build:
-///
-/// 1. PROBE — state EVERY single-list candidate universally (floored with an
-///    `AVERSPEC_SORRY:<fn.law>` trace) and run one `lake build`. A candidate
-///    whose portfolio fell through to the floor surfaces its id in the log (it
-///    did not close). The bounded sample cross-checks still pass, so the probe
-///    build always succeeds (a `sorry` is a warning).
-/// 2. COMMIT — re-emit with the laws that CLOSED (`probed − failed`) stated
-///    universally and the rest reverted to their sound bounded sampled-domain
-///    statement.
-///
-/// No-op when the file has no single-list candidate (the probe emit records
-/// none — the byte-identical baseline is restored without a build, so the
-/// decomposed corpus pays nothing). Fail-safe: if the committed project does not
-/// build, the bounded baseline is restored. Successful candidates retain their
-/// diagnostic floors, keeping unchanged modules reusable by Lake. A demoted
-/// candidate still rebuilds its module and dependents; the final axiom audit
-/// always runs against the committed environment.
-fn run_lean_speculative(
-    file: &str,
-    output_dir: &str,
-    ctx: &mut codegen::CodegenContext,
-    verify_mode: &super::cli::ProofVerifyMode,
-) {
-    use aver::ast::{TopLevel, VerifyKind};
-    use aver::codegen::lean::tactic_ir::speculative;
-    use std::process::Command;
-
-    // Cheap necessary-condition pre-filter: the speculative path fires for a
-    // `when`-law with ONE or TWO `List<_>` givens (the single-list and two-list
-    // conditional-inductive shapes), OR for a `when`-law with NO list givens that
-    // FOLLOWS an earlier law block (a possible laws-as-lemmas pool — the keystone
-    // `recognize_pool_composition_generic` shape). With no such law the probe
-    // would admit nothing, so skip the extra emits + build entirely and leave the
-    // baseline untouched. A loose match here is harmless: a file whose probe emit
-    // traces no candidate (`probed_ids` empty) short-circuits before any build.
-    let mut seen_law = false;
-    let candidate_law = |law: &aver::ast::VerifyLaw, seen_law: bool| -> bool {
-        let lists = law
-            .givens
-            .iter()
-            .filter(|g| g.type_name.trim().starts_with("List<"))
-            .count();
-        law.when.is_some() && ((lists == 1 || lists == 2) || (lists == 0 && seen_law))
-    };
-    let entry_candidate = ctx.items.iter().any(|item| {
-        let TopLevel::Verify(vb) = item else {
-            return false;
-        };
-        let VerifyKind::Law(law) = &vb.kind else {
-            return false;
-        };
-        let is_candidate = candidate_law(law, seen_law);
-        seen_law = true;
-        is_candidate
-    });
-    // A DEPENDENCY module's `when`-law can be a speculative candidate too — the
-    // rounded-step reciprocal bound (`projects/k5_fdiv`) CITES the dependency
-    // rounding bounds (`awayFracErrorBound` / `truncFracErrorBound`), which are
-    // single-`when` laws the keystone closes universally only through the probe.
-    // When the entry file has no candidate of its own the probe would never run,
-    // leaving those dep laws stated bounded and the citation unresolved. Trigger
-    // on a dep candidate as well; the probe still short-circuits (no build) when
-    // the probe emit traces nothing (`probed_ids` empty), so a file with no
-    // admitted speculative dep law pays only one extra emit and is byte-identical.
-    let dep_candidate = ctx.modules.iter().any(|m| {
-        let mut seen = false;
-        m.verify_laws.iter().any(|vb| {
-            let VerifyKind::Law(law) = &vb.kind else {
-                return false;
-            };
-            let is_candidate = candidate_law(law, seen);
-            seen = true;
-            is_candidate
-        })
-    });
-    if !entry_candidate && !dep_candidate {
-        return;
-    }
-
-    // Elan resolves the pinned toolchain from the generated project even when
-    // the caller has no default toolchain. Match the build's working directory.
-    let lake_ok = Command::new("lake")
-        .arg("--version")
-        .current_dir(output_dir)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if !lake_ok {
-        // No prover to run the probe, so we cannot learn which candidates close.
-        // The baseline directly admits two-list conditionals (the `default`), which
-        // would stamp a non-closer `universal` over a `sorry` floor. Commit an
-        // EMPTY closed-set instead: every conditional law falls back to its sound
-        // bounded statement (honest — nothing was proven). Then re-emit.
-        speculative::set_committed(std::collections::HashSet::new());
-        cmd_proof_lean(file, output_dir, ctx, verify_mode);
-        return;
-    }
-    let build = |dir: &str| -> (bool, String) {
-        match Command::new("lake").arg("build").current_dir(dir).output() {
-            Ok(o) => (
-                o.status.success(),
-                format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&o.stdout),
-                    String::from_utf8_lossy(&o.stderr)
-                ),
-            ),
-            Err(_) => (false, String::new()),
-        }
-    };
-
-    // 1) PROBE emit — single-list conditionals stated universally with trace floors.
-    speculative::begin_probe();
-    cmd_proof_lean(file, output_dir, ctx, verify_mode);
-    let probed = speculative::probed_ids();
-    if probed.is_empty() {
-        // No single-list candidate — restore the byte-identical baseline (no
-        // build needed; the probe emit only differs on single-list laws).
-        speculative::clear();
-        cmd_proof_lean(file, output_dir, ctx, verify_mode);
-        return;
-    }
-
-    let (probe_ok, probe_out) = build(output_dir);
-    if let Ok(path) = std::env::var("AVER_SPECULATIVE_LOG") {
-        let _ = std::fs::write(&path, &probe_out);
-    }
-    // `AVER_SPECULATIVE_KEEP=<dir>` keeps the probe emit itself (the
-    // universal statements with their trace floors), which the committed
-    // emit below overwrites — the only way to read the arm a candidate
-    // actually failed with.
-    if let Ok(keep) = std::env::var("AVER_SPECULATIVE_KEEP") {
-        let _ = std::fs::remove_dir_all(&keep);
-        let _ = std::process::Command::new("cp")
-            .args(["-R", output_dir, &keep])
-            .status();
-    }
-    let mut failed = speculative::parse_failures(&probe_out);
-    if probe_ok {
-        // Behind the isolation guard a candidate whose proof errored no longer
-        // fails the build; it carries a synthetic `sorry` and never reaches its
-        // trace floor. Ask the built environment which ones did.
-        match lean_isolated_errors(output_dir) {
-            Ok(names) => failed.extend(speculative::ids_for_theorems(&names, &probed)),
-            Err(reason) => {
-                speculative::set_committed(std::collections::HashSet::new());
-                cmd_proof_lean(file, output_dir, ctx, verify_mode);
-                eprintln!(
-                    "{}",
-                    format!(
-                        "speculative-universal: could not tell which probe proofs failed \
-                         ({reason}) — every candidate kept its bounded statement"
-                    )
-                    .yellow()
-                );
-                return;
-            }
-        }
-    }
-    if !probe_ok {
-        // A `sorry` is only a warning, so the probe build succeeds even when
-        // every candidate fails to close; a FAILED probe build means a hard
-        // error somewhere in it — a heartbeat timeout in one arm, say, which
-        // `first` cannot catch. Lean aborts only THAT theorem (its floor never
-        // runs, so it counts as open) and still elaborates every other one,
-        // whose floors stay a reliable oracle. Map the errors to their
-        // candidates and go on; the committed build below re-verifies the
-        // result. Only an error outside every candidate's theorems (a def
-        // failed) leaves nothing to trust — then every candidate keeps its
-        // bounded statement, and the run says so: a silent fallback hides the
-        // one arm that needs fixing.
-        match speculative::parse_error_theorems(&probe_out, Path::new(output_dir), &probed) {
-            Some(errored) if !errored.is_empty() => {
-                eprintln!(
-                    "{}",
-                    format!(
-                        "speculative-universal: the probe hit a hard error in {} candidate(s) — \
-                         they keep their bounded statements (AVER_SPECULATIVE_LOG=<file> keeps the probe log)",
-                        errored.len()
-                    )
-                    .yellow()
-                );
-                failed.extend(errored);
-            }
-            _ => {
-                speculative::set_committed(std::collections::HashSet::new());
-                cmd_proof_lean(file, output_dir, ctx, verify_mode);
-                eprintln!(
-                    "{}",
-                    "speculative-universal: probe build failed — every candidate kept its \
-                     bounded statement (AVER_SPECULATIVE_LOG=<file> keeps the probe log)"
-                        .yellow()
-                );
-                return;
-            }
-        }
-    }
-    let closed: std::collections::HashSet<String> = probed.difference(&failed).cloned().collect();
-
-    // 2) COMMIT re-emit — the laws that closed go universal, the rest fall back.
-    speculative::set_committed(closed.clone());
-    cmd_proof_lean(file, output_dir, ctx, verify_mode);
-
-    // 3) FAIL-SAFE verify — the committed project must still build.
-    let (commit_ok, _) = build(output_dir);
-    if !commit_ok {
-        // Commit an empty closed-set so every conditional law falls back to
-        // bounded (NOT `clear()` — the default-admit baseline would stamp a
-        // two-list non-closer `universal` over a `sorry`).
-        speculative::set_committed(std::collections::HashSet::new());
-        cmd_proof_lean(file, output_dir, ctx, verify_mode);
-        eprintln!(
-            "{}",
-            "speculative-universal: committed proof did not build — fell back to bounded".yellow()
-        );
-    } else if !closed.is_empty() {
-        println!(
-            "{}",
-            format!(
-                "speculative-universal: proved {} single-list conditional law(s) universally",
-                closed.len()
-            )
-            .green()
-        );
-    }
 }
 
 /// `--minimize` (Lean): collapse each emitted `first | … | sorry` portfolio to
@@ -12624,10 +12218,10 @@ mod tests {
         let none = "'f_law_x' does not depend on any axioms";
         let foreign = "'f_law_x' depends on axioms: [propext, cheat]";
         let native = "'f_law_x' depends on axioms: [Lean.ofReduceBool]";
-        assert!(super::lean_axiom_lines_whitelisted(clean));
-        assert!(super::lean_axiom_lines_whitelisted(none));
-        assert!(!super::lean_axiom_lines_whitelisted(foreign));
-        assert!(!super::lean_axiom_lines_whitelisted(native));
+        assert!(super::theorem_credit_from_axioms(clean, "f_law_x"));
+        assert!(super::theorem_credit_from_axioms(none, "f_law_x"));
+        assert!(!super::theorem_credit_from_axioms(foreign, "f_law_x"));
+        assert!(!super::theorem_credit_from_axioms(native, "f_law_x"));
     }
 
     #[test]
@@ -12640,10 +12234,7 @@ mod tests {
             "'f_law_x' depends on axioms: [propext, Classical.choice,\n  Quot.sound, sorryAx]";
         let wrapped_clean =
             "'f_law_x' depends on axioms: [propext,\n  Classical.choice, Quot.sound]";
-        // The whitelist reader reads the full bracket across the wrap:
-        assert!(!super::lean_axiom_lines_whitelisted(wrapped_sorry));
-        assert!(super::lean_axiom_lines_whitelisted(wrapped_clean));
-        // The credit reader (awards hand/core/universal) likewise rejects it:
+        // The credit reader reads the full bracket across the wrap:
         assert!(!super::theorem_credit_from_axioms(wrapped_sorry, "f_law_x"));
         assert!(super::theorem_credit_from_axioms(wrapped_clean, "f_law_x"));
         // And the per-law axiom set captures the wrapped tail in full:
@@ -12746,6 +12337,32 @@ mod tests {
                     && l.contains("was universal")),
             "must name the missing law with its old tier: {:?}",
             report.lines
+        );
+    }
+
+    #[test]
+    fn gate_explains_a_pre_031_bounded_baseline() {
+        // A 0.30 baseline holds `bounded` laws; 0.31 states every law for every
+        // input and declines the ones that do not close. The gate must fail
+        // and say why, not just list MISSING laws.
+        let base = manifest(vec![
+            law("f.closes", super::LawTier::Bounded, &[]),
+            law("f.open", super::LawTier::Bounded, &[]),
+        ]);
+        let cur = manifest(vec![law(
+            "f.closes",
+            super::LawTier::Universal,
+            &["propext"],
+        )]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 1);
+        assert!(report.lines[0].contains("2 law(s) at tier `bounded`"));
+        assert!(report.lines[0].contains("--write-baseline"));
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|l| l.contains("f.open") && l.contains("MISSING"))
         );
     }
 

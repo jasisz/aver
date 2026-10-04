@@ -17,7 +17,7 @@ fn imported_in_place_effects_have_universal_mapping_and_splice_laws() {
         &["--module-root", source.to_str().unwrap()],
     );
     assert!(run.status.success(), "{}", format_output(&run));
-    for key in ["bounded_laws", "build_errors", "sorries"] {
+    for key in ["build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
     let manifest: serde_json::Value = serde_json::from_str(
@@ -102,7 +102,7 @@ verify detectsCorruption
     );
     assert!(!run.status.success(), "false laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     assert_eq!(summary["universal_laws"], 97, "{summary}");
     for name in ["dropped", "reordered", "resetPosition"] {
         assert_eq!(

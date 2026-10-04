@@ -39,10 +39,9 @@ their normal Lake build do not depend on waterfall.
    names of admissible helpers. An explicit `using` keeps its existing
    citation rules, including `using []`. Claims declined at provider
    boundaries or at unproved fuel boundaries stay declined.
-2. Existing universal proofs first get a transitive axiom audit. For a bounded
-   law, the compiler builds a universal candidate with its normal statement
-   builder. It drops the sample-membership premises and keeps `when` guards
-   and refinement binders.
+2. Existing universal proofs first get a transitive axiom audit. Each
+   candidate is the law's universal statement from the normal statement
+   builder, with its `when` guards and refinement binders.
 3. Unresolved candidates try `waterfall?` in search mode and then in committed
    mode. Each attempt uses one worker, effort 1,000 and 1,000,000 Lean
    heartbeats. `--waterfall-effort N` changes the effort.
@@ -59,7 +58,7 @@ their normal Lake build do not depend on waterfall.
    obligation audits, budgets and manifest gate. Each `because` obligation
    stays separate, and the root proof still composes them.
 
-A failed search keeps the original proof or bounded statement. A broken
+A failed search keeps the original proof. A broken
 dependency build blocks discovery in its consumers. A hard error in an earlier
 declaration can also stop an isolated attempt from reaching its target. This
 first integration does not repair arbitrary errors in an export.

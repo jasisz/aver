@@ -61,9 +61,9 @@ fn proof_citation_order_lean_closes_kernel_genuine() {
             summary["build_errors"].as_u64(),
             summary["sorries"].as_u64(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(0), Some(0), Some(3), Some(0)),
+        (Some(0), Some(0), Some(3), None),
         "the round trip must close from the snoc law written after it.\n{}",
         format_output(&run)
     );

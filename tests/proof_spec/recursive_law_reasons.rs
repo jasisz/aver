@@ -622,7 +622,7 @@ fn integer_descent_keeps_recursive_guards_and_rejects_false_explanations() {
     let (summary, run) = run_lean_check_json(file, &dir, 0, &[]);
     assert!(!run.status.success(), "false explanations must be rejected");
     assert_eq!(summary["build_errors"], 0, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     assert_eq!(summary["universal_laws"], 1, "{summary}");
     for step in ["because1", "implication"] {
         assert_eq!(

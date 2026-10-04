@@ -55,23 +55,19 @@ use crate::codegen::{CodegenContext, ProjectOutput};
 
 /// Statement-class channel for emitted law theorems.
 ///
-/// `aver proof --check`'s `universal` metric must know, per law theorem,
-/// whether the emitted STATEMENT is genuinely universal or bounded: for a
-/// `when`-law over non-refinement-lifted givens, `law_theorem_prop` prepends
-/// sampled-domain disjunction premises (`a = 0 ∨ a = 1 ∨ …`) — the theorem
-/// then only claims the law on the finite sample domain, even when it is
-/// proven by real tactics with a kernel-clean axiom profile. Refinement-lifted
-/// `when`-laws drop those premises (the Subtype carries the invariant) and
-/// stay genuinely universal.
-///
-/// Only the code that BUILDS the statement knows which premises it prepended,
-/// so the emitter records the class as one structured marker comment per
-/// emitted law theorem, preceding it in the generated `.lean` source
-/// (self-contained artifact — the classification travels with the export):
+/// Every law theorem states the law for every input (a `when`-law as
+/// `∀ givens, <when> = true -> claim`). What `aver proof --check` must know,
+/// per law theorem, is what a refusal means: a CLAIM whose proof Lean refuses
+/// is a sorry, an ATTEMPT whose proof Lean refuses is a declined law (not
+/// proved for every input; `aver verify` still checks its samples). Only the
+/// code that chose the proof knows which it is, so the emitter records the
+/// class as one structured marker comment per emitted law theorem, preceding
+/// it in the generated `.lean` source (self-contained artifact — the
+/// classification travels with the export):
 ///
 /// ```text
-/// -- aver:law-class <theorem_name> universal
-/// -- aver:law-class <theorem_name> bounded-domain
+/// -- aver:law-class <theorem_name> universal <fn.law>
+/// -- aver:law-class <theorem_name> attempt <fn.law>
 /// ```
 ///
 /// The checker (`lean_universal_proof` in the CLI) consumes these markers and
@@ -90,12 +86,11 @@ pub const LAW_CLASS_MARKER_PREFIX: &str = "-- aver:law-class ";
 /// Separately audited obligations belonging to one source law. They do not
 /// increase the count of source laws in a proof report.
 pub const LAW_OBLIGATION_MARKER_PREFIX: &str = "-- aver:law-obligation ";
-/// Marker class tag: no sampled-domain premises — the `∀`-statement is the
-/// law's genuine universal claim.
+/// Marker class tag: a claim — a refusal is a sorry.
 pub const LAW_CLASS_UNIVERSAL: &str = "universal";
-/// Marker class tag: sampled-domain disjunction premises bound the statement
-/// to the finite sample domain.
-pub const LAW_CLASS_BOUNDED_DOMAIN: &str = "bounded-domain";
+/// Marker class tag: a speculative `when`-law proof — a refusal declines the
+/// law instead of charging a sorry.
+pub const LAW_CLASS_ATTEMPT: &str = "attempt";
 
 /// How verify blocks should be emitted in generated Lean.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

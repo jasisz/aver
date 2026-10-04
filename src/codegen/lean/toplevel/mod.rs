@@ -18,14 +18,13 @@ pub use type_def::{
     emit_recursive_measure, emit_type_def_in_scope,
 };
 pub(crate) use verify::law_as_lemma_statement;
-pub(super) use verify::law_given_domain_values;
 pub(crate) use verify::law_theorem_base;
 pub use verify::{emit_decision, emit_verify_block};
 
 // Aliases into the parent `lean` module so the submodules' `super::<item>`
 // paths keep resolving exactly as they did when this was a single file.
 pub(super) use super::{
-    LAW_CLASS_BOUNDED_DOMAIN, LAW_CLASS_MARKER_PREFIX, LAW_CLASS_UNIVERSAL, VerifyEmitMode,
+    LAW_CLASS_ATTEMPT, LAW_CLASS_MARKER_PREFIX, LAW_CLASS_UNIVERSAL, VerifyEmitMode,
     bound_expr_to_lean, expr, kernel_decide, law_auto, recurrence, sample_literal,
     sizeof_measure_param_indices, syntax, types,
 };

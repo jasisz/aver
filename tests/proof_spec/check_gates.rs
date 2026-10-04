@@ -390,20 +390,10 @@ fn proof_lean_vacuous_when_premise_law_builds_and_passes() {
 }
 
 #[test]
-fn proof_lean_bounded_when_law_proof_is_not_credited_universal() {
-    // The false-credit probe for the `universal` metric. A `when`-law over a
-    // non-refinement-lifted Int given is emitted with sampled-domain
-    // disjunction premises prepended (`a = 0 ∨ a = 1 ∨ … ->`), so its
-    // theorem is BOUNDED — it claims the law only on the finite sample
-    // domain. This exact shape is one the LinearArithmetic `h_when` path
-    // proves with real tactics (`intro a h_a h_when; simp_all`-style), so the
-    // proof is axiom-clean: before the statement-class channel
-    // (`-- aver:law-class`, emitted by `law_theorem_prop`'s caller and
-    // consumed by `lean_universal_proof`), the file FALSELY flipped
-    // `universal: true`. The honest summary is: passed (the bounded claim IS
-    // proven), zero sorries, but NO universal credit. Reverting only the
-    // classification change (emitter marker + checker consumption) makes
-    // this test fail with `universal: true` — the false credit.
+fn proof_lean_when_law_is_stated_and_credited_for_every_input() {
+    // A `when`-law over a plain Int given is stated for every input
+    // (`∀ a, (a >= 0) = true -> …`), never over its sample domain, and is
+    // credited universal only because Lean closes that statement.
     if !lean_required::lake_available() {
         eprintln!("skipping lean bounded-when universal-credit test: `lake` not available");
         return;
@@ -447,20 +437,25 @@ fn proof_lean_bounded_when_law_proof_is_not_credited_universal() {
     assert_eq!(
         summary["passed"].as_bool(),
         Some(true),
-        "the bounded `when`-law claim itself must still prove and pass\n{}",
+        "the `when`-law must prove and pass\n{}",
         format_output(&run)
     );
     assert_eq!(
         summary["sorries"].as_u64(),
         Some(0),
-        "the bounded `when`-law proof must be sorry-free\n{}",
+        "the `when`-law proof must be sorry-free\n{}",
         format_output(&run)
     );
     assert_eq!(
         summary["universal"].as_bool(),
-        Some(false),
-        "a bounded-statement law proof must NOT be credited universal\n{}",
+        Some(true),
+        "the universal statement closes, so the law is credited universal\n{}",
         format_output(&run)
+    );
+    let lean = std::fs::read_to_string(out.join("ClampFloor.lean")).expect("read ClampFloor.lean");
+    assert!(
+        lean.contains("∀ (a : Int), (a >= 0) = true -> clampFloor a = a"),
+        "the law must be stated for every input:\n{lean}"
     );
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
@@ -700,9 +695,8 @@ fn ratchet_gate_catches_deleted_law() {
 
 #[test]
 fn ratchet_gate_catches_demoted_law() {
-    // (b) THE SOUNDNESS CASE: a law silently slides universal -> bounded. Both
-    // laws fall out of the universal lane; `passed`/`sorries`/exit stay green
-    // under the old count gate. The ratchet must FAIL and name the tier change.
+    // (b) THE SOUNDNESS CASE: a law silently stops closing for every input and
+    // is declined. The ratchet must FAIL and name it.
     if !lean_required::lake_available() {
         eprintln!("skipping ratchet demote test: `lake` not available");
         return;
@@ -726,11 +720,11 @@ fn ratchet_gate_catches_demoted_law() {
     );
     assert_eq!(
         code, 1,
-        "a universal -> bounded demotion must FAIL the gate (exit 1)\n{stderr}"
+        "a universal law that is now declined must FAIL the gate (exit 1)\n{stderr}"
     );
     assert!(
-        stderr.contains("le.leSucc") && stderr.contains("tier universal -> "),
-        "the gate must name the demoted law with its before/after tier\n{stderr}"
+        stderr.contains("le.leSucc") && stderr.contains("MISSING (was universal)"),
+        "the gate must name the demoted law with its old tier\n{stderr}"
     );
     let _ = std::fs::remove_file(&baseline);
 }
@@ -750,6 +744,8 @@ fn ratchet_regenerated_baseline_is_green() {
         RATCHET_WEAKENED_AV,
         &[
             "--check".as_ref(),
+            "--declined-budget".as_ref(),
+            "2".as_ref(),
             "--write-baseline".as_ref(),
             baseline.as_os_str(),
         ],
@@ -759,7 +755,13 @@ fn ratchet_regenerated_baseline_is_green() {
     let (code, stderr) = ratchet_run(
         "regen-gate",
         RATCHET_WEAKENED_AV,
-        &["--check".as_ref(), "--gate".as_ref(), baseline.as_os_str()],
+        &[
+            "--check".as_ref(),
+            "--declined-budget".as_ref(),
+            "2".as_ref(),
+            "--gate".as_ref(),
+            baseline.as_os_str(),
+        ],
     );
     assert_eq!(
         code, 0,

@@ -38,7 +38,7 @@ use crate::codegen::CodegenContext;
 //     against the cited magnitude/positivity facts.
 // The whole arm sits inside the keystone's `first | … | sorry` floor, so any
 // citation/discharge that does not typecheck falls to the honest floor and the
-// law degrades to its bounded sampled statement — credit stays fail-closed.
+// law stays open — credit stays fail-closed.
 // The algebraic content (the magnitude product, the value-magnitude product,
 // the window bounds) lives ENTIRELY in the cited Aver laws; deleting any of
 // them breaks the proof.
@@ -698,7 +698,7 @@ fn rf_homomorphism_name(ctx: &CodegenContext, pow_lean: &str) -> Option<String> 
 /// multiply-by-positive rung in `aver_int_order`. The algebra lives ENTIRELY in
 /// the two cited Aver laws; the arm only factors / sign-splits / multiplies /
 /// ring-bridges (`grind`). Returns `None` (decline → bounded fallback) on any
-/// structural surprise — credit stays fail-closed behind the probe + axiom
+/// structural surprise — credit stays fail-closed behind the axiom
 /// whitelist.
 /// The four general-exponent value accessors read off an inlined
 /// `fpValueGeneral(F)` body `times(pow2Signed(F.exp), Fraction(top = F.sign *
@@ -1383,11 +1383,7 @@ fn emit_rational_floor_bound_matched(
     body.push("    )".to_string());
     body.push("  )".to_string());
 
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!(
-        "  | {}",
-        super::super::super::tactic_ir::speculative::floor(&id)
-    );
+    let floor = "  | sorry".to_string();
     body.push(floor);
 
     Some(AutoProof {
@@ -1800,11 +1796,7 @@ fn emit_rational_frac_bound(
     }
     body.push("  )".to_string());
 
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!(
-        "  | {}",
-        super::super::super::tactic_ir::speculative::floor(&id)
-    );
+    let floor = "  | sorry".to_string();
     body.push(floor);
 
     Some(AutoProof {
@@ -2038,11 +2030,7 @@ fn emit_rational_floor_bound_general(
     body.push("    aver_int_order".to_string());
     body.push("  )".to_string());
 
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!(
-        "  | {}",
-        super::super::super::tactic_ir::speculative::floor(&id)
-    );
+    let floor = "  | sorry".to_string();
     body.push(floor);
 
     Some(AutoProof {
@@ -2215,11 +2203,7 @@ fn emit_rational_floor_sign_general(
     body.push("    simp only [hVfact, hTfact]".to_string());
     body.push("    rcases hsign with h | h <;> simp only [h] <;> split <;> simp only [decide_eq_true_eq] <;> omega".to_string());
     body.push("  )".to_string());
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!(
-        "  | {}",
-        super::super::super::tactic_ir::speculative::floor(&id)
-    );
+    let floor = "  | sorry".to_string();
     body.push(floor);
 
     Some(AutoProof {
@@ -2414,11 +2398,7 @@ fn emit_rational_floor_bound(
     body.push("      rw [lhs_eq, rhs_eq]; aver_int_order".to_string());
     body.push("  )".to_string());
 
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!(
-        "  | {}",
-        super::super::super::tactic_ir::speculative::floor(&id)
-    );
+    let floor = "  | sorry".to_string();
     body.push(floor);
 
     Some(AutoProof {
@@ -2521,11 +2501,7 @@ pub(super) fn emit_rational_floor_family(
         }
     };
 
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!(
-        "  | {}",
-        super::super::super::tactic_ir::speculative::floor(&id)
-    );
+    let floor = "  | sorry".to_string();
 
     Some(AutoProof {
         support_lines,

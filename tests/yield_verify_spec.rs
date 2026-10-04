@@ -264,7 +264,7 @@ fn coordinator_laws_are_universal_beside_the_vm_schedule_scenarios() {
     .unwrap();
     assert_eq!(summary["universal"], true, "{summary}");
     assert_eq!(summary["universal_laws"], 8, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
 }

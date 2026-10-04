@@ -94,8 +94,7 @@ fn waterfall_generalizes_only_the_generated_sample_domain() {
     ));
     let proposals = candidates(&output);
     let c = &proposals[0];
-    assert!(!c.baseline_universal);
-    assert!(output.contains("nonNeg_law_positiveIsNonnegative bounded-domain"));
+    assert!(output.contains("nonNeg_law_positiveIsNonnegative attempt"));
     assert_eq!(
         c.statement,
         "∀ (x : Fraction), lessF zeroF x = true -> nonNeg x = true"

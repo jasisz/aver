@@ -329,7 +329,7 @@ fn guarded_countdown_equations_support_citations_and_accumulator_laws() {
     assert!(run.status.success(), "{}", format_output(&run));
     assert_eq!(summary["build_errors"], 0);
     assert_eq!(summary["universal_laws"], 4);
-    assert_eq!(summary["bounded_laws"], 0);
+    assert!(summary.get("declined").is_none());
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap())
             .unwrap();
@@ -421,7 +421,7 @@ fn explain_reports_source_requirements_without_changing_proof_credit() {
     assert!(!plain_run.status.success(), "the missing guard must fail");
     assert_eq!(plain["build_errors"], 0, "{}", format_output(&plain_run));
     assert_eq!(plain["universal_laws"], 2, "{plain}");
-    assert_eq!(plain["bounded_laws"], 0, "{plain}");
+    assert!(plain.get("declined").is_none(), "{plain}");
     for step in ["because1", "implication"] {
         assert_eq!(
             plain["obligations"][format!("product.nonnegative.{step}")],
@@ -570,7 +570,7 @@ fn guided_singleton_helpers_remain_citable_without_laundering_false_claims() {
     );
     assert!(!run.status.success(), "the false helper must fail the gate");
     assert_eq!(summary["build_errors"], 0, "{}", format_output(&run));
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     assert_eq!(summary["universal_laws"], 5, "{summary}");
     for law in ["checked.explainedHelper", "checked.usingOnlyHelper"] {
         for step in ["because1", "because2", "implication"] {

@@ -221,9 +221,9 @@ fn proof_wf_fuel_induction_lean_closes_kernel_genuine() {
     assert_eq!(
         (
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(3), Some(0)),
+        (Some(3), None),
         "explicit law counts: exactly the three universal-classed law \
          theorems certified, none degraded to bounded-domain.\n{}",
         format_output(&run)

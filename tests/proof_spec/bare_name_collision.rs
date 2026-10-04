@@ -90,9 +90,9 @@ fn proof_bare_name_collision_lean_closes_kernel_genuine() {
             summary["build_errors"].as_u64(),
             summary["sorries"].as_u64(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(0), Some(0), Some(3), Some(0)),
+        (Some(0), Some(0), Some(3), None),
         "the writer's laws must certify against the writer's own fns.\n{}",
         format_output(&run)
     );

@@ -40,9 +40,9 @@ fn proof_conditional_split_closer_lean_closes_universally() {
         (
             summary["universal"].as_bool(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
         ),
-        (Some(true), Some(1), Some(0)),
+        (Some(true), Some(1), None),
         "the when-law must be stated universally and certified, not degraded \
          to its sampled domain.\n{}",
         format_output(&run)
@@ -56,8 +56,8 @@ fn proof_conditional_split_closer_lean_closes_universally() {
         "the when-law must drop its sampled domain:\n{lean}"
     );
     assert!(
-        lean.contains("-- aver:law-class placed_law_readsAsSigned universal"),
-        "the law must be classed universal:\n{lean}"
+        lean.contains("-- aver:law-class placed_law_readsAsSigned attempt"),
+        "the law must be stated universally as an attempt of the generic driver:\n{lean}"
     );
     assert!(
         lean.contains("(cases negative <;> simp only [placed, Bool.false_eq_true"),
@@ -80,10 +80,10 @@ fn proof_conditional_layout_with_arbitrary_threshold_closes() {
         (
             summary["build_errors"].as_u64(),
             summary["universal_laws"].as_u64(),
-            summary["bounded_laws"].as_u64(),
+            summary["declined"].as_u64(),
             summary["sorries"].as_u64(),
         ),
-        (Some(0), Some(1), Some(0), Some(0)),
+        (Some(0), Some(1), None, Some(0)),
         "the layout law must prove beyond its sampled thresholds:\n{}",
         format_output(&run)
     );

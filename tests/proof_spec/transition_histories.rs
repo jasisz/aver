@@ -19,7 +19,7 @@ fn cited_transitions_compose_and_missing_event_guards_stay_open() {
     );
     assert_eq!(summary["build_errors"], 0, "{summary}");
     assert_eq!(summary["universal_laws"], 4, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     for name in [
         "consume.everyFiniteHistory",
         "collect.growingListAccumulator",

@@ -939,9 +939,9 @@ fn the_programs_laws_reach_the_lean_wall() {
         format_output(&out)
     );
     assert_eq!(
-        summary["bounded_laws"].as_u64(),
-        Some(0),
-        "a law became bounded — say so in the report:\n{}",
+        summary["declined"].as_u64(),
+        None,
+        "a law was declined — say so in the report:\n{}",
         format_output(&out)
     );
     assert_eq!(

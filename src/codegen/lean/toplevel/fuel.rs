@@ -560,16 +560,13 @@ theorem {lemma_name} :
 /// argument — independent of how many literal arms recurse.
 ///
 /// FAIL-SOFT: the whole proof is wrapped in `first | (<skeleton>) | sorry`
-/// (mirroring the off-probe floor of
+/// (mirroring the floor of
 /// [`crate::codegen::lean::law_auto::transparent_chain`]). A gated shape the
 /// skeleton cannot close degrades to a non-fatal `declaration uses 'sorry'`
 /// warning instead of a hard `unsolved goals` build error. The lemma is not
 /// cited by any law, so its own `sorry` never enters another law's
 /// `#print axioms` set — universal credit for laws that do not reference it is
-/// untouched. A bare `sorry` (not the `AVERSPEC_SORRY:<id>` trace) is used
-/// deliberately: the trace exists so `speculative::parse_failures` can demote a
-/// non-closing conditional LAW to bounded, and this support lemma has no law
-/// tier to demote and no `speculative::admits` consumer.
+/// untouched.
 fn emit_simple_string_pos_stability_lemma(
     fd: &FnDef,
     helper_name: &str,

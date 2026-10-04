@@ -38,7 +38,7 @@ fn source_request_traces_are_universal_including_in_place_effects() {
         &["--module-root", source.to_str().unwrap()],
     );
     assert!(run.status.success(), "{}", format_output(&run));
-    for key in ["bounded_laws", "build_errors", "sorries"] {
+    for key in ["build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
     // Fifteen trace obligations, and six more for the segment interface: this
@@ -135,7 +135,7 @@ verify detects
     // The same twenty as above: the segment interface says nothing about the
     // corrupted claims below and none of them cites it.
     assert_eq!(summary["universal_laws"], 21, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     for name in [
         "dropped",
         "duplicated",
@@ -169,7 +169,7 @@ fn imported_private_helpers_preserve_universal_request_traces() {
         &["--module-root", source.to_str().unwrap()],
     );
     assert!(run.status.success(), "{}", format_output(&run));
-    for key in ["bounded_laws", "build_errors", "sorries"] {
+    for key in ["build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
     assert_eq!(summary["universal_laws"], 3, "{summary}");
@@ -192,7 +192,7 @@ fn tail_entry_alignment_is_universal_across_local_and_imported_helpers() {
         &["--module-root", source.to_str().unwrap()],
     );
     assert!(run.status.success(), "{}", format_output(&run));
-    for key in ["bounded_laws", "build_errors", "sorries"] {
+    for key in ["build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
     assert_eq!(summary["universal_laws"], 12, "{summary}");
@@ -255,7 +255,7 @@ verify detectsPause
     assert!(!run.status.success(), "false pause laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
     assert_eq!(summary["universal_laws"], 12, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     for name in ["inventedAnswer", "hiddenResumption"] {
         assert_eq!(
             summary["obligations"][format!("__localSourceTrace.{name}.implication")],
@@ -282,7 +282,7 @@ fn recursive_helper_splices_are_universal_and_explicit_dependencies() {
         &["--module-root", source.to_str().unwrap()],
     );
     assert!(run.status.success(), "{}", format_output(&run));
-    for key in ["bounded_laws", "build_errors", "sorries"] {
+    for key in ["build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
     assert_eq!(summary["universal_laws"], 16, "{summary}");
@@ -365,7 +365,7 @@ verify detectsCorruption
     assert!(!run.status.success(), "false laws passed: {summary}");
     assert_eq!(summary["build_errors"], 0, "{summary}");
     assert_eq!(summary["universal_laws"], 16, "{summary}");
-    assert_eq!(summary["bounded_laws"], 0, "{summary}");
+    assert!(summary.get("declined").is_none(), "{summary}");
     for name in ["position", "consumed", "events", "remaining"] {
         assert_eq!(
             summary["obligations"][format!("corrupt.{name}.implication")],
@@ -392,7 +392,7 @@ fn recursive_splices_preserve_nominal_arguments_early_errors_and_in_place_effect
         &["--module-root", source.to_str().unwrap()],
     );
     assert!(run.status.success(), "{}", format_output(&run));
-    for key in ["bounded_laws", "build_errors", "sorries"] {
+    for key in ["build_errors", "sorries"] {
         assert_eq!(summary[key], 0, "{summary}");
     }
     // Five trace obligations, and six more for the segment interface: this
@@ -470,7 +470,7 @@ fn recursive_imports_compose_universal_contracts_without_exposing_private_helper
             &["--module-root", source.to_str().unwrap()],
         );
         assert!(run.status.success(), "{}", format_output(&run));
-        for key in ["bounded_laws", "build_errors", "sorries"] {
+        for key in ["build_errors", "sorries"] {
             assert_eq!(summary[key], 0, "{summary}");
         }
         assert_eq!(summary["universal_laws"], count, "{summary}");

@@ -166,13 +166,11 @@ impl Runner<'_> {
                 .push(serde_json::json!({"law": c.label, "status": "existing-proof"}));
             return Ok(original.to_string());
         }
-        if c.baseline_universal {
-            let baseline = self.check(prefix, original, &c.name, false)?;
-            if baseline.ok && format::axioms(&baseline.output, &name).is_some() {
-                self.report
-                    .push(serde_json::json!({"law": c.label, "status": "existing-proof"}));
-                return Ok(original.to_string());
-            }
+        let baseline = self.check(prefix, original, &c.name, false)?;
+        if baseline.ok && format::axioms(&baseline.output, &name).is_some() {
+            self.report
+                .push(serde_json::json!({"law": c.label, "status": "existing-proof"}));
+            return Ok(original.to_string());
         }
         let key = format!(
             "{:x}",
@@ -256,7 +254,6 @@ impl Runner<'_> {
             // improve; final whole-project checking remains authoritative.
             let audit = candidates
                 .iter()
-                .filter(|(_, c)| c.baseline_universal)
                 .map(|(name, _)| format!("#print axioms {name}\n"))
                 .collect::<String>();
             let mut input = tempfile::Builder::new()
@@ -279,9 +276,7 @@ impl Runner<'_> {
                 clean.extend(
                     candidates
                         .iter()
-                        .filter(|(name, c)| {
-                            c.baseline_universal && format::axioms(&run.output, name).is_some()
-                        })
+                        .filter(|(name, _)| format::axioms(&run.output, name).is_some())
                         .map(|(name, _)| name.clone()),
                 );
             }

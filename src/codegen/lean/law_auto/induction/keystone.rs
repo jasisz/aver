@@ -41,10 +41,9 @@ fn enclosing_verify_blocks<'a>(_vb: &VerifyBlock, ctx: &'a CodegenContext) -> Ve
 /// lives as Aver helper laws (proven on their own), and the engine only supplies
 /// the citation skeleton, never a per-figure template.
 ///
-/// Speculative: the probe is the oracle (grind either closes from the pool or it
-/// does not), and `default` is OFF — a no-probe transpile keeps the bounded
-/// sampled statement, so a law `grind`+pool cannot close never regresses off its
-/// sound bounded fallback.
+/// Speculative: Lean is the oracle (grind either closes from the pool or it does
+/// not). A `when`-law it cannot close is declined by `aver proof --check` rather
+/// than charged as a sorry (see `LAW_CLASS_ATTEMPT`).
 pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -79,14 +78,12 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     // Decline a law the DETERMINISTIC interval-monotonicity rung already closes:
     // it has its own complete universal proof (a `replaces_theorem` helper kit +
     // assembly, separate-arrow statement), so the keystone must not speculatively
-    // steal it. Stealing it would only matter under the probe — the keystone's
-    // bare `grind` cannot close an interval-monotonicity goal and would fall to
-    // its sorry floor — but the theft also swaps the law's STATEMENT shape (the
-    // keystone uses the single-conjunction `omit_domain` form, interval-mono uses
-    // separate arrows). Any later law that CITES this universal (the
-    // multi-citation arm) then sees a different premise shape in the probe than
-    // in the commit and mis-probes. Declining here keeps interval-monotonicity
-    // laws deterministic in BOTH passes, so citations stay stable.
+    // steal it. The keystone's bare `grind` cannot close an interval-monotonicity
+    // goal and would fall to its sorry floor, and the theft also swaps the law's
+    // STATEMENT shape (the keystone uses the single-conjunction universal form,
+    // interval-mono uses separate arrows), which any later law that CITES this
+    // universal (the multi-citation arm) depends on. Declining here keeps
+    // interval-monotonicity laws deterministic, so citations stay stable.
     if super::super::recognize_interval_monotonicity(vb, law, ctx) {
         return false;
     }
@@ -95,9 +92,8 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     // `replaces_theorem` closer (citing `F`'s recursive-positivity / homomorphism
     // pool laws and chaining through the generic Fraction order kit), dispatched
     // before the keystone. The keystone's bare `grind` over the pool can never
-    // assemble that chain, so under the probe it would only fall to its sorry
-    // floor; declining here keeps the law deterministic in BOTH passes and lets
-    // the dedicated rung own its (separate-arrow) universal statement, exactly as
+    // assemble that chain, so it would only fall to its sorry floor; declining
+    // here keeps the law deterministic and lets the dedicated rung own its (separate-arrow) universal statement, exactly as
     // the interval-monotonicity guard above does.
     if super::super::recognize_frac_positivity(vb, law, ctx)
         || super::super::recognize_frac_geone(vb, law, ctx)
@@ -113,7 +109,7 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     // closer (the shared recursive-mono kit + a positivity / monotonicity
     // citation), dispatched before the keystone. The keystone's bare `grind` over
     // the pool can never close them (they need `f.induct`), so declining here
-    // keeps the law deterministic in BOTH passes and lets the dedicated rung own
+    // keeps the law deterministic and lets the dedicated rung own
     // its statement.
     if super::super::recognize_recursive_positive(vb, law, ctx)
         || super::super::recognize_recursive_monotone(vb, law, ctx)
@@ -124,10 +120,10 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     // composition): its dedicated rung is a DETERMINISTIC `replaces_theorem`
     // closer (the `frac_le_trans` kit + the cited monotonicity/homomorphism
     // chain), dispatched before the keystone. The keystone's bare `grind` over
-    // the pool can never synthesize the chain's intermediate magnitudes, so
-    // under the probe it would only fall to its sorry floor; declining here
-    // keeps the law deterministic in BOTH passes and lets the dedicated rung
-    // own its (separate-arrow) universal statement, exactly as the
+    // the pool can never synthesize the chain's intermediate magnitudes, so it
+    // would only fall to its sorry floor; declining here keeps the law
+    // deterministic and lets the dedicated rung own its (separate-arrow)
+    // universal statement, exactly as the
     // interval-monotonicity / pow2-monotonicity guards above do.
     if super::super::recognize_frac_order_chain(vb, law, ctx) {
         return false;
@@ -137,9 +133,9 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     // `replaces_theorem` closer (the self-contained order kit + have-sequence
     // assembler), dispatched before the keystone. The keystone's bare `grind`
     // over the pool can never assemble the chain's intermediate magnitudes, so
-    // under the probe it would only fall to its sorry floor; declining here
-    // keeps the law deterministic in BOTH passes and lets the dedicated rung own
-    // its (single-arrow) universal statement.
+    // it would only fall to its sorry floor; declining here keeps the law
+    // deterministic and lets the dedicated rung own its (single-arrow)
+    // universal statement.
     if super::super::recognize_frac_order_transitivity(vb, law, ctx) {
         return false;
     }
@@ -149,7 +145,7 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     // quotient-remainder arm below, not the subject fn.
     // A guarded comparison or equation that goes through the subject fn
     // (`place(s, n).state.used <= cap`, `(f(x) == Option.None) => x < k`) is
-    // admitted too; the probe decides whether its arms close it.
+    // admitted too; Lean decides whether its arms close it.
     if !matches!(&law.lhs.node, crate::ast::Expr::FnCall(..))
         && !super::super::shared::law_cone_calls_int_div_mod(ctx, vb, law)
         && !(law.when.is_some() && super::super::core_kit::lhs_calls_subject(vb, law))
@@ -178,7 +174,7 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
         return false;
     }
     // This rung earns its keep over the (when-gated-off) plain simp / grind
-    // rungs in two ways, both probe-decided:
+    // rungs in two ways, both decided by Lean:
     //   * a citable POOL — an earlier law whose subject fn is in this law's
     //     call cone (the EQUATIONAL pool, e.g. a `pow2` homomorphism abstracting
     //     cone recursion) or an earlier inequality `L <op> R` matching subterms
@@ -189,18 +185,16 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
     //     record-field projection through `trunc` / `fpScale`, a Bool predicate
     //     that reduces to `rfl` under the premises. The plain grind rung NEVER
     //     runs on a `when`-law (it is gated to `law.when.is_none()`), so without
-    //     this arm such a law has no universal path and silently degrades to the
-    //     bounded sampled statement.
-    // The speculative probe is the oracle in BOTH cases: a candidate that does
-    // not close falls back to bounded (default `false`), so admitting the
-    // no-pool case is fail-safe and leaves a non-probe `transpile` byte-identical.
+    //     this arm such a law has no universal path.
+    // Lean is the oracle in BOTH cases: a `when`-law candidate that does not
+    // close is declined by the check, never credited.
     //
     // The no-pool case is gated to laws WITHOUT a dedicated template strategy of
     // their own. A `when`-law pinned to a bespoke template (the `FloorDivWindow`
     // pow / window family — its own PowSumSplit / SigWindow / ProductWindow
     // proofs need functional induction the keystone's bare `grind` can't do) is
     // dispatched LATER and must keep that template; admitting it here would let
-    // the probe steal it with a grind that can only fail. Pool-citing laws skip
+    // the keystone steal it with a grind that can only fail. Pool-citing laws skip
     // this gate entirely (they are never `FloorDivWindow`-shaped and the pool is
     // the whole point).
     let has_pool = !keystone_pool_names(vb, law, ctx).is_empty()
@@ -219,8 +213,7 @@ pub(in crate::codegen::lean) fn recognize_pool_composition_generic(
             _ => return false,
         }
     }
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    super::super::super::tactic_ir::speculative::admits(&id, false)
+    true
 }
 
 /// The laws-as-lemmas pool for the keystone: the Lean theorem NAMES of EARLIER
@@ -1319,9 +1312,7 @@ pub(in crate::codegen::lean) fn equation_grind_arm(
 /// `simp` unfolds the cone and bridges the Bool comparison / splits a
 /// conjunctive guard; `grind` then composes the laws-as-lemmas pool (cone defs
 /// AND the earlier-law theorem names) to close the residual. The `first | … |
-/// sorry` floor keeps credit fail-closed; under the speculative probe the floor
-/// carries the `AVERSPEC_SORRY:<fn.law>` trace so a non-closing portfolio is
-/// observable and the law falls back to its bounded statement.
+/// sorry` floor keeps credit fail-closed.
 pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1570,11 +1561,7 @@ pub(in crate::codegen::lean) fn emit_pool_composition_generic_law(
             closes.push(format!("  | ({arm})"));
         }
     }
-    let id = format!("{}.{}", vb.fn_name, law.name);
-    let floor = format!(
-        "  | {}",
-        super::super::super::tactic_ir::speculative::floor(&id)
-    );
+    let floor = "  | sorry".to_string();
     Some(AutoProof {
         support_lines,
         body: Tactic::raw(

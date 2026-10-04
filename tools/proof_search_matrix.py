@@ -78,7 +78,7 @@ def run(binary, output, name, timeout, expected_laws):
               and bool((summary or {}).get("passed"))
               and exported == expected_laws
               and all((summary or {}).get(k, 0) == 0
-                      for k in ["sorries", "bounded_laws", "build_errors", "declined"]))
+                      for k in ["sorries", "build_errors", "declined"]))
     row = dict(expected_laws=expected_laws, exported_laws=exported, strict_passed=strict,
                case=name, elapsed=round(time.monotonic() - start, 3),
                outer_timeout=timed_out, exit_code=process.returncode, summary=summary)

@@ -15,7 +15,7 @@ fn k5_sticky_composition_has_universal_source_proofs() {
     );
     assert!(output.status.success(), "{}", format_output(&output));
     assert_eq!(summary["build_errors"], 0);
-    assert_eq!(summary["bounded_laws"], 0);
+    assert!(summary.get("declined").is_none());
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap())
             .unwrap();
@@ -49,11 +49,21 @@ fn k5_fraction_exponent_and_rounding_agree_with_the_normalized_model() {
         &dir,
         0,
         &[],
-        &["--module-root", "projects/k5_fdiv"],
+        &[
+            "--module-root",
+            "projects/k5_fdiv",
+            "--declined-budget",
+            "1",
+        ],
     );
     assert!(output.status.success(), "{}", format_output(&output));
     assert_eq!(summary["build_errors"], 0, "{summary}");
     assert_eq!(summary["sorries"], 0, "{summary}");
+    // The away-rounding bound is not proved for every input in this cone.
+    assert_eq!(
+        summary["declined_claims"][0]["claim"], "Domain.Round.awayErrorBound.strictBound",
+        "{summary}"
+    );
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("proof_manifest.json")).unwrap())
             .unwrap();
