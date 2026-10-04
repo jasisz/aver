@@ -103,8 +103,7 @@
     "filter": "all()",
     "partition": "1/8",
     "features": "wasm,wasip2",
-    "wasip2_tests": true,
-    "smoke": true
+    "wasip2_tests": true
   },
   {
     "suite": "cert_hardening_spec",
@@ -112,8 +111,7 @@
     "mode": "nextest",
     "filter": "all()",
     "partition": "2/8",
-    "features": "wasm,wasip2",
-    "smoke": true
+    "features": "wasm,wasip2"
   },
   {
     "suite": "cert_hardening_spec",
@@ -121,8 +119,7 @@
     "mode": "nextest",
     "filter": "all()",
     "partition": "3/8",
-    "features": "wasm,wasip2",
-    "smoke": true
+    "features": "wasm,wasip2"
   },
   {
     "suite": "cert_hardening_spec",
@@ -130,8 +127,7 @@
     "mode": "nextest",
     "filter": "all()",
     "partition": "4/8",
-    "features": "wasm,wasip2",
-    "smoke": true
+    "features": "wasm,wasip2"
   },
   {
     "suite": "cert_hardening_spec",
@@ -139,8 +135,7 @@
     "mode": "nextest",
     "filter": "all()",
     "partition": "5/8",
-    "features": "wasm,wasip2",
-    "smoke": true
+    "features": "wasm,wasip2"
   },
   {
     "suite": "cert_hardening_spec",
@@ -148,8 +143,7 @@
     "mode": "nextest",
     "filter": "all()",
     "partition": "6/8",
-    "features": "wasm,wasip2",
-    "smoke": true
+    "features": "wasm,wasip2"
   },
   {
     "suite": "cert_hardening_spec",
@@ -157,8 +151,7 @@
     "mode": "nextest",
     "filter": "all()",
     "partition": "7/8",
-    "features": "wasm,wasip2",
-    "smoke": true
+    "features": "wasm,wasip2"
   },
   {
     "suite": "cert_hardening_spec",
@@ -166,8 +159,38 @@
     "mode": "nextest",
     "filter": "all()",
     "partition": "8/8",
+    "features": "wasm,wasip2"
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "pr-smoke-1",
+    "mode": "nextest",
+    "filter": "test(=cert_hardening_accepts_the_clean_certificate) | test(=cert_hardening_declines_a_shadow_under_the_witness_namespace) | test(=cert_hardening_declines_a_constant_under_a_wall_namespace) | test(=cert_hardening_declines_a_constant_under_the_manifest) | test(=cert_hardening_declines_forged_policies_behind_a_shadowed_obligations) | test(=cert_hardening_declines_a_wasip2_constant_extending_the_artifact_data) | test(=cert_hardening_declines_a_skipped_kernel_check) | test(=cert_hardening_declines_set_option_and_open_in_a_law_statement) | test(=cert_hardening_declines_an_aliased_core_class_instance) | test(=cert_hardening_declines_a_sorry_backed_report_block) | test(=cert_hardening_declines_a_sorry_backed_plans_part) | test(=cert_hardening_declines_a_law_citing_an_unrelated_bridge) | test(=cert_hardening_declines_a_record_encoder_missing_a_field) | test(=cert_hardening_declines_a_law_statement_that_reassociates_its_pin) | test(=cert_hardening_declines_a_list_bridge_with_another_element_encoder) | test(=cert_hardening_declines_a_bridged_law_naming_its_model_unqualified) | test(=cert_hardening_declines_bridges_whose_slice_is_not_imported) | test(=cert_hardening_credits_identical_bridge_slices_once) | test(=cert_hardening_accepts_int_interpolation) | test(=cert_hardening_declines_a_lying_policy_answer) | test(=cert_hardening_declines_site_bits_hiding_a_declared_export) | test(=cert_hardening_report_blocks_check_the_last_export) | test(=cert_hardening_declines_divmod_at_a_supertype_signature) | test(=cert_hardening_declines_a_wrong_chunk_boundary) | test(=cert_hardening_declines_lying_role_bits) | test(=cert_hardening_declines_a_rec_subtype_boundary_moved)",
+    "partition": "1/1",
     "features": "wasm,wasip2",
-    "smoke": true
+    "smoke": true,
+    "pr_only": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "pr-smoke-2",
+    "mode": "nextest",
+    "filter": "test(=cert_hardening_declines_exchanged_list_cons_structs) | test(=cert_hardening_accepts_list_matches) | test(=cert_hardening_declines_a_certified_closure_reaching_a_work_import) | test(=cert_hardening_declines_a_cons_helper_that_is_a_user_function) | test(=cert_hardening_accepts_list_literals) | test(=cert_hardening_declines_a_duplicate_planned_index) | test(=cert_hardening_declines_a_helper_that_is_a_user_function) | test(=cert_hardening_declines_an_early_return_of_the_other_variant)",
+    "partition": "1/1",
+    "features": "wasm,wasip2",
+    "smoke": true,
+    "pr_only": true
+  },
+  {
+    "suite": "cert_hardening_spec",
+    "lane": "pr-smoke-3",
+    "mode": "nextest",
+    "filter": "test(=cert_hardening_declines_a_lying_type_cut) | test(=cert_hardening_declines_callee_lists_out_of_fold_order) | test(=cert_hardening_declines_a_lying_code_offset) | test(=cert_hardening_declines_declared_names_out_of_order) | test(=cert_hardening_declines_a_lying_shape_bit) | test(=cert_hardening_declines_bytes_declared_at_the_string_array) | test(=cert_hardening_accepts_early_returns) | test(=cert_hardening_accepts_bytes_helpers) | test(=cert_hardening_accepts_list_helpers) | test(=cert_hardening_accepts_list_of_records_bridges)",
+    "partition": "1/1",
+    "features": "wasm,wasip2",
+    "smoke": true,
+    "pr_only": true,
+    "wasip2_tests": true
   },
   {
     "suite": "cert_whole_module_guard_iso",
