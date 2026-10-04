@@ -380,10 +380,10 @@ impl Env<'_> {
             return Ok(meet(l.chain, r.chain));
         }
         let Some(g) = l.blocked.or(r.blocked) else {
-            return Err("the sides evaluate to different terms".into());
+            return Err(self.stopped_at(l.chain.cur(), r.chain.cur()));
         };
         if depth == 0 || is_bool_value(&g) || self.hyp_for(&g).is_some() {
-            return Err("no split decides the claim".into());
+            return Err(self.stopped_at(l.chain.cur(), r.chain.cur()));
         }
         let hyp = self.fresh_hyp();
         let branch = |env: &mut Self, v: bool| -> Result<Proof, String> {
@@ -401,6 +401,32 @@ impl Env<'_> {
             if_true: Box::new(if_true),
             if_false: Box::new(if_false),
         })
+    }
+}
+
+impl Env<'_> {
+    /// The refusal for two sides evaluation cannot bring together: both
+    /// sides as it left them, and the hypotheses in scope.
+    pub(crate) fn stopped_at(&self, lhs: &Term, rhs: &Term) -> String {
+        use crate::ir::proof_steps::show;
+        let names = self.inputs.symbol_table;
+        let mut s = format!(
+            "evaluation stops at `{}` and `{}`",
+            show::term(lhs, names),
+            show::term(rhs, names)
+        );
+        if !self.hyps.is_empty() {
+            s.push_str(", under ");
+            s.push_str(
+                &self
+                    .hyps
+                    .iter()
+                    .map(|(n, e)| format!("{n}: {}", show::eqn(e, names)))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
+        s
     }
 }
 

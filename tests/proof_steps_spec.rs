@@ -49,6 +49,7 @@ fn export_steps(fixture: &str, out: &Path) -> Vec<(String, PathBuf)> {
     let mut files: Vec<(String, PathBuf)> = fs::read_dir(out.join("proof_steps"))
         .unwrap_or_else(|e| panic!("no proof_steps in {}: {e}", out.display()))
         .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "steps"))
         .map(|p| {
             let law = p.file_stem().unwrap().to_string_lossy().to_string();
             (law, p)
@@ -790,6 +791,32 @@ fn a_using_list_is_a_set_and_ambiguous_or_looping_rewrites_are_refused_by_name()
         ),
         "{log}"
     );
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn the_aver_backend_says_where_the_steps_producer_stopped() {
+    let out = scratch("where");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "using.av",
+            "--backend",
+            "aver",
+            "-o",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let text = String::from_utf8_lossy(&result.stdout);
+    for expected in [
+        "  f.isH: closed by steps",
+        "  f.isG: not closed by this backend (steps: evaluation stops at `x + 1` and `1 + x`)",
+        "  g.overlapping: not closed by this backend (steps: law f.isG and law f.isH both rewrite",
+    ] {
+        assert!(text.contains(expected), "missing `{expected}`\n{text}");
+    }
     let _ = fs::remove_dir_all(out);
 }
 

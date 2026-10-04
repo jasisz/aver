@@ -350,11 +350,26 @@ impl Renderer<'_> {
                     s.push(' ');
                     s.push_str(&self.expr(v));
                 }
+                let cited = self.script.law(law);
                 if let Some(p) = premise {
+                    let p = self.proof(p, hyps)?;
+                    // A bare comparison as `when` is a Prop in the theorem.
+                    let prop = cited
+                        .and_then(|l| l.premise.as_ref())
+                        .is_some_and(is_prop_comparison);
                     s.push(' ');
-                    s.push_str(&self.proof(p, hyps)?);
+                    if prop {
+                        s.push_str(&format!(
+                            "(propext ⟨fun _ => rfl, fun _ => of_decide_eq_true {p}⟩)"
+                        ));
+                    } else {
+                        s.push_str(&p);
+                    }
                 }
-                s
+                match cited {
+                    Some(l) => from_statement(&l.lhs, &l.rhs, format!("({s})")),
+                    None => s,
+                }
             }
             Proof::Compute { .. } => "by decide".to_string(),
             Proof::Cases {
@@ -539,7 +554,7 @@ impl Renderer<'_> {
         if arm == 0 {
             let body = term::subst(&def.body, &outer)?;
             statement = format!("{} = {}", self.expr(&call), self.expr(&body));
-            tactic = "rfl".to_string();
+            tactic = format!("first | rfl | {SAME_MATCHES}");
         } else {
             let ResolvedExpr::Match { subject, arms } = &def.body.node else {
                 return Err("unfold: not a match".into());
@@ -589,7 +604,13 @@ impl Renderer<'_> {
                 }
                 None => pat,
             };
-            tactic = arm_tactic(pat, &subject, "h")?;
+            // A match the statement writes out is elaborated apart from the
+            // definition's, so the two need not be equal by `rfl` alone.
+            tactic = match arm_tactic(pat, &subject, "h")?.as_str() {
+                "subst h; rfl" => format!("subst h; first | rfl | {SAME_MATCHES}"),
+                "rw [h]; try rfl" => format!("rw [h]; all_goals first | rfl | {SAME_MATCHES}"),
+                other => other.to_string(),
+            };
         }
         let intro = if names.is_empty() {
             String::new()
@@ -728,11 +749,58 @@ pub(crate) fn render(script: &Script, ctx: &CodegenContext) -> Result<Rendered, 
         hyps.push(("when".into(), Eqn::new(p.clone(), term::boolean(true))));
     }
     let term = r.proof(&script.proof, &hyps)?;
+    let term = to_statement(&script.obligation, term);
     Ok(Rendered {
         support: r.support,
         term,
     })
 }
+
+/// A cited law's theorem states a comparison as a Prop; the steps read it
+/// as an equation of Bools, every comparison through `decide`.
+fn from_statement(lhs: &Term, rhs: &Term, h: String) -> String {
+    match (is_prop_comparison(lhs), is_prop_comparison(rhs)) {
+        (false, false) => h,
+        // `decide A = R` from `A = (R = true)`.
+        (true, false) => format!(
+            "(Bool.eq_iff_iff.mpr ⟨fun d => Eq.mp {h} (of_decide_eq_true d), fun r => decide_eq_true (Eq.mpr {h} r)⟩)"
+        ),
+        // `L = decide B` from `(L = true) = B`.
+        (false, true) => format!(
+            "(Bool.eq_iff_iff.mpr ⟨fun l => decide_eq_true (Eq.mp {h} l), fun d => Eq.mpr {h} (of_decide_eq_true d)⟩)"
+        ),
+        // `decide A = decide B` from `A = B`.
+        (true, true) => format!(
+            "(Bool.eq_iff_iff.mpr ⟨fun d => decide_eq_true (Eq.mp {h} (of_decide_eq_true d)), fun d => decide_eq_true (Eq.mpr {h} (of_decide_eq_true d))⟩)"
+        ),
+    }
+}
+
+/// The step term proves the claim as an equation of Bools, every Int
+/// comparison read through `decide`. Lean states a comparison as a Prop, so
+/// a claim with a comparison on one side, or on both, is an equation of
+/// Props: carry the proof across.
+fn to_statement(ob: &crate::ir::proof_steps::Obligation, t: String) -> String {
+    match (is_prop_comparison(&ob.lhs), is_prop_comparison(&ob.rhs)) {
+        (false, false) => t,
+        // `A = (R = true)` from `decide A = R`.
+        (true, false) => format!(
+            "(propext ⟨fun h => ({t}).symm.trans (decide_eq_true h), fun h => of_decide_eq_true (({t}).trans h)⟩)"
+        ),
+        // `(L = true) = B` from `L = decide B`.
+        (false, true) => format!(
+            "(propext ⟨fun h => of_decide_eq_true (({t}).symm.trans h), fun h => ({t}).trans (decide_eq_true h)⟩)"
+        ),
+        // `A = B` from `decide A = decide B`.
+        (true, true) => format!(
+            "(propext ⟨fun h => of_decide_eq_true (({t}).symm.trans (decide_eq_true h)), fun h => of_decide_eq_true (({t}).trans (decide_eq_true h))⟩)"
+        ),
+    }
+}
+
+/// Closes `body = body'` where both write the same matches, elaborated
+/// apart: split every match and compare the branches.
+const SAME_MATCHES: &str = "(dsimp only; (repeat' split) <;> simp_all)";
 
 /// The marker a rejected step proof leaves in the build log.
 pub(crate) const STEPS_REJECTED_MARKER: &str = "AVER_STEPS_REJECTED:";
@@ -764,15 +832,24 @@ pub(crate) fn lead_portfolio(
 }
 
 /// One `proof_steps/<law>.steps` file per law with a step proof: the
-/// serialised script the Aver replayer checks.
+/// serialised script the Aver replayer checks. A law no producer wrote
+/// steps for gets `proof_steps/<law>.refused` instead, with where the
+/// producer stopped.
 pub(crate) fn step_files(ctx: &CodegenContext) -> Vec<(String, String)> {
     ctx.proof_ir
         .law_theorems
         .iter()
         .filter_map(|t| {
-            let script = t.steps.as_ref()?;
-            let text = crate::ir::proof_steps::sexpr::script(script, &ctx.symbol_table).ok()?;
-            Some((format!("proof_steps/{}.steps", script.obligation.key), text))
+            if let Some(script) = t.steps.as_ref() {
+                let text = crate::ir::proof_steps::sexpr::script(script, &ctx.symbol_table).ok()?;
+                return Some((format!("proof_steps/{}.steps", script.obligation.key), text));
+            }
+            let why = t.steps_refusal.as_ref()?;
+            let key = crate::ir::proof_steps::sexpr::Names::fn_name(&ctx.symbol_table, t.fn_id);
+            Some((
+                format!("proof_steps/{key}.{}.refused", t.law_name),
+                format!("{why}\n"),
+            ))
         })
         .collect()
 }

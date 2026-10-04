@@ -498,6 +498,9 @@ pub struct LawTheorem {
     /// The proof as data, when a step producer recognised the law
     /// (`crate::ir::proof_steps`). Backends try it before any search.
     pub steps: Option<crate::ir::proof_steps::Script>,
+    /// Why no producer wrote steps, when none did: where it stopped, with
+    /// both sides and the hypotheses in scope.
+    pub steps_refusal: Option<String>,
 }
 
 #[derive(Debug, Clone)]

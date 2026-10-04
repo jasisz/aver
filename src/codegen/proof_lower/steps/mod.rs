@@ -235,6 +235,9 @@ fn produce(inputs: &ProofLowerInputs, ir: &ProofIR, t: &LawTheorem) -> Result<Sc
         proof,
     };
     check_script(&script)?;
+    // A script the kernel could not read back would be a producer error
+    // later; refuse it here, by name.
+    crate::ir::proof_steps::sexpr::script(&script, inputs.symbol_table)?;
     Ok(script)
 }
 
@@ -250,6 +253,15 @@ pub(crate) fn populate_law_steps(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 Err(why) => eprintln!("steps: {key}: none ({why})"),
             }
         }
-        ir.law_theorems[i].steps = result.ok();
+        match result {
+            Ok(script) => {
+                ir.law_theorems[i].steps = Some(script);
+                ir.law_theorems[i].steps_refusal = None;
+            }
+            Err(why) => {
+                ir.law_theorems[i].steps = None;
+                ir.law_theorems[i].steps_refusal = Some(why);
+            }
+        }
     }
 }

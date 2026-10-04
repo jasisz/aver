@@ -68,9 +68,31 @@ pub fn evalClosed(t @ _: &crate::proof_kernel::aver_generated::kernel::term::Ter
                 &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&b),
             )
         }
+        crate::proof_kernel::aver_generated::kernel::term::Term::TNeg(a) => {
+            let a = (*a).clone();
+            crate::proof_kernel::aver_generated::kernel::eval::negated(
+                &crate::proof_kernel::aver_generated::kernel::eval::evalClosed(&a),
+            )
+        }
         crate::proof_kernel::aver_generated::kernel::term::Term::TBi(name, args) => {
             crate::proof_kernel::aver_generated::kernel::eval::evalBuiltin(name, &args)
         }
+        _ => None,
+    }
+}
+
+/// The negation of an Int value.
+pub fn negated(a @ _: &Option<Val>) -> Option<Val> {
+    crate::proof_kernel::cancel_checkpoint();
+    match a.clone() {
+        Some(__pat0) => match __pat0 {
+            crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(x) => Some(
+                crate::proof_kernel::aver_generated::kernel::eval::Val::VInt(
+                    aver_rt::AverInt::from_i64(0).sub(&x),
+                ),
+            ),
+            _ => None,
+        },
         _ => None,
     }
 }

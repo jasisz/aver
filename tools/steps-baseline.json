@@ -1,54 +1,83 @@
 {
- "examples/data/flatten.av": [
-  "flattenThenCount.countViaFlatten"
- ],
- "examples/data/words.av": [
-  "countAll.viaExpand"
- ],
- "examples/formal/law_auto.av": [
-  "add.associative",
-  "add.commutative",
-  "add.commutativeSwapSides",
-  "add.identityZero",
-  "add.identityZeroLeft",
-  "addOne.identityViaAdd",
-  "id.reflexive",
-  "mul.associative",
-  "mul.commutative",
-  "mul.identityOne",
-  "mul.identityOneLeft",
-  "sub.rightIdentity"
- ],
- "examples/formal/spec_laws.av": [
-  "absVal.absValSpec",
-  "clampNonNegative.clampNonNegativeSpec"
- ],
- "examples/formal/tcp_write_now.av": [
-  "stillToSend.acceptedNothingKeepsEverything"
- ],
- "examples/games/eggcatch/core.av": [
-  "chuteIndex.inRange",
-  "foxCount.exactlyOne",
-  "resolveLip.conserves",
-  "resolveLip.noFalseMiss"
- ],
- "examples/games/tetris/logic.av": [
-  "computeScore.zeroLinesZeroScore"
- ],
- "proof-corpus/decomposed/prod/prop_39.av": [
-  "barbar.barbarTrueRight"
- ],
- "proof-corpus/decomposed/prod/prop_42.av": [
-  "elem.barbarIdempotent"
- ],
- "proof-corpus/decomposed/prod/prop_43.av": [
-  "barbar.barbarTrueRight"
- ],
- "proof-corpus/decomposed/prod/prop_44.av": [
-  "barbar.barbarTrueLeft"
- ],
- "proof-corpus/tip/isaplanner/prop_58.av": [
-  "dropInt.dropIntSelf",
-  "zip.zipSelf"
- ]
+ "examples/data/flatten.av": {
+  "steps": [
+   "flattenThenCount.countViaFlatten"
+  ]
+ },
+ "examples/data/words.av": {
+  "steps": [
+   "countAll.viaExpand"
+  ]
+ },
+ "examples/formal/law_auto.av": {
+  "steps": [
+   "add.associative",
+   "add.commutative",
+   "add.commutativeSwapSides",
+   "add.identityZero",
+   "add.identityZeroLeft",
+   "addOne.identityViaAdd",
+   "id.reflexive",
+   "mul.associative",
+   "mul.commutative",
+   "mul.identityOne",
+   "mul.identityOneLeft",
+   "sub.rightIdentity"
+  ]
+ },
+ "examples/formal/spec_laws.av": {
+  "steps": [
+   "absVal.absValSpec",
+   "clampNonNegative.clampNonNegativeSpec"
+  ]
+ },
+ "examples/formal/tcp_write_now.av": {
+  "steps": [
+   "stillToSend.acceptedNothingKeepsEverything"
+  ]
+ },
+ "examples/games/eggcatch/core.av": {
+  "steps": [
+   "chuteIndex.inRange",
+   "foxCount.exactlyOne",
+   "resolveLip.conserves",
+   "resolveLip.noFalseMiss"
+  ]
+ },
+ "examples/games/tetris/logic.av": {
+  "steps": [
+   "computeScore.zeroLinesZeroScore"
+  ]
+ },
+ "projects/song/wave.av": {
+  "steps": [
+   "clamp16.fitsSixteenBits"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_39.av": {
+  "steps": [
+   "barbar.barbarTrueRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_42.av": {
+  "steps": [
+   "elem.barbarIdempotent"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_43.av": {
+  "steps": [
+   "barbar.barbarTrueRight"
+  ]
+ },
+ "proof-corpus/decomposed/prod/prop_44.av": {
+  "steps": [
+   "barbar.barbarTrueLeft"
+  ]
+ },
+ "proof-corpus/tip/isaplanner/prop_58.av": {
+  "steps": [
+   "dropInt.dropIntSelf",
+   "zip.zipSelf"
+  ]
+ }
 }

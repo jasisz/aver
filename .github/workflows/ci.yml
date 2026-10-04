@@ -338,9 +338,11 @@ jobs:
         # steps must fail the PR that makes it. `--backend aver` checks the
         # steps with the kernel written in Aver, in process, so this needs no
         # Lean: it runs over every corpus file with a law and compares the laws
-        # closed by steps with tools/steps-baseline.json. A gain is recorded in
-        # the same commit with `python3 tools/steps_ratchet.py --update`. The
-        # binary is the one the step above built.
+        # closed by steps with the `steps` level of tools/steps-baseline.json
+        # (the `tactic` level needs Lean and is checked nightly in proof.yml).
+        # A gain is recorded in the same commit with `python3
+        # tools/steps_ratchet.py --update`. The binary is the one the step
+        # above built.
         timeout-minutes: 10
         run: python3 tools/steps_ratchet.py --aver target/debug/aver
 

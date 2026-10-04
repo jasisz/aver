@@ -2564,6 +2564,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             function_cone,
             using: law.using.clone(),
             steps: None,
+            steps_refusal: None,
         });
     }
     steps::populate_law_steps(inputs, ir);

@@ -16,13 +16,25 @@ fn evalClosed(t: Term) -> Option<Val>
         Term.TInt(n) -> Option.Some(Val.VInt(n))
         Term.TBool(b) -> Option.Some(Val.VBool(b))
         Term.TOp(o, a, b) -> evalOp(o, evalClosed(a), evalClosed(b))
+        Term.TNeg(a) -> negated(evalClosed(a))
         Term.TBi(name, args) -> evalBuiltin(name, args)
         _ -> Option.None
 
 verify evalClosed
     evalClosed(Term.TOp("-", Term.TInt(8), Term.TInt(1))) => Option.Some(Val.VInt(7))
     evalClosed(Term.TVar("x")) => Option.None
+    evalClosed(Term.TOp("<", Term.TInt(32767), Term.TNeg(Term.TInt(32768)))) => Option.Some(Val.VBool(false))
     evalClosed(Term.TBi("__int_div_euclid", [Term.TInt(0 - 7), Term.TInt(2)])) => Option.Some(Val.VInt(0 - 4))
+
+fn negated(a: Option<Val>) -> Option<Val>
+    ? "The negation of an Int value."
+    match a
+        Option.Some(Val.VInt(x)) -> Option.Some(Val.VInt(0 - x))
+        _ -> Option.None
+
+verify negated
+    negated(Option.Some(Val.VInt(3))) => Option.Some(Val.VInt(0 - 3))
+    negated(Option.Some(Val.VBool(true))) => Option.None
 
 fn evalOp(o: String, a: Option<Val>, b: Option<Val>) -> Option<Val>
     ? "A binary operator on two values."
