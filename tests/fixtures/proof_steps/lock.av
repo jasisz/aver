@@ -1,6 +1,6 @@
 module Lock
     intent = "Lock time rules and small arithmetic wrappers whose laws proof lowering proves as data."
-    exposes [lockTimeChecked, sequenceChecked]
+    exposes [lockTimeChecked, sequenceChecked, pick]
     effects []
 
 type Step
@@ -139,3 +139,16 @@ fn mul(a: Int, b: Int) -> Int
 verify mul law oneIsIdentity
     given a: Int = [0, 1, -2]
     mul(1, a) => a
+fn pick(x: Int) -> Int
+    ? "One for a positive number."
+    match x > 0
+        true -> 1
+        false -> 0
+
+verify pick
+    pick(3) => 1
+
+verify pick law positiveIsOne
+    given x: Int = [1, 2, -1]
+    when x > 0
+    pick(x) => 1

@@ -98,6 +98,7 @@ fn the_producers_write_steps_for_the_shapes_they_know() {
             "add.zeroIsIdentity",
             "lockTimeChecked.agreesWithSpec",
             "mul.oneIsIdentity",
+            "pick.positiveIsOne",
             "sequenceChecked.agreesWithSpec",
         ]
     );

@@ -266,6 +266,20 @@ impl Renderer<'_> {
                 let _ = binders;
                 format!("(fun h_arm => by {tactic}) {}", self.proof(premise, hyps)?)
             }
+            // A `when` that is a bare comparison is stated `(a < b) = true`,
+            // which Lean reads as an equation of Props; recover the Bool
+            // equation the steps use.
+            Proof::Hyp(name)
+                if name == "when"
+                    && self
+                        .script
+                        .obligation
+                        .premise
+                        .as_ref()
+                        .is_some_and(is_prop_comparison) =>
+            {
+                "decide_eq_true (of_eq_true (h_when.trans (eq_self true)))".to_string()
+            }
             Proof::Hyp(name) => self.hyp_name(name),
             Proof::Rule {
                 rule,
