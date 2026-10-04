@@ -354,7 +354,9 @@ jobs:
             wasm_gc_string_scalar_semantics_regression \
             wasm_gc_tuple_variant_match_regression \
             wasm_gc_unicode_case_regression \
+            wasm_gc_unicode_trim_regression \
             wasm_gc_verify_bool_case_regression \
+            wasm_gc_verify_nested_values \
             wasm_gc_verify_option_case_regression \
             wasm_gc_verify_result_record_eq_regression \
             wasm_work_spec \
