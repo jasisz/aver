@@ -562,8 +562,9 @@ pub(in crate::codegen::lean) fn emit_reason_law(
             lines.push(format!("  | exact {}", rendered.term));
             lines.push("  |".to_string());
             lines.push(format!(
-                "    trace \"{}{label}\"",
-                crate::codegen::lean::proof_steps::STEPS_REJECTED_MARKER
+                "    trace \"{}{}\"",
+                crate::codegen::lean::proof_steps::STEPS_REJECTED_MARKER,
+                script.obligation.key
             ));
             lines.extend(structured.into_iter().map(|line| format!("  {line}")));
             steps_support = rendered.support;

@@ -326,8 +326,11 @@ pub fn emit_verify_law_forall_auto_proof(
     let steps_rendered = if proof.replaces_theorem {
         None
     } else {
-        law_steps_for(ctx, &vb.fn_name, &law.name)
-            .and_then(|script| super::proof_steps::render(&script, ctx, theorem_base).ok())
+        law_steps_for(ctx, &vb.fn_name, &law.name).and_then(|script| {
+            super::proof_steps::render(&script, ctx, theorem_base)
+                .ok()
+                .map(|r| (script.obligation.key.clone(), r))
+        })
     };
     // A literal bit mask (`Bits.and(x, 128)`) is a closed form no portfolio
     // arm reaches; its arm is a fixed rewrite chain that closes or fails
@@ -354,7 +357,7 @@ pub fn emit_verify_law_forall_auto_proof(
     }
     // A proof written as data leads: the kernel checks it, and the whole
     // portfolio above stays behind it as the fallback.
-    if let Some(rendered) = steps_rendered {
+    if let Some((key, rendered)) = steps_rendered {
         let givens: Vec<String> = law
             .givens
             .iter()
@@ -363,7 +366,7 @@ pub fn emit_verify_law_forall_auto_proof(
         let intro = extend_intro_names_with_premises(law, &givens);
         proof.support_lines.extend(rendered.support.iter().cloned());
         let body = std::mem::replace(&mut proof.body, super::tactic_ir::Tactic::Sorry);
-        proof.body = super::proof_steps::lead_portfolio(&rendered, &intro, theorem_base, body);
+        proof.body = super::proof_steps::lead_portfolio(&rendered, &intro, &key, body);
     }
     Some(proof)
 }
