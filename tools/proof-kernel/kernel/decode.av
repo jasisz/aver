@@ -1,0 +1,511 @@
+module Decode
+    intent =
+        "From S-expressions to terms, patterns and proofs."
+        "The grammar is the one written at the top of src/ir/proof_steps/sexpr.rs; anything else is refused by name."
+    exposes [term, terms, proof, script]
+    depends [Kernel.Sexp, Kernel.Term, Kernel.Proof]
+    effects []
+
+fn atom(s: Sexp) -> Result<String, String>
+    ? "An atom's text."
+    match s
+        Sexp.Atom(a) -> Result.Ok(a)
+        _ -> Result.Err("expected an atom")
+
+verify atom
+    atom(Sexp.Atom("x")) => Result.Ok("x")
+    atom(Sexp.Node([])) => Result.Err("expected an atom")
+
+fn atoms(ss: List<Sexp>) -> Result<List<String>, String>
+    ? "Atoms of a list."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(atom(s)?, atoms(rest)?))
+
+verify atoms
+    atoms([Sexp.Atom("a"), Sexp.Atom("b")]) => Result.Ok(["a", "b"])
+
+fn items(s: Sexp) -> Result<List<Sexp>, String>
+    ? "The items of a list."
+    match s
+        Sexp.Node(xs) -> Result.Ok(xs)
+        _ -> Result.Err("expected a list")
+
+verify items
+    items(Sexp.Node([Sexp.Atom("a")])) => Result.Ok([Sexp.Atom("a")])
+
+fn tagged(s: Sexp) -> Result<Tuple<String, List<Sexp>>, String>
+    ? "A list headed by an atom: the tag and the arguments."
+    match s
+        Sexp.Node([Sexp.Atom(tag), ..args]) -> Result.Ok((tag, args))
+        _ -> Result.Err("expected a tagged list")
+
+verify tagged
+    tagged(Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")])) => Result.Ok(("v", [Sexp.Atom("x")]))
+
+fn term(s: Sexp) -> Result<Term, String>
+    ? "One term."
+    match tagged(s)?
+        (tag, args) -> termOf(tag, args)
+
+verify term
+    term(Sexp.Node([Sexp.Atom("i"), Sexp.Atom("-5")])) => Result.Ok(Term.TInt(0 - 5))
+    term(Sexp.Node([Sexp.Atom("v"), Sexp.Atom("x")])) => Result.Ok(Term.TVar("x"))
+    term(Sexp.Node([Sexp.Atom("zz")])) => Result.Err("unknown term zz")
+
+fn termOf(tag: String, args: List<Sexp>) -> Result<Term, String>
+    ? "A term by its tag."
+    match tag
+        "i" -> intTerm(args)
+        "b" -> boolTerm(args)
+        "s" -> textTerm(args)
+        "unit" -> Result.Ok(Term.TUnit)
+        "v" -> nameTerm(args)
+        "hole" -> Result.Ok(Term.THole)
+        "get" -> getTerm(args)
+        "call" -> headed(args, "call")
+        "bi" -> headed(args, "bi")
+        "ctor" -> headed(args, "ctor")
+        "op" -> opTerm(args)
+        "neg" -> negTerm(args)
+        "match" -> matchTerm(args)
+        "str" -> Result.Ok(Term.TParts(terms(args)?))
+        "list" -> Result.Ok(Term.TList(terms(args)?))
+        "tuple" -> Result.Ok(Term.TTuple(terms(args)?))
+        "rec" -> recTerm(args)
+        "upd" -> updTerm(args)
+        _ -> Result.Err("unknown term {tag}")
+
+verify termOf
+    termOf("unit", []) => Result.Ok(Term.TUnit)
+
+fn intTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(i DIGITS)"
+    match args
+        [Sexp.Atom(d)] -> Result.Ok(Term.TInt(Int.fromString(d)?))
+        _ -> Result.Err("malformed integer")
+
+verify intTerm
+    intTerm([Sexp.Atom("18446744073709551616")]) => Result.Ok(Term.TInt(18446744073709551616))
+
+fn boolTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(b true) or (b false)"
+    match args
+        [Sexp.Atom("true")] -> Result.Ok(Term.TBool(true))
+        [Sexp.Atom("false")] -> Result.Ok(Term.TBool(false))
+        _ -> Result.Err("malformed Bool")
+
+verify boolTerm
+    boolTerm([Sexp.Atom("true")]) => Result.Ok(Term.TBool(true))
+
+fn textTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(s \"text\")"
+    match args
+        [Sexp.Text(t)] -> Result.Ok(Term.TStr(t))
+        _ -> Result.Err("malformed text")
+
+verify textTerm
+    textTerm([Sexp.Text("a")]) => Result.Ok(Term.TStr("a"))
+
+fn nameTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(v NAME)"
+    match args
+        [Sexp.Atom(n)] -> Result.Ok(Term.TVar(n))
+        _ -> Result.Err("malformed variable")
+
+verify nameTerm
+    nameTerm([Sexp.Atom("x")]) => Result.Ok(Term.TVar("x"))
+
+fn getTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(get TERM FIELD)"
+    match args
+        [o, Sexp.Atom(f)] -> Result.Ok(Term.TGet(term(o)?, f))
+        _ -> Result.Err("malformed field access")
+
+verify getTerm
+    getTerm([Sexp.Node([Sexp.Atom("v"), Sexp.Atom("r")]), Sexp.Atom("f")]) => Result.Ok(Term.TGet(Term.TVar("r"), "f"))
+
+fn headed(args: List<Sexp>, kind: String) -> Result<Term, String>
+    ? "(call NAME TERM…), (bi NAME TERM…), (ctor NAME TERM…)"
+    match args
+        [Sexp.Atom(name), ..rest] -> headedOf(kind, name, terms(rest)?)
+        _ -> Result.Err("malformed {kind}")
+
+verify headed
+    headed([Sexp.Atom("f")], "call") => Result.Ok(Term.TCall("f", []))
+
+fn headedOf(kind: String, name: String, xs: List<Term>) -> Result<Term, String>
+    ? "The term for a headed form."
+    match kind
+        "call" -> Result.Ok(Term.TCall(name, xs))
+        "bi" -> Result.Ok(Term.TBi(name, xs))
+        _ -> Result.Ok(Term.TCtor(name, xs))
+
+verify headedOf
+    headedOf("ctor", "Option.None", []) => Result.Ok(Term.TCtor("Option.None", []))
+
+fn opTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(op OP TERM TERM)"
+    match args
+        [Sexp.Atom(o), a, b] -> Result.Ok(Term.TOp(o, term(a)?, term(b)?))
+        _ -> Result.Err("malformed operator")
+
+verify opTerm
+    opTerm([Sexp.Atom("+")]) => Result.Err("malformed operator")
+
+fn negTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(neg TERM)"
+    match args
+        [a] -> Result.Ok(Term.TNeg(term(a)?))
+        _ -> Result.Err("malformed negation")
+
+verify negTerm
+    negTerm([]) => Result.Err("malformed negation")
+
+fn matchTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(match TERM (arm PAT TERM)…)"
+    match args
+        [s, ..rest] -> Result.Ok(Term.TMatch(term(s)?, arms(rest)?))
+        _ -> Result.Err("malformed match")
+
+verify matchTerm
+    matchTerm([]) => Result.Err("malformed match")
+
+fn arms(ss: List<Sexp>) -> Result<List<Arm>, String>
+    ? "Match arms."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(arm(s)?, arms(rest)?))
+
+verify arms
+    arms([]) => Result.Ok([])
+
+fn arm(s: Sexp) -> Result<Arm, String>
+    ? "(arm PAT TERM)"
+    match s
+        Sexp.Node([Sexp.Atom("arm"), p, b]) -> Result.Ok(Arm(pattern = pat(p)?, body = term(b)?))
+        _ -> Result.Err("malformed arm")
+
+verify arm
+    arm(Sexp.Atom("x")) => Result.Err("malformed arm")
+
+fn pat(s: Sexp) -> Result<Pat, String>
+    ? "A pattern."
+    match tagged(s)?
+        (tag, args) -> patOf(tag, args)
+
+verify pat
+    pat(Sexp.Node([Sexp.Atom("pw")])) => Result.Ok(Pat.PWild)
+
+fn patOf(tag: String, args: List<Sexp>) -> Result<Pat, String>
+    ? "A pattern by its tag."
+    match tag
+        "pw" -> Result.Ok(Pat.PWild)
+        "pv" -> Result.Ok(Pat.PVar(onlyAtom(args)?))
+        "pl" -> patLit(args)
+        "pnil" -> Result.Ok(Pat.PNil)
+        "pcons" -> patCons(args)
+        "pt" -> Result.Ok(Pat.PTuple(pats(args)?))
+        "pc" -> patCtor(args)
+        _ -> Result.Err("unknown pattern {tag}")
+
+verify patOf
+    patOf("pnil", []) => Result.Ok(Pat.PNil)
+
+fn onlyAtom(args: List<Sexp>) -> Result<String, String>
+    ? "The single atom of a form."
+    match args
+        [Sexp.Atom(a)] -> Result.Ok(a)
+        _ -> Result.Err("expected one atom")
+
+verify onlyAtom
+    onlyAtom([Sexp.Atom("x")]) => Result.Ok("x")
+
+fn patLit(args: List<Sexp>) -> Result<Pat, String>
+    ? "(pl TERM)"
+    match args
+        [t] -> Result.Ok(Pat.PLit(term(t)?))
+        _ -> Result.Err("malformed literal pattern")
+
+verify patLit
+    patLit([]) => Result.Err("malformed literal pattern")
+
+fn patCons(args: List<Sexp>) -> Result<Pat, String>
+    ? "(pcons HEAD TAIL)"
+    match args
+        [Sexp.Atom(h), Sexp.Atom(t)] -> Result.Ok(Pat.PCons(h, t))
+        _ -> Result.Err("malformed cons pattern")
+
+verify patCons
+    patCons([Sexp.Atom("h"), Sexp.Atom("t")]) => Result.Ok(Pat.PCons("h", "t"))
+
+fn patCtor(args: List<Sexp>) -> Result<Pat, String>
+    ? "(pc CTOR NAME…)"
+    match args
+        [Sexp.Atom(c), ..names] -> Result.Ok(Pat.PCtor(c, atoms(names)?))
+        _ -> Result.Err("malformed constructor pattern")
+
+verify patCtor
+    patCtor([Sexp.Atom("Option.None")]) => Result.Ok(Pat.PCtor("Option.None", []))
+
+fn pats(ss: List<Sexp>) -> Result<List<Pat>, String>
+    ? "Several patterns."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(pat(s)?, pats(rest)?))
+
+verify pats
+    pats([]) => Result.Ok([])
+
+fn recTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(rec TYPE (FIELD TERM)…)"
+    match args
+        [Sexp.Atom(ty), ..fs] -> Result.Ok(Term.TRec(ty, fields(fs)?))
+        _ -> Result.Err("malformed record")
+
+verify recTerm
+    recTerm([Sexp.Atom("R")]) => Result.Ok(Term.TRec("R", []))
+
+fn updTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "(upd TYPE TERM (FIELD TERM)…)"
+    match args
+        [Sexp.Atom(ty), b, ..fs] -> Result.Ok(Term.TUpd(ty, term(b)?, fields(fs)?))
+        _ -> Result.Err("malformed record update")
+
+verify updTerm
+    updTerm([]) => Result.Err("malformed record update")
+
+fn fields(ss: List<Sexp>) -> Result<List<Field>, String>
+    ? "(FIELD TERM)…"
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom(n), v]), ..rest] -> Result.Ok(List.prepend(Field(name = n, value = term(v)?), fields(rest)?))
+        _ -> Result.Err("malformed field")
+
+verify fields
+    fields([]) => Result.Ok([])
+
+fn terms(ss: List<Sexp>) -> Result<List<Term>, String>
+    ? "Several terms."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(term(s)?, terms(rest)?))
+
+verify terms
+    terms([]) => Result.Ok([])
+
+fn termList(s: Sexp) -> Result<List<Term>, String>
+    ? "A parenthesised list of terms."
+    terms(items(s)?)
+
+verify termList
+    termList(Sexp.Node([])) => Result.Ok([])
+
+fn bindings(s: Sexp) -> Result<List<Binding>, String>
+    ? "((NAME TERM)…)"
+    bindingsOf(items(s)?)
+
+verify bindings
+    bindings(Sexp.Node([])) => Result.Ok([])
+
+fn bindingsOf(ss: List<Sexp>) -> Result<List<Binding>, String>
+    ? "Each (NAME TERM)."
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Node([Sexp.Atom(n), v]), ..rest] -> Result.Ok(List.prepend(Kernel.Term.bind(n, term(v)?), bindingsOf(rest)?))
+        _ -> Result.Err("malformed binding")
+
+verify bindingsOf
+    bindingsOf([Sexp.Atom("x")]) => Result.Err("malformed binding")
+
+fn proof(s: Sexp) -> Result<Proof, String>
+    ? "One proof step."
+    match tagged(s)?
+        (tag, args) -> proofOf(tag, args)
+
+verify proof
+    proof(Sexp.Node([Sexp.Atom("hyp"), Sexp.Atom("h")])) => Result.Ok(Proof.PHyp("h"))
+    proof(Sexp.Node([Sexp.Atom("simp")])) => Result.Err("unknown rule simp")
+
+fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
+    ? "A proof step by its rule."
+    match tag
+        "refl" -> Result.Ok(Proof.PRefl(oneTerm(args)?))
+        "symm" -> Result.Ok(Proof.PSymm(oneProof(args)?))
+        "trans" -> transProof(args)
+        "congr" -> congrProof(args)
+        "unfold" -> unfoldProof(args)
+        "arm" -> armProof(args)
+        "proj" -> Result.Ok(Proof.PProj(oneTerm(args)?))
+        "hyp" -> Result.Ok(Proof.PHyp(onlyAtom(args)?))
+        "rule" -> instanceProof(args, "rule")
+        "law" -> instanceProof(args, "law")
+        "compute" -> computeProof(args)
+        "cases" -> casesProof(args)
+        _ -> Result.Err("unknown rule {tag}")
+
+verify proofOf
+    proofOf("refl", [Sexp.Node([Sexp.Atom("unit")])]) => Result.Ok(Proof.PRefl(Term.TUnit))
+
+fn oneTerm(args: List<Sexp>) -> Result<Term, String>
+    ? "The single term of a step."
+    match args
+        [t] -> term(t)
+        _ -> Result.Err("expected one term")
+
+verify oneTerm
+    oneTerm([]) => Result.Err("expected one term")
+
+fn oneProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "The single sub-proof of a step."
+    match args
+        [p] -> proof(p)
+        _ -> Result.Err("expected one proof")
+
+verify oneProof
+    oneProof([]) => Result.Err("expected one proof")
+
+fn proofs(ss: List<Sexp>) -> Result<List<Proof>, String>
+    ? "Several proofs."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(proof(s)?, proofs(rest)?))
+
+verify proofs
+    proofs([]) => Result.Ok([])
+
+fn transProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(trans (TERM…) PROOF…)"
+    match args
+        [ts, ..steps] -> Result.Ok(Proof.PTrans(termList(ts)?, proofs(steps)?))
+        _ -> Result.Err("malformed trans")
+
+verify transProof
+    transProof([]) => Result.Err("malformed trans")
+
+fn congrProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(congr CONTEXT PROOF)"
+    match args
+        [c, p] -> Result.Ok(Proof.PCongr(term(c)?, proof(p)?))
+        _ -> Result.Err("malformed congr")
+
+verify congrProof
+    congrProof([]) => Result.Err("malformed congr")
+
+fn unfoldProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(unfold FN ARM (TERM…) (TERM…) [PROOF])"
+    match args
+        [Sexp.Atom(f), Sexp.Atom(k), xs, ys, ..given] -> Result.Ok(Proof.PUnfold(f, Int.fromString(k)?, termList(xs)?, termList(ys)?, proofs(given)?))
+        _ -> Result.Err("malformed unfold")
+
+verify unfoldProof
+    unfoldProof([]) => Result.Err("malformed unfold")
+
+fn armProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(arm ARM (TERM…) MATCH PROOF)"
+    match args
+        [Sexp.Atom(k), ys, t, p] -> Result.Ok(Proof.PArm(Int.fromString(k)?, termList(ys)?, term(t)?, proof(p)?))
+        _ -> Result.Err("malformed arm step")
+
+verify armProof
+    armProof([]) => Result.Err("malformed arm step")
+
+fn instanceProof(args: List<Sexp>, kind: String) -> Result<Proof, String>
+    ? "(rule ID ((NAME TERM)…) PROOF…) or (law KEY ((NAME TERM)…) [PROOF])"
+    match args
+        [Sexp.Atom(id), bs, ..ps] -> instanceOf(kind, id, bindings(bs)?, proofs(ps)?)
+        _ -> Result.Err("malformed {kind}")
+
+verify instanceProof
+    instanceProof([], "rule") => Result.Err("malformed rule")
+
+fn instanceOf(kind: String, id: String, bs: List<Binding>, ps: List<Proof>) -> Result<Proof, String>
+    ? "A rule or law instance."
+    match kind
+        "rule" -> Result.Ok(Proof.PRule(id, bs, ps))
+        _ -> Result.Ok(Proof.PLaw(id, bs, ps))
+
+verify instanceOf
+    instanceOf("law", "k", [], []) => Result.Ok(Proof.PLaw("k", [], []))
+
+fn computeProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(compute TERM TERM)"
+    match args
+        [a, b] -> Result.Ok(Proof.PCompute(term(a)?, term(b)?))
+        _ -> Result.Err("malformed compute")
+
+verify computeProof
+    computeProof([]) => Result.Err("malformed compute")
+
+fn casesProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(cases TERM NAME PROOF PROOF)"
+    match args
+        [on, Sexp.Atom(h), t, f] -> Result.Ok(Proof.PCases(term(on)?, h, proof(t)?, proof(f)?))
+        _ -> Result.Err("malformed cases")
+
+verify casesProof
+    casesProof([]) => Result.Err("malformed cases")
+
+fn premise(s: Sexp) -> Result<List<Term>, String>
+    ? "(none) or a term."
+    match s
+        Sexp.Node([Sexp.Atom("none")]) -> Result.Ok([])
+        _ -> Result.Ok([term(s)?])
+
+verify premise
+    premise(Sexp.Node([Sexp.Atom("none")])) => Result.Ok([])
+
+fn law(s: Sexp, head: String) -> Result<Law, String>
+    ? "(law KEY (GIVEN…) PREMISE TERM TERM), or the same headed obligation."
+    match s
+        Sexp.Node([Sexp.Atom(h), Sexp.Atom(k), gs, p, l, r]) -> lawOf(h == head, k, atoms(items(gs)?)?, premise(p)?, term(l)?, term(r)?)
+        _ -> Result.Err("malformed {head}")
+
+verify law
+    law(Sexp.Atom("x"), "law") => Result.Err("malformed law")
+
+fn lawOf(expected: Bool, k: String, gs: List<String>, p: List<Term>, l: Term, r: Term) -> Result<Law, String>
+    ? "A law once its head was checked."
+    match expected
+        true -> Result.Ok(Law(key = k, givens = gs, premise = p, lhs = l, rhs = r))
+        false -> Result.Err("unexpected head for {k}")
+
+verify lawOf
+    lawOf(false, "k", [], [], Term.TUnit, Term.TUnit) => Result.Err("unexpected head for k")
+
+fn laws(ss: List<Sexp>) -> Result<List<Law>, String>
+    ? "Cited laws."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(law(s, "law")?, laws(rest)?))
+
+verify laws
+    laws([]) => Result.Ok([])
+
+fn def(s: Sexp) -> Result<Def, String>
+    ? "(def NAME (PARAM…) TERM)"
+    match s
+        Sexp.Node([Sexp.Atom("def"), Sexp.Atom(n), ps, b]) -> Result.Ok(Def(name = n, params = atoms(items(ps)?)?, body = term(b)?))
+        _ -> Result.Err("malformed def")
+
+verify def
+    def(Sexp.Atom("x")) => Result.Err("malformed def")
+
+fn defs(ss: List<Sexp>) -> Result<List<Def>, String>
+    ? "Definitions."
+    match ss
+        [] -> Result.Ok([])
+        [s, ..rest] -> Result.Ok(List.prepend(def(s)?, defs(rest)?))
+
+verify defs
+    defs([]) => Result.Ok([])
+
+fn script(s: Sexp) -> Result<Script, String>
+    ? "(steps 1 (obligation …) (defs …) (laws …) (proof …)); version 1 only."
+    match s
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("1"), o, Sexp.Node([Sexp.Atom("defs"), ..ds]), Sexp.Node([Sexp.Atom("laws"), ..ls]), Sexp.Node([Sexp.Atom("proof"), p])]) -> Result.Ok(Script(obligation = law(o, "obligation")?, defs = defs(ds)?, laws = laws(ls)?, proof = proof(p)?))
+        Sexp.Node([Sexp.Atom("steps"), Sexp.Atom(v), ..rest]) -> Result.Err("unsupported step format version {v}")
+        _ -> Result.Err("not a step script")
+
+verify script
+    script(Sexp.Node([Sexp.Atom("steps"), Sexp.Atom("2")])) => Result.Err("unsupported step format version 2")

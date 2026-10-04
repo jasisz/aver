@@ -1,0 +1,125 @@
+module Eval
+    intent =
+        "Evaluation of closed terms for the compute rule: Int arithmetic, Euclidean division by a"
+        "nonzero literal, comparisons and the Bool connectives. Anything else is not closed."
+    exposes [Val, evalClosed]
+    depends [Kernel.Term]
+    effects []
+
+type Val
+    VInt(Int)
+    VBool(Bool)
+
+fn evalClosed(t: Term) -> Option<Val>
+    ? "The value of a closed term, if it is one this evaluator knows."
+    match t
+        Term.TInt(n) -> Option.Some(Val.VInt(n))
+        Term.TBool(b) -> Option.Some(Val.VBool(b))
+        Term.TOp(o, a, b) -> evalOp(o, evalClosed(a), evalClosed(b))
+        Term.TBi(name, args) -> evalBuiltin(name, args)
+        _ -> Option.None
+
+verify evalClosed
+    evalClosed(Term.TOp("-", Term.TInt(8), Term.TInt(1))) => Option.Some(Val.VInt(7))
+    evalClosed(Term.TVar("x")) => Option.None
+    evalClosed(Term.TBi("__int_div_euclid", [Term.TInt(0 - 7), Term.TInt(2)])) => Option.Some(Val.VInt(0 - 4))
+
+fn evalOp(o: String, a: Option<Val>, b: Option<Val>) -> Option<Val>
+    ? "A binary operator on two values."
+    match (a, b)
+        (Option.Some(Val.VInt(x)), Option.Some(Val.VInt(y))) -> intOp(o, x, y)
+        (Option.Some(Val.VBool(x)), Option.Some(Val.VBool(y))) -> boolOp(o, x, y)
+        _ -> Option.None
+
+verify evalOp
+    evalOp("<", Option.Some(Val.VInt(1)), Option.Some(Val.VInt(2))) => Option.Some(Val.VBool(true))
+    evalOp("+", Option.None, Option.Some(Val.VInt(2))) => Option.None
+
+fn intOp(o: String, x: Int, y: Int) -> Option<Val>
+    ? "Int arithmetic and comparison."
+    match o
+        "+" -> Option.Some(Val.VInt(x + y))
+        "-" -> Option.Some(Val.VInt(x - y))
+        "*" -> Option.Some(Val.VInt(x * y))
+        "<" -> Option.Some(Val.VBool(x < y))
+        ">" -> Option.Some(Val.VBool(x > y))
+        "<=" -> Option.Some(Val.VBool(x <= y))
+        ">=" -> Option.Some(Val.VBool(x >= y))
+        "==" -> Option.Some(Val.VBool(x == y))
+        "!=" -> Option.Some(Val.VBool(x != y))
+        _ -> Option.None
+
+verify intOp
+    intOp("*", 3, 4) => Option.Some(Val.VInt(12))
+    intOp("/", 3, 4) => Option.None
+
+fn boolOp(o: String, x: Bool, y: Bool) -> Option<Val>
+    ? "Equality of Bools."
+    match o
+        "==" -> Option.Some(Val.VBool(x == y))
+        "!=" -> Option.Some(Val.VBool(x != y))
+        _ -> Option.None
+
+verify boolOp
+    boolOp("==", true, true) => Option.Some(Val.VBool(true))
+    boolOp("+", true, true) => Option.None
+
+fn evalBuiltin(name: String, args: List<Term>) -> Option<Val>
+    ? "The builtins the evaluator knows."
+    match (name, args)
+        ("Bool.and", [a, b]) -> both(evalClosed(a), evalClosed(b), true)
+        ("Bool.or", [a, b]) -> both(evalClosed(a), evalClosed(b), false)
+        ("Bool.not", [a]) -> negate(evalClosed(a))
+        ("__int_div_euclid", [a, k]) -> division(evalClosed(a), evalClosed(k), true)
+        ("__int_mod_euclid", [a, k]) -> division(evalClosed(a), evalClosed(k), false)
+        _ -> Option.None
+
+verify evalBuiltin
+    evalBuiltin("Bool.and", [Term.TBool(true), Term.TBool(false)]) => Option.Some(Val.VBool(false))
+    evalBuiltin("Bits.and", [Term.TInt(1), Term.TInt(1)]) => Option.None
+
+fn both(a: Option<Val>, b: Option<Val>, isAnd: Bool) -> Option<Val>
+    ? "Bool.and (isAnd) or Bool.or of two values."
+    match (a, b)
+        (Option.Some(Val.VBool(x)), Option.Some(Val.VBool(y))) -> match isAnd
+            true -> Option.Some(Val.VBool(Bool.and(x, y)))
+            false -> Option.Some(Val.VBool(Bool.or(x, y)))
+        _ -> Option.None
+
+verify both
+    both(Option.Some(Val.VBool(false)), Option.Some(Val.VBool(true)), false) => Option.Some(Val.VBool(true))
+    both(Option.None, Option.None, true) => Option.None
+
+fn negate(a: Option<Val>) -> Option<Val>
+    ? "Bool.not of a value."
+    match a
+        Option.Some(Val.VBool(x)) -> Option.Some(Val.VBool(Bool.not(x)))
+        _ -> Option.None
+
+verify negate
+    negate(Option.Some(Val.VBool(true))) => Option.Some(Val.VBool(false))
+    negate(Option.None) => Option.None
+
+fn division(a: Option<Val>, k: Option<Val>, quotient: Bool) -> Option<Val>
+    ? "Euclidean quotient or remainder; a zero divisor is not closed."
+    match (a, k)
+        (Option.Some(Val.VInt(x)), Option.Some(Val.VInt(y))) -> divided(x, y, quotient)
+        _ -> Option.None
+
+verify division
+    division(Option.Some(Val.VInt(7)), Option.Some(Val.VInt(0)), true) => Option.None
+    division(Option.Some(Val.VInt(7)), Option.Some(Val.VInt(2)), false) => Option.Some(Val.VInt(1))
+
+fn divided(x: Int, y: Int, quotient: Bool) -> Option<Val>
+    ? "The Euclidean result of dividing x by y."
+    match quotient
+        true -> match Int.div(x, y)
+            Result.Ok(q) -> Option.Some(Val.VInt(q))
+            Result.Err(e) -> Option.None
+        false -> match Int.mod(x, y)
+            Result.Ok(r) -> Option.Some(Val.VInt(r))
+            Result.Err(e) -> Option.None
+
+verify divided
+    divided(0 - 7, 2, false) => Option.Some(Val.VInt(1))
+    divided(1, 0, true) => Option.None

@@ -1,0 +1,52 @@
+module Proof
+    intent =
+        "Proof steps, definitions, cited laws and the script that ties them to one obligation."
+        "Each step names its rule and writes out every instance; see src/ir/proof_steps/mod.rs."
+    exposes [Proof, Def, Law, Script, Hyp, premiseOf]
+    depends [Kernel.Term]
+    effects []
+
+type Proof
+    PRefl(Term)
+    PSymm(Proof)
+    PTrans(List<Term>, List<Proof>)
+    PCongr(Term, Proof)
+    PUnfold(String, Int, List<Term>, List<Term>, List<Proof>)
+    PArm(Int, List<Term>, Term, Proof)
+    PProj(Term)
+    PHyp(String)
+    PRule(String, List<Binding>, List<Proof>)
+    PLaw(String, List<Binding>, List<Proof>)
+    PCompute(Term, Term)
+    PCases(Term, String, Proof, Proof)
+
+record Def
+    name: String
+    params: List<String>
+    body: Term
+
+record Law
+    key: String
+    givens: List<String>
+    premise: List<Term>
+    lhs: Term
+    rhs: Term
+
+record Script
+    obligation: Law
+    defs: List<Def>
+    laws: List<Law>
+    proof: Proof
+
+record Hyp
+    name: String
+    eqn: Eqn
+
+fn premiseOf(law: Law) -> Option<Term>
+    ? "A law's when, if it has one."
+    match law.premise
+        [p, ..rest] -> Option.Some(p)
+        [] -> Option.None
+
+verify premiseOf
+    premiseOf(Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1))) => Option.None

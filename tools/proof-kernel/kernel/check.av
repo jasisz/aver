@@ -1,0 +1,469 @@
+module Check
+    intent =
+        "The replayer: recompute the equation each step proves, from the step's own data, the"
+        "definitions and the hypotheses in scope, and compare the last one with the claim."
+        "A refused step is named by its path from the root of the proof."
+    exposes [Env, conclude, checkScript, emptyEnv]
+    depends [Kernel.Term, Kernel.Subst, Kernel.Proof, Kernel.Rules, Kernel.Eval]
+    effects []
+
+record Env
+    defs: List<Def>
+    laws: List<Law>
+    hyps: List<Hyp>
+
+fn emptyEnv() -> Env
+    ? "No definitions, laws or hypotheses."
+    Env(defs = [], laws = [], hyps = [])
+
+verify emptyEnv
+    emptyEnv().hyps => []
+
+fn refuse(path: String, why: String) -> Result<Eqn, String>
+    ? "A refusal that names the step."
+    Result.Err("step {path}: {why}")
+
+verify refuse
+    refuse("proof", "no") => Result.Err("step proof: no")
+
+fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "The equation a step proves, or the refusal of the first wrong step under it."
+    match p
+        Proof.PRefl(t) -> Result.Ok(Eqn(lhs = t, rhs = t))
+        Proof.PSymm(q) -> flip(conclude(q, env, path + "/symm")?)
+        Proof.PTrans(ts, ps) -> trans(ts, ps, env, path)
+        Proof.PCongr(c, q) -> congr(c, q, env, path)
+        Proof.PUnfold(f, k, xs, ys, pre) -> unfold(f, k, xs, ys, pre, env, path)
+        Proof.PArm(k, ys, t, q) -> armStep(k, ys, t, q, env, path)
+        Proof.PProj(t) -> proj(t, path)
+        Proof.PHyp(h) -> hyp(h, env.hyps, path)
+        Proof.PRule(id, bs, ps) -> rule(id, bs, ps, env, path)
+        Proof.PLaw(k, bs, ps) -> lawStep(k, bs, ps, env, path)
+        Proof.PCompute(a, b) -> compute(a, b, path)
+        Proof.PCases(on, h, t, f) -> cases(on, h, t, f, env, path)
+
+verify conclude
+    conclude(Proof.PRefl(Term.TInt(1)), emptyEnv(), "proof") => Result.Ok(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(1)))
+    conclude(Proof.PHyp("h"), emptyEnv(), "proof") => Result.Err("step proof: hypothesis h is not in scope")
+    conclude(Proof.PRule("simp", [], []), emptyEnv(), "proof/trans.2") => Result.Err("step proof/trans.2: unknown rule simp")
+
+verify conclude law refusalNamesTheStep
+    given name: String = ["h", "when", "h_steps1"]
+    given path: String = ["proof", "proof/trans.0", "proof/cases.true/congr"]
+    namesStep(conclude(Proof.PHyp(name), emptyEnv(), path), path) => true
+
+fn namesStep(r: Result<Eqn, String>, path: String) -> Bool
+    ? "Whether a result is a refusal that begins with the step it names."
+    match r
+        Result.Ok(e) -> false
+        Result.Err(why) -> String.startsWith(why, "step {path}: ")
+
+verify namesStep
+    namesStep(Result.Err("step p: x"), "p") => true
+    namesStep(Result.Ok(Eqn(lhs = Term.TUnit, rhs = Term.TUnit)), "p") => false
+
+fn flip(e: Eqn) -> Result<Eqn, String>
+    ? "Symmetry."
+    Result.Ok(Eqn(lhs = e.rhs, rhs = e.lhs))
+
+verify flip
+    flip(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(2))) => Result.Ok(Eqn(lhs = Term.TInt(2), rhs = Term.TInt(1)))
+
+fn trans(ts: List<Term>, ps: List<Proof>, env: Env, path: String) -> Result<Eqn, String>
+    ? "A chain t0 = t1 = … = tn, each link proved by its step."
+    match List.len(ts) == List.len(ps) + 1
+        false -> refuse(path, "trans needs one more term than steps")
+        true -> transFrom(ts, ps, env, path, 0)
+
+verify trans
+    trans([Term.TInt(1)], [Proof.PRefl(Term.TInt(1))], emptyEnv(), "p") => Result.Err("step p: trans needs one more term than steps")
+
+fn transFrom(ts: List<Term>, ps: List<Proof>, env: Env, path: String, i: Int) -> Result<Eqn, String>
+    ? "Check link i and those after it; the result spans the whole chain."
+    match (ts, ps)
+        ([a, b, ..moreTerms], [p, ..moreSteps]) -> transLink(a, b, p, List.prepend(b, moreTerms), moreSteps, env, path, i)
+        ([a], []) -> Result.Ok(Eqn(lhs = a, rhs = a))
+        _ -> refuse(path, "trans needs at least one step")
+
+verify transFrom
+    transFrom([Term.TInt(1)], [], emptyEnv(), "p", 0) => Result.Ok(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(1)))
+
+fn transLink(a: Term, b: Term, p: Proof, rest: List<Term>, steps: List<Proof>, env: Env, path: String, i: Int) -> Result<Eqn, String>
+    ? "One link of a chain, then the rest."
+    here = "{path}/trans.{i}"
+    e = conclude(p, env, here)?
+    match e == Eqn(lhs = a, rhs = b)
+        false -> refuse(here, "the step does not join the written terms")
+        true -> joinRest(a, transFrom(rest, steps, env, path, i + 1)?)
+
+verify transLink
+    transLink(Term.TInt(1), Term.TInt(2), Proof.PRefl(Term.TInt(1)), [Term.TInt(2)], [], emptyEnv(), "p", 0) => Result.Err("step p/trans.0: the step does not join the written terms")
+
+fn joinRest(a: Term, rest: Eqn) -> Result<Eqn, String>
+    ? "The chain from a to the end of the rest."
+    Result.Ok(Eqn(lhs = a, rhs = rest.rhs))
+
+verify joinRest
+    joinRest(Term.TInt(1), Eqn(lhs = Term.TInt(2), rhs = Term.TInt(3))) => Result.Ok(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(3)))
+
+fn congr(c: Term, q: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "From a = b, c[a] = c[b]; the context holds exactly one hole."
+    match Kernel.Subst.holeCount(c) == 1
+        false -> refuse(path, "a congruence context needs exactly one hole")
+        true -> plugBoth(c, conclude(q, env, "{path}/congr")?, path)
+
+verify congr
+    congr(Term.TVar("x"), Proof.PRefl(Term.TInt(1)), emptyEnv(), "p") => Result.Err("step p: a congruence context needs exactly one hole")
+
+fn plugBoth(c: Term, e: Eqn, path: String) -> Result<Eqn, String>
+    ? "Put both sides of an equation into the hole."
+    match (Kernel.Subst.subst(c, [Kernel.Term.bind("□", e.lhs)]), Kernel.Subst.subst(c, [Kernel.Term.bind("□", e.rhs)]))
+        (Result.Ok(l), Result.Ok(r)) -> Result.Ok(Eqn(lhs = l, rhs = r))
+        (Result.Err(why), _) -> refuse(path, why)
+        (_, Result.Err(why)) -> refuse(path, why)
+
+verify plugBoth
+    plugBoth(Term.TNeg(Term.THole), Eqn(lhs = Term.TVar("a"), rhs = Term.TVar("b")), "p") => Result.Ok(Eqn(lhs = Term.TNeg(Term.TVar("a")), rhs = Term.TNeg(Term.TVar("b"))))
+
+fn proj(t: Term, path: String) -> Result<Eqn, String>
+    ? "A record literal's field."
+    match t
+        Term.TGet(Term.TRec(ty, fs), f) -> projField(t, fs, f, path)
+        _ -> refuse(path, "a projection must read a field of a record literal")
+
+verify proj
+    proj(Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), "p") => Result.Ok(Eqn(lhs = Term.TGet(Term.TRec("R", [Field(name = "a", value = Term.TInt(3))]), "a"), rhs = Term.TInt(3)))
+    proj(Term.TGet(Term.TVar("r"), "a"), "p") => Result.Err("step p: a projection must read a field of a record literal")
+
+fn projField(t: Term, fs: List<Field>, f: String, path: String) -> Result<Eqn, String>
+    ? "Find the field among the literal's fields."
+    match fs
+        [] -> refuse(path, "the record has no field {f}")
+        [x, ..rest] -> match x.name == f
+            true -> Result.Ok(Eqn(lhs = t, rhs = x.value))
+            false -> projField(t, rest, f, path)
+
+verify projField
+    projField(Term.TUnit, [], "a", "p") => Result.Err("step p: the record has no field a")
+
+fn hyp(h: String, hs: List<Hyp>, path: String) -> Result<Eqn, String>
+    ? "A hypothesis in scope; the innermost one of a name wins."
+    match hs
+        [] -> refuse(path, "hypothesis {h} is not in scope")
+        [x, ..rest] -> match x.name == h
+            true -> Result.Ok(x.eqn)
+            false -> hyp(h, rest, path)
+
+verify hyp
+    hyp("h", [Hyp(name = "h", eqn = Eqn(lhs = Term.TVar("c"), rhs = Term.TBool(true)))], "p") => Result.Ok(Eqn(lhs = Term.TVar("c"), rhs = Term.TBool(true)))
+
+fn compute(a: Term, b: Term, path: String) -> Result<Eqn, String>
+    ? "Two closed terms with the same value."
+    match (Kernel.Eval.evalClosed(a), Kernel.Eval.evalClosed(b))
+        (Option.Some(x), Option.Some(y)) -> match x == y
+            true -> Result.Ok(Eqn(lhs = a, rhs = b))
+            false -> refuse(path, "the two sides compute to different values")
+        _ -> refuse(path, "compute needs closed terms")
+
+verify compute
+    compute(Term.TOp("-", Term.TInt(8), Term.TInt(1)), Term.TInt(7), "p") => Result.Ok(Eqn(lhs = Term.TOp("-", Term.TInt(8), Term.TInt(1)), rhs = Term.TInt(7)))
+    compute(Term.TOp("-", Term.TInt(8), Term.TInt(1)), Term.TInt(6), "p") => Result.Err("step p: the two sides compute to different values")
+    compute(Term.TVar("x"), Term.TInt(6), "p") => Result.Err("step p: compute needs closed terms")
+
+fn cases(on: Term, h: String, t: Proof, f: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "Both branches of a Bool split must prove the same equation."
+    whenTrue = conclude(t, withHyp(env, h, on, true), "{path}/cases.true")?
+    whenFalse = conclude(f, withHyp(env, h, on, false), "{path}/cases.false")?
+    match whenTrue == whenFalse
+        true -> Result.Ok(whenTrue)
+        false -> refuse(path, "the two branches prove different equations")
+
+verify cases
+    cases(Term.TVar("c"), "h", Proof.PHyp("h"), Proof.PHyp("h"), emptyEnv(), "p") => Result.Err("step p: the two branches prove different equations")
+
+fn withHyp(env: Env, h: String, on: Term, value: Bool) -> Env
+    ? "The environment with one more hypothesis in front."
+    Env(defs = env.defs, laws = env.laws, hyps = List.prepend(Hyp(name = h, eqn = Eqn(lhs = on, rhs = Term.TBool(value))), env.hyps))
+
+verify withHyp
+    List.len(withHyp(emptyEnv(), "h", Term.TVar("c"), true).hyps) => 1
+
+fn findDef(name: String, ds: List<Def>) -> Option<Def>
+    ? "A definition by name."
+    match ds
+        [] -> Option.None
+        [d, ..rest] -> match d.name == name
+            true -> Option.Some(d)
+            false -> findDef(name, rest)
+
+verify findDef
+    findDef("f", []) => Option.None
+
+fn zipBind(names: List<String>, values: List<Term>) -> List<Binding>
+    ? "Pair names with terms, as far as both go."
+    match (names, values)
+        ([n, ..ns], [v, ..vs]) -> List.prepend(Kernel.Term.bind(n, v), zipBind(ns, vs))
+        _ -> []
+
+verify zipBind
+    zipBind(["a"], [Term.TInt(1)]) => [Kernel.Term.bind("a", Term.TInt(1))]
+
+fn unfold(f: String, k: Int, xs: List<Term>, ys: List<Term>, pre: List<Proof>, env: Env, path: String) -> Result<Eqn, String>
+    ? "Equation k of a definition at explicit arguments: 0 is the whole body, k is arm k of its match."
+    match findDef(f, env.defs)
+        Option.None -> refuse(path, "no definition of {f}")
+        Option.Some(d) -> match List.len(d.params) == List.len(xs)
+            false -> refuse(path, "{f} takes {List.len(d.params)} arguments")
+            true -> unfoldArm(d, k, xs, ys, pre, env, path)
+
+verify unfold
+    unfold("f", 0, [], [], [], emptyEnv(), "p") => Result.Err("step p: no definition of f")
+
+fn unfoldArm(d: Def, k: Int, xs: List<Term>, ys: List<Term>, pre: List<Proof>, env: Env, path: String) -> Result<Eqn, String>
+    ? "The whole body, or one arm under its premise."
+    outer = zipBind(d.params, xs)
+    lhs = Term.TCall(d.name, xs)
+    match (k, ys, pre)
+        (0, [], []) -> Result.Ok(Eqn(lhs = lhs, rhs = Kernel.Subst.subst(d.body, outer)?))
+        (0, _, _) -> refuse(path, "equation 0 takes no binders and no premise")
+        _ -> unfoldMatch(d.body, k, outer, ys, pre, lhs, env, path)
+
+verify unfoldArm
+    unfoldArm(Def(name = "one", params = [], body = Term.TInt(1)), 0, [], [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TCall("one", []), rhs = Term.TInt(1)))
+    unfoldArm(Def(name = "one", params = [], body = Term.TInt(1)), 1, [], [], [], emptyEnv(), "p") => Result.Err("step p: the body is not a match")
+
+fn unfoldMatch(body: Term, k: Int, outer: List<Binding>, ys: List<Term>, pre: List<Proof>, lhs: Term, env: Env, path: String) -> Result<Eqn, String>
+    ? "Arm k of the body's match."
+    match body
+        Term.TMatch(s, arms) -> selected(s, arms, k, outer, ys, pre, lhs, env, path)
+        _ -> refuse(path, "the body is not a match")
+
+verify unfoldMatch
+    unfoldMatch(Term.TUnit, 1, [], [], [], Term.TUnit, emptyEnv(), "p") => Result.Err("step p: the body is not a match")
+
+fn armStep(k: Int, ys: List<Term>, t: Term, q: Proof, env: Env, path: String) -> Result<Eqn, String>
+    ? "Arm k of an explicit match term, under its premise."
+    match t
+        Term.TMatch(s, arms) -> selected(s, arms, k, [], ys, [q], t, env, path)
+        _ -> refuse(path, "not a match")
+
+verify armStep
+    armStep(1, [], Term.TUnit, Proof.PRefl(Term.TUnit), emptyEnv(), "p") => Result.Err("step p: not a match")
+
+fn selected(s: Term, arms: List<Arm>, k: Int, outer: List<Binding>, ys: List<Term>, pre: List<Proof>, lhs: Term, env: Env, path: String) -> Result<Eqn, String>
+    ? "lhs = arm k, once the premise shows the subject has arm k's pattern."
+    match (armAt(arms, k), pre)
+        (Option.None, _) -> refuse(path, "there is no arm {k}")
+        (_, [q]) -> selectedWith(s, arms, k, outer, ys, q, lhs, env, path)
+        _ -> refuse(path, "an arm needs exactly one premise")
+
+verify selected
+    selected(Term.TVar("s"), [], 1, [], [], [], Term.TUnit, emptyEnv(), "p") => Result.Err("step p: there is no arm 1")
+
+fn selectedWith(s: Term, arms: List<Arm>, k: Int, outer: List<Binding>, ys: List<Term>, q: Proof, lhs: Term, env: Env, path: String) -> Result<Eqn, String>
+    ? "Check the arm is the first that can match, then the premise."
+    chosen = Option.withDefault(armAt(arms, k), Arm(pattern = Pat.PWild, body = Term.TUnit))
+    match earlierExclude(arms, k, chosen.pattern)
+        false -> refuse(path, "an earlier arm can also match arm {k}")
+        true -> armEquation(s, chosen, outer, ys, q, lhs, env, path)
+
+verify selectedWith
+    selectedWith(Term.TVar("s"), [Arm(pattern = Pat.PWild, body = Term.TUnit), Arm(pattern = Pat.PNil, body = Term.TUnit)], 2, [], [], Proof.PRefl(Term.TUnit), Term.TUnit, emptyEnv(), "p") => Result.Err("step p: an earlier arm can also match arm 2")
+
+fn armEquation(s: Term, chosen: Arm, outer: List<Binding>, ys: List<Term>, q: Proof, lhs: Term, env: Env, path: String) -> Result<Eqn, String>
+    ? "subject = pattern must be what the premise proves; then lhs equals the arm's body."
+    shape = patTerm(chosen.pattern, ys, path)?
+    names = Kernel.Subst.patNames(chosen.pattern)
+    inner = List.concat(zipBind(names, ys), outer)
+    needed = Eqn(lhs = Kernel.Subst.subst(s, outer)?, rhs = shape)
+    got = conclude(q, env, "{path}/premise")?
+    match got == needed
+        false -> refuse(path, "the premise does not select this arm")
+        true -> Result.Ok(Eqn(lhs = lhs, rhs = Kernel.Subst.subst(chosen.body, inner)?))
+
+verify armEquation
+    armEquation(Term.TVar("c"), Arm(pattern = Pat.PLit(Term.TBool(true)), body = Term.TInt(1)), [], [], Proof.PHyp("h"), Term.TUnit, withHyp(emptyEnv(), "h", Term.TVar("c"), false), "p") => Result.Err("step p: the premise does not select this arm")
+
+fn armAt(arms: List<Arm>, k: Int) -> Option<Arm>
+    ? "Arm k, counting from 1."
+    match (arms, k)
+        ([a, ..rest], 1) -> Option.Some(a)
+        ([a, ..rest], _) -> match k > 1
+            true -> armAt(rest, k - 1)
+            false -> Option.None
+        _ -> Option.None
+
+verify armAt
+    armAt([], 1) => Option.None
+    armAt([Arm(pattern = Pat.PWild, body = Term.TUnit)], 0) => Option.None
+
+fn earlierExclude(arms: List<Arm>, k: Int, p: Pat) -> Bool
+    ? "Every arm before arm k has a head pattern p cannot share."
+    match (arms, k > 1)
+        ([a, ..rest], true) -> Bool.and(headsDiffer(a.pattern, p), earlierExclude(rest, k - 1, p))
+        _ -> true
+
+verify earlierExclude
+    earlierExclude([Arm(pattern = Pat.PLit(Term.TBool(false)), body = Term.TUnit)], 2, Pat.PLit(Term.TBool(true))) => true
+
+fn headsDiffer(a: Pat, b: Pat) -> Bool
+    ? "Two patterns no value can both match."
+    match (a, b)
+        (Pat.PLit(x), Pat.PLit(y)) -> x != y
+        (Pat.PNil, Pat.PCons(h, t)) -> true
+        (Pat.PCons(h, t), Pat.PNil) -> true
+        (Pat.PCtor(c, xs), Pat.PCtor(d, ys)) -> c != d
+        _ -> false
+
+verify headsDiffer
+    headsDiffer(Pat.PWild, Pat.PNil) => false
+    headsDiffer(Pat.PCtor("A", []), Pat.PCtor("B", [])) => true
+
+fn patTerm(p: Pat, ys: List<Term>, path: String) -> Result<Term, String>
+    ? "The value a pattern denotes once its names are bound to ys."
+    match (p, ys)
+        (Pat.PLit(t), []) -> Result.Ok(t)
+        (Pat.PNil, []) -> Result.Ok(Term.TList([]))
+        (Pat.PCons(h, t), [x, y]) -> consTerm(h, t, x, y, path)
+        (Pat.PCtor(c, names), _) -> ctorTerm(c, names, ys, path)
+        _ -> Result.Err("step {path}: this pattern has no term to equate the subject with")
+
+verify patTerm
+    patTerm(Pat.PWild, [], "p") => Result.Err("step p: this pattern has no term to equate the subject with")
+
+fn consTerm(h: String, t: String, x: Term, y: Term, path: String) -> Result<Term, String>
+    ? "A cons pattern with both parts named."
+    match Bool.or(h == "_", t == "_")
+        true -> Result.Err("step {path}: a wildcard part has no term")
+        false -> Result.Ok(Term.TBi("List.prepend", [x, y]))
+
+verify consTerm
+    consTerm("h", "_", Term.TInt(1), Term.TList([]), "p") => Result.Err("step p: a wildcard part has no term")
+
+fn ctorTerm(c: String, names: List<String>, ys: List<Term>, path: String) -> Result<Term, String>
+    ? "A constructor pattern with every field named."
+    match Bool.and(List.len(names) == List.len(ys), Bool.not(List.contains(names, "_")))
+        true -> Result.Ok(Term.TCtor(c, ys))
+        false -> Result.Err("step {path}: the binders do not fit the constructor pattern")
+
+verify ctorTerm
+    ctorTerm("Option.Some", ["x"], [Term.TInt(1)], "p") => Result.Ok(Term.TCtor("Option.Some", [Term.TInt(1)]))
+    ctorTerm("Option.Some", ["x"], [], "p") => Result.Err("step p: the binders do not fit the constructor pattern")
+
+fn boundNames(bs: List<Binding>) -> List<String>
+    ? "The names a substitution binds, in order."
+    match bs
+        [] -> []
+        [b, ..rest] -> List.prepend(b.name, boundNames(rest))
+
+verify boundNames
+    boundNames([Kernel.Term.bind("a", Term.TUnit)]) => ["a"]
+
+fn instantiate(e: Eqn, bs: List<Binding>, path: String) -> Result<Eqn, String>
+    ? "An equation at a substitution."
+    match (Kernel.Subst.subst(e.lhs, bs), Kernel.Subst.subst(e.rhs, bs))
+        (Result.Ok(l), Result.Ok(r)) -> Result.Ok(Eqn(lhs = l, rhs = r))
+        _ -> refuse(path, "the substitution captures a bound name")
+
+verify instantiate
+    instantiate(Eqn(lhs = Term.TVar("a"), rhs = Term.TVar("a")), [Kernel.Term.bind("a", Term.TInt(2))], "p") => Result.Ok(Eqn(lhs = Term.TInt(2), rhs = Term.TInt(2)))
+
+fn premisesHold(wanted: List<Eqn>, ps: List<Proof>, bs: List<Binding>, env: Env, path: String, i: Int) -> Result<Unit, String>
+    ? "Each premise proof proves its premise at the substitution."
+    match (wanted, ps)
+        ([], []) -> Result.Ok(Unit)
+        ([w, ..ws], [p, ..rest]) -> premiseHolds(w, p, ws, rest, bs, env, path, i)
+        _ -> Result.Err("step {path}: wrong number of premises")
+
+verify premisesHold
+    premisesHold([], [Proof.PHyp("h")], [], emptyEnv(), "p", 0) => Result.Err("step p: wrong number of premises")
+
+fn premiseHolds(w: Eqn, p: Proof, ws: List<Eqn>, rest: List<Proof>, bs: List<Binding>, env: Env, path: String, i: Int) -> Result<Unit, String>
+    ? "One premise, then the rest."
+    want = instantiate(w, bs, path)?
+    got = conclude(p, env, "{path}/premise.{i}")?
+    match got == want
+        false -> Result.Err("step {path}: premise {i} does not match")
+        true -> premisesHold(ws, rest, bs, env, path, i + 1)
+
+verify premiseHolds
+    premiseHolds(Eqn(lhs = Term.TVar("a"), rhs = Term.TBool(true)), Proof.PRefl(Term.TInt(1)), [], [], [], emptyEnv(), "p", 0) => Result.Err("step p: premise 0 does not match")
+
+fn rule(id: String, bs: List<Binding>, ps: List<Proof>, env: Env, path: String) -> Result<Eqn, String>
+    ? "A wall rule at an explicit substitution of all its binders."
+    match Kernel.Rules.schema(id)
+        Option.None -> refuse(path, "unknown rule {id}")
+        Option.Some(s) -> match boundNames(bs) == s.binders
+            false -> refuse(path, "rule {id} binds {commaJoined(s.binders)}")
+            true -> ruleConclusion(s.premises, s.concl, bs, ps, env, path)
+
+verify rule
+    rule("int.add_comm", [Kernel.Term.bind("a", Term.TInt(1))], [], emptyEnv(), "p") => Result.Err("step p: rule int.add_comm binds a,b")
+    rule("int.add_comm", [Kernel.Term.bind("a", Term.TInt(1)), Kernel.Term.bind("b", Term.TInt(2))], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TOp("+", Term.TInt(1), Term.TInt(2)), rhs = Term.TOp("+", Term.TInt(2), Term.TInt(1))))
+
+fn ruleConclusion(wanted: List<Eqn>, concl: Eqn, bs: List<Binding>, ps: List<Proof>, env: Env, path: String) -> Result<Eqn, String>
+    ? "Premises first, then the conclusion."
+    premisesHold(wanted, ps, bs, env, path, 0)?
+    instantiate(concl, bs, path)
+
+verify ruleConclusion
+    ruleConclusion([], Eqn(lhs = Term.TUnit, rhs = Term.TUnit), [], [], emptyEnv(), "p") => Result.Ok(Eqn(lhs = Term.TUnit, rhs = Term.TUnit))
+
+fn findLaw(key: String, ls: List<Law>) -> Option<Law>
+    ? "A cited law by key."
+    match ls
+        [] -> Option.None
+        [l, ..rest] -> match l.key == key
+            true -> Option.Some(l)
+            false -> findLaw(key, rest)
+
+verify findLaw
+    findLaw("k", []) => Option.None
+
+fn lawStep(key: String, bs: List<Binding>, ps: List<Proof>, env: Env, path: String) -> Result<Eqn, String>
+    ? "An earlier law at an explicit substitution of all its givens, its when proved."
+    match findLaw(key, env.laws)
+        Option.None -> refuse(path, "law {key} is not cited")
+        Option.Some(l) -> match boundNames(bs) == l.givens
+            false -> refuse(path, "law {key} quantifies {commaJoined(l.givens)}")
+            true -> ruleConclusion(lawPremises(l), Eqn(lhs = l.lhs, rhs = l.rhs), bs, ps, env, path)
+
+verify lawStep
+    lawStep("k", [], [], emptyEnv(), "p") => Result.Err("step p: law k is not cited")
+
+fn lawPremises(l: Law) -> List<Eqn>
+    ? "A law's when as a premise equation."
+    match l.premise
+        [p, ..rest] -> [Eqn(lhs = p, rhs = Term.TBool(true))]
+        [] -> []
+
+verify lawPremises
+    lawPremises(Law(key = "k", givens = [], premise = [], lhs = Term.TUnit, rhs = Term.TUnit)) => []
+
+fn checkScript(s: Script) -> Result<String, String>
+    ? "The proof must prove exactly the obligation, under its when."
+    env = Env(defs = s.defs, laws = s.laws, hyps = lawHyps(s.obligation))
+    e = conclude(s.proof, env, "proof")?
+    match e == Eqn(lhs = s.obligation.lhs, rhs = s.obligation.rhs)
+        true -> Result.Ok(s.obligation.key)
+        false -> Result.Err("step proof: the proof ends at a different equation than the claim")
+
+verify checkScript
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(1)), defs = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Ok("k")
+    checkScript(Script(obligation = Law(key = "k", givens = [], premise = [], lhs = Term.TInt(1), rhs = Term.TInt(2)), defs = [], laws = [], proof = Proof.PRefl(Term.TInt(1)))) => Result.Err("step proof: the proof ends at a different equation than the claim")
+
+fn lawHyps(ob: Law) -> List<Hyp>
+    ? "The obligation's when, as hypothesis `when`."
+    match ob.premise
+        [p, ..rest] -> [Hyp(name = "when", eqn = Eqn(lhs = p, rhs = Term.TBool(true)))]
+        [] -> []
+
+verify lawHyps
+    lawHyps(Law(key = "k", givens = [], premise = [Term.TVar("c")], lhs = Term.TUnit, rhs = Term.TUnit)) => [Hyp(name = "when", eqn = Eqn(lhs = Term.TVar("c"), rhs = Term.TBool(true)))]
+
+fn commaJoined(ns: List<String>) -> String
+    ? "Names separated by commas."
+    String.join(ns, ",")
+
+verify commaJoined
+    commaJoined(["a", "b"]) => "a,b"

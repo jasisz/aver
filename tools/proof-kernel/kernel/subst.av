@@ -1,0 +1,265 @@
+module Subst
+    intent =
+        "Substitution of terms for variables, refusing any substitution a pattern binder would capture."
+        "Free variables and hole counting, which the checker uses to keep substitution honest."
+    exposes [subst, substAll, lookup, freeVars, holeCount, patNames]
+    depends [Kernel.Term]
+    effects []
+
+fn lookup(name: String, bs: List<Binding>) -> Option<Term>
+    ? "The term bound to a name, if any."
+    match bs
+        [] -> Option.None
+        [b, ..rest] -> match b.name == name
+            true -> Option.Some(b.value)
+            false -> lookup(name, rest)
+
+verify lookup
+    lookup("x", [Kernel.Term.bind("x", Term.TInt(1))]) => Option.Some(Term.TInt(1))
+    lookup("y", []) => Option.None
+
+fn patNames(p: Pat) -> List<String>
+    ? "The names a pattern binds, wildcards excluded."
+    match p
+        Pat.PVar(n) -> dropWild([n])
+        Pat.PCons(h, t) -> dropWild([h, t])
+        Pat.PCtor(c, ns) -> dropWild(ns)
+        Pat.PTuple(ps) -> patNamesAll(ps)
+        _ -> []
+
+verify patNames
+    patNames(Pat.PCons("h", "_")) => ["h"]
+    patNames(Pat.PWild) => []
+
+fn patNamesAll(ps: List<Pat>) -> List<String>
+    ? "Names bound by several patterns."
+    match ps
+        [] -> []
+        [p, ..rest] -> List.concat(patNames(p), patNamesAll(rest))
+
+verify patNamesAll
+    patNamesAll([Pat.PVar("a"), Pat.PVar("b")]) => ["a", "b"]
+
+fn dropWild(ns: List<String>) -> List<String>
+    ? "Names other than the wildcard."
+    match ns
+        [] -> []
+        [n, ..rest] -> match n == "_"
+            true -> dropWild(rest)
+            false -> List.prepend(n, dropWild(rest))
+
+verify dropWild
+    dropWild(["_", "a"]) => ["a"]
+
+fn freeVars(t: Term) -> List<String>
+    ? "Variables of a term not bound by a match arm inside it (with repeats); the hole counts as one."
+    match t
+        Term.TVar(n) -> [n]
+        Term.THole -> ["□"]
+        Term.TGet(o, f) -> freeVars(o)
+        Term.TCall(f, xs) -> freeVarsAll(xs)
+        Term.TBi(f, xs) -> freeVarsAll(xs)
+        Term.TOp(o, a, b) -> List.concat(freeVars(a), freeVars(b))
+        Term.TNeg(a) -> freeVars(a)
+        Term.TCtor(c, xs) -> freeVarsAll(xs)
+        Term.TMatch(s, arms) -> List.concat(freeVars(s), freeVarsArms(arms))
+        Term.TParts(xs) -> freeVarsAll(xs)
+        Term.TList(xs) -> freeVarsAll(xs)
+        Term.TTuple(xs) -> freeVarsAll(xs)
+        Term.TRec(n, fs) -> freeVarsFields(fs)
+        Term.TUpd(n, b, fs) -> List.concat(freeVars(b), freeVarsFields(fs))
+        _ -> []
+
+verify freeVars
+    freeVars(Term.TOp("+", Term.TVar("a"), Term.TInt(1))) => ["a"]
+    freeVars(Term.TMatch(Term.TVar("s"), [Arm(pattern = Pat.PVar("x"), body = Term.TVar("x"))])) => ["s"]
+
+fn freeVarsAll(xs: List<Term>) -> List<String>
+    ? "Free variables of several terms."
+    match xs
+        [] -> []
+        [x, ..rest] -> List.concat(freeVars(x), freeVarsAll(rest))
+
+verify freeVarsAll
+    freeVarsAll([Term.TVar("a"), Term.TVar("b")]) => ["a", "b"]
+
+fn freeVarsFields(fs: List<Field>) -> List<String>
+    ? "Free variables of record fields."
+    match fs
+        [] -> []
+        [f, ..rest] -> List.concat(freeVars(f.value), freeVarsFields(rest))
+
+verify freeVarsFields
+    freeVarsFields([Field(name = "a", value = Term.TVar("x"))]) => ["x"]
+
+fn freeVarsArms(arms: List<Arm>) -> List<String>
+    ? "Free variables of match arms, without each arm's own binders."
+    match arms
+        [] -> []
+        [a, ..rest] -> List.concat(without(freeVars(a.body), patNames(a.pattern)), freeVarsArms(rest))
+
+verify freeVarsArms
+    freeVarsArms([Arm(pattern = Pat.PVar("x"), body = Term.TVar("y"))]) => ["y"]
+
+fn without(ns: List<String>, drop: List<String>) -> List<String>
+    ? "Names not in the dropped list."
+    match ns
+        [] -> []
+        [n, ..rest] -> match List.contains(drop, n)
+            true -> without(rest, drop)
+            false -> List.prepend(n, without(rest, drop))
+
+verify without
+    without(["a", "b"], ["a"]) => ["b"]
+
+fn holeCount(t: Term) -> Int
+    ? "How many holes a term holds."
+    match t
+        Term.THole -> 1
+        Term.TGet(o, f) -> holeCount(o)
+        Term.TCall(f, xs) -> holeCountAll(xs)
+        Term.TBi(f, xs) -> holeCountAll(xs)
+        Term.TOp(o, a, b) -> holeCount(a) + holeCount(b)
+        Term.TNeg(a) -> holeCount(a)
+        Term.TCtor(c, xs) -> holeCountAll(xs)
+        Term.TMatch(s, arms) -> holeCount(s) + holeCountArms(arms)
+        Term.TParts(xs) -> holeCountAll(xs)
+        Term.TList(xs) -> holeCountAll(xs)
+        Term.TTuple(xs) -> holeCountAll(xs)
+        Term.TRec(n, fs) -> holeCountFields(fs)
+        Term.TUpd(n, b, fs) -> holeCount(b) + holeCountFields(fs)
+        _ -> 0
+
+verify holeCount
+    holeCount(Term.TOp("+", Term.THole, Term.THole)) => 2
+    holeCount(Term.TVar("x")) => 0
+
+fn holeCountAll(xs: List<Term>) -> Int
+    ? "Holes in several terms."
+    match xs
+        [] -> 0
+        [x, ..rest] -> holeCount(x) + holeCountAll(rest)
+
+verify holeCountAll
+    holeCountAll([Term.THole, Term.TInt(1)]) => 1
+
+fn holeCountFields(fs: List<Field>) -> Int
+    ? "Holes in record fields."
+    match fs
+        [] -> 0
+        [f, ..rest] -> holeCount(f.value) + holeCountFields(rest)
+
+verify holeCountFields
+    holeCountFields([Field(name = "a", value = Term.THole)]) => 1
+
+fn holeCountArms(arms: List<Arm>) -> Int
+    ? "Holes in match arm bodies."
+    match arms
+        [] -> 0
+        [a, ..rest] -> holeCount(a.body) + holeCountArms(rest)
+
+verify holeCountArms
+    holeCountArms([]) => 0
+
+fn subst(t: Term, bs: List<Binding>) -> Result<Term, String>
+    ? "Replace free variables (and the hole, bound under the name of the hole) by terms."
+    match t
+        Term.TVar(n) -> Result.Ok(Option.withDefault(lookup(n, bs), t))
+        Term.THole -> Result.Ok(Option.withDefault(lookup("□", bs), t))
+        Term.TGet(o, f) -> Result.Ok(Term.TGet(subst(o, bs)?, f))
+        Term.TCall(f, xs) -> Result.Ok(Term.TCall(f, substAll(xs, bs)?))
+        Term.TBi(f, xs) -> Result.Ok(Term.TBi(f, substAll(xs, bs)?))
+        Term.TOp(o, a, b) -> Result.Ok(Term.TOp(o, subst(a, bs)?, subst(b, bs)?))
+        Term.TNeg(a) -> Result.Ok(Term.TNeg(subst(a, bs)?))
+        Term.TCtor(c, xs) -> Result.Ok(Term.TCtor(c, substAll(xs, bs)?))
+        Term.TMatch(s, arms) -> Result.Ok(Term.TMatch(subst(s, bs)?, substArms(arms, bs)?))
+        Term.TParts(xs) -> Result.Ok(Term.TParts(substAll(xs, bs)?))
+        Term.TList(xs) -> Result.Ok(Term.TList(substAll(xs, bs)?))
+        Term.TTuple(xs) -> Result.Ok(Term.TTuple(substAll(xs, bs)?))
+        Term.TRec(n, fs) -> Result.Ok(Term.TRec(n, substFields(fs, bs)?))
+        Term.TUpd(n, b, fs) -> Result.Ok(Term.TUpd(n, subst(b, bs)?, substFields(fs, bs)?))
+        _ -> Result.Ok(t)
+
+verify subst
+    subst(Term.TOp("+", Term.TVar("a"), Term.THole), [Kernel.Term.bind("a", Term.TInt(1)), Kernel.Term.bind("□", Term.TInt(2))]) => Result.Ok(Term.TOp("+", Term.TInt(1), Term.TInt(2)))
+    subst(Term.TMatch(Term.TVar("s"), [Arm(pattern = Pat.PVar("x"), body = Term.TVar("y"))]), [Kernel.Term.bind("y", Term.TVar("x"))]) => Result.Err("substituting y would capture x")
+
+fn substAll(xs: List<Term>, bs: List<Binding>) -> Result<List<Term>, String>
+    ? "Substitute in several terms."
+    match xs
+        [] -> Result.Ok([])
+        [x, ..rest] -> Result.Ok(List.prepend(subst(x, bs)?, substAll(rest, bs)?))
+
+verify substAll
+    substAll([Term.TVar("a")], [Kernel.Term.bind("a", Term.TInt(3))]) => Result.Ok([Term.TInt(3)])
+
+fn substFields(fs: List<Field>, bs: List<Binding>) -> Result<List<Field>, String>
+    ? "Substitute in record fields."
+    match fs
+        [] -> Result.Ok([])
+        [f, ..rest] -> Result.Ok(List.prepend(Field(name = f.name, value = subst(f.value, bs)?), substFields(rest, bs)?))
+
+verify substFields
+    substFields([], []) => Result.Ok([])
+
+fn substArms(arms: List<Arm>, bs: List<Binding>) -> Result<List<Arm>, String>
+    ? "Substitute under each arm, minus the names the arm binds."
+    match arms
+        [] -> Result.Ok([])
+        [a, ..rest] -> Result.Ok(List.prepend(substArm(a, bs)?, substArms(rest, bs)?))
+
+verify substArms
+    substArms([], []) => Result.Ok([])
+
+fn substArm(a: Arm, bs: List<Binding>) -> Result<Arm, String>
+    ? "Substitute in one arm, refusing a capture."
+    bound = patNames(a.pattern)
+    inner = unbind(bs, bound)
+    capture(inner, freeVars(a.body), bound)?
+    Result.Ok(Arm(pattern = a.pattern, body = subst(a.body, inner)?))
+
+verify substArm
+    substArm(Arm(pattern = Pat.PVar("x"), body = Term.TVar("x")), [Kernel.Term.bind("x", Term.TInt(1))]) => Result.Ok(Arm(pattern = Pat.PVar("x"), body = Term.TVar("x")))
+
+fn unbind(bs: List<Binding>, names: List<String>) -> List<Binding>
+    ? "Drop bindings for names a pattern shadows."
+    match bs
+        [] -> []
+        [b, ..rest] -> match List.contains(names, b.name)
+            true -> unbind(rest, names)
+            false -> List.prepend(b, unbind(rest, names))
+
+verify unbind
+    unbind([Kernel.Term.bind("x", Term.TInt(1))], ["x"]) => []
+
+fn capture(bs: List<Binding>, used: List<String>, bound: List<String>) -> Result<Unit, String>
+    ? "Refuse a binding that is used under the arm and would bring in a bound name."
+    match bs
+        [] -> Result.Ok(Unit)
+        [b, ..rest] -> captureOne(b, used, bound, rest)
+
+verify capture
+    capture([], [], []) => Result.Ok(Unit)
+
+fn captureOne(b: Binding, used: List<String>, bound: List<String>, rest: List<Binding>) -> Result<Unit, String>
+    ? "Check one binding, then the rest."
+    match List.contains(used, b.name)
+        false -> capture(rest, used, bound)
+        true -> match firstShared(freeVars(b.value), bound)
+            Option.Some(c) -> Result.Err("substituting {b.name} would capture {c}")
+            Option.None -> capture(rest, used, bound)
+
+verify captureOne
+    captureOne(Kernel.Term.bind("y", Term.TVar("x")), ["y"], ["x"], []) => Result.Err("substituting y would capture x")
+
+fn firstShared(ns: List<String>, others: List<String>) -> Option<String>
+    ? "The first name also in the other list."
+    match ns
+        [] -> Option.None
+        [n, ..rest] -> match List.contains(others, n)
+            true -> Option.Some(n)
+            false -> firstShared(rest, others)
+
+verify firstShared
+    firstShared(["a", "b"], ["b"]) => Option.Some("b")
+    firstShared([], ["b"]) => Option.None
