@@ -1,0 +1,48 @@
+{
+ "examples/data/flatten.av": [
+  "flattenThenCount.countViaFlatten"
+ ],
+ "examples/data/words.av": [
+  "countAll.viaExpand"
+ ],
+ "examples/formal/law_auto.av": [
+  "add.associative",
+  "add.commutative",
+  "add.commutativeSwapSides",
+  "add.identityZero",
+  "add.identityZeroLeft",
+  "addOne.identityViaAdd",
+  "id.reflexive",
+  "mul.associative",
+  "mul.commutative",
+  "mul.identityOne",
+  "mul.identityOneLeft",
+  "sub.rightIdentity"
+ ],
+ "examples/formal/spec_laws.av": [
+  "absVal.absValSpec",
+  "clampNonNegative.clampNonNegativeSpec"
+ ],
+ "examples/formal/tcp_write_now.av": [
+  "stillToSend.acceptedNothingKeepsEverything"
+ ],
+ "examples/games/eggcatch/core.av": [
+  "resolveLip.conserves"
+ ],
+ "proof-corpus/decomposed/prod/prop_39.av": [
+  "barbar.barbarTrueRight"
+ ],
+ "proof-corpus/decomposed/prod/prop_42.av": [
+  "elem.barbarIdempotent"
+ ],
+ "proof-corpus/decomposed/prod/prop_43.av": [
+  "barbar.barbarTrueRight"
+ ],
+ "proof-corpus/decomposed/prod/prop_44.av": [
+  "barbar.barbarTrueLeft"
+ ],
+ "proof-corpus/tip/isaplanner/prop_58.av": [
+  "dropInt.dropIntSelf",
+  "zip.zipSelf"
+ ]
+}
