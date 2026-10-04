@@ -513,10 +513,10 @@ fn emit_mir_tuple_constructor_match(
 /// The pre-pass verdict for one element pattern of a tuple arm against
 /// its element type `elem` (whitespace-free canonical): a bind or a
 /// wildcard takes the field as it is, and a `Result` or `Option` tag, a
-/// list's emptiness or an `Int` or `Bool` literal tests it before the arm
-/// is taken. `false` is a shape the cascade does not emit: a `String` or
-/// `Float` literal, a user variant, a nested tuple, or an element whose
-/// type has no registered slot. Every registry lookup the emit pass makes
+/// user variant, a list's emptiness or an `Int` or `Bool` literal tests it
+/// before the arm is taken. `false` is a shape the cascade does not emit: a
+/// `String` or `Float` literal, a nested tuple, or an element whose type
+/// has no registered slot. Every registry lookup the emit pass makes
 /// is made here first, so the cascade cannot fail half-way through.
 fn tuple_element_admitted(pat: &MirPattern, elem: &str, ctx: &EmitCtx<'_>) -> bool {
     match pat {
@@ -532,6 +532,25 @@ fn tuple_element_admitted(pat: &MirPattern, elem: &str, ctx: &EmitCtx<'_>) -> bo
         MirPattern::EmptyList | MirPattern::Cons { .. } => {
             ctx.registry.list_type_idx(elem).is_some()
         }
+        // A user variant tests its field with `ref.test` against the
+        // variant's struct, as the plain variant cascade does. A newtype
+        // variant is the whole type, so it tests nothing; a carrier newtype
+        // lifts its native `i64` field into the binding's `$AverInt`, which
+        // needs `__aint_from_i64` under bignum.
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            bindings,
+            ..
+        } => match mir_user_variant_info(*ctor_id, ctx) {
+            Ok(info) => {
+                !(ctx.registry.newtype_underlying(&info.parent).is_some()
+                    && bindings.len() == 1
+                    && ctx.registry.is_eligible_carrier(&info.parent)
+                    && ctx.registry.bignum
+                    && !ctx.fn_map.builtins.contains_key("__aint_from_i64"))
+            }
+            Err(_) => false,
+        },
         MirPattern::Literal(Literal::Bool(_)) => elem == "Bool",
         // A boxed `$AverInt` field compares through the two helpers the
         // Int-literal cascade uses; both must be registered.
@@ -623,6 +642,20 @@ fn emit_tuple_element_test(
             });
             func.instruction(&Instruction::I32Const(expected_tag));
             func.instruction(&Instruction::I32Eq);
+        }
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            bindings,
+            ..
+        } => {
+            let info = mir_user_variant_info(*ctor_id, ctx)?;
+            if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
+                return Ok(false);
+            }
+            emit_tuple_field(func, scratch, tuple_idx, i);
+            func.instruction(&Instruction::RefTestNonNull(
+                wasm_encoder::HeapType::Concrete(info.type_idx),
+            ));
         }
         // A list is null when empty (mirror of `emit_mir_list_match`).
         MirPattern::EmptyList => {
@@ -729,6 +762,40 @@ fn emit_tuple_element_binds(
                 func.instruction(&Instruction::StructGet {
                     struct_type_index: opt_idx,
                     field_index: 1,
+                });
+                func.instruction(&Instruction::LocalSet(binding.0));
+            }
+        }
+        // Mirror of `emit_mir_arm_body`: a newtype binds the field itself
+        // (lifting a carrier's native `i64`), any other variant casts the
+        // field and reads each bound payload.
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            bindings,
+            ..
+        } => {
+            let info = mir_user_variant_info(*ctor_id, ctx)?;
+            if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
+                if bindings[0].0 != NO_SLOT {
+                    emit_tuple_field(func, scratch, tuple_idx, i);
+                    if ctx.registry.is_eligible_carrier(&info.parent) {
+                        super::emit_carrier_project_bridge(func, ctx)?;
+                    }
+                    func.instruction(&Instruction::LocalSet(bindings[0].0));
+                }
+                return Ok(());
+            }
+            for (field_index, binding) in bindings.iter().enumerate() {
+                if binding.0 == NO_SLOT {
+                    continue;
+                }
+                emit_tuple_field(func, scratch, tuple_idx, i);
+                func.instruction(&Instruction::RefCastNonNull(
+                    wasm_encoder::HeapType::Concrete(info.type_idx),
+                ));
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: info.type_idx,
+                    field_index: field_index as u32,
                 });
                 func.instruction(&Instruction::LocalSet(binding.0));
             }
