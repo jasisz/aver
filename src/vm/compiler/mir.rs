@@ -19,7 +19,7 @@ use crate::vm::opcode::*;
 use super::VmSymbolTable;
 use super::resolve_helpers::buffer_intrinsic_opcode;
 
-use super::{CompileError, FnCompiler, operand_u8};
+use super::{CompileError, FnCompiler, fn_id_operand, operand_u8, type_id_operand};
 
 /// Reasons the walker cannot emit a given MIR fn. Nothing catches these
 /// to try another path: they surface as a compile error.
@@ -182,7 +182,7 @@ pub(super) fn compile_mir_expr(
                     // (CALL_KNOWN_OWNED is recognized there now as
                     // defense, but no longer emitted here).
                     fc.emit_op(CALL_KNOWN);
-                    fc.emit_u16(vm_fn_id as u16);
+                    fc.emit_u16(fn_id_operand(vm_fn_id, &name)?);
                     fc.emit_u8(argc);
                     Ok(())
                 }
@@ -327,7 +327,7 @@ pub(super) fn compile_mir_expr(
                             }
                             compile_mir_expr(fc, &args[0])?;
                             let empty = fc.nan_literal(&Literal::Str(String::new()));
-                            let idx = fc.add_constant(empty);
+                            let idx = fc.add_constant(empty)?;
                             fc.emit_op(LOAD_CONST);
                             fc.emit_u16(idx);
                             fc.emit_op(CONCAT);
@@ -412,7 +412,7 @@ pub(super) fn compile_mir_expr(
                     Ok(())
                 }
                 MirCtor::Builtin(BuiltinCtor::OptionNone) => {
-                    let idx = fc.add_constant(NanValue::NONE);
+                    let idx = fc.add_constant(NanValue::NONE)?;
                     fc.emit_op(LOAD_CONST);
                     fc.emit_u16(idx);
                     Ok(())
@@ -457,7 +457,7 @@ pub(super) fn compile_mir_expr(
                         ),
                     )?;
                     fc.emit_op(VARIANT_NEW);
-                    fc.emit_u16(arena_type_id as u16);
+                    fc.emit_u16(type_id_operand(arena_type_id, &qualified_type_name)?);
                     fc.emit_u16(variant_id);
                     fc.emit_u8(field_count);
                     Ok(())
@@ -569,7 +569,7 @@ pub(super) fn compile_mir_expr(
                     })
                 })?;
                 fc.emit_op(TAIL_CALL_KNOWN);
-                fc.emit_u16(vm_fn_id as u16);
+                fc.emit_u16(fn_id_operand(vm_fn_id, &target_name)?);
                 fc.emit_u8(argc);
                 fc.emit_u8(owned_mask);
             }
@@ -691,11 +691,11 @@ pub(super) fn compile_mir_expr(
                 .all(|(pos, idx)| pos == *idx as usize);
             if in_declared_order {
                 fc.emit_op(RECORD_NEW);
-                fc.emit_u16(arena_type_id as u16);
+                fc.emit_u16(type_id_operand(arena_type_id, &qualified_type_name)?);
                 fc.emit_u8(field_count);
             } else {
                 fc.emit_op(RECORD_NEW_INDEXED);
-                fc.emit_u16(arena_type_id as u16);
+                fc.emit_u16(type_id_operand(arena_type_id, &qualified_type_name)?);
                 fc.emit_u8(field_count);
                 for idx in written_indices {
                     fc.emit_u8(idx);
@@ -770,7 +770,7 @@ pub(super) fn compile_mir_expr(
                 ),
             )?;
             fc.emit_op(RECORD_UPDATE);
-            fc.emit_u16(arena_type_id as u16);
+            fc.emit_u16(type_id_operand(arena_type_id, &qualified_type_name)?);
             fc.emit_u8(update_count);
             for idx in updated_indices {
                 fc.emit_u8(idx);
@@ -897,7 +897,7 @@ pub(super) fn compile_mir_expr(
             // compile key + value and emit a `MapSet` call.
             let empty_map = fc.arena.push_map(crate::nan_value::PersistentMap::new());
             let nv = NanValue::new_map(empty_map);
-            let idx = fc.add_constant(nv);
+            let idx = fc.add_constant(nv)?;
             fc.emit_op(LOAD_CONST);
             fc.emit_u16(idx);
             for (k, v) in entries {
@@ -922,7 +922,7 @@ pub(super) fn compile_mir_expr(
             // covers every `MirExpr` variant.
             if parts.is_empty() {
                 let nv = NanValue::new_string_value("", fc.arena);
-                let cidx = fc.add_constant(nv);
+                let cidx = fc.add_constant(nv)?;
                 fc.emit_op(LOAD_CONST);
                 fc.emit_u16(cidx);
                 return Ok(());
@@ -932,14 +932,14 @@ pub(super) fn compile_mir_expr(
                 match part {
                     MirStrPart::Literal(s) => {
                         let nv = NanValue::new_string_value(s, fc.arena);
-                        let cidx = fc.add_constant(nv);
+                        let cidx = fc.add_constant(nv)?;
                         fc.emit_op(LOAD_CONST);
                         fc.emit_u16(cidx);
                     }
                     MirStrPart::Expr(e) => {
                         compile_mir_expr(fc, e)?;
                         let empty_nv = NanValue::new_string_value("", fc.arena);
-                        let empty_const = fc.add_constant(empty_nv);
+                        let empty_const = fc.add_constant(empty_nv)?;
                         fc.emit_op(LOAD_CONST);
                         fc.emit_u16(empty_const);
                         fc.emit_op(CONCAT);
@@ -1021,7 +1021,7 @@ pub(super) fn compile_mir_expr(
                                 msg: format!("MIR-VM: missing VM symbol for fn `{name}`"),
                             })
                         })?;
-                        let idx = fc.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+                        let idx = fc.add_constant(VmSymbolTable::symbol_ref(symbol_id))?;
                         fc.emit_op(LOAD_CONST);
                         fc.emit_u16(idx);
                     }
@@ -1035,7 +1035,7 @@ pub(super) fn compile_mir_expr(
                                 msg: format!("MIR-VM: missing VM symbol for builtin `{name}`"),
                             })
                         })?;
-                        let idx = fc.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+                        let idx = fc.add_constant(VmSymbolTable::symbol_ref(symbol_id))?;
                         fc.emit_op(LOAD_CONST);
                         fc.emit_u16(idx);
                     }
@@ -1346,15 +1346,15 @@ fn emit_pattern_check(
                         ),
                     })
                 })?;
-            if arena_ctor_id > u16::MAX as u32 {
+            let Ok(arena_ctor_id) = u16::try_from(arena_ctor_id) else {
                 return Err(MirVmUnsupported::InnerError(CompileError {
                     msg: format!(
                         "MIR-VM: ctor id too large for MATCH_VARIANT: {qualified_type_name}.{variant_name}"
                     ),
                 }));
-            }
+            };
             fc.emit_op(MATCH_VARIANT);
-            fc.emit_u16(arena_ctor_id as u16);
+            fc.emit_u16(arena_ctor_id);
             let patch = fc.offset();
             fc.emit_i32(0);
             // EXTRACT_FIELD doesn't consume the subject — value
@@ -1438,7 +1438,7 @@ fn emit_pattern_check(
                     // Nullary: DUP + LOAD_CONST NONE + EQ +
                     // JUMP_IF_FALSE. No bindings to extract.
                     fc.emit_op(DUP);
-                    let none_const = fc.add_constant(NanValue::NONE);
+                    let none_const = fc.add_constant(NanValue::NONE)?;
                     fc.emit_op(LOAD_CONST);
                     fc.emit_u16(none_const);
                     fc.emit_op(EQ);
@@ -1946,7 +1946,7 @@ fn try_emit_vector_compound(
             // read, the target therefore arrives through `LOAD_LOCAL`, and
             // the fence has to know which cell is the target's own before it
             // can tell that cell from a real alias.
-            let owned = (vec_last_use || def_last_use) && !fc.is_aliased_slot(vec_slot as u16);
+            let owned = (vec_last_use || def_last_use) && !fc.is_aliased_slot(vec_slot);
             compile_mir_expr(fc, &inner_args[0])?;
             compile_mir_expr(fc, &inner_args[1])?;
             compile_mir_expr(fc, &inner_args[2])?;
@@ -1968,7 +1968,7 @@ fn try_emit_vector_compound(
             compile_mir_expr(fc, &inner_args[0])?;
             compile_mir_expr(fc, &inner_args[1])?;
             let default_value = fc.nan_literal(&lit.node);
-            let const_idx = fc.add_constant(default_value);
+            let const_idx = fc.add_constant(default_value)?;
             fc.emit_op(VECTOR_GET_OR);
             fc.emit_u16(const_idx);
             Ok(true)
@@ -1991,7 +1991,7 @@ fn try_emit_vector_compound(
 fn compute_owned_mask(args: &[Spanned<MirExpr>], fc: &FnCompiler<'_>) -> u8 {
     let mut mask = 0u8;
     for (i, arg) in args.iter().enumerate().take(8) {
-        if contains_last_use_slot_mir(&arg.node, i as u32) && !fc.is_aliased_slot(i as u16) {
+        if contains_last_use_slot_mir(&arg.node, i as u32) && !fc.is_aliased_slot(i as u32) {
             mask |= 1 << i;
         }
     }
@@ -2014,7 +2014,7 @@ fn compute_builtin_owned_mask(args: &[Spanned<MirExpr>], fc: &FnCompiler<'_>) ->
     for (i, arg) in args.iter().enumerate().take(8) {
         if let Some((slot, last_use)) = mir_local_slot_last_use(&arg.node)
             && last_use
-            && !fc.is_aliased_slot(slot as u16)
+            && !fc.is_aliased_slot(slot)
         {
             mask |= 1 << i;
         }

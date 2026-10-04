@@ -289,14 +289,18 @@ fn compile_program_inner(
 
     for item in items {
         if let ResolvedTopLevel::Passthrough(TopLevel::Stmt(Stmt::Binding(name, _, _))) = item {
-            compiler.ensure_global(name);
+            compiler.ensure_global(name)?;
         }
     }
 
     for item in items {
         match item {
             ResolvedTopLevel::FnDef(rfd) => {
-                compiler.ensure_global(&rfd.name);
+                // A fn takes no global slot: a fn read as a value
+                // resolves through its VM symbol (`compile_ident`), which
+                // is the same `symbol_ref` a global would have held. Globals
+                // are for module bindings only, so their count does not grow
+                // with the number of fns (verify adds two or three per case).
                 let arity = operand_u8(
                     rfd.params.len(),
                     &format!(
@@ -324,7 +328,7 @@ fn compile_program_inner(
                     source_file: String::new(),
                     line_table: Vec::new(),
                 });
-                let symbol_id = compiler.symbols.intern_function(
+                compiler.symbols.intern_function(
                     &rfd.name,
                     fn_id,
                     &rfd.effects
@@ -332,8 +336,6 @@ fn compile_program_inner(
                         .map(|e| e.node.clone())
                         .collect::<Vec<_>>(),
                 )?;
-                let global_idx = compiler.global_names[&rfd.name];
-                compiler.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
             }
             ResolvedTopLevel::Passthrough(TopLevel::TypeDef(td)) => {
                 // Current module: register in Arena (no qualified alias needed)
@@ -445,6 +447,38 @@ pub struct CompileError {
 pub(super) fn operand_u8(value: usize, what: &str) -> Result<u8, CompileError> {
     u8::try_from(value).map_err(|_| CompileError {
         msg: format!("{what}; the VM supports at most {}", u8::MAX),
+    })
+}
+
+/// A `CALL_KNOWN` / `TAIL_CALL_KNOWN` target. The operand is `u16`, so a
+/// call to a function past that id refuses to compile rather than
+/// dispatching to whichever function the truncated id names.
+pub(super) fn fn_id_operand(fn_id: u32, name: &str) -> Result<u16, CompileError> {
+    operand_u16(
+        fn_id as usize,
+        &format!("call to `{name}` targets function id {fn_id}"),
+    )
+}
+
+/// An arena type id in a record / variant instruction (`u16` operand).
+pub(super) fn type_id_operand(type_id: u32, type_name: &str) -> Result<u16, CompileError> {
+    operand_u16(
+        type_id as usize,
+        &format!("type `{type_name}` has arena type id {type_id}"),
+    )
+}
+
+/// The 16-bit twin of [`operand_u8`]: every `u16` instruction operand
+/// (global, constant, function, type and constructor indices) goes through
+/// here, so an index past the field refuses the compile instead of wrapping
+/// onto a different entry.
+pub(super) fn operand_u16(value: usize, what: &str) -> Result<u16, CompileError> {
+    u16::try_from(value).map_err(|_| CompileError {
+        msg: format!(
+            "{what}; the VM supports at most {} (indices 0..={})",
+            usize::from(u16::MAX) + 1,
+            u16::MAX
+        ),
     })
 }
 
@@ -718,7 +752,7 @@ impl ProgramCompiler {
         let mut dep_globals = self.global_names.clone();
         for stmt in &binding_stmts {
             if let Stmt::Binding(name, _, _) = stmt {
-                let idx = self.ensure_global(&visibility::qualified_name(dep_name, name));
+                let idx = self.ensure_global(&visibility::qualified_name(dep_name, name))?;
                 dep_globals.insert(name.clone(), idx);
             }
         }
@@ -759,16 +793,18 @@ impl ProgramCompiler {
             )?;
         }
 
-        // Expose exported functions and types via globals and namespace members.
+        // Expose exported functions and types as namespace members. An
+        // exported fn read as a value (`Lib.f`) resolves through its VM
+        // symbol, so it takes no global slot.
         let exports = visibility::collect_module_exports(&mod_items);
 
         for fd in &exports.functions {
             let qualified = visibility::qualified_name(dep_name, &fd.name);
-            let global_idx = self.ensure_global(&qualified);
-            let symbol_id = self.symbols.find(&qualified).ok_or_else(|| CompileError {
-                msg: format!("missing VM symbol for exposed function {}", qualified),
-            })?;
-            self.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
+            if self.symbols.find(&qualified).is_none() {
+                return Err(CompileError {
+                    msg: format!("missing VM symbol for exposed function {}", qualified),
+                });
+            }
         }
 
         let module_symbol_id = self.symbols.intern_namespace_path(dep_name)?;
@@ -836,14 +872,24 @@ impl ProgramCompiler {
         Ok(())
     }
 
-    fn ensure_global(&mut self, name: &str) -> u16 {
+    /// The global slot holding module binding `name`, allocated on first
+    /// use. `LOAD_GLOBAL` / `STORE_GLOBAL` carry a `u16` index, so a program
+    /// with more bindings than that refuses to compile rather than letting
+    /// two bindings share one slot.
+    fn ensure_global(&mut self, name: &str) -> Result<u16, CompileError> {
         if let Some(&idx) = self.global_names.get(name) {
-            return idx;
+            return Ok(idx);
         }
-        let idx = self.globals.len() as u16;
+        let idx = operand_u16(
+            self.globals.len(),
+            &format!(
+                "module binding `{name}` needs global slot {}",
+                self.globals.len()
+            ),
+        )?;
         self.global_names.insert(name.to_string(), idx);
         self.globals.push(NanValue::UNIT);
-        idx
+        Ok(idx)
     }
 
     /// Register type symbols in VmSymbolTable for namespace resolution.
@@ -885,7 +931,11 @@ impl ProgramCompiler {
                 let type_id = arena
                     .find_type_id(&arena_name)
                     .unwrap_or_else(|| panic!("type `{arena_name}` already registered in Arena"));
-                for (variant_id, variant) in variants.iter().enumerate() {
+                for (variant_index, variant) in variants.iter().enumerate() {
+                    let variant_id = operand_u16(
+                        variant_index,
+                        &format!("type `{arena_name}` has {} variants", variants.len()),
+                    )?;
                     let field_count = operand_u8(
                         variant.fields.len(),
                         &format!(
@@ -895,15 +945,13 @@ impl ProgramCompiler {
                             variant.fields.len()
                         ),
                     )?;
-                    let ctor_id = arena
-                        .find_ctor_id(type_id, variant_id as u16)
-                        .expect("ctor id");
+                    let ctor_id = arena.find_ctor_id(type_id, variant_id).expect("ctor id");
                     let qualified_name = visibility::member_key(&arena_name, &variant.name);
                     let ctor_symbol_id = self.symbols.intern_variant_ctor(
                         &qualified_name,
                         VmVariantCtor {
                             type_id,
-                            variant_id: variant_id as u16,
+                            variant_id,
                             ctor_id,
                             field_count,
                         },
@@ -1045,16 +1093,6 @@ impl ProgramCompiler {
         // params-only fallback stays for bodies compiled WITHOUT a
         // resolution, where idents were never rewritten and a bare
         // param read can legitimately reach `FnValue`.
-        let local_slots: HashMap<String, u16> = match resolution {
-            Some(_) => HashMap::new(),
-            None => rfd
-                .params
-                .iter()
-                .enumerate()
-                .map(|(i, (name, _))| (name.clone(), i as u16))
-                .collect(),
-        };
-
         let arity = operand_u8(
             rfd.params.len(),
             &format!(
@@ -1063,6 +1101,13 @@ impl ProgramCompiler {
                 rfd.params.len()
             ),
         )?;
+        let local_slots: HashMap<String, u16> = match resolution {
+            Some(_) => HashMap::new(),
+            None => (0..arity)
+                .zip(&rfd.params)
+                .map(|(i, (name, _))| (name.clone(), u16::from(i)))
+                .collect(),
+        };
         // Verify drivers remain callable by the case runner, but their exact
         // stubs do not create live provider requirements for ordinary `run`.
         // Calls in real process segments still accumulate in the main set.
@@ -1122,7 +1167,7 @@ impl ProgramCompiler {
         }
         for stmt in &stmts {
             if let Stmt::Binding(name, _, _) = stmt {
-                self.ensure_global(name);
+                self.ensure_global(name)?;
             }
         }
         // Top-level statements never went through the resolver pass
@@ -1372,9 +1417,9 @@ pub(super) struct FnCompiler<'a> {
     /// Source file path for this function.
     source_file: String,
     /// Run-length encoded line table being built: (bytecode_offset, source_line).
-    line_table: Vec<(u16, u16)>,
+    line_table: Vec<(u32, u32)>,
     /// Last emitted line (for RLE dedup).
-    last_noted_line: u16,
+    last_noted_line: u32,
     /// Snapshot of `FnResolution.aliased_slots` for the current fn.
     /// Stamped per slot by the IR `alias` pass; backends consume it
     /// rather than re-deriving the same shape per fn. Empty when the
@@ -1441,7 +1486,7 @@ impl<'a> FnCompiler<'a> {
         self.aliased_slots = aliased;
     }
 
-    pub(super) fn is_aliased_slot(&self, slot: u16) -> bool {
+    pub(super) fn is_aliased_slot(&self, slot: u32) -> bool {
         self.aliased_slots
             .get(slot as usize)
             .copied()
@@ -1484,12 +1529,16 @@ impl<'a> FnCompiler<'a> {
         if line == 0 {
             return;
         }
-        let line16 = line as u16;
-        if line16 == self.last_noted_line {
+        // Both halves are `u32`: a generated body can pass 64 KiB of
+        // bytecode and a generated source can pass 65 535 lines, and a
+        // wrapped entry would point an error at an unrelated line.
+        let line = u32::try_from(line).unwrap_or(u32::MAX);
+        if line == self.last_noted_line {
             return; // RLE dedup
         }
-        self.last_noted_line = line16;
-        self.line_table.push((self.code.len() as u16, line16));
+        self.last_noted_line = line;
+        let offset = u32::try_from(self.code.len()).unwrap_or(u32::MAX);
+        self.line_table.push((offset, line));
     }
 
     pub(super) fn emit_op(&mut self, op: u8) {
@@ -1565,15 +1614,24 @@ impl<'a> FnCompiler<'a> {
         self.code.extend_from_slice(&val.to_be_bytes());
     }
 
-    pub(super) fn add_constant(&mut self, val: NanValue) -> u16 {
-        for (i, c) in self.constants.iter().enumerate() {
-            if c.bits() == val.bits() {
-                return i as u16;
-            }
+    /// Index of `val` in this chunk's constant pool, appended on first
+    /// use. `LOAD_CONST` and its fused forms carry a `u16` index, so a
+    /// chunk needing more distinct constants than that refuses to compile.
+    pub(super) fn add_constant(&mut self, val: NanValue) -> Result<u16, CompileError> {
+        if let Some(i) = self.constants.iter().position(|c| c.bits() == val.bits()) {
+            // Only indices that passed the check below are ever stored.
+            return operand_u16(i, "constant index");
         }
-        let idx = self.constants.len() as u16;
+        let idx = operand_u16(
+            self.constants.len(),
+            &format!(
+                "function `{}` needs constant {}",
+                self.name,
+                self.constants.len()
+            ),
+        )?;
         self.constants.push(val);
-        idx
+        Ok(idx)
     }
 
     pub(super) fn offset(&self) -> usize {
@@ -1768,5 +1826,147 @@ fn bucket(n: Int) -> Int
             "expected the base integer compare LT in bytecode, got {:?}",
             chunk.code
         );
+    }
+
+    /// Globals hold module bindings only. A fn takes no slot, so the global
+    /// count does not grow with the number of fns — `aver verify` adds two or
+    /// three fns per case, and when every fn took a `u16` global slot a large
+    /// `given` domain pushed the index past 65 535: it wrapped onto a slot in
+    /// use and a fn read as a value (`apply(f, x)`) called a verify helper.
+    #[test]
+    fn fns_take_no_global_slots_and_fn_values_still_resolve() {
+        let mut source = String::from(
+            r#"
+module Demo
+
+base = 40
+
+fn f(x: Int) -> Int
+    base + x
+
+fn apply(g: Fn(Int) -> Int, x: Int) -> Int
+    g(x)
+
+fn useF() -> Int
+    apply(f, 2)
+"#,
+        );
+        for k in 0..200 {
+            source.push_str(&format!("\nfn filler{k}(x: Int) -> Int\n    x + {k}\n"));
+        }
+        let mut items = parse_source(&source).expect("source should parse");
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
+        let symbols = SymbolTable::build(&items, &[]);
+        let resolved = resolve_program(&symbols, &items);
+        let mut arena = Arena::new();
+        let (code, globals) =
+            compile_program(&resolved, &symbols, &mut arena, None).expect("vm compile should pass");
+        assert_eq!(globals.len(), 1, "only `base` takes a global slot");
+
+        let mut vm = crate::vm::VM::new(code, globals, arena);
+        vm.run_top_level().expect("top level runs");
+        let result = vm.run_named_function("useF", &[]).expect("useF runs");
+        assert_eq!(result.as_int(&vm.arena), 42);
+    }
+
+    /// Past the last `u16` global index the compiler refuses instead of
+    /// handing a binding a slot another binding already holds.
+    #[test]
+    fn global_slot_past_u16_refuses_to_compile() {
+        let mut compiler = super::ProgramCompiler::new();
+        compiler
+            .globals
+            .resize(usize::from(u16::MAX), crate::nan_value::NanValue::UNIT);
+        assert_eq!(
+            compiler.ensure_global("last").expect("slot 65535 fits"),
+            u16::MAX
+        );
+        assert_eq!(
+            compiler
+                .ensure_global("last")
+                .expect("same name, same slot"),
+            u16::MAX
+        );
+        let err = compiler
+            .ensure_global("oneTooMany")
+            .expect_err("slot 65536 does not fit a u16 operand");
+        assert!(
+            err.msg
+                .contains("module binding `oneTooMany` needs global slot 65536")
+                && err.msg.contains("at most 65536"),
+            "{}",
+            err.msg
+        );
+        assert!(!compiler.global_names.contains_key("oneTooMany"));
+    }
+
+    /// The constant pool refuses its 65 537th distinct entry rather than
+    /// handing out an index that names constant 0.
+    #[test]
+    fn constant_past_u16_refuses_to_compile() {
+        let global_names = HashMap::new();
+        let module_scope = HashMap::new();
+        let code_store = CodeStore::new();
+        let mut vm_symbols = VmSymbolTable::default();
+        let mut arena = Arena::new();
+        let source_symbols = SymbolTable::default();
+        let mut required_capabilities = BTreeSet::new();
+        let mut compiler = FnCompiler::new(
+            "many_constants",
+            0,
+            0,
+            Vec::new(),
+            HashMap::new(),
+            &global_names,
+            &module_scope,
+            &code_store,
+            &mut vm_symbols,
+            &mut arena,
+            &source_symbols,
+            None,
+            &mut required_capabilities,
+        );
+        let unit = crate::nan_value::NanValue::UNIT;
+        compiler.constants = vec![unit; usize::from(u16::MAX) + 1];
+        assert_eq!(compiler.add_constant(unit).expect("existing constant"), 0);
+        let err = compiler
+            .add_constant(crate::nan_value::NanValue::TRUE)
+            .expect_err("constant 65536 does not fit a u16 operand");
+        assert!(
+            err.msg.contains("`many_constants` needs constant 65536"),
+            "{}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn fn_and_type_ids_past_u16_refuse() {
+        assert_eq!(super::fn_id_operand(65_535, "f").expect("fits"), u16::MAX);
+        let err = super::fn_id_operand(65_536, "helper").expect_err("does not fit");
+        assert!(
+            err.msg
+                .contains("call to `helper` targets function id 65536"),
+            "{}",
+            err.msg
+        );
+        let err = super::type_id_operand(70_000, "Big").expect_err("does not fit");
+        assert!(
+            err.msg.contains("type `Big` has arena type id 70000"),
+            "{}",
+            err.msg
+        );
+    }
+
+    /// A field past slot 255 gets no slot instead of a wrapped one that
+    /// would read field 0.
+    #[test]
+    fn record_field_past_u8_slots_gets_no_slot() {
+        let mut code = CodeStore::new();
+        let fields: Vec<u32> = (1000..1257).collect();
+        code.register_record_fields(0, &fields);
+        assert_eq!(code.record_field_slots.get(&(0, 1255)), Some(&255));
+        assert_eq!(code.record_field_slots.get(&(0, 1256)), None);
+        assert_eq!(code.record_field_slots.len(), 256);
     }
 }
