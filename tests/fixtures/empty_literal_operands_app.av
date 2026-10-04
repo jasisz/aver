@@ -1,0 +1,122 @@
+module EmptyLiteralOperandsApp
+    intent =
+        "Applies every generic List, Map and Vector builtin to an empty literal that nothing else types."
+        "The checker settles each element type, so every backend prints what the VM prints."
+    effects [Console.print]
+
+fn word() -> String
+    ? "A String the checker cannot fold."
+    "k"
+
+fn listLen() -> Int
+    ? "The length of an empty list."
+    List.len([])
+
+fn listReverse() -> Int
+    ? "The length of a reversed empty list."
+    List.len(List.reverse([]))
+
+fn listConcat() -> Int
+    ? "The length of two empty lists joined."
+    List.len(List.concat([], []))
+
+fn listTake() -> Int
+    ? "The length of a prefix of an empty list."
+    List.len(List.take([], 2))
+
+fn listDrop() -> Int
+    ? "The length of an empty list after a drop."
+    List.len(List.drop([], 2))
+
+fn listZip() -> Int
+    ? "The length of two empty lists zipped."
+    List.len(List.zip([], []))
+
+fn listContains() -> Bool
+    ? "Whether an empty list holds 1."
+    List.contains([], 1)
+
+fn listContainsWord() -> Bool
+    ? "Whether an empty list holds a String; the needle types the list."
+    List.contains([], word())
+
+fn listContainsNone() -> Bool
+    ? "Whether an empty list holds Option.None."
+    List.contains([], Option.None)
+
+fn vectorLen() -> Int
+    ? "The length of a vector built from an empty list."
+    Vector.len(Vector.fromList([]))
+
+fn mapLen() -> Int
+    ? "The size of an empty map."
+    Map.len({})
+
+fn mapKeys() -> Int
+    ? "How many keys an empty map has."
+    List.len(Map.keys({}))
+
+fn mapValues() -> Int
+    ? "How many values an empty map has."
+    List.len(Map.values({}))
+
+fn mapEntries() -> Int
+    ? "How many entries an empty map has."
+    List.len(Map.entries({}))
+
+fn mapHas() -> Bool
+    ? "Whether an empty map has key 1."
+    Map.has({}, 1)
+
+fn mapRemove() -> Int
+    ? "The size of an empty map after a removal; the key types the map."
+    Map.len(Map.remove({}, word()))
+
+fn mapFromList() -> Int
+    ? "The size of a map built from an empty list."
+    Map.len(Map.fromList([]))
+
+fn mapGet() -> Bool
+    ? "Whether looking a key up in an empty map finds nothing."
+    Map.get({}, 1) == Option.None
+
+fn listsEqual() -> Bool
+    ? "Whether two empty lists are equal."
+    [] == []
+
+fn mapsEqual() -> Bool
+    ? "Whether two empty maps are equal."
+    {} == {}
+
+fn nonesEqual() -> Bool
+    ? "Whether two Option.None values are equal."
+    Option.None == Option.None
+
+fn reversedEqual() -> Bool
+    ? "Whether a reversed empty list equals an empty list."
+    List.reverse([]) == []
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("listLen {listLen()}")
+    Console.print("listReverse {listReverse()}")
+    Console.print("listConcat {listConcat()}")
+    Console.print("listTake {listTake()}")
+    Console.print("listDrop {listDrop()}")
+    Console.print("listZip {listZip()}")
+    Console.print("listContains {listContains()}")
+    Console.print("listContainsWord {listContainsWord()}")
+    Console.print("listContainsNone {listContainsNone()}")
+    Console.print("vectorLen {vectorLen()}")
+    Console.print("mapLen {mapLen()}")
+    Console.print("mapKeys {mapKeys()}")
+    Console.print("mapValues {mapValues()}")
+    Console.print("mapEntries {mapEntries()}")
+    Console.print("mapHas {mapHas()}")
+    Console.print("mapRemove {mapRemove()}")
+    Console.print("mapFromList {mapFromList()}")
+    Console.print("mapGet {mapGet()}")
+    Console.print("listsEqual {listsEqual()}")
+    Console.print("mapsEqual {mapsEqual()}")
+    Console.print("nonesEqual {nonesEqual()}")
+    Console.print("reversedEqual {reversedEqual()}")

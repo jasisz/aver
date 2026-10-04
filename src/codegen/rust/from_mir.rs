@@ -61,6 +61,7 @@ use crate::ir::mir::{
     LocalId, MirCallee, MirCtor, MirExpr, MirLocal, MirMatch, MirPattern, MirProgram,
 };
 use crate::ir::{MatchDispatchPlan, SymbolTable};
+use crate::types::checker::type_is_fully_concrete;
 
 use super::emit_ctx::{is_copy_type, should_borrow_param};
 use super::expr::{
@@ -1084,6 +1085,33 @@ fn pack_u8_list(value: String) -> String {
     )
 }
 
+/// `[]`, `{}` or `Option.None` spelled with its stamped element type, for
+/// the positions where nothing lets rustc infer it: the operand of a
+/// collection builtin (`List.len([])` is `AverList::empty().len()`) and
+/// both sides of `[] == []`. `None` for any other expression, or when the
+/// stamp is not concrete. Elsewhere the bare form stays.
+fn mir_typed_empty_literal(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    let ty = expr.ty().filter(|ty| type_is_fully_concrete(ty))?;
+    let rust = |ty: &Type| match ctx.codegen {
+        Some(codegen) => super::types::type_to_rust_scoped(ty, codegen, ctx.current_module_scope),
+        None => super::types::type_to_rust(ty),
+    };
+    match (&expr.node, ty) {
+        (MirExpr::List(items), Type::List(_)) if items.is_empty() => {
+            Some(format!("<{}>::empty()", rust(ty)))
+        }
+        (MirExpr::MapLiteral(entries), Type::Map(_, _)) if entries.is_empty() => {
+            Some(format!("<{}>::new()", rust(ty)))
+        }
+        (MirExpr::Construct(ctor), Type::Option(inner))
+            if matches!(ctor.node.ctor, MirCtor::Builtin(BuiltinCtor::OptionNone)) =>
+        {
+            Some(format!("None::<{}>", rust(inner)))
+        }
+        _ => None,
+    }
+}
+
 fn type_is_int_list(ty: Option<&Type>) -> bool {
     matches!(ty, Some(Type::List(inner)) if **inner == Type::Int)
 }
@@ -1393,8 +1421,21 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
-            let l = emit_mir_expr(&bop.lhs, emit_ctx)?;
-            let r = emit_mir_expr(&bop.rhs, emit_ctx)?;
+            let typed = matches!(bop.op, BinOp::Eq | BinOp::Neq)
+                .then(|| {
+                    Some((
+                        mir_typed_empty_literal(&bop.lhs, emit_ctx)?,
+                        mir_typed_empty_literal(&bop.rhs, emit_ctx)?,
+                    ))
+                })
+                .flatten();
+            let (l, r) = match typed {
+                Some(pair) => pair,
+                None => (
+                    emit_mir_expr(&bop.lhs, emit_ctx)?,
+                    emit_mir_expr(&bop.rhs, emit_ctx)?,
+                ),
+            };
             // `Int` arithmetic lowers to the non-wrapping `AverInt` methods
             // (`+ - *` → `.add/.sub/.mul(&rhs)`, `/` → `.div_trunc(&rhs)`),
             // since `AverInt` has no operator-trait impls. Comparisons stay
@@ -5454,19 +5495,30 @@ fn emit_mir_builtin_call(
         return Some(fused);
     }
 
+    // An empty collection operand names its element type; see
+    // `mir_typed_empty_literal`.
+    let collection_op = ["List.", "Map.", "Vector."]
+        .iter()
+        .any(|namespace| name.starts_with(namespace));
+    let emit_operand = |arg: &Spanned<MirExpr>| {
+        collection_op
+            .then(|| mir_typed_empty_literal(arg, ctx))
+            .flatten()
+            .or_else(|| emit_mir_expr(arg, ctx))
+    };
     // `emit_arg(i)`: raw emit (HIR's `emit_expr(&args[i].node, …)`). A
     // raw argument is often a receiver or a `&` borrow that lives until the
     // builtin runs, so it is detached when a later argument moves it.
     macro_rules! arg {
         ($i:expr) => {{
             let later: Vec<&Spanned<MirExpr>> = args.iter().skip($i + 1).collect();
-            detach_borrow_before_later_move(emit_mir_expr(&args[$i], ctx)?, &args[$i], &later, ctx)
+            detach_borrow_before_later_move(emit_operand(&args[$i])?, &args[$i], &later, ctx)
         }};
     }
     // `clone_arg(&args[i].node, …)`: owning clone.
     macro_rules! clone {
         ($i:expr) => {
-            mir_clone_arg(emit_mir_expr(&args[$i], ctx)?, &args[$i].node, ctx)
+            mir_clone_arg(emit_operand(&args[$i])?, &args[$i].node, ctx)
         };
     }
 

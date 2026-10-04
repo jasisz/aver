@@ -532,6 +532,87 @@ verify allBytes law reverseKeepsBytes
     );
 }
 
+/// The stamp of every empty literal argument of the last call in `name`'s
+/// body, in source order, after the program is checked.
+fn empty_literal_stamps(items: &[TopLevel], name: &str) -> Vec<String> {
+    fn walk(expr: &Spanned<Expr>, out: &mut Vec<String>) {
+        match &expr.node {
+            Expr::List(items) if items.is_empty() => {}
+            Expr::MapLiteral(entries) if entries.is_empty() => {}
+            Expr::FnCall(_, args) => return args.iter().for_each(|arg| walk(arg, out)),
+            Expr::BinOp(_, left, right) => {
+                return [left, right].into_iter().for_each(|e| walk(e, out));
+            }
+            _ => return,
+        }
+        out.push(expr.ty().map_or("unstamped".to_string(), Type::display));
+    }
+    let fd = items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::FnDef(fd) if fd.name == name => Some(fd),
+            _ => None,
+        })
+        .expect("fn is defined");
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    let Some(Stmt::Expr(expr)) = stmts.last() else {
+        panic!("{name} ends in an expression")
+    };
+    let mut out = Vec::new();
+    walk(expr, &mut out);
+    out
+}
+
+#[test]
+fn empty_literals_in_collection_builtins_get_a_concrete_type() {
+    // A type the call's result does not carry settles on Int; one an
+    // argument or the context fixes is taken from there. Before, every
+    // literal here kept `List<T>` / `Map<K, V>`, which wasm-gc and the
+    // Rust backend cannot lower.
+    let items = parse_items(
+        r#"
+fn len() -> Int
+    List.len([])
+
+fn nested() -> Int
+    List.len(List.reverse(List.concat([], [])))
+
+fn fromSibling(xs: List<String>) -> Int
+    List.len(List.concat(xs, []))
+
+fn needle(s: String) -> Bool
+    List.contains([], s)
+
+fn noneNeedle() -> Bool
+    List.contains([], Option.None)
+
+fn mapLen() -> Int
+    Map.len(Map.remove({}, "k"))
+
+fn mapKeys() -> Int
+    List.len(Map.keys({}))
+
+fn fromContext() -> List<String>
+    List.reverse(List.take([], 1))
+
+fn equal() -> Bool
+    [] == []
+"#,
+    );
+    let errs = run_type_check(&items);
+    assert!(errs.is_empty(), "{errs:?}");
+    let stamps = |name| empty_literal_stamps(&items, name);
+    assert_eq!(stamps("len"), ["List<Int>"]);
+    assert_eq!(stamps("nested"), ["List<Int>", "List<Int>"]);
+    assert_eq!(stamps("fromSibling"), ["List<String>"]);
+    assert_eq!(stamps("needle"), ["List<String>"]);
+    assert_eq!(stamps("noneNeedle"), ["List<Option<Int>>"]);
+    assert_eq!(stamps("mapLen"), ["Map<String, Int>"]);
+    assert_eq!(stamps("mapKeys"), ["Map<Int, Int>"]);
+    assert_eq!(stamps("fromContext"), ["List<String>"]);
+    assert_eq!(stamps("equal"), ["List<Int>", "List<Int>"]);
+}
+
 #[test]
 fn result_from_option_types_empty_error_from_expected() {
     // The error argument is unrelated to the subject's payload, so its
