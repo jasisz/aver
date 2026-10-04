@@ -91,7 +91,9 @@ pub fn emptyFnStore() -> FnStore {
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::store::FnStore {
         nameToId: HashMap::new(),
-        byId: aver_rt::AverVector::from_vec(aver_rt::AverList::empty().to_vec()),
+        byId: aver_rt::AverVector::from_vec(
+            <aver_rt::AverList<crate::aver_generated::domain::ast::FnDef>>::empty().to_vec(),
+        ),
         globals: HashMap::new(),
     }
 }

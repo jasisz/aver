@@ -391,6 +391,7 @@ jobs:
             cert_verify_spec \
             cross_backend_proptest \
             cross_backend_stress \
+            empty_literal_operands_spec \
             guide_example_spec \
             knowledge_provider_spec \
             module_bindings_spec \

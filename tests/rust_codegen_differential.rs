@@ -405,6 +405,16 @@ fn bool_match_named_default_arm_matches_between_rust_and_vm() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// Generic List, Map and Vector builtins over an empty literal nothing
+/// else types (`List.len([])`, `Map.len({})`, `[] == []`). rustc cannot
+/// infer the element type of `AverList::empty().len()`, so the walker names
+/// the type the checker settled on; the run must print what the VM prints.
+#[test]
+fn empty_literal_operands_match_between_rust_and_vm() {
+    assert_plain_parity("tests/fixtures/empty_literal_operands_app.av", None)
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
 /// An interpolated String in a module-level statement. The interpolation
 /// pass lowered function bodies only, so a top-level `"a{1}b"`, bound or
 /// bare, reached the Rust walker as a raw interpolation and the crate got

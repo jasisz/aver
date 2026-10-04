@@ -48,6 +48,8 @@ xs: List<Int> = []
 
 A type annotation is optional and gives the type checker a hint. When the annotation and inference are compatible, the annotation wins. Binding an empty list literal without an annotation (`x = []`) is a type error.
 
+An empty literal (`[]`, `{}`, `Option.None`) passed to a `List`, `Map` or `Vector` function takes its element type from the call's other arguments (`List.contains([], name)` is a `List<String>` when `name` is a `String`) or from where the result goes. When neither says, and the call's result does not show it either (`List.len([])`, `Map.has({}, 1)`, `[] == []`), the element type is `Int`.
+
 Every name means one thing in its scope. Binding the same name twice in one scope is a type error, and so is shadowing. A binder (a function parameter, a statement binding, or a match-pattern binding) may not reuse any name already visible at that point, including a top-level function of its own module and the name of the enclosing function. The error names both sides and where the shadowed one is defined, and the fix is one rename. Sibling match arms may bind the same name, since neither is in the other's scope. Names from other modules are always qualified as `Module.fn`, so nothing outside the file can collide. In `aver repl` the session is the scope. The rule reads everything entered so far together with the new entry, so a binder may not reuse the name of a function defined in an earlier entry. A refused entry is not added to the session, and `:clear` starts a fresh one.
 
 ## Operators

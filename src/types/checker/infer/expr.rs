@@ -180,6 +180,7 @@ fn equality_needs_context(expr: &Expr) -> bool {
             items.is_empty() || items.iter().any(|item| equality_needs_context(&item.node))
         }
         Expr::Tuple(items) => items.iter().any(|item| equality_needs_context(&item.node)),
+        Expr::MapLiteral(entries) => entries.is_empty(),
         _ => is_bare_none_expr(expr),
     }
 }
@@ -511,7 +512,7 @@ impl TypeChecker {
                         Some(Type::Result(inner, Box::new(err_ty)))
                     }
 
-                    _ => None,
+                    _ => self.infer_open_collection_call(&key, args, Some(expected), false),
                 }
             }
 
@@ -661,7 +662,7 @@ impl TypeChecker {
                 }
                 Some(default_ty)
             }
-            _ => None,
+            (name, _) => self.infer_open_collection_call(name, args, None, false),
         }
     }
 
@@ -1204,9 +1205,19 @@ impl TypeChecker {
                 // unresolved set-once stamp. Forward the checked type using
                 // the same expected-type path as arguments and returns.
                 let equality = matches!(op, BinOp::Eq | BinOp::Neq);
-                let l_bare = equality && equality_needs_context(&left.node);
-                let r_bare = equality && equality_needs_context(&right.node);
-                let (lt, rt) = if l_bare && !r_bare {
+                let l_bare = equality
+                    && (equality_needs_context(&left.node) || self.is_open_call(&left.node));
+                let r_bare = equality
+                    && (equality_needs_context(&right.node) || self.is_open_call(&right.node));
+                let open_left = if l_bare && r_bare {
+                    self.infer_open_equality_side(left, &right.node)
+                } else {
+                    None
+                };
+                let (lt, rt) = if let Some(lt) = open_left {
+                    let rt = self.infer_type_with_expected(right, Some(&lt));
+                    (lt, rt)
+                } else if l_bare && !r_bare {
                     let rt = self.infer_type(right);
                     let lt = if type_is_fully_concrete(&rt) {
                         self.infer_type_with_expected(left, Some(&rt))

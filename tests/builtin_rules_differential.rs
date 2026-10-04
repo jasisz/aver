@@ -183,14 +183,9 @@ fn the_kernel_evaluates_every_rule_instance_as_the_compiler_does() {
 
 /// A module whose laws state every sampled instance, both sides, as one
 /// list per rule; `k` is a given only so that each law has one sample.
-///
-/// Every empty list is spelled `none()`, a `List<Int>`: wasm-gc does not
-/// compile `List.len([])` or `List.reverse([])` when nothing fixes the
-/// element type of the `[]` (no `List<T>` helper is registered for it),
-/// which is a gap of that backend, not of the rules.
 fn program() -> String {
     let mut src = String::from(
-        "module RuleSamples\n    intent = \"Every sampled instance of the list rules and facts.\"\n    exposes [lists, ints]\n    effects []\n\nfn lists(xs: List<List<Int>>) -> List<List<Int>>\n    ? \"Anchor for list-valued instances.\"\n    xs\n\nfn ints(xs: List<Int>) -> List<Int>\n    ? \"Anchor for Int-valued instances.\"\n    xs\n\nfn none() -> List<Int>\n    ? \"The empty list of Ints.\"\n    []\n",
+        "module RuleSamples\n    intent = \"Every sampled instance of the list rules and facts.\"\n    exposes [lists, ints]\n    effects []\n\nfn lists(xs: List<List<Int>>) -> List<List<Int>>\n    ? \"Anchor for list-valued instances.\"\n    xs\n\nfn ints(xs: List<Int>) -> List<Int>\n    ? \"Anchor for Int-valued instances.\"\n    xs\n",
     );
     for (n, s) in schemas().iter().enumerate() {
         let is = instances(s);
@@ -210,8 +205,8 @@ fn program() -> String {
         src.push_str(&format!(
             "\n// {}\nverify {anchor} law rule{n}\n    given k: Int = [0]\n    {anchor}([{}]) => [{}]\n",
             s.name,
-            sides.join(", ").replace("[]", "none()"),
-            values.join(", ").replace("[]", "none()")
+            sides.join(", "),
+            values.join(", ")
         ));
     }
     src
