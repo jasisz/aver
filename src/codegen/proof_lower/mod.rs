@@ -2557,12 +2557,16 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             induction,
             reason_inductions,
             function_cone,
+            using: law.using.clone(),
+            steps: None,
         });
     }
+    steps::populate_law_steps(inputs, ir);
 }
 
 mod law_dependencies;
 mod law_induction;
+mod steps;
 
 /// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.
 ///

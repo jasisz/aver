@@ -323,6 +323,12 @@ pub fn emit_verify_law_forall_auto_proof(
     // first alternative, so grind can do NEW work — guaranteed closers
     // like `omega`/`rfl` are left byte-identical).
     let mut proof = maybe_wrap_with_grind_rung(vb, law, ctx, inner);
+    let steps_rendered = if proof.replaces_theorem {
+        None
+    } else {
+        law_steps_for(ctx, &vb.fn_name, &law.name)
+            .and_then(|script| super::proof_steps::render(&script, ctx, theorem_base).ok())
+    };
     // A literal bit mask (`Bits.and(x, 128)`) is a closed form no portfolio
     // arm reaches; its arm is a fixed rewrite chain that closes or fails
     // fast, so it goes first.
@@ -346,7 +352,34 @@ pub fn emit_verify_law_forall_auto_proof(
                 .insert_before_sorry(super::tactic_ir::Tactic::Leaf(arm));
         }
     }
+    // A proof written as data leads: the kernel checks it, and the whole
+    // portfolio above stays behind it as the fallback.
+    if let Some(rendered) = steps_rendered {
+        let givens: Vec<String> = law
+            .givens
+            .iter()
+            .map(|g| aver_name_to_lean(&g.name))
+            .collect();
+        let intro = extend_intro_names_with_premises(law, &givens);
+        proof.support_lines.extend(rendered.support.iter().cloned());
+        let body = std::mem::replace(&mut proof.body, super::tactic_ir::Tactic::Sorry);
+        proof.body = super::proof_steps::lead_portfolio(&rendered, &intro, theorem_base, body);
+    }
     Some(proof)
+}
+
+/// The step script proof lowering produced for `(fn_name, law_name)`.
+pub(super) fn law_steps_for(
+    ctx: &CodegenContext,
+    fn_name: &str,
+    law_name: &str,
+) -> Option<crate::ir::proof_steps::Script> {
+    let fn_id = ctx.law_target_fn_id(fn_name)?;
+    ctx.proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_id == fn_id && t.law_name == law_name)
+        .and_then(|t| t.steps.clone())
 }
 
 /// Put `arm` in front of an open proof: `intro …` then `first | (arm) | (the

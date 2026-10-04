@@ -1434,6 +1434,10 @@ pub(super) fn transpile_unified(
     }
     files.push(("lakefile.lean".to_string(), lakefile));
     files.push(("lean-toolchain".to_string(), toolchain));
+    // Proofs written as data, for the Aver replayer (`tools/proof-kernel`).
+    if !cert_model {
+        files.extend(super::proof_steps::step_files(ctx));
+    }
     let mut output = ProjectOutput::of(files);
     // Hand the law-claims the certificate model recorded to the caller and
     // clear the sink, so a context reused for a second emission starts empty

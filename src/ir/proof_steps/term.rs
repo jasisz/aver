@@ -153,7 +153,7 @@ pub fn map_children(
      -> Result<Box<Term>, String> { Ok(Box::new(f(x)?)) };
     let all = |xs: &[Term],
                f: &mut dyn FnMut(&Term) -> Result<Term, String>|
-     -> Result<Vec<Term>, String> { xs.iter().map(|x| f(x)).collect() };
+     -> Result<Vec<Term>, String> { xs.iter().map(&mut *f).collect() };
     let node = match &t.node {
         ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
             return Ok(t.clone());
@@ -380,7 +380,7 @@ pub fn with_child(t: &Term, index: usize, new: Term) -> Term {
     let mut i = 0usize;
     let mut slot = Some(new);
     let mut in_match_body = false;
-    let rebuilt = map_children(t, &mut |c| {
+    map_children(t, &mut |c| {
         // Match arm bodies are visited by map_children but are not
         // positions; count only `children()` entries.
         if in_match_body {
@@ -397,8 +397,7 @@ pub fn with_child(t: &Term, index: usize, new: Term) -> Term {
         }
         Ok(out)
     })
-    .expect("with_child is total");
-    rebuilt
+    .expect("with_child is total")
 }
 
 /// The context of position `path` in `t`: `t` with a hole there.
