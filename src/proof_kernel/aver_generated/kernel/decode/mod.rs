@@ -968,17 +968,19 @@ pub fn proofOf(
                                                                     {
                                                                         crate::proof_kernel::aver_generated::kernel::decode::inductProof(args)
                                                                     } else {
-                                                                        Err(aver_rt::AverStr::from(
+                                                                        if &*__dispatch_subject
+                                                                            == "ring"
+                                                                        {
+                                                                            crate::proof_kernel::aver_generated::kernel::decode::ringProof(args)
+                                                                        } else {
+                                                                            if &*__dispatch_subject
+                                                                                == "linear"
                                                                             {
-                                                                                let mut __b = {
-                                                                                    let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0));
-                                                                                    __b.push_str(&AverStr::from("unknown rule "));
-                                                                                    __b
-                                                                                };
-                                                                                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag))));
-                                                                                __b
-                                                                            },
-                                                                        ))
+                                                                                crate::proof_kernel::aver_generated::kernel::decode::linearProof(args)
+                                                                            } else {
+                                                                                Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((aver_rt::AverInt::from_i64(29)).to_usize().unwrap_or(0)); __b.push_str(&AverStr::from("unknown rule ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(tag)))); __b }))
+                                                                            }
+                                                                        }
                                                                     }
                                                                 }
                                                             }
@@ -1402,6 +1404,105 @@ pub fn enumProof(
             }
         } else {
             Err(AverStr::from("malformed enum"))
+        }
+    }
+}
+
+/// (linear TERM BOOL (NAME…) (INT…))
+pub fn linearProof(
+    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = args.clone();
+        if let Some((g, __pat0)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            {
+                let __list_subject = __pat0;
+                if let Some((__pat1, __pat2)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    match __pat1 {
+                        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(v) => {
+                            let __list_subject = __pat2;
+                            if let Some((hs, __pat3)) = aver_rt::list_uncons_cloned(&__list_subject)
+                            {
+                                {
+                                    let __list_subject = __pat3;
+                                    if let Some((ws, __pat4)) =
+                                        aver_rt::list_uncons_cloned(&__list_subject)
+                                    {
+                                        {
+                                            let __list_subject = __pat4;
+                                            if __list_subject.is_empty() {
+                                                Ok(crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(crate::proof_kernel::aver_generated::kernel::decode::term(&g)?, (&*v == "true"), crate::proof_kernel::aver_generated::kernel::decode::atoms(&crate::proof_kernel::aver_generated::kernel::decode::items(&hs)?)?, crate::proof_kernel::aver_generated::kernel::decode::ints(&crate::proof_kernel::aver_generated::kernel::decode::items(&ws)?)?))
+                                            } else {
+                                                Err(AverStr::from("malformed linear"))
+                                            }
+                                        }
+                                    } else {
+                                        Err(AverStr::from("malformed linear"))
+                                    }
+                                }
+                            } else {
+                                Err(AverStr::from("malformed linear"))
+                            }
+                        }
+                        _ => Err(AverStr::from("malformed linear")),
+                    }
+                } else {
+                    Err(AverStr::from("malformed linear"))
+                }
+            }
+        } else {
+            Err(AverStr::from("malformed linear"))
+        }
+    }
+}
+
+/// Integers written as atoms.
+#[inline(always)]
+pub fn ints(
+    ss @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<aver_rt::AverIntList, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(ss.clone(), [] => Ok(aver_rt::AverIntList::empty()), [__pat0, rest] => { match __pat0 {
+        crate::proof_kernel::aver_generated::kernel::sexp::Sexp::Atom(a) => {
+            Ok(aver_rt::AverIntList::prepend(({ let __s = &(a); __s.parse::<aver_rt::AverInt>().map_err(|_| format!("Cannot parse '{}' as Int", __s)) }).into_aver()?, &crate::proof_kernel::aver_generated::kernel::decode::ints(&rest)?))
+        },
+        _ => {
+            Err(AverStr::from("expected an integer"))
+        }
+    } })
+}
+
+/// (ring TERM TERM)
+pub fn ringProof(
+    args @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::sexp::Sexp>,
+) -> Result<crate::proof_kernel::aver_generated::kernel::proof::Proof, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    {
+        let __list_subject = args.clone();
+        if let Some((l, __pat0)) = aver_rt::list_uncons_cloned(&__list_subject) {
+            {
+                let __list_subject = __pat0;
+                if let Some((r, __pat1)) = aver_rt::list_uncons_cloned(&__list_subject) {
+                    {
+                        let __list_subject = __pat1;
+                        if __list_subject.is_empty() {
+                            Ok(
+                                crate::proof_kernel::aver_generated::kernel::proof::Proof::PRing(
+                                    crate::proof_kernel::aver_generated::kernel::decode::term(&l)?,
+                                    crate::proof_kernel::aver_generated::kernel::decode::term(&r)?,
+                                ),
+                            )
+                        } else {
+                            Err(AverStr::from("malformed ring"))
+                        }
+                    }
+                } else {
+                    Err(AverStr::from("malformed ring"))
+                }
+            }
+        } else {
+            Err(AverStr::from("malformed ring"))
         }
     }
 }

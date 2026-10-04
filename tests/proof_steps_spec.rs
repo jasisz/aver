@@ -786,8 +786,8 @@ fn a_using_list_is_a_set_and_ambiguous_or_looping_rewrites_are_refused_by_name()
         "{log}"
     );
     assert!(
-        line("add.swapsOne").contains(
-            "law add.commutes rewrites a term into one it applies to again, so rewriting with it never stops"
+        line("sameLen.againstOne").contains(
+            "law sameLen.commutes rewrites a term into one it applies to again, so rewriting with it never stops"
         ),
         "{log}"
     );
@@ -812,7 +812,7 @@ fn the_aver_backend_says_where_the_steps_producer_stopped() {
     let text = String::from_utf8_lossy(&result.stdout);
     for expected in [
         "  f.isH: closed by steps",
-        "  f.isG: not closed by this backend (steps: evaluation stops at `x + 1` and `1 + x`",
+        "  f.isG: not closed by this backend (steps: evaluation stops at `x + \"!\"` and `(\"\" + x) + \"!\"`",
         "  g.overlapping: not closed by this backend (steps: law f.isG and law f.isH both rewrite",
     ] {
         assert!(text.contains(expected), "missing `{expected}`\n{text}");
@@ -1014,6 +1014,120 @@ fn lean_inducts_with_the_functional_induction_principle_and_refuses_mutations() 
             law
         ),
         "the hypothesis used in the base case: Lean must refuse the step term"
+    );
+    let _ = fs::remove_dir_all(out);
+}
+
+const ARITH_LAWS: [&str; 5] = [
+    "clamp.positiveStaysPositive",
+    "next.staysAboveOne",
+    "sqSum.expands",
+    "sumTR.isAccPlusTotal",
+    "twice.isDouble",
+];
+
+#[test]
+fn both_kernels_check_ring_and_linear_steps_and_refuse_mutations() {
+    let out = scratch("arith");
+    let files: std::collections::BTreeMap<String, PathBuf> =
+        export_steps("arith.av", &out).into_iter().collect();
+    assert_eq!(files.keys().cloned().collect::<Vec<_>>(), ARITH_LAWS);
+    let read = |law: &str| fs::read_to_string(&files[law]).unwrap();
+    for law in files.keys() {
+        assert_eq!(aver::proof_kernel::verdict(&read(law)), Ok(law.clone()));
+    }
+    let next = read("next.staysAboveOne");
+    let square = read("sqSum.expands");
+    assert!(next.contains("(linear "), "{next}");
+    assert!(square.contains("(ring "), "{square}");
+    for (kind, text) in [
+        (
+            "a weight that does not add up",
+            mutate_proof(&next, "true (when) (1 1)", "true (when) (1 2)"),
+        ),
+        (
+            "a negative weight",
+            mutate_proof(&next, "true (when) (1 1)", "true (when) (1 -1)"),
+        ),
+        (
+            "the opposite value",
+            mutate_proof(&next, "true (when) (1 1)", "false (when) (1 1)"),
+        ),
+        (
+            "a different polynomial",
+            square.replacen("(op * (i 2) (v a))", "(op * (i 3) (v a))", 2),
+        ),
+    ] {
+        let refused = aver::proof_kernel::verdict(&text);
+        assert!(refused.is_err(), "{kind}: {refused:?}");
+        let path = out.join("mutant.steps");
+        fs::write(&path, &text).unwrap();
+        let result = replay(std::slice::from_ref(&path));
+        assert!(
+            !result.status.success(),
+            "{kind}: {}",
+            format_output(&result)
+        );
+    }
+    let _ = fs::remove_dir_all(out);
+}
+
+#[test]
+fn joining_texts_is_never_read_as_int_arithmetic() {
+    // `+` on texts does not commute: written as `++`, no Int rule or ring
+    // step applies to it, even in a script made by hand.
+    let script = |op: &str| {
+        format!(
+            "(steps 4 (obligation k (a b) (none) (op {op} (v a) (v b)) (op {op} (v b) (v a))) (defs) (consts) (laws) (proof (ring (op {op} (v a) (v b)) (op {op} (v b) (v a)))))"
+        )
+    };
+    assert_eq!(
+        aver::proof_kernel::verdict(&script("+")),
+        Ok("k".to_string())
+    );
+    assert!(aver::proof_kernel::verdict(&script("++")).is_err());
+    assert!(aver::proof_kernel::verdict(&script("+.")).is_err());
+}
+
+#[test]
+fn lean_checks_ring_and_linear_steps() {
+    if !lean_required::lake_available() {
+        eprintln!("skipping the Lean half: `lake` is not available");
+        return;
+    }
+    let out = scratch("arith-lean");
+    let result = aver_in(
+        &repo_root().join(FIXTURES),
+        &[
+            "proof",
+            "arith.av",
+            "-o",
+            out.to_str().unwrap(),
+            "--check-json",
+            "--sorry-budget",
+            "0",
+        ],
+    );
+    assert!(result.status.success(), "{}", format_output(&result));
+    let summary: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .rev()
+            .find(|l| l.starts_with('{'))
+            .unwrap(),
+    )
+    .unwrap();
+    for law in ARITH_LAWS {
+        assert_eq!(summary["closed_by"][law], "steps", "{law}: {summary}");
+    }
+    let lean = fs::read_to_string(out.join("Arith.lean")).unwrap();
+    let law = "sqSum.expands";
+    let line = exact_line(&lean, "sqSum_law_expands").to_string();
+    let wrong = line.replacen("Expr.num (2)", "Expr.num (3)", 1);
+    assert_ne!(line, wrong, "{line}");
+    assert!(
+        lean_refuses(&out, "Arith.lean", &lean.replacen(&line, &wrong, 1), law),
+        "a different polynomial: Lean must refuse the step term"
     );
     let _ = fs::remove_dir_all(out);
 }

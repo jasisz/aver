@@ -1,0 +1,266 @@
+module Ring
+    intent =
+        "Int terms read as polynomials over their atoms, for the ring step: + - * negation and"
+        "integer literals are the ring operations, any other subterm is an atom compared by its"
+        "exact term. Two terms are equal when their monomials and coefficients are."
+    exposes [samePolynomial, linearContradiction]
+    depends [Kernel.Term]
+    effects []
+
+record Mono
+    atoms: List<Int>
+    coef: Int
+
+record Read
+    poly: List<Mono>
+    atoms: List<Term>
+
+fn samePolynomial(a: Term, b: Term) -> Bool
+    ? "Whether two Int terms are the same polynomial."
+    left = readPoly(a, [])
+    right = readPoly(b, left.atoms)
+    left.poly == right.poly
+
+verify samePolynomial
+    samePolynomial(Term.TOp("+", Term.TVar("a"), Term.TVar("b")), Term.TOp("+", Term.TVar("b"), Term.TVar("a"))) => true
+    samePolynomial(Term.TOp("*", Term.TOp("+", Term.TVar("a"), Term.TInt(1)), Term.TVar("b")), Term.TOp("+", Term.TOp("*", Term.TVar("b"), Term.TVar("a")), Term.TVar("b"))) => true
+    samePolynomial(Term.TOp("-", Term.TVar("a"), Term.TVar("a")), Term.TInt(0)) => true
+    samePolynomial(Term.TOp("+", Term.TVar("a"), Term.TVar("a")), Term.TVar("a")) => false
+    samePolynomial(Term.TOp("++", Term.TVar("a"), Term.TVar("b")), Term.TOp("++", Term.TVar("b"), Term.TVar("a"))) => false
+    samePolynomial(Term.TNeg(Term.TCall("f", [Term.TVar("x")])), Term.TOp("*", Term.TInt(0 - 1), Term.TCall("f", [Term.TVar("x")]))) => true
+
+fn readPoly(t: Term, atoms: List<Term>) -> Read
+    ? "t as a polynomial over atoms, with the atoms it adds."
+    match t
+        Term.TInt(n) -> Read(poly = constant(n), atoms = atoms)
+        Term.TOp("+", a, b) -> combine(readPoly(a, atoms), b, 0)
+        Term.TOp("-", a, b) -> combine(readPoly(a, atoms), b, 1)
+        Term.TOp("*", a, b) -> combine(readPoly(a, atoms), b, 2)
+        Term.TNeg(a) -> negated(readPoly(a, atoms))
+        _ -> atom(t, atoms)
+
+verify readPoly
+    readPoly(Term.TInt(0), []).poly => []
+    readPoly(Term.TVar("x"), []).atoms => [Term.TVar("x")]
+
+fn combine(left: Read, b: Term, how: Int) -> Read
+    ? "The left polynomial joined with b's: added (0), subtracted (1) or multiplied (2)."
+    right = readPoly(b, left.atoms)
+    match how
+        0 -> Read(poly = addPoly(left.poly, right.poly), atoms = right.atoms)
+        1 -> Read(poly = addPoly(left.poly, scalePoly(right.poly, 0 - 1)), atoms = right.atoms)
+        _ -> Read(poly = mulPoly(left.poly, right.poly), atoms = right.atoms)
+
+verify combine
+    combine(readPoly(Term.TInt(2), []), Term.TInt(3), 2).poly => [Mono(atoms = [], coef = 6)]
+
+fn negated(r: Read) -> Read
+    ? "The negation of a polynomial."
+    Read(poly = scalePoly(r.poly, 0 - 1), atoms = r.atoms)
+
+verify negated
+    negated(readPoly(Term.TInt(2), [])).poly => [Mono(atoms = [], coef = 0 - 2)]
+
+fn constant(n: Int) -> List<Mono>
+    ? "A constant polynomial; zero has no monomials."
+    match n == 0
+        true -> []
+        false -> [Mono(atoms = [], coef = n)]
+
+verify constant
+    constant(0) => []
+
+fn atom(t: Term, atoms: List<Term>) -> Read
+    ? "An atom: its index in the list, adding it when new."
+    match indexOf(t, atoms, 0)
+        Option.Some(i) -> Read(poly = [Mono(atoms = [i], coef = 1)], atoms = atoms)
+        Option.None -> Read(poly = [Mono(atoms = [List.len(atoms)], coef = 1)], atoms = List.concat(atoms, [t]))
+
+verify atom
+    atom(Term.TVar("y"), [Term.TVar("x")]).poly => [Mono(atoms = [1], coef = 1)]
+
+fn indexOf(t: Term, atoms: List<Term>, i: Int) -> Option<Int>
+    ? "Where an atom is, if it is there."
+    match atoms
+        [] -> Option.None
+        [a, ..rest] -> match a == t
+            true -> Option.Some(i)
+            false -> indexOf(t, rest, i + 1)
+
+verify indexOf
+    indexOf(Term.TVar("x"), [Term.TVar("x")], 0) => Option.Some(0)
+
+fn addPoly(a: List<Mono>, b: List<Mono>) -> List<Mono>
+    ? "The sum of two polynomials, monomials kept in order and merged."
+    match b
+        [] -> a
+        [m, ..rest] -> addPoly(insertMono(m, a), rest)
+
+verify addPoly
+    addPoly([Mono(atoms = [0], coef = 1)], [Mono(atoms = [0], coef = 0 - 1)]) => []
+
+fn insertMono(m: Mono, p: List<Mono>) -> List<Mono>
+    ? "Add one monomial to a polynomial in order; a coefficient that sums to zero drops it."
+    match p
+        [] -> nonzero(m)
+        [x, ..rest] -> match compareAtoms(m.atoms, x.atoms)
+            0 -> List.concat(nonzero(Mono(atoms = x.atoms, coef = x.coef + m.coef)), rest)
+            1 -> List.prepend(x, insertMono(m, rest))
+            _ -> List.concat(nonzero(m), p)
+
+verify insertMono
+    insertMono(Mono(atoms = [1], coef = 2), [Mono(atoms = [0], coef = 1)]) => [Mono(atoms = [0], coef = 1), Mono(atoms = [1], coef = 2)]
+
+fn nonzero(m: Mono) -> List<Mono>
+    ? "A monomial, unless its coefficient is zero."
+    match m.coef == 0
+        true -> []
+        false -> [m]
+
+verify nonzero
+    nonzero(Mono(atoms = [], coef = 0)) => []
+
+fn compareAtoms(a: List<Int>, b: List<Int>) -> Int
+    ? "Order of two sorted atom lists: 0 equal, 1 when a comes after b, 2 when before."
+    match (a, b)
+        ([], []) -> 0
+        ([], _) -> 2
+        (_, []) -> 1
+        ([x, ..xs], [y, ..ys]) -> match x == y
+            true -> compareAtoms(xs, ys)
+            false -> match x > y
+                true -> 1
+                false -> 2
+
+verify compareAtoms
+    compareAtoms([0, 1], [0, 1]) => 0
+    compareAtoms([1], [0, 1]) => 1
+    compareAtoms([], [0]) => 2
+
+fn scalePoly(p: List<Mono>, k: Int) -> List<Mono>
+    ? "Every coefficient times k."
+    match p
+        [] -> []
+        [m, ..rest] -> List.concat(nonzero(Mono(atoms = m.atoms, coef = m.coef * k)), scalePoly(rest, k))
+
+verify scalePoly
+    scalePoly([Mono(atoms = [], coef = 2)], 0) => []
+
+fn mulPoly(a: List<Mono>, b: List<Mono>) -> List<Mono>
+    ? "The product of two polynomials."
+    match a
+        [] -> []
+        [m, ..rest] -> addPoly(mulMono(m, b), mulPoly(rest, b))
+
+verify mulPoly
+    mulPoly([Mono(atoms = [0], coef = 1)], [Mono(atoms = [0], coef = 1)]) => [Mono(atoms = [0, 0], coef = 1)]
+
+fn mulMono(m: Mono, p: List<Mono>) -> List<Mono>
+    ? "One monomial times a polynomial."
+    match p
+        [] -> []
+        [x, ..rest] -> insertMono(Mono(atoms = mergeSorted(m.atoms, x.atoms), coef = m.coef * x.coef), mulMono(m, rest))
+
+verify mulMono
+    mulMono(Mono(atoms = [1], coef = 2), [Mono(atoms = [0], coef = 3)]) => [Mono(atoms = [0, 1], coef = 6)]
+
+fn mergeSorted(a: List<Int>, b: List<Int>) -> List<Int>
+    ? "Two sorted lists merged into one."
+    match (a, b)
+        ([], _) -> b
+        (_, []) -> a
+        ([x, ..xs], [y, ..ys]) -> match x <= y
+            true -> List.prepend(x, mergeSorted(xs, b))
+            false -> List.prepend(y, mergeSorted(a, ys))
+
+verify mergeSorted
+    mergeSorted([0, 2], [1]) => [0, 1, 2]
+
+fn linearContradiction(facts: List<Eqn>, weights: List<Int>) -> Bool
+    ? "Whether Int comparisons with the truth values given, weighted by nonnegative numbers and added as p >= 0, sum to a negative constant."
+    match List.len(facts) == List.len(weights)
+        false -> false
+        true -> negativeConstant(weightedSum(facts, weights, [], []))
+
+verify linearContradiction
+    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), rhs = Term.TBool(false))], [1, 1]) => true
+    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true))], [1]) => false
+    linearContradiction([Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(false))], [1, 0 - 1]) => false
+    linearContradiction([Eqn(lhs = Term.TOp(">.", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(true)), Eqn(lhs = Term.TOp(">.", Term.TVar("x"), Term.TInt(0)), rhs = Term.TBool(false))], [1, 1]) => false
+
+fn weightedSum(facts: List<Eqn>, weights: List<Int>, acc: List<Mono>, atoms: List<Term>) -> Option<List<Mono>>
+    ? "The weighted sum of the facts read as p >= 0; None when a fact is not an Int comparison or a weight is negative."
+    match (facts, weights)
+        ([f, ..fs], [w, ..ws]) -> match Bool.and(w >= 0, isTruth(f.rhs))
+            false -> Option.None
+            true -> weightedNext(asNonneg(f.lhs, f.rhs == Term.TBool(true), atoms), w, fs, ws, acc)
+        _ -> Option.Some(acc)
+
+verify weightedSum
+    weightedSum([], [], [], []) => Option.Some([])
+
+fn weightedNext(r: Option<Read>, w: Int, fs: List<Eqn>, ws: List<Int>, acc: List<Mono>) -> Option<List<Mono>>
+    ? "Add one weighted fact, then the rest."
+    match r
+        Option.None -> Option.None
+        Option.Some(read) -> weightedSum(fs, ws, addPoly(acc, scalePoly(read.poly, w)), read.atoms)
+
+verify weightedNext
+    weightedNext(Option.None, 1, [], [], []) => Option.None
+
+fn isTruth(t: Term) -> Bool
+    ? "A Bool literal."
+    match t
+        Term.TBool(b) -> true
+        _ -> false
+
+verify isTruth
+    isTruth(Term.TInt(1)) => false
+
+fn asNonneg(t: Term, value: Bool, atoms: List<Term>) -> Option<Read>
+    ? "An Int comparison with its truth value as p >= 0: a < b true is b - a - 1 >= 0, a < b false is a - b >= 0, and so on."
+    match t
+        Term.TOp("<", a, b) -> Option.Some(difference(b, a, strictWhen(value, true), atoms, value, a, b))
+        Term.TOp("<=", a, b) -> Option.Some(difference(b, a, strictWhen(value, false), atoms, value, a, b))
+        Term.TOp(">", a, b) -> Option.Some(difference(a, b, strictWhen(value, true), atoms, value, b, a))
+        Term.TOp(">=", a, b) -> Option.Some(difference(a, b, strictWhen(value, false), atoms, value, b, a))
+        _ -> Option.None
+
+verify asNonneg
+    asNonneg(Term.TOp("==", Term.TVar("a"), Term.TVar("b")), true, []) => Option.None
+
+fn strictWhen(value: Bool, strict: Bool) -> Int
+    ? "The constant to take away: 1 for a strict comparison that holds or a non-strict one that fails."
+    match value == strict
+        true -> 1
+        false -> 0
+
+verify strictWhen
+    strictWhen(true, true) => 1
+    strictWhen(false, true) => 0
+
+fn difference(upper: Term, lower: Term, k: Int, atoms: List<Term>, value: Bool, otherUpper: Term, otherLower: Term) -> Read
+    ? "upper - lower - k when the comparison holds; otherUpper - otherLower - k when it fails."
+    match value
+        true -> lessConstant(readPoly(Term.TOp("-", upper, lower), atoms), k)
+        false -> lessConstant(readPoly(Term.TOp("-", otherUpper, otherLower), atoms), k)
+
+verify difference
+    difference(Term.TVar("b"), Term.TVar("a"), 1, [], true, Term.TVar("a"), Term.TVar("b")).atoms => [Term.TVar("b"), Term.TVar("a")]
+
+fn lessConstant(r: Read, k: Int) -> Read
+    ? "A polynomial minus a constant."
+    Read(poly = addPoly(r.poly, constant(0 - k)), atoms = r.atoms)
+
+verify lessConstant
+    lessConstant(readPoly(Term.TInt(3), []), 1).poly => [Mono(atoms = [], coef = 2)]
+
+fn negativeConstant(p: Option<List<Mono>>) -> Bool
+    ? "A constant below zero."
+    match p
+        Option.Some([m]) -> Bool.and(m.atoms == [], m.coef < 0)
+        _ -> false
+
+verify negativeConstant
+    negativeConstant(Option.Some([Mono(atoms = [], coef = 0 - 1)])) => true
+    negativeConstant(Option.Some([])) => false

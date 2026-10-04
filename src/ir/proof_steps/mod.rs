@@ -21,6 +21,8 @@
 
 pub mod check;
 pub mod induct;
+pub mod linear;
+pub mod ring;
 pub mod rules;
 pub mod sexpr;
 pub mod show;
@@ -204,6 +206,19 @@ pub enum Proof {
         rhs: Term,
         cases: Vec<InductCase>,
     },
+    /// `goal = value` for an Int comparison `goal`: its opposite and the
+    /// hypotheses `hyps`, each read as `p >= 0` and weighted by `weights`
+    /// (the opposite first), add up to a negative constant (see
+    /// [`linear`]).
+    Linear {
+        goal: Term,
+        value: bool,
+        hyps: Vec<String>,
+        weights: Vec<num_bigint::BigInt>,
+    },
+    /// `lhs = rhs` for two Int terms that are the same polynomial over
+    /// their atoms (see [`ring`]).
+    Ring { lhs: Term, rhs: Term },
     /// Case split on every value of a given of finite type: `cases[i]`
     /// proves `lhs = rhs` with `var` replaced by value `i` (also in the
     /// hypotheses in scope), in the order [`Finite::values`] lists them.
@@ -348,7 +363,9 @@ impl Proof {
             | Proof::Proj { .. }
             | Proof::Hyp(_)
             | Proof::Compute { .. }
-            | Proof::UnfoldConst { .. } => 0,
+            | Proof::UnfoldConst { .. }
+            | Proof::Ring { .. }
+            | Proof::Linear { .. } => 0,
             Proof::Symm(p) => p.size(),
             Proof::Trans { steps, .. } => steps.iter().map(Proof::size).sum(),
             Proof::Congr { inner, .. } => inner.size(),

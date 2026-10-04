@@ -1,0 +1,77 @@
+module Arith
+    intent = "Int laws that need the ring step or linear arithmetic over the hypotheses."
+    exposes [twice, sqSum, next, clamp, sumTR, total]
+    effects []
+
+fn twice(x: Int) -> Int
+    ? "The number added to itself."
+    x + x
+
+verify twice
+    twice(3) => 6
+
+verify twice law isDouble
+    given x: Int = [0, 3, -2]
+    twice(x) => 2 * x
+
+fn sqSum(a: Int, b: Int) -> Int
+    ? "The square of a sum."
+    (a + b) * (a + b)
+
+verify sqSum
+    sqSum(1, 2) => 9
+
+verify sqSum law expands
+    given a: Int = [0, 1, -3]
+    given b: Int = [2, 5]
+    sqSum(a, b) => a * a + 2 * a * b + b * b
+
+fn next(x: Int) -> Int
+    ? "One more."
+    x + 1
+
+verify next
+    next(1) => 2
+
+verify next law staysAboveOne
+    given x: Int = [1, 2, 9]
+    when x > 0
+    next(x) > 1 => true
+
+fn clamp(x: Int) -> Int
+    ? "Below zero becomes zero."
+    match x < 0
+        true -> 0
+        false -> x
+
+verify clamp
+    clamp(-1) => 0
+    clamp(4) => 4
+
+verify clamp law positiveStaysPositive
+    given x: Int = [6, 7, 100]
+    when x > 5
+    clamp(x) > 0 => true
+
+fn sumTR(xs: List<Int>, acc: Int) -> Int
+    ? "Sum with an accumulator."
+    match xs
+        [] -> acc
+        [h, ..t] -> sumTR(t, acc + h)
+
+verify sumTR
+    sumTR([1, 2], 3) => 6
+
+fn total(xs: List<Int>) -> Int
+    ? "Sum by direct recursion."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + total(t)
+
+verify total
+    total([1, 2]) => 3
+
+verify sumTR law isAccPlusTotal
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given acc: Int = [0, 5]
+    sumTR(xs, acc) => acc + total(xs)

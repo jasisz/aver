@@ -487,6 +487,52 @@ impl Renderer<'_> {
                 s.push(')');
                 s
             }
+            // Each decided comparison becomes a Prop fact and Lean's core
+            // decision procedure for linear integer arithmetic closes the
+            // goal from them alone; the kernel written in Aver checks the
+            // weights instead.
+            Proof::Linear {
+                goal,
+                value,
+                hyps: names,
+                ..
+            } => {
+                let mut facts = String::new();
+                for (i, n) in names.iter().enumerate() {
+                    let (_, e) = hyps
+                        .iter()
+                        .rev()
+                        .find(|(h, _)| h == n)
+                        .ok_or("linear: no such hypothesis")?;
+                    let proof = self.proof(&Proof::Hyp(n.clone()), hyps)?;
+                    let fact = match term::bool_value(&e.rhs) {
+                        Some(true) => format!("of_decide_eq_true {proof}"),
+                        _ => format!("of_decide_eq_false {proof}"),
+                    };
+                    facts.push_str(&format!("have steps_fact{i} := {fact}; "));
+                }
+                // The comparison as the Prop `omega` proves.
+                let prop = emit_expr(goal, self.ctx);
+                if *value {
+                    format!("decide_eq_true (show {prop} from by {facts}omega)")
+                } else {
+                    format!("decide_eq_false (show ¬ ({prop}) from by {facts}omega)")
+                }
+            }
+            // Both sides read as `Lean.Grind.CommRing.Expr` over one list of
+            // atoms; the normaliser Lean's core proves sound
+            // (`CommRing.norm_int`) maps both to one polynomial, which the
+            // kernel checks by evaluation.
+            Proof::Ring { lhs, rhs } => {
+                let mut atoms: Vec<Term> = Vec::new();
+                let el = reify(lhs, &mut atoms);
+                let er = reify(rhs, &mut atoms);
+                let rendered: Vec<String> = atoms.iter().map(|a| self.expr(a)).collect();
+                let ctx = rarray(&rendered);
+                format!(
+                    "((Lean.Grind.CommRing.norm_int {ctx} {el} (Lean.Grind.CommRing.Expr.toPoly_k {er}) rfl).trans (Lean.Grind.CommRing.norm_int {ctx} {er} (Lean.Grind.CommRing.Expr.toPoly_k {er}) rfl).symm)"
+                )
+            }
             // `true = false` (or the other way round) is refuted by `decide`.
             Proof::Absurd { contradiction, .. } => {
                 format!("absurd {} (by decide)", self.proof(contradiction, hyps)?)
@@ -826,6 +872,60 @@ fn law_theorem(key: &str, ctx: &CodegenContext) -> Option<String> {
         }
     }
     None
+}
+
+/// `t` as a `Lean.Grind.CommRing.Expr`, the way [`crate::ir::proof_steps::ring`]
+/// reads it: ring operations on Int, every other subterm an atom.
+fn reify(t: &Term, atoms: &mut Vec<Term>) -> String {
+    use crate::ast::Type;
+    let e = "Lean.Grind.CommRing.Expr";
+    if let Some(v) = term::int_value(t) {
+        return format!("({e}.num ({v}))");
+    }
+    let int_op = !matches!(t.ty(), Some(Type::Str | Type::Float));
+    match &t.node {
+        ResolvedExpr::BinOp(BinOp::Add, a, b) if int_op => {
+            format!("({e}.add {} {})", reify(a, atoms), reify(b, atoms))
+        }
+        ResolvedExpr::BinOp(BinOp::Sub, a, b) if int_op => {
+            format!("({e}.sub {} {})", reify(a, atoms), reify(b, atoms))
+        }
+        ResolvedExpr::BinOp(BinOp::Mul, a, b) if int_op => {
+            format!("({e}.mul {} {})", reify(a, atoms), reify(b, atoms))
+        }
+        ResolvedExpr::Neg(a) if int_op => format!("({e}.neg {})", reify(a, atoms)),
+        _ => {
+            let c = term::canon(t);
+            let i = match atoms.iter().position(|x| *x == c) {
+                Some(i) => i,
+                None => {
+                    atoms.push(c);
+                    atoms.len() - 1
+                }
+            };
+            format!("({e}.var {i})")
+        }
+    }
+}
+
+/// A `Lean.RArray` of the rendered atoms, index `i` at position `i`.
+fn rarray(items: &[String]) -> String {
+    fn build(items: &[String], from: usize) -> String {
+        match items.len() {
+            0 => "(Lean.RArray.leaf (0 : Int))".to_string(),
+            1 => format!("(Lean.RArray.leaf {})", items[0]),
+            n => {
+                let mid = n / 2;
+                format!(
+                    "(Lean.RArray.branch {} {} {})",
+                    from + mid,
+                    build(&items[..mid], from),
+                    build(&items[mid..], from + mid)
+                )
+            }
+        }
+    }
+    build(items, 0)
 }
 
 /// Whether `t` builds or reads the inside of a refined record, which Lean

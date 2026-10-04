@@ -4,7 +4,7 @@ module Check
         "definitions and the hypotheses in scope, and compare the last one with the claim."
         "A refused step is named by its path from the root of the proof."
     exposes [Env, conclude, checkScript, emptyEnv]
-    depends [Kernel.Term, Kernel.Subst, Kernel.Proof, Kernel.Rules, Kernel.Eval, Kernel.Finite, Kernel.Induct]
+    depends [Kernel.Term, Kernel.Subst, Kernel.Proof, Kernel.Rules, Kernel.Eval, Kernel.Finite, Kernel.Induct, Kernel.Ring]
     effects []
 
 record Env
@@ -48,6 +48,8 @@ fn conclude(p: Proof, env: Env, path: String) -> Result<Eqn, String>
         Proof.PEnum(v, l, r, cs) -> enumStep(v, l, r, cs, env, path)
         Proof.PAbsurd(q, l, r) -> absurd(conclude(q, env, "{path}/absurd")?, l, r, path)
         Proof.PInduct(f, xs, l, r, cs) -> induct(f, xs, Eqn(lhs = l, rhs = r), cs, env, path)
+        Proof.PRing(l, r) -> ring(l, r, path)
+        Proof.PLinear(g, v, hs, ws) -> linear(g, v, hs, ws, env, path)
 
 verify conclude
     conclude(Proof.PRefl(Term.TInt(1)), emptyEnv(), "proof") => Result.Ok(Eqn(lhs = Term.TInt(1), rhs = Term.TInt(1)))
@@ -194,6 +196,37 @@ fn withHyp(env: Env, h: String, on: Term, value: Bool) -> Env
 
 verify withHyp
     List.len(withHyp(emptyEnv(), "h", Term.TVar("c"), true).hyps) => 1
+
+fn linear(g: Term, v: Bool, hs: List<String>, ws: List<Int>, env: Env, path: String) -> Result<Eqn, String>
+    ? "A comparison decided by linear arithmetic: its opposite and the named hypotheses, weighted, add up to a negative constant."
+    match hypEqns(hs, env.hyps, path)
+        Result.Err(why) -> Result.Err(why)
+        Result.Ok(facts) -> match Kernel.Ring.linearContradiction(List.prepend(Eqn(lhs = g, rhs = Term.TBool(Bool.not(v))), facts), ws)
+            true -> Result.Ok(Eqn(lhs = g, rhs = Term.TBool(v)))
+            false -> refuse(path, "the weights do not add up to a contradiction")
+
+verify linear
+    linear(Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), true, ["h"], [1, 1], withHyp(emptyEnv(), "h", Term.TOp(">", Term.TVar("x"), Term.TInt(0)), true), "p") => Result.Ok(Eqn(lhs = Term.TOp(">", Term.TOp("+", Term.TVar("x"), Term.TInt(1)), Term.TInt(1)), rhs = Term.TBool(true)))
+    linear(Term.TOp(">", Term.TVar("x"), Term.TInt(1)), true, ["h"], [1, 1], withHyp(emptyEnv(), "h", Term.TOp(">", Term.TVar("x"), Term.TInt(0)), true), "p") => Result.Err("step p: the weights do not add up to a contradiction")
+
+fn hypEqns(hs: List<String>, scope: List<Hyp>, path: String) -> Result<List<Eqn>, String>
+    ? "The equations of the named hypotheses."
+    match hs
+        [] -> Result.Ok([])
+        [h, ..rest] -> Result.Ok(List.prepend(hyp(h, scope, path)?, hypEqns(rest, scope, path)?))
+
+verify hypEqns
+    hypEqns(["h"], [], "p") => Result.Err("step p: hypothesis h is not in scope")
+
+fn ring(l: Term, r: Term, path: String) -> Result<Eqn, String>
+    ? "Two Int terms that are the same polynomial over their atoms."
+    match Kernel.Ring.samePolynomial(l, r)
+        true -> Result.Ok(Eqn(lhs = l, rhs = r))
+        false -> refuse(path, "the two sides are different polynomials")
+
+verify ring
+    ring(Term.TOp("*", Term.TVar("a"), Term.TInt(2)), Term.TOp("+", Term.TVar("a"), Term.TVar("a")), "p") => Result.Ok(Eqn(lhs = Term.TOp("*", Term.TVar("a"), Term.TInt(2)), rhs = Term.TOp("+", Term.TVar("a"), Term.TVar("a"))))
+    ring(Term.TVar("a"), Term.TInt(0), "p") => Result.Err("step p: the two sides are different polynomials")
 
 fn absurd(e: Eqn, l: Term, r: Term, path: String) -> Result<Eqn, String>
     ? "Any equation, once true has been shown equal to false: the case cannot happen."

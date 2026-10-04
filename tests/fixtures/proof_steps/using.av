@@ -1,69 +1,69 @@
 module Using
     intent = "Cited laws as rewrite rules: a set, applied left to right, refused where the outcome would depend on the order."
-    exposes [f, g, h, add]
+    exposes [f, g, h, sameLen]
     effects []
 
-fn f(x: Int) -> Int
-    ? "One more."
-    x + 1
+fn f(x: String) -> String
+    ? "An exclamation after the text."
+    x + "!"
 
-fn g(x: Int) -> Int
-    ? "One more, written the other way round."
-    1 + x
+fn g(x: String) -> String
+    ? "The same, written with an empty text in front."
+    ("" + x) + "!"
 
-fn h(x: Int) -> Int
-    ? "One more again."
-    x + 1
+fn h(x: String) -> String
+    ? "The same again."
+    x + "!"
 
-fn add(a: Int, b: Int) -> Int
-    ? "The sum."
-    a + b
+fn sameLen(a: List<Int>, b: List<Int>) -> Bool
+    ? "Whether two lists are as long."
+    List.len(a) == List.len(b)
 
 verify f
-    f(1) => 2
+    f("a") => "a!"
 
 verify g
-    g(1) => 2
+    g("a") => "a!"
 
 verify h
-    h(1) => 2
+    h("a") => "a!"
 
-verify add
-    add(1, 2) => 3
+verify sameLen
+    sameLen([1], [2]) => true
 
 verify f law isG
-    given x: Int = [0, 3]
+    given x: String = ["", "a"]
     f(x) => g(x)
 
 verify f law isH
-    given x: Int = [0, 3]
+    given x: String = ["", "a"]
     f(x) => h(x)
 
 verify h law isG
-    given x: Int = [0, 3]
+    given x: String = ["", "a"]
     h(x) => g(x)
 
 verify g law throughHOneWay
-    given x: Int = [0, 3]
+    given x: String = ["", "a"]
     using [f.isH, h.isG]
     f(x) => g(x)
 
 verify g law throughHOtherWay
-    given x: Int = [0, 3]
+    given x: String = ["", "a"]
     using [h.isG, f.isH]
     f(x) => g(x)
 
 verify g law overlapping
-    given x: Int = [0, 3]
+    given x: String = ["", "a"]
     using [f.isG, f.isH]
     f(x) => g(x)
 
-verify add law commutes
-    given a: Int = [0, 3]
-    given b: Int = [1, 2]
-    add(a, b) => add(b, a)
+verify sameLen law commutes
+    given a: List<Int> = [[], [1]]
+    given b: List<Int> = [[2]]
+    sameLen(a, b) => sameLen(b, a)
 
-verify add law swapsOne
-    given x: Int = [0, 3]
-    using [add.commutes]
-    add(x, 1) => add(1, x)
+verify sameLen law againstOne
+    given xs: List<Int> = [[], [1]]
+    using [sameLen.commutes]
+    sameLen(xs, [1]) => sameLen([1], xs)

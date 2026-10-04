@@ -683,6 +683,12 @@ pub fn conclude(
                 path,
             )
         }
+        crate::proof_kernel::aver_generated::kernel::proof::Proof::PRing(l, r) => {
+            crate::proof_kernel::aver_generated::kernel::check::ring(&l, &r, path)
+        }
+        crate::proof_kernel::aver_generated::kernel::proof::Proof::PLinear(g, v, hs, ws) => {
+            crate::proof_kernel::aver_generated::kernel::check::linear(&g, v, &hs, &ws, env, path)
+        }
     }
 }
 
@@ -1075,6 +1081,76 @@ pub fn withHyp(
         ),
         finite: env.finite.clone(),
         givens: env.givens.clone(),
+    }
+}
+
+/// A comparison decided by linear arithmetic: its opposite and the named hypotheses, weighted, add up to a negative constant.
+#[inline(always)]
+pub fn linear(
+    g @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    v @ _: bool,
+    hs @ _: &aver_rt::AverList<AverStr>,
+    ws @ _: &aver_rt::AverIntList,
+    env @ _: &Env,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    match crate::proof_kernel::aver_generated::kernel::check::hypEqns(hs, &env.hyps, path.clone()) {
+        Err(why @ _) => Err(why),
+        Ok(facts @ _) => {
+            if crate::proof_kernel::aver_generated::kernel::ring::linearContradiction(
+                &aver_rt::AverList::prepend(
+                    crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                        lhs: g.clone(),
+                        rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool((!v)),
+                    },
+                    &facts,
+                ),
+                ws,
+            ) {
+                Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
+                    lhs: g.clone(),
+                    rhs: crate::proof_kernel::aver_generated::kernel::term::Term::TBool(v),
+                })
+            } else {
+                crate::proof_kernel::aver_generated::kernel::check::refuse(
+                    path,
+                    AverStr::from("the weights do not add up to a contradiction"),
+                )
+            }
+        }
+    }
+}
+
+/// The equations of the named hypotheses.
+#[inline(always)]
+pub fn hypEqns(
+    hs @ _: &aver_rt::AverList<AverStr>,
+    scope @ _: &aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::proof::Hyp>,
+    path @ _: AverStr,
+) -> Result<aver_rt::AverList<crate::proof_kernel::aver_generated::kernel::term::Eqn>, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    aver_list_match!(hs.clone(), [] => Ok(aver_rt::AverList::empty()), [h, rest] => Ok(aver_rt::AverList::prepend(crate::proof_kernel::aver_generated::kernel::check::hyp(h, scope.clone(), path.clone())?, &crate::proof_kernel::aver_generated::kernel::check::hypEqns(&rest, scope, path)?)))
+}
+
+/// Two Int terms that are the same polynomial over their atoms.
+#[inline(always)]
+pub fn ring(
+    l @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    r @ _: &crate::proof_kernel::aver_generated::kernel::term::Term,
+    path @ _: AverStr,
+) -> Result<crate::proof_kernel::aver_generated::kernel::term::Eqn, AverStr> {
+    crate::proof_kernel::cancel_checkpoint();
+    if crate::proof_kernel::aver_generated::kernel::ring::samePolynomial(l, r) {
+        Ok(crate::proof_kernel::aver_generated::kernel::term::Eqn {
+            lhs: l.clone(),
+            rhs: r.clone(),
+        })
+    } else {
+        crate::proof_kernel::aver_generated::kernel::check::refuse(
+            path,
+            AverStr::from("the two sides are different polynomials"),
+        )
     }
 }
 

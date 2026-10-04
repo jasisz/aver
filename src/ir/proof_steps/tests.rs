@@ -281,3 +281,49 @@ fn closed_lists_compute_with_aver_slice_semantics() {
     let open = term::builtin("List.len", vec![var("xs")], None);
     assert_eq!(term::eval_closed(&open), None);
 }
+
+#[test]
+fn the_ring_step_compares_polynomials_and_leaves_text_joining_alone() {
+    use crate::ast::Type;
+    let mul = |a, b| term::binop(BinOp::Mul, a, b);
+    let two = || term::int(&2.into());
+    // (a + b) * (a + b) = a*a + 2*a*b + b*b
+    let lhs = mul(add(var("a"), var("b")), add(var("a"), var("b")));
+    let rhs = add(
+        add(mul(var("a"), var("a")), mul(mul(two(), var("a")), var("b"))),
+        mul(var("b"), var("b")),
+    );
+    assert!(super::ring::same_polynomial(&lhs, &rhs));
+    assert!(!super::ring::same_polynomial(
+        &lhs,
+        &mul(var("a"), var("b"))
+    ));
+    let join = |x: super::Term, y: super::Term| {
+        let t = Spanned::bare(ResolvedExpr::BinOp(BinOp::Add, Box::new(x), Box::new(y)));
+        t.set_ty(Type::Str);
+        t
+    };
+    assert!(!super::ring::same_polynomial(
+        &join(var("s"), var("t")),
+        &join(var("t"), var("s"))
+    ));
+}
+
+#[test]
+fn a_linear_certificate_needs_nonnegative_weights_that_reach_a_negative_constant() {
+    use super::linear;
+    let gt = |a, b| term::binop(BinOp::Gt, a, b);
+    let one = || term::int(&1.into());
+    let zero = || term::int(&0.into());
+    let mut atoms = Vec::new();
+    // x > 0 and not (x + 1 > 1) contradict each other.
+    let facts = vec![
+        linear::as_nonneg(&gt(var("x"), zero()), true, &mut atoms).unwrap(),
+        linear::as_nonneg(&gt(add(var("x"), one()), one()), false, &mut atoms).unwrap(),
+    ];
+    let w = linear::certificate(&facts).expect("a certificate");
+    assert!(linear::contradicts(&linear::combine(&facts, &w).unwrap()));
+    assert!(linear::combine(&facts, &[1.into(), (-1).into()]).is_none());
+    let alone = vec![facts[0].clone()];
+    assert!(linear::certificate(&alone).is_none());
+}

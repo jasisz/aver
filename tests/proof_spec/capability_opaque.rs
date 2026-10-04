@@ -170,7 +170,7 @@ verify twice law doubling
         main.contains("def twice (n : Int) : Int :=\n  (n + n)")
             && main.contains("example : twice 2 = (4 : Int) := by decide +kernel")
             && main.contains(
-                "theorem twice_law_doubling : ∀ (n : Int), twice n = (n * 2) := by\n  intro n\n  first | (simp only [twice] <;> omega) | (simp only [twice, Bool.beq_comm, beq_iff_eq, bne_iff_ne, Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, ← decide_not, Bool.not_eq_true', ge_iff_le, gt_iff_lt] <;> (try split) <;> simp_all <;> omega) | sorry"
+                "trace \"AVER_STEPS_REJECTED:twice.doubling\"\n    intro n\n    first | (simp only [twice] <;> omega) | (simp only [twice, Bool.beq_comm, beq_iff_eq, bne_iff_ne, Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, ← decide_not, Bool.not_eq_true', ge_iff_le, gt_iff_lt] <;> (try split) <;> simp_all <;> omega) | sorry"
             )
             && main.contains(
                 "theorem twice_law_doubling_checked_domain : (twice 0 = (0 : Int)) ∧ (twice 1 = (2 : Int)) ∧ (twice 2 = (4 : Int)) := by native_decide"
@@ -534,7 +534,7 @@ verify twice law doubling
             && !main.contains("noncomputable section\n\ndef g")
             && main.contains("def twice (n : Int) : Int :=\n  (n + n)")
             && main.contains(
-                "theorem twice_law_doubling : ∀ (n : Int), twice n = (n * 2) := by\n  intro n\n  first | (simp only [twice] <;> omega) | (simp only [twice, Bool.beq_comm, beq_iff_eq, bne_iff_ne, Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, ← decide_not, Bool.not_eq_true', ge_iff_le, gt_iff_lt] <;> (try split) <;> simp_all <;> omega) | sorry"
+                "trace \"AVER_STEPS_REJECTED:twice.doubling\"\n    intro n\n    first | (simp only [twice] <;> omega) | (simp only [twice, Bool.beq_comm, beq_iff_eq, bne_iff_ne, Bool.or_eq_true, Bool.and_eq_true, decide_eq_decide, decide_eq_true_eq, ← decide_not, Bool.not_eq_true', ge_iff_le, gt_iff_lt] <;> (try split) <;> simp_all <;> omega) | sorry"
             )
             && main.contains(
                 "theorem twice_law_doubling_checked_domain : (twice 0 = (0 : Int)) ∧ (twice 1 = (2 : Int)) ∧ (twice 2 = (4 : Int)) := by native_decide"

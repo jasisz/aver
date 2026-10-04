@@ -22,6 +22,7 @@
    "mul.commutative",
    "mul.identityOne",
    "mul.identityOneLeft",
+   "sub.antiCommutative",
    "sub.rightIdentity"
   ]
  },
@@ -33,21 +34,118 @@
  },
  "examples/formal/tcp_write_now.av": {
   "steps": [
-   "stillToSend.acceptedNothingKeepsEverything"
+   "stillToSend.acceptedEverythingLeavesNothing",
+   "stillToSend.acceptedNothingKeepsEverything",
+   "stillToSend.acceptedPrefixNeverOvershoots"
   ]
  },
  "examples/games/eggcatch/core.av": {
   "steps": [
    "chuteIndex.inRange",
    "foxCount.exactlyOne",
+   "nextPos.advancesByOne",
    "resolveLip.conserves",
    "resolveLip.noFalseMiss",
+   "startBoard.conserves",
    "stepAll.leftFold"
   ]
  },
  "examples/games/tetris/logic.av": {
   "steps": [
+   "computeScore.levelScalesLineScore",
+   "computeScore.tetrisDoublesSingle",
    "computeScore.zeroLinesZeroScore"
+  ]
+ },
+ "projects/k5_fdiv/domain/awaymodel.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/binadeorder.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/estimate.av": {
+  "steps": [
+   "nrNewErrNum.nrErrorSquares"
+  ]
+ },
+ "projects/k5_fdiv/domain/exponent.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/fprep.av": {
+  "steps": [
+   "productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/fracround.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/kernel.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/modelscale.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds"
+  ]
+ },
+ "projects/k5_fdiv/domain/recip.av": {
+  "steps": [
+   "Domain.Estimate.nrNewErrNum.nrErrorSquares",
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/remainder.av": {
+  "steps": [
+   "Domain.Estimate.nrNewErrNum.nrErrorSquares",
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice",
+   "awayDigitOvershoot.guarded"
+  ]
+ },
+ "projects/k5_fdiv/domain/round.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/roundscale.av": {
+  "steps": [
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/stickyint.av": {
+  "steps": [
+   "sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/stickyscale.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/truncscale.av": {
+  "steps": [
+   "Domain.Fprep.productExpInRange.productExponentBounds",
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
+  ]
+ },
+ "projects/k5_fdiv/domain/valuechain.av": {
+  "steps": [
+   "Domain.StickyInt.sigDouble.doubleIsTwice"
   ]
  },
  "projects/song/wave.av": {

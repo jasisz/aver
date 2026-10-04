@@ -157,6 +157,9 @@ impl Env<'_> {
         if let Some((name, value)) = self.hyp_for(cur) {
             return Ok(Step::Progress(Box::new((Proof::Hyp(name), value))));
         }
+        if let Some(step) = self.decide_linearly(cur) {
+            return Ok(Step::Progress(Box::new(step)));
+        }
         if let Some((proof, to)) = self.rewrite_with_cited(cur)? {
             return Ok(Step::Progress(Box::new((proof, to))));
         }
@@ -390,6 +393,58 @@ impl Env<'_> {
         s
     }
 
+    /// An Int comparison the decided comparisons in scope settle by
+    /// linear arithmetic, with its value.
+    fn decide_linearly(&self, cur: &Term) -> Option<(Proof, Term)> {
+        use crate::ir::proof_steps::linear;
+        let mut atoms = Vec::new();
+        linear::as_nonneg(cur, true, &mut atoms)?;
+        let known: Vec<(String, crate::ir::proof_steps::Eqn)> = self
+            .hyps
+            .iter()
+            .filter(|(_, e)| {
+                term::bool_value(&e.rhs).is_some()
+                    && linear::as_nonneg(&e.lhs, true, &mut Vec::new()).is_some()
+            })
+            .cloned()
+            .collect();
+        if known.is_empty() {
+            return None;
+        }
+        for value in [true, false] {
+            let mut atoms = Vec::new();
+            let mut facts = vec![linear::as_nonneg(cur, !value, &mut atoms)?];
+            for (_, e) in &known {
+                facts.push(linear::as_nonneg(
+                    &e.lhs,
+                    term::bool_value(&e.rhs)?,
+                    &mut atoms,
+                )?);
+            }
+            if let Some(weights) = linear::certificate(&facts) {
+                // Only the hypotheses the certificate uses are named.
+                let mut hyps = Vec::new();
+                let mut kept = vec![weights[0].clone()];
+                for ((n, _), w) in known.iter().zip(&weights[1..]) {
+                    if *w != num_bigint::BigInt::from(0) {
+                        hyps.push(n.clone());
+                        kept.push(w.clone());
+                    }
+                }
+                return Some((
+                    Proof::Linear {
+                        goal: canon(cur),
+                        value,
+                        hyps,
+                        weights: kept,
+                    },
+                    term::boolean(value),
+                ));
+            }
+        }
+        None
+    }
+
     /// A law the author cited, applied left to right to a term evaluation
     /// stopped at. Two cited laws that rewrite it to different terms are a
     /// refusal: the result would depend on which is tried first.
@@ -468,9 +523,22 @@ impl Env<'_> {
         let Some(g) = l.blocked.or(r.blocked) else {
             // Nothing to split on: look below the heads, at the parts of a
             // constructor and the arguments of a call evaluation stopped at.
-            let nl = self.normalize(lhs, 8)?;
+            let mut nl = self.normalize(lhs, 8)?;
             let nr = self.normalize(rhs, 8)?;
             if canon(nl.cur()) == canon(nr.cur()) {
+                return Ok(meet(nl, nr));
+            }
+            // Two Int terms that are one polynomial: the ring step.
+            if is_int(nl.cur()) && crate::ir::proof_steps::ring::same_polynomial(nl.cur(), nr.cur())
+            {
+                let (from, to) = (nl.cur().clone(), nr.cur().clone());
+                nl.push(
+                    Proof::Ring {
+                        lhs: from,
+                        rhs: to.clone(),
+                    },
+                    to,
+                );
                 return Ok(meet(nl, nr));
             }
             return Err(self.stopped_at(nl.cur(), nr.cur()));

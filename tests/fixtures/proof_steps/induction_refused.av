@@ -21,4 +21,4 @@ verify double
 
 verify double law isTwiceTheLength
     given xs: List<Int> = [[], [1]]
-    double(xs) - len(xs) => len(xs)
+    double(xs) >= len(xs) => true

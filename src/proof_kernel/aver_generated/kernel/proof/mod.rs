@@ -68,6 +68,16 @@ pub enum Proof {
         crate::proof_kernel::aver_generated::kernel::term::Term,
         aver_rt::AverList<Case>,
     ),
+    PRing(
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+    ),
+    PLinear(
+        crate::proof_kernel::aver_generated::kernel::term::Term,
+        bool,
+        aver_rt::AverList<AverStr>,
+        aver_rt::AverIntList,
+    ),
 }
 
 impl Proof {
@@ -83,12 +93,14 @@ impl Proof {
             Proof::PHyp(..) => 7,
             Proof::PInduct(..) => 8,
             Proof::PLaw(..) => 9,
-            Proof::PProj(..) => 10,
-            Proof::PRefl(..) => 11,
-            Proof::PRule(..) => 12,
-            Proof::PSymm(..) => 13,
-            Proof::PTrans(..) => 14,
-            Proof::PUnfold(..) => 15,
+            Proof::PLinear(..) => 10,
+            Proof::PProj(..) => 11,
+            Proof::PRefl(..) => 12,
+            Proof::PRing(..) => 13,
+            Proof::PRule(..) => 14,
+            Proof::PSymm(..) => 15,
+            Proof::PTrans(..) => 16,
+            Proof::PUnfold(..) => 17,
         }
     }
 }
@@ -153,12 +165,22 @@ impl Ord for Proof {
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1))
                 .then_with(|| a2.cmp(b2)),
+            (Proof::PLinear(a0, a1, a2, a3), Proof::PLinear(b0, b1, b2, b3)) => {
+                std::cmp::Ordering::Equal
+                    .then_with(|| a0.cmp(b0))
+                    .then_with(|| a1.cmp(b1))
+                    .then_with(|| a2.cmp(b2))
+                    .then_with(|| a3.cmp(b3))
+            }
             (Proof::PProj(a0), Proof::PProj(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
             (Proof::PRefl(a0), Proof::PRefl(b0)) => {
                 std::cmp::Ordering::Equal.then_with(|| a0.cmp(b0))
             }
+            (Proof::PRing(a0, a1), Proof::PRing(b0, b1)) => std::cmp::Ordering::Equal
+                .then_with(|| a0.cmp(b0))
+                .then_with(|| a1.cmp(b1)),
             (Proof::PRule(a0, a1, a2), Proof::PRule(b0, b1, b2)) => std::cmp::Ordering::Equal
                 .then_with(|| a0.cmp(b0))
                 .then_with(|| a1.cmp(b1))
@@ -278,6 +300,20 @@ impl aver_rt::AverDisplay for Proof {
                     f2.aver_display_inner(),
                     f3.aver_display_inner(),
                     f4.aver_display_inner()
+                ]
+                .join(", ")
+            ),
+            Proof::PRing(f0, f1) => format!(
+                "PRing({})",
+                vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
+            ),
+            Proof::PLinear(f0, f1, f2, f3) => format!(
+                "PLinear({})",
+                vec![
+                    f0.aver_display_inner(),
+                    f1.aver_display_inner(),
+                    f2.aver_display_inner(),
+                    f3.aver_display_inner()
                 ]
                 .join(", ")
             ),

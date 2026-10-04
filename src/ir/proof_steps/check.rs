@@ -368,6 +368,45 @@ pub fn conclusion(p: &Proof, script: &Script, hyps: &Hyps) -> Result<Eqn, String
             cases,
         } => induct_conclusion(*fn_id, args, lhs, rhs, cases, script, hyps)
             .map_err(|m| format!("induct: {m}")),
+        Proof::Linear {
+            goal,
+            value,
+            hyps: names,
+            weights,
+        } => {
+            let mut atoms = Vec::new();
+            let mut facts = vec![
+                super::linear::as_nonneg(goal, !value, &mut atoms)
+                    .ok_or("linear: the goal is not an Int comparison")?,
+            ];
+            for n in names {
+                let (_, e) = hyps
+                    .iter()
+                    .rev()
+                    .find(|(h, _)| h == n)
+                    .ok_or_else(|| format!("linear: hypothesis {n} is not in scope"))?;
+                let v = term::bool_value(&e.rhs)
+                    .ok_or_else(|| format!("linear: hypothesis {n} is not a decided comparison"))?;
+                facts.push(
+                    super::linear::as_nonneg(&e.lhs, v, &mut atoms).ok_or_else(|| {
+                        format!("linear: hypothesis {n} is not an Int comparison")
+                    })?,
+                );
+            }
+            match super::linear::combine(&facts, weights) {
+                Some(sum) if super::linear::contradicts(&sum) => {
+                    Ok(Eqn::new(canon(goal), term::boolean(*value)))
+                }
+                _ => Err("linear: the weights do not add up to a contradiction".into()),
+            }
+        }
+        Proof::Ring { lhs, rhs } => {
+            if super::ring::same_polynomial(lhs, rhs) {
+                Ok(Eqn::new(canon(lhs), canon(rhs)))
+            } else {
+                Err("ring: the two sides are different polynomials".into())
+            }
+        }
         Proof::Absurd {
             contradiction,
             lhs,

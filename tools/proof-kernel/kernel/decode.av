@@ -346,6 +346,8 @@ fn proofOf(tag: String, args: List<Sexp>) -> Result<Proof, String>
         "enum" -> enumProof(args)
         "absurd" -> absurdProof(args)
         "induct" -> inductProof(args)
+        "ring" -> ringProof(args)
+        "linear" -> linearProof(args)
         _ -> Result.Err("unknown rule {tag}")
 
 verify proofOf
@@ -459,6 +461,34 @@ fn enumProof(args: List<Sexp>) -> Result<Proof, String>
 verify enumProof
     enumProof([]) => Result.Err("malformed enum")
     enumProof([Sexp.Atom("b"), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("b")]), Sexp.Node([Sexp.Atom("v"), Sexp.Atom("b")])]) => Result.Ok(Proof.PEnum("b", Term.TVar("b"), Term.TVar("b"), []))
+
+fn linearProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(linear TERM BOOL (NAME…) (INT…))"
+    match args
+        [g, Sexp.Atom(v), hs, ws] -> Result.Ok(Proof.PLinear(term(g)?, v == "true", atoms(items(hs)?)?, ints(items(ws)?)?))
+        _ -> Result.Err("malformed linear")
+
+verify linearProof
+    linearProof([]) => Result.Err("malformed linear")
+
+fn ints(ss: List<Sexp>) -> Result<List<Int>, String>
+    ? "Integers written as atoms."
+    match ss
+        [] -> Result.Ok([])
+        [Sexp.Atom(a), ..rest] -> Result.Ok(List.prepend(Int.fromString(a)?, ints(rest)?))
+        _ -> Result.Err("expected an integer")
+
+verify ints
+    ints([Sexp.Atom("2"), Sexp.Atom("-1")]) => Result.Ok([2, 0 - 1])
+
+fn ringProof(args: List<Sexp>) -> Result<Proof, String>
+    ? "(ring TERM TERM)"
+    match args
+        [l, r] -> Result.Ok(Proof.PRing(term(l)?, term(r)?))
+        _ -> Result.Err("malformed ring")
+
+verify ringProof
+    ringProof([]) => Result.Err("malformed ring")
 
 fn inductProof(args: List<Sexp>) -> Result<Proof, String>
     ? "(induct FN (TERM…) TERM TERM (case (NAME…) (NAME…) PROOF)…)"
