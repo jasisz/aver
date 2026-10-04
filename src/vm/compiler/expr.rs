@@ -11,7 +11,7 @@ impl<'a> FnCompiler<'a> {
         match lit {
             Literal::Int(i) => {
                 let nv = NanValue::new_int(*i, self.arena);
-                let idx = self.add_constant(nv);
+                let idx = self.add_constant(nv)?;
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
             }
@@ -22,13 +22,13 @@ impl<'a> FnCompiler<'a> {
                 // lexer validated the digits, so `from_str` cannot fail.
                 let n = AverInt::from_str(s).expect("lexer-validated big integer literal");
                 let nv = NanValue::from_aver_int(n, self.arena);
-                let idx = self.add_constant(nv);
+                let idx = self.add_constant(nv)?;
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
             }
             Literal::Float(f) => {
                 let nv = NanValue::new_float(*f);
-                let idx = self.add_constant(nv);
+                let idx = self.add_constant(nv)?;
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
             }
@@ -37,7 +37,7 @@ impl<'a> FnCompiler<'a> {
             Literal::Unit => self.emit_op(LOAD_UNIT),
             Literal::Str(s) => {
                 let nv = NanValue::new_string_value(s, self.arena);
-                let idx = self.add_constant(nv);
+                let idx = self.add_constant(nv)?;
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
             }
@@ -70,7 +70,7 @@ impl<'a> FnCompiler<'a> {
                 .ok_or_else(|| CompileError {
                     msg: format!("missing VM symbol for module function: {}", qualified_name),
                 })?;
-            let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+            let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id))?;
             self.emit_op(LOAD_CONST);
             self.emit_u16(idx);
         } else if let Some(symbol_id) = self.symbols.find(name)
@@ -79,7 +79,7 @@ impl<'a> FnCompiler<'a> {
                 .get(symbol_id)
                 .is_some_and(|info| info.kind.is_some())
         {
-            let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+            let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id))?;
             self.emit_op(LOAD_CONST);
             self.emit_u16(idx);
         } else {

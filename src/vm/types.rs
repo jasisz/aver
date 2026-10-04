@@ -33,7 +33,7 @@ pub struct FnChunk {
     pub source_file: String,
     /// Run-length encoded line table: `(bytecode_offset, source_line)`.
     /// Sorted by offset. Lookup: find last entry where offset <= target ip.
-    pub line_table: Vec<(u16, u16)>,
+    pub line_table: Vec<(u32, u32)>,
 }
 
 /// Call-frame metadata, with no closure/upvalue fields.
@@ -151,26 +151,27 @@ impl CodeStore {
         self.fn_index.get(name).copied()
     }
 
+    /// Map each field symbol of record type `type_id` to its slot. Slots are
+    /// `u8`, as in every record instruction. A field past slot 255 gets no
+    /// entry rather than a wrapped one that would alias a lower field; no
+    /// value of such a type exists, since the compiler refuses a record
+    /// literal with more than 255 fields.
     pub fn register_record_fields(&mut self, type_id: u32, field_symbol_ids: &[u32]) {
-        for (field_idx, symbol_id) in field_symbol_ids.iter().copied().enumerate() {
+        for (field_idx, symbol_id) in (0..=u8::MAX).zip(field_symbol_ids.iter().copied()) {
             self.record_field_slots
-                .insert((type_id, symbol_id), field_idx as u8);
+                .insert((type_id, symbol_id), field_idx);
         }
     }
 
     /// Resolve a bytecode position to (source_file, source_line).
     /// Returns None if line table is empty or fn_id is invalid.
-    pub fn resolve_source_location(&self, fn_id: u32, ip: u32) -> Option<(&str, u16)> {
+    pub fn resolve_source_location(&self, fn_id: u32, ip: u32) -> Option<(&str, u32)> {
         let chunk = self.functions.get(fn_id as usize)?;
         if chunk.line_table.is_empty() {
             return None;
         }
         // Binary search: find last entry where offset <= ip
-        let ip16 = ip as u16;
-        let idx = match chunk
-            .line_table
-            .binary_search_by_key(&ip16, |&(off, _)| off)
-        {
+        let idx = match chunk.line_table.binary_search_by_key(&ip, |&(off, _)| off) {
             Ok(i) => i,
             Err(0) => return None,
             Err(i) => i - 1,
@@ -189,7 +190,7 @@ impl CodeStore {
 #[derive(Debug, Default, Clone)]
 pub struct VmSourceLoc {
     pub file: String,
-    pub line: u16,
+    pub line: u32,
     pub fn_name: String,
 }
 
@@ -197,15 +198,15 @@ pub struct VmSourceLoc {
 #[derive(Debug)]
 pub enum VmError {
     /// Runtime error with message and optional source line.
-    Runtime { msg: String, line: u16 },
+    Runtime { msg: String, line: u32 },
     /// Type error (e.g. adding int + string).
-    Type { msg: String, line: u16 },
+    Type { msg: String, line: u32 },
     /// Stack underflow (bug in compiler).
     StackUnderflow,
     /// Dispatched opcode count exceeded `VM::step_limit`. Carries the
     /// limit value so the caller (verify runner) can put it in the
     /// failure message — "did not converge in 10_000_000 steps".
-    StepLimit { limit: u64, line: u16 },
+    StepLimit { limit: u64, line: u32 },
 }
 
 impl VmError {
