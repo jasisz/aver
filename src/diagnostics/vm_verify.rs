@@ -861,7 +861,7 @@ pub fn run_prepared_verify_vm_with_bindings(
         return Ok(Vec::new());
     }
     let mut machine = machine.expect("non-empty prepared plans own a VM");
-    configure_verify_capabilities(&mut machine, &capabilities, provider_bindings)?;
+    prepare_verify_machine(&mut machine, &capabilities, provider_bindings)?;
     let budgets = budgets_for_plans(&plans, config.as_ref(), source_file, base_dir);
     let raised_by = budgets
         .iter()
@@ -1009,7 +1009,7 @@ fn run_verify_for_items_vm_impl(
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
-    configure_verify_capabilities(&mut machine, &tc_result.capabilities, provider_bindings)?;
+    prepare_verify_machine(&mut machine, &tc_result.capabilities, provider_bindings)?;
     // One budget per block, resolved before the config is handed to the VM's
     // runtime policy. `run_verify_vm` installs it per block, so two fns in
     // one file can be expensive on different terms.
@@ -1206,7 +1206,7 @@ pub fn decline_reason(budget: &CaseBudget, raised_by_fn: Option<&str>) -> String
     }
 }
 
-fn configure_verify_capabilities(
+fn prepare_verify_machine(
     machine: &mut vm::VM,
     capabilities: &crate::capability::CapabilityRegistry,
     provider_bindings: &[crate::provider::ProviderBinding],
@@ -1227,6 +1227,16 @@ fn configure_verify_capabilities(
     )?;
     machine.set_provider_registry(std::sync::Arc::new(providers));
     machine.defer_missing_capability_providers_to_dispatch(true);
+    // Module-level bindings (`base = 40` outside any fn) live in VM globals
+    // that only the `__top_level__` chunk fills. `aver run` runs it before
+    // `main`; verify must run it before the first case too, or a fn reading
+    // such a binding sees an empty slot and every case and law about it is
+    // judged against a wrong value. The bindings are checked with no effects
+    // allowed, so running them once here is the same as `run` does, and the
+    // parallel case forks copy the filled globals.
+    machine
+        .run_top_level()
+        .map_err(|error| format!("module-level binding failed: {error}"))?;
     Ok(())
 }
 
@@ -1383,7 +1393,7 @@ fn run_verify_for_items_vm_with_loaded_impl(
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
-    configure_verify_capabilities(&mut machine, &tc_result.capabilities, provider_bindings)?;
+    prepare_verify_machine(&mut machine, &tc_result.capabilities, provider_bindings)?;
     // One budget per block, resolved before the config is handed to the VM's
     // runtime policy. `run_verify_vm` installs it per block, so two fns in
     // one file can be expensive on different terms.
