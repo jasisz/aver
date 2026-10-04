@@ -6,9 +6,8 @@
 //! MIR, and every backend reads it instead of forking `ResolvedExpr`.
 //!
 //! [`emit_mir_expr`] is the dispatcher. Any construct it does not cover
-//! returns `Ok(None)`; the caller ([`emit_fn_body_via_mir`]) then
-//! discards `func` and re-runs the `ResolvedExpr` emitter for the whole
-//! function. Two byte-differential tests compile
+//! returns `Ok(None)` through [`unsupported`], which records what it was;
+//! the module emitter then refuses the fn by name with that reason. Two byte-differential tests compile
 //! every single-file example and every multi-module game both ways (MIR
 //! on vs forced off) and assert the modules are identical — the gate
 //! that keeps each mirror exact.
@@ -25,10 +24,8 @@
 //! supported: `FnValue(name)` lowers to an `i32.const` of the fn's
 //! dense funcref-table index, and a `Fn`-param call (`LocalSlot`)
 //! dispatches that index via `call_indirect` on table 0 (the funcref
-//! table + functypes are set up in `module.rs`). Only the residual
-//! cases with no table slot (a `FnValue` of a builtin / variant, or a
-//! `LocalSlot` whose name is a let-bound fn value rather than a `Fn`
-//! param) fall back to the trap stub. Registered-helper builtins and effect imports (`Console.*` /
+//! table + functypes are set up in `module.rs`). A `FnValue` of a builtin
+//! or a constructor has no table slot and is refused by name. Registered-helper builtins and effect imports (`Console.*` /
 //! `Disk.*` / `Tcp.*` / `Http.*` / `Random.*` / `Time.*`, each carrying
 //! the host's `caller_fn` stamp) go through the `fn_map.builtins` /
 //! `fn_map.effects` lookups here.
@@ -102,6 +99,38 @@ pub(super) use records::*;
 pub(super) use strings::*;
 
 pub use coverage::{CoverageReport, coverage_report};
+
+thread_local! {
+    /// The first construct the body walk of the current fn could not lower,
+    /// in words. `emit_fn_body_via_mir` clears it on entry, a leaf bail sets
+    /// it through [`unsupported`], and the module emitter reads it back with
+    /// [`take_unsupported_reason`] when the walk returns `Ok(None)`, so the
+    /// refusal names what the fn contains rather than only the fn.
+    static UNSUPPORTED_REASON: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Record why the walk gives up — the deepest, first reason wins — and
+/// return the `Ok(None)` bail.
+pub(crate) fn unsupported<T>(reason: impl Into<String>) -> Result<Option<T>, WasmGcError> {
+    UNSUPPORTED_REASON.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(reason.into());
+        }
+    });
+    Ok(None)
+}
+
+/// The reason the last body walk gave up, cleared as it is read.
+pub(crate) fn take_unsupported_reason() -> Option<String> {
+    UNSUPPORTED_REASON.with(|slot| slot.borrow_mut().take())
+}
+
+/// The reason prefix of the one bail that is not a gap: a fn reading a
+/// `BranchPath` is a proof helper, and wasm-gc deliberately carries no
+/// `BranchPath` runtime (see `refuse_fabricated_intrinsics`).
+pub(crate) const PROOF_ONLY_BRANCH_PATH: &str = "BranchPath is proof-only on wasm-gc";
 
 /// ETAP-2 carrier-`i64`: narrow the `$AverInt` Int VALUE on the stack down
 /// to the native `i64` the carrier slot/field holds. Emitted at the carrier
@@ -364,6 +393,7 @@ pub(crate) fn emit_fn_body_via_mir(
     caller_fn_collector: &std::cell::RefCell<CallerFnCollector>,
     wasip2_lowering: Option<&Wasip2Lowering>,
 ) -> Result<Option<Vec<ValType>>, WasmGcError> {
+    take_unsupported_reason();
     // ETAP-2 SLICE 2a: pass the per-slot Int repr (mirror of the alias
     // facts). Default-empty on the un-rewritten wasm-gc MIR, so every slot
     // stays boxed.
@@ -674,7 +704,11 @@ pub(crate) fn emit_mir_expr(
                     }
                     Ok(Some(true))
                 }
-                _ => Ok(None),
+                other => unsupported(format!(
+                    "the `{:?}` operator on `{}`",
+                    bop.op,
+                    other.map_or_else(|| "an untyped operand".to_string(), |t| t.display())
+                )),
             }
         }
         MirExpr::Neg(inner) => {
@@ -839,7 +873,7 @@ pub(crate) fn emit_mir_expr(
                     // `program.builtins`); fall back safely rather than panic.
                     let Some(dotted) = ctx.mir_builtins.and_then(|names| names.get(id.0 as usize))
                     else {
-                        return Ok(None);
+                        return unsupported(format!("a builtin with no name (id {})", id.0));
                     };
                     let dotted = dotted.as_str();
                     // Capability-owned represented sum constructors are
@@ -870,7 +904,9 @@ pub(crate) fn emit_mir_expr(
                     // import to reach and nothing target-specific to say.
                     match emit_mir_job_call(func, dotted, &call.args, expr, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `Run.fail` and `Run.failure` keep the reason in a
@@ -878,7 +914,9 @@ pub(crate) fn emit_mir_expr(
                     // way a job is the module's own.
                     match emit_mir_run_call(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `--target wasip2`: every effect lowers to a
@@ -891,7 +929,9 @@ pub(crate) fn emit_mir_expr(
                     // why it precedes the AverBridge `Args.get` inline below.
                     match emit_mir_wasip2_effect(func, dotted, &call.args, expr, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `Args.get` is intercepted *before* the effect /
@@ -961,28 +1001,36 @@ pub(crate) fn emit_mir_expr(
                     // lookup (which would miss them).
                     match emit_mir_native_scalar_builtin(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `List.*` custom-inline ops (helper dispatch +
                     // prepend / empty) — also not in `fn_map.builtins`.
                     match emit_mir_list_builtin(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `Vector.*` custom-inline ops (len / new / get / set
                     // / fromList) — likewise not registered helpers.
                     match emit_mir_vector_builtin(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `Map.*` per-instantiation helper dispatch — also not
                     // in `fn_map.builtins`.
                     match emit_mir_map_builtin(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // Fused `Option.withDefault(Vector.get(v, i), <literal>)`
@@ -990,7 +1038,9 @@ pub(crate) fn emit_mir_expr(
                     // Other `withDefault` shapes fall through to fallback.
                     match emit_mir_option_with_default(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `Result.withDefault` — the fused Euclidean-modulo
@@ -998,7 +1048,9 @@ pub(crate) fn emit_mir_expr(
                     // tag-dispatch form for every other Result.
                     match emit_mir_result_with_default(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `Result.fromOption` changes the wrapper while preserving
@@ -1006,7 +1058,9 @@ pub(crate) fn emit_mir_expr(
                     // so lower it inline rather than through a monomorphic helper.
                     match emit_mir_result_from_option(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // Boxed `Int.div(a, b)` / `Int.mod(a, b)` — the
@@ -1019,7 +1073,9 @@ pub(crate) fn emit_mir_expr(
                     // lookup below would miss and force a trapping fallback.)
                     match emit_mir_int_div_mod_boxed(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // The `Bits` namespace — a bit-level view of `Int` on the
@@ -1028,7 +1084,9 @@ pub(crate) fn emit_mir_expr(
                     // recognised before the generic lookup below.
                     match emit_mir_bits(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
-                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::Fallback => {
+                            return unsupported(format!("`{dotted}` in this form"));
+                        }
                         MirBuiltinEmit::NotHandled => {}
                     }
                     // `Int = ℤ` size lever: route a `String.fromInt(x)` whose
@@ -1068,7 +1126,7 @@ pub(crate) fn emit_mir_expr(
                             }
                             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
                         }
-                        None => Ok(None),
+                        None => unsupported(format!("the builtin `{dotted}`")),
                     }
                 }
                 MirCallee::Intrinsic(intr) => {
@@ -1232,7 +1290,10 @@ pub(crate) fn emit_mir_expr(
                         intr,
                         BuiltinIntrinsic::BranchPathChild | BuiltinIntrinsic::BranchPathParse
                     ) {
-                        return Ok(None);
+                        return unsupported(format!(
+                            "{PROOF_ONLY_BRANCH_PATH} (`{}`)",
+                            intr.name()
+                        ));
                     }
                     if ctx.registry.bignum
                         && matches!(
@@ -1345,13 +1406,17 @@ pub(crate) fn emit_mir_expr(
                 // pass-the-fn call site). Recover the param's `Fn(..)`
                 // sig key, look up the pre-registered functype; either
                 // missing (e.g. a let-bound fn value with no table slot)
-                // → fall back to the trap stub.
+                // → refuse the fn, naming the call.
                 MirCallee::LocalSlot { slot, ref name, .. } => {
                     let Some(key) = ctx.fn_param_fn_sig(name) else {
-                        return Ok(None);
+                        return unsupported(format!(
+                            "a call through `{name}`, which is not a `Fn(..)` parameter"
+                        ));
                     };
                     let Some(&type_index) = ctx.fn_map.call_indirect_types.get(&key) else {
-                        return Ok(None);
+                        return unsupported(format!(
+                            "a call through `{name}`, whose function type has no table entry"
+                        ));
                     };
                     // STACK ORDER: args first, then the i32 table index
                     // on top, then `call_indirect` (which pops index +
@@ -1547,7 +1612,19 @@ pub(crate) fn emit_mir_expr(
                 ctx.registry.record_type_idx(&record_name),
                 ctx.registry.record_field_index(&record_name, &proj.field),
             ) else {
-                return Ok(None);
+                // `Int.abs` written as a value reaches here as a projection
+                // off the namespace name.
+                if let MirExpr::FnValue(namespace) = &proj.base.node {
+                    return unsupported(format!(
+                        "`{namespace}.{}` passed as a function value; on wasm-gc only a fn \
+                         of this program can be passed, not a builtin or a constructor",
+                        proj.field
+                    ));
+                }
+                return unsupported(format!(
+                    "the field `{}` of `{record_name}`, which has no registered layout",
+                    proj.field
+                ));
             };
             if emit_mir_expr(func, &proj.base, slots, ctx)?.is_none() {
                 return Ok(None);
@@ -1698,13 +1775,16 @@ pub(crate) fn emit_mir_expr(
         // funcref-table index as an `i32`. A `Fn`-param call later reads
         // this i32 from its slot and dispatches via `call_indirect`.
         // Names absent from the funcref table (builtins / variants) have
-        // no table slot — fall back to the trap stub.
+        // no table slot — refuse the fn, naming the value.
         MirExpr::FnValue(name) => match ctx.fn_map.funcref_table.get(name) {
             Some(&idx) => {
                 func.instruction(&Instruction::I32Const(idx as i32));
                 Ok(Some(true))
             }
-            None => Ok(None),
+            None => unsupported(format!(
+                "`{name}` passed as a function value; on wasm-gc only a fn of this \
+                 program can be passed, not a builtin or a constructor"
+            )),
         },
         // ETAP-2 SLICE 2b — the representation boundaries the
         // `bare_i64_rewrite::rewrite_for_wasm_gc` pass inserted. Codegen no

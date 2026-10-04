@@ -109,11 +109,12 @@
 //! will introduce one when `Let` bindings start producing fresh
 //! locals that the resolver didn't see.
 
-use crate::ast::{FnResolution, Spanned};
+use crate::ast::{FnResolution, Literal, Spanned};
 use crate::ir::hir::{
     ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedMatchArm,
     ResolvedPattern, ResolvedStmt, ResolvedTopLevel,
 };
+use crate::types::Type;
 
 use super::expr::{
     MirBinOp, MirCall, MirCallee, MirConstruct, MirCtor, MirEffectAnnotation, MirExpr, MirLet,
@@ -187,21 +188,16 @@ fn lower_fn(fd: &ResolvedFnDef, program: &mut MirProgram) -> Result<MirFn, SkipR
         .as_ref()
         .map_or(fd.params.len() as u32, |r| u32::from(r.local_count));
     let mut next_synthetic_local = base_local_count;
-    let body = match stmts.len() {
-        1 => {
-            // Single-stmt body: must be `Expr`. Bindings alone
-            // can't produce a value. No opaque-let temps here, so the
-            // counter stays at `base_local_count`.
-            let ResolvedStmt::Expr(expr) = &stmts[0] else {
-                return Err(SkipReason::BindingOnlyTail);
-            };
-            lower_expr(expr, program)?
-        }
+    let body = match stmts.as_slice() {
+        // Single-expression body. No opaque-let temps here, so the
+        // counter stays at `base_local_count`.
+        [ResolvedStmt::Expr(expr)] => lower_expr(expr, program)?,
         _ => {
             // Multi-stmt body (wave 3a): right-fold into `Let`
-            // chains. Last stmt must be `Expr` — it's the body's
-            // final value; everything before it gets opaque-let'd
-            // so effectful intermediate calls survive into MIR.
+            // chains. The last stmt is the body's final value (a
+            // closing binding leaves `Unit`); everything before it
+            // gets opaque-let'd so effectful intermediate calls
+            // survive into MIR.
             let resolution = fd
                 .resolution
                 .as_ref()
@@ -706,12 +702,29 @@ fn lower_stmt_chain(
     next_synthetic_local: &mut u32,
     program: &mut MirProgram,
 ) -> Result<Spanned<MirExpr>, SkipReason> {
-    let (last, rest) = stmts.split_last().ok_or(SkipReason::EmptyBody)?;
-    // Last stmt must produce a value.
-    let ResolvedStmt::Expr(tail_expr) = last else {
-        return Err(SkipReason::BindingOnlyTail);
+    let (last, _) = stmts.split_last().ok_or(SkipReason::EmptyBody)?;
+    // The tail statement is the body's value. A body ending in a binding
+    // (`_ = log(x)` closing a `Unit` fn) has the type `Unit`, as the
+    // checker types it, so it lowers with a `Unit` tail after it.
+    let (mut body, rest) = match last {
+        ResolvedStmt::Expr(tail_expr) => {
+            (lower_expr(tail_expr, program)?, &stmts[..stmts.len() - 1])
+        }
+        ResolvedStmt::Binding { value, .. } => {
+            let ty = std::sync::OnceLock::new();
+            let _ = ty.set(Type::Unit);
+            let unit = Spanned {
+                node: MirExpr::Literal(Spanned {
+                    node: Literal::Unit,
+                    line: value.line,
+                    ty: std::sync::OnceLock::new(),
+                }),
+                line: value.line,
+                ty,
+            };
+            (unit, stmts)
+        }
     };
-    let mut body = lower_expr(tail_expr, program)?;
 
     // Per-statement binding slots, aligned front-to-back with the
     // `Binding` stmts in `stmts` (the resolver records one entry per

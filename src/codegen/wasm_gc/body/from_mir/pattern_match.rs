@@ -130,6 +130,35 @@ pub(crate) fn emit_mir_match(
         return emit_mir_expr(func, &m.arms[0].body, slots, ctx);
     }
 
+    // An irrefutable first arm (`_ -> body` or `x -> body`) is the whole
+    // match: every later arm is unreachable, so there is nothing to test.
+    // The subject is evaluated for its effects, or into the binder's slot,
+    // and the body is the match's value. `Int` keeps its own path below,
+    // which knows the bare-`i64` slot colouring, and a `Unit` subject has
+    // no wasm value to store.
+    if !matches!(subject_type.trim(), "Int" | "Unit")
+        && let Some(first) = m.arms.first()
+        && matches!(first.pattern, MirPattern::Wildcard | MirPattern::Bind(..))
+    {
+        let bind_slot = match &first.pattern {
+            MirPattern::Bind(slot, _) if slot.0 != u32::from(u16::MAX) => Some(slot.0),
+            _ => None,
+        };
+        if bind_slot.is_some() || !is_pure_read(&m.subject.node) {
+            ctx.int_result_raw.set(false);
+            match emit_mir_expr(func, &m.subject, slots, ctx)? {
+                None => return Ok(None),
+                Some(true) => match bind_slot {
+                    Some(slot) => func.instruction(&Instruction::LocalSet(slot)),
+                    None => func.instruction(&Instruction::Drop),
+                },
+                Some(false) => func,
+            };
+        }
+        ctx.int_result_raw.set(result_raw);
+        return emit_mir_expr(func, &first.body, slots, ctx);
+    }
+
     // Tuple arms. The single-arm flat destructure `(a, b, …) -> body`
     // (every component a `Bind` or `Wildcard`) goes to `emit_mir_tuple_match`
     // — mirror of `emit_match`'s `arms.len() == 1 && Tuple && items >= 2`
@@ -173,7 +202,12 @@ pub(crate) fn emit_mir_match(
         return Ok(emit_mir_result_match(func, m, block_ty, slots, ctx)?.map(|()| produces));
     }
     if m.arms.iter().any(arm_is_mir_option_ctor) {
-        if subject_is_map_get(&m.subject, ctx) {
+        if subject_is_map_get(&m.subject, ctx)
+            && !m
+                .arms
+                .iter()
+                .any(|a| matches!(a.pattern, MirPattern::Bind(..)))
+        {
             return Ok(
                 emit_mir_map_get_match_fused(func, m, block_ty, slots, ctx)?.map(|()| produces)
             );
@@ -208,7 +242,7 @@ pub(crate) fn emit_mir_match(
             // Mirror of `emit_match`'s Bool special-case: a single
             // `if subject { true_body } else { false_body }`.
             if m.arms.len() != 2 {
-                return Ok(None);
+                return unsupported(format!("a `Bool` match with {} arms", m.arms.len()));
             }
             let mut true_body: Option<&Spanned<MirExpr>> = None;
             let mut false_body: Option<&Spanned<MirExpr>> = None;
@@ -223,11 +257,13 @@ pub(crate) fn emit_mir_match(
                             false_body = Some(&arm.body);
                         }
                     }
-                    _ => return Ok(None),
+                    other => {
+                        return unsupported(format!("a `{other:?}` arm in a `Bool` match"));
+                    }
                 }
             }
             let (Some(t), Some(f)) = (true_body, false_body) else {
-                return Ok(None);
+                return unsupported("a `Bool` match without both `true` and `false`");
             };
             if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
                 return Ok(None);
@@ -265,11 +301,13 @@ pub(crate) fn emit_mir_match(
                     }
                     // First catch-all wins; later arms are unreachable.
                     _ if fallback.is_some() => break,
-                    _ => return Ok(None),
+                    other => {
+                        return unsupported(format!("a `{other:?}` arm in an `Int` match"));
+                    }
                 }
             }
             let Some((fallback_body, fallback_slot)) = fallback else {
-                return Ok(None);
+                return unsupported("an `Int` match without a catch-all arm");
             };
             // A wildcard alone binds nothing, but `match say(x) _ -> …` still
             // performs `say`: the cascade emits the subject only where a
@@ -284,9 +322,30 @@ pub(crate) fn emit_mir_match(
                     Some(false) => func,
                 };
             }
+            // A computed subject tested against literals is evaluated once
+            // into its own local, in the representation its tests read; a
+            // slot read is simply read again per test.
+            let stash = if !typed_arms.is_empty() && !is_pure_read(&m.subject.node) {
+                let raw = super::mir_renders_raw_i64(&m.subject.node, ctx);
+                ctx.int_result_raw.set(false);
+                if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                let ty = if raw {
+                    ValType::I64
+                } else {
+                    aver_to_wasm("Int", Some(ctx.registry))?.unwrap_or(ValType::I64)
+                };
+                let local = slots.match_subject_local(ty);
+                func.instruction(&Instruction::LocalSet(local));
+                Some(IntSubjectStash { local, raw })
+            } else {
+                None
+            };
             if emit_mir_int_cascade(
                 func,
                 &m.subject,
+                stash,
                 &typed_arms,
                 fallback_body,
                 fallback_slot,
@@ -297,6 +356,12 @@ pub(crate) fn emit_mir_match(
             )?
             .is_none()
             {
+                return Ok(None);
+            }
+            Ok(Some(produces))
+        }
+        "Float" => {
+            if emit_mir_float_match(func, m, block_ty, slots, ctx)?.is_none() {
                 return Ok(None);
             }
             Ok(Some(produces))
@@ -371,7 +436,10 @@ pub(crate) fn emit_mir_match(
                 };
                 return Ok(Some(body_produces));
             }
-            Ok(None)
+            unsupported(format!(
+                "a match on `{}` with these arms",
+                subject_type.trim()
+            ))
         }
     }
 }
@@ -465,11 +533,13 @@ fn emit_mir_tuple_constructor_match(
 ) -> Result<Option<()>, WasmGcError> {
     let subject_ty = aver_type_str_of(&m.subject);
     let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
-    let Some(tuple_idx) = ctx.registry.tuple_type_idx(&canonical) else {
-        return Ok(None);
-    };
-    let Some(elems) = TypeRegistry::tuple_elements(&canonical) else {
-        return Ok(None);
+    let (Some(tuple_idx), Some(elems)) = (
+        ctx.registry.tuple_type_idx(&canonical),
+        TypeRegistry::tuple_elements(&canonical),
+    ) else {
+        return unsupported(format!(
+            "a match on `{subject_ty}`, which has no tuple layout"
+        ));
     };
     let elems: Vec<String> = elems
         .into_iter()
@@ -486,15 +556,22 @@ fn emit_mir_tuple_constructor_match(
             MirPattern::Wildcard | MirPattern::Bind(..) => {}
             MirPattern::Tuple(items) => {
                 if items.len() != elems.len() {
-                    return Ok(None);
+                    return unsupported(format!(
+                        "a {}-element pattern over `{subject_ty}`",
+                        items.len()
+                    ));
                 }
                 for (pat, elem) in items.iter().zip(&elems) {
                     if !tuple_element_admitted(pat, elem, ctx) {
-                        return Ok(None);
+                        return unsupported(format!(
+                            "the element pattern `{pat:?}` over `{elem}` in a tuple match"
+                        ));
                     }
                 }
             }
-            _ => return Ok(None),
+            other => {
+                return unsupported(format!("a `{other:?}` arm in a match on `{subject_ty}`"));
+            }
         }
     }
 
@@ -513,10 +590,10 @@ fn emit_mir_tuple_constructor_match(
 /// The pre-pass verdict for one element pattern of a tuple arm against
 /// its element type `elem` (whitespace-free canonical): a bind or a
 /// wildcard takes the field as it is, and a `Result` or `Option` tag, a
-/// list's emptiness or an `Int` or `Bool` literal tests it before the arm
-/// is taken. `false` is a shape the cascade does not emit: a `String` or
-/// `Float` literal, a user variant, a nested tuple, or an element whose
-/// type has no registered slot. Every registry lookup the emit pass makes
+/// user variant, a list's emptiness, an `Int`, `Bool`, `String` or `Float`
+/// literal, or a nested tuple of these tests it before the arm is taken.
+/// `false` is an element whose type has no registered slot or a helper the
+/// module did not register. Every registry lookup the emit pass makes
 /// is made here first, so the cascade cannot fail half-way through.
 fn tuple_element_admitted(pat: &MirPattern, elem: &str, ctx: &EmitCtx<'_>) -> bool {
     match pat {
@@ -532,7 +609,35 @@ fn tuple_element_admitted(pat: &MirPattern, elem: &str, ctx: &EmitCtx<'_>) -> bo
         MirPattern::EmptyList | MirPattern::Cons { .. } => {
             ctx.registry.list_type_idx(elem).is_some()
         }
+        // A user variant tests its field with `ref.test` against the
+        // variant's struct, as the plain variant cascade does. A newtype
+        // variant is the whole type, so it tests nothing; a carrier newtype
+        // lifts its native `i64` field into the binding's `$AverInt`, which
+        // needs `__aint_from_i64` under bignum.
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            bindings,
+            ..
+        } => match mir_user_variant_info(*ctor_id, ctx) {
+            Ok(info) => {
+                !(ctx.registry.newtype_underlying(&info.parent).is_some()
+                    && bindings.len() == 1
+                    && ctx.registry.is_eligible_carrier(&info.parent)
+                    && ctx.registry.bignum
+                    && !ctx.fn_map.builtins.contains_key("__aint_from_i64"))
+            }
+            Err(_) => false,
+        },
         MirPattern::Literal(Literal::Bool(_)) => elem == "Bool",
+        MirPattern::Literal(Literal::Str(_)) => elem == "String" && tuple_string_eq(ctx).is_some(),
+        MirPattern::Literal(Literal::Float(_)) => elem == "Float",
+        MirPattern::Tuple(items) => nested_tuple_layout(elem, ctx).is_some_and(|(_, inner)| {
+            items.len() == inner.len()
+                && items
+                    .iter()
+                    .zip(&inner)
+                    .all(|(sub, sub_elem)| tuple_element_admitted(sub, sub_elem, ctx))
+        }),
         // A boxed `$AverInt` field compares through the two helpers the
         // Int-literal cascade uses; both must be registered.
         MirPattern::Literal(Literal::Int(_)) => {
@@ -545,17 +650,45 @@ fn tuple_element_admitted(pat: &MirPattern, elem: &str, ctx: &EmitCtx<'_>) -> bo
     }
 }
 
-/// `local.get scratch; ref.cast $tuple; struct.get $tuple i` — the
-/// tuple field `i` of the scratch-held subject, left on the stack.
-fn emit_tuple_field(func: &mut Function, scratch: u32, tuple_idx: u32, i: usize) {
+/// The `__wasmgc_string_eq` helper and the `String` array type a `String`
+/// literal element compares with.
+fn tuple_string_eq(ctx: &EmitCtx<'_>) -> Option<(u32, u32)> {
+    let eq_idx = ctx.fn_map.builtins.get("__wasmgc_string_eq").copied()?;
+    Some((eq_idx, ctx.registry.string_array_type_idx?))
+}
+
+/// `local.get scratch`, then `ref.cast $tuple; struct.get $tuple i` for
+/// each `(tuple, i)` step of `path` — the element of the scratch-held
+/// subject a (possibly nested) tuple pattern addresses, left on the stack.
+fn emit_tuple_field(func: &mut Function, scratch: u32, path: &[(u32, u32)]) {
     func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::RefCastNonNull(
-        wasm_encoder::HeapType::Concrete(tuple_idx),
-    ));
-    func.instruction(&Instruction::StructGet {
-        struct_type_index: tuple_idx,
-        field_index: i as u32,
-    });
+    for &(tuple_idx, field_index) in path {
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(tuple_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: tuple_idx,
+            field_index,
+        });
+    }
+}
+
+/// The element types of a nested tuple element `elem` and its registry
+/// slot, whitespace-free like the outer tuple's.
+fn nested_tuple_layout(elem: &str, ctx: &EmitCtx<'_>) -> Option<(u32, Vec<String>)> {
+    let idx = ctx.registry.tuple_type_idx(elem)?;
+    let elems = TypeRegistry::tuple_elements(elem)?
+        .into_iter()
+        .map(|s| s.chars().filter(|c| !c.is_whitespace()).collect())
+        .collect();
+    Some((idx, elems))
+}
+
+/// `path` extended by one step into field `i` of the tuple `tuple_idx`.
+fn tuple_path_step(path: &[(u32, u32)], tuple_idx: u32, i: usize) -> Vec<(u32, u32)> {
+    let mut next = path.to_vec();
+    next.push((tuple_idx, i as u32));
+    next
 }
 
 /// The registry slot of a carrier element (`Result<..>`, `Option<..>`,
@@ -575,13 +708,52 @@ fn tuple_element_type_idx(lookup: Option<u32>, what: &str) -> Result<u32, WasmGc
 fn emit_tuple_element_test(
     func: &mut Function,
     scratch: u32,
-    tuple_idx: u32,
-    i: usize,
+    path: &[(u32, u32)],
     pat: &MirPattern,
     elem: &str,
     ctx: &EmitCtx<'_>,
 ) -> Result<bool, WasmGcError> {
     match pat {
+        // A nested tuple ANDs its own elements' tests.
+        MirPattern::Tuple(items) => {
+            let (inner_idx, inner_elems) = nested_tuple_layout(elem, ctx).ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "tuple match: element `{elem}` is not a registered tuple (the pre-pass admitted it)"
+                ))
+            })?;
+            let mut tests = 0u32;
+            for (j, (sub, sub_elem)) in items.iter().zip(&inner_elems).enumerate() {
+                let sub_path = tuple_path_step(path, inner_idx, j);
+                if emit_tuple_element_test(func, scratch, &sub_path, sub, sub_elem, ctx)? {
+                    if tests > 0 {
+                        func.instruction(&Instruction::I32And);
+                    }
+                    tests += 1;
+                }
+            }
+            return Ok(tests > 0);
+        }
+        // A `String` literal compares through `__wasmgc_string_eq`, as the
+        // `String` match cascade does.
+        MirPattern::Literal(Literal::Str(lit)) => {
+            let (eq_idx, s_idx) = tuple_string_eq(ctx).ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tuple match: a String literal element needs __wasmgc_string_eq (the pre-pass admitted it)"
+                        .into(),
+                )
+            })?;
+            emit_tuple_field(func, scratch, path);
+            func.instruction(&Instruction::RefCastNullable(
+                wasm_encoder::HeapType::Concrete(s_idx),
+            ));
+            emit_string_literal_bytes(func, lit.as_bytes(), ctx)?;
+            func.instruction(&Instruction::Call(eq_idx));
+        }
+        MirPattern::Literal(Literal::Float(f)) => {
+            emit_tuple_field(func, scratch, path);
+            func.instruction(&Instruction::F64Const((*f).into()));
+            func.instruction(&Instruction::F64Eq);
+        }
         MirPattern::Ctor {
             ctor: MirCtor::Builtin(bc @ (BuiltinCtor::ResultOk | BuiltinCtor::ResultErr)),
             ..
@@ -592,7 +764,7 @@ fn emit_tuple_element_test(
             } else {
                 RESULT_ERR_TAG
             };
-            emit_tuple_field(func, scratch, tuple_idx, i);
+            emit_tuple_field(func, scratch, path);
             func.instruction(&Instruction::RefCastNonNull(
                 wasm_encoder::HeapType::Concrete(res_idx),
             ));
@@ -613,7 +785,7 @@ fn emit_tuple_element_test(
             } else {
                 OPTION_NONE_TAG
             };
-            emit_tuple_field(func, scratch, tuple_idx, i);
+            emit_tuple_field(func, scratch, path);
             func.instruction(&Instruction::RefCastNonNull(
                 wasm_encoder::HeapType::Concrete(opt_idx),
             ));
@@ -624,18 +796,32 @@ fn emit_tuple_element_test(
             func.instruction(&Instruction::I32Const(expected_tag));
             func.instruction(&Instruction::I32Eq);
         }
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            bindings,
+            ..
+        } => {
+            let info = mir_user_variant_info(*ctor_id, ctx)?;
+            if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
+                return Ok(false);
+            }
+            emit_tuple_field(func, scratch, path);
+            func.instruction(&Instruction::RefTestNonNull(
+                wasm_encoder::HeapType::Concrete(info.type_idx),
+            ));
+        }
         // A list is null when empty (mirror of `emit_mir_list_match`).
         MirPattern::EmptyList => {
-            emit_tuple_field(func, scratch, tuple_idx, i);
+            emit_tuple_field(func, scratch, path);
             func.instruction(&Instruction::RefIsNull);
         }
         MirPattern::Cons { .. } => {
-            emit_tuple_field(func, scratch, tuple_idx, i);
+            emit_tuple_field(func, scratch, path);
             func.instruction(&Instruction::RefIsNull);
             func.instruction(&Instruction::I32Eqz);
         }
         MirPattern::Literal(Literal::Bool(b)) => {
-            emit_tuple_field(func, scratch, tuple_idx, i);
+            emit_tuple_field(func, scratch, path);
             func.instruction(&Instruction::I32Const(i32::from(*b)));
             func.instruction(&Instruction::I32Eq);
         }
@@ -644,7 +830,7 @@ fn emit_tuple_element_test(
         // does for a boxed subject; with bignum off the field is a scalar
         // `i64`.
         MirPattern::Literal(Literal::Int(n)) => {
-            emit_tuple_field(func, scratch, tuple_idx, i);
+            emit_tuple_field(func, scratch, path);
             func.instruction(&Instruction::I64Const(*n));
             if ctx.registry.bignum {
                 let from_i64 = ctx.fn_map.builtins.get("__aint_from_i64").copied().ok_or(
@@ -674,16 +860,26 @@ fn emit_tuple_element_test(
 fn emit_tuple_element_binds(
     func: &mut Function,
     scratch: u32,
-    tuple_idx: u32,
-    i: usize,
+    path: &[(u32, u32)],
     pat: &MirPattern,
     elem: &str,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     const NO_SLOT: u32 = u16::MAX as u32;
     match pat {
+        MirPattern::Tuple(items) => {
+            let (inner_idx, inner_elems) = nested_tuple_layout(elem, ctx).ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "tuple match: element `{elem}` is not a registered tuple (the pre-pass admitted it)"
+                ))
+            })?;
+            for (j, (sub, sub_elem)) in items.iter().zip(&inner_elems).enumerate() {
+                let sub_path = tuple_path_step(path, inner_idx, j);
+                emit_tuple_element_binds(func, scratch, &sub_path, sub, sub_elem, ctx)?;
+            }
+        }
         MirPattern::Bind(slot, _) if slot.0 != NO_SLOT => {
-            emit_tuple_field(func, scratch, tuple_idx, i);
+            emit_tuple_field(func, scratch, path);
             func.instruction(&Instruction::LocalSet(slot.0));
         }
         MirPattern::Ctor {
@@ -701,7 +897,7 @@ fn emit_tuple_element_binds(
                 if binding.0 == NO_SLOT {
                     continue;
                 }
-                emit_tuple_field(func, scratch, tuple_idx, i);
+                emit_tuple_field(func, scratch, path);
                 func.instruction(&Instruction::RefCastNonNull(
                     wasm_encoder::HeapType::Concrete(res_idx),
                 ));
@@ -722,7 +918,7 @@ fn emit_tuple_element_binds(
                 if binding.0 == NO_SLOT {
                     continue;
                 }
-                emit_tuple_field(func, scratch, tuple_idx, i);
+                emit_tuple_field(func, scratch, path);
                 func.instruction(&Instruction::RefCastNonNull(
                     wasm_encoder::HeapType::Concrete(opt_idx),
                 ));
@@ -733,13 +929,47 @@ fn emit_tuple_element_binds(
                 func.instruction(&Instruction::LocalSet(binding.0));
             }
         }
+        // Mirror of `emit_mir_arm_body`: a newtype binds the field itself
+        // (lifting a carrier's native `i64`), any other variant casts the
+        // field and reads each bound payload.
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            bindings,
+            ..
+        } => {
+            let info = mir_user_variant_info(*ctor_id, ctx)?;
+            if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
+                if bindings[0].0 != NO_SLOT {
+                    emit_tuple_field(func, scratch, path);
+                    if ctx.registry.is_eligible_carrier(&info.parent) {
+                        super::emit_carrier_project_bridge(func, ctx)?;
+                    }
+                    func.instruction(&Instruction::LocalSet(bindings[0].0));
+                }
+                return Ok(());
+            }
+            for (field_index, binding) in bindings.iter().enumerate() {
+                if binding.0 == NO_SLOT {
+                    continue;
+                }
+                emit_tuple_field(func, scratch, path);
+                func.instruction(&Instruction::RefCastNonNull(
+                    wasm_encoder::HeapType::Concrete(info.type_idx),
+                ));
+                func.instruction(&Instruction::StructGet {
+                    struct_type_index: info.type_idx,
+                    field_index: field_index as u32,
+                });
+                func.instruction(&Instruction::LocalSet(binding.0));
+            }
+        }
         MirPattern::Cons { head, tail, .. } => {
             let list_idx = tuple_element_type_idx(ctx.registry.list_type_idx(elem), "List")?;
             for (field_index, slot) in [(0u32, head), (1u32, tail)] {
                 if slot.0 == NO_SLOT {
                     continue;
                 }
-                emit_tuple_field(func, scratch, tuple_idx, i);
+                emit_tuple_field(func, scratch, path);
                 func.instruction(&Instruction::RefCastNonNull(
                     wasm_encoder::HeapType::Concrete(list_idx),
                 ));
@@ -800,7 +1030,8 @@ fn emit_mir_tuple_constructor_arm_cascade(
             // Verdict: AND together each testing element's verdict.
             let mut tests_emitted = 0u32;
             for (i, (pat, elem)) in items.iter().zip(elems).enumerate() {
-                if emit_tuple_element_test(func, scratch, tuple_idx, i, pat, elem, ctx)? {
+                if emit_tuple_element_test(func, scratch, &[(tuple_idx, i as u32)], pat, elem, ctx)?
+                {
                     if tests_emitted > 0 {
                         func.instruction(&Instruction::I32And);
                     }
@@ -812,7 +1043,7 @@ fn emit_mir_tuple_constructor_arm_cascade(
             }
             func.instruction(&Instruction::If(block_ty));
             for (i, (pat, elem)) in items.iter().zip(elems).enumerate() {
-                emit_tuple_element_binds(func, scratch, tuple_idx, i, pat, elem, ctx)?;
+                emit_tuple_element_binds(func, scratch, &[(tuple_idx, i as u32)], pat, elem, ctx)?;
             }
             // ETAP-2 SLICE 2b: arm tail — colour raw per the block type.
             ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
@@ -981,19 +1212,19 @@ pub(crate) fn emit_mir_string_match(
     // Literal-string arms in source order, then the first non-literal
     // arm as the single default (mirror of `emit_string_match`).
     let mut literal_arms: Vec<(&str, &Spanned<MirExpr>)> = Vec::new();
-    let mut default_body: Option<&Spanned<MirExpr>> = None;
+    let mut default_arm: Option<&MirMatchArm> = None;
     for arm in &m.arms {
         if let MirPattern::Literal(Literal::Str(s)) = &arm.pattern {
             literal_arms.push((s.as_str(), &arm.body));
-        } else if default_body.is_none() {
-            default_body = Some(&arm.body);
+        } else if default_arm.is_none() {
+            default_arm = Some(arm);
         }
     }
-    let Some(default_body) = default_body else {
-        // `emit_string_match` raises a Validation error here; fall back
-        // so the `ResolvedExpr` emitter reproduces it.
-        return Ok(None);
+    let Some(default_arm) = default_arm else {
+        return unsupported("a `String` match without a catch-all arm");
     };
+    let default_body = &default_arm.body;
+    let result_raw = block_ty_is_raw_i64(block_ty);
 
     let mut ends_to_close = 0usize;
     for (lit, body) in &literal_arms {
@@ -1004,12 +1235,24 @@ pub(crate) fn emit_mir_string_match(
         emit_string_literal_bytes(func, lit.as_bytes(), ctx)?;
         func.instruction(&Instruction::Call(eq_idx));
         func.instruction(&Instruction::If(block_ty));
+        ctx.int_result_raw.set(result_raw);
         if emit_mir_expr(func, body, slots, ctx)?.is_none() {
             return Ok(None);
         }
         func.instruction(&Instruction::Else);
         ends_to_close += 1;
     }
+    // A named catch-all (`other -> …`) captures the subject.
+    if let MirPattern::Bind(slot, _) = &default_arm.pattern
+        && slot.0 != u32::from(u16::MAX)
+    {
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNullable(
+            wasm_encoder::HeapType::Concrete(s_idx),
+        ));
+        func.instruction(&Instruction::LocalSet(slot.0));
+    }
+    ctx.int_result_raw.set(result_raw);
     if emit_mir_expr(func, default_body, slots, ctx)?.is_none() {
         return Ok(None);
     }
@@ -1019,6 +1262,91 @@ pub(crate) fn emit_mir_string_match(
     Ok(Some(()))
 }
 
+/// A `Float` subject matched against literals: `subject == lit ? body :
+/// <rest>` with `f64.eq`, as the VM and the Rust backend compare, then the
+/// catch-all, which may bind the subject. A computed subject is evaluated
+/// once into its own `f64` local; a slot read is read again per test.
+fn emit_mir_float_match(
+    func: &mut Function,
+    m: &MirMatch,
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let mut literal_arms: Vec<(f64, &Spanned<MirExpr>)> = Vec::new();
+    let mut fallback: Option<&MirMatchArm> = None;
+    for arm in &m.arms {
+        match &arm.pattern {
+            MirPattern::Literal(Literal::Float(f)) => literal_arms.push((*f, &arm.body)),
+            MirPattern::Wildcard | MirPattern::Bind(..) => {
+                fallback = Some(arm);
+                break;
+            }
+            other => return unsupported(format!("a `{other:?}` arm in a `Float` match")),
+        }
+    }
+    let Some(fallback) = fallback else {
+        return unsupported("a `Float` match without a catch-all arm");
+    };
+    let stash = if is_pure_read(&m.subject.node) {
+        None
+    } else {
+        ctx.int_result_raw.set(false);
+        if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        let local = slots.match_subject_local(ValType::F64);
+        func.instruction(&Instruction::LocalSet(local));
+        Some(local)
+    };
+    let read_subject = |func: &mut Function| -> Result<Option<()>, WasmGcError> {
+        if let Some(local) = stash {
+            func.instruction(&Instruction::LocalGet(local));
+            return Ok(Some(()));
+        }
+        ctx.int_result_raw.set(false);
+        Ok(emit_mir_expr(func, &m.subject, slots, ctx)?.map(|_| ()))
+    };
+    let result_raw = block_ty_is_raw_i64(block_ty);
+    for (lit, body) in &literal_arms {
+        if read_subject(func)?.is_none() {
+            return Ok(None);
+        }
+        func.instruction(&Instruction::F64Const((*lit).into()));
+        func.instruction(&Instruction::F64Eq);
+        func.instruction(&Instruction::If(block_ty));
+        ctx.int_result_raw.set(result_raw);
+        if emit_mir_expr(func, body, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        func.instruction(&Instruction::Else);
+    }
+    if let MirPattern::Bind(slot, _) = &fallback.pattern
+        && slot.0 != u32::from(u16::MAX)
+    {
+        if read_subject(func)?.is_none() {
+            return Ok(None);
+        }
+        func.instruction(&Instruction::LocalSet(slot.0));
+    }
+    ctx.int_result_raw.set(result_raw);
+    if emit_mir_expr(func, &fallback.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    for _ in &literal_arms {
+        func.instruction(&Instruction::End);
+    }
+    Ok(Some(()))
+}
+
+/// A computed `Int` match subject held in its own local, and whether it was
+/// stored as a raw `i64` or as a boxed `Int`.
+#[derive(Clone, Copy)]
+pub(crate) struct IntSubjectStash {
+    local: u32,
+    raw: bool,
+}
+
 /// Mirror of `emit_int_match_cascade` (emit.rs): `subject == lit ?
 /// body : <rest>`, recomputing the subject per arm (no scratch slot).
 /// Returns `None` if any subtree falls outside the supported subset.
@@ -1026,6 +1354,7 @@ pub(crate) fn emit_mir_string_match(
 pub(crate) fn emit_mir_int_cascade(
     func: &mut Function,
     subject: &Spanned<MirExpr>,
+    stash: Option<IntSubjectStash>,
     typed_arms: &[(i64, &Spanned<MirExpr>)],
     fallback: &Spanned<MirExpr>,
     fallback_slot: Option<LocalId>,
@@ -1039,11 +1368,28 @@ pub(crate) fn emit_mir_int_cascade(
         // catch-all also captures the subject. String-index fusion uses this
         // exact shape to bind the raw codepoint after its -1 sentinel arm.
         if let Some(slot) = fallback_slot {
-            let emitted = if ctx.slot_is_bare(slot.0) {
-                emit_mir_int_raw(func, subject, slots, ctx)?
-            } else {
-                ctx.int_result_raw.set(false);
-                emit_mir_expr(func, subject, slots, ctx)?
+            let emitted = match stash {
+                // The stashed subject, converted to the binder's colour: a
+                // raw value lifts into a boxed slot, a boxed one cannot be
+                // narrowed into a bare slot here.
+                Some(IntSubjectStash { local, raw }) => {
+                    let bare = ctx.slot_is_bare(slot.0);
+                    if bare && !raw {
+                        return unsupported(
+                            "an `Int` match binding a computed boxed subject into a bare slot",
+                        );
+                    }
+                    func.instruction(&Instruction::LocalGet(local));
+                    if raw && !bare {
+                        lift_i64_result_to_aint(func, ctx)?;
+                    }
+                    Some(true)
+                }
+                None if ctx.slot_is_bare(slot.0) => emit_mir_int_raw(func, subject, slots, ctx)?,
+                None => {
+                    ctx.int_result_raw.set(false);
+                    emit_mir_expr(func, subject, slots, ctx)?
+                }
             };
             if emitted.is_none() {
                 return Ok(None);
@@ -1065,11 +1411,20 @@ pub(crate) fn emit_mir_int_cascade(
     // NOT lifted to `$aint`. The boxed (`$aint` ref) subject keeps the
     // `__aint_from_i64` + `__aint_eq` path. The subject is a value position,
     // so emit it with the colour cleared.
-    let subject_raw = super::mir_renders_raw_i64(&subject.node, ctx);
-    ctx.int_result_raw.set(false);
-    if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
-        return Ok(None);
-    }
+    let subject_raw = match stash {
+        Some(IntSubjectStash { local, raw }) => {
+            func.instruction(&Instruction::LocalGet(local));
+            raw
+        }
+        None => {
+            let raw = super::mir_renders_raw_i64(&subject.node, ctx);
+            ctx.int_result_raw.set(false);
+            if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            raw
+        }
+    };
     // bignum slice 4 (eq+hash gap) — under the flag a BOXED subject is an
     // `$aint` ref, so the literal must be lifted to a Small `$aint`
     // (`__aint_from_i64`) and compared with `__aint_eq`. The flag-off path
@@ -1112,6 +1467,7 @@ pub(crate) fn emit_mir_int_cascade(
     if emit_mir_int_cascade(
         func,
         subject,
+        stash,
         rest,
         fallback,
         fallback_slot,
@@ -1230,7 +1586,7 @@ pub(crate) fn emit_mir_option_match(
                 ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
                 ..
             } => none_arm = Some(arm),
-            MirPattern::Wildcard => {
+            MirPattern::Wildcard | MirPattern::Bind(..) => {
                 if none_arm.is_none() {
                     none_arm = Some(arm);
                 } else if some_arm.is_none() {
@@ -1241,8 +1597,7 @@ pub(crate) fn emit_mir_option_match(
         }
     }
     let (Some(some_arm), Some(none_arm)) = (some_arm, none_arm) else {
-        // `emit_option_match` raises a Validation error here; fall back.
-        return Ok(None);
+        return unsupported(format!("a match on `{subject_ty}` without both its arms"));
     };
 
     if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
@@ -1275,11 +1630,13 @@ pub(crate) fn emit_mir_option_match(
     }
     // ETAP-2 SLICE 2b: re-set the raw colour for each arm tail (see
     // `block_ty_is_raw_i64`) so a bare `Int` arm body renders raw `i64`.
+    emit_bind_whole_subject(func, scratch, some_arm, &subject_ty, ctx)?;
     ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &some_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
     func.instruction(&Instruction::Else);
+    emit_bind_whole_subject(func, scratch, none_arm, &subject_ty, ctx)?;
     ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &none_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
@@ -1323,7 +1680,7 @@ pub(crate) fn emit_mir_result_match(
                 ctor: MirCtor::Builtin(BuiltinCtor::ResultErr),
                 ..
             } => err_arm = Some(arm),
-            MirPattern::Wildcard => {
+            MirPattern::Wildcard | MirPattern::Bind(..) => {
                 if err_arm.is_none() {
                     err_arm = Some(arm);
                 } else if ok_arm.is_none() {
@@ -1334,7 +1691,7 @@ pub(crate) fn emit_mir_result_match(
         }
     }
     let (Some(ok_arm), Some(err_arm)) = (ok_arm, err_arm) else {
-        return Ok(None);
+        return unsupported(format!("a match on `{subject_ty}` without both its arms"));
     };
 
     if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
@@ -1371,6 +1728,7 @@ pub(crate) fn emit_mir_result_match(
     // `i64`, matching the `Result(I64)` block type. Without it the literal
     // takes the boxed `__aint_from_i64` path and pushes an `$AverInt` ref
     // where the block expects `i64` — a wasm validation error (the v4 bug).
+    emit_bind_whole_subject(func, scratch, ok_arm, &subject_ty, ctx)?;
     ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &ok_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
@@ -1387,6 +1745,7 @@ pub(crate) fn emit_mir_result_match(
         });
         func.instruction(&Instruction::LocalSet(slot));
     }
+    emit_bind_whole_subject(func, scratch, err_arm, &subject_ty, ctx)?;
     ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &err_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
@@ -1425,7 +1784,7 @@ pub(crate) fn emit_mir_list_match(
         match &arm.pattern {
             MirPattern::EmptyList => empty_arm = Some(arm),
             MirPattern::Cons { .. } => cons_arm = Some(arm),
-            MirPattern::Wildcard => {
+            MirPattern::Wildcard | MirPattern::Bind(..) => {
                 if empty_arm.is_none() {
                     empty_arm = Some(arm);
                 } else if cons_arm.is_none() {
@@ -1436,7 +1795,7 @@ pub(crate) fn emit_mir_list_match(
         }
     }
     let (Some(empty_arm), Some(cons_arm)) = (empty_arm, cons_arm) else {
-        return Ok(None);
+        return unsupported(format!("a match on `{subject_ty}` without both its arms"));
     };
 
     if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
@@ -1449,6 +1808,7 @@ pub(crate) fn emit_mir_list_match(
     func.instruction(&Instruction::If(block_ty));
     // ETAP-2 SLICE 2b: re-set the raw colour for each arm tail (see
     // `block_ty_is_raw_i64`) so a bare `Int` arm body renders raw `i64`.
+    emit_bind_whole_subject(func, scratch, empty_arm, &subject_ty, ctx)?;
     ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &empty_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
@@ -1478,12 +1838,51 @@ pub(crate) fn emit_mir_list_match(
             func.instruction(&Instruction::LocalSet(tail.0));
         }
     }
+    emit_bind_whole_subject(func, scratch, cons_arm, &subject_ty, ctx)?;
     ctx.int_result_raw.set(block_ty_is_raw_i64(block_ty));
     if emit_mir_expr(func, &cons_arm.body, slots, ctx)?.is_none() {
         return Ok(None);
     }
     func.instruction(&Instruction::End);
     Ok(Some(()))
+}
+
+/// A named catch-all (`other -> …`) after arms that test the subject
+/// captures the whole scratch-held subject: read the scratch, cast it back
+/// to the subject's own wasm type and store it in the binder's slot. Any
+/// other arm (a constructor, `_`, an ignored binder) stores nothing.
+fn emit_bind_whole_subject(
+    func: &mut Function,
+    scratch: u32,
+    arm: &MirMatchArm,
+    subject_ty: &str,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let MirPattern::Bind(slot, _) = &arm.pattern else {
+        return Ok(());
+    };
+    if slot.0 == u32::from(u16::MAX) {
+        return Ok(());
+    }
+    func.instruction(&Instruction::LocalGet(scratch));
+    match aver_to_wasm(subject_ty, Some(ctx.registry))? {
+        Some(ValType::Ref(wasm_encoder::RefType {
+            heap_type: wasm_encoder::HeapType::Concrete(idx),
+            ..
+        })) => {
+            func.instruction(&Instruction::RefCastNullable(
+                wasm_encoder::HeapType::Concrete(idx),
+            ));
+        }
+        Some(ValType::Ref(_)) => {}
+        other => {
+            return Err(WasmGcError::Validation(format!(
+                "a binder over a `{subject_ty}` subject held in the match scratch has no ref type ({other:?})"
+            )));
+        }
+    }
+    func.instruction(&Instruction::LocalSet(slot.0));
+    Ok(())
 }
 
 /// Resolve a `MirCtor::User(CtorId)` to its registry `VariantInfo`,
@@ -1648,17 +2047,29 @@ pub(crate) fn emit_mir_variant_dispatch(
     }
     func.instruction(&Instruction::LocalSet(scratch));
     let result_raw = block_ty_is_raw_i64(block_ty);
-    emit_mir_variant_arm_cascade(func, &m.arms, block_ty, scratch, result_raw, slots, ctx)
+    let subject_ty = aver_type_str_of(&m.subject);
+    emit_mir_variant_arm_cascade(
+        func,
+        &m.arms,
+        block_ty,
+        scratch,
+        &subject_ty,
+        result_raw,
+        slots,
+        ctx,
+    )
 }
 
 /// Mirror of `emit_variant_arm_cascade` (emit.rs): one arm left → the
 /// default (no test); else `ref.test` the first arm's variant, emit its
 /// body on match, recurse on the rest in the `else`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_mir_variant_arm_cascade(
     func: &mut Function,
     arms: &[MirMatchArm],
     block_ty: wasm_encoder::BlockType,
     subject_scratch: u32,
+    subject_ty: &str,
     result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -1670,7 +2081,15 @@ pub(crate) fn emit_mir_variant_arm_cascade(
         return Ok(Some(()));
     }
     if arms.len() == 1 {
-        return emit_mir_arm_body(func, &arms[0], subject_scratch, result_raw, slots, ctx);
+        return emit_mir_arm_body(
+            func,
+            &arms[0],
+            subject_scratch,
+            subject_ty,
+            result_raw,
+            slots,
+            ctx,
+        );
     }
     let arm = &arms[0];
     match &arm.pattern {
@@ -1684,7 +2103,17 @@ pub(crate) fn emit_mir_variant_arm_cascade(
                 wasm_encoder::HeapType::Concrete(info.type_idx),
             ));
             func.instruction(&Instruction::If(block_ty));
-            if emit_mir_arm_body(func, arm, subject_scratch, result_raw, slots, ctx)?.is_none() {
+            if emit_mir_arm_body(
+                func,
+                arm,
+                subject_scratch,
+                subject_ty,
+                result_raw,
+                slots,
+                ctx,
+            )?
+            .is_none()
+            {
                 return Ok(None);
             }
             func.instruction(&Instruction::Else);
@@ -1693,6 +2122,7 @@ pub(crate) fn emit_mir_variant_arm_cascade(
                 &arms[1..],
                 block_ty,
                 subject_scratch,
+                subject_ty,
                 result_raw,
                 slots,
                 ctx,
@@ -1704,22 +2134,31 @@ pub(crate) fn emit_mir_variant_arm_cascade(
             func.instruction(&Instruction::End);
             Ok(Some(()))
         }
-        MirPattern::Wildcard => {
-            emit_mir_arm_body(func, arm, subject_scratch, result_raw, slots, ctx)
-        }
-        // A non-Ctor / non-Wildcard arm here is `emit_match`'s
-        // Unimplemented case — fall back.
-        _ => Ok(None),
+        // A catch-all closes the cascade; a named one captures the subject.
+        MirPattern::Wildcard | MirPattern::Bind(..) => emit_mir_arm_body(
+            func,
+            arm,
+            subject_scratch,
+            subject_ty,
+            result_raw,
+            slots,
+            ctx,
+        ),
+        other => unsupported(format!(
+            "a `{other:?}` arm in a match on the sum type `{subject_ty}`"
+        )),
     }
 }
 
 /// Mirror of `emit_arm_body` (emit.rs): extract a `Ctor` arm's fields
 /// from the scratch-held subject (newtype binds the scratch directly),
 /// then emit the body; a wildcard arm just emits its body.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_mir_arm_body(
     func: &mut Function,
     arm: &MirMatchArm,
     subject_scratch: u32,
+    subject_ty: &str,
     result_raw: bool,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -1762,6 +2201,7 @@ pub(crate) fn emit_mir_arm_body(
         }
         return emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx);
     }
-    // Wildcard / non-pattern arm — just emit the body.
+    // Wildcard / binder arm — a binder captures the subject, then the body.
+    emit_bind_whole_subject(func, subject_scratch, arm, subject_ty, ctx)?;
     emit_mir_arm_body_value(func, &arm.body, result_raw, slots, ctx)
 }
